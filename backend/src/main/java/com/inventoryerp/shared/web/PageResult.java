@@ -9,7 +9,13 @@ public record PageResult<T>(List<T> data, Meta meta) {
 
     public static <T> PageResult<T> of(List<T> data, PageQuery query, long total) {
         int size = query.pageSizeOrDefault();
-        int totalPages = (int) Math.ceil(total / (double) size);
+        int totalPages = Math.max(1, (int) Math.ceil(total / (double) size));
         return new PageResult<>(data, new Meta(query.pageOrDefault(), size, total, totalPages));
+    }
+
+    /** Nest {@code meta} with explicit page/pageSize ({@code totalPages = max(1, ceil(total / pageSize))}). */
+    public static <T> PageResult<T> of(List<T> data, int page, int pageSize, long total) {
+        int totalPages = Math.max(1, (int) Math.ceil(total / (double) pageSize));
+        return new PageResult<>(data, new Meta(page, pageSize, total, totalPages));
     }
 }

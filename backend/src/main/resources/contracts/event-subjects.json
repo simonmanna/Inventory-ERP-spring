@@ -1,0 +1,126 @@
+{
+  "order.confirmed": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.fulfillment_started": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.completed": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.closed": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.cancelled": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.reopened": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "order.superseded": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "fulfillment.started": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "fulfillment.completed": {
+    "entityType": "order",
+    "idField": "orderId"
+  },
+  "document.created": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.submitted": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.approved": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.rejected": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.confirmed": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.issued": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.activated": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.expired": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.revoked": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.posted": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.paid": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.closed": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.cancelled": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.reversed": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.reissued": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.terminated": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.archived": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "document.amended": {
+    "entityType": "document",
+    "idField": "documentId"
+  },
+  "communication.message.created": {
+    "entityType": "communication_message",
+    "idField": "messageId"
+  },
+  "communication.message.received": {
+    "entityType": "communication_message",
+    "idField": "messageId"
+  },
+  "communication.message.delivered": {
+    "entityType": "communication_message",
+    "idField": "messageId"
+  },
+  "communication.message.failed": {
+    "entityType": "communication_message",
+    "idField": "messageId"
+  }
+}

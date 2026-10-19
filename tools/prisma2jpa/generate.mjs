@@ -30,6 +30,19 @@ const JAVA_KW = new Set(
 );
 const OPTIMISTIC_LOCK = new Set(['Order', 'Invoice', 'PurchaseOrder']);
 
+// ---------- tenancy (port of reference/nest-api/src/kernel/prisma/tenancy.extension.ts) ----------
+// ORG_SCOPED models get the Hibernate "tenant" filter, SOFT_DELETE models the "softDelete" filter
+// (both enabled per transaction by kernel.tenancy.TenantAwareTransactionManager).
+const tenancySrc = fs.readFileSync(path.join(root, 'reference/nest-api/src/kernel/prisma/tenancy.extension.ts'), 'utf8');
+function tenancySet(name) {
+  const start = tenancySrc.indexOf(`const ${name} = new Set<string>([`);
+  if (start < 0) throw new Error(`${name} not found in tenancy.extension.ts`);
+  const body = tenancySrc.slice(start, tenancySrc.indexOf(']);', start));
+  return new Set([...body.replace(/\/\/.*$/gm, '').matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]));
+}
+export const ORG_SCOPED = tenancySet('ORG_SCOPED');
+export const SOFT_DELETE = tenancySet('SOFT_DELETE');
+
 // ---------- model -> module ownership ----------
 const KERNEL = new Set(['Organization', 'Permission', 'User', 'Role', 'RefreshToken', 'IdempotencyRecord', 'AuditLog', 'LoginAttempt', 'Setting', 'EventOutbox', 'DomainEventLog', 'Notification', 'NotificationPreference', 'PushSubscription', 'File', 'OneTimeToken', 'ApprovalRequest', 'ApprovalDecision', 'ApprovalPolicy', 'ApprovalWorkflow', 'ApprovalStep', 'RecurringDocument', 'RecurringDocumentRun', 'WebhookEndpoint', 'WebhookDelivery', 'FeatureFlag', 'SavedReport', 'SavedReportRun', 'OrganizationModule', 'LifecycleEvent']);
 const ACCOUNTING = new Set(['AccountCategory', 'Account', 'Journal', 'JournalEntry', 'JournalLine', 'AccountMapping', 'BankAccount', 'FxRevaluation', 'BankStatementLine', 'BankReconciliationRun', 'CashRegister', 'CashSession', 'CashMovement', 'PosPaymentMethod', 'TenderSettlement', 'CostCenter', 'Currency', 'CurrencyRate']);
@@ -276,6 +289,17 @@ for (const model of Object.values(models)) {
     );
     accessors.push([f.type, jf]);
   }
+  const filters = [];
+  if (ORG_SCOPED.has(model.name) && scalarNames.has('organizationId')) filters.push('TENANT');
+  if (SOFT_DELETE.has(model.name) && scalarNames.has('deletedAt')) filters.push('SOFT_DELETE');
+  if (filters.length) {
+    imports.add('org.hibernate.annotations.Filter');
+    imports.add(`${BASE_PKG}.shared.persistence.TenancyFilters`);
+  }
+  const filterAnn = filters
+    .map((f) => `@Filter(name = TenancyFilters.${f}, condition = TenancyFilters.${f}_CONDITION, deduceAliasInjectionPoints = false)
+`)
+    .join('');
   if (hasUuidId) {
     imports.add('jakarta.persistence.PrePersist');
     imports.add('java.util.UUID');
@@ -309,7 +333,7 @@ ${[...imports].sort().map((i) => `import ${i};`).join('\n')}
 @Table(name = "${model.name}")
 @DynamicInsert
 @DynamicUpdate
-public class ${model.name} {
+${filterAnn}public class ${model.name} {
 
 ${lines.join('\n')}${prePersist}${acc}}
 `,

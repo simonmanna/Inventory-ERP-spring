@@ -3,6 +3,7 @@ package com.inventoryerp.invoicing.domain;
 
 import com.inventoryerp.shared.domain.DiscountSource;
 import com.inventoryerp.shared.domain.DiscountType;
+import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -18,6 +19,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -26,6 +28,7 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "InvoiceItem")
 @DynamicInsert
 @DynamicUpdate
+@Filter(name = TenancyFilters.TENANT, condition = TenancyFilters.TENANT_CONDITION, deduceAliasInjectionPoints = false)
 public class InvoiceItem {
 
     @Column(name = "taxAccountId")

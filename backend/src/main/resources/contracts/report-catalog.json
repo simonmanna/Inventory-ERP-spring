@@ -1,0 +1,327 @@
+[
+  {
+    "id": "pos.sales",
+    "label": "Sales Report",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "sales"
+  },
+  {
+    "id": "pos.items",
+    "label": "Items Report",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "items"
+  },
+  {
+    "id": "pos.item-sales",
+    "label": "Item Sales",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "item-sales"
+  },
+  {
+    "id": "pos.items-by-group",
+    "label": "Items by Group",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "items-by-group"
+  },
+  {
+    "id": "pos.items-by-server",
+    "label": "Item Sales by Server",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "items-by-server"
+  },
+  {
+    "id": "pos.orders",
+    "label": "Order Reports",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "orders"
+  },
+  {
+    "id": "pos.cashier",
+    "label": "Cashier Reports",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "cashier"
+  },
+  {
+    "id": "pos.cashier-summary",
+    "label": "Cashier Shift Summary",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "cashier-summary"
+  },
+  {
+    "id": "pos.waiter",
+    "label": "Waiter Report",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "waiter"
+  },
+  {
+    "id": "pos.daily",
+    "label": "Daily Sales",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "daily"
+  },
+  {
+    "id": "pos.weekly",
+    "label": "Weekly Sales",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "weekly"
+  },
+  {
+    "id": "pos.monthly",
+    "label": "Monthly Sales",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "monthly"
+  },
+  {
+    "id": "pos.hourly",
+    "label": "Sales by Hour",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "hourly"
+  },
+  {
+    "id": "pos.top",
+    "label": "Top Items",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "top"
+  },
+  {
+    "id": "pos.x",
+    "label": "X-Report",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "x"
+  },
+  {
+    "id": "pos.z",
+    "label": "Z-Report",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/reports",
+    "tab": "z"
+  },
+  {
+    "id": "center.sales",
+    "label": "Sales Report",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "sales"
+  },
+  {
+    "id": "center.items",
+    "label": "Item Sales",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "items"
+  },
+  {
+    "id": "center.expenses",
+    "label": "Expenses",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "expenses"
+  },
+  {
+    "id": "center.purchases",
+    "label": "Purchases",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "purchases"
+  },
+  {
+    "id": "center.cf-summary",
+    "label": "Cash Flow Summary",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "cf-summary"
+  },
+  {
+    "id": "center.cf-detailed",
+    "label": "Cash Flow Detailed",
+    "group": "Report Center",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "tab": "cf-detailed"
+  },
+  {
+    "id": "pos.kds",
+    "label": "Kitchen Reports",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/pos/kds-reports",
+    "description": "Kitchen performance and ticket timings."
+  },
+  {
+    "id": "pos.tables",
+    "label": "Table Reports",
+    "group": "POS Reports",
+    "permission": "pos:reports",
+    "route": "/tables/reports"
+  },
+  {
+    "id": "sales.ar-aging",
+    "label": "Accounts Receivable Aging",
+    "group": "Sales",
+    "permission": "report:ar",
+    "route": "/ar-aging"
+  },
+  {
+    "id": "accounting.report-center",
+    "label": "Report Center",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/reports",
+    "description": "The unified report hub page itself."
+  },
+  {
+    "id": "accounting.trial-balance",
+    "label": "Trial Balance",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/trial-balance"
+  },
+  {
+    "id": "accounting.general-ledger",
+    "label": "General Ledger",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/general-ledger"
+  },
+  {
+    "id": "accounting.detailed",
+    "label": "Detailed Accounting Report",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/accounting-detailed-report"
+  },
+  {
+    "id": "accounting.profit-and-loss",
+    "label": "Profit & Loss",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/profit-and-loss"
+  },
+  {
+    "id": "accounting.balance-sheet",
+    "label": "Balance Sheet",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/balance-sheet"
+  },
+  {
+    "id": "accounting.cash-flow-statement",
+    "label": "Cash Flow Statement",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/cash-flow"
+  },
+  {
+    "id": "accounting.tieout",
+    "label": "Tie-Out",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/tieout"
+  },
+  {
+    "id": "accounting.pos-gl-recon",
+    "label": "POS → GL Reconciliation",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/pos-gl-reconciliation"
+  },
+  {
+    "id": "accounting.inventory-valuation",
+    "label": "Inventory Valuation",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/inventory-valuation"
+  },
+  {
+    "id": "accounting.inventory-gl-tieout",
+    "label": "Inventory ↔ GL Tie-Out",
+    "group": "Accounting",
+    "permission": "report:accounting",
+    "route": "/inventory-gl-tieout"
+  },
+  {
+    "id": "money.reports",
+    "label": "Money Reports",
+    "group": "Money",
+    "permission": "account:read",
+    "route": "/cash-flow/report"
+  },
+  {
+    "id": "inventory.reports",
+    "label": "Inventory Reports",
+    "group": "Inventory",
+    "permission": "inventory:read",
+    "route": "/inventory/reports"
+  },
+  {
+    "id": "expenses.reports",
+    "label": "Expense Reports",
+    "group": "Expenses",
+    "permission": "expense:read",
+    "route": "/expenses/reports"
+  },
+  {
+    "id": "hr.reports",
+    "label": "HR Reports",
+    "group": "Human Resource",
+    "permission": "hr:report",
+    "route": "/hr/reports"
+  },
+  {
+    "id": "manufacturing.reports",
+    "label": "Production Reports",
+    "group": "Manufacturing",
+    "permission": "production:report",
+    "route": "/manufacturing/reports"
+  },
+  {
+    "id": "repair.reports",
+    "label": "Repair Reports",
+    "group": "Repair",
+    "permission": "repair:read",
+    "route": "/repair/reports"
+  },
+  {
+    "id": "rental.reports",
+    "label": "Rental Reports",
+    "group": "Rentals",
+    "permission": "rental:read",
+    "route": "/rental/reports"
+  }
+]

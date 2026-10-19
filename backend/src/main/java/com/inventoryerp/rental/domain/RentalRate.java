@@ -2,6 +2,7 @@
 package com.inventoryerp.rental.domain;
 
 import com.inventoryerp.shared.domain.RentalRatePeriod;
+import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -13,6 +14,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /** Table {@code "RentalRate"} (owned by module {@code rental}). */
@@ -20,6 +22,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Table(name = "RentalRate")
 @DynamicInsert
 @DynamicUpdate
+@Filter(name = TenancyFilters.TENANT, condition = TenancyFilters.TENANT_CONDITION, deduceAliasInjectionPoints = false)
+@Filter(name = TenancyFilters.SOFT_DELETE, condition = TenancyFilters.SOFT_DELETE_CONDITION, deduceAliasInjectionPoints = false)
 public class RentalRate {
 
     @Id

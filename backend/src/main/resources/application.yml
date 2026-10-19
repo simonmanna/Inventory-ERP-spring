@@ -77,7 +77,7 @@ app:
   jwt:
     access-secret: ${JWT_ACCESS_SECRET:dev-only-access-secret-change-me-32bytes!!}
     refresh-secret: ${JWT_REFRESH_SECRET:dev-only-refresh-secret-change-me-32bytes!}
-    pos-secret: ${JWT_POS_SECRET:dev-only-pos-secret-change-me-32bytes!!!!!}
+    pos-secret: ${JWT_POS_SECRET:}
     access-ttl: ${JWT_ACCESS_TTL:15m}
     refresh-ttl: ${JWT_REFRESH_TTL:7d}
     pos-ttl: ${JWT_POS_TTL:12h}
@@ -87,6 +87,8 @@ app:
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}
+  throttle:
+    enabled: ${THROTTLE_ENABLED:true}
   storage:
     driver: ${STORAGE_DRIVER:local}
     local-dir: ${STORAGE_LOCAL_DIR:./var/uploads}

@@ -2,6 +2,7 @@
 package com.inventoryerp.rental.domain;
 
 import com.inventoryerp.shared.domain.RentalRatePeriod;
+import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -15,12 +16,14 @@ import java.time.Instant;
 import java.util.UUID;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.Filter;
 
 /** Table {@code "RentalAgreementLine"} (owned by module {@code rental}). */
 @Entity
 @Table(name = "RentalAgreementLine")
 @DynamicInsert
 @DynamicUpdate
+@Filter(name = TenancyFilters.TENANT, condition = TenancyFilters.TENANT_CONDITION, deduceAliasInjectionPoints = false)
 public class RentalAgreementLine {
 
     @Id

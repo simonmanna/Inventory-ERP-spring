@@ -86,4 +86,16 @@ ${Object.entries(events.EVENTS).map(([k, v]) => `    public static final String 
 fs.mkdirSync(path.join(javaBase, 'shared/events'), { recursive: true });
 fs.writeFileSync(path.join(javaBase, 'shared/events/DomainEvents.java'), evJava);
 
+// ---- JSON catalogs (runtime data the kernel serves verbatim) ----
+//   permission-tree.json  : PERMISSIONS (nested, key order kept) for GET /auth/permissions
+//   report-catalog.json   : REPORT_CATALOG for /reports/access/*
+//   event-subjects.json   : EVENT_SUBJECT for the DomainEventLog ledger
+const reports = await load('reports.ts');
+const resDir = path.join(root, 'backend/src/main/resources/contracts');
+fs.mkdirSync(resDir, { recursive: true });
+const writeJson = (name, value) => fs.writeFileSync(path.join(resDir, name), `${JSON.stringify(value, null, 2)}\n`);
+writeJson('permission-tree.json', perms.PERMISSIONS);
+writeJson('report-catalog.json', reports.REPORT_CATALOG);
+writeJson('event-subjects.json', events.EVENT_SUBJECT);
+
 console.log(`permissions: ${entries.length} constants (${perms.ALL_PERMISSIONS.length} distinct), manager: ${perms.MANAGER_PERMISSIONS.length}, events: ${Object.keys(events.EVENTS).length}`);

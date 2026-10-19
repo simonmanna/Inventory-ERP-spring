@@ -2,6 +2,7 @@
 package com.inventoryerp.procurement.domain;
 
 import com.inventoryerp.shared.domain.PaymentStatus;
+import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -17,6 +18,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.type.SqlTypes;
@@ -26,6 +28,8 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "PurchaseOrder")
 @DynamicInsert
 @DynamicUpdate
+@Filter(name = TenancyFilters.TENANT, condition = TenancyFilters.TENANT_CONDITION, deduceAliasInjectionPoints = false)
+@Filter(name = TenancyFilters.SOFT_DELETE, condition = TenancyFilters.SOFT_DELETE_CONDITION, deduceAliasInjectionPoints = false)
 public class PurchaseOrder {
 
     @Id

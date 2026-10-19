@@ -3,6 +3,7 @@ package com.inventoryerp.pos.domain;
 
 import com.inventoryerp.shared.domain.DiscountSource;
 import com.inventoryerp.shared.domain.DiscountType;
+import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -15,6 +16,7 @@ import java.util.UUID;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /** Table {@code "Order"} (owned by module {@code pos}). */
@@ -22,6 +24,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 @Table(name = "Order")
 @DynamicInsert
 @DynamicUpdate
+@Filter(name = TenancyFilters.TENANT, condition = TenancyFilters.TENANT_CONDITION, deduceAliasInjectionPoints = false)
 public class Order {
 
     @Column(name = "clientOperationKey")
