@@ -1,0 +1,29 @@
+{
+  "name": "Kernel: staff (roles, users, permissions guard)",
+  "vars": { "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123" },
+  "steps": [
+    { "name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}" }, "capture": { "token": "$.accessToken" } },
+    { "name": "roles list", "method": "GET", "path": "/api/v1/roles" },
+    { "name": "role: unknown permission", "method": "POST", "path": "/api/v1/roles", "body": { "name": "Parity Role", "permissions": ["nope:x"] } },
+    { "name": "role: invalid name", "method": "POST", "path": "/api/v1/roles", "body": { "name": "!", "permissions": [] } },
+    { "name": "role: create", "method": "POST", "path": "/api/v1/roles", "body": { "name": "Parity Role", "description": "parity", "permissions": ["user:read"] }, "capture": { "roleId": "$.id" } },
+    { "name": "role: duplicate", "method": "POST", "path": "/api/v1/roles", "body": { "name": "Parity Role", "permissions": [] } },
+    { "name": "role: find", "method": "GET", "path": "/api/v1/roles/{{roleId}}" },
+    { "name": "role: update", "method": "PATCH", "path": "/api/v1/roles/{{roleId}}", "body": { "permissions": ["user:read", "role:read"] } },
+    { "name": "role: not found", "method": "GET", "path": "/api/v1/roles/00000000-0000-0000-0000-000000000000" },
+    { "name": "user: short password", "method": "POST", "path": "/api/v1/users", "body": { "email": "parity@demo.test", "password": "short", "firstName": "P", "roleIds": [] } },
+    { "name": "user: create", "method": "POST", "path": "/api/v1/users", "body": { "email": "parity@demo.test", "password": "Parity@12345", "firstName": "Par", "lastName": "Ity", "roleIds": ["{{roleId}}"] }, "capture": { "userId": "$.id" } },
+    { "name": "user: duplicate email", "method": "POST", "path": "/api/v1/users", "body": { "email": "parity@demo.test", "password": "Parity@12345", "firstName": "Par", "roleIds": [] } },
+    { "name": "user: find", "method": "GET", "path": "/api/v1/users/{{userId}}" },
+    { "name": "user: search", "method": "GET", "path": "/api/v1/users?search=parity&pageSize=5" },
+    { "name": "user: bad pin", "method": "POST", "path": "/api/v1/users/{{userId}}/pin", "body": { "pin": "12" } },
+    { "name": "user: set pin", "method": "POST", "path": "/api/v1/users/{{userId}}/pin", "body": { "pin": "9876" } },
+    { "name": "user: clear pin", "method": "DELETE", "path": "/api/v1/users/{{userId}}/pin" },
+    { "name": "user: unlock", "method": "POST", "path": "/api/v1/users/{{userId}}/unlock" },
+    { "name": "user: reset password", "method": "POST", "path": "/api/v1/users/{{userId}}/reset-password", "body": { "newPassword": "Parity@99999" } },
+    { "name": "role: delete assigned", "method": "DELETE", "path": "/api/v1/roles/{{roleId}}" },
+    { "name": "weak login", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "parity@demo.test", "password": "Parity@99999" }, "capture": { "token": "$.accessToken" } },
+    { "name": "weak: audit forbidden", "method": "GET", "path": "/api/v1/audit-logs" },
+    { "name": "weak: users allowed", "method": "GET", "path": "/api/v1/users?pageSize=1" }
+  ]
+}

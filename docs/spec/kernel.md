@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Kernel (platform) — `kernel`
 
 | | |
@@ -35,8 +34,8 @@ Identity, staff, tenancy, authorization, idempotency, settings, audit, events/ou
 ## Business rules to reproduce exactly
 
 1. Login requires `organizationCode`; user must belong to that org, be active, not locked. 10 failed attempts → `lockedUntil = now + 15 min`; successful login resets the counter. Record every attempt in `LoginAttempt` (ip, user agent, success, reason).
-2. MFA: if `mfaEnabled`, login returns `{ mfaToken, requiresMfa: true }`; the mfaToken (24 random bytes, base64url) is stored hashed as a `Setting` row `mfa:<sha256>` with short expiry; `mfa-login` validates TOTP then issues tokens.
-3. Refresh token rotation: each refresh marks the old row `replacedById`; presenting an already-replaced token revokes the whole chain (reuse detection) and returns 401.
+2. MFA: if `mfaSecret` is set, login returns `{ mfaToken, requiresMfa: true }`; the mfaToken (24 random bytes, base64url) is stored hashed as an `IdempotencyRecord` row `mfa:<sha256>` (status `pending`, 5-minute window); `mfa-login` validates TOTP then issues tokens.
+3. Refresh token rotation: each refresh revokes the old row and sets its `replacedById`; presenting an already-rotated (revoked) token returns 401 `Invalid or expired refresh token`. (The Nest code does **not** revoke the rest of the chain on reuse; kept identical.)
 4. POS session check (`pos-session-check.ts`): valid `X-Pos-User` overrides actor; revoked/deactivated POS user → 401 + `X-Pos-Session: revoked` except on PIN routes.
 5. POS eligibility (`pos-eligibility.ts`): which roles/users may PIN-login on a terminal (port spec `pos-eligibility.spec.ts`).
 6. Role policy (`role-policy.spec.ts`): system roles cannot be deleted/renamed; a user cannot grant permissions they do not hold; last administrator cannot be removed.
@@ -66,21 +65,57 @@ outbox-ship 30 s, webhooks-retry 1 min, recurring-tick 10 min, cleanup-notificat
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/kernel-*.json` — zero unexplained diffs
-- [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] Web screens for this module work against Spring (no console errors)
+- [x] `docs/PORT_STATUS.md` updated
+
+## Implementation notes (Nest behaviour reproduced on purpose)
+
+- `@Idempotent` routes (e.g. `POST /auth/login`) answer **200**, not 201: the Nest interceptor overwrites the
+  route status with the handler result status (200) or the cached status on replay.
+- Guards run after routing, in Nest order: unknown route -> 404 `Cannot GET /api/v1/...`; missing token ->
+  401 `Authentication required`; missing permission -> 403 `Missing required permission(s): a, b`;
+  `@RequiresModule` -> 403. The throttler (100/60 s + 600/10 min, x5 for signed-in staff, per route) runs last.
+- HttpExceptions constructed with a plain string (`new HttpException('...', 403)`, `ThrottlerException`)
+  are rendered by the Nest global filter as a bare JSON string body; reproduced.
+- `PermissionsGuard` DB mode is the only mode (access tokens no longer carry permissions, CONTRACT section 7).
+  Permissions are cached per user for at most 60 s and evicted on any role/user write.
+- Validation errors are Nest-shaped (`message: string[]`, class-validator wording). An unknown property is
+  reported alone (`property x should not exist`), not together with other violations.
+- `POST /auth/reset-password` with an invalid token is an unhandled error (500) in Nest (`throw new Error`); kept.
+- Webhook retries: like Nest, the tick only picks `pending` deliveries (a `failed` delivery is not retried).
+- `POST /push/subscribe` requires `notifications:write`, which is not in the permission catalog (Nest); kept.
+- Global search: the pg_trgm pass fails (the extension is not in the schema) and falls back to the substring
+  hits, exactly like Nest.
+- `/procurement/three-way-match/*` is ported in P4 together with the procurement tables.
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Bug fixes where the Nest code could never work (pending owner approval):
+
+1. **MFA login / enrollment lookups** - Nest looked the pending `IdempotencyRecord` up with
+   `organizationId: ''`, so `mfa-login` always answered `MFA token invalid or expired` and `mfa/verify`
+   always `No MFA enrollment in progress`. Spring looks the row up by its unique key (`mfa:<sha256>`; for
+   enrollment the caller's organization + key). Messages and flow are otherwise identical.
+2. **MFA secret decryption** - Nest's `EncryptionService.decrypt` compared a 3-byte prefix with the 2-byte
+   `v1` tag (always failing) and `readMfaSecret` passed an empty IV/tag. Spring writes the identical format
+   (scrypt key, AES-256-GCM, `base64("v1"+ct)`, IV/tag columns) and decrypts it correctly; a unit test
+   decrypts a ciphertext produced by `node:crypto` with the Nest parameters.
+3. **Seed (P1 subset)** - `SeedRunner` seeds the kernel/login-critical part of `prisma/seed.ts` 1:1
+   (currencies, permissions, DEMO org, Administrator, admin user, taxes, categories, partners, fiscal year,
+   branch, table zones, staff roles + users + PINs, kitchen stations, POS tables). UoM/products/stock, chart
+   of accounts, menu, DMS registry and approval workflows are added by the phases that own those modules.
+4. **Entity listener** - assigns `organizationId` on persist for org-scoped entities (Nest tenancy
+   extension) and refuses cross-organization updates; it does not auto-fill `createdBy`/`updatedBy` (Nest
+   services set those explicitly; auto-filling would change the rows written).
 
 ## Status
 
-Not started.
+P1 done: 78/82 routes (+17 routes the generator missed). Open: three-way-match (P4), `/metrics` token gate (P8).

@@ -1,1 +1,3 @@
-[]
+[
+  { "path": "$.body.accessToken", "reason": "Spring access tokens omit the permissions claim (CONTRACT section 7), so the token string differs by design." }
+]

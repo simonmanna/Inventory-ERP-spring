@@ -7,7 +7,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 
 | Module | Phase | Routes | Done |
 |---|---|---|---|
-| [kernel](spec/kernel.md) | P1 | 82 | 0 |
+| [kernel](spec/kernel.md) | P1 | 82 | 78 |
 | [core](spec/core.md) | P2 | 81 | 0 |
 | [accounting](spec/accounting.md) | P2 | 110 | 0 |
 | [inventory](spec/inventory.md) | P3a | 69 | 0 |
@@ -28,94 +28,118 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **0** |
+| **total** | | **1118** | **78** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
 ## kernel
 
-- [ ] GET /api/v1/approval-policies — ApprovalPolicyController.list
-- [ ] POST /api/v1/approval-policies — ApprovalPolicyController.create
-- [ ] DELETE /api/v1/approval-policies/:id — ApprovalPolicyController.remove
-- [ ] GET /api/v1/approval-policies/:id — ApprovalPolicyController.findOne
-- [ ] PATCH /api/v1/approval-policies/:id — ApprovalPolicyController.update
-- [ ] GET /api/v1/approval-workflows — ApprovalWorkflowController.list
-- [ ] POST /api/v1/approval-workflows — ApprovalWorkflowController.create
-- [ ] DELETE /api/v1/approval-workflows/:id — ApprovalWorkflowController.remove
-- [ ] GET /api/v1/approval-workflows/:id — ApprovalWorkflowController.findOne
-- [ ] PATCH /api/v1/approval-workflows/:id — ApprovalWorkflowController.update
-- [ ] GET /api/v1/approvals — ApprovalsController.list
-- [ ] GET /api/v1/approvals/:id — ApprovalsController.findOne
-- [ ] POST /api/v1/approvals/:id/decide — ApprovalsController.decide
-- [ ] POST /api/v1/approvals/request — ApprovalsController.request
-- [ ] GET /api/v1/audit-logs — AuditLogController.list
-- [ ] POST /api/v1/auth/change-password — AuthController.change
-- [ ] POST /api/v1/auth/forgot-password — AuthController.forgot
-- [ ] POST /api/v1/auth/login — AuthController.login
-- [ ] GET /api/v1/auth/me — AuthController.me
-- [ ] POST /api/v1/auth/mfa-login — AuthController.mfaLogin
-- [ ] POST /api/v1/auth/mfa/disable — AuthController.disable
-- [ ] POST /api/v1/auth/mfa/enroll — AuthController.enroll
-- [ ] POST /api/v1/auth/mfa/verify — AuthController.verifyEnroll
-- [ ] GET /api/v1/auth/permissions — PermissionsController.catalog
-- [ ] POST /api/v1/auth/refresh — AuthController.refresh
-- [ ] POST /api/v1/auth/reset-password — AuthController.reset
-- [ ] GET /api/v1/auth/sessions — AuthController.sessions
-- [ ] DELETE /api/v1/auth/sessions/:id — AuthController.revoke
-- [ ] GET /api/v1/files — FilesController.list
-- [ ] DELETE /api/v1/files/:id — FilesController.remove
-- [ ] GET /api/v1/files/:id/download — FilesController.download
-- [ ] POST /api/v1/files/:id/signed-url — FilesController.signedUrl
-- [ ] POST /api/v1/files/upload — FilesController.upload
+- [x] GET /api/v1/approval-policies — ApprovalPolicyController.list
+- [x] POST /api/v1/approval-policies — ApprovalPolicyController.create
+- [x] DELETE /api/v1/approval-policies/:id — ApprovalPolicyController.remove
+- [x] GET /api/v1/approval-policies/:id — ApprovalPolicyController.findOne
+- [x] PATCH /api/v1/approval-policies/:id — ApprovalPolicyController.update
+- [x] GET /api/v1/approval-workflows — ApprovalWorkflowController.list
+- [x] POST /api/v1/approval-workflows — ApprovalWorkflowController.create
+- [x] DELETE /api/v1/approval-workflows/:id — ApprovalWorkflowController.remove
+- [x] GET /api/v1/approval-workflows/:id — ApprovalWorkflowController.findOne
+- [x] PATCH /api/v1/approval-workflows/:id — ApprovalWorkflowController.update
+- [x] GET /api/v1/approvals — ApprovalsController.list
+- [x] GET /api/v1/approvals/:id — ApprovalsController.findOne
+- [x] POST /api/v1/approvals/:id/decide — ApprovalsController.decide
+- [x] POST /api/v1/approvals/request — ApprovalsController.request
+- [x] GET /api/v1/audit-logs — AuditLogController.list
+- [x] POST /api/v1/auth/change-password — AuthController.change
+- [x] POST /api/v1/auth/forgot-password — AuthController.forgot
+- [x] POST /api/v1/auth/login — AuthController.login
+- [x] GET /api/v1/auth/me — AuthController.me
+- [x] POST /api/v1/auth/mfa-login — AuthController.mfaLogin
+- [x] POST /api/v1/auth/mfa/disable — AuthController.disable
+- [x] POST /api/v1/auth/mfa/enroll — AuthController.enroll
+- [x] POST /api/v1/auth/mfa/verify — AuthController.verifyEnroll
+- [x] GET /api/v1/auth/permissions — PermissionsController.catalog
+- [x] POST /api/v1/auth/refresh — AuthController.refresh
+- [x] POST /api/v1/auth/reset-password — AuthController.reset
+- [x] GET /api/v1/auth/sessions — AuthController.sessions
+- [x] DELETE /api/v1/auth/sessions/:id — AuthController.revoke
+- [x] GET /api/v1/files — FilesController.list
+- [x] DELETE /api/v1/files/:id — FilesController.remove
+- [x] GET /api/v1/files/:id/download — FilesController.download
+- [x] POST /api/v1/files/:id/signed-url — FilesController.signedUrl
+- [x] POST /api/v1/files/upload — FilesController.upload
 - [x] GET /api/v1/health — HealthController.liveness
 - [x] GET /api/v1/health/live — HealthController.liveness
 - [x] GET /api/v1/health/ready — HealthController.readiness
 - [x] GET /api/v1/health/startup — HealthController.startup
 - [ ] GET /api/v1/metrics — MetricsController.metrics
-- [ ] GET /api/v1/notifications — NotificationsController.list
-- [ ] DELETE /api/v1/notifications/:id — NotificationsController.remove
-- [ ] PATCH /api/v1/notifications/:id/read — NotificationsController.markRead
-- [ ] GET /api/v1/notifications/preferences — NotificationsController.prefs
-- [ ] PATCH /api/v1/notifications/preferences — NotificationsController.setPref
-- [ ] POST /api/v1/notifications/read-all — NotificationsController.markAllRead
-- [ ] POST /api/v1/notifications/test — NotificationsController.test
+- [x] GET /api/v1/notifications — NotificationsController.list
+- [x] DELETE /api/v1/notifications/:id — NotificationsController.remove
+- [x] PATCH /api/v1/notifications/:id/read — NotificationsController.markRead
+- [x] GET /api/v1/notifications/preferences — NotificationsController.prefs
+- [x] PATCH /api/v1/notifications/preferences — NotificationsController.setPref
+- [x] POST /api/v1/notifications/read-all — NotificationsController.markAllRead
+- [x] POST /api/v1/notifications/test — NotificationsController.test
 - [ ] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
 - [ ] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
 - [ ] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
-- [ ] DELETE /api/v1/push/subscribe — PushController.unsubscribe
-- [ ] POST /api/v1/push/subscribe — PushController.subscribe
-- [ ] DELETE /api/v1/push/subscribe/:id — PushController.unsubscribeById
-- [ ] GET /api/v1/push/vapid-public-key — PushController.publicKey
-- [ ] GET /api/v1/reports/access/catalog — ReportAccessController.catalog
-- [ ] GET /api/v1/reports/access/me — ReportAccessController.me
-- [ ] GET /api/v1/reports/access/roles — ReportAccessController.roles
-- [ ] PUT /api/v1/reports/access/roles/:roleId — ReportAccessController.setRole
-- [ ] GET /api/v1/roles — RolesController.list
-- [ ] POST /api/v1/roles — RolesController.create
-- [ ] DELETE /api/v1/roles/:id — RolesController.remove
-- [ ] GET /api/v1/roles/:id — RolesController.findOne
-- [ ] PATCH /api/v1/roles/:id — RolesController.update
-- [ ] GET /api/v1/search — SearchController.global
-- [ ] GET /api/v1/settings — SettingsController.list
-- [ ] DELETE /api/v1/settings/:key — SettingsController.unset
-- [ ] PUT /api/v1/settings/:key — SettingsController.set
-- [ ] GET /api/v1/settings/company — CompanySettingsController.getCompanySettings
-- [ ] PUT /api/v1/settings/company — CompanySettingsController.putCompanySettings
-- [ ] GET /api/v1/settings/developer — CompanySettingsController.getDeveloperSettings
-- [ ] PUT /api/v1/settings/developer — CompanySettingsController.putDeveloperSettings
-- [ ] GET /api/v1/settings/effective — SettingsController.effective
-- [ ] GET /api/v1/settings/features — CompanySettingsController.getFeatures
-- [ ] GET /api/v1/settings/inventory-defaults — SettingsController.getInventoryDefaults
-- [ ] PUT /api/v1/settings/inventory-defaults — SettingsController.setInventoryDefaults
-- [ ] GET /api/v1/users — UsersController.list
-- [ ] POST /api/v1/users — UsersController.create
-- [ ] DELETE /api/v1/users/:id — UsersController.remove
-- [ ] GET /api/v1/users/:id — UsersController.findOne
-- [ ] PATCH /api/v1/users/:id — UsersController.update
-- [ ] DELETE /api/v1/users/:id/pin — UsersController.clearPin
-- [ ] POST /api/v1/users/:id/pin — UsersController.setPin
-- [ ] POST /api/v1/users/:id/reset-password — UsersController.resetPassword
-- [ ] POST /api/v1/users/:id/unlock — UsersController.unlock
+- [x] DELETE /api/v1/push/subscribe — PushController.unsubscribe
+- [x] POST /api/v1/push/subscribe — PushController.subscribe
+- [x] DELETE /api/v1/push/subscribe/:id — PushController.unsubscribeById
+- [x] GET /api/v1/push/vapid-public-key — PushController.publicKey
+- [x] GET /api/v1/reports/access/catalog — ReportAccessController.catalog
+- [x] GET /api/v1/reports/access/me — ReportAccessController.me
+- [x] GET /api/v1/reports/access/roles — ReportAccessController.roles
+- [x] PUT /api/v1/reports/access/roles/:roleId — ReportAccessController.setRole
+- [x] GET /api/v1/roles — RolesController.list
+- [x] POST /api/v1/roles — RolesController.create
+- [x] DELETE /api/v1/roles/:id — RolesController.remove
+- [x] GET /api/v1/roles/:id — RolesController.findOne
+- [x] PATCH /api/v1/roles/:id — RolesController.update
+- [x] GET /api/v1/search — SearchController.global
+- [x] GET /api/v1/settings — SettingsController.list
+- [x] DELETE /api/v1/settings/:key — SettingsController.unset
+- [x] PUT /api/v1/settings/:key — SettingsController.set
+- [x] GET /api/v1/settings/company — CompanySettingsController.getCompanySettings
+- [x] PUT /api/v1/settings/company — CompanySettingsController.putCompanySettings
+- [x] GET /api/v1/settings/developer — CompanySettingsController.getDeveloperSettings
+- [x] PUT /api/v1/settings/developer — CompanySettingsController.putDeveloperSettings
+- [x] GET /api/v1/settings/effective — SettingsController.effective
+- [x] GET /api/v1/settings/features — CompanySettingsController.getFeatures
+- [x] GET /api/v1/settings/inventory-defaults — SettingsController.getInventoryDefaults
+- [x] PUT /api/v1/settings/inventory-defaults — SettingsController.setInventoryDefaults
+- [x] GET /api/v1/users — UsersController.list
+- [x] POST /api/v1/users — UsersController.create
+- [x] DELETE /api/v1/users/:id — UsersController.remove
+- [x] GET /api/v1/users/:id — UsersController.findOne
+- [x] PATCH /api/v1/users/:id — UsersController.update
+- [x] DELETE /api/v1/users/:id/pin — UsersController.clearPin
+- [x] POST /api/v1/users/:id/pin — UsersController.setPin
+- [x] POST /api/v1/users/:id/reset-password — UsersController.resetPassword
+- [x] POST /api/v1/users/:id/unlock — UsersController.unlock
+
+Not in the generated table (the extractor misses one-line handlers) but ported in P1 with the same contract:
+
+- [x] GET /api/v1/feature-flags — FeatureFlagsController.list
+- [x] POST /api/v1/feature-flags — FeatureFlagsController.set
+- [x] DELETE /api/v1/feature-flags/:key — FeatureFlagsController.unset
+- [x] GET /api/v1/feature-flags/modules/catalog — FeatureFlagsController.catalog
+- [x] GET /api/v1/feature-flags/modules — FeatureFlagsController.modules
+- [x] POST /api/v1/feature-flags/modules/:name/enable — FeatureFlagsController.enable
+- [x] PATCH /api/v1/feature-flags/modules/:name/disable — FeatureFlagsController.disable
+- [x] GET /api/v1/recurring — RecurringController.list
+- [x] GET /api/v1/recurring/:id — RecurringController.findOne
+- [x] POST /api/v1/recurring — RecurringController.create
+- [x] PATCH /api/v1/recurring/:id/pause|resume|end — RecurringController.pause/resume/end
+- [x] GET /api/v1/webhooks/endpoints — WebhooksController.list
+- [x] POST /api/v1/webhooks/endpoints — WebhooksController.create
+- [x] PATCH /api/v1/webhooks/endpoints/:id — WebhooksController.update
+- [x] POST /api/v1/webhooks/endpoints/:id/rotate — WebhooksController.rotate
+- [x] DELETE /api/v1/webhooks/endpoints/:id — WebhooksController.remove
+- [x] GET /api/v1/webhooks/deliveries — WebhooksController.deliveries
+
+Open: `/procurement/three-way-match/*` (3 routes) moves to P4 with the procurement tables it reads;
+`/metrics` is served by the actuator Prometheus endpoint (P0) — the Nest `METRICS_TOKEN` gate and
+hand-written gauges are P8 (hardening).
 
 ## core
 

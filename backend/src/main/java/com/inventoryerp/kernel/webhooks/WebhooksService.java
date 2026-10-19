@@ -2,7 +2,6 @@ package com.inventoryerp.kernel.webhooks;
 
 import com.inventoryerp.kernel.domain.WebhookEndpoint;
 import com.inventoryerp.kernel.tenancy.TenantContext;
-import com.inventoryerp.kernel.web.JsonConfig;
 import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
 import java.net.URI;
@@ -144,16 +143,14 @@ public class WebhooksService {
 
     /** Attempt due deliveries (all orgs). */
     public Map<String, Integer> tick() {
-        record Due(String id, String eventName, Instant createdAt, String payload, int attempts, String url, String secret,
+        record Due(String id, String eventName, String payload, int attempts, String url, String secret,
                 boolean active) {}
         List<Due> due = jdbc.sql("""
-                        SELECT d.id, d."eventName", d."createdAt", d.payload::text AS payload, d.attempts, e.url,
+                        SELECT d.id, d."eventName", d.payload::text AS payload, d.attempts, e.url,
                                e."signingSecret", e."isActive"
                         FROM "WebhookDelivery" d JOIN "WebhookEndpoint" e ON e.id = d."endpointId"
                         WHERE d.status = 'pending' AND d."nextAttemptAt" <= now() LIMIT 100""")
-                .query((rs, n) -> new Due(rs.getString("id"), rs.getString("eventName"),
-                        rs.getTimestamp("createdAt") == null ? null : rs.getTimestamp("createdAt").toInstant(),
-                        rs.getString("payload"), rs.getInt("attempts"), rs.getString("url"), rs.getString("signingSecret"),
+                .query((rs, n) -> new Due(rs.getString("id"), rs.getString("eventName"), rs.getString("payload"), rs.getInt("attempts"), rs.getString("url"), rs.getString("signingSecret"),
                         rs.getBoolean("isActive")))
                 .list();
         int attempted = 0;
@@ -167,7 +164,7 @@ public class WebhooksService {
             Map<String, Object> envelope = new LinkedHashMap<>();
             envelope.put("id", d.id());
             envelope.put("event", d.eventName());
-            envelope.put("createdAt", d.createdAt() == null ? null : JsonConfig.toJsIso(d.createdAt()));
+            // WebhookDelivery has no createdAt column: Nest's JSON.stringify drops the undefined key.
             envelope.put("data", d.payload() == null ? null : mapper.readTree(d.payload()));
             String body = mapper.writeValueAsString(envelope);
             String ts = String.valueOf(Instant.now().getEpochSecond());

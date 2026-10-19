@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  * by the web POS (no auth, no DB). Backup health joins as an advisory check in phase P6.
  */
 @RestController
+@com.inventoryerp.kernel.security.Public
 @RequestMapping("/health")
 public class HealthController {
 

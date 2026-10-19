@@ -83,7 +83,7 @@ app:
     pos-ttl: ${JWT_POS_TTL:12h}
   cors:
     origins: ${CORS_ORIGINS:}
-    allow-lan: ${CORS_ALLOW_LAN:false}
+    allow-lan: ${CORS_ALLOW_LAN:}
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}

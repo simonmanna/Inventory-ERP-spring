@@ -44,7 +44,8 @@ Clients that depend on this contract: `web/src/lib/api.ts`, `web/src/lib/api-err
 
 - **No envelope.** Return the resource / array / object exactly as Nest does.
 - Field names camelCase exactly as Prisma/Nest (entity field names = column names).
-- Status codes: POST → **201** unless the handler has `@HttpCode` (route table "Status" column);
+- Status codes: POST → **201** unless the handler has `@HttpCode` (route table "Status" column) or is
+  `@Idempotent` behind the IdempotencyInterceptor (those answer **200**, or the cached status on replay);
   GET/PUT/PATCH/DELETE → 200; SSE → 200 `text/event-stream`.
 - **Error body** (port of `kernel/filters/global-exception.filter.ts`):
   ```json
@@ -60,9 +61,10 @@ Clients that depend on this contract: `web/src/lib/api.ts`, `web/src/lib/api-err
     `{ "message": "This operation conflicts with one that was just completed. Refresh and try again.", "statusCode": 409, "requestId": "..." }`.
   - Unhandled → **500** `{ "message": "Internal Server Error", "statusCode": 500, "requestId": "..." }`
     (+ `error`, `name` only when `EXPOSE_ERROR_DETAIL=true`).
-  - 401 → `{ "statusCode": 401, "message": "Unauthorized", "error": "Unauthorized" }`;
-    403 (permission) → `{ "statusCode": 403, "message": "Forbidden resource", "error": "Forbidden" }`
-    unless the guard supplies a specific message (check `permissions.guard.ts`).
+  - 401 (no/invalid token on a protected route) → `{ "message": "Authentication required", "error": "Unauthorized", "statusCode": 401 }`
+    (Nest `JwtAuthGuard`; guards run after routing, so an unknown route is a 404 even without a token);
+    403 (permission) → `{ "message": "Missing required permission(s): a:b, c:d", "error": "Forbidden", "statusCode": 403 }`
+    (`permissions.guard.ts`).
   - Unknown route → 404 `{ "statusCode": 404, "message": "Cannot GET /api/v1/x", "error": "Not Found" }`.
 - Client behaviour you must not break: 401 triggers one refresh + retry; 403 and 5xx show a toast;
   a response with **no status** (network failure) flips the POS to offline mode.
@@ -96,7 +98,9 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
 ## 6. Idempotency (port of `kernel/idempotency/*`)
 
 - Every write may carry `Idempotency-Key`; the client always sends one.
-- **Required** (400 when missing) on money routes. Exact Nest regex (`idempotency.service.ts`):
+- **Required** (400 when missing) only where Nest has `@Idempotent({ required: true })`. The regex below
+  (`OUTCOME_ROUTES`, `idempotency.service.ts`) does not make a key required; it marks routes whose outcome is
+  saved in the business transaction (abandoned-retry and cached-4xx rules):
   ```
   /(pos/(checkout|tabs/[^/]+/settle|orders/[^/]+/settle|split-bills/[^/]+/settle|invoices/[^/]+/(payments|refund)|sales/[^/]+/void|shift/handover)|cash-sessions/(open|close|movement|tender-settlements|[^/]+/(banking|force-close|reconcile))|accounts/cash-flow/(deposit|withdraw)|treasury/transfer|expenses(/[^/]+/(pay|void))?|payments(/[^/]+/void)?|supplier-payments)$
   ```
@@ -108,7 +112,8 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
   3. Existing **pending** → 409 `{ "code": "OPERATION_PENDING", "message": "This operation needs recovery; do not submit it with a new key. Retry with the same key.", "operationKey": key, "recovery": <stored responseJson> }`.
      Money route pending > 2 min with empty outcome = abandoned → delete and re-run.
   4. None → insert pending row (unique constraint = lock), run handler, store response, mark completed.
-     Handler failure → delete pending row so the same key can retry.
+     Handler failure → the pending row is **kept** for recovery (same key again → 409 `OPERATION_PENDING`),
+     except a definitive 4xx on an OUTCOME route with no saved outcome, cached as completed with `safeToRetry: true`.
 - The "business outcome" for money routes is written in the **same transaction** as the money
   (`business-outcome.ts`) so a crash never leaves money without an outcome. Port this exactly.
 - The sync push path uses `executeWithKey(opId)` per op (§10).
@@ -127,7 +132,8 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
   | refresh | opaque 48 random bytes | 7d | sha256 in `RefreshToken`, rotation via `replacedById`; reuse of a rotated token revokes the chain |
   | pos | `JWT_POS_SECRET` | 12h | `{ sub, organizationId, type: "pos" }`, sent as `X-Pos-User` |
   | device | opaque | until revoked | sha256 in `PosDevice`, header `X-Device-Token`, `/sync/*` only |
-- `POST /auth/refresh { refreshToken }` → `{ accessToken, refreshToken }` (rotated).
+- `POST /auth/refresh { refreshToken }` → `{ accessToken, refreshToken, user, permissions, organization }`
+  (rotated; a rotated/revoked token → 401).
 - POS identity: when `X-Pos-User` is valid and in the same organization as the bearer, the acting
   user = POS user. If the POS user was revoked/deactivated → **401 with header `X-Pos-Session: revoked`**
   (exposed via CORS) except on the PIN screens (`pos-session-check.ts`). The client then returns to
@@ -146,8 +152,10 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
   evicted on role/user change), not from the token.
 - `@RequiresModule('x')` → 404/403 behaviour exactly as `module-enabled.guard.ts` when the module is
   disabled for the organization (`OrganizationModule`) or by `ENABLE_*`.
-- Rate limit: 100 requests / 60 s and 600 / 10 min per staff user (IP when anonymous); 429 body in
-  Nest throttler shape `{ "statusCode": 429, "message": "ThrottlerException: Too Many Requests" }`.
+- Rate limit (per route): 100 / 60 s and 600 / 10 min per IP when anonymous; per user and x5
+  (`THROTTLE_STAFF_MULTIPLIER`) when signed in; login/mfa-login 10 / 5 min, forgot-password 5 / 15 min.
+  429 body is the bare JSON string `"ThrottlerException: Too Many Requests"` (the Nest global filter renders
+  string HttpException responses as-is) with `Retry-After`.
 
 ## 9. Real-time (SSE)
 

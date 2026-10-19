@@ -58,9 +58,9 @@ class ApplicationIT {
     void unauthenticatedReturnsNestShape() {
         var response = RestClient.create("http://localhost:" + port)
                 .get()
-                .uri("/api/v1/products")
+                .uri("/api/v1/auth/me")
                 .exchange((req, res) -> new Object[] {res.getStatusCode().value(), res.bodyTo(String.class)}, true);
         assertThat(response[0]).isEqualTo(401);
-        assertThat((String) response[1]).contains("\"statusCode\":401").contains("\"message\":\"Unauthorized\"");
+        assertThat((String) response[1]).contains("\"statusCode\":401").contains("\"message\":\"Authentication required\"");
     }
 }

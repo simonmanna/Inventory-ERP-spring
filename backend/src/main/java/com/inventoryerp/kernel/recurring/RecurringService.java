@@ -179,8 +179,8 @@ public class RecurringService {
                     .setScale(6, RoundingMode.HALF_UP);
             jdbc.sql("""
                             INSERT INTO "DocumentLine" (id, "organizationId", "documentId", "productId", "accountId", description,
-                              quantity, "unitPrice", "discountPercent", "taxId", subtotal, "taxAmount", total, "lineNumber", "updatedAt")
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, now())""")
+                              quantity, "unitPrice", "discountPercent", "taxId", subtotal, "taxAmount", total, "lineNumber")
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""")
                     .params(UUID.randomUUID().toString(), orgId, docId, text(ln, "productId"), text(ln, "accountId"),
                             text(ln, "description"), qty, price, discount, text(ln, "taxId"), lineSubtotal, lineSubtotal, lineNo++)
                     .update();

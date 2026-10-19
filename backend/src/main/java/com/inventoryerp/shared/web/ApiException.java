@@ -44,7 +44,14 @@ public class ApiException extends RuntimeException {
 
     /** The given value is rendered as the complete response body (Nest object-argument exceptions). */
     public static ApiException withBody(HttpStatus status, Object body) {
-        String message = body instanceof Map<?, ?> m && m.get("message") instanceof String s ? s : String.valueOf(body);
+        String message;
+        if (body instanceof Map<?, ?> m && m.get("message") instanceof String s) {
+            message = s;
+        } else if (body instanceof tools.jackson.databind.JsonNode n && n.path("message").isString()) {
+            message = n.path("message").asString();
+        } else {
+            message = String.valueOf(body);
+        }
         return new ApiException(status, message, body);
     }
 
