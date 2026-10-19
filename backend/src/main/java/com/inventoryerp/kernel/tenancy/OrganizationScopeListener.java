@@ -55,6 +55,12 @@ public class OrganizationScopeListener {
 
     private static Optional<Field> field(Class<?> type) {
         return ORG_FIELD.computeIfAbsent(type, t -> {
+            // Only the Nest ORG_SCOPED models (those carrying the tenant filter); e.g. Setting is excluded.
+            boolean scoped = java.util.Arrays.stream(t.getAnnotationsByType(org.hibernate.annotations.Filter.class))
+                    .anyMatch(f -> com.inventoryerp.shared.persistence.TenancyFilters.TENANT.equals(f.name()));
+            if (!scoped) {
+                return Optional.empty();
+            }
             try {
                 Field f = t.getDeclaredField("organizationId");
                 f.setAccessible(true);

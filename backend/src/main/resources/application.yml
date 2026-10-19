@@ -45,8 +45,8 @@ spring:
     baseline-version: 2
   servlet:
     multipart:
-      max-file-size: ${UPLOAD_MAX_BYTES:10MB}
-      max-request-size: ${UPLOAD_MAX_BYTES:10MB}
+      max-file-size: ${UPLOAD_MAX_BYTES:25MB}
+      max-request-size: ${UPLOAD_MAX_BYTES:25MB}
   modulith:
     events:
       jdbc:
