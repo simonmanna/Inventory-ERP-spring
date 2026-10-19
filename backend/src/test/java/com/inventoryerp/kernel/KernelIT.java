@@ -244,6 +244,19 @@ class KernelIT {
     }
 
     @Test
+    @DisplayName("GET /metrics is public outside prod (no METRICS_TOKEN) and renders Prometheus text")
+    void metrics() throws Exception {
+        HttpResponse<String> r = http.send(HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + "/api/v1/metrics")).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(r.headers().firstValue("Content-Type").orElse("")).startsWith("text/plain");
+        assertThat(r.body()).contains("# TYPE erp_process_uptime_seconds gauge")
+                .contains("erp_process_memory_bytes{type=\"heap_used\"}")
+                .contains("jvm_memory_used_bytes");
+    }
+
+    @Test
     @DisplayName("MFA: enroll → verify → login requires TOTP → mfa-login issues tokens → disable")
     void mfa() throws Exception {
         String email = "mfa-" + UUID.randomUUID() + "@demo.test";

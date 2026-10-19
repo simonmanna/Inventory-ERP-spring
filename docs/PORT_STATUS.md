@@ -7,7 +7,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 
 | Module | Phase | Routes | Done |
 |---|---|---|---|
-| [kernel](spec/kernel.md) | P1 | 82 | 78 |
+| [kernel](spec/kernel.md) | P1 | 79 | 79 |
 | [core](spec/core.md) | P2 | 81 | 0 |
 | [accounting](spec/accounting.md) | P2 | 110 | 0 |
 | [inventory](spec/inventory.md) | P3a | 69 | 0 |
@@ -16,7 +16,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [crm](spec/crm.md) | P3c | 21 | 0 |
 | [task](spec/task.md) | P3c | 16 | 0 |
 | [documents](spec/documents.md) | P3c | 28 | 0 |
-| [procurement](spec/procurement.md) | P4 | 33 | 0 |
+| [procurement](spec/procurement.md) | P4 | 36 | 0 |
 | [pos](spec/pos.md) | P5 | 219 | 0 |
 | [sync](spec/sync.md) | P6 | 8 | 0 |
 | [backup](spec/backup.md) | P6 | 13 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **78** |
+| **total** | | **1118** | **79** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -71,7 +71,7 @@ Health endpoints (`/api/v1/health*`) were completed in P0.
 - [x] GET /api/v1/health/live — HealthController.liveness
 - [x] GET /api/v1/health/ready — HealthController.readiness
 - [x] GET /api/v1/health/startup — HealthController.startup
-- [ ] GET /api/v1/metrics — MetricsController.metrics
+- [x] GET /api/v1/metrics — MetricsController.metrics
 - [x] GET /api/v1/notifications — NotificationsController.list
 - [x] DELETE /api/v1/notifications/:id — NotificationsController.remove
 - [x] PATCH /api/v1/notifications/:id/read — NotificationsController.markRead
@@ -79,9 +79,6 @@ Health endpoints (`/api/v1/health*`) were completed in P0.
 - [x] PATCH /api/v1/notifications/preferences — NotificationsController.setPref
 - [x] POST /api/v1/notifications/read-all — NotificationsController.markAllRead
 - [x] POST /api/v1/notifications/test — NotificationsController.test
-- [ ] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
-- [ ] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
-- [ ] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
 - [x] DELETE /api/v1/push/subscribe — PushController.unsubscribe
 - [x] POST /api/v1/push/subscribe — PushController.subscribe
 - [x] DELETE /api/v1/push/subscribe/:id — PushController.unsubscribeById
@@ -137,9 +134,8 @@ Not in the generated table (the extractor misses one-line handlers) but ported i
 - [x] DELETE /api/v1/webhooks/endpoints/:id — WebhooksController.remove
 - [x] GET /api/v1/webhooks/deliveries — WebhooksController.deliveries
 
-Open: `/procurement/three-way-match/*` (3 routes) moves to P4 with the procurement tables it reads;
-`/metrics` is served by the actuator Prometheus endpoint (P0) — the Nest `METRICS_TOKEN` gate and
-hand-written gauges are P8 (hardening).
+P1 complete. `/procurement/three-way-match/*` (3 routes; Nest service lives in kernel) moved to the
+procurement section (P4) with the procurement tables it reads.
 
 ## core
 
@@ -540,6 +536,9 @@ hand-written gauges are P8 (hardening).
 
 ## procurement
 
+- [ ] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
+- [ ] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
+- [ ] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
 - [ ] GET /api/v1/procurement/debit-notes — DebitNotesController.list
 - [ ] POST /api/v1/procurement/debit-notes — DebitNotesController.create
 - [ ] GET /api/v1/procurement/debit-notes/:id — DebitNotesController.findOne

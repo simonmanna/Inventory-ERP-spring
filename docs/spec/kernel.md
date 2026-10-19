@@ -115,7 +115,11 @@ Bug fixes where the Nest code could never work (pending owner approval):
 4. **Entity listener** - assigns `organizationId` on persist for org-scoped entities (Nest tenancy
    extension) and refuses cross-organization updates; it does not auto-fill `createdBy`/`updatedBy` (Nest
    services set those explicitly; auto-filling would change the rows written).
+5. **`/metrics` body** - same route, `@Public`, `METRICS_TOKEN` gate and messages (`Invalid metrics token`,
+   `METRICS_TOKEN is not configured` under the `prod` profile) and content type as Nest. The `erp_process_*`
+   gauges keep their names (JVM heap/non-heap instead of Node RSS); `erp_node_info` becomes `erp_jvm_info`,
+   followed by the Micrometer Prometheus registry (JVM, HTTP, Hikari). Actuator web endpoints are not exposed.
 
 ## Status
 
-P1 done: 78/82 routes (+17 routes the generator missed). Open: three-way-match (P4), `/metrics` token gate (P8).
+P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

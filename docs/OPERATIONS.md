@@ -60,7 +60,7 @@ curl -fsS http://localhost:3001/api/v1/health/ready
 
 ## 7. Monitoring
 
-- Scrape `GET /api/v1/metrics` (Prometheus). Dashboards: HTTP rate/latency/errors, JVM, Hikari,
+- Scrape `GET /api/v1/metrics` (Prometheus) with `Authorization: Bearer $METRICS_TOKEN` (required under the `prod` profile). Dashboards: HTTP rate/latency/errors, JVM, Hikari,
   stock-posting backlog, outbox lag, webhook failures, comm dispatch queue, backup age.
 - Alerts: 5xx rate > 1 % 5 min; p95 checkout > 500 ms; stock-posting backlog > 100 or oldest > 5 min;
   backup older than 26 h; DB connections > 80 %; disk < 15 %.

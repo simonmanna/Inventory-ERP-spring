@@ -57,11 +57,10 @@ spring:
 management:
   endpoints:
     web:
-      base-path: /api/v1
-      path-mapping:
-        prometheus: metrics
+      # /api/v1/metrics is served by kernel MetricsController (METRICS_TOKEN gate, Nest parity), which
+      # renders the Prometheus registry; no actuator web endpoints are exposed.
       exposure:
-        include: prometheus
+        include: ""
   endpoint:
     health:
       probes:
