@@ -378,7 +378,7 @@ public class PostingService {
     }
 
     /** decimal.js {@code toString()} (no trailing zeros). */
-    static String plain(BigDecimal v) {
+    public static String plain(BigDecimal v) {
         BigDecimal s = v.stripTrailingZeros();
         return s.scale() < 0 ? s.setScale(0).toPlainString() : s.toPlainString();
     }
