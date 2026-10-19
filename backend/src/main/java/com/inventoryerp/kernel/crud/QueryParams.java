@@ -43,6 +43,20 @@ public final class QueryParams {
         return new PageQuery(page, pageSize, raw.get("search"), raw.get("sortBy"), sortOrder);
     }
 
+    /** Whitelist check for a query DTO of optional string fields ({@code property x should not exist}). */
+    public static void only(Map<String, String> raw, String... allowed) {
+        List<String> ok = List.of(allowed);
+        List<String> errors = new ArrayList<>();
+        for (String k : raw.keySet()) {
+            if (!ok.contains(k)) {
+                errors.add("property " + k + " should not exist");
+            }
+        }
+        if (!errors.isEmpty()) {
+            throw validation(errors);
+        }
+    }
+
     /** A Nest-shaped 400 with a {@code message} array. */
     public static ApiException validation(List<String> messages) {
         Map<String, Object> body = new java.util.LinkedHashMap<>();

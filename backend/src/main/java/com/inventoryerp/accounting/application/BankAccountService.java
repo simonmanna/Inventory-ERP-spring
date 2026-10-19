@@ -1,0 +1,49 @@
+package com.inventoryerp.accounting.application;
+
+import com.inventoryerp.accounting.domain.Account;
+import com.inventoryerp.accounting.domain.BankAccount;
+import com.inventoryerp.kernel.crud.BaseCrudService;
+import com.inventoryerp.shared.web.EntityJson;
+import com.inventoryerp.shared.web.PageQuery;
+import com.inventoryerp.shared.web.PageResult;
+import jakarta.persistence.EntityManager;
+import java.util.List;
+import java.util.Map;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Bank accounts (port of {@code bank-account.service.ts}): generic CRUD with the GL {@code account} included. */
+@Service
+public class BankAccountService extends BaseCrudService<BankAccount> {
+
+    public BankAccountService(EntityManager em) {
+        super(em, BankAccount.class);
+    }
+
+    @Override
+    protected String entityName() {
+        return "BankAccount";
+    }
+
+    @Override
+    protected List<String> searchFields() {
+        return List.of("name", "bankName", "accountNumber");
+    }
+
+    @Override
+    protected List<Map<String, Object>> render(List<BankAccount> rows) {
+        return rows.stream().map(b -> {
+            Map<String, Object> m = EntityJson.of(b);
+            m.put("account", one(em, Account.class, b.getAccountId()));
+            return m;
+        }).toList();
+    }
+
+    /** {@code GET /bank-accounts}: pageSize defaults to 100. */
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<Map<String, Object>> list(PageQuery query) {
+        return super.list(new PageQuery(query.page(), query.pageSize() == null ? 100 : query.pageSize(), query.search(),
+                query.sortBy(), query.sortOrder()));
+    }
+}

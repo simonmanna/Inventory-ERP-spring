@@ -58,6 +58,9 @@ public abstract class ApiTestSupport {
     protected PlatformTransactionManager txm;
 
     @Autowired
+    protected List<com.inventoryerp.kernel.seed.SeedContributor> seedContributors;
+
+    @Autowired
     @Qualifier("requestMappingHandlerMapping")
     protected RequestMappingHandlerMapping mappings;
 
@@ -74,10 +77,18 @@ public abstract class ApiTestSupport {
     void baseFixtures() {
         synchronized (ApiTestSupport.class) {
             if (jdbc.sql("SELECT count(*) FROM \"Organization\" WHERE code = 'DEMO'").query(Long.class).single() == 0) {
-                SeedRunnerAccess.seed(jdbc, passwords, txm);
+                SeedRunnerAccess.seed(jdbc, passwords, txm, seedContributors);
+            }
+            demoOrg = jdbc.sql("SELECT id FROM \"Organization\" WHERE code = 'DEMO'").query(String.class).single();
+            // A suite that seeded DEMO without the module contributors (e.g. KernelIT) left them out.
+            if (jdbc.sql("SELECT count(*) FROM \"Account\" WHERE \"organizationId\" = ?").param(demoOrg)
+                    .query(Long.class).single() == 0) {
+                new org.springframework.transaction.support.TransactionTemplate(txm).executeWithoutResult(
+                        st -> seedContributors.stream()
+                                .sorted(java.util.Comparator.comparingInt(com.inventoryerp.kernel.seed.SeedContributor::order))
+                                .forEach(c -> c.seed(demoOrg)));
             }
         }
-        demoOrg = jdbc.sql("SELECT id FROM \"Organization\" WHERE code = 'DEMO'").query(String.class).single();
         otherOrgCode = "OTHER-" + UUID.randomUUID().toString().substring(0, 8);
         otherOrg = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Organization\" (id, code, name, \"updatedAt\") VALUES (?, ?, 'Other Org', now())")

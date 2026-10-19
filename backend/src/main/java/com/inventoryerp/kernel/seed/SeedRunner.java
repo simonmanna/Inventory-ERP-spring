@@ -80,10 +80,13 @@ public class SeedRunner implements ApplicationRunner {
     private final PasswordService passwords;
     private final TransactionTemplate tx;
     private final String adminPassword;
+    private final List<SeedContributor> contributors;
 
     public SeedRunner(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
-            @Value("${SEED_ADMIN_PASSWORD:}") String adminPassword) {
+            @Value("${SEED_ADMIN_PASSWORD:}") String adminPassword, List<SeedContributor> contributors) {
         this.jdbc = jdbc;
+        this.contributors = contributors == null ? List.of()
+                : contributors.stream().sorted(java.util.Comparator.comparingInt(SeedContributor::order)).toList();
         this.passwords = passwords;
         this.tx = new TransactionTemplate(txm);
         this.adminPassword = adminPassword == null || adminPassword.isEmpty() ? "Admin@123" : adminPassword;
@@ -245,6 +248,9 @@ public class SeedRunner implements ApplicationRunner {
                     .update();
         }
         log.info("Demo staff (Sarah cashier 1111, John waiter 2222) and 7 tables seeded. Admin PIN: 1234");
+        for (SeedContributor c : contributors) {
+            c.seed(orgId);
+        }
     }
 
     private void currency(String code, String symbol, String name, int decimals) {

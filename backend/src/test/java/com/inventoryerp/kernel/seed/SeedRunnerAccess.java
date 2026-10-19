@@ -11,7 +11,12 @@ public final class SeedRunnerAccess {
     private SeedRunnerAccess() {}
 
     public static void seed(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm) {
-        SeedRunner runner = new SeedRunner(jdbc, passwords, txm, "");
+        seed(jdbc, passwords, txm, java.util.List.of());
+    }
+
+    public static void seed(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
+            java.util.List<SeedContributor> contributors) {
+        SeedRunner runner = new SeedRunner(jdbc, passwords, txm, "", contributors);
         new TransactionTemplate(txm).executeWithoutResult(s -> runner.seed());
     }
 }

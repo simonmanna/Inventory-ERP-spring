@@ -1,0 +1,74 @@
+[
+  {
+    "key": "current_assets",
+    "label": "Current Assets",
+    "side": "asset",
+    "order": 10
+  },
+  {
+    "key": "non_current_assets",
+    "label": "Non-current Assets",
+    "side": "asset",
+    "order": 20
+  },
+  {
+    "key": "current_liabilities",
+    "label": "Current Liabilities",
+    "side": "liability",
+    "order": 30
+  },
+  {
+    "key": "long_term_liabilities",
+    "label": "Long-term Liabilities",
+    "side": "liability",
+    "order": 40
+  },
+  {
+    "key": "equity",
+    "label": "Stockholders' Equity",
+    "side": "equity",
+    "order": 50
+  },
+  {
+    "key": "revenue",
+    "label": "Revenue",
+    "side": null,
+    "order": 60
+  },
+  {
+    "key": "contra_revenue",
+    "label": "Sales Discounts & Returns",
+    "side": null,
+    "order": 65
+  },
+  {
+    "key": "cogs",
+    "label": "Cost of Sales",
+    "side": null,
+    "order": 70
+  },
+  {
+    "key": "operating_expense",
+    "label": "Operating Expenses",
+    "side": null,
+    "order": 80
+  },
+  {
+    "key": "other_income",
+    "label": "Other Income",
+    "side": null,
+    "order": 90
+  },
+  {
+    "key": "other_expense",
+    "label": "Other Expenses",
+    "side": null,
+    "order": 100
+  },
+  {
+    "key": "off_balance",
+    "label": "Off Balance Sheet",
+    "side": null,
+    "order": 200
+  }
+]
