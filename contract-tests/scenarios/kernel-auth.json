@@ -1,0 +1,22 @@
+{
+  "name": "Kernel: health, login, me, refresh, permission and validation errors",
+  "vars": { "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123" },
+  "steps": [
+    { "name": "health", "method": "GET", "path": "/api/v1/health" },
+    { "name": "login: validation error", "method": "POST", "path": "/api/v1/auth/login", "body": { "email": "not-an-email" } },
+    { "name": "login: wrong password", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "wrong" } },
+    {
+      "name": "login: success",
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}" },
+      "capture": { "token": "$.accessToken", "refresh": "$.refreshToken" }
+    },
+    { "name": "me", "method": "GET", "path": "/api/v1/auth/me" },
+    { "name": "permissions catalog", "method": "GET", "path": "/api/v1/auth/permissions" },
+    { "name": "refresh rotates", "method": "POST", "path": "/api/v1/auth/refresh", "body": { "refreshToken": "{{refresh}}" } },
+    { "name": "unknown route", "method": "GET", "path": "/api/v1/does-not-exist" },
+    { "name": "roles list", "method": "GET", "path": "/api/v1/roles" },
+    { "name": "users page", "method": "GET", "path": "/api/v1/users?page=1&pageSize=5" }
+  ]
+}

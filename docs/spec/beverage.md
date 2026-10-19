@@ -1,0 +1,56 @@
+<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
+# Beverage (bar control) — `beverage`
+
+| | |
+|---|---|
+| Phase | P7 |
+| Nest source | `reference/nest-api/src/modules/beverage` |
+| Routes | 10 — full table: [generated/beverage.md](generated/beverage.md) |
+| Feature flag | `ENABLE_BEVERAGE` |
+| Java package | `com.inventoryerp.beverage` |
+
+## Purpose
+
+Bottle weigh-count sessions and bar variance, yield, bartender and dashboard reports.
+
+## Functional areas
+
+| Area | Endpoints / scope |
+|---|---|
+| counts | `/beverage/counts` |
+| reports | variance, yield, bartender, dashboard |
+
+## Business rules to reproduce exactly
+
+1. Bottle math in `kernel/common/beverage-math.ts` (weight → volume via measurements) — port with its tests.
+
+Error messages: copy verbatim from the "Error messages" table in the generated spec.
+
+## Events
+
+—
+
+## Scheduled jobs
+
+—
+
+## Porting checklist
+
+- [ ] Read every file under "Source files to port" in the generated spec
+- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [ ] DTO records with Bean Validation mirroring class-validator rules
+- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [ ] Controllers: same paths/verbs/status/permissions/response shapes
+- [ ] Events published/consumed as in Nest
+- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [ ] Parity scenarios `contract-tests/scenarios/beverage-*.json` — zero unexplained diffs
+- [ ] Web screens for this module work against Spring (no console errors)
+- [ ] `docs/PORT_STATUS.md` updated
+
+## Deviations
+
+_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+
+## Status
+
+Not started.

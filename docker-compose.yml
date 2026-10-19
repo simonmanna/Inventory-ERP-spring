@@ -1,0 +1,65 @@
+# Local / single-site stack: Postgres 16 + Spring API + nginx-served React web.
+#   docker compose up -d db            # database only (for ./gradlew bootRun + pnpm web:dev)
+#   docker compose up -d --build       # full stack on http://localhost:8080
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ierp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-erp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-erp}
+      POSTGRES_DB: ${DB_NAME:-erp}
+    # pg_dump takes one lock per relation in a single transaction (298 tables + sequences).
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-erp} -d ${DB_NAME:-erp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: ierp-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: 3000
+      JDBC_DATABASE_URL: jdbc:postgresql://db:5432/${DB_NAME:-erp}?stringtype=unspecified
+      DB_USER: ${DB_USER:-erp}
+      DB_PASSWORD: ${DB_PASSWORD:-erp}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      STORAGE_LOCAL_DIR: /app/var/uploads
+      BACKUP_DIR: /app/backups
+    volumes:
+      - uploads:/app/var/uploads
+      - backups:/app/backups
+    ports:
+      - "127.0.0.1:3001:3000"
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: ierp-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
+  uploads:
+  backups:

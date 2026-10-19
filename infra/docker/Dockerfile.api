@@ -1,0 +1,27 @@
+# Spring Boot API image. Java 25, non-root, tini, Postgres 16 client + rclone for the backup module.
+
+FROM eclipse-temurin:25-jdk-alpine AS build
+WORKDIR /src
+COPY backend/gradlew backend/settings.gradle.kts backend/build.gradle.kts ./
+COPY backend/gradle gradle
+RUN ./gradlew --no-daemon dependencies > /dev/null
+COPY backend/src src
+RUN ./gradlew --no-daemon bootJar -x test \
+ && java -Djarmode=tools -jar build/libs/inventory-erp.jar extract --layers --launcher --destination /extracted
+
+FROM eclipse-temurin:25-jre-alpine AS runtime
+RUN apk add --no-cache tini postgresql16-client rclone \
+ && addgroup -S app && adduser -S app -G app \
+ && mkdir -p /app/var/uploads /app/backups && chown -R app:app /app
+WORKDIR /app
+COPY --from=build --chown=app:app /extracted/dependencies/ ./
+COPY --from=build --chown=app:app /extracted/spring-boot-loader/ ./
+COPY --from=build --chown=app:app /extracted/snapshot-dependencies/ ./
+COPY --from=build --chown=app:app /extracted/application/ ./
+USER app
+ENV PORT=3000 \
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8"
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:${PORT}/api/v1/health/live || exit 1
+ENTRYPOINT ["/sbin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]

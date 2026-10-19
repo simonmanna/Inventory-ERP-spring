@@ -1,0 +1,30 @@
+{
+  "name": "inventory-erp-spring",
+  "version": "0.1.0",
+  "private": true,
+  "description": "POS-CAFE ERP rebuilt on Spring Boot 4 / Java 25. React web client + shared TS contract constants.",
+  "packageManager": "pnpm@10.14.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "shared:build": "pnpm --filter @erp/shared build",
+    "web:dev": "pnpm shared:build && pnpm --filter @erp/web dev",
+    "web:build": "pnpm shared:build && pnpm --filter @erp/web build",
+    "web:typecheck": "pnpm shared:build && pnpm --filter @erp/web typecheck",
+    "specs:extract": "node tools/extract-routes/extract.mjs",
+    "entities:generate": "node tools/prisma2jpa/generate.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"],
+    "overrides": {
+      "axios": ">=1.18.0",
+      "brace-expansion": ">=5.0.9",
+      "minimatch@3>brace-expansion": "^1.1.21",
+      "js-yaml": ">=4.3.1",
+      "nanoid": ">=3.3.18",
+      "postcss": ">=8.5.18",
+      "dompurify": ">=3.4.12",
+      "qs": ">=6.16.0",
+      "uuid": ">=11.1.1"
+    }
+  }
+}

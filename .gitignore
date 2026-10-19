@@ -1,0 +1,34 @@
+# node
+node_modules/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+coverage/
+
+# java / gradle
+backend/build/
+backend/.gradle/
+.gradle/
+build/
+out/
+*.class
+backend/bin/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# runtime data
+var/
+backups/
+*.log
+
+# editor / os
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.local

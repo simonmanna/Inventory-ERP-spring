@@ -1,0 +1,287 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseInterceptors,
+} from '@nestjs/common';
+import { PERMISSIONS } from '@erp/shared';
+import { RequirePermissions } from '../../../kernel/auth/decorators/require-permissions.decorator';
+import { Idempotent } from '../../../kernel/idempotency/idempotent.decorator';
+import { IdempotencyInterceptor } from '../../../kernel/idempotency/idempotency.interceptor';
+import { Type } from 'class-transformer';
+import { CashSessionService } from './cash-session.service';
+import { MoneySettlementService } from './money-settlement.service';
+import { IsBoolean, IsISO8601, IsNumber, IsObject, IsOptional, IsString, Min, IsIn } from 'class-validator';
+import { PaginationDto } from '../../../kernel/common/pagination.dto';
+
+class OpenSessionDto {
+  @IsOptional() @IsString() openingSourceAccountId?: string;
+  @IsOptional() @IsObject() openingAccounts?: Record<string, number>;
+  @IsString() cashRegisterId!: string;
+  @IsOptional() @IsNumber() @Min(0) openingFloat?: number;
+  @IsOptional() @IsString() notes?: string;
+  /** When accepted, a count above/below the drawer ledger is auto-recorded as a cash-in / withdrawal instead of being refused. */
+  @IsOptional() @IsBoolean() autoAdjust?: boolean;
+  /** Denomination breakdown captured at open: { "50000": 3, "20000": 5, ... }. */
+  @IsOptional() @IsObject() openingDenomination?: Record<string, number>;
+  /** Offline-first: when the drawer was actually opened on the device (ISO-8601). */
+  @IsOptional() @IsISO8601() occurredAt?: string;
+}
+
+class CloseSessionDto {
+  @IsOptional() @IsObject() closingAccounts?: Record<string, number>;
+  /** Tracked tender accounts not counted: accountId → reason (manager approval required). */
+  @IsOptional() @IsObject() uncountedAccounts?: Record<string, string>;
+  @IsOptional() @IsNumber() @Min(0) pendingSyncCount?: number;
+  @IsNumber() @Min(0) closingCounted!: number;
+  @IsOptional() @IsString() notes?: string;
+  @IsOptional() @IsString() varianceReason?: string;
+  /** When accepted, a counted-short / counted-over drawer difference is auto-recorded as a pay-out / pay-in movement and the drawer balances. */
+  @IsOptional() @IsBoolean() autoAdjustCash?: boolean;
+  @IsOptional() @IsString() @IsIn(['pending_review', 'approved', 'rejected']) varianceStatus?: string;
+  /** Manager sign-off for a large variance. */
+  @IsOptional() @IsString() approvedById?: string;
+  @IsOptional() @IsString() approverEmail?: string;
+  @IsOptional() @IsString() managerPin?: string;
+  @IsOptional() @IsObject() closingDenomination?: Record<string, number>;
+  /** Offline-first: when the drawer was actually closed on the device (ISO-8601). */
+  @IsOptional() @IsISO8601() occurredAt?: string;
+  /** Optional session ID to close a session opened by another cashier on a shared terminal. */
+  @IsOptional() @IsString() sessionId?: string;
+}
+
+class RecordMovementDto {
+  @IsString() counterpartAccountId!: string;
+  /** Adjustment correcting an earlier closed shift (requires cash_session:correct). */
+  @IsOptional() @IsString() correctionOfSessionId?: string;
+  @IsOptional() @IsString() sessionId?: string;
+  @IsIn(['pay_in', 'pay_out', 'adjustment']) movementType!: 'pay_in' | 'pay_out' | 'adjustment';
+  @IsNumber() amount!: number;
+  @IsOptional() @IsString() reason?: string;
+  /** Manager sign-off — required for pay_out (cash leaving the drawer). */
+  @IsOptional() @IsString() approvedById?: string;
+  @IsOptional() @IsString() approverEmail?: string;
+  @IsOptional() @IsString() managerPin?: string;
+  /** Offline-first: when the movement actually happened on the device (ISO-8601). */
+  @IsOptional() @IsISO8601() occurredAt?: string;
+}
+
+class ForceCloseSessionDto {
+  @IsNumber() @Min(0) closingCounted!: number;
+  /** Why the manager is closing someone else's shift. */
+  @IsString() notes!: string;
+  @IsOptional() @IsString() varianceReason?: string;
+  @IsOptional() @IsObject() closingAccounts?: Record<string, number>;
+  @IsOptional() @IsObject() uncountedAccounts?: Record<string, string>;
+  @IsOptional() @IsObject() closingDenomination?: Record<string, number>;
+}
+
+class BankDepositDto {
+  @IsString() destinationAccountId!: string;
+  @IsNumber() @Min(0) amount!: number;
+  @IsString() bankName!: string;
+  @IsOptional() @IsString() reference?: string;
+  @IsOptional() @IsNumber() @Min(0) remainingFloat?: number;
+  @IsOptional() @IsString() notes?: string;
+}
+
+class VarianceUpdateDto {
+  @IsString() reason!: string;
+  @IsOptional() @IsString() @IsIn(['pending_review', 'approved', 'rejected']) status?: string;
+}
+
+class ReconcileSessionDto {
+  @IsOptional() @IsNumber() @Min(0) depositAmount?: number;
+  @IsOptional() @IsString() bankName?: string;
+  @IsOptional() @IsString() reference?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+
+class DailyResetDto {
+  @IsString() date!: string;
+  @IsOptional() @IsBoolean() force?: boolean;
+}
+
+class SettlementHistoryQueryDto {
+  @IsOptional() @IsString() sourceAccountId?: string;
+  @IsOptional() @IsISO8601() from?: string;
+  @IsOptional() @IsISO8601() to?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() page?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() pageSize?: number;
+}
+
+class TenderSettlementDto {
+  @IsString() sourceAccountId!: string;
+  @IsString() destinationAccountId!: string;
+  @IsOptional() @IsString() cashSessionId?: string;
+  @IsNumber() @Min(0.000001) grossAmount!: number;
+  @IsOptional() @IsNumber() @Min(0) feeAmount?: number;
+  @IsOptional() @IsString() feeAccountId?: string;
+  @IsString() reference!: string;
+  @IsISO8601() settledAt!: string;
+}
+
+@Controller('cash-sessions')
+@UseInterceptors(IdempotencyInterceptor)
+export class CashSessionController {
+  constructor(
+    private readonly sessions: CashSessionService,
+    private readonly settlements: MoneySettlementService,
+  ) {}
+
+  @Get('open')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  findOpen(@Query('registerId') registerId?: string) {
+    return this.sessions.findOpen(registerId);
+  }
+
+  @Get('history')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  history(
+    @Query('page') page?: string,
+    @Query('perPage') perPage?: string,
+    @Query('registerId') registerId?: string,
+  ) {
+    return this.sessions.history(
+      page ? Math.max(1, Number(page)) : 1,
+      perPage ? Math.min(100, Math.max(1, Number(perPage))) : 20,
+      registerId,
+    );
+  }
+
+  @Get('report/daily')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  dailyReconciliation(@Query('date') date: string) {
+    return this.sessions.dailyReconciliation(date);
+  }
+
+  @Get(':id/reconciliation')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  reconciliation(@Param('id') id: string) { return this.sessions.reconciliation(id); }
+
+  @Post('tender-settlements')
+  @Idempotent({ required: true })
+  @RequirePermissions(PERMISSIONS.cashSession.reconcile)
+  settleTender(@Body() dto: TenderSettlementDto) { return this.sessions.settleTender(dto); }
+
+  /** Settlement history (newest first). Declared before `:id` so the path is not captured. */
+  @Get('tender-settlements')
+  @RequirePermissions(PERMISSIONS.cashSession.reconcile)
+  settlementHistory(@Query() q: SettlementHistoryQueryDto) { return this.settlements.history(q); }
+
+  /** Provider accounts that can be settled, with balance and POS receipts since the last settlement. */
+  @Get('tender-settlements/sources')
+  @RequirePermissions(PERMISSIONS.cashSession.reconcile)
+  settlementSources() { return this.settlements.sources(); }
+
+  @Get(':id')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  findOne(@Param('id') id: string) {
+    return this.sessions.findById(id);
+  }
+
+  @Get(':id/movements')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  getMovements(@Param('id') id: string) {
+    return this.sessions.getMovements(id);
+  }
+
+  @Get(':id/expected')
+  @RequirePermissions(PERMISSIONS.cashSession.read)
+  async expected(@Param('id') id: string) {
+    const value = await this.sessions.expectedCash(id);
+    return { sessionId: id, expectedCash: value.toString() };
+  }
+
+  @Post('open')
+  @Idempotent({ required: true })
+  @RequirePermissions(PERMISSIONS.cashSession.open)
+  open(@Body() dto: OpenSessionDto) {
+    return this.sessions.open(dto);
+  }
+
+  @Post('close')
+    @Idempotent({ required: true })
+    @RequirePermissions(PERMISSIONS.cashSession.close)
+    close(@Body() dto: CloseSessionDto) {
+      return this.sessions.close({
+        closingCounted: dto.closingCounted,
+        closingAccounts: dto.closingAccounts,
+        uncountedAccounts: dto.uncountedAccounts,
+        pendingSyncCount: dto.pendingSyncCount,
+        notes: dto.notes,
+        varianceReason: dto.varianceReason,
+        varianceStatus: dto.varianceStatus,
+        approvedById: dto.approvedById,
+        approverEmail: dto.approverEmail,
+        managerPin: dto.managerPin,
+        closingDenomination: dto.closingDenomination,
+        occurredAt: dto.occurredAt,
+        sessionId: dto.sessionId,
+      });
+    }
+
+  @Post('movement')
+  @Idempotent({ required: true })
+  @RequirePermissions(PERMISSIONS.cashSession.open)
+  recordMovement(@Body() dto: RecordMovementDto) {
+    return this.sessions.recordMovement(dto.sessionId, {
+      movementType: dto.movementType,
+      counterpartAccountId: dto.counterpartAccountId,
+      correctionOfSessionId: dto.correctionOfSessionId,
+      amount: dto.amount,
+      reason: dto.reason,
+      approvedById: dto.approvedById,
+      approverEmail: dto.approverEmail,
+      managerPin: dto.managerPin,
+      occurredAt: dto.occurredAt,
+    });
+  }
+
+  /** Manager closes another cashier's abandoned shift with a blind count. */
+  @Post(':id/force-close')
+  @Idempotent({ required: true })
+  @RequirePermissions(PERMISSIONS.cashSession.forceClose)
+  forceClose(@Param('id') id: string, @Body() dto: ForceCloseSessionDto) {
+    return this.sessions.close({ ...dto, sessionId: id }, { force: true });
+  }
+
+  @Post(':id/banking')
+  @Idempotent({ required: true })
+  @RequirePermissions(PERMISSIONS.cashSession.close)
+  banking(@Param('id') id: string, @Body() dto: BankDepositDto) {
+    return this.sessions.recordBankDeposit(id, dto);
+  }
+
+  @Patch(':id/variance')
+  @RequirePermissions(PERMISSIONS.cashSession.approveVariance)
+  updateVariance(@Param('id') id: string, @Body() dto: VarianceUpdateDto) {
+    return this.sessions.updateVariance(id, {
+      reason: dto.reason,
+      status: dto.status as any,
+    });
+  }
+
+  @Patch(':id/reconcile')
+  @Idempotent()
+  @RequirePermissions(PERMISSIONS.cashSession.reconcile)
+  reconcile(@Param('id') id: string, @Body() dto: ReconcileSessionDto) {
+    return this.sessions.reconcile(id, {
+      depositAmount: dto.depositAmount,
+      bankName: dto.bankName,
+      reference: dto.reference,
+      notes: dto.notes,
+    });
+  }
+
+  @Post('reconcile/daily')
+  @Idempotent()
+  @RequirePermissions(PERMISSIONS.cashSession.reconcile)
+  dailyReset(@Body() dto: DailyResetDto) {
+    return this.sessions.dailyReset(dto.date);
+  }
+}

@@ -1,0 +1,230 @@
+/**
+ * POS PIN authentication service.
+ *
+ * Verifies a cashier's POS PIN (stored in User.pinHash, bcrypt).
+ * Returns user info + aggregated permissions for the frontend store.
+ *
+ * Rate-limits failed attempts and locks the account after MAX_FAILED_ATTEMPTS
+ * to prevent brute-force attacks on the 4-8 digit PIN.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { EVENTS } from '@erp/shared';
+import { EventBus } from '../../kernel/events/event-bus';
+import { PrismaService } from '../../kernel/prisma/prisma.service';
+import { TenantContextService } from '../../kernel/tenancy/tenant-context.service';
+import { PasswordService } from '../../kernel/auth/password.service';
+import { AuditService } from '../../kernel/audit/audit.service';
+import { JwtTokenService } from '../../kernel/auth/jwt-token.service';
+import { employmentBlocksPos, posEligibleUserWhere } from '../../kernel/auth/pos-eligibility';
+
+const MAX_FAILED_ATTEMPTS = 10;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 min
+
+@Injectable()
+export class PosAuthService {
+  private readonly logger = new Logger(PosAuthService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly tenant: TenantContextService,
+    private readonly password: PasswordService,
+    private readonly audit: AuditService,
+    private readonly jwt: JwtTokenService,
+    private readonly events: EventBus,
+  ) {}
+
+  /**
+   * List active staff in this org for POS PIN login. Someone whose linked HR
+   * record is suspended or has ended is left off the tills (pos-eligibility.ts).
+   */
+  async listStaff() {
+    const organizationId = this.tenant.organizationId;
+    const users = await this.prisma.client.user.findMany({
+      where: { organizationId, isActive: true, deletedAt: null, ...posEligibleUserWhere },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        pinHash: true,
+        roles: { select: { name: true } },
+      },
+    });
+    return users.map((u) => ({
+      id: u.id,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      hasPin: !!u.pinHash,
+      roles: u.roles.map((r) => r.name),
+    }));
+  }
+
+  /** Verify POS PIN and return user info + permissions. */
+  async pinLogin(userId: string, pin: string) {
+    const organizationId = this.tenant.organizationId;
+
+    const user = await this.prisma.raw.user.findFirst({
+      where: { id: userId, organizationId, isActive: true, deletedAt: null },
+      include: { roles: true, employee: { select: { employmentStatus: true, deletedAt: true } } },
+    });
+    if (!user) throw new NotFoundException('Staff not found');
+    if (employmentBlocksPos(user.employee)) {
+      throw new UnauthorizedException('Your employment is not active. Ask a manager.');
+    }
+
+    // Check if account is temporarily locked
+    if (user.lockedUntil && new Date() < user.lockedUntil) {
+      const remaining = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000 / 60);
+      throw new UnauthorizedException(`Account locked. Try again in ${remaining} min`);
+    }
+
+    // Verify PIN
+    if (!user.pinHash) {
+      throw new UnauthorizedException('No POS PIN set. Ask a manager to set one.');
+    }
+    const ok = await this.password.compare(pin, user.pinHash);
+    if (!ok) {
+      await this.recordFailedAttempt(user);
+      throw new UnauthorizedException('Invalid PIN');
+    }
+
+    // Successful login — reset counter
+    await this.prisma.client.user.update({
+      where: { id: user.id },
+      data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() },
+    });
+
+    await this.recordAttempt(user.organizationId, user.email, true, null);
+
+    // Aggregate permissions from all roles
+    const permissions = [...new Set<string>(user.roles.flatMap((r: any) => r.permissions ?? []))];
+
+    // Mint a short-lived POS token. The terminal sends it on the `X-Pos-User`
+    // header so the server attributes POS writes (sales, receipts, cash, audit)
+    // to THIS cashier rather than the back-office user who opened the terminal.
+    const posToken = this.jwt.signPos({
+      sub: user.id,
+      organizationId: user.organizationId,
+      email: user.email,
+      permissions,
+    });
+
+    // Audit login
+    await this.audit.record({
+      entity: 'User',
+      entityId: user.id,
+      action: 'login' as any,
+      newValues: { posLogin: true },
+    });
+
+    // Announce the sign-in. HR turns this into an attendance clock-in when the
+    // cashier is linked to an employee; nothing else in POS depends on it.
+    //
+    // Fire-and-forget through the outbox, deliberately: a cashier's login must
+    // never be delayed or failed by workforce bookkeeping, and `pos` is not
+    // allowed to import `hr` anyway. If HR is disabled, nobody is listening and
+    // this costs one outbox row.
+    this.events.publish(EVENTS.PosPinLogin, {
+      userId: user.id,
+      organizationId: user.organizationId,
+      at: new Date().toISOString(),
+      deviceId: null,
+    });
+
+    return {
+      userId: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      permissions,
+      posToken,
+    };
+  }
+
+  /**
+   * The cashier left the terminal (Log off / switch user). Announced for HR to
+   * turn into an attendance clock-out; like the login event, nothing in POS
+   * depends on who is listening.
+   */
+  logoff(userId: string): { ok: true } {
+    const organizationId = this.tenant.organizationId;
+    this.events.publish(EVENTS.PosPinLogoff, {
+      userId,
+      organizationId,
+      at: new Date().toISOString(),
+      deviceId: null,
+    });
+    return { ok: true };
+  }
+
+  // ─── private helpers ──────────────────────────────────────────────────────
+
+  private async recordFailedAttempt(user: any): Promise<void> {
+    const next = (user.failedLoginCount ?? 0) + 1;
+    const locked = next >= MAX_FAILED_ATTEMPTS;
+    await this.prisma.client.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginCount: next,
+        lockedUntil: locked ? new Date(Date.now() + LOCKOUT_DURATION_MS) : undefined,
+      },
+    });
+    const reason = locked ? 'account_locked' : 'invalid_pin';
+    await this.recordAttempt(user.organizationId, user.email, false, reason);
+    if (locked) {
+      this.logger.warn(`User ${user.email} POS PIN locked after ${next} failed attempts`);
+    }
+  }
+
+  private async recordAttempt(organizationId: string, email: string, success: boolean, reason: string | null): Promise<void> {
+    try {
+      await this.prisma.client.loginAttempt.create({
+        data: { organizationId, email, success, reason, createdAt: new Date() },
+      });
+    } catch {
+      // Don't fail the request because of a logging failure.
+    }
+  }
+
+  async changePin(userId: string, currentPin: string, newPin: string): Promise<void> {
+    const user = await this.prisma.client.user.findFirst({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.pinHash) throw new BadRequestException('No POS PIN set. Use the PIN login screen to set one first.');
+    const ok = await this.password.compare(currentPin, user.pinHash);
+    if (!ok) throw new BadRequestException('Current PIN is incorrect');
+    if (currentPin === newPin) throw new BadRequestException('New PIN must be different from the current PIN');
+    const hash = await this.password.hash(newPin);
+    await this.prisma.client.user.update({ where: { id: userId }, data: { pinHash: hash } });
+    await this.audit.record({ entity: 'User', entityId: userId, action: 'update', newValues: { posPinChanged: true } });
+    this.events.publish('user.pos_pin_changed' as any, { userId, organizationId: user.organizationId, at: new Date().toISOString() });
+  }
+
+  /**
+   * Rotate the back-office password from the POS terminal.
+   *
+   * A-007 remediation: the caller's LOGIN PASSWORD is the required proof — a
+   * 4-digit PIN (shoulder-surfable, brute-forceable within the throttle) must
+   * no longer be sufficient to rotate the back-office credential and revoke
+   * refresh tokens. The PIN may still rotate itself via changePin.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const user = await this.prisma.client.user.findFirst({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (!currentPassword) throw new BadRequestException('Your current login password is required');
+    const ok = await this.password.compare(currentPassword, user.passwordHash);
+    if (!ok) throw new BadRequestException('Current password is incorrect');
+    if (currentPassword === newPassword) throw new BadRequestException('New password must be different from the current password');
+    const hash = await this.password.hash(newPassword);
+    await this.prisma.client.$transaction([
+      this.prisma.client.user.update({
+        where: { id: userId },
+        data: { passwordHash: hash, failedLoginCount: 0, lockedUntil: null },
+      }),
+      this.prisma.client.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
+    ]);
+    await this.audit.record({ entity: 'User', entityId: userId, action: 'update', newValues: { passwordChanged: true, via: 'pos' } });
+    this.events.publish('user.password_changed' as any, { userId, organizationId: user.organizationId, at: new Date().toISOString() });
+  }
+}

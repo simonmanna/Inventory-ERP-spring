@@ -1,0 +1,76 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { PERMISSIONS } from '@erp/shared';
+import { PaginationDto } from '../../../kernel/common/pagination.dto';
+import { RequirePermissions } from '../../../kernel/auth/decorators/require-permissions.decorator';
+import { CashRegisterService } from './cash-register.service';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
+
+class CreateCashRegisterDto {
+  @IsString() code!: string;
+  @IsString() name!: string;
+  /** Optional for backward compatibility; creation provisions DRW-{code}. */
+  @IsOptional() @IsString() defaultAccountId?: string;
+  @IsOptional() @IsString() locationId?: string;
+  @IsOptional() @IsString() branchId?: string;
+}
+
+class UpdateCashRegisterDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() defaultAccountId?: string;
+  @IsOptional() @IsString() locationId?: string;
+  @IsOptional() @IsString() branchId?: string;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+}
+
+@Controller('cash-registers')
+export class CashRegisterController {
+  constructor(private readonly registers: CashRegisterService) {}
+
+  @Get()
+  @RequirePermissions(PERMISSIONS.cashRegister.read)
+  list(@Query() query: PaginationDto) {
+    return this.registers.list(query);
+  }
+
+  @Get(':id')
+  @RequirePermissions(PERMISSIONS.cashRegister.read)
+  findOne(@Param('id') id: string) {
+    return this.registers.findOne(id);
+  }
+
+  /** Drawer GL balance — shown in the open-shift dialog so the cashier sees what the drawer holds before counting. */
+  @Get(':id/drawer-balance')
+  @RequirePermissions(PERMISSIONS.cashSession.open)
+  drawerBalance(@Param('id') id: string) {
+    return this.registers.drawerBalance(id);
+  }
+
+  @Post()
+  @RequirePermissions(PERMISSIONS.cashRegister.create)
+  create(@Body() dto: CreateCashRegisterDto) {
+    return this.registers.create(dto);
+  }
+
+  @Patch(':id')
+  @RequirePermissions(PERMISSIONS.cashRegister.update)
+  update(@Param('id') id: string, @Body() dto: UpdateCashRegisterDto) {
+    return this.registers.update(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  @RequirePermissions(PERMISSIONS.cashRegister.delete)
+  remove(@Param('id') id: string) {
+    return this.registers.remove(id);
+  }
+}

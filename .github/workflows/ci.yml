@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build + tests (Testcontainers Postgres 16, Modulith, ArchUnit)
+        run: ./gradlew build --no-daemon
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/build/reports/tests
+
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generated code is up to date
+        run: |
+          node tools/contracts2java/generate.mjs
+          node tools/prisma2jpa/generate.mjs
+          node tools/extract-routes/extract.mjs
+          git diff --exit-code -- backend/src docs/spec
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm web:build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, web]
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f infra/docker/Dockerfile.api -t inventory-erp-api:ci .
+      - run: docker build -f infra/docker/Dockerfile.web -t inventory-erp-web:ci .

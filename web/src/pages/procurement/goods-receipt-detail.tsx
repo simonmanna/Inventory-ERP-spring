@@ -1,0 +1,368 @@
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, Undo2 } from 'lucide-react';
+import { idempotentPatch } from '@/lib/idempotent-request';
+import { notify } from '@/lib/notify';
+import { useAuthStore } from '@/stores/auth.store';
+import { ReasonDialog } from '@/features/inventory/reason-dialog';
+import { LandedCostPanel } from '@/features/procurement/landed-cost-panel';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { api } from '@/lib/api';
+import { date, money } from '@/lib/format';
+import { tx } from '@/lib/i18n/tx';
+
+interface GRNProduct {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface GRNLine {
+  id: string;
+  productId: string | null;
+  description: string;
+  quantity: number;
+  unitCost: number;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  notes: string | null;
+  lineNumber: number;
+  product: GRNProduct | null;
+}
+
+interface GRNWarehouse {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface GRNPartner {
+  id: string;
+  name: string;
+}
+
+interface GRNDetail {
+  id: string;
+  receiptNumber: string;
+  status: 'draft' | 'posted' | 'cancelled' | 'reversed';
+  reversedAt?: string | null;
+  reversalReason?: string | null;
+  receivedAt: string;
+  notes: string | null;
+  postedAt: string | null;
+  postedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lines: GRNLine[];
+  order: { orderNumber: string } | null;
+  warehouse: GRNWarehouse | null;
+  partner: GRNPartner | null;
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  posted: 'Posted',
+  cancelled: 'Cancelled',
+  reversed: 'Reversed',
+};
+
+const BADGE_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive'> = {
+  draft: 'secondary',
+  posted: 'default',
+  cancelled: 'destructive',
+  reversed: 'secondary',
+};
+
+export default function GoodsReceiptDetailPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const qc = useQueryClient();
+  const has = useAuthStore((s) => s.hasPermission);
+  const [reversing, setReversing] = useState(false);
+
+  const { data: grn, isLoading } = useQuery<GRNDetail>({
+    queryKey: ['goods-receipt', id],
+    queryFn: async () => (await api.get<GRNDetail>(`/procurement/goods-receipts/${id}`)).data,
+    enabled: !!id,
+  });
+
+  const refresh = () => {
+    for (const key of ['goods-receipt', 'goods-receipts', 'inventory-product-stock-levels', 'inventory-ledger', 'purchase-orders']) {
+      qc.invalidateQueries({ queryKey: [key] });
+    }
+  };
+  const errText = (e: any, fallback: string) => {
+    const m = e?.response?.data?.message;
+    return Array.isArray(m) ? m.join(', ') : (m ?? fallback);
+  };
+
+  const post = useMutation({
+    mutationFn: async () => await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/post`),
+    onSuccess: () => { notify.success(tx('Goods receipt posted — stock received')); refresh(); },
+    onError: (e: any) => notify.error(errText(e, 'Posting failed')),
+  });
+
+  const reverse = useMutation({
+    mutationFn: async (reason: string) =>
+      await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/reverse`, { reason }),
+    onSuccess: () => { notify.success(tx('Goods receipt reversed — stock returned and journals reversed')); setReversing(false); refresh(); },
+    onError: (e: any) => notify.error(errText(e, 'Reversal failed')),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-4 px-4">
+        <div className="flex items-center gap-3">
+          <div className="h-4 w-20 bg-sky-200 rounded" />
+          <Skeleton className="h-6 w-64" />
+        </div>
+        <div className="rounded-lg border border-sky-100 bg-white shadow-sm">
+          <div className="flex divide-x divide-sky-100">
+            <div className="w-1/2 p-6 space-y-3">
+              <div className="h-3 w-24 bg-sky-100 rounded" />
+              <div className="h-4 w-48 bg-sky-200 rounded" />
+              <div className="h-3 w-full bg-sky-50 rounded mt-4" />
+              <div className="h-3 w-3/4 bg-sky-50 rounded" />
+            </div>
+            <div className="w-1/2 p-6 space-y-3">
+              <div className="h-3 w-24 bg-sky-100 rounded" />
+              <div className="h-4 w-32 bg-sky-200 rounded" />
+              <div className="h-3 w-full bg-sky-50 rounded mt-2" />
+              <div className="h-3 w-2/3 bg-sky-50 rounded" />
+            </div>
+          </div>
+          <div className="border-t border-sky-100 p-0">
+            <div className="p-4 space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex gap-4 items-center">
+                  <Skeleton className="h-3 w-8 shrink-0 bg-sky-50" />
+                  <Skeleton className="h-3 flex-1 bg-sky-50" />
+                  <Skeleton className="h-3 w-16 bg-sky-50" />
+                  <Skeleton className="h-3 w-20 bg-sky-50" />
+                  <Skeleton className="h-3 w-16 bg-sky-50" />
+                  <Skeleton className="h-3 w-20 bg-sky-50" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!grn) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-4 px-4">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/procurement/goods-receipts')} className="flex items-center text-sm text-sky-700 hover:text-sky-900 gap-1">
+            <ArrowLeft className="h-4 w-4" /> {tx('Goods Receipts')}
+          </button>
+        </div>
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-8 text-center">
+          <h1 className="text-xl font-semibold text-destructive">{tx('Not Found')}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{tx('Goods receipt not found or you don\'t have permission to view it.')}</p>
+          <Button variant="outline" className="mt-4" onClick={() => navigate('/procurement/goods-receipts')}>
+            <ArrowLeft className="mr-2 h-4 w-4" /> {tx('Back to Goods Receipts')}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const totalQty = grn.lines.reduce((sum, l) => sum + Number(l.quantity), 0);
+  const totalCost = grn.lines.reduce((sum, l) => sum + Number(l.quantity) * Number(l.unitCost), 0);
+
+  return (
+    <div className="max-w-[1600px] mx-auto space-y-0 px-1 md:px-2">
+      <div className="flex items-center gap-3 mb-4">
+        <button
+          onClick={() => navigate('/procurement/goods-receipts')}
+          className="flex items-center gap-1 text-sm text-sky-700 hover:text-sky-900"
+        >
+          <ArrowLeft className="h-4 w-4" /> {tx('Goods Receipts')}
+        </button>
+        <span className="text-sky-300">/</span>
+        <span className="font-mono text-sm text-sky-900 font-semibold">{grn.receiptNumber}</span>
+        <div className="ml-auto flex gap-2">
+          {grn.status === 'draft' && has('goods_receipt:post') && (
+            <Button size="sm" disabled={post.isPending} onClick={() => post.mutate()}>
+              <CheckCircle2 className="mr-1.5 h-4 w-4" />{post.isPending ? 'Posting…' : 'Post receipt'}
+            </Button>
+          )}
+          {grn.status === 'posted' && has('goods_receipt:cancel') && (
+            <Button size="sm" variant="outline" disabled={reverse.isPending} onClick={() => setReversing(true)}>
+              <Undo2 className="mr-1.5 h-4 w-4" />{tx('Reverse')}
+            </Button>
+          )}
+        </div>
+      </div>
+      {grn.reversedAt && (
+        <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
+          {tx('Reversed')} {date(grn.reversedAt)}{grn.reversalReason ? ` — ${grn.reversalReason}` : ''}{tx('. Stock was returned and the receipt\'s journals were reversed.')}
+        </div>
+      )}
+
+      <div className="rounded-t-lg bg-gradient-to-r from-sky-400 to-sky-500 px-6 py-3 flex items-center justify-between shadow-sm">
+        <h1 className="text-white font-bold text-base tracking-wide">{tx('GOODS RECEIPT NOTE')}</h1>
+        <Badge variant={BADGE_VARIANTS[grn.status]} className="text-sm px-3 py-1">
+          {STATUS_LABELS[grn.status] ?? grn.status}
+        </Badge>
+      </div>
+
+      <div className="bg-white border border-t-0 border-sky-100 shadow-sm rounded-b-lg overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-x divide-sky-100">
+          <div className="p-4 bg-sky-50/30">
+            <p className="text-xs text-sky-500 font-bold uppercase tracking-wider mb-1">{tx('Supplier')}</p>
+            <p className="font-bold text-base text-sky-900">{grn.partner?.name ?? '—'}</p>
+            <p className="text-xs text-sky-400 mt-1">{tx('Partner')}</p>
+
+            <div className="mt-4">
+              <p className="text-xs text-sky-500 font-bold uppercase tracking-wider mb-1">{tx('Warehouse')}</p>
+              <p className="font-semibold text-sm text-sky-900">
+                {grn.warehouse ? `${grn.warehouse.code} — ${grn.warehouse.name}` : '—'}
+              </p>
+            </div>
+
+            {grn.notes && (
+              <div className="mt-4">
+                <p className="text-xs text-sky-500 font-bold uppercase tracking-wider mb-1">{tx('Notes')}</p>
+                <p className="text-sm text-sky-800">{grn.notes}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 bg-sky-50/20">
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-sky-100">
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 w-28 align-top">{tx('Receipt No')}</th>
+                  <td className="text-right font-bold text-sky-900 py-2">{grn.receiptNumber}</td>
+                </tr>
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 align-top">{tx('Received Date')}</th>
+                  <td className="text-right text-sky-800 py-2">{date(grn.receivedAt)}</td>
+                </tr>
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 align-top">{tx('Status')}</th>
+                  <td className="text-right text-sky-800 py-2">
+                    <Badge variant={BADGE_VARIANTS[grn.status]}>
+                      {STATUS_LABELS[grn.status] ?? grn.status}
+                    </Badge>
+                  </td>
+                </tr>
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 align-top">{tx('PO Reference')}</th>
+                  <td className="text-right text-sky-800 py-2">{grn.order?.orderNumber ?? '—'}</td>
+                </tr>
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 align-top">{tx('Posted At')}</th>
+                  <td className="text-right text-sky-800 py-2">{grn.postedAt ? date(grn.postedAt) : '—'}</td>
+                </tr>
+                <tr>
+                  <th className="text-left text-sky-600 font-medium py-2 align-top">{tx('Created At')}</th>
+                  <td className="text-right text-sky-800 py-2">{date(grn.createdAt)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="border-t border-sky-100">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-sky-50 hover:bg-sky-50">
+                <TableHead className="w-12 text-sky-700 font-bold text-xs uppercase tracking-wider">#</TableHead>
+                <TableHead className="w-24 text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Product Code')}</TableHead>
+                <TableHead className="text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Product Name')}</TableHead>
+                <TableHead className="text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Description')}</TableHead>
+                <TableHead className="w-24 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Qty')}</TableHead>
+                <TableHead className="w-28 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Unit Cost')}</TableHead>
+                <TableHead className="w-28 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Total')}</TableHead>
+                <TableHead className="w-24 text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Batch #')}</TableHead>
+                <TableHead className="w-28 text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Expiry')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {grn.lines.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="py-10 text-center text-sky-400">
+                    {tx('No line items found.')}
+                  </TableCell>
+                </TableRow>
+              ) : grn.lines.map((l, index) => {
+                const lineTotal = Number(l.quantity) * Number(l.unitCost);
+                return (
+                  <TableRow key={l.id} className="hover:bg-sky-50/40">
+                    <TableCell className="text-sky-600 text-sm font-mono">{index + 1}</TableCell>
+                    <TableCell className="font-mono text-xs text-sky-700">
+                      {l.product?.code ?? '—'}
+                    </TableCell>
+                    <TableCell className="font-semibold text-sm text-sky-900">
+                      {l.product?.name ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-sky-700">
+                      {l.description}
+                      {l.notes && <div className="text-[10px] text-slate-500 mt-0.5">({l.notes})</div>}
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-sky-800">{Number(l.quantity).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm text-sky-800">{money(l.unitCost)}</TableCell>
+                    <TableCell className="text-right text-sm font-bold text-sky-900">{money(lineTotal)}</TableCell>
+                    <TableCell className="font-mono text-xs text-sky-700">{l.batchNumber ?? '—'}</TableCell>
+                    <TableCell className="text-xs text-sky-700">{l.expiryDate ? date(l.expiryDate) : '—'}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        <div className="border-t border-sky-100 bg-gradient-to-r from-sky-50/60 to-sky-100/40">
+          <div className="flex justify-end">
+            <div className="w-80 space-y-2 pt-3 pb-3 pr-4">
+              <div className="flex justify-between gap-8">
+                <span className="text-muted-foreground">{tx('Total Items')}</span>
+                <span className="font-semibold">{grn.lines.length}</span>
+              </div>
+              <div className="flex justify-between gap-8">
+                <span className="text-muted-foreground">{tx('Total Quantity')}</span>
+                <span className="font-semibold">{totalQty.toLocaleString()}</span>
+              </div>
+              <div className="border-t-2 border-sky-200 pt-2">
+                <div className="flex justify-between gap-8 font-bold text-sm">
+                  <span>{tx('Total Cost')}</span>
+                  <span>{money(totalCost)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {grn.status === 'posted' && (
+        <LandedCostPanel goodsReceiptId={grn.id} canCreate={has('goods_receipt:create')} canPost={has('goods_receipt:post')} canCancel={has('goods_receipt:cancel')} />
+      )}
+
+      <ReasonDialog
+        open={reversing}
+        onOpenChange={setReversing}
+        title={`Reverse ${grn.receiptNumber}`}
+        description={
+          <>
+            <p>{tx('Returns the received quantities out of stock, reverses the receipt\'s journal entries (inventory, GRNI and any supplier payable) today, and rolls the purchase order back.')}</p>
+            <p>{tx('Not possible once a vendor bill or payment exists — use a debit note for supplier returns.')}</p>
+          </>
+        }
+        confirmLabel={tx('Reverse receipt')}
+        pendingLabel="Reversing…"
+        destructive
+        pending={reverse.isPending}
+        onConfirm={(reason) => reverse.mutate(reason)}
+      />
+    </div>
+  );
+}

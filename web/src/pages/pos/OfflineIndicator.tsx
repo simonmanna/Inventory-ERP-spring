@@ -1,0 +1,222 @@
+/**
+ * POS P11 — Online/offline indicator + queued-sales badge.
+ * Designed to live in the Topbar.
+ *
+ * Also surfaces server-rejected sales (4xx on replay) parked in the
+ * failed-sales store: a red badge opens a review dialog where the cashier
+ * can retry (after the cause is fixed) or explicitly discard. A rejected
+ * sale is money — it must never disappear without a human deciding so.
+ */
+import React from 'react';
+import { Wifi, WifiOff, CloudUpload, AlertTriangle, RotateCcw, Trash2 } from 'lucide-react';
+import { useOfflineQueue, useFailedSales, type FailedSale } from '@/features/pos/offline-queue';
+import { usePosSettings } from '@/features/pos/api';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from 'sonner';
+import { tx } from '@/lib/i18n/tx';
+
+function saleAmount(sale: FailedSale): number | null {
+  const tenders = sale.payload?.tenders;
+  if (Array.isArray(tenders) && tenders.length > 0) {
+    return tenders.reduce((s: number, t: any) => s + (Number(t?.amount) || 0), 0);
+  }
+  return null;
+}
+
+const FailedSaleRow: React.FC<{
+  sale: FailedSale;
+  onRetry: (key: string) => Promise<void>;
+  onDiscard: (key: string) => Promise<void>;
+}> = ({ sale, onRetry, onDiscard }) => {
+  const [confirmingDiscard, setConfirmingDiscard] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const amount = saleAmount(sale);
+
+  const retry = async () => {
+    setBusy(true);
+    try {
+      await onRetry(sale.idempotencyKey);
+      toast.info(tx('Sale moved back to the sync queue.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const discard = async () => {
+    setBusy(true);
+    try {
+      await onDiscard(sale.idempotencyKey);
+      toast.warning(tx('Sale discarded permanently.'));
+    } finally {
+      setBusy(false);
+      setConfirmingDiscard(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-rose-400/30 bg-rose-500/5 p-3 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-xs opacity-70">{sale.idempotencyKey.slice(0, 8).toUpperCase()}</span>
+        <span className="text-xs opacity-70">{new Date(sale.createdAt).toLocaleString()}</span>
+      </div>
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="truncate">{sale.endpoint ?? '/pos/checkout'}</span>
+        {amount != null && <span className="font-semibold whitespace-nowrap">{amount.toLocaleString()}</span>}
+      </div>
+      <div className="text-xs text-rose-300 break-words">
+        {sale.httpStatus ? `HTTP ${sale.httpStatus} — ` : ''}{sale.lastError || 'Rejected by server'}
+      </div>
+      <div className="flex justify-end gap-2 pt-1">
+        {confirmingDiscard ? (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={discard}
+              className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2.5 py-1 text-xs text-white hover:bg-rose-500 disabled:opacity-50"
+            >
+              <Trash2 className="h-3 w-3" /> {tx('Discard forever')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmingDiscard(false)}
+              className="rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:opacity-50"
+            >
+              {tx('Keep')}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={retry}
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-400/50 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+            >
+              <RotateCcw className="h-3 w-3" /> {tx('Retry')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmingDiscard(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-rose-400/50 px-2.5 py-1 text-xs text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+            >
+              <Trash2 className="h-3 w-3" /> {tx('Discard…')}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const OfflineIndicator: React.FC = () => {
+  // Connection mode "offline" (the default) = local-only install: the API and
+  // database run on this PC, so there is no connection to check or display.
+  const { data: posSettings } = usePosSettings();
+  const monitor = posSettings?.connectionMode === 'online';
+  const { online, pending, replaying, replay } = useOfflineQueue({ monitor });
+  const { failed, retry, discard } = useFailedSales();
+  const [reviewOpen, setReviewOpen] = React.useState(false);
+
+  const onClick = () => {
+    if (pending.length === 0) return;
+    if (!monitor) {
+      toast.info(`Saving ${pending.length} unsaved payment${pending.length === 1 ? '' : 's'}…`);
+      replay();
+      return;
+    }
+    if (!online) {
+      toast.warning(`Offline — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. They will sync when the network returns.`);
+      return;
+    }
+    toast.info(`Syncing ${pending.length} pending sale${pending.length === 1 ? '' : 's'}…`);
+    replay();
+  };
+
+  return (
+    <>
+      {!monitor ? (
+        // Local-only: no online icon. Surface only a payment the local service
+        // did not confirm (e.g. it was restarting), so the cashier can retry it.
+        pending.length > 0 && (
+          <button
+            type="button"
+            onClick={onClick}
+            disabled={replaying}
+            title={`${pending.length} payment${pending.length === 1 ? '' : 's'} not yet saved. Click to retry.`}
+            className="pos-tbl-pill !px-2.5 !gap-1 !bg-amber-500/20 !border-amber-400/50"
+          >
+            <AlertTriangle className="h-4 w-4 text-amber-200" />
+            <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-white/90 text-[10px] font-bold text-slate-900 leading-none">
+              {pending.length}
+            </span>
+          </button>
+        )
+      ) : (
+      <button
+        type="button"
+        onClick={onClick}
+        title={
+          online
+            ? pending.length > 0
+              ? `Online — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. Click to sync.`
+              : 'Online — all sales synced'
+            : `Offline — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. Sales are stored locally and will sync when the network returns.`
+        }
+        className={
+          'pos-tbl-pill !px-2.5 !gap-1 ' +
+          (online
+            ? (pending.length > 0 ? '!bg-amber-500/20 !border-amber-400/50' : '!bg-emerald-500/20 !border-emerald-400/50')
+            : '!bg-rose-500/20 !border-rose-400/50')
+        }
+      >
+        {online ? (
+          pending.length > 0 ? <AlertTriangle className="h-4 w-4 text-amber-200" /> : <Wifi className="h-4 w-4 text-emerald-200" />
+        ) : (
+          <WifiOff className="h-4 w-4 text-rose-200" />
+        )}
+        {pending.length > 0 ? (
+          <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-white/90 text-[10px] font-bold text-slate-900 leading-none">
+            {pending.length}
+          </span>
+        ) : null}
+        {online && pending.length > 0 && !replaying ? (
+          <CloudUpload className="h-3.5 w-3.5 text-amber-200" />
+        ) : null}
+      </button>
+      )}
+
+      {failed.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setReviewOpen(true)}
+          title={`${failed.length} sale${failed.length === 1 ? '' : 's'} rejected by the server — click to review`}
+          className="pos-tbl-pill !bg-rose-600/30 !border-rose-400/70 animate-pulse"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 text-rose-200" />
+          <span className="text-rose-100">{failed.length} {tx('failed')}</span>
+        </button>
+      )}
+
+      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{tx('Rejected offline sales')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {tx('These queued sales were rejected by the server and were NOT recorded. Retry after the cause is fixed, or discard only if the sale was rung up another way.')}
+          </p>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+            {failed.map((sale) => (
+              <FailedSaleRow key={sale.idempotencyKey} sale={sale} onRetry={retry} onDiscard={discard} />
+            ))}
+            {failed.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted-foreground">{tx('Nothing left to review.')}</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};

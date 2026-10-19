@@ -1,0 +1,554 @@
+import {
+  methodsByKind, usePosPaymentMethods, TENDER_KIND_COLOR, TENDER_KIND_LABEL, TENDER_KIND_ORDER,
+  type PosPaymentMethod as PosMethod,
+} from '@/features/pos/payment-accounts';
+import { useAuthStore } from '@/stores/auth.store';
+const orgCur = () => useAuthStore.getState().organization?.currencyCode ?? 'IDR';
+// Multi-tender payment dialog. Maps directly to POST /pos/checkout with `tenders`.
+// Quick-amount buttons, change calculation, manager override for high discounts.
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Banknote, Smartphone, CreditCard, Building2, Wallet, Check, X, Plus, Gift, UserPlus, AlertTriangle,
+  Settings2,
+} from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import type { PaymentMethod, PaymentTender } from './types';
+import { tx } from '@/lib/i18n/tx';
+
+/** The pay panel offers the tender kinds PLUS a non-tender "settle on account"
+ *  mode (credit_settlement) that books the sale to the customer's AR instead of
+ *  collecting money now. It is routed to onCreditSale, not added as a tender. */
+type SettleMode = PaymentMethod | 'credit_settlement';
+type MethodTile = {
+  key: SettleMode;
+  label: string;
+  icon: React.ReactNode;
+  color: string;
+  /** Configured methods behind this tile. Empty = nothing configured for this kind. */
+  methods: PosMethod[];
+};
+
+const KIND_ICON: Record<string, React.ReactNode> = {
+  cash: <Banknote className="h-4 w-4" />,
+  mobile_money: <Smartphone className="h-4 w-4" />,
+  card: <CreditCard className="h-4 w-4" />,
+  bank: <Building2 className="h-4 w-4" />,
+  store_credit: <Gift className="h-4 w-4" />,
+};
+
+const fmt = (n: number | string) => `${orgCur()} ${Number(n || 0).toLocaleString()}`;
+
+interface Props {
+  open: boolean;
+  total: number;
+  /** Highest discount percentage currently applied (line + transaction). */
+  effectiveDiscountPercent?: number;
+  /** Selected customer's redeemable store-credit balance (0 / undefined hides it). */
+  storeCreditBalance?: number;
+  /** Called by parent when the cashier needs to verify a manager. */
+  onRequestOverride: (kind: 'discount' | 'void' | 'manual_refund') => Promise<{managerId: string; pin: string} | null>;
+  onClose: () => void;
+  onSettle: (input: {
+    tenders: PaymentTender[];
+    transactionDiscountPercent: number;
+    /** Cash physically handed over (may exceed total) so the backend can record the change. */
+    amountTendered?: number;
+    overrideById?: string;
+    overridePin?: string;
+  }) => Promise<void>;
+  /** Enables the "Charge to account" (postpaid credit) action — true when a real customer is selected. */
+  creditEnabled?: boolean;
+  /** Runs the credit (postpaid AR) sale through the Order→Invoice→Receipt pipeline. */
+  onCreditSale?: () => Promise<void>;
+  /** Selected customer's display name, shown on the credit panel. */
+  customerName?: string;
+  /** Selected customer's credit standing (GET /pos/customers/:id/credit). */
+  creditInfo?: { creditLimit: number; outstanding: number; available: number | null; creditHold: boolean } | null;
+  /** Opens the customer picker — the credit tile is useless without a customer. */
+  onPickCustomer?: () => void;
+}
+
+export const PaymentDialog: React.FC<Props> = ({
+  open, total, effectiveDiscountPercent = 0, storeCreditBalance = 0, onRequestOverride, onClose, onSettle,
+  creditEnabled = false, onCreditSale, customerName, creditInfo, onPickCustomer,
+}) => {
+  const { data: paymentMethods = [] } = usePosPaymentMethods();
+  /** Configured method chosen within the active kind (the "provider" step). */
+  const [methodId, setMethodId] = useState('');
+  const [tenders, setTenders] = useState<PaymentTender[]>([]);
+  // Raw amount entered per tender, aligned index-wise with `tenders`. For cash this
+  // may exceed the applied leg (over-tender → change); it is never sent as a tender.
+  const [tenderRaw, setTenderRaw] = useState<number[]>([]);
+  /** Method label per tender, index-aligned — what the cashier actually picked. */
+  const [tenderLabels, setTenderLabels] = useState<string[]>([]);
+  const [activeKind, setActiveKind] = useState<SettleMode>('cash');
+  const [tendered, setTendered] = useState(() => String(total));
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [overrideId, setOverrideId] = useState<string | undefined>(undefined);
+  const [overridePin, setOverridePin] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    setTenders([]);
+    setTenderRaw([]);
+    setTenderLabels([]);
+    setTendered(String(total));
+    setReference('');
+    setError(null);
+    setOverrideId(undefined);
+    setOverridePin(undefined);
+    setActiveKind('cash');
+    setMethodId('');
+  }, [open, total]);
+
+  // Store-credit tile only appears when the selected customer carries a balance.
+  // Credit-settlement ("Credit") is ALWAYS offered: hiding it until a customer
+  // was picked made the whole feature look missing. With no customer the tile
+  // still shows and its panel explains what to do.
+  const byKind = useMemo(() => methodsByKind(paymentMethods), [paymentMethods]);
+
+  // One tile per tender kind, always shown so the layout is stable — a kind with
+  // nothing configured renders disabled with instructions rather than vanishing.
+  const methods = useMemo(() => {
+    const base: MethodTile[] = TENDER_KIND_ORDER.map((kind) => ({
+      key: kind as SettleMode,
+      label: TENDER_KIND_LABEL[kind],
+      icon: KIND_ICON[kind],
+      color: TENDER_KIND_COLOR[kind],
+      methods: byKind.get(kind) ?? [],
+    }));
+    if (storeCreditBalance > 0) {
+      base.push({ key: 'store_credit', label: 'Store Credit', icon: KIND_ICON.store_credit, color: TENDER_KIND_COLOR.store_credit, methods: [] });
+    }
+    if (onCreditSale) {
+      base.push({ key: 'credit_settlement', label: 'Credit', icon: <Wallet className="h-4 w-4" />, color: '#0284c7', methods: [] });
+    }
+    return base;
+  }, [byKind, storeCreditBalance, onCreditSale]);
+
+  const activeTile = methods.find((m) => m.key === activeKind);
+  const kindMethods = activeTile?.methods ?? [];
+  // Cash and store credit never need an account; every other kind does. A kind
+  // with exactly one configured method skips the provider step entirely.
+  const needsMethod = activeKind !== 'cash' && activeKind !== 'store_credit' && activeKind !== 'credit_settlement';
+  const selectedMethod = kindMethods.find((m) => m.id === methodId)
+    ?? (kindMethods.length === 1 ? kindMethods[0] : undefined);
+  const unconfigured = needsMethod && kindMethods.length === 0;
+  const isCredit = activeKind === 'credit_settlement';
+
+  const paid = useMemo(() => tenders.reduce((s, t) => s + (t.amount || 0), 0), [tenders]);
+  const remaining = Math.max(0, total - paid);
+  // Change = cash over-tender: each tender's raw entered amount minus the amount
+  // actually applied to the bill (only cash is allowed to exceed the bill).
+  const change = useMemo(
+    () => tenders.reduce((s, t, i) => s + Math.max(0, (tenderRaw[i] ?? t.amount) - t.amount), 0),
+    [tenders, tenderRaw],
+  );
+  const amountTendered = paid + change;
+  const creditUsed = useMemo(
+    () => tenders.filter((t) => t.method === 'store_credit').reduce((s, t) => s + t.amount, 0),
+    [tenders],
+  );
+  const availableCredit = Math.max(0, storeCreditBalance - creditUsed);
+  const tenderNum = Number(tendered);
+  const tenderValid = Number.isFinite(tenderNum) && tenderNum > 0;
+  const creditBlocked = activeKind === 'store_credit' && availableCredit <= 0;
+  // A provider transaction id is PROMPTED, never demanded: a sale must never be
+  // blocked on a number the customer has not read off their phone yet.
+  const referenceWanted = !!selectedMethod?.requiresReference && !reference.trim();
+
+  // Why Add is unavailable, in the cashier's words. A disabled button that says
+  // nothing reads as a broken terminal — this is what the till shows instead.
+  const blockedReason = (() => {
+    if (unconfigured) return `No ${TENDER_KIND_LABEL[activeKind]?.toLowerCase()} account is set up yet.`;
+    if (needsMethod && !selectedMethod) {
+      return activeKind === 'mobile_money'
+        ? 'Choose which wallet the customer paid into.'
+        : `Choose which ${TENDER_KIND_LABEL[activeKind]?.toLowerCase()} account this went to.`;
+    }
+    if (remaining <= 0) return 'This bill is already fully covered.';
+    if (creditBlocked) return 'This customer has no store credit left.';
+    if (!tenderValid) return 'Enter the amount to charge.';
+    return null;
+  })();
+
+  // Why an on-account sale can't go through right now (null = it can). The API
+  // enforces all of this too; this only saves the cashier a round-trip.
+  const balanceAfter = (creditInfo?.outstanding ?? 0) + total;
+  const creditBlockReason = useMemo(() => {
+    if (!creditEnabled) return 'Select a customer to charge this sale to.';
+    if (creditInfo?.creditHold) return 'This customer is on credit hold — new credit sales are blocked.';
+    if (creditInfo?.available != null && creditInfo.available + 0.01 < total) {
+      return `Over credit limit — only ${fmt(creditInfo.available)} of credit is available.`;
+    }
+    return null;
+  }, [creditEnabled, creditInfo, total]);
+
+  const addTender = () => {
+    // credit_settlement is not a tender — it's routed to onCreditSale instead.
+    if (activeKind === 'credit_settlement') return;
+    if (!tenderValid || remaining <= 0 || creditBlocked) return;
+    // The tile decides the account. Only ask when a kind has SEVERAL providers
+    // and none is picked yet; a kind with nothing configured is disabled upstream.
+    if (needsMethod && !selectedMethod) {
+      setError(`Choose which ${TENDER_KIND_LABEL[activeKind] ?? activeKind} account this payment went to`);
+      return;
+    }
+    let amount = Math.min(tenderNum, remaining);
+    if (activeKind === 'store_credit') amount = Math.min(amount, availableCredit);
+    if (amount <= 0) return;
+    const method: PaymentMethod = activeKind;
+    // Cash may exceed the bill (customer overpays → change). The tender LEG stays
+    // clamped to `remaining` so tenders still sum to the total (backend guard),
+    // while the raw amount handed over is remembered to compute the change.
+    const raw = method === 'cash' ? tenderNum : amount;
+    // Cash carries no account: the register's own drawer wins server-side.
+    const accountId = method === 'cash' ? undefined : selectedMethod?.accountId ?? undefined;
+    setTenders((prev) => [...prev, { method, amount, accountId, reference: reference.trim() || undefined }]);
+    setTenderRaw((prev) => [...prev, raw]);
+    setTenderLabels((prev) => [...prev, selectedMethod?.label ?? TENDER_KIND_LABEL[method] ?? method]);
+    setTendered(''); setReference(''); setError(null);
+  };
+
+  const removeTender = (i: number) => {
+    setTenders((prev) => prev.filter((_, idx) => idx !== i));
+    setTenderRaw((prev) => prev.filter((_, idx) => idx !== i));
+    setTenderLabels((prev) => prev.filter((_, idx) => idx !== i));
+  };
+
+  // A-019: match the backend's ε (1e-6) — the old 0.01 slack let a 1-cent-short
+  // tender through to the server, which then 400'd mid-payment.
+  const canSettle = tenders.length > 0 && paid >= total - 0.000001;
+
+  const settle = async () => {
+    if (!canSettle) return;
+    try {
+      setBusy(true); setError(null);
+      await onSettle({
+        tenders,
+        transactionDiscountPercent: 0,
+        // Only sent when the customer overpaid in cash; exact payments omit it.
+        amountTendered: change > 0 ? amountTendered : undefined,
+        overrideById: overrideId,
+        overridePin: overridePin,
+      });
+    } catch (e: any) {
+      setError(e?.message || e?.response?.data?.message || 'Payment failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Settle on account: no money collected now — books the sale to the customer's
+  // AR (postpaid) via the credit pipeline. Routed to the parent, not a tender.
+  const settleOnAccount = async () => {
+    if (!onCreditSale) return;
+    try {
+      setBusy(true); setError(null);
+      await onCreditSale();
+    } catch (e: any) {
+      setError(e?.message || e?.response?.data?.message || 'Credit settlement failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestOverride = async () => {
+    const result = await onRequestOverride('discount');
+    if (result) { setOverrideId(result.managerId); setOverridePin(result.pin); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[860px] p-0 overflow-hidden">
+        <DialogHeader className="bg-gradient-to-r from-emerald-500 to-emerald-700 text-white p-4">
+          <DialogTitle className="text-white text-base font-bold flex items-center gap-2">
+            <Wallet className="h-4 w-4" /> {tx('Charge')}
+          </DialogTitle>
+          <DialogDescription className="text-emerald-100 text-xs">
+            {tx('Pay with one or many methods. Split by adding tenders until the total is covered.')}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_320px]">
+          <div className="p-4 space-y-3">
+            {/* Method tabs */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {methods.map((m) => {
+                const active = activeKind === m.key;
+                return (
+                  <button
+                    key={m.key}
+                    type="button"
+                    className="flex flex-col items-center gap-1 p-2.5 rounded-lg border-2 transition-all"
+                    style={{
+                      borderColor: active ? m.color : '#e2e8f0',
+                      background: active ? `${m.color}15` : '#fff',
+                      color: active ? m.color : '#64748b',
+                    }}
+                    onClick={() => { setActiveKind(m.key); setMethodId(''); setError(null); }}
+                  >
+                    {m.icon}
+                    <span className="text-[11px] font-bold">{m.label}</span>
+                    {m.methods.length > 1 ? (
+                      <span className="text-[9px] font-semibold opacity-70">{m.methods.length} {tx('accounts')}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {isCredit ? (
+              <div className="space-y-2">
+                <div className="rounded-lg border-2 border-sky-200 bg-sky-50 p-4 space-y-1.5">
+                  <div className="flex items-center gap-2 text-sky-800 font-bold text-sm">
+                    <Wallet className="h-4 w-4" /> {tx('Settle on account (credit)')}
+                  </div>
+                  <p className="text-xs text-sky-700">
+                    {tx('No money is collected now.')} {fmt(total)} {tx('is booked to the customer\'s account (AR) and stays unpaid until a payment is recorded against the invoice.')}
+                  </p>
+                </div>
+
+                {!creditEnabled ? (
+                  <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-4 space-y-2.5">
+                    <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                      <AlertTriangle className="h-4 w-4" /> {tx('No customer selected')}
+                    </div>
+                    <p className="text-xs text-amber-700">
+                      {tx('An on-account sale has to be billed to a named customer — somebody has to owe the money. Walk-in customers must pay now.')}
+                    </p>
+                    {onPickCustomer ? (
+                      <Button onClick={onPickCustomer} className="w-full bg-amber-600 hover:bg-amber-700">
+                        <UserPlus className="h-4 w-4 mr-1" /> {tx('Select customer')}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">{tx('Customer')}</span>
+                      <span className="font-bold">{customerName ?? '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">{tx('Credit limit')}</span>
+                      <span className="font-mono">{creditInfo && creditInfo.creditLimit > 0 ? fmt(creditInfo.creditLimit) : 'No limit'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">{tx('Already owing')}</span>
+                      <span className="font-mono">{fmt(creditInfo?.outstanding ?? 0)}</span>
+                    </div>
+                    {creditInfo?.available != null ? (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">{tx('Available')}</span>
+                        <span className="font-mono font-bold text-emerald-600">{fmt(creditInfo.available)}</span>
+                      </div>
+                    ) : null}
+                    <div className="flex justify-between border-t border-slate-200 pt-1.5">
+                      <span className="text-slate-500">{tx('Owing after this sale')}</span>
+                      <span className="font-mono font-bold">{fmt(balanceAfter)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {creditEnabled && creditBlockReason ? (
+                  <div className="flex items-start gap-2 rounded-lg border-2 border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0" /> {creditBlockReason}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+            <>
+            {/* Nothing configured for this kind — say what to do instead of failing on Add. */}
+            {unconfigured ? (
+              <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                  <AlertTriangle className="h-4 w-4" /> {tx('No')} {TENDER_KIND_LABEL[activeKind]?.toLowerCase()} {tx('account is set up')}
+                </div>
+                <p className="text-xs text-amber-700">
+                  A {TENDER_KIND_LABEL[activeKind]?.toLowerCase()} payment has to land in a named finance
+                  account. Ask finance to add one under Money &amp; Accounts, then connect it in Settings →
+                  Payment methods — the mode will appear here automatically.
+                </p>
+                <Link
+                  to="/settings/payment-methods"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700"
+                >
+                  <Settings2 className="h-3.5 w-3.5" /> {tx('Open Payment methods')}
+                </Link>
+              </div>
+            ) : null}
+
+            {/* Provider step — only when a kind actually has a choice to make. */}
+            {needsMethod && kindMethods.length > 1 ? (
+              <div>
+                <Label>{activeKind === 'mobile_money' ? 'Mobile money provider' : 'Account'}</Label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {kindMethods.map((m) => {
+                    const picked = selectedMethod?.id === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => { setMethodId(m.id); setError(null); }}
+                        className="rounded-full border-2 px-3 py-1.5 text-xs font-bold transition-all"
+                        style={{
+                          borderColor: picked ? activeTile?.color : '#e2e8f0',
+                          background: picked ? `${activeTile?.color}15` : '#fff',
+                          color: picked ? activeTile?.color : '#64748b',
+                        }}
+                      >
+                        {m.provider ?? m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {/* The account is configuration, not a cashier decision — show it, don't ask. */}
+            {needsMethod && selectedMethod?.accountId ? (
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{tx('Receiving account')}</span>
+                <span className="flex items-center gap-1.5 text-sm font-bold text-slate-700">
+                  {selectedMethod.accountName} · {selectedMethod.accountCode}
+                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                </span>
+              </div>
+            ) : null}
+            <div>
+              <Label>{activeKind === 'cash' ? 'Cash tendered' : 'Amount to charge'}</Label>
+              <Input
+                type="number"
+                value={tendered}
+                onChange={(e) => setTendered(e.target.value)}
+                placeholder="0"
+                className="text-right text-xl h-12 font-mono font-bold"
+                autoFocus
+                disabled={unconfigured}
+                onKeyDown={(e) => { if (e.key === 'Enter') addTender(); }}
+              />
+              {activeKind === 'store_credit' ? (
+                <div className="flex items-center gap-2 mt-2 text-xs">
+                  <span className="font-semibold text-sky-700">{tx('Available credit:')} {fmt(availableCredit)}</span>
+                  <button
+                    type="button"
+                    className="px-2.5 py-1 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-200 font-bold disabled:opacity-50"
+                    disabled={availableCredit <= 0}
+                    onClick={() => setTendered(String(Math.min(remaining, availableCredit)))}
+                  >
+                    {tx('Use max')}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            {activeKind !== 'cash' && activeKind !== 'store_credit' && !unconfigured ? (
+              <div>
+                <Label>
+                  {tx('Reference / transaction id')} {selectedMethod?.requiresReference ? '(recommended)' : '(optional)'}
+                </Label>
+                <Input
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder={selectedMethod?.provider ? `e.g. ${selectedMethod.provider.toUpperCase()}-12345` : 'e.g. MTN-12345'}
+                  className="font-mono"
+                />
+              </div>
+            ) : null}
+
+            <Button
+              onClick={addTender}
+              disabled={blockedReason != null}
+              className="w-full"
+              style={{ background: activeTile?.color }}
+            >
+              <Plus className="h-4 w-4 mr-1" /> {tx('Add')} {selectedMethod?.label ?? activeTile?.label} — {fmt(activeKind === 'cash' ? (tenderValid ? tenderNum : remaining) : Math.min(tenderValid ? tenderNum : remaining, activeKind === 'store_credit' ? Math.min(remaining, availableCredit) : remaining))}
+            </Button>
+
+            {/* Never leave a dead button unexplained. */}
+            {blockedReason ? (
+              <p className="text-center text-xs font-semibold text-slate-500">{blockedReason}</p>
+            ) : referenceWanted ? (
+              <p className="text-center text-xs text-amber-700">
+                {tx('Add the')} {selectedMethod?.label} {tx('transaction id if the customer has it — you can still take the payment without it.')}
+              </p>
+            ) : null}
+            </>
+
+            )}
+
+            {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+          </div>
+
+          {/* Right column: total + tenders + settle */}
+          <div className="bg-slate-50 border-l border-slate-200 p-4 flex flex-col">
+            <div className="text-center mb-3">
+              <div className="text-xs uppercase tracking-wider text-slate-500">{tx('Total due')}</div>
+              <div className="text-3xl font-extrabold text-slate-800 mt-1">{fmt(total)}</div>
+            </div>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between"><span>{tx('Tenders entered')}</span><span className="font-mono">{fmt(paid)}</span></div>
+              <div className="flex justify-between font-bold text-emerald-600"><span>{tx('Remaining')}</span><span className="font-mono">{fmt(remaining)}</span></div>
+              {change > 0 ? (
+                <div className="flex justify-between font-bold text-amber-600"><span>{tx('Change')}</span><span className="font-mono">{fmt(change)}</span></div>
+              ) : null}
+            </div>
+            <div className="mt-3 flex-1 overflow-y-auto space-y-1.5">
+              {tenders.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center mt-4">{tx('No tenders yet')}</p>
+              ) : tenders.map((t, i) => (
+                <div key={i} className="flex items-center justify-between bg-white rounded border border-slate-200 px-2 py-1.5 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full" style={{ background: TENDER_KIND_COLOR[t.method] }} />
+                    <span className="font-bold">{tenderLabels[i] ?? TENDER_KIND_LABEL[t.method] ?? t.method.replace('_', ' ')}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-bold">{fmt(t.amount)}</span>
+                    <button type="button" onClick={() => removeTender(i)} className="text-rose-500 hover:text-rose-700"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Optional manager override indicator (already verified upstream via parent) */}
+            {overrideId ? (
+              <div className="mt-2 text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-2 py-1">
+                {tx('✓ Manager override applied')}
+              </div>
+            ) : null}
+
+            <Button
+              onClick={isCredit ? settleOnAccount : settle}
+              disabled={busy || (isCredit ? creditBlockReason != null : !canSettle)}
+              className="w-full mt-3 h-12 text-base"
+              style={{ background: isCredit ? '#0284c7' : '#16a34a' }}
+            >
+              {busy
+                ? 'Processing…'
+                : isCredit
+                  ? <><Wallet className="h-4 w-4 mr-1" /> {tx('Charge')} {fmt(total)} {tx('to account')}</>
+                  : <><Check className="h-4 w-4 mr-1" /> {tx('Settle')} {fmt(total)}</>}
+            </Button>
+          </div>
+        </div>
+
+        <DialogFooter className="border-t border-slate-200 p-3 bg-slate-50">
+          <Button variant="ghost" onClick={onClose}>{tx('Cancel')}</Button>
+          {/* Hidden helper — if discount > 10% and no override, allow cashier to request one */}
+          {effectiveDiscountPercent > 10 && !overrideId ? (
+            <Button onClick={requestOverride} variant="outline" className="border-amber-300 text-amber-700">
+              {tx('Request manager override')}
+            </Button>
+          ) : null}
+          {/* Postpaid credit is now a payment mode ("Credit") in the method grid. */}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};

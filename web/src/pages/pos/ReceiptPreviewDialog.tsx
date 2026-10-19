@@ -1,0 +1,178 @@
+// Receipt preview + print / reprint / email actions.
+import React, { useCallback, useRef, useState } from 'react';
+import { Printer, Download, RefreshCw, X, LogOut } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { api } from '@/lib/api';
+import { toast } from 'sonner';
+import { tx } from '@/lib/i18n/tx';
+
+/** Screen-only height bounds for the preview paper (px). Long receipts scroll. */
+const PAPER_MIN_H = 320;
+const PAPER_MAX_H = 660;
+
+interface Props {
+  open: boolean;
+  invoiceId: string | null;
+  invoiceNumber?: string;
+  receiptHtml?: string;
+  onClose: () => void;
+  onVoid?: (invoiceId: string, invoiceNumber: string) => void;
+  canReprint?: boolean;
+  /** Log off the POS session — returns to the terminal PIN login screen. */
+  onLogoff?: () => void;
+}
+
+export const ReceiptPreviewDialog: React.FC<Props> = ({ open, invoiceId, invoiceNumber, receiptHtml, onClose, onVoid: _onVoid, canReprint = false, onLogoff }) => {
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'print' | 'email' | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [paperH, setPaperH] = useState<number>(PAPER_MIN_H);
+
+  // Shrink the preview paper to the receipt's real content height so short
+  // receipts don't float in a fixed 600px frame (the big blank gap). Only the
+  // same-origin HTML receipt is measurable — the PDF fallback runs in the
+  // browser's plugin viewer, whose contentDocument is empty.
+  const fitPaper = useCallback(() => {
+    if (!receiptHtml) return;
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc?.body) return;
+    const h = Math.ceil(doc.body.scrollHeight) + 2;
+    if (h > 0) setPaperH(Math.min(PAPER_MAX_H, Math.max(PAPER_MIN_H, h)));
+  }, [receiptHtml]);
+
+  const onIframeLoad = useCallback(() => fitPaper(), [fitPaper]);
+
+  // (Re)load the PDF blob URL when the dialog opens or invoiceId changes (fallback
+  // when receiptHtml isn't available).
+  React.useEffect(() => {
+    if (!open || !invoiceId || receiptHtml) {
+      if (!receiptHtml) setPdfUrl(null);
+      return;
+    }
+    let cancelled = false;
+    let url: string | null = null;
+    (async () => {
+      try {
+        const res = await api.get<Blob>(`/pos/receipts/${invoiceId}/pdf`, { responseType: 'blob' });
+        if (cancelled) return;
+        url = URL.createObjectURL(res.data);
+        setPdfUrl(url);
+      } catch (e: any) {
+        if (!cancelled) toast.error(tx('Could not load receipt PDF'));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [open, invoiceId, receiptHtml]);
+
+  const onPrint = async () => {
+    if (!invoiceId) return;
+    setBusy('print');
+    try {
+      const r = await api.post<{ ok: boolean; backend: string; message?: string }>(`/pos/receipts/${invoiceId}/print`);
+      if (r.data.ok) {
+        toast.success(r.data.backend === 'escpos' ? 'Receipt sent to printer' : r.data.message ?? 'Receipt logged (no printer)');
+      } else {
+        toast.warning(r.data.message ?? 'Printer error');
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Print failed');
+    } finally { setBusy(null); }
+  };
+
+  const onDownload = () => {
+    if (receiptHtml && invoiceNumber) {
+      const blob = new Blob([receiptHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `receipt-${invoiceNumber}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    if (!pdfUrl || !invoiceNumber) return;
+    const a = document.createElement('a');
+    a.href = pdfUrl;
+    a.download = `receipt-${invoiceNumber}.pdf`;
+    a.click();
+  };
+
+  const onReprint = async () => {
+    if (!invoiceId) return;
+    setBusy('print');
+    try {
+      const r = await api.post<{ ok: boolean; backend: string }>(`/pos/receipts/${invoiceId}/reprint`);
+      toast.success(`Re-printed via ${r.data.backend}`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Reprint failed');
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-[640px] p-0 overflow-hidden">
+        <DialogHeader className="bg-gradient-to-r from-slate-700 to-slate-900 text-white p-4">
+          <DialogTitle className="text-white text-base font-bold flex items-center gap-2">
+            <Printer className="h-4 w-4" /> {tx('Receipt')} {invoiceNumber ?? ''}
+          </DialogTitle>
+          <DialogDescription className="text-slate-300 text-xs">
+            {tx('Print, email, or download the receipt for this sale.')}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="bg-slate-200 p-4 flex justify-center">
+          {receiptHtml ? (
+            <iframe
+              ref={iframeRef}
+              srcDoc={receiptHtml}
+              title={tx('Receipt preview')}
+              className="bg-white shadow-md"
+              style={{ width: 340, height: paperH }}
+              onLoad={onIframeLoad}
+            />
+          ) : pdfUrl ? (
+            <iframe
+              ref={iframeRef}
+              src={pdfUrl}
+              title={tx('Receipt preview')}
+              className="bg-white shadow-md"
+              style={{ width: 340, height: 600 }}
+            />
+          ) : (
+            <div className="flex items-center justify-center text-slate-500 text-sm min-h-[200px]">
+              <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> {tx('Loading receipt…')}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="border-t border-slate-200 p-3 bg-slate-50 flex flex-wrap gap-2 sm:justify-between">
+          <Button variant="ghost" onClick={onClose}>
+            <X className="h-4 w-4 mr-1" /> {tx('Close')}
+          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {onLogoff && (
+              <Button variant="outline" onClick={onLogoff} title={tx('Log off this POS terminal — back to staff PIN login')} className="text-rose-700 border-rose-300 hover:bg-rose-50">
+                <LogOut className="h-4 w-4 mr-1" /> {tx('Log off')}
+              </Button>
+            )}
+            <Button variant="outline" onClick={onDownload} disabled={!pdfUrl && !receiptHtml}>
+              <Download className="h-4 w-4 mr-1" /> {receiptHtml ? 'Download HTML' : 'Download PDF'}
+            </Button>
+            {canReprint && (
+              <Button variant="outline" onClick={onReprint} disabled={busy !== null}>
+                <RefreshCw className="h-4 w-4 mr-1" /> {tx('Reprint')}
+              </Button>
+            )}
+            <Button onClick={onPrint} disabled={busy !== null} title={tx('Send to thermal printer')} style={{ background: '#16a34a' }}>
+              <Printer className="h-4 w-4 mr-1" /> {busy === 'print' ? 'Sending…' : 'Print'}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
