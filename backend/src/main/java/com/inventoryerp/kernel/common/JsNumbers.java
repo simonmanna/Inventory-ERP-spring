@@ -41,4 +41,28 @@ public final class JsNumbers {
         }
         return (int) n;
     }
+
+    /** JS {@code String(n)} for the common range: integers without ".0", otherwise the shortest repr. */
+    public static String toJsString(double n) {
+        if (Double.isNaN(n)) {
+            return "NaN";
+        }
+        if (Double.isInfinite(n)) {
+            return n > 0 ? "Infinity" : "-Infinity";
+        }
+        if (n == Math.rint(n) && Math.abs(n) < 1e21) {
+            return new java.math.BigDecimal(n).toPlainString();
+        }
+        String s = Double.toString(n);
+        if (s.contains("E")) {
+            String[] parts = s.split("E");
+            String mantissa = parts[0].endsWith(".0") ? parts[0].substring(0, parts[0].length() - 2) : parts[0];
+            int exp = Integer.parseInt(parts[1]);
+            if (exp >= -6) {
+                return new java.math.BigDecimal(s).toPlainString();
+            }
+            return mantissa + "e" + exp;
+        }
+        return s;
+    }
 }

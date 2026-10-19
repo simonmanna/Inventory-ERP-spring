@@ -8,7 +8,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | Module | Phase | Routes | Done |
 |---|---|---|---|
 | [kernel](spec/kernel.md) | P1 | 79 | 79 |
-| [core](spec/core.md) | P2 | 81 | 0 |
+| [core](spec/core.md) | P2 | 81 | 81 |
 | [accounting](spec/accounting.md) | P2 | 110 | 0 |
 | [inventory](spec/inventory.md) | P3a | 69 | 0 |
 | [invoicing](spec/invoicing.md) | P3b | 30 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **79** |
+| **total** | | **1118** | **160** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -139,87 +139,87 @@ procurement section (P4) with the procurement tables it reads.
 
 ## core
 
-- [ ] GET /api/v1/addresses — AddressController.list
-- [ ] POST /api/v1/addresses — AddressController.create
-- [ ] DELETE /api/v1/addresses/:id — AddressController.remove
-- [ ] GET /api/v1/addresses/:id — AddressController.findOne
-- [ ] PATCH /api/v1/addresses/:id — AddressController.update
-- [ ] GET /api/v1/branches — BranchController.list
-- [ ] POST /api/v1/branches — BranchController.create
-- [ ] DELETE /api/v1/branches/:id — BranchController.remove
-- [ ] GET /api/v1/branches/:id — BranchController.findOne
-- [ ] PATCH /api/v1/branches/:id — BranchController.update
-- [ ] GET /api/v1/contacts — ContactController.list
-- [ ] POST /api/v1/contacts — ContactController.create
-- [ ] DELETE /api/v1/contacts/:id — ContactController.remove
-- [ ] GET /api/v1/contacts/:id — ContactController.findOne
-- [ ] PATCH /api/v1/contacts/:id — ContactController.update
-- [ ] GET /api/v1/fiscal-periods — FiscalPeriodController.list
-- [ ] POST /api/v1/fiscal-periods — FiscalPeriodController.create
-- [ ] DELETE /api/v1/fiscal-periods/:id — FiscalPeriodController.remove
-- [ ] GET /api/v1/fiscal-periods/:id — FiscalPeriodController.findOne
-- [ ] PATCH /api/v1/fiscal-periods/:id — FiscalPeriodController.update
-- [ ] GET /api/v1/fiscal-positions — FiscalPositionController.list
-- [ ] POST /api/v1/fiscal-positions — FiscalPositionController.create
-- [ ] DELETE /api/v1/fiscal-positions/:id — FiscalPositionController.remove
-- [ ] GET /api/v1/fiscal-positions/:id — FiscalPositionController.get
-- [ ] PATCH /api/v1/fiscal-positions/:id — FiscalPositionController.update
-- [ ] PATCH /api/v1/fiscal-positions/:id/restore — FiscalPositionController.restore
-- [ ] GET /api/v1/fiscal-positions/deleted — FiscalPositionController.deleted
-- [ ] POST /api/v1/organizations/accept-invite — OrganizationsController.acceptInvite
-- [ ] POST /api/v1/organizations/bootstrap — OrganizationsController.bootstrap
-- [ ] GET /api/v1/organizations/me — OrganizationsController.me
-- [ ] PATCH /api/v1/organizations/me/branch — OrganizationsController.setMyBranch
-- [ ] PATCH /api/v1/organizations/me/settings — OrganizationsController.updateSettings
-- [ ] GET /api/v1/organizations/users — OrganizationsController.listUsers
-- [ ] PATCH /api/v1/organizations/users/:id/deactivate — OrganizationsController.deactivate
-- [ ] POST /api/v1/organizations/users/invite — OrganizationsController.invite
-- [ ] GET /api/v1/partner-categories — PartnerCategoryController.list
-- [ ] POST /api/v1/partner-categories — PartnerCategoryController.create
-- [ ] DELETE /api/v1/partner-categories/:id — PartnerCategoryController.remove
-- [ ] GET /api/v1/partner-categories/:id — PartnerCategoryController.findOne
-- [ ] PATCH /api/v1/partner-categories/:id — PartnerCategoryController.update
-- [ ] GET /api/v1/partners — PartnerController.list
-- [ ] POST /api/v1/partners — PartnerController.create
-- [ ] DELETE /api/v1/partners/:id — PartnerController.remove
-- [ ] GET /api/v1/partners/:id — PartnerController.findOne
-- [ ] PATCH /api/v1/partners/:id — PartnerController.update
-- [ ] GET /api/v1/payment-terms — PaymentTermController.list
-- [ ] POST /api/v1/payment-terms — PaymentTermController.create
-- [ ] DELETE /api/v1/payment-terms/:id — PaymentTermController.remove
-- [ ] GET /api/v1/payment-terms/:id — PaymentTermController.get
-- [ ] PATCH /api/v1/payment-terms/:id — PaymentTermController.update
-- [ ] PATCH /api/v1/payment-terms/:id/restore — PaymentTermController.restore
-- [ ] GET /api/v1/payment-terms/deleted — PaymentTermController.deleted
-- [ ] GET /api/v1/product-categories — ProductCategoryController.list
-- [ ] POST /api/v1/product-categories — ProductCategoryController.create
-- [ ] DELETE /api/v1/product-categories/:id — ProductCategoryController.remove
-- [ ] GET /api/v1/product-categories/:id — ProductCategoryController.findOne
-- [ ] PATCH /api/v1/product-categories/:id — ProductCategoryController.update
-- [ ] GET /api/v1/products — ProductController.list
-- [ ] POST /api/v1/products — ProductController.create
-- [ ] DELETE /api/v1/products/:id — ProductController.remove
-- [ ] GET /api/v1/products/:id — ProductController.findOne
-- [ ] PATCH /api/v1/products/:id — ProductController.update
-- [ ] PATCH /api/v1/products/:id/restore — ProductController.restore
-- [ ] GET /api/v1/products/resolve-barcode — ProductController.resolveBarcode
-- [ ] GET /api/v1/products/search — ProductController.search
-- [ ] GET /api/v1/taxes — TaxController.list
-- [ ] POST /api/v1/taxes — TaxController.create
-- [ ] DELETE /api/v1/taxes/:id — TaxController.remove
-- [ ] GET /api/v1/taxes/:id — TaxController.findOne
-- [ ] PATCH /api/v1/taxes/:id — TaxController.update
-- [ ] GET /api/v1/uom-categories — UomCategoryController.list
-- [ ] POST /api/v1/uom-categories — UomCategoryController.create
-- [ ] DELETE /api/v1/uom-categories/:id — UomCategoryController.remove
-- [ ] GET /api/v1/uom-categories/:id — UomCategoryController.findOne
-- [ ] PATCH /api/v1/uom-categories/:id — UomCategoryController.update
-- [ ] GET /api/v1/uoms — UomController.list
-- [ ] POST /api/v1/uoms — UomController.create
-- [ ] DELETE /api/v1/uoms/:id — UomController.remove
-- [ ] GET /api/v1/uoms/:id — UomController.findOne
-- [ ] PATCH /api/v1/uoms/:id — UomController.update
-- [ ] POST /api/v1/uoms/convert — UomController.convert
+- [x] GET /api/v1/addresses — AddressController.list
+- [x] POST /api/v1/addresses — AddressController.create
+- [x] DELETE /api/v1/addresses/:id — AddressController.remove
+- [x] GET /api/v1/addresses/:id — AddressController.findOne
+- [x] PATCH /api/v1/addresses/:id — AddressController.update
+- [x] GET /api/v1/branches — BranchController.list
+- [x] POST /api/v1/branches — BranchController.create
+- [x] DELETE /api/v1/branches/:id — BranchController.remove
+- [x] GET /api/v1/branches/:id — BranchController.findOne
+- [x] PATCH /api/v1/branches/:id — BranchController.update
+- [x] GET /api/v1/contacts — ContactController.list
+- [x] POST /api/v1/contacts — ContactController.create
+- [x] DELETE /api/v1/contacts/:id — ContactController.remove
+- [x] GET /api/v1/contacts/:id — ContactController.findOne
+- [x] PATCH /api/v1/contacts/:id — ContactController.update
+- [x] GET /api/v1/fiscal-periods — FiscalPeriodController.list
+- [x] POST /api/v1/fiscal-periods — FiscalPeriodController.create
+- [x] DELETE /api/v1/fiscal-periods/:id — FiscalPeriodController.remove
+- [x] GET /api/v1/fiscal-periods/:id — FiscalPeriodController.findOne
+- [x] PATCH /api/v1/fiscal-periods/:id — FiscalPeriodController.update
+- [x] GET /api/v1/fiscal-positions — FiscalPositionController.list
+- [x] POST /api/v1/fiscal-positions — FiscalPositionController.create
+- [x] DELETE /api/v1/fiscal-positions/:id — FiscalPositionController.remove
+- [x] GET /api/v1/fiscal-positions/:id — FiscalPositionController.get
+- [x] PATCH /api/v1/fiscal-positions/:id — FiscalPositionController.update
+- [x] PATCH /api/v1/fiscal-positions/:id/restore — FiscalPositionController.restore
+- [x] GET /api/v1/fiscal-positions/deleted — FiscalPositionController.deleted
+- [x] POST /api/v1/organizations/accept-invite — OrganizationsController.acceptInvite
+- [x] POST /api/v1/organizations/bootstrap — OrganizationsController.bootstrap
+- [x] GET /api/v1/organizations/me — OrganizationsController.me
+- [x] PATCH /api/v1/organizations/me/branch — OrganizationsController.setMyBranch
+- [x] PATCH /api/v1/organizations/me/settings — OrganizationsController.updateSettings
+- [x] GET /api/v1/organizations/users — OrganizationsController.listUsers
+- [x] PATCH /api/v1/organizations/users/:id/deactivate — OrganizationsController.deactivate
+- [x] POST /api/v1/organizations/users/invite — OrganizationsController.invite
+- [x] GET /api/v1/partner-categories — PartnerCategoryController.list
+- [x] POST /api/v1/partner-categories — PartnerCategoryController.create
+- [x] DELETE /api/v1/partner-categories/:id — PartnerCategoryController.remove
+- [x] GET /api/v1/partner-categories/:id — PartnerCategoryController.findOne
+- [x] PATCH /api/v1/partner-categories/:id — PartnerCategoryController.update
+- [x] GET /api/v1/partners — PartnerController.list
+- [x] POST /api/v1/partners — PartnerController.create
+- [x] DELETE /api/v1/partners/:id — PartnerController.remove
+- [x] GET /api/v1/partners/:id — PartnerController.findOne
+- [x] PATCH /api/v1/partners/:id — PartnerController.update
+- [x] GET /api/v1/payment-terms — PaymentTermController.list
+- [x] POST /api/v1/payment-terms — PaymentTermController.create
+- [x] DELETE /api/v1/payment-terms/:id — PaymentTermController.remove
+- [x] GET /api/v1/payment-terms/:id — PaymentTermController.get
+- [x] PATCH /api/v1/payment-terms/:id — PaymentTermController.update
+- [x] PATCH /api/v1/payment-terms/:id/restore — PaymentTermController.restore
+- [x] GET /api/v1/payment-terms/deleted — PaymentTermController.deleted
+- [x] GET /api/v1/product-categories — ProductCategoryController.list
+- [x] POST /api/v1/product-categories — ProductCategoryController.create
+- [x] DELETE /api/v1/product-categories/:id — ProductCategoryController.remove
+- [x] GET /api/v1/product-categories/:id — ProductCategoryController.findOne
+- [x] PATCH /api/v1/product-categories/:id — ProductCategoryController.update
+- [x] GET /api/v1/products — ProductController.list
+- [x] POST /api/v1/products — ProductController.create
+- [x] DELETE /api/v1/products/:id — ProductController.remove
+- [x] GET /api/v1/products/:id — ProductController.findOne
+- [x] PATCH /api/v1/products/:id — ProductController.update
+- [x] PATCH /api/v1/products/:id/restore — ProductController.restore
+- [x] GET /api/v1/products/resolve-barcode — ProductController.resolveBarcode
+- [x] GET /api/v1/products/search — ProductController.search
+- [x] GET /api/v1/taxes — TaxController.list
+- [x] POST /api/v1/taxes — TaxController.create
+- [x] DELETE /api/v1/taxes/:id — TaxController.remove
+- [x] GET /api/v1/taxes/:id — TaxController.findOne
+- [x] PATCH /api/v1/taxes/:id — TaxController.update
+- [x] GET /api/v1/uom-categories — UomCategoryController.list
+- [x] POST /api/v1/uom-categories — UomCategoryController.create
+- [x] DELETE /api/v1/uom-categories/:id — UomCategoryController.remove
+- [x] GET /api/v1/uom-categories/:id — UomCategoryController.findOne
+- [x] PATCH /api/v1/uom-categories/:id — UomCategoryController.update
+- [x] GET /api/v1/uoms — UomController.list
+- [x] POST /api/v1/uoms — UomController.create
+- [x] DELETE /api/v1/uoms/:id — UomController.remove
+- [x] GET /api/v1/uoms/:id — UomController.findOne
+- [x] PATCH /api/v1/uoms/:id — UomController.update
+- [x] POST /api/v1/uoms/convert — UomController.convert
 
 ## accounting
 

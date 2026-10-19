@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Core master data — `core`
 
 | | |
@@ -61,10 +60,34 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 - [ ] Web screens for this module work against Spring (no console errors)
 - [ ] `docs/PORT_STATUS.md` updated
 
+## Implementation notes
+
+- Generic CRUD (`BaseCrudService`) lives in `kernel/crud`: Hibernate tenant + soft-delete filters stand in
+  for the Prisma tenancy extension; `EntityPatch` applies request records like Prisma `data: dto` (an
+  explicit JSON `null` clears a column, an absent key leaves it); `QueryParams.page` reproduces
+  `PaginationDto` validation (whitelist + class-validator messages). Prisma `include`s are rendered by
+  each service (`render`), nested to-one includes ignore soft delete like Prisma.
+- Events are published after commit; product audit is fire-and-forget after commit (Nest order).
+- `CorePermissionSync` ports the boot-time permission catalog + Administrator role sync.
+
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Pending owner approval:
+
+1. **`GET /organizations/users`** omits `passwordHash`, `mfaSecret*` and `pinHash` (Nest returned full
+   `User` rows including credential hashes).
+2. **`PATCH /organizations/me/branch`, `PATCH /organizations/users/:id/deactivate`** answer
+   `404 No record was found for an update.` for an unknown user (Nest: unhandled Prisma P2025 → 500).
+3. **Bootstrap** runs the organization seed in one transaction (Nest wrote row by row; a mid-way failure
+   left a partial org).
+4. **Date-only strings** (`2026-01-01`) for `DateTime` fields are stored as UTC midnight (Prisma rejected
+   them → 500).
+5. **`PATCH /fiscal-positions/:id`, `/payment-terms/:id`** (unvalidated `Partial<>` bodies) ignore unknown
+   keys (Nest passed them to Prisma → 500 for fiscal positions).
 
 ## Status
 
-Not started.
+P2: 81/81 routes. `CoreIT` (CRUD contract, partners, products, UoM, payment terms, fiscal positions,
+bootstrap/invite, authorization matrix, tenant isolation) + `UomConversionServiceTest` (port of
+`uom-conversion.service.spec.ts`). The listed `test/integration/audit/*` specs exercise inventory/POS flows
+and are ported with P3–P5. DEMO seed UoM/products follow with the accounting seed.

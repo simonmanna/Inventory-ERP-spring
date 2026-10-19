@@ -32,6 +32,8 @@ public final class EntityJson {
         if (entity == null) {
             return null;
         }
+        // A lazy proxy (em.find of an already-referenced row) has no column fields of its own.
+        entity = org.hibernate.Hibernate.unproxy(entity);
         Map<String, Object> out = new LinkedHashMap<>();
         for (Col c : columns(entity.getClass())) {
             try {
