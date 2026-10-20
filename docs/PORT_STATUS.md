@@ -16,7 +16,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [crm](spec/crm.md) | P3c | 21 | 21 |
 | [task](spec/task.md) | P3c | 16 | 16 |
 | [documents](spec/documents.md) | P3c | 28 | 28 |
-| [procurement](spec/procurement.md) | P4 | 36 | 0 |
+| [procurement](spec/procurement.md) | P4 | 36 | 36 |
 | [pos](spec/pos.md) | P5 | 219 | 0 |
 | [sync](spec/sync.md) | P6 | 8 | 0 |
 | [backup](spec/backup.md) | P6 | 13 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **452** |
+| **total** | | **1118** | **488** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -536,42 +536,42 @@ procurement section (P4) with the procurement tables it reads.
 
 ## procurement
 
-- [ ] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
-- [ ] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
-- [ ] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
-- [ ] GET /api/v1/procurement/debit-notes — DebitNotesController.list
-- [ ] POST /api/v1/procurement/debit-notes — DebitNotesController.create
-- [ ] GET /api/v1/procurement/debit-notes/:id — DebitNotesController.findOne
-- [ ] PATCH /api/v1/procurement/debit-notes/:id/cancel — DebitNotesController.cancel
-- [ ] PATCH /api/v1/procurement/debit-notes/:id/post — DebitNotesController.post
-- [ ] GET /api/v1/procurement/goods-receipts — GoodsReceiptsController.list
-- [ ] POST /api/v1/procurement/goods-receipts — GoodsReceiptsController.createDraft
-- [ ] GET /api/v1/procurement/goods-receipts/:id — GoodsReceiptsController.findOne
-- [ ] PATCH /api/v1/procurement/goods-receipts/:id/post — GoodsReceiptsController.post
-- [ ] PATCH /api/v1/procurement/goods-receipts/:id/reverse — GoodsReceiptsController.reverse
-- [ ] POST /api/v1/procurement/goods-receipts/adhoc — GoodsReceiptsController.createAdhoc
-- [ ] GET /api/v1/procurement/landed-costs — LandedCostController.list
-- [ ] POST /api/v1/procurement/landed-costs — LandedCostController.create
-- [ ] GET /api/v1/procurement/landed-costs/:id — LandedCostController.get
-- [ ] POST /api/v1/procurement/landed-costs/:id/cancel — LandedCostController.cancel
-- [ ] POST /api/v1/procurement/landed-costs/:id/post — LandedCostController.post
-- [ ] GET /api/v1/procurement/purchase-orders — PurchaseOrdersController.list
-- [ ] POST /api/v1/procurement/purchase-orders — PurchaseOrdersController.create
-- [ ] DELETE /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.remove
-- [ ] GET /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.findOne
-- [ ] PATCH /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.update
-- [ ] POST /api/v1/procurement/purchase-orders/:id/activate — PurchaseOrdersController.activate
-- [ ] POST /api/v1/procurement/purchase-orders/:id/cancel — PurchaseOrdersController.cancel
-- [ ] POST /api/v1/procurement/purchase-orders/:id/pay — PurchaseOrdersController.pay
-- [ ] POST /api/v1/procurement/purchase-orders/:id/receive — PurchaseOrdersController.receive
-- [ ] GET /api/v1/procurement/purchase-requests — PurchaseRequestsController.list
-- [ ] POST /api/v1/procurement/purchase-requests — PurchaseRequestsController.create
-- [ ] DELETE /api/v1/procurement/purchase-requests/:id — PurchaseRequestsController.remove
-- [ ] GET /api/v1/procurement/purchase-requests/:id — PurchaseRequestsController.findOne
-- [ ] PATCH /api/v1/procurement/purchase-requests/:id/approve — PurchaseRequestsController.approve
-- [ ] PATCH /api/v1/procurement/purchase-requests/:id/reject — PurchaseRequestsController.reject
-- [ ] PATCH /api/v1/procurement/purchase-requests/:id/submit — PurchaseRequestsController.submit
-- [ ] GET /api/v1/procurement/reports/grni — GrniReconciliationController.grni
+- [x] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
+- [x] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
+- [x] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
+- [x] GET /api/v1/procurement/debit-notes — DebitNotesController.list
+- [x] POST /api/v1/procurement/debit-notes — DebitNotesController.create
+- [x] GET /api/v1/procurement/debit-notes/:id — DebitNotesController.findOne
+- [x] PATCH /api/v1/procurement/debit-notes/:id/cancel — DebitNotesController.cancel
+- [x] PATCH /api/v1/procurement/debit-notes/:id/post — DebitNotesController.post
+- [x] GET /api/v1/procurement/goods-receipts — GoodsReceiptsController.list
+- [x] POST /api/v1/procurement/goods-receipts — GoodsReceiptsController.createDraft
+- [x] GET /api/v1/procurement/goods-receipts/:id — GoodsReceiptsController.findOne
+- [x] PATCH /api/v1/procurement/goods-receipts/:id/post — GoodsReceiptsController.post
+- [x] PATCH /api/v1/procurement/goods-receipts/:id/reverse — GoodsReceiptsController.reverse
+- [x] POST /api/v1/procurement/goods-receipts/adhoc — GoodsReceiptsController.createAdhoc
+- [x] GET /api/v1/procurement/landed-costs — LandedCostController.list
+- [x] POST /api/v1/procurement/landed-costs — LandedCostController.create
+- [x] GET /api/v1/procurement/landed-costs/:id — LandedCostController.get
+- [x] POST /api/v1/procurement/landed-costs/:id/cancel — LandedCostController.cancel
+- [x] POST /api/v1/procurement/landed-costs/:id/post — LandedCostController.post
+- [x] GET /api/v1/procurement/purchase-orders — PurchaseOrdersController.list
+- [x] POST /api/v1/procurement/purchase-orders — PurchaseOrdersController.create
+- [x] DELETE /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.remove
+- [x] GET /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.findOne
+- [x] PATCH /api/v1/procurement/purchase-orders/:id — PurchaseOrdersController.update
+- [x] POST /api/v1/procurement/purchase-orders/:id/activate — PurchaseOrdersController.activate
+- [x] POST /api/v1/procurement/purchase-orders/:id/cancel — PurchaseOrdersController.cancel
+- [x] POST /api/v1/procurement/purchase-orders/:id/pay — PurchaseOrdersController.pay
+- [x] POST /api/v1/procurement/purchase-orders/:id/receive — PurchaseOrdersController.receive
+- [x] GET /api/v1/procurement/purchase-requests — PurchaseRequestsController.list
+- [x] POST /api/v1/procurement/purchase-requests — PurchaseRequestsController.create
+- [x] DELETE /api/v1/procurement/purchase-requests/:id — PurchaseRequestsController.remove
+- [x] GET /api/v1/procurement/purchase-requests/:id — PurchaseRequestsController.findOne
+- [x] PATCH /api/v1/procurement/purchase-requests/:id/approve — PurchaseRequestsController.approve
+- [x] PATCH /api/v1/procurement/purchase-requests/:id/reject — PurchaseRequestsController.reject
+- [x] PATCH /api/v1/procurement/purchase-requests/:id/submit — PurchaseRequestsController.submit
+- [x] GET /api/v1/procurement/reports/grni — GrniReconciliationController.grni
 
 ## pos
 

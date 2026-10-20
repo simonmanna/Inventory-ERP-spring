@@ -1,11 +1,10 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Procurement — `procurement`
 
 | | |
 |---|---|
 | Phase | P4 |
 | Nest source | `reference/nest-api/src/modules/procurement (+ kernel/three-way-match)` |
-| Routes | 33 — full table: [generated/procurement.md](generated/procurement.md) |
+| Routes | 36 — 33 in [generated/procurement.md](generated/procurement.md) + 3 `/procurement/three-way-match/*` (Nest `kernel/three-way-match` controller) |
 | Feature flag | always on |
 | Java package | `com.inventoryerp.procurement` |
 
@@ -27,8 +26,14 @@ Purchase requests, purchase orders, goods receipt notes (incl. ad-hoc), landed c
 
 ## Business rules to reproduce exactly
 
-1. PO status machine: draft → submitted → approved → sent → acknowledged → partially_received → received → billed → closed; cancelled; `active` for blanket orders.
-2. Receipt quantities cannot exceed ordered (tolerance per settings); posting a GRN increases stock (inventory) and credits GR/IR (GRNI).
+1. PO status as Nest drives it: `draft` (only while a `purchase_order` approval request is pending) → `active` →
+   `partially_received` → `received`; `cancelled` from anything but received / billed / closed. The other enum
+   values (`submitted`, `approved`, `sent`, ...) exist in the schema but no Nest code path sets them.
+2. Over-receipt is a hard block (no tolerance): `applyReceiptToPO` is the single writer of PO receipt status, shared
+   by `POST /purchase-orders/:id/receive` and `PATCH /goods-receipts/:id/post`. Posting a GRN stocks the warehouse
+   (Dr Stock Valuation / Cr GRNI); a PO-linked receipt is also vouchered (Dr GRNI + Dr Input Tax / Cr AP) and a cash
+   PO is settled from the caller's open till (Dr AP / Cr Cash + drawer pay-out). Ad-hoc receipts leave GRNI open for
+   the vendor bill.
 3. Landed cost only on a posted GRN; charge total > 0; allocation by value | quantity | equal; share for units still on hand raises AVCO and debits Stock Valuation; share for units already consumed is expensed to COGS; STANDARD-cost items expense the whole share; posting period must be open; code prefix `LC-`.
 4. Three-way match: bill qty/price vs GRN vs PO within tolerances; override requires `three_way_match:override`.
 
@@ -36,7 +41,9 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Events
 
-`goods_receipt.posted`, `purchase_order.*`, …
+`purchase_request.created|submitted|approved|rejected`, `purchase_order.created|received|paid|cancelled|activated`,
+`goods_receipt.posted`, `debit_note.created|posted`, `three_way_match.computed` — published fire-and-forget at the
+same points as Nest. No subscribers in this module.
 
 ## Scheduled jobs
 
@@ -48,21 +55,61 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
-- [ ] Parity scenarios `contract-tests/scenarios/procurement-*.json` — zero unexplained diffs
-- [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — none needed: services are JdbcClient SQL
+- [x] DTO records with Bean Validation mirroring class-validator rules (untyped Nest bodies stay unvalidated maps)
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
+- [ ] Parity scenarios `contract-tests/scenarios/procurement-*.json` — written, not yet run against a live Nest
+- [ ] Web screens for this module work against Spring (no console errors) — not exercised
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+_None._
+
+Same as Nest, kept on purpose:
+
+- `GET /procurement/purchase-orders?search=…` answers **500**: Nest builds `contains` filters on the
+  `paymentType` / `paymentStatus` / `status` enum columns, which Prisma rejects at validation time.
+- Posting an **inbound** debit note that is not a return-to-vendor always fails with `400 Unbalanced entry…`:
+  Nest credits AP *and* the expense line. Outbound notes and RTV (`inbound` + `returned_goods`) post normally.
+- `GET /procurement/landed-costs/:id` answers 404 when missing, while the other detail routes answer 200 with an
+  empty body (Nest returns `null`).
+- `PATCH /goods-receipts/:id/reverse` cancels the receipt's draft landed costs (autocommit) *before* the bill /
+  payment checks, so a refused reversal still leaves them cancelled.
+- Approval gates Nest calls outside `$transaction` (`checkOrRequestApproval` on GRN / debit-note post and PO
+  receive; `requestApproval` during PO create) run in their own transaction (`REQUIRES_NEW` for PO create), so the
+  approval request survives a later failure.
+- `PATCH /purchase-orders/:id` sets `expectedDeliveryDate` to `null` when the field is omitted (Nest passes
+  `null` explicitly) but leaves `description` / `notes` / `terms` untouched when omitted.
+- Business timestamps Nest sets with `new Date()` use the database clock (`clock_timestamp()`), as in every module.
 
 ## Status
 
-Not started.
+P4: 36/36 routes (33 procurement + 3 three-way-match). Services: `PurchaseRequestsService`,
+`PurchaseOrdersService` (create with approval gate, receive, `applyReceiptToPO`, `settleCashReceipt`, pay, update,
+cancel, remove, activate), `GoodsReceiptsService`, `LandedCostService` (value / quantity / equal allocation; serial,
+lot, STANDARD and AVCO layers; books lock), `DebitNotesService` (incl. RTV), `GrniReconciliationService`; the
+existing `kernel.threewaymatch.ThreeWayMatchService` got its controller.
+
+Tests: `ProcurementIT` (22 tests) ports `procurement-flow.spec.ts` (credit/cash receive GL identity, partial →
+received, over-receipt rollback, fully received, pay Dr AP / Cr Bank, overpay), `purchase-bill-matching.spec.ts`
+(partial bill, PPV, cancel releases the receipt), `supplier-payment-withholding.spec.ts`, and the purchasing cases of
+`inv-audit-purchasing` (H1-A, H1-B, H18), `inv-audit3-remediation` (P2-02 landed cost AVCO + FIFO lot),
+`inv-p0-remediation` (INV-003 concurrent GRN post), `inv-p1-integrity` (N3 ×2, INV-012),
+`inv-p2-accounting` (INV-010 GRN reversal) and `inv-readiness-remediation` (P0-2 ×2, P1-3); plus purchase
+requests, PO admin + approval gate, GRN lifecycle, debit notes incl. RTV, GRNI report, three-way match,
+receive idempotency + replay, tenant isolation and the authorization matrix (36 routes).
+
+Not ported here: `lakeview-15day.sim.spec.ts` and `lakeview-m3.sim.spec.ts` drive POS services (P5) and are skipped
+in Nest unless `SIM_RUN=1` against a `pos_stage1_*` database — port them with P5. `inv-p2-accounting` INV-011 (org-wide GL tie-out after document
+flows) is not ported: it asserts zero variance over the whole org, which the shared DEMO test org cannot guarantee.
+
+JaCoCo line coverage (full build): `procurement.application` 91.1 %, `procurement.web` 97.0 %,
+`kernel.threewaymatch` 91.7 %.
+
+Parity scenarios: `contract-tests/scenarios/procurement-purchasing.json`, `procurement-landed-cost.json` — not run
+against a live Nest yet. Web procurement screens (incl. `landed-cost-panel.tsx`) not exercised against Spring.

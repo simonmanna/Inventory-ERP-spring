@@ -1,0 +1,62 @@
+{
+  "name": "Procurement: purchase requests, purchase orders (receive / pay idempotent), goods receipts, debit notes, GRNI, three-way match",
+  "vars": {
+    "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123",
+    "k1": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a1", "k2": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a2",
+    "k3": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a3", "k4": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a4",
+    "k5": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a5", "k6": "5c1d0b6e-7a41-4a0e-9d0b-0000000000a6"
+  },
+  "steps": [
+    {"name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": {"organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}"}, "capture": {"token": "$.accessToken"}},
+    {"name": "supplier lookup", "method": "GET", "path": "/api/v1/partners?pageSize=1", "capture": {"supplier": "$.data.0.id"}},
+    {"name": "product lookup", "method": "GET", "path": "/api/v1/products?productType=stockable&pageSize=1", "capture": {"product": "$.data.0.id"}},
+    {"name": "warehouse lookup", "method": "GET", "path": "/api/v1/inventory/locations?type=warehouse", "capture": {"wh": "$.data.0.id"}},
+
+    {"name": "PR: empty lines", "method": "POST", "path": "/api/v1/procurement/purchase-requests", "body": {"lines": []}},
+    {"name": "PR: create", "method": "POST", "path": "/api/v1/procurement/purchase-requests", "body": {"description": "Parity beans", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 20, "estimatedUnitPrice": 12.5}]}, "capture": {"pr": "$.id"}},
+    {"name": "PR: approve a draft", "method": "PATCH", "path": "/api/v1/procurement/purchase-requests/{{pr}}/approve"},
+    {"name": "PR: submit", "method": "PATCH", "path": "/api/v1/procurement/purchase-requests/{{pr}}/submit"},
+    {"name": "PR: approve", "method": "PATCH", "path": "/api/v1/procurement/purchase-requests/{{pr}}/approve"},
+    {"name": "PR: delete approved", "method": "DELETE", "path": "/api/v1/procurement/purchase-requests/{{pr}}"},
+    {"name": "PR: detail", "method": "GET", "path": "/api/v1/procurement/purchase-requests/{{pr}}"},
+    {"name": "PR: list approved", "method": "GET", "path": "/api/v1/procurement/purchase-requests?status=approved"},
+
+    {"name": "PO: missing warehouse", "method": "POST", "path": "/api/v1/procurement/purchase-orders", "body": {"partnerId": "{{supplier}}", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 1, "unitPrice": 1}]}},
+    {"name": "PO: quantity below minimum", "method": "POST", "path": "/api/v1/procurement/purchase-orders", "body": {"partnerId": "{{supplier}}", "warehouseId": "{{wh}}", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 0, "unitPrice": 1}]}},
+    {"name": "PO: create credit", "method": "POST", "path": "/api/v1/procurement/purchase-orders", "body": {"partnerId": "{{supplier}}", "warehouseId": "{{wh}}", "requestId": "{{pr}}", "paymentType": "credit", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 10, "unitPrice": 100, "taxRate": 18}]}, "capture": {"po": "$.id", "poLine": "$.lines.0.id"}},
+    {"name": "PO: list", "method": "GET", "path": "/api/v1/procurement/purchase-orders?paymentType=credit&pageSize=5"},
+    {"name": "PO: list bad page", "method": "GET", "path": "/api/v1/procurement/purchase-orders?page=x"},
+    {"name": "PO: update notes", "method": "PATCH", "path": "/api/v1/procurement/purchase-orders/{{po}}", "body": {"notes": "Call before delivery"}},
+    {"name": "PO: receive without key", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/receive", "body": {"warehouseId": "{{wh}}", "lines": [{"purchaseOrderLineId": "{{poLine}}", "description": "Beans", "quantity": 4}]}},
+    {"name": "PO: over-receive", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/receive", "headers": {"Idempotency-Key": "{{k1}}"}, "body": {"warehouseId": "{{wh}}", "lines": [{"purchaseOrderLineId": "{{poLine}}", "description": "Beans", "quantity": 40}]}},
+    {"name": "PO: receive 4", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/receive", "headers": {"Idempotency-Key": "{{k2}}"}, "body": {"warehouseId": "{{wh}}", "lines": [{"purchaseOrderLineId": "{{poLine}}", "description": "Beans", "quantity": 4}]}, "capture": {"grn": "$.grn.id"}},
+    {"name": "PO: receive 4 (replay)", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/receive", "headers": {"Idempotency-Key": "{{k2}}"}, "body": {"warehouseId": "{{wh}}", "lines": [{"purchaseOrderLineId": "{{poLine}}", "description": "Beans", "quantity": 4}]}},
+    {"name": "PO: pay over balance", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/pay", "headers": {"Idempotency-Key": "{{k3}}"}, "body": {"amount": 99999, "method": "bank"}},
+    {"name": "PO: pay 100", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/pay", "headers": {"Idempotency-Key": "{{k4}}"}, "body": {"amount": 100, "method": "bank", "reference": "CHQ-PARITY"}},
+    {"name": "PO: detail", "method": "GET", "path": "/api/v1/procurement/purchase-orders/{{po}}"},
+    {"name": "PO: reverse paid receipt", "method": "PATCH", "path": "/api/v1/procurement/goods-receipts/{{grn}}/reverse", "headers": {"Idempotency-Key": "{{k5}}"}, "body": {"reason": "parity"}},
+    {"name": "PO: cancel partially received", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/cancel", "body": {"reason": "Parity cancel"}},
+    {"name": "PO: activate cancelled", "method": "POST", "path": "/api/v1/procurement/purchase-orders/{{po}}/activate"},
+    {"name": "PO: delete cancelled", "method": "DELETE", "path": "/api/v1/procurement/purchase-orders/{{po}}"},
+
+    {"name": "GRN: missing warehouse", "method": "POST", "path": "/api/v1/procurement/goods-receipts", "body": {"lines": [{"productId": "{{product}}", "description": "x", "quantity": 1}]}},
+    {"name": "GRN: draft", "method": "POST", "path": "/api/v1/procurement/goods-receipts", "body": {"partnerId": "{{supplier}}", "warehouseId": "{{wh}}", "notes": "Parity delivery", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 3, "unitCost": 7}]}, "capture": {"draft": "$.id"}},
+    {"name": "GRN: reverse a draft", "method": "PATCH", "path": "/api/v1/procurement/goods-receipts/{{draft}}/reverse", "body": {"reason": "x"}},
+    {"name": "GRN: post", "method": "PATCH", "path": "/api/v1/procurement/goods-receipts/{{draft}}/post", "headers": {"Idempotency-Key": "{{k6}}"}},
+    {"name": "GRN: detail", "method": "GET", "path": "/api/v1/procurement/goods-receipts/{{draft}}"},
+    {"name": "GRN: list posted", "method": "GET", "path": "/api/v1/procurement/goods-receipts?status=posted&pageSize=5"},
+
+    {"name": "DN: bad direction", "method": "POST", "path": "/api/v1/procurement/debit-notes", "body": {"direction": "sideways", "partnerId": "{{supplier}}", "reason": "other", "lines": [{"description": "x", "quantity": 1, "unitPrice": 1}]}},
+    {"name": "DN: outbound", "method": "POST", "path": "/api/v1/procurement/debit-notes", "body": {"direction": "outbound", "partnerId": "{{supplier}}", "reason": "price_adjustment", "lines": [{"description": "Under-billed", "quantity": 2, "unitPrice": 25}]}, "capture": {"dn": "$.id"}},
+    {"name": "DN: post outbound", "method": "PATCH", "path": "/api/v1/procurement/debit-notes/{{dn}}/post"},
+    {"name": "DN: cancel posted", "method": "PATCH", "path": "/api/v1/procurement/debit-notes/{{dn}}/cancel"},
+    {"name": "DN: inbound plain", "method": "POST", "path": "/api/v1/procurement/debit-notes", "body": {"direction": "inbound", "partnerId": "{{supplier}}", "reason": "overcharge", "lines": [{"description": "Fee", "quantity": 1, "unitPrice": 10}]}, "capture": {"dnIn": "$.id"}},
+    {"name": "DN: post inbound plain (unbalanced in Nest)", "method": "PATCH", "path": "/api/v1/procurement/debit-notes/{{dnIn}}/post"},
+    {"name": "DN: list", "method": "GET", "path": "/api/v1/procurement/debit-notes?direction=outbound"},
+
+    {"name": "GRNI report", "method": "GET", "path": "/api/v1/procurement/reports/grni?partnerId={{supplier}}"},
+    {"name": "3WM: recompute", "method": "POST", "path": "/api/v1/procurement/three-way-match/recompute/{{po}}"},
+    {"name": "3WM: list", "method": "GET", "path": "/api/v1/procurement/three-way-match?purchaseOrderId={{po}}"},
+    {"name": "3WM: validate unknown bill", "method": "POST", "path": "/api/v1/procurement/three-way-match/validate-bill/00000000-0000-0000-0000-000000000000"}
+  ]
+}

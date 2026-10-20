@@ -91,6 +91,8 @@ tasks.withType<JavaCompile> {
 tasks.withType<Test> {
     useJUnitPlatform()
     jvmArgs("-XX:+EnableDynamicAgentLoading")
+    // Application.main pins the JVM (and so the PgJDBC session TimeZone) to UTC; @SpringBootTest never runs main.
+    systemProperty("user.timezone", "UTC")
     finalizedBy(tasks.jacocoTestReport)
 }
 

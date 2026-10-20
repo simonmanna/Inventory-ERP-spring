@@ -131,7 +131,7 @@ public class ThreeWayMatchService {
         List<Object> params = new ArrayList<>(List.of(TenantContext.organizationId()));
         StringBuilder where = new StringBuilder(" \"organizationId\" = ?");
         if (status != null && !status.isEmpty()) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?::\"MatchStatus\"");
             params.add(status);
         }
         if (purchaseOrderId != null && !purchaseOrderId.isEmpty()) {

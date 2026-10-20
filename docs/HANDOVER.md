@@ -1,4 +1,4 @@
-# Handover — state after P3 (2026-10-20)
+# Handover — state after P4 (2026-10-20)
 
 Read `AGENTS.md` and `CLAUDE.md` first. This file only records where the port stands and the conventions
 and pitfalls learned so far.
@@ -10,12 +10,13 @@ and pitfalls learned so far.
 | P1 | kernel | 79/79 | merged history |
 | P2 | core, accounting | 81/81, 110/110 | `phase/P2-core-accounting` (last commit `feat(accounting): complete P2 reporting surface`) |
 | P3 | inventory, invoicing, expenses, crm, task, documents | 69, 30, 18, 21, 16, 28 — all done | `phase/P3-inventory-invoicing-crm` (branched from P2) |
-| P4 | procurement | 0/36 | next — brief `docs/phases/P4-procurement.md` |
+| P4 | procurement | 36/36 | `phase/P4-procurement` (branched from P3) |
+| P5 | pos | 0/219 | next — brief `docs/phases/P5-pos.md` |
 
-Nothing is pushed or merged. `main` does not contain P2/P3 yet; the owner decides on merge / PRs.
-`cd backend && ./gradlew build --offline` is green (255 tests, Docker required for Testcontainers).
+Nothing is pushed or merged. `main` does not contain P2/P3/P4 yet; the owner decides on merge / PRs.
+Run `cd backend && ./gradlew build --offline` (Docker required for Testcontainers) before claiming green.
 
-Totals and per-route ticks: `docs/PORT_STATUS.md` (452/1118). Per-module status, deviations and
+Totals and per-route ticks: `docs/PORT_STATUS.md` (488/1118). Per-module status, deviations and
 "same as Nest, kept on purpose" notes: `docs/spec/<module>.md`.
 
 ## Open items (not done, do not claim them)
@@ -26,10 +27,12 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (452/1118). Per-module status,
 2. **Web screens** for P3 modules not exercised against Spring.
 3. **JaCoCo ≥ 80 %** on `application` packages not measured.
 4. **Deviations awaiting owner approval**: inventory `lowStock` filter, task date-only `dueDate`, DMS A4 PDF
-   via OpenPDF (see each spec's "Deviations").
-5. Deferred Jest suites (POS / procurement / sync driven: `test/integration/audit/inv-*`, `procurement-flow`,
-   `pos-*`, `sync-*`, `purchase-bill-matching`, `supplier-payment-withholding`) — port with P4–P6.
-6. `kernel/threewaymatch/ThreeWayMatchService` exists (used by vendor-bill posting); P4 adds its HTTP routes.
+   via OpenPDF (see each spec's "Deviations"). Procurement has none, but lists Nest bugs kept on purpose
+   (PO search → 500, inbound non-RTV debit note never balances) — the owner may want those fixed after parity.
+5. Deferred Jest suites still open: POS / sync driven (`pos-*`, `sync-*`, the remaining `inv-*` POS cases) and the
+   Lakeview simulations (`test/business-simulation/*`, need POS) — port with P5–P6. The procurement ones
+   (`procurement-flow`, `purchase-bill-matching`, `supplier-payment-withholding`, purchasing cases of `inv-*`) are
+   in `ProcurementIT`.
 
 ## How the code is written (follow it)
 
@@ -88,14 +91,16 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (452/1118). Per-module status,
 
 ## Tooling notes (Windows, Git Bash)
 
+- The test JVM runs with `-Duser.timezone=UTC` (`build.gradle.kts`). `Application.main` pins UTC in production, but
+  `@SpringBootTest` never calls it; on a non-UTC host the PgJDBC session time zone then followed the host and every
+  `clock_timestamp()::timestamp(3)` was stored in local time (found in P4: GRNI `asOf` filtered out fresh receipts).
+
 - Multiple heredocs in one Bash call break the tool's quoting — write files with the Write tool or one heredoc
   per call / a Python script.
 - `tools/dms-registry/export.mjs` regenerates `backend/src/main/resources/dms/registry.json` from the Nest seed.
 
 ## Next step
 
-Start P4 (procurement) on a new branch from `phase/P3-inventory-invoicing-crm`: read
-`docs/phases/P4-procurement.md`, `docs/spec/procurement.md`, `docs/spec/generated/procurement.md`, then the Nest
-`modules/procurement` + `kernel/three-way-match` sources. Reuse `inventory.application.StockService`
-(`receiveForDocument`, `receiveFromBill`), `StockPostingService.postReceipt/postLandedCost/postReturnToSupplier`,
-`invoicing.application.BillReceiptMatcherService` and `kernel.threewaymatch.ThreeWayMatchService`.
+Start P5 (POS) on a new branch from `phase/P4-procurement`: read `docs/phases/P5-pos.md`, `docs/spec/pos.md` and
+`docs/spec/generated/pos.md`. Procurement services other modules may call: `procurement.application.*`
+(`PurchaseOrdersService`, `GoodsReceiptsService`, ...). Port the Lakeview simulations with P5.
