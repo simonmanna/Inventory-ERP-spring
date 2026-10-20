@@ -38,6 +38,43 @@ public final class SqlRows {
         return rows.isEmpty() ? null : rows.getFirst();
     }
 
+    /**
+     * A {@code SELECT *} row rendered like the Prisma row of {@code entity}: every scalar column in schema
+     * order (columns missing from the row are omitted), values normalized.
+     */
+    public static Map<String, Object> as(Class<?> entity, Map<String, Object> row) {
+        if (row == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String col : EntityJson.columnNames(entity)) {
+            if (row.containsKey(col)) {
+                out.put(col, value(row.get(col)));
+            }
+        }
+        return out;
+    }
+
+    /** Rows of {@code entity} in Prisma shape. */
+    public static List<Map<String, Object>> list(Class<?> entity, JdbcClient.StatementSpec spec) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : spec.query().listOfRows()) {
+            out.add(as(entity, row));
+        }
+        return out;
+    }
+
+    /** First row of {@code entity} in Prisma shape, or {@code null}. */
+    public static Map<String, Object> one(Class<?> entity, JdbcClient.StatementSpec spec) {
+        List<Map<String, Object>> rows = list(entity, spec);
+        return rows.isEmpty() ? null : rows.getFirst();
+    }
+
+    /** Timestamp parameter for a {@code timestamp(3)} (UTC wall clock) column. */
+    public static java.sql.Timestamp ts(Instant instant) {
+        return instant == null ? null : java.sql.Timestamp.valueOf(instant.atOffset(ZoneOffset.UTC).toLocalDateTime());
+    }
+
     public static Map<String, Object> normalize(Map<String, Object> row) {
         Map<String, Object> out = new LinkedHashMap<>();
         row.forEach((k, v) -> out.put(k, value(v)));

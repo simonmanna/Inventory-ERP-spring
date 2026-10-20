@@ -42,6 +42,46 @@ public final class JsNumbers {
         return (int) n;
     }
 
+    /** A JS number for JSON output: integral values as {@link Long} (no ".0"), others as {@link Double}. */
+    public static Number js(double n) {
+        if (!Double.isNaN(n) && !Double.isInfinite(n) && n == Math.rint(n) && Math.abs(n) < 9.007199254740992E15) {
+            return (long) n;
+        }
+        return n;
+    }
+
+    /** JS {@code Number(decimal)} for JSON output; {@code null} stays {@code null}. */
+    public static Number js(java.math.BigDecimal v) {
+        return v == null ? null : js(v.doubleValue());
+    }
+
+    /** JS {@code Math.round(v * 10^dp) / 10^dp}. */
+    public static double round(double v, int dp) {
+        double f = Math.pow(10, dp);
+        return Math.floor(v * f + 0.5) / f;
+    }
+
+    /**
+     * decimal.js {@code Decimal#toString()}: plain notation without trailing zeros, exponential when the
+     * exponent is {@code <= -7} or {@code >= 21} ("1e-7", "1.5e+21").
+     */
+    public static String dec(java.math.BigDecimal v) {
+        if (v == null) {
+            return null;
+        }
+        if (v.signum() == 0) {
+            return "0";
+        }
+        java.math.BigDecimal s = v.stripTrailingZeros();
+        int exponent = s.precision() - s.scale() - 1;
+        if (exponent <= -7 || exponent >= 21) {
+            String digits = s.unscaledValue().abs().toString();
+            String mantissa = digits.length() == 1 ? digits : digits.charAt(0) + "." + digits.substring(1);
+            return (s.signum() < 0 ? "-" : "") + mantissa + "e" + (exponent > 0 ? "+" : "") + exponent;
+        }
+        return s.toPlainString();
+    }
+
     /** JS {@code String(n)} for the common range: integers without ".0", otherwise the shortest repr. */
     public static String toJsString(double n) {
         if (Double.isNaN(n)) {

@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Accounting, treasury and cash — `accounting`
 
 | | |
@@ -58,21 +57,54 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
-- [ ] Parity scenarios `contract-tests/scenarios/accounting-*.json` — zero unexplained diffs
-- [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported (module unit specs); integration tests; authz + tenant isolation tests
+- [ ] Parity scenarios `contract-tests/scenarios/accounting-*.json` — written, not yet run against Nest
+- [ ] Web screens for this module work against Spring (no console errors) — not yet checked
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Pending owner approval:
+
+1. **`GET /reports/accounting/pos-gl-reconciliation`**: `inventory.jobCounts` values are numbers and
+   `unpostedJobs` is their sum. Nest groups with `_count: { _all: true }`, so in production each value is
+   a `{ "_all": n }` object and `unpostedJobs` becomes the string `"[object Object]00"` (the note then
+   always says every job has posted). The Jest spec mocks `_count` as a number, which is the behaviour
+   kept here.
+2. **`GET /reports/export/invoice/:id.pdf`** is rendered with OpenPDF instead of PDFKit: same text,
+   order and alignment, different bytes and font metrics. Like Nest, the id still comes from `?id=`
+   (the path segment is ignored) and a missing `id` renders the organization's first document.
+3. **Unhandled errors** (an invalid date in a report query, `to` before `from` on POS → GL
+   reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
+   development-only `error` detail text comes from Java rather than Prisma.
+
+Same as Nest, kept on purpose:
+
+- `PATCH /cash-sessions/:id/reconcile` writes `notes` as sent. The `guard_cash_session` trigger lets a
+  closed shift's notes only be appended to, so a body whose `notes` does not start with the stored notes
+  fails with 500, exactly as in Nest. Omitting `notes` keeps the stored value.
+- Re-closing a period after `reopen` answers "Nothing to close" until new revenue/expense is posted (the
+  reversal of the closing entry posts today and nets the period to zero).
+- `GET /reports/export/trial-balance.csv` keeps Nest's SQL verbatim: the entry status/date filter sits in
+  the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
+- `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
 
 ## Status
 
-Not started.
+P2: 110/110 routes. Tests: `AccountingIT` (seed, accounts, journal entries + maker-checker, period
+close/reopen/lock, journals/cost centers/currencies/mappings, authorization matrix, tenant isolation),
+`TreasuryIT` (idempotent money operations, registers, full cash-session simulation against the GL),
+`ReportingIT` (statements, detailed report, snapshots + tie-out, POS → GL reconciliation, inventory
+valuation/tie-out, CSV/PDF exports, dashboard, FX revaluation, journal_entry workflow), `TreasurySpecsIT`
+(ports of `pos-payment-method`, `cash-session` guards and the remaining `period-close`/`posting` cases),
+`AccountingUnitTest` + `AccountingSpecsTest` (ports of `posting.math`, `money-activity.taxonomy`,
+`org-dates`, `coa-template`, `accounting-invariant`, `pos-gl-reconciliation`, `session-reconciliation`,
+`currency` specs). The listed `test/business-simulation/*` and `test/integration/*` specs drive POS,
+inventory and stock-posting flows and are ported with P3–P5. Parity scenarios are written
+(`accounting-ledger`, `accounting-treasury`, `accounting-reports`) but have not been run against Nest.

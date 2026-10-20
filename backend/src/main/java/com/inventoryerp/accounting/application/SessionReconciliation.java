@@ -104,7 +104,7 @@ public class SessionReconciliation {
     }
 
     /** The shift-open observation for a provider account (object or legacy bare number). */
-    static BigDecimal[] openingObservation(Map<String, Object> session, String accountId) {
+    public static BigDecimal[] openingObservation(Map<String, Object> session, String accountId) {
         Object accounts = session.get("openingAccounts");
         JsonNode raw = accounts instanceof JsonNode n ? n.get(accountId) : null;
         if (raw == null || raw.isNull()) {
@@ -139,6 +139,13 @@ public class SessionReconciliation {
         List<Map<String, Object>> movements = SqlRows.list(jdbc.sql("SELECT * FROM \"CashMovement\" WHERE \"organizationId\" = :org"
                         + " AND \"cashSessionId\" = :sid AND \"paymentId\" IS NULL AND \"counterpartAccountId\" IN (:ids)")
                 .param("org", organizationId).param("sid", sessionId).param("ids", ids));
+        return expectations(session, ids, payments, settlements, movements);
+    }
+
+    /** The expectation formula over the shift's payments, tender settlements and drawer movements (pure). */
+    public static Map<String, Map<String, Object>> expectations(Map<String, Object> session, java.util.Collection<String> ids,
+            List<Map<String, Object>> payments, List<Map<String, Object>> settlements, List<Map<String, Object>> movements) {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
         for (String id : ids) {
             BigDecimal[] obs = openingObservation(session, id);
             BigDecimal opening = obs[0];
@@ -168,7 +175,7 @@ public class SessionReconciliation {
                 }
             }
             for (Map<String, Object> m : movements) {
-                if (!id.equals(m.get("counterpartAccountId"))) {
+                if (m.get("paymentId") != null || !id.equals(m.get("counterpartAccountId"))) {
                     continue;
                 }
                 BigDecimal drawerDelta = SqlRows.dec(m, "amount").multiply("pay_out".equals(m.get("movementType"))

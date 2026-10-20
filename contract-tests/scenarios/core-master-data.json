@@ -1,0 +1,25 @@
+{
+  "name": "Core: organizations, branches, partners, products, UoM, taxes, periods, positions, payment terms",
+  "vars": { "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123" },
+  "steps": [
+    { "name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}" }, "capture": { "token": "$.accessToken" } },
+    { "name": "organization me", "method": "GET", "path": "/api/v1/organizations/me" },
+    { "name": "branches", "method": "GET", "path": "/api/v1/branches?page=1&pageSize=50" },
+    { "name": "branch not found", "method": "GET", "path": "/api/v1/branches/00000000-0000-0000-0000-000000000000" },
+    { "name": "partners page", "method": "GET", "path": "/api/v1/partners?page=1&pageSize=5" },
+    { "name": "partners unknown query", "method": "GET", "path": "/api/v1/partners?bogus=1" },
+    { "name": "partner categories", "method": "GET", "path": "/api/v1/partner-categories" },
+    { "name": "partner: invalid body", "method": "POST", "path": "/api/v1/partners", "body": { "name": "" } },
+    { "name": "products page", "method": "GET", "path": "/api/v1/products?page=1&pageSize=5" },
+    { "name": "product search", "method": "GET", "path": "/api/v1/products/search?q=coffee" },
+    { "name": "resolve unknown barcode", "method": "GET", "path": "/api/v1/products/resolve-barcode?code=0000000000000" },
+    { "name": "product categories", "method": "GET", "path": "/api/v1/product-categories" },
+    { "name": "uom list", "method": "GET", "path": "/api/v1/uoms" },
+    { "name": "uom categories", "method": "GET", "path": "/api/v1/uom-categories" },
+    { "name": "taxes", "method": "GET", "path": "/api/v1/taxes" },
+    { "name": "fiscal periods", "method": "GET", "path": "/api/v1/fiscal-periods" },
+    { "name": "fiscal period: bad dates", "method": "POST", "path": "/api/v1/fiscal-periods", "body": { "name": "Bad", "startDate": "2030-12-31", "endDate": "2030-01-01" } },
+    { "name": "fiscal positions", "method": "GET", "path": "/api/v1/fiscal-positions" },
+    { "name": "payment terms", "method": "GET", "path": "/api/v1/payment-terms" }
+  ]
+}

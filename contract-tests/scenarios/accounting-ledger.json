@@ -1,0 +1,32 @@
+{
+  "name": "Accounting: chart of accounts, mappings, journals, journal entries, cost centers, currencies, periods",
+  "vars": { "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123" },
+  "steps": [
+    { "name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}" }, "capture": { "token": "$.accessToken" } },
+    { "name": "account categories", "method": "GET", "path": "/api/v1/account-categories" },
+    { "name": "account category usage", "method": "GET", "path": "/api/v1/account-categories/usage" },
+    { "name": "accounts tree", "method": "GET", "path": "/api/v1/accounts/tree" },
+    { "name": "bank account lookup", "method": "GET", "path": "/api/v1/accounts?search=BANK-DEFAULT", "capture": { "bank": "$.data.0.id" } },
+    { "name": "equity account lookup", "method": "GET", "path": "/api/v1/accounts?search=3100", "capture": { "equity": "$.data.0.id" } },
+    { "name": "group account lookup", "method": "GET", "path": "/api/v1/accounts?search=1000", "capture": { "group": "$.data.0.id" } },
+    { "name": "account: duplicate code", "method": "POST", "path": "/api/v1/accounts", "body": { "code": "1200", "name": "Dup", "categoryKey": "bank" } },
+    { "name": "account mappings", "method": "GET", "path": "/api/v1/account-mappings" },
+    { "name": "account mappings registry", "method": "GET", "path": "/api/v1/account-mappings/registry" },
+    { "name": "account mappings missing", "method": "GET", "path": "/api/v1/account-mappings/missing" },
+    { "name": "mapping: unknown key", "method": "PUT", "path": "/api/v1/account-mappings/not_a_key", "body": { "accountId": "{{bank}}" } },
+    { "name": "journals", "method": "GET", "path": "/api/v1/journals" },
+    { "name": "entry: unbalanced", "method": "POST", "path": "/api/v1/journal-entries", "body": { "journalCode": "GEN", "date": "2026-03-15", "lines": [ { "accountId": "{{bank}}", "debit": 10 }, { "accountId": "{{equity}}", "credit": 9 } ] } },
+    { "name": "entry: one line", "method": "POST", "path": "/api/v1/journal-entries", "body": { "journalCode": "GEN", "date": "2026-03-15", "lines": [ { "accountId": "{{bank}}", "debit": 1 } ] } },
+    { "name": "entry: group account", "method": "POST", "path": "/api/v1/journal-entries", "body": { "journalCode": "GEN", "date": "2026-03-15", "lines": [ { "accountId": "{{group}}", "debit": 1 }, { "accountId": "{{equity}}", "credit": 1 } ] } },
+    { "name": "entry: draft", "method": "POST", "path": "/api/v1/journal-entries", "body": { "journalCode": "GEN", "date": "2026-03-15", "description": "Parity capital", "lines": [ { "accountId": "{{bank}}", "debit": 500 }, { "accountId": "{{equity}}", "credit": 500 } ] }, "capture": { "draft": "$.id" } },
+    { "name": "entry: maker cannot post", "method": "POST", "path": "/api/v1/journal-entries/{{draft}}/post" },
+    { "name": "entry: detail", "method": "GET", "path": "/api/v1/journal-entries/{{draft}}" },
+    { "name": "entry: reverse a draft", "method": "POST", "path": "/api/v1/journal-entries/{{draft}}/reverse", "body": {} },
+    { "name": "entries search", "method": "GET", "path": "/api/v1/journal-entries?search=parity" },
+    { "name": "cost centers", "method": "GET", "path": "/api/v1/cost-centers" },
+    { "name": "currencies", "method": "GET", "path": "/api/v1/currencies" },
+    { "name": "currency rates", "method": "GET", "path": "/api/v1/currencies/rates" },
+    { "name": "currency rate missing", "method": "GET", "path": "/api/v1/currencies/rate?fromCode=XYZ&toCode=USD" },
+    { "name": "period close: not found", "method": "POST", "path": "/api/v1/fiscal-periods/00000000-0000-0000-0000-000000000000/close" }
+  ]
+}

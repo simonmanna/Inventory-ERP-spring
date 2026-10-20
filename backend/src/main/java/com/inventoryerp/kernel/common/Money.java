@@ -11,6 +11,24 @@ import java.util.Collection;
 public final class Money {
 
     public static final BigDecimal ZERO = BigDecimal.ZERO;
+
+    /** decimal.js default context (Prisma.Decimal): 20 significant digits, ROUND_HALF_UP. */
+    public static final java.math.MathContext DECIMAL_JS = new java.math.MathContext(20, RoundingMode.HALF_UP);
+
+    /** decimal.js {@code a.dividedBy(b)}. */
+    public static BigDecimal div(BigDecimal a, BigDecimal b) {
+        return a.divide(b, DECIMAL_JS);
+    }
+
+    /** decimal.js {@code Decimal.min}. */
+    public static BigDecimal min(BigDecimal a, BigDecimal b) {
+        return a.compareTo(b) <= 0 ? a : b;
+    }
+
+    /** decimal.js {@code Decimal.max}. */
+    public static BigDecimal max(BigDecimal a, BigDecimal b) {
+        return a.compareTo(b) >= 0 ? a : b;
+    }
     private static final BigDecimal EPSILON = new BigDecimal("0.0001");
 
     private Money() {}

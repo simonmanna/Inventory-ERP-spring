@@ -185,9 +185,12 @@ class TreasuryIT extends ApiTestSupport {
         assertThat(banking.body().has("journalEntryId")).isTrue();
         assertThat(ledger(drawer)).isEqualByComparingTo("34000");
 
-        Res reconciled = keyed(manager, "PATCH", "/cash-sessions/" + sessionId + "/reconcile", Map.of("notes", "ok"), null);
+        // Like Nest, `notes` replaces the stored value; the DB trigger only lets a closed shift's notes be appended to.
+        Res reconciled = keyed(manager, "PATCH", "/cash-sessions/" + sessionId + "/reconcile",
+                Map.of("notes", "Morning float | reconciled"), null);
         assertThat(reconciled.status()).as(reconciled.raw().body()).isEqualTo(200);
         assertThat(reconciled.body().get("status").asString()).isEqualTo("reconciled");
+        assertThat(reconciled.body().get("notes").asString()).isEqualTo("Morning float | reconciled");
 
         JsonNode history = ok(200, "GET", "/cash-sessions/history?registerId=" + registerId, null);
         assertThat(history.get("data").get(0).get("movementCount").asInt()).isEqualTo(2);

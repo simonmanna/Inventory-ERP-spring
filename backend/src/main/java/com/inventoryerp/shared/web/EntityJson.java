@@ -73,6 +73,15 @@ public final class EntityJson {
         return json == null ? null : MAPPER.readTree(json);
     }
 
+    /** Column names of an entity in schema (Prisma field) order. */
+    public static List<String> columnNames(Class<?> type) {
+        List<String> names = new ArrayList<>();
+        for (Col c : columns(type)) {
+            names.add(c.name);
+        }
+        return names;
+    }
+
     private static List<Col> columns(Class<?> type) {
         return COLUMNS.computeIfAbsent(type, t -> {
             List<Col> cols = new ArrayList<>();

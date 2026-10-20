@@ -10,6 +10,9 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Native Postgres SEQUENCE numbering per (organization, key) (port of {@code sequence.service.ts}):
@@ -36,9 +39,12 @@ public class SequenceService {
 
     private final JdbcClient jdbc;
     private final Set<String> ensured = ConcurrentHashMap.newKeySet();
+    private final TransactionTemplate outsideTx;
 
-    public SequenceService(JdbcClient jdbc) {
+    public SequenceService(JdbcClient jdbc, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
+        this.outsideTx = new TransactionTemplate(txm);
+        this.outsideTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** Remove sequences left by deleted tenants. */
@@ -79,9 +85,15 @@ public class SequenceService {
             return;
         }
         try {
-            jdbc.sql("CREATE SEQUENCE IF NOT EXISTS \"" + name + "\" INCREMENT BY 1 START WITH 1").update();
+            // Nest creates it on the raw client, outside the caller's transaction: a rollback of the business
+            // transaction must not drop a sequence this cache already considers present.
+            outsideTx.executeWithoutResult(s -> jdbc.sql("CREATE SEQUENCE IF NOT EXISTS \"" + name
+                    + "\" INCREMENT BY 1 START WITH 1").update());
         } catch (RuntimeException err) {
-            if (!String.valueOf(err.getMessage()).contains("already exists")) {
+            // Concurrent first use: Postgres can still raise "already exists" / a pg_type duplicate key.
+            String cause = String.valueOf(org.springframework.core.NestedExceptionUtils.getMostSpecificCause(err)
+                    .getMessage());
+            if (!cause.contains("already exists") && !cause.contains("duplicate key")) {
                 throw err;
             }
         }

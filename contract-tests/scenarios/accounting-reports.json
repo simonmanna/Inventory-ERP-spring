@@ -1,0 +1,30 @@
+{
+  "name": "Accounting: financial statements, controls, inventory valuation, exports, dashboard",
+  "vars": { "org": "DEMO", "email": "admin@demo.test", "password": "Admin@123" },
+  "steps": [
+    { "name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": { "organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}" }, "capture": { "token": "$.accessToken" } },
+    { "name": "bank account lookup", "method": "GET", "path": "/api/v1/accounts?search=BANK-DEFAULT", "capture": { "bank": "$.data.0.id" } },
+    { "name": "trial balance", "method": "GET", "path": "/api/v1/reports/accounting/trial-balance?from=2026-01-01&to=2026-12-31" },
+    { "name": "detailed", "method": "GET", "path": "/api/v1/reports/accounting/detailed?from=2026-01-01&to=2026-12-31" },
+    { "name": "detailed: summary for one account", "method": "GET", "path": "/api/v1/reports/accounting/detailed?summaryOnly=true&accountIds={{bank}}" },
+    { "name": "detailed: empty classification", "method": "GET", "path": "/api/v1/reports/accounting/detailed?classification=nope" },
+    { "name": "account ledger", "method": "GET", "path": "/api/v1/reports/accounting/account-ledger/{{bank}}?from=2026-01-01&to=2026-12-31" },
+    { "name": "general ledger", "method": "GET", "path": "/api/v1/reports/accounting/general-ledger?from=2026-01-01&to=2026-12-31&page=1" },
+    { "name": "profit and loss", "method": "GET", "path": "/api/v1/reports/accounting/profit-and-loss?from=2026-01-01&to=2026-12-31" },
+    { "name": "balance sheet", "method": "GET", "path": "/api/v1/reports/accounting/balance-sheet?asOf=2026-12-31" },
+    { "name": "balance sheet detailed", "method": "GET", "path": "/api/v1/reports/accounting/balance-sheet/detailed?asOf=2026-12-31" },
+    { "name": "cash flow statement", "method": "GET", "path": "/api/v1/reports/accounting/cash-flow?fromDate=2026-01-01&toDate=2026-12-31" },
+    { "name": "pos gl reconciliation", "method": "GET", "path": "/api/v1/reports/accounting/pos-gl-reconciliation?from=2026-01-01&to=2026-12-31" },
+    { "name": "inventory valuation (historical)", "method": "GET", "path": "/api/v1/reports/inventory/valuation?asOf=2026-01-31" },
+    { "name": "inventory valuation: invalid asOf", "method": "GET", "path": "/api/v1/reports/inventory/valuation?asOf=garbage" },
+    { "name": "inventory gl tie-out", "method": "GET", "path": "/api/v1/reports/inventory/gl-tieout?asOf=2026-01-31&tolerance=5" },
+    { "name": "dashboard kpi", "method": "GET", "path": "/api/v1/reports/dashboard-kpi" },
+    { "name": "dashboard activity", "method": "GET", "path": "/api/v1/reports/dashboard-activity?limit=5" },
+    { "name": "dashboard activity: unknown query", "method": "GET", "path": "/api/v1/reports/dashboard-activity?bogus=1" },
+    { "name": "export trial balance csv", "method": "GET", "path": "/api/v1/reports/export/trial-balance.csv?asOf=2026-12-31" },
+    { "name": "export ar aging csv", "method": "GET", "path": "/api/v1/reports/export/ar-aging.csv" },
+    { "name": "export invoice pdf: not found", "method": "GET", "path": "/api/v1/reports/export/invoice/x.pdf?id=00000000-0000-0000-0000-000000000000" },
+    { "name": "rebuild snapshots", "method": "POST", "path": "/api/v1/reports/accounting/rebuild-snapshots" },
+    { "name": "tieout", "method": "GET", "path": "/api/v1/reports/accounting/tieout" }
+  ]
+}
