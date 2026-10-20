@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Invoicing, payments, AR/AP — `invoicing`
 
 | | |
@@ -46,21 +45,36 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/invoicing-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+_None._
+
+Same as Nest, kept on purpose:
+
+- `GET /invoices` merges manual `Document` rows and POS `Invoice` rows; manual rows always report
+  `paymentStatus: "unpaid"` and `settlementStatus: "unsettled"` (Nest overwrites them in the merge), so the
+  `paymentStatus` / `settlementStatus` filters only ever match POS rows or those literals.
+- `GET /vendor-bills/suppliers/:partnerId/ledger` only lists bills in `draft | posted | cancelled`: a fully
+  paid bill (status `paid`) drops out while its payment stays, so the closing balance goes negative.
+- Invoicing writes `Document` / `DocumentLine` (documents module tables) through JDBC exactly where the Nest
+  services write them through Prisma; approval gates that Nest runs outside `$transaction` run in
+  `REQUIRES_NEW` so a refused request survives.
 
 ## Status
 
-Not started.
+P3b: 30/30 routes. Tests: `InvoicingIT` (invoice draft / preview / edit / post / cancel with JE reversal,
+receipts with allocations + Idempotency-Key requirement + replay + void restoring the residual, credit notes,
+vendor bills with stock-in + PURCH journal + supplier payment with withholding (2160) + supplier ledger + AP
+aging, AR reports, tenant isolation, authorization matrix = 30 routes), `TaxCalculationServiceTest` (port of
+`tax-calculation.service.spec.ts`). Parity scenario: `contract-tests/scenarios/invoicing-ar-ap.json`.

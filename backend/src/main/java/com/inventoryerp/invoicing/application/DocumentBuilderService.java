@@ -1,0 +1,321 @@
+package com.inventoryerp.invoicing.application;
+
+import static com.inventoryerp.kernel.common.Money.ZERO;
+
+import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.documents.application.DmsTypeResolver;
+import com.inventoryerp.documents.domain.Document;
+import com.inventoryerp.documents.domain.DocumentLine;
+import com.inventoryerp.invoicing.application.TaxCalculationService.LineTaxResult;
+import com.inventoryerp.invoicing.application.TaxCalculationService.TaxLike;
+import com.inventoryerp.kernel.common.Money;
+import com.inventoryerp.kernel.crud.EntityPatch;
+import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.sequence.SequenceService;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+
+/**
+ * Shared document logic for invoices, credit notes and vendor bills (port of {@code document-builder.service.ts},
+ * ADR-010): the server computes line subtotals / tax / totals and resolves the accounts each line posts to.
+ */
+@Service
+public class DocumentBuilderService {
+
+    /** One requested line ({@code DocumentLineInput}). */
+    public record LineInput(String productId, String menuItemId, String variantId, String variantName,
+            String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+            String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
+            String lineType, Boolean taxInclusive) {
+
+        public static LineInput of(String productId, String accountId, String description, BigDecimal quantity,
+                BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType) {
+            return new LineInput(productId, null, null, null, accountId, description, quantity, unitPrice,
+                    discountPercent, null, null, null, null, taxId, lineType, null);
+        }
+    }
+
+    /** Header fields ({@code DocumentHeaderInput}). Dates are ISO strings like the Nest DTOs. */
+    public record HeaderInput(String partnerId, String issueDate, String dueDate, String paymentTermId,
+            String paymentTermName, String paymentMode, String fiscalPositionId, String fiscalPositionName,
+            String invoicingJournalId, String invoicingJournalName, String salespersonId, String salespersonName,
+            String deliveryDate, String deliveryAddress, String incoterm, String incotermLocation, String sourceDocument,
+            String currencyId, BigDecimal exchangeRate, String reference, String notes, String reversedDocumentId,
+            String sourceType, String branchId) {}
+
+    /** A server-computed line. */
+    public record PreparedLine(String productId, String menuItemId, String variantId, String variantName,
+            String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+            String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
+            String lineType, BigDecimal subtotal, BigDecimal taxAmount, BigDecimal total, int lineNumber,
+            boolean taxInclusive) {
+
+        /** Shape consumed by {@link #groupForPosting}. */
+        public Map<String, Object> asRow() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("productId", productId);
+            m.put("accountId", accountId);
+            m.put("lineType", lineType);
+            m.put("subtotal", subtotal);
+            m.put("taxId", taxId);
+            m.put("taxAmount", taxAmount);
+            m.put("total", total);
+            m.put("quantity", quantity);
+            m.put("description", description);
+            return m;
+        }
+    }
+
+    /** {@code prepareLines} result. */
+    public record Totals(List<PreparedLine> prepared, BigDecimal subtotal, BigDecimal taxAmount, BigDecimal total,
+            BigDecimal discountTotal) {}
+
+    /** Accounts a document posts to. */
+    public record Grouped(String counterAccount, Map<String, BigDecimal> itemByAccount,
+            Map<String, BigDecimal> taxByAccount) {}
+
+    private final JdbcClient jdbc;
+    private final DmsTypeResolver dmsTypes;
+    private final SequenceService sequence;
+    private final TaxCalculationService tax;
+    private final AccountDeterminationService determination;
+
+    public DocumentBuilderService(JdbcClient jdbc, DmsTypeResolver dmsTypes, SequenceService sequence,
+            TaxCalculationService tax, AccountDeterminationService determination) {
+        this.jdbc = jdbc;
+        this.dmsTypes = dmsTypes;
+        this.sequence = sequence;
+        this.tax = tax;
+        this.determination = determination;
+    }
+
+    private static String org() {
+        return TenantContext.organizationId();
+    }
+
+    /** Decimal places of the organization currency (VAT lines round to it); null when unknown. */
+    private Integer currencyScale() {
+        String orgId = TenantContext.optionalOrganizationId();
+        if (orgId == null) {
+            return null;
+        }
+        String code = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(orgId)
+                .query(String.class).optional().orElse(null);
+        if (code == null) {
+            return null;
+        }
+        return jdbc.sql("SELECT \"decimalPlaces\" FROM \"Currency\" WHERE code = ?").param(code).query(Integer.class)
+                .optional().orElse(null);
+    }
+
+    /** Server-side line math: price, discount, tax engine, totals. */
+    public Totals prepareLines(List<LineInput> lines) {
+        List<PreparedLine> prepared = new ArrayList<>();
+        BigDecimal discountTotal = ZERO;
+        Integer taxScale = currencyScale();
+        int i = 0;
+        for (LineInput l : lines) {
+            i++;
+            String lineType = l.lineType() != null ? l.lineType() : "product";
+            boolean meta = !"product".equals(lineType);
+            Map<String, Object> product = null;
+            if (l.productId() != null && !meta) {
+                product = SqlRows.one(jdbc.sql("SELECT * FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " AND \"deletedAt\" IS NULL LIMIT 1").params(l.productId(), org()));
+            }
+            BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
+                    : product != null && product.get("salesPrice") != null ? (BigDecimal) product.get("salesPrice") : ZERO;
+            BigDecimal quantity = meta ? ZERO : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
+            BigDecimal gross = quantity.multiply(unitPrice);
+            String discType = l.discountType() != null ? l.discountType() : "percentage";
+            BigDecimal effectiveDiscount = "fixed_amount".equals(discType) && l.discountAmount() != null
+                    && l.discountAmount().signum() > 0
+                    ? Money.min(l.discountAmount(), gross)
+                    : gross.multiply(Money.div(l.discountPercent() != null ? l.discountPercent() : ZERO,
+                            BigDecimal.valueOf(100)));
+            BigDecimal afterDiscount = gross.subtract(effectiveDiscount);
+            discountTotal = discountTotal.add(effectiveDiscount);
+            BigDecimal effectivePct = gross.signum() > 0
+                    ? Money.div(effectiveDiscount, gross).multiply(BigDecimal.valueOf(100)) : ZERO;
+            String taxId = meta ? null : l.taxId() != null ? l.taxId() : product == null ? null : (String) product.get("taxId");
+            Map<String, Object> taxRow = taxId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"Tax\" WHERE id = ?"
+                    + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(taxId, org()));
+            boolean taxInclusive = l.taxInclusive() != null ? l.taxInclusive()
+                    : taxRow != null ? Boolean.TRUE.equals(taxRow.get("isInclusive"))
+                    : product != null && Boolean.TRUE.equals(product.get("taxInclusive"));
+            List<TaxLike> taxes = taxRow == null ? List.of() : List.of(new TaxLike((String) taxRow.get("id"),
+                    (BigDecimal) taxRow.get("rate"), taxInclusive, Boolean.TRUE.equals(taxRow.get("isCompound")),
+                    taxRow.get("type") == null ? null : taxRow.get("type").toString()));
+            LineTaxResult result = tax.computeLine(afterDiscount, taxes, taxScale);
+            String description = l.description() != null ? l.description()
+                    : product != null ? (String) product.get("name") : "Item";
+            prepared.add(new PreparedLine(l.productId(), l.menuItemId(), l.variantId(), l.variantName(), l.accountId(),
+                    description, quantity, unitPrice, effectivePct, discType, effectiveDiscount, l.discountReason(),
+                    l.discountSource() != null ? l.discountSource() : "manual", taxId, lineType, result.net(),
+                    result.taxTotal(), result.gross(), i, taxInclusive));
+        }
+        BigDecimal subtotal = Money.sum(prepared.stream().map(PreparedLine::subtotal).toList());
+        BigDecimal taxAmount = Money.sum(prepared.stream().map(PreparedLine::taxAmount).toList());
+        return new Totals(prepared, subtotal, taxAmount, subtotal.add(taxAmount), discountTotal);
+    }
+
+    /** Create a draft document (numbered per type and issue year) with its lines; returns it with lines + partner. */
+    public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
+        Totals totals = prepareLines(lines);
+        int year = EntityPatch.toInstant(h.issueDate()).atOffset(ZoneOffset.UTC).getYear();
+        String key;
+        String prefix;
+        switch (documentType) {
+            case "credit_note" -> {
+                key = "creditnote:" + year;
+                prefix = "CN-" + year + "-";
+            }
+            case "vendor_bill" -> {
+                key = "vendorbill:" + year;
+                prefix = "BILL-" + year + "-";
+            }
+            default -> {
+                key = "invoice:" + year;
+                prefix = "INV-" + year + "-";
+            }
+        }
+        String number = sequence.next(key, prefix, 6);
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\", \"documentTypeId\","
+                        + " \"partnerId\", \"currencyId\", \"exchangeRate\", \"issueDate\", \"dueDate\", \"paymentTermId\","
+                        + " \"paymentTermName\", \"paymentMode\", \"fiscalPositionId\", \"fiscalPositionName\","
+                        + " \"invoicingJournalId\", \"invoicingJournalName\", \"salespersonId\", \"salespersonName\","
+                        + " \"deliveryDate\", \"deliveryAddress\", incoterm, \"incotermLocation\", \"sourceDocument\", status,"
+                        + " reference, notes, \"reversedDocumentId\", \"sourceType\", \"branchId\", subtotal, \"discountTotal\","
+                        + " \"taxAmount\", \"totalAmount\", \"amountResidual\", \"amountPaid\", \"paymentStatus\", \"createdAt\","
+                        + " \"updatedAt\") VALUES (?, ?, ?, ?::\"DocumentType\", ?, ?, ?, ?, ?, ?, ?, ?, ?::\"InvoicePaymentMode\","
+                        + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'not_paid', "
+                        + NOW + ", " + NOW + ")")
+                .params(id, org(), number, documentType, dmsTypes.resolveIdByCode(documentType), h.partnerId(),
+                        h.currencyId(), h.exchangeRate() != null ? h.exchangeRate() : BigDecimal.ONE, ts(h.issueDate()),
+                        ts(h.dueDate()), h.paymentTermId(), h.paymentTermName(), h.paymentMode(), h.fiscalPositionId(),
+                        h.fiscalPositionName(), h.invoicingJournalId(), h.invoicingJournalName(), h.salespersonId(),
+                        h.salespersonName(), ts(h.deliveryDate()), h.deliveryAddress(), h.incoterm(), h.incotermLocation(),
+                        h.sourceDocument(), h.reference(), h.notes(), h.reversedDocumentId(), h.sourceType(), h.branchId(),
+                        totals.subtotal(), totals.discountTotal(), totals.taxAmount(), totals.total(), totals.total())
+                .update();
+        insertLines(id, totals.prepared(), true);
+        Map<String, Object> doc = document(id);
+        doc.put("lines", lines(id, false));
+        doc.put("partner", partner(doc.get("partnerId")));
+        return doc;
+    }
+
+    /** Insert prepared lines ({@code withExtras}: menuItemId / lineType / taxInclusive like {@code create}). */
+    public void insertLines(String documentId, List<PreparedLine> prepared, boolean withExtras) {
+        for (PreparedLine p : prepared) {
+            jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", \"productId\", \"menuItemId\","
+                            + " \"accountId\", description, quantity, \"unitPrice\", \"discountPercent\", \"taxId\", subtotal,"
+                            + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                    .params(UUID.randomUUID().toString(), org(), documentId, p.productId(),
+                            withExtras ? p.menuItemId() : null, p.accountId(), p.description(), p.quantity(),
+                            p.unitPrice(), p.discountPercent(), p.taxId(), p.subtotal(), p.taxAmount(), p.total(),
+                            p.lineNumber(), withExtras ? p.lineType() : "product", withExtras && p.taxInclusive())
+                    .update();
+        }
+    }
+
+    /** Resolve the counter account (AR / AP) plus income|expense and tax accounts grouped for a document. */
+    public Grouped groupForPosting(String partnerId, List<Map<String, Object>> lines, String kind, String grniAccountId) {
+        Map<String, Object> partner = SqlRows.one(jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"deletedAt\" IS NULL LIMIT 1").params(partnerId, org()));
+        boolean sales = "sales".equals(kind);
+        String counter = sales
+                ? determination.receivableAccount(partner == null ? null : (String) partner.get("receivableAccountId"))
+                : determination.payableAccount(partner == null ? null : (String) partner.get("payableAccountId"));
+        Map<String, BigDecimal> items = new LinkedHashMap<>();
+        Map<String, BigDecimal> taxes = new LinkedHashMap<>();
+        for (Map<String, Object> line : lines) {
+            Object lt = line.get("lineType");
+            if (lt != null && !"product".equals(lt.toString())) {
+                continue;
+            }
+            Map<String, Object> category = null;
+            boolean stockable = false;
+            if (line.get("productId") != null) {
+                Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT \"categoryId\", \"trackInventory\" FROM \"Product\""
+                        + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1")
+                        .params(line.get("productId"), org()));
+                if (p != null) {
+                    stockable = Boolean.TRUE.equals(p.get("trackInventory"));
+                    if (p.get("categoryId") != null) {
+                        category = SqlRows.one(jdbc.sql("SELECT * FROM \"ProductCategory\" WHERE id = ?")
+                                .param(p.get("categoryId")));
+                    }
+                }
+            }
+            String lineAccount = (String) line.get("accountId");
+            String itemAcc = sales
+                    ? determination.incomeAccount(lineAccount, category == null ? null : (String) category.get("incomeAccountId"))
+                    : stockable && grniAccountId != null ? grniAccountId
+                    : determination.expenseAccount(lineAccount,
+                            category == null ? null : (String) category.get("expenseAccountId"));
+            items.merge(itemAcc, Money.dec(line.get("subtotal")), BigDecimal::add);
+            BigDecimal taxAmount = Money.dec(line.get("taxAmount"));
+            if (line.get("taxId") != null && taxAmount.signum() != 0) {
+                Map<String, Object> t = SqlRows.one(jdbc.sql("SELECT \"accountId\", type::text AS type FROM \"Tax\" WHERE id = ?"
+                        + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(line.get("taxId"), org()));
+                if (t != null && !"withholding".equals(t.get("type"))) {
+                    String taxAcc = determination.taxAccount((String) t.get("accountId"),
+                            sales ? "tax_payable" : "tax_receivable");
+                    taxes.merge(taxAcc, taxAmount, BigDecimal::add);
+                }
+            }
+        }
+        return new Grouped(counter, items, taxes);
+    }
+
+    // ------------------------------------------------------------------ rows
+
+    static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
+
+    static java.sql.Timestamp ts(String iso) {
+        return iso == null ? null : SqlRows.ts(EntityPatch.toInstant(iso));
+    }
+
+    static java.sql.Timestamp ts(Instant i) {
+        return SqlRows.ts(i);
+    }
+
+    /** Document row (tenant scoped) or null. */
+    public Map<String, Object> document(String id) {
+        return SqlRows.one(Document.class, jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()));
+    }
+
+    /** Document row of a given type or null. */
+    public Map<String, Object> document(String id, String type) {
+        return SqlRows.one(Document.class, jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"documentType\"::text = ?").params(id, org(), type));
+    }
+
+    /** Lines of a document ({@code ordered}: by lineNumber). */
+    public List<Map<String, Object>> lines(String documentId, boolean ordered) {
+        return SqlRows.list(DocumentLine.class, jdbc.sql("SELECT * FROM \"DocumentLine\" WHERE \"documentId\" = ?"
+                + (ordered ? " ORDER BY \"lineNumber\" ASC" : "")).param(documentId));
+    }
+
+    /** Full partner row ({@code include: {partner: true}}). */
+    public Map<String, Object> partner(Object partnerId) {
+        if (partnerId == null) {
+            return null;
+        }
+        return SqlRows.one(com.inventoryerp.core.domain.Partner.class,
+                jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?").param(partnerId));
+    }
+}

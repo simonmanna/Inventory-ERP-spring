@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # CRM — `crm`
 
 | | |
@@ -43,21 +42,34 @@ consumes `invoice.created`.
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/crm-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+_None._
+
+Same as Nest, kept on purpose:
+
+- `PATCH /crm/deals/:id/stage` takes an untyped body (no DTO validation): an unknown stage fails in the
+  database cast (500).
+- `restore` audit rows use an action outside the `AuditAction` enum; the fire-and-forget audit write fails
+  and is only logged, as in Nest.
+- `GET /crm/analytics/forecast` builds prefilled month keys as `month + i + 1` without year roll-over
+  (`YYYY-13` past December); deals closing next year land in their own real key after them.
 
 ## Status
 
-Not started.
+P3c: 21/21 routes. `invoice.created` listener links the invoice to the partner's open deal (replay-safe).
+Tests: `CrmIT` (ports `crm.service.spec.ts`: create / validation / audit + outbox event, stage timeline, won →
+customer + delete guard, soft delete / restore / archived lists, `{data, meta}` paging, activities lifecycle,
+invoice link replay, analytics, tenant isolation, authorization matrix = 21 routes). Parity scenario:
+`contract-tests/scenarios/crm-pipeline.json`.

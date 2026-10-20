@@ -1,0 +1,22 @@
+{
+  "name": "Invoicing: invoices, credit notes, vendor bills, payments (idempotent), AR/AP reports",
+  "vars": {"org": "DEMO", "email": "admin@demo.test", "password": "Admin@123", "k1": "7b2e1f2d-2e66-4a7f-8b76-0000000000e1"},
+  "steps": [
+    {"name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": {"organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}"}, "capture": {"token": "$.accessToken"}},
+    {"name": "customer lookup", "method": "GET", "path": "/api/v1/partners?isCustomer=true&pageSize=1", "capture": {"customer": "$.data.0.id"}},
+    {"name": "invoices", "method": "GET", "path": "/api/v1/invoices?pageSize=5"},
+    {"name": "invoices: bad page", "method": "GET", "path": "/api/v1/invoices?page=x"},
+    {"name": "invoice: missing lines", "method": "POST", "path": "/api/v1/invoices", "body": {"partnerId": "{{customer}}", "issueDate": "2026-03-15"}},
+    {"name": "invoice: journal preview", "method": "POST", "path": "/api/v1/invoices/journal-preview", "body": {"partnerId": "{{customer}}", "issueDate": "2026-03-15", "lines": [{"description": "Parity", "quantity": 1, "unitPrice": 10}]}},
+    {"name": "credit notes", "method": "GET", "path": "/api/v1/credit-notes"},
+    {"name": "vendor bills", "method": "GET", "path": "/api/v1/vendor-bills?sort=issueDate:desc"},
+    {"name": "vendor bill: future date", "method": "POST", "path": "/api/v1/vendor-bills", "body": {"partnerId": "{{customer}}", "issueDate": "2999-01-01", "lines": [{"quantity": 1, "unitPrice": 5}]}},
+    {"name": "payment: missing key", "method": "POST", "path": "/api/v1/payments", "body": {"partnerId": "{{customer}}", "paymentDate": "2026-03-15", "amount": 1, "paymentMethod": "bank"}},
+    {"name": "payment: over-allocation", "method": "POST", "path": "/api/v1/payments", "headers": {"Idempotency-Key": "{{k1}}"}, "body": {"partnerId": "{{customer}}", "paymentDate": "2026-03-15", "amount": 1, "paymentMethod": "bank", "allocations": [{"documentId": "00000000-0000-0000-0000-000000000000", "amount": 5}]}},
+    {"name": "payments", "method": "GET", "path": "/api/v1/payments?direction=inbound"},
+    {"name": "AR aging", "method": "GET", "path": "/api/v1/reports/ar/aging"},
+    {"name": "AR customer balances", "method": "GET", "path": "/api/v1/reports/ar/customer-balances"},
+    {"name": "AR revenue by period", "method": "GET", "path": "/api/v1/reports/ar/revenue-by-period"},
+    {"name": "AP aging", "method": "GET", "path": "/api/v1/reports/ap/aging"}
+  ]
+}

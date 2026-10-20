@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Expenses — `expenses`
 
 | | |
@@ -41,21 +40,25 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/expenses-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+_None._
 
 ## Status
 
-Not started.
+P3b: 18/18 routes. Tests: `InvoicingIT#expenses` (categories CRUD + ledger validation, CREDIT expense →
+pay from bank 1200 → void, CASH expense paid on create, SoD 403 on self-approval, reject, soft delete,
+list / stats / meta / audit), `InvoicingIT#tenantIsolation`, authorization matrix = 18 routes. Money routes
+(`POST /expenses`, `/:id/pay`, `/:id/void`) require `Idempotency-Key`. Parity scenario:
+`contract-tests/scenarios/expenses-lifecycle.json`.

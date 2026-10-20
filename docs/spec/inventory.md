@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Inventory — `inventory`
 
 | | |
@@ -52,21 +51,44 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/inventory-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Pending owner approval:
+
+1. **`GET /inventory/items?lowStock=true`**: Nest passes a `Prisma.sql` fragment as a `where` field value,
+   which Prisma rejects at runtime (500). Java applies the intended filter
+   (`quantity > 0 AND minQuantity > 0 AND quantity <= minQuantity`).
+
+Same as Nest, kept on purpose:
+
+- Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation
+  includes are not filtered (Prisma's extension does not filter includes either).
+- Period-lock, negative-stock and posting-rule resolution follow `stock.service.ts` / `stock-posting.service.ts`
+  line by line; all money/qty math is `BigDecimal` with decimal.js semantics (`Money.div`, `JsNumbers.dec`).
+
+Kernel fix found while porting: `SequenceService` now creates per-org sequences outside the caller's transaction
+(Nest uses the raw client). A business rollback used to drop a freshly created sequence while the in-memory
+cache still considered it present (500 on the next `nextval`).
 
 ## Status
 
-Not started.
+P3a: 69/69 routes. Tests: `InventoryIT` (15: locations, items, ledger, stock-out / waste / adjustment / transfer
+document flows incl. approve + reverse, counts, reservations + ATP, posting rules, reports, period lock,
+idempotent replay, authorization matrix = 69 routes, tenant isolation), `InventoryUnitTest` (ports of
+`cost-resolver.spec.ts`, `stock-posting.service.spec.ts`, decimal formatting). Parity scenario:
+`contract-tests/scenarios/inventory-stock.json`.
+
+Deferred to the phase that owns the other side of the flow: the `test/integration/audit/inv-*`,
+`procurement-flow`, `pos-*` and `sync-*` Jest suites listed in the generated spec drive POS / procurement /
+sync routes (P4–P6) and are ported there.

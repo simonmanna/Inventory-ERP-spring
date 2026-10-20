@@ -9,13 +9,13 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 |---|---|---|---|
 | [kernel](spec/kernel.md) | P1 | 79 | 79 |
 | [core](spec/core.md) | P2 | 81 | 81 |
-| [accounting](spec/accounting.md) | P2 | 110 | 0 |
-| [inventory](spec/inventory.md) | P3a | 69 | 0 |
-| [invoicing](spec/invoicing.md) | P3b | 30 | 0 |
-| [expenses](spec/expenses.md) | P3b | 18 | 0 |
-| [crm](spec/crm.md) | P3c | 21 | 0 |
-| [task](spec/task.md) | P3c | 16 | 0 |
-| [documents](spec/documents.md) | P3c | 28 | 0 |
+| [accounting](spec/accounting.md) | P2 | 110 | 110 |
+| [inventory](spec/inventory.md) | P3a | 69 | 69 |
+| [invoicing](spec/invoicing.md) | P3b | 30 | 30 |
+| [expenses](spec/expenses.md) | P3b | 18 | 18 |
+| [crm](spec/crm.md) | P3c | 21 | 21 |
+| [task](spec/task.md) | P3c | 16 | 16 |
+| [documents](spec/documents.md) | P3c | 28 | 28 |
 | [procurement](spec/procurement.md) | P4 | 36 | 0 |
 | [pos](spec/pos.md) | P5 | 219 | 0 |
 | [sync](spec/sync.md) | P6 | 8 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **160** |
+| **total** | | **1118** | **452** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -223,316 +223,316 @@ procurement section (P4) with the procurement tables it reads.
 
 ## accounting
 
-- [ ] GET /api/v1/account-categories — AccountCategoryController.list
-- [ ] GET /api/v1/account-categories/:id — AccountCategoryController.findOne
-- [ ] GET /api/v1/account-categories/usage — AccountCategoryController.usage
-- [ ] GET /api/v1/account-mappings — AccountMappingController.list
-- [ ] PUT /api/v1/account-mappings/:key — AccountMappingController.set
-- [ ] GET /api/v1/account-mappings/missing — AccountMappingController.missing
-- [ ] GET /api/v1/account-mappings/registry — AccountMappingController.registry
-- [ ] GET /api/v1/accounts — AccountController.list
-- [ ] POST /api/v1/accounts — AccountController.create
-- [ ] DELETE /api/v1/accounts/:id — AccountController.remove
-- [ ] GET /api/v1/accounts/:id — AccountController.findOne
-- [ ] PATCH /api/v1/accounts/:id — AccountController.update
-- [ ] PATCH /api/v1/accounts/:id/deprecate — AccountController.deprecate
-- [ ] GET /api/v1/accounts/cash-flow — CashFlowController.listAccounts
-- [ ] POST /api/v1/accounts/cash-flow — CashFlowController.create
-- [ ] DELETE /api/v1/accounts/cash-flow/:id — CashFlowController.remove
-- [ ] PATCH /api/v1/accounts/cash-flow/:id — CashFlowController.update
-- [ ] GET /api/v1/accounts/cash-flow/:id/transactions — CashFlowController.transactions
-- [ ] GET /api/v1/accounts/cash-flow/activity — CashFlowController.activity
-- [ ] POST /api/v1/accounts/cash-flow/deposit — CashFlowController.deposit
-- [ ] GET /api/v1/accounts/cash-flow/operation-types — CashFlowController.operationTypes
-- [ ] GET /api/v1/accounts/cash-flow/overview — CashFlowController.overview
-- [ ] GET /api/v1/accounts/cash-flow/report — CashFlowController.report
-- [ ] GET /api/v1/accounts/cash-flow/transactions — CashFlowController.allTransactions
-- [ ] POST /api/v1/accounts/cash-flow/withdraw — CashFlowController.withdraw
-- [ ] GET /api/v1/accounts/pos-payment-methods — PosPaymentMethodController.list
-- [ ] POST /api/v1/accounts/pos-payment-methods — PosPaymentMethodController.create
-- [ ] DELETE /api/v1/accounts/pos-payment-methods/:id — PosPaymentMethodController.remove
-- [ ] PATCH /api/v1/accounts/pos-payment-methods/:id — PosPaymentMethodController.update
-- [ ] PATCH /api/v1/accounts/reorder — AccountController.reorder
-- [ ] GET /api/v1/accounts/tree — AccountController.tree
-- [ ] GET /api/v1/bank-accounts — TreasuryController.listBankAccounts
-- [ ] POST /api/v1/bank-accounts — TreasuryController.createBankAccount
-- [ ] DELETE /api/v1/bank-accounts/:id — TreasuryController.removeBankAccount
-- [ ] PATCH /api/v1/bank-accounts/:id — TreasuryController.updateBankAccount
-- [ ] POST /api/v1/bank-reconciliation/import — BankReconciliationController.import
-- [ ] POST /api/v1/bank-reconciliation/match — BankReconciliationController.match
-- [ ] GET /api/v1/bank-reconciliation/status — BankReconciliationController.status
-- [ ] POST /api/v1/bank-reconciliation/unmatch/:lineId — BankReconciliationController.unmatch
-- [ ] GET /api/v1/cash-registers — CashRegisterController.list
-- [ ] POST /api/v1/cash-registers — CashRegisterController.create
-- [ ] DELETE /api/v1/cash-registers/:id — CashRegisterController.remove
-- [ ] GET /api/v1/cash-registers/:id — CashRegisterController.findOne
-- [ ] PATCH /api/v1/cash-registers/:id — CashRegisterController.update
-- [ ] GET /api/v1/cash-registers/:id/drawer-balance — CashRegisterController.drawerBalance
-- [ ] GET /api/v1/cash-sessions/:id — CashSessionController.findOne
-- [ ] POST /api/v1/cash-sessions/:id/banking — CashSessionController.banking
-- [ ] GET /api/v1/cash-sessions/:id/expected — CashSessionController.expected
-- [ ] POST /api/v1/cash-sessions/:id/force-close — CashSessionController.forceClose
-- [ ] GET /api/v1/cash-sessions/:id/movements — CashSessionController.getMovements
-- [ ] PATCH /api/v1/cash-sessions/:id/reconcile — CashSessionController.reconcile
-- [ ] GET /api/v1/cash-sessions/:id/reconciliation — CashSessionController.reconciliation
-- [ ] PATCH /api/v1/cash-sessions/:id/variance — CashSessionController.updateVariance
-- [ ] POST /api/v1/cash-sessions/close — CashSessionController.close
-- [ ] GET /api/v1/cash-sessions/history — CashSessionController.history
-- [ ] POST /api/v1/cash-sessions/movement — CashSessionController.recordMovement
-- [ ] GET /api/v1/cash-sessions/open — CashSessionController.findOpen
-- [ ] POST /api/v1/cash-sessions/open — CashSessionController.open
-- [ ] POST /api/v1/cash-sessions/reconcile/daily — CashSessionController.dailyReset
-- [ ] GET /api/v1/cash-sessions/report/daily — CashSessionController.dailyReconciliation
-- [ ] GET /api/v1/cash-sessions/tender-settlements — CashSessionController.settlementHistory
-- [ ] POST /api/v1/cash-sessions/tender-settlements — CashSessionController.settleTender
-- [ ] GET /api/v1/cash-sessions/tender-settlements/sources — CashSessionController.settlementSources
-- [ ] GET /api/v1/cost-centers — CostCenterController.list
-- [ ] POST /api/v1/cost-centers — CostCenterController.create
-- [ ] DELETE /api/v1/cost-centers/:id — CostCenterController.remove
-- [ ] GET /api/v1/cost-centers/:id — CostCenterController.findOne
-- [ ] PATCH /api/v1/cost-centers/:id — CostCenterController.update
-- [ ] GET /api/v1/currencies — CurrencyController.list
-- [ ] POST /api/v1/currencies — CurrencyController.createCurrency
-- [ ] GET /api/v1/currencies/rate — CurrencyController.rateAt
-- [ ] GET /api/v1/currencies/rates — CurrencyController.rates
-- [ ] POST /api/v1/currencies/rates — CurrencyController.createRate
-- [ ] GET /api/v1/fiscal-periods — FiscalPeriodCrudController.list
-- [ ] POST /api/v1/fiscal-periods — FiscalPeriodCrudController.create
-- [ ] GET /api/v1/fiscal-periods/:id — FiscalPeriodCrudController.findOne
-- [ ] PATCH /api/v1/fiscal-periods/:id — FiscalPeriodCrudController.update
-- [ ] POST /api/v1/fiscal-periods/:id/close — PeriodCloseController.close
-- [ ] POST /api/v1/fiscal-periods/:id/lock — PeriodCloseController.lock
-- [ ] POST /api/v1/fiscal-periods/:id/reopen — PeriodCloseController.reopen
-- [ ] GET /api/v1/journal-entries — JournalEntryController.list
-- [ ] POST /api/v1/journal-entries — JournalEntryController.create
-- [ ] DELETE /api/v1/journal-entries/:id — JournalEntryController.discard
-- [ ] GET /api/v1/journal-entries/:id — JournalEntryController.findOne
-- [ ] POST /api/v1/journal-entries/:id/post — JournalEntryController.post
-- [ ] POST /api/v1/journal-entries/:id/reverse — JournalEntryController.reverse
-- [ ] GET /api/v1/journals — JournalController.list
-- [ ] POST /api/v1/journals — JournalController.create
-- [ ] DELETE /api/v1/journals/:id — JournalController.remove
-- [ ] GET /api/v1/journals/:id — JournalController.findOne
-- [ ] PATCH /api/v1/journals/:id — JournalController.update
-- [ ] GET /api/v1/reports/accounting/account-ledger/:accountId — AccountingReportingController.accountLedger
-- [ ] GET /api/v1/reports/accounting/balance-sheet — AccountingReportingController.balanceSheetReport
-- [ ] GET /api/v1/reports/accounting/balance-sheet/detailed — AccountingReportingController.balanceSheetDetailed
-- [ ] GET /api/v1/reports/accounting/cash-flow — AccountingReportingController.cashFlowReport
-- [ ] GET /api/v1/reports/accounting/detailed — AccountingReportingController.detailedReport
-- [ ] GET /api/v1/reports/accounting/general-ledger — AccountingReportingController.generalLedger
-- [ ] GET /api/v1/reports/accounting/pos-gl-reconciliation — AccountingReportingController.posGlReconciliation
-- [ ] GET /api/v1/reports/accounting/profit-and-loss — AccountingReportingController.profitAndLoss
-- [ ] POST /api/v1/reports/accounting/rebuild-snapshots — AccountingReportingController.rebuildSnapshots
-- [ ] GET /api/v1/reports/accounting/tieout — AccountingReportingController.tieout
-- [ ] GET /api/v1/reports/accounting/trial-balance — AccountingReportingController.trialBalance
-- [ ] GET /api/v1/reports/dashboard-activity — ReportsDashboardController.activity
-- [ ] GET /api/v1/reports/dashboard-kpi — ReportsDashboardController.kpi
-- [ ] GET /api/v1/reports/export/ar-aging.csv — ExportController.arAgingCsv
-- [ ] GET /api/v1/reports/export/invoice/:id.pdf — ExportController.invoicePdf
-- [ ] GET /api/v1/reports/export/trial-balance.csv — ExportController.trialBalanceCsv
-- [ ] GET /api/v1/reports/inventory/gl-tieout — InventoryValuationController.getTieOut
-- [ ] GET /api/v1/reports/inventory/valuation — InventoryValuationController.getValuation
-- [ ] POST /api/v1/treasury/transfer — TreasuryController.transfer
+- [x] GET /api/v1/account-categories — AccountCategoryController.list
+- [x] GET /api/v1/account-categories/:id — AccountCategoryController.findOne
+- [x] GET /api/v1/account-categories/usage — AccountCategoryController.usage
+- [x] GET /api/v1/account-mappings — AccountMappingController.list
+- [x] PUT /api/v1/account-mappings/:key — AccountMappingController.set
+- [x] GET /api/v1/account-mappings/missing — AccountMappingController.missing
+- [x] GET /api/v1/account-mappings/registry — AccountMappingController.registry
+- [x] GET /api/v1/accounts — AccountController.list
+- [x] POST /api/v1/accounts — AccountController.create
+- [x] DELETE /api/v1/accounts/:id — AccountController.remove
+- [x] GET /api/v1/accounts/:id — AccountController.findOne
+- [x] PATCH /api/v1/accounts/:id — AccountController.update
+- [x] PATCH /api/v1/accounts/:id/deprecate — AccountController.deprecate
+- [x] GET /api/v1/accounts/cash-flow — CashFlowController.listAccounts
+- [x] POST /api/v1/accounts/cash-flow — CashFlowController.create
+- [x] DELETE /api/v1/accounts/cash-flow/:id — CashFlowController.remove
+- [x] PATCH /api/v1/accounts/cash-flow/:id — CashFlowController.update
+- [x] GET /api/v1/accounts/cash-flow/:id/transactions — CashFlowController.transactions
+- [x] GET /api/v1/accounts/cash-flow/activity — CashFlowController.activity
+- [x] POST /api/v1/accounts/cash-flow/deposit — CashFlowController.deposit
+- [x] GET /api/v1/accounts/cash-flow/operation-types — CashFlowController.operationTypes
+- [x] GET /api/v1/accounts/cash-flow/overview — CashFlowController.overview
+- [x] GET /api/v1/accounts/cash-flow/report — CashFlowController.report
+- [x] GET /api/v1/accounts/cash-flow/transactions — CashFlowController.allTransactions
+- [x] POST /api/v1/accounts/cash-flow/withdraw — CashFlowController.withdraw
+- [x] GET /api/v1/accounts/pos-payment-methods — PosPaymentMethodController.list
+- [x] POST /api/v1/accounts/pos-payment-methods — PosPaymentMethodController.create
+- [x] DELETE /api/v1/accounts/pos-payment-methods/:id — PosPaymentMethodController.remove
+- [x] PATCH /api/v1/accounts/pos-payment-methods/:id — PosPaymentMethodController.update
+- [x] PATCH /api/v1/accounts/reorder — AccountController.reorder
+- [x] GET /api/v1/accounts/tree — AccountController.tree
+- [x] GET /api/v1/bank-accounts — TreasuryController.listBankAccounts
+- [x] POST /api/v1/bank-accounts — TreasuryController.createBankAccount
+- [x] DELETE /api/v1/bank-accounts/:id — TreasuryController.removeBankAccount
+- [x] PATCH /api/v1/bank-accounts/:id — TreasuryController.updateBankAccount
+- [x] POST /api/v1/bank-reconciliation/import — BankReconciliationController.import
+- [x] POST /api/v1/bank-reconciliation/match — BankReconciliationController.match
+- [x] GET /api/v1/bank-reconciliation/status — BankReconciliationController.status
+- [x] POST /api/v1/bank-reconciliation/unmatch/:lineId — BankReconciliationController.unmatch
+- [x] GET /api/v1/cash-registers — CashRegisterController.list
+- [x] POST /api/v1/cash-registers — CashRegisterController.create
+- [x] DELETE /api/v1/cash-registers/:id — CashRegisterController.remove
+- [x] GET /api/v1/cash-registers/:id — CashRegisterController.findOne
+- [x] PATCH /api/v1/cash-registers/:id — CashRegisterController.update
+- [x] GET /api/v1/cash-registers/:id/drawer-balance — CashRegisterController.drawerBalance
+- [x] GET /api/v1/cash-sessions/:id — CashSessionController.findOne
+- [x] POST /api/v1/cash-sessions/:id/banking — CashSessionController.banking
+- [x] GET /api/v1/cash-sessions/:id/expected — CashSessionController.expected
+- [x] POST /api/v1/cash-sessions/:id/force-close — CashSessionController.forceClose
+- [x] GET /api/v1/cash-sessions/:id/movements — CashSessionController.getMovements
+- [x] PATCH /api/v1/cash-sessions/:id/reconcile — CashSessionController.reconcile
+- [x] GET /api/v1/cash-sessions/:id/reconciliation — CashSessionController.reconciliation
+- [x] PATCH /api/v1/cash-sessions/:id/variance — CashSessionController.updateVariance
+- [x] POST /api/v1/cash-sessions/close — CashSessionController.close
+- [x] GET /api/v1/cash-sessions/history — CashSessionController.history
+- [x] POST /api/v1/cash-sessions/movement — CashSessionController.recordMovement
+- [x] GET /api/v1/cash-sessions/open — CashSessionController.findOpen
+- [x] POST /api/v1/cash-sessions/open — CashSessionController.open
+- [x] POST /api/v1/cash-sessions/reconcile/daily — CashSessionController.dailyReset
+- [x] GET /api/v1/cash-sessions/report/daily — CashSessionController.dailyReconciliation
+- [x] GET /api/v1/cash-sessions/tender-settlements — CashSessionController.settlementHistory
+- [x] POST /api/v1/cash-sessions/tender-settlements — CashSessionController.settleTender
+- [x] GET /api/v1/cash-sessions/tender-settlements/sources — CashSessionController.settlementSources
+- [x] GET /api/v1/cost-centers — CostCenterController.list
+- [x] POST /api/v1/cost-centers — CostCenterController.create
+- [x] DELETE /api/v1/cost-centers/:id — CostCenterController.remove
+- [x] GET /api/v1/cost-centers/:id — CostCenterController.findOne
+- [x] PATCH /api/v1/cost-centers/:id — CostCenterController.update
+- [x] GET /api/v1/currencies — CurrencyController.list
+- [x] POST /api/v1/currencies — CurrencyController.createCurrency
+- [x] GET /api/v1/currencies/rate — CurrencyController.rateAt
+- [x] GET /api/v1/currencies/rates — CurrencyController.rates
+- [x] POST /api/v1/currencies/rates — CurrencyController.createRate
+- [x] GET /api/v1/fiscal-periods — FiscalPeriodCrudController.list
+- [x] POST /api/v1/fiscal-periods — FiscalPeriodCrudController.create
+- [x] GET /api/v1/fiscal-periods/:id — FiscalPeriodCrudController.findOne
+- [x] PATCH /api/v1/fiscal-periods/:id — FiscalPeriodCrudController.update
+- [x] POST /api/v1/fiscal-periods/:id/close — PeriodCloseController.close
+- [x] POST /api/v1/fiscal-periods/:id/lock — PeriodCloseController.lock
+- [x] POST /api/v1/fiscal-periods/:id/reopen — PeriodCloseController.reopen
+- [x] GET /api/v1/journal-entries — JournalEntryController.list
+- [x] POST /api/v1/journal-entries — JournalEntryController.create
+- [x] DELETE /api/v1/journal-entries/:id — JournalEntryController.discard
+- [x] GET /api/v1/journal-entries/:id — JournalEntryController.findOne
+- [x] POST /api/v1/journal-entries/:id/post — JournalEntryController.post
+- [x] POST /api/v1/journal-entries/:id/reverse — JournalEntryController.reverse
+- [x] GET /api/v1/journals — JournalController.list
+- [x] POST /api/v1/journals — JournalController.create
+- [x] DELETE /api/v1/journals/:id — JournalController.remove
+- [x] GET /api/v1/journals/:id — JournalController.findOne
+- [x] PATCH /api/v1/journals/:id — JournalController.update
+- [x] GET /api/v1/reports/accounting/account-ledger/:accountId — AccountingReportingController.accountLedger
+- [x] GET /api/v1/reports/accounting/balance-sheet — AccountingReportingController.balanceSheetReport
+- [x] GET /api/v1/reports/accounting/balance-sheet/detailed — AccountingReportingController.balanceSheetDetailed
+- [x] GET /api/v1/reports/accounting/cash-flow — AccountingReportingController.cashFlowReport
+- [x] GET /api/v1/reports/accounting/detailed — AccountingReportingController.detailedReport
+- [x] GET /api/v1/reports/accounting/general-ledger — AccountingReportingController.generalLedger
+- [x] GET /api/v1/reports/accounting/pos-gl-reconciliation — AccountingReportingController.posGlReconciliation
+- [x] GET /api/v1/reports/accounting/profit-and-loss — AccountingReportingController.profitAndLoss
+- [x] POST /api/v1/reports/accounting/rebuild-snapshots — AccountingReportingController.rebuildSnapshots
+- [x] GET /api/v1/reports/accounting/tieout — AccountingReportingController.tieout
+- [x] GET /api/v1/reports/accounting/trial-balance — AccountingReportingController.trialBalance
+- [x] GET /api/v1/reports/dashboard-activity — ReportsDashboardController.activity
+- [x] GET /api/v1/reports/dashboard-kpi — ReportsDashboardController.kpi
+- [x] GET /api/v1/reports/export/ar-aging.csv — ExportController.arAgingCsv
+- [x] GET /api/v1/reports/export/invoice/:id.pdf — ExportController.invoicePdf
+- [x] GET /api/v1/reports/export/trial-balance.csv — ExportController.trialBalanceCsv
+- [x] GET /api/v1/reports/inventory/gl-tieout — InventoryValuationController.getTieOut
+- [x] GET /api/v1/reports/inventory/valuation — InventoryValuationController.getValuation
+- [x] POST /api/v1/treasury/transfer — TreasuryController.transfer
 
 ## inventory
 
-- [ ] GET /api/v1/inventory/adjustments — InventoryController.listAdjustments
-- [ ] POST /api/v1/inventory/adjustments — InventoryController.createAdjustment
-- [ ] POST /api/v1/inventory/adjustments/:id/approve — InventoryController.approveAdjustment
-- [ ] POST /api/v1/inventory/adjustments/:id/cancel — InventoryController.cancelAdjustment
-- [ ] POST /api/v1/inventory/adjustments/:id/reverse — InventoryController.reverseAdjustment
-- [ ] GET /api/v1/inventory/counts — InventoryCountController.list
-- [ ] GET /api/v1/inventory/counts/:id — InventoryCountController.get
-- [ ] POST /api/v1/inventory/counts/:id/cancel — InventoryCountController.cancel
-- [ ] PATCH /api/v1/inventory/counts/:id/draft — InventoryCountController.saveDraft
-- [ ] GET /api/v1/inventory/counts/:id/review — InventoryCountController.review
-- [ ] POST /api/v1/inventory/counts/:id/submit — InventoryCountController.submit
-- [ ] GET /api/v1/inventory/counts/preview — InventoryCountController.preview
-- [ ] POST /api/v1/inventory/counts/start — InventoryCountController.start
-- [ ] POST /api/v1/inventory/direct-stock/in — InventoryController.directStockIn
-- [ ] POST /api/v1/inventory/direct-stock/out — InventoryController.directStockOut
-- [ ] GET /api/v1/inventory/items — InventoryController.listItems
-- [ ] GET /api/v1/inventory/items/:productId — InventoryController.itemDetail
-- [ ] GET /api/v1/inventory/ledger — InventoryController.ledger
-- [ ] GET /api/v1/inventory/ledger/:id — InventoryController.ledgerEntry
-- [ ] GET /api/v1/inventory/locations — InventoryController.listLocations
-- [ ] POST /api/v1/inventory/locations — InventoryController.createLocation
-- [ ] DELETE /api/v1/inventory/locations/:id — InventoryController.removeLocation
-- [ ] GET /api/v1/inventory/locations/:id — InventoryController.findLocation
-- [ ] PATCH /api/v1/inventory/locations/:id — InventoryController.updateLocation
-- [ ] GET /api/v1/inventory/posting-rules — PostingRuleController.list
-- [ ] POST /api/v1/inventory/posting-rules — PostingRuleController.create
-- [ ] DELETE /api/v1/inventory/posting-rules/:id — PostingRuleController.remove
-- [ ] PATCH /api/v1/inventory/posting-rules/:id — PostingRuleController.update
-- [ ] GET /api/v1/inventory/posting-rules/movement-types — PostingRuleController.movementTypes
-- [ ] GET /api/v1/inventory/posting-rules/overview — PostingRuleController.overview
-- [ ] GET /api/v1/inventory/posting-rules/resolve-preview — PostingRuleController.resolvePreview
-- [ ] POST /api/v1/inventory/posting-rules/restore-defaults — PostingRuleController.restoreDefaults
-- [ ] GET /api/v1/inventory/product-stock-levels — InventoryController.productStockLevels
-- [ ] GET /api/v1/inventory/reports/expiring — InventoryController.expiring
-- [ ] GET /api/v1/inventory/reports/item-movements — InventoryController.itemMovements
-- [ ] GET /api/v1/inventory/reports/movement-analysis — InventoryController.movementAnalysis
-- [ ] GET /api/v1/inventory/reports/movements — InventoryController.movements
-- [ ] GET /api/v1/inventory/reports/negative-stock — InventoryController.negativeStock
-- [ ] GET /api/v1/inventory/reports/reconciliation — InventoryController.reconciliation
-- [ ] GET /api/v1/inventory/reports/register/:kind — InventoryController.movementRegister
-- [ ] GET /api/v1/inventory/reports/reorder — InventoryController.reorder
-- [ ] GET /api/v1/inventory/reports/stock-health — InventoryController.stockHealth
-- [ ] GET /api/v1/inventory/reports/valuation — InventoryController.valuation
-- [ ] GET /api/v1/inventory/reservations — StockReservationController.list
-- [ ] POST /api/v1/inventory/reservations — StockReservationController.reserve
-- [ ] GET /api/v1/inventory/reservations/atp — StockReservationController.atp
-- [ ] POST /api/v1/inventory/reservations/consume — StockReservationController.consume
-- [ ] POST /api/v1/inventory/reservations/release — StockReservationController.release
-- [ ] GET /api/v1/inventory/stats — InventoryController.stats
-- [ ] GET /api/v1/inventory/stock-outs — InventoryController.listStockOuts
-- [ ] POST /api/v1/inventory/stock-outs — InventoryController.createStockOut
-- [ ] POST /api/v1/inventory/stock-outs/:id/approve — InventoryController.approveStockOut
-- [ ] POST /api/v1/inventory/stock-outs/:id/reverse — InventoryController.reverseStockOut
-- [ ] GET /api/v1/inventory/transfers — InventoryController.listTransfers
-- [ ] POST /api/v1/inventory/transfers — InventoryController.createTransfer
-- [ ] GET /api/v1/inventory/transfers/:id — InventoryController.getTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/approve — InventoryController.approveTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/cancel — InventoryController.cancelTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/dispatch — InventoryController.dispatchTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/recall — InventoryController.recallTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/receive — InventoryController.receiveTransfer
-- [ ] POST /api/v1/inventory/transfers/:id/reverse — InventoryController.reverseTransfer
-- [ ] GET /api/v1/inventory/waste — InventoryController.listWaste
-- [ ] POST /api/v1/inventory/waste — InventoryController.createWaste
-- [ ] GET /api/v1/inventory/waste/:id — InventoryController.getWaste
-- [ ] POST /api/v1/inventory/waste/:id/approve — InventoryController.approveWaste
-- [ ] POST /api/v1/inventory/waste/:id/cancel — InventoryController.cancelWaste
-- [ ] POST /api/v1/inventory/waste/:id/reverse — InventoryController.reverseWaste
-- [ ] GET /api/v1/inventory/waste/summary — InventoryController.wasteSummary
+- [x] GET /api/v1/inventory/adjustments — InventoryController.listAdjustments
+- [x] POST /api/v1/inventory/adjustments — InventoryController.createAdjustment
+- [x] POST /api/v1/inventory/adjustments/:id/approve — InventoryController.approveAdjustment
+- [x] POST /api/v1/inventory/adjustments/:id/cancel — InventoryController.cancelAdjustment
+- [x] POST /api/v1/inventory/adjustments/:id/reverse — InventoryController.reverseAdjustment
+- [x] GET /api/v1/inventory/counts — InventoryCountController.list
+- [x] GET /api/v1/inventory/counts/:id — InventoryCountController.get
+- [x] POST /api/v1/inventory/counts/:id/cancel — InventoryCountController.cancel
+- [x] PATCH /api/v1/inventory/counts/:id/draft — InventoryCountController.saveDraft
+- [x] GET /api/v1/inventory/counts/:id/review — InventoryCountController.review
+- [x] POST /api/v1/inventory/counts/:id/submit — InventoryCountController.submit
+- [x] GET /api/v1/inventory/counts/preview — InventoryCountController.preview
+- [x] POST /api/v1/inventory/counts/start — InventoryCountController.start
+- [x] POST /api/v1/inventory/direct-stock/in — InventoryController.directStockIn
+- [x] POST /api/v1/inventory/direct-stock/out — InventoryController.directStockOut
+- [x] GET /api/v1/inventory/items — InventoryController.listItems
+- [x] GET /api/v1/inventory/items/:productId — InventoryController.itemDetail
+- [x] GET /api/v1/inventory/ledger — InventoryController.ledger
+- [x] GET /api/v1/inventory/ledger/:id — InventoryController.ledgerEntry
+- [x] GET /api/v1/inventory/locations — InventoryController.listLocations
+- [x] POST /api/v1/inventory/locations — InventoryController.createLocation
+- [x] DELETE /api/v1/inventory/locations/:id — InventoryController.removeLocation
+- [x] GET /api/v1/inventory/locations/:id — InventoryController.findLocation
+- [x] PATCH /api/v1/inventory/locations/:id — InventoryController.updateLocation
+- [x] GET /api/v1/inventory/posting-rules — PostingRuleController.list
+- [x] POST /api/v1/inventory/posting-rules — PostingRuleController.create
+- [x] DELETE /api/v1/inventory/posting-rules/:id — PostingRuleController.remove
+- [x] PATCH /api/v1/inventory/posting-rules/:id — PostingRuleController.update
+- [x] GET /api/v1/inventory/posting-rules/movement-types — PostingRuleController.movementTypes
+- [x] GET /api/v1/inventory/posting-rules/overview — PostingRuleController.overview
+- [x] GET /api/v1/inventory/posting-rules/resolve-preview — PostingRuleController.resolvePreview
+- [x] POST /api/v1/inventory/posting-rules/restore-defaults — PostingRuleController.restoreDefaults
+- [x] GET /api/v1/inventory/product-stock-levels — InventoryController.productStockLevels
+- [x] GET /api/v1/inventory/reports/expiring — InventoryController.expiring
+- [x] GET /api/v1/inventory/reports/item-movements — InventoryController.itemMovements
+- [x] GET /api/v1/inventory/reports/movement-analysis — InventoryController.movementAnalysis
+- [x] GET /api/v1/inventory/reports/movements — InventoryController.movements
+- [x] GET /api/v1/inventory/reports/negative-stock — InventoryController.negativeStock
+- [x] GET /api/v1/inventory/reports/reconciliation — InventoryController.reconciliation
+- [x] GET /api/v1/inventory/reports/register/:kind — InventoryController.movementRegister
+- [x] GET /api/v1/inventory/reports/reorder — InventoryController.reorder
+- [x] GET /api/v1/inventory/reports/stock-health — InventoryController.stockHealth
+- [x] GET /api/v1/inventory/reports/valuation — InventoryController.valuation
+- [x] GET /api/v1/inventory/reservations — StockReservationController.list
+- [x] POST /api/v1/inventory/reservations — StockReservationController.reserve
+- [x] GET /api/v1/inventory/reservations/atp — StockReservationController.atp
+- [x] POST /api/v1/inventory/reservations/consume — StockReservationController.consume
+- [x] POST /api/v1/inventory/reservations/release — StockReservationController.release
+- [x] GET /api/v1/inventory/stats — InventoryController.stats
+- [x] GET /api/v1/inventory/stock-outs — InventoryController.listStockOuts
+- [x] POST /api/v1/inventory/stock-outs — InventoryController.createStockOut
+- [x] POST /api/v1/inventory/stock-outs/:id/approve — InventoryController.approveStockOut
+- [x] POST /api/v1/inventory/stock-outs/:id/reverse — InventoryController.reverseStockOut
+- [x] GET /api/v1/inventory/transfers — InventoryController.listTransfers
+- [x] POST /api/v1/inventory/transfers — InventoryController.createTransfer
+- [x] GET /api/v1/inventory/transfers/:id — InventoryController.getTransfer
+- [x] POST /api/v1/inventory/transfers/:id/approve — InventoryController.approveTransfer
+- [x] POST /api/v1/inventory/transfers/:id/cancel — InventoryController.cancelTransfer
+- [x] POST /api/v1/inventory/transfers/:id/dispatch — InventoryController.dispatchTransfer
+- [x] POST /api/v1/inventory/transfers/:id/recall — InventoryController.recallTransfer
+- [x] POST /api/v1/inventory/transfers/:id/receive — InventoryController.receiveTransfer
+- [x] POST /api/v1/inventory/transfers/:id/reverse — InventoryController.reverseTransfer
+- [x] GET /api/v1/inventory/waste — InventoryController.listWaste
+- [x] POST /api/v1/inventory/waste — InventoryController.createWaste
+- [x] GET /api/v1/inventory/waste/:id — InventoryController.getWaste
+- [x] POST /api/v1/inventory/waste/:id/approve — InventoryController.approveWaste
+- [x] POST /api/v1/inventory/waste/:id/cancel — InventoryController.cancelWaste
+- [x] POST /api/v1/inventory/waste/:id/reverse — InventoryController.reverseWaste
+- [x] GET /api/v1/inventory/waste/summary — InventoryController.wasteSummary
 
 ## invoicing
 
-- [ ] GET /api/v1/credit-notes — CreditNoteController.list
-- [ ] POST /api/v1/credit-notes — CreditNoteController.create
-- [ ] GET /api/v1/credit-notes/:id — CreditNoteController.findOne
-- [ ] POST /api/v1/credit-notes/:id/post — CreditNoteController.post
-- [ ] GET /api/v1/invoices — InvoiceController.list
-- [ ] POST /api/v1/invoices — InvoiceController.create
-- [ ] GET /api/v1/invoices/:id — InvoiceController.findOne
-- [ ] PATCH /api/v1/invoices/:id — InvoiceController.update
-- [ ] POST /api/v1/invoices/:id/cancel — InvoiceController.cancel
-- [ ] POST /api/v1/invoices/:id/post — InvoiceController.post
-- [ ] POST /api/v1/invoices/journal-preview — InvoiceController.journalPreview
-- [ ] GET /api/v1/payments — PaymentController.listReceipts
-- [ ] POST /api/v1/payments — PaymentController.createReceipt
-- [ ] GET /api/v1/payments/:id — PaymentController.findOne
-- [ ] POST /api/v1/payments/:id/void — PaymentController.voidPayment
-- [ ] GET /api/v1/reports/ap/aging — ArReportingController.apAgingReport
-- [ ] GET /api/v1/reports/ar/aging — ArReportingController.arAging
-- [ ] GET /api/v1/reports/ar/customer-balances — ArReportingController.customerBalances
-- [ ] GET /api/v1/reports/ar/outstanding — ArReportingController.outstanding
-- [ ] GET /api/v1/reports/ar/revenue-by-customer — ArReportingController.revenueByCustomer
-- [ ] GET /api/v1/reports/ar/revenue-by-period — ArReportingController.revenueByPeriod
-- [ ] GET /api/v1/supplier-payments — PaymentController.listSupplierPayments
-- [ ] POST /api/v1/supplier-payments — PaymentController.createSupplierPayment
-- [ ] GET /api/v1/vendor-bills — VendorBillController.list
-- [ ] POST /api/v1/vendor-bills — VendorBillController.create
-- [ ] GET /api/v1/vendor-bills/:id — VendorBillController.findOne
-- [ ] PATCH /api/v1/vendor-bills/:id — VendorBillController.update
-- [ ] POST /api/v1/vendor-bills/:id/cancel — VendorBillController.cancel
-- [ ] POST /api/v1/vendor-bills/:id/post — VendorBillController.post
-- [ ] GET /api/v1/vendor-bills/suppliers/:partnerId/ledger — VendorBillController.ledger
+- [x] GET /api/v1/credit-notes — CreditNoteController.list
+- [x] POST /api/v1/credit-notes — CreditNoteController.create
+- [x] GET /api/v1/credit-notes/:id — CreditNoteController.findOne
+- [x] POST /api/v1/credit-notes/:id/post — CreditNoteController.post
+- [x] GET /api/v1/invoices — InvoiceController.list
+- [x] POST /api/v1/invoices — InvoiceController.create
+- [x] GET /api/v1/invoices/:id — InvoiceController.findOne
+- [x] PATCH /api/v1/invoices/:id — InvoiceController.update
+- [x] POST /api/v1/invoices/:id/cancel — InvoiceController.cancel
+- [x] POST /api/v1/invoices/:id/post — InvoiceController.post
+- [x] POST /api/v1/invoices/journal-preview — InvoiceController.journalPreview
+- [x] GET /api/v1/payments — PaymentController.listReceipts
+- [x] POST /api/v1/payments — PaymentController.createReceipt
+- [x] GET /api/v1/payments/:id — PaymentController.findOne
+- [x] POST /api/v1/payments/:id/void — PaymentController.voidPayment
+- [x] GET /api/v1/reports/ap/aging — ArReportingController.apAgingReport
+- [x] GET /api/v1/reports/ar/aging — ArReportingController.arAging
+- [x] GET /api/v1/reports/ar/customer-balances — ArReportingController.customerBalances
+- [x] GET /api/v1/reports/ar/outstanding — ArReportingController.outstanding
+- [x] GET /api/v1/reports/ar/revenue-by-customer — ArReportingController.revenueByCustomer
+- [x] GET /api/v1/reports/ar/revenue-by-period — ArReportingController.revenueByPeriod
+- [x] GET /api/v1/supplier-payments — PaymentController.listSupplierPayments
+- [x] POST /api/v1/supplier-payments — PaymentController.createSupplierPayment
+- [x] GET /api/v1/vendor-bills — VendorBillController.list
+- [x] POST /api/v1/vendor-bills — VendorBillController.create
+- [x] GET /api/v1/vendor-bills/:id — VendorBillController.findOne
+- [x] PATCH /api/v1/vendor-bills/:id — VendorBillController.update
+- [x] POST /api/v1/vendor-bills/:id/cancel — VendorBillController.cancel
+- [x] POST /api/v1/vendor-bills/:id/post — VendorBillController.post
+- [x] GET /api/v1/vendor-bills/suppliers/:partnerId/ledger — VendorBillController.ledger
 
 ## expenses
 
-- [ ] GET /api/v1/expense-categories — ExpenseCategoriesController.list
-- [ ] POST /api/v1/expense-categories — ExpenseCategoriesController.create
-- [ ] DELETE /api/v1/expense-categories/:id — ExpenseCategoriesController.remove
-- [ ] GET /api/v1/expense-categories/:id — ExpenseCategoriesController.findOne
-- [ ] PATCH /api/v1/expense-categories/:id — ExpenseCategoriesController.update
-- [ ] GET /api/v1/expenses — ExpensesController.list
-- [ ] POST /api/v1/expenses — ExpensesController.create
-- [ ] DELETE /api/v1/expenses/:id — ExpensesController.remove
-- [ ] GET /api/v1/expenses/:id — ExpensesController.findOne
-- [ ] PATCH /api/v1/expenses/:id — ExpensesController.update
-- [ ] POST /api/v1/expenses/:id/approve — ExpensesController.approve
-- [ ] GET /api/v1/expenses/:id/audit — ExpensesController.audit
-- [ ] POST /api/v1/expenses/:id/pay — ExpensesController.pay
-- [ ] POST /api/v1/expenses/:id/reject — ExpensesController.reject
-- [ ] POST /api/v1/expenses/:id/void — ExpensesController.voidExpense
-- [ ] GET /api/v1/expenses/meta/accounts — ExpensesController.accounts
-- [ ] GET /api/v1/expenses/meta/suppliers — ExpensesController.suppliers
-- [ ] GET /api/v1/expenses/stats — ExpensesController.stats
+- [x] GET /api/v1/expense-categories — ExpenseCategoriesController.list
+- [x] POST /api/v1/expense-categories — ExpenseCategoriesController.create
+- [x] DELETE /api/v1/expense-categories/:id — ExpenseCategoriesController.remove
+- [x] GET /api/v1/expense-categories/:id — ExpenseCategoriesController.findOne
+- [x] PATCH /api/v1/expense-categories/:id — ExpenseCategoriesController.update
+- [x] GET /api/v1/expenses — ExpensesController.list
+- [x] POST /api/v1/expenses — ExpensesController.create
+- [x] DELETE /api/v1/expenses/:id — ExpensesController.remove
+- [x] GET /api/v1/expenses/:id — ExpensesController.findOne
+- [x] PATCH /api/v1/expenses/:id — ExpensesController.update
+- [x] POST /api/v1/expenses/:id/approve — ExpensesController.approve
+- [x] GET /api/v1/expenses/:id/audit — ExpensesController.audit
+- [x] POST /api/v1/expenses/:id/pay — ExpensesController.pay
+- [x] POST /api/v1/expenses/:id/reject — ExpensesController.reject
+- [x] POST /api/v1/expenses/:id/void — ExpensesController.voidExpense
+- [x] GET /api/v1/expenses/meta/accounts — ExpensesController.accounts
+- [x] GET /api/v1/expenses/meta/suppliers — ExpensesController.suppliers
+- [x] GET /api/v1/expenses/stats — ExpensesController.stats
 
 ## crm
 
-- [ ] GET /api/v1/crm/activities — ActivitiesController.list
-- [ ] POST /api/v1/crm/activities — ActivitiesController.create
-- [ ] DELETE /api/v1/crm/activities/:id — ActivitiesController.remove
-- [ ] PATCH /api/v1/crm/activities/:id — ActivitiesController.update
-- [ ] POST /api/v1/crm/activities/:id/complete — ActivitiesController.complete
-- [ ] PATCH /api/v1/crm/activities/:id/restore — ActivitiesController.restore
-- [ ] GET /api/v1/crm/activities/deleted — ActivitiesController.listDeleted
-- [ ] GET /api/v1/crm/activities/upcoming — ActivitiesController.upcoming
-- [ ] GET /api/v1/crm/analytics/forecast — CrmAnalyticsController.forecast
-- [ ] GET /api/v1/crm/analytics/partner/:partnerId — CrmAnalyticsController.partner360
-- [ ] GET /api/v1/crm/analytics/pipeline — CrmAnalyticsController.pipeline
-- [ ] GET /api/v1/crm/analytics/top-customers — CrmAnalyticsController.topCustomers
-- [ ] GET /api/v1/crm/analytics/win-rate — CrmAnalyticsController.winRate
-- [ ] GET /api/v1/crm/deals — DealsController.list
-- [ ] POST /api/v1/crm/deals — DealsController.create
-- [ ] DELETE /api/v1/crm/deals/:id — DealsController.remove
-- [ ] GET /api/v1/crm/deals/:id — DealsController.findOne
-- [ ] PATCH /api/v1/crm/deals/:id — DealsController.update
-- [ ] PATCH /api/v1/crm/deals/:id/restore — DealsController.restore
-- [ ] PATCH /api/v1/crm/deals/:id/stage — DealsController.changeStage
-- [ ] GET /api/v1/crm/deals/deleted — DealsController.listDeleted
+- [x] GET /api/v1/crm/activities — ActivitiesController.list
+- [x] POST /api/v1/crm/activities — ActivitiesController.create
+- [x] DELETE /api/v1/crm/activities/:id — ActivitiesController.remove
+- [x] PATCH /api/v1/crm/activities/:id — ActivitiesController.update
+- [x] POST /api/v1/crm/activities/:id/complete — ActivitiesController.complete
+- [x] PATCH /api/v1/crm/activities/:id/restore — ActivitiesController.restore
+- [x] GET /api/v1/crm/activities/deleted — ActivitiesController.listDeleted
+- [x] GET /api/v1/crm/activities/upcoming — ActivitiesController.upcoming
+- [x] GET /api/v1/crm/analytics/forecast — CrmAnalyticsController.forecast
+- [x] GET /api/v1/crm/analytics/partner/:partnerId — CrmAnalyticsController.partner360
+- [x] GET /api/v1/crm/analytics/pipeline — CrmAnalyticsController.pipeline
+- [x] GET /api/v1/crm/analytics/top-customers — CrmAnalyticsController.topCustomers
+- [x] GET /api/v1/crm/analytics/win-rate — CrmAnalyticsController.winRate
+- [x] GET /api/v1/crm/deals — DealsController.list
+- [x] POST /api/v1/crm/deals — DealsController.create
+- [x] DELETE /api/v1/crm/deals/:id — DealsController.remove
+- [x] GET /api/v1/crm/deals/:id — DealsController.findOne
+- [x] PATCH /api/v1/crm/deals/:id — DealsController.update
+- [x] PATCH /api/v1/crm/deals/:id/restore — DealsController.restore
+- [x] PATCH /api/v1/crm/deals/:id/stage — DealsController.changeStage
+- [x] GET /api/v1/crm/deals/deleted — DealsController.listDeleted
 
 ## task
 
-- [ ] GET /api/v1/tasks — TaskController.findAll
-- [ ] POST /api/v1/tasks — TaskController.create
-- [ ] DELETE /api/v1/tasks/:id — TaskController.remove
-- [ ] GET /api/v1/tasks/:id — TaskController.findOne
-- [ ] PATCH /api/v1/tasks/:id — TaskController.update
-- [ ] PATCH /api/v1/tasks/:id/checklist/:itemId — TaskController.toggleChecklist
-- [ ] POST /api/v1/tasks/:id/comments — TaskController.addComment
-- [ ] PATCH /api/v1/tasks/:id/reorder — TaskController.reorder
-- [ ] POST /api/v1/tasks/:id/verify — TaskController.verify
-- [ ] GET /api/v1/tasks/auto-rules — TaskController.listAutoRules
-- [ ] POST /api/v1/tasks/auto-rules — TaskController.createAutoRule
-- [ ] GET /api/v1/tasks/dashboard — TaskController.dashboard
-- [ ] GET /api/v1/tasks/labels — TaskController.listLabels
-- [ ] POST /api/v1/tasks/labels — TaskController.createLabel
-- [ ] GET /api/v1/tasks/templates — TaskController.listTemplates
-- [ ] POST /api/v1/tasks/templates — TaskController.createTemplate
+- [x] GET /api/v1/tasks — TaskController.findAll
+- [x] POST /api/v1/tasks — TaskController.create
+- [x] DELETE /api/v1/tasks/:id — TaskController.remove
+- [x] GET /api/v1/tasks/:id — TaskController.findOne
+- [x] PATCH /api/v1/tasks/:id — TaskController.update
+- [x] PATCH /api/v1/tasks/:id/checklist/:itemId — TaskController.toggleChecklist
+- [x] POST /api/v1/tasks/:id/comments — TaskController.addComment
+- [x] PATCH /api/v1/tasks/:id/reorder — TaskController.reorder
+- [x] POST /api/v1/tasks/:id/verify — TaskController.verify
+- [x] GET /api/v1/tasks/auto-rules — TaskController.listAutoRules
+- [x] POST /api/v1/tasks/auto-rules — TaskController.createAutoRule
+- [x] GET /api/v1/tasks/dashboard — TaskController.dashboard
+- [x] GET /api/v1/tasks/labels — TaskController.listLabels
+- [x] POST /api/v1/tasks/labels — TaskController.createLabel
+- [x] GET /api/v1/tasks/templates — TaskController.listTemplates
+- [x] POST /api/v1/tasks/templates — TaskController.createTemplate
 
 ## documents
 
-- [ ] GET /api/v1/documents — DocumentsController.list
-- [ ] GET /api/v1/documents/:id — DocumentsController.detail
-- [ ] PATCH /api/v1/documents/:id — DocumentsController.patch
-- [ ] POST /api/v1/documents/:id/actions/:action — DocumentActionsController.run
-- [ ] GET /api/v1/documents/:id/attachments — DocumentsController.listAttachments
-- [ ] POST /api/v1/documents/:id/attachments — DocumentsController.attach
-- [ ] DELETE /api/v1/documents/:id/attachments/:aid — DocumentsController.removeAttachment
-- [ ] GET /api/v1/documents/:id/preview — DocumentsController.preview
-- [ ] POST /api/v1/documents/:id/print — DocumentsController.printDoc
-- [ ] GET /api/v1/documents/:id/relations — DocumentsController.listRelations
-- [ ] POST /api/v1/documents/:id/relations — DocumentsController.createRelation
-- [ ] DELETE /api/v1/documents/:id/relations/:rid — DocumentsController.deleteRelation
-- [ ] GET /api/v1/documents/:id/relations/chain — DocumentsController.relationChain
-- [ ] GET /api/v1/documents/:id/sources — DocumentsController.listSources
-- [ ] POST /api/v1/documents/:id/sources — DocumentsController.addSource
-- [ ] DELETE /api/v1/documents/:id/sources/:sid — DocumentsController.removeSource
-- [ ] GET /api/v1/documents/:id/timeline — DocumentsController.timeline
-- [ ] GET /api/v1/documents/lifecycles — DocumentTypesController.listLifecycles
-- [ ] GET /api/v1/documents/lifecycles/:code — DocumentTypesController.lifecycle
-- [ ] GET /api/v1/documents/templates — DocumentsController.listTemplates
-- [ ] POST /api/v1/documents/templates — DocumentsController.createTemplate
-- [ ] POST /api/v1/documents/templates/:id/activate — DocumentsController.activateTemplate
-- [ ] GET /api/v1/documents/types — DocumentTypesController.types
-- [ ] POST /api/v1/documents/types — DocumentTypesController.create
-- [ ] DELETE /api/v1/documents/types/:code — DocumentTypesController.remove
-- [ ] GET /api/v1/documents/types/:code — DocumentTypesController.type
-- [ ] PATCH /api/v1/documents/types/:code — DocumentTypesController.update
-- [ ] GET /api/v1/documents/types/categories — DocumentTypesController.categories
+- [x] GET /api/v1/documents — DocumentsController.list
+- [x] GET /api/v1/documents/:id — DocumentsController.detail
+- [x] PATCH /api/v1/documents/:id — DocumentsController.patch
+- [x] POST /api/v1/documents/:id/actions/:action — DocumentActionsController.run
+- [x] GET /api/v1/documents/:id/attachments — DocumentsController.listAttachments
+- [x] POST /api/v1/documents/:id/attachments — DocumentsController.attach
+- [x] DELETE /api/v1/documents/:id/attachments/:aid — DocumentsController.removeAttachment
+- [x] GET /api/v1/documents/:id/preview — DocumentsController.preview
+- [x] POST /api/v1/documents/:id/print — DocumentsController.printDoc
+- [x] GET /api/v1/documents/:id/relations — DocumentsController.listRelations
+- [x] POST /api/v1/documents/:id/relations — DocumentsController.createRelation
+- [x] DELETE /api/v1/documents/:id/relations/:rid — DocumentsController.deleteRelation
+- [x] GET /api/v1/documents/:id/relations/chain — DocumentsController.relationChain
+- [x] GET /api/v1/documents/:id/sources — DocumentsController.listSources
+- [x] POST /api/v1/documents/:id/sources — DocumentsController.addSource
+- [x] DELETE /api/v1/documents/:id/sources/:sid — DocumentsController.removeSource
+- [x] GET /api/v1/documents/:id/timeline — DocumentsController.timeline
+- [x] GET /api/v1/documents/lifecycles — DocumentTypesController.listLifecycles
+- [x] GET /api/v1/documents/lifecycles/:code — DocumentTypesController.lifecycle
+- [x] GET /api/v1/documents/templates — DocumentsController.listTemplates
+- [x] POST /api/v1/documents/templates — DocumentsController.createTemplate
+- [x] POST /api/v1/documents/templates/:id/activate — DocumentsController.activateTemplate
+- [x] GET /api/v1/documents/types — DocumentTypesController.types
+- [x] POST /api/v1/documents/types — DocumentTypesController.create
+- [x] DELETE /api/v1/documents/types/:code — DocumentTypesController.remove
+- [x] GET /api/v1/documents/types/:code — DocumentTypesController.type
+- [x] PATCH /api/v1/documents/types/:code — DocumentTypesController.update
+- [x] GET /api/v1/documents/types/categories — DocumentTypesController.categories
 
 ## procurement
 

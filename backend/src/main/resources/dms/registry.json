@@ -1,0 +1,2907 @@
+{
+  "lifecycles": [
+    {
+      "code": "receipt_doc",
+      "name": "Receipt",
+      "description": "Simple cash-receipt flow: post then pay. Used by POS receipts, rental deposits, school receipts.",
+      "states": [
+        "draft",
+        "posted",
+        "paid"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "posted",
+          "action": "post",
+          "guard": {}
+        },
+        {
+          "from": "posted",
+          "to": "paid",
+          "action": "pay",
+          "guard": {}
+        },
+        {
+          "from": "posted",
+          "to": "posted",
+          "action": "reverse",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    },
+    {
+      "code": "sales_doc",
+      "name": "Sales document",
+      "description": "Order-to-cash flow: submit → approve → post → pay, with cancels from any pre-effects state (rev 4: cancel-vs-reverse, §3.6).",
+      "states": [
+        "draft",
+        "submitted",
+        "approved",
+        "posted",
+        "paid",
+        "cancelled"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "submitted",
+          "action": "submit",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "approved",
+          "action": "approve",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "draft",
+          "action": "reject",
+          "guard": {}
+        },
+        {
+          "from": "approved",
+          "to": "posted",
+          "action": "post",
+          "guard": {}
+        },
+        {
+          "from": "posted",
+          "to": "paid",
+          "action": "pay",
+          "guard": {}
+        },
+        {
+          "from": "draft",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "submitted",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "approved",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "posted",
+          "to": "posted",
+          "action": "reverse",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    },
+    {
+      "code": "purchase_doc",
+      "name": "Purchase document",
+      "description": "Procure-to-pay flow: confirm → post → pay → close.",
+      "states": [
+        "draft",
+        "confirmed",
+        "posted",
+        "paid",
+        "closed",
+        "cancelled"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "confirmed",
+          "action": "confirm",
+          "guard": {}
+        },
+        {
+          "from": "confirmed",
+          "to": "posted",
+          "action": "post",
+          "guard": {}
+        },
+        {
+          "from": "posted",
+          "to": "paid",
+          "action": "pay",
+          "guard": {}
+        },
+        {
+          "from": "paid",
+          "to": "closed",
+          "action": "close",
+          "guard": {
+            "requiresPaid": true
+          }
+        },
+        {
+          "from": "draft",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "confirmed",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "posted",
+          "to": "posted",
+          "action": "reverse",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    },
+    {
+      "code": "contract_doc",
+      "name": "Contract / agreement",
+      "description": "Contractual flow with a long-lived active state (rental agreements, service contracts).",
+      "states": [
+        "draft",
+        "submitted",
+        "approved",
+        "active",
+        "expired",
+        "terminated",
+        "cancelled"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "submitted",
+          "action": "submit",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "approved",
+          "action": "approve",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "draft",
+          "action": "reject",
+          "guard": {}
+        },
+        {
+          "from": "approved",
+          "to": "active",
+          "action": "activate",
+          "guard": {}
+        },
+        {
+          "from": "active",
+          "to": "expired",
+          "action": "expire",
+          "guard": {}
+        },
+        {
+          "from": "active",
+          "to": "terminated",
+          "action": "terminate",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "draft",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "submitted",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "approved",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    },
+    {
+      "code": "certificate_doc",
+      "name": "Certificate / letter",
+      "description": "Issue-and-revoke flow for certificates, letters, report cards.",
+      "states": [
+        "draft",
+        "approved",
+        "issued",
+        "revoked",
+        "cancelled"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "approved",
+          "action": "approve",
+          "guard": {}
+        },
+        {
+          "from": "approved",
+          "to": "issued",
+          "action": "issue",
+          "guard": {}
+        },
+        {
+          "from": "issued",
+          "to": "revoked",
+          "action": "revoke",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "draft",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    },
+    {
+      "code": "approval_doc",
+      "name": "Approval-gated document",
+      "description": "Sales flow with an explicit approval gate at posting (school fee invoices, service orders).",
+      "states": [
+        "draft",
+        "submitted",
+        "approved",
+        "posted",
+        "paid",
+        "cancelled"
+      ],
+      "initialState": "draft",
+      "transitions": [
+        {
+          "from": "draft",
+          "to": "submitted",
+          "action": "submit",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "approved",
+          "action": "approve",
+          "guard": {}
+        },
+        {
+          "from": "submitted",
+          "to": "draft",
+          "action": "reject",
+          "guard": {}
+        },
+        {
+          "from": "approved",
+          "to": "posted",
+          "action": "post",
+          "guard": {
+            "requiresApproval": true
+          }
+        },
+        {
+          "from": "posted",
+          "to": "paid",
+          "action": "pay",
+          "guard": {}
+        },
+        {
+          "from": "draft",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "submitted",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "approved",
+          "to": "cancelled",
+          "action": "cancel",
+          "guard": {
+            "requiresReason": true
+          }
+        },
+        {
+          "from": "posted",
+          "to": "posted",
+          "action": "reverse",
+          "guard": {
+            "requiresReason": true
+          }
+        }
+      ]
+    }
+  ],
+  "types": [
+    {
+      "code": "sales_invoice",
+      "name": "Sales Invoice",
+      "description": "Universal sales document (POS counter sales and manual invoicing).",
+      "category": "retail",
+      "isSystem": true,
+      "numberingKey": "invoice",
+      "numberingPrefix": "INV-",
+      "numberingPadding": 5,
+      "lifecycle": "sales_doc",
+      "approvalPolicy": {
+        "requiresApproval": false
+      },
+      "postingPolicy": {
+        "behavior": "accounting",
+        "journalHints": [
+          "sales"
+        ]
+      },
+      "paymentPolicy": {},
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "snapshotPolicy": {
+        "captureOn": [
+          "post",
+          "amend"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": false
+      },
+      "printProfile": {
+        "formats": [
+          "a4",
+          "thermal"
+        ],
+        "reprintable": true
+      },
+      "businessEffects": {
+        "inventory": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "org",
+        "workflowHooks": [
+          "pos_inventory"
+        ]
+      },
+      "isFinancial": true,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "credit_note",
+      "name": "Credit Note",
+      "description": "Reversal counterpart of a sales invoice (CANCELS relation, §3.6).",
+      "category": "retail",
+      "isSystem": true,
+      "numberingKey": "creditnote",
+      "numberingPrefix": "CN-",
+      "numberingPadding": 5,
+      "lifecycle": "sales_doc",
+      "postingPolicy": {
+        "behavior": "accounting",
+        "journalHints": [
+          "sales_returns"
+        ]
+      },
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": true,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "vendor_bill",
+      "name": "Vendor Bill",
+      "description": "Supplier invoice payable (purchase side).",
+      "category": "procurement",
+      "isSystem": true,
+      "numberingKey": "vendorbill",
+      "numberingPrefix": "BILL-",
+      "numberingPadding": 5,
+      "lifecycle": "purchase_doc",
+      "postingPolicy": {
+        "behavior": "accounting",
+        "journalHints": [
+          "purchases"
+        ]
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "businessEffects": {
+        "inventory": true
+      },
+      "isFinancial": true,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "debit_note",
+      "name": "Debit Note",
+      "description": "Supplier debit — purchase-side adjustment.",
+      "category": "procurement",
+      "isSystem": true,
+      "numberingKey": "debitnote",
+      "numberingPrefix": "DN-",
+      "numberingPadding": 5,
+      "lifecycle": "purchase_doc",
+      "postingPolicy": {
+        "behavior": "accounting"
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "proforma_invoice",
+      "name": "Proforma Invoice",
+      "description": "Pre-billing estimate for a sale — no accounting effects.",
+      "category": "retail",
+      "isSystem": true,
+      "numberingKey": "proforma",
+      "numberingPrefix": "PRO-",
+      "numberingPadding": 5,
+      "lifecycle": "sales_doc",
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": false
+      },
+      "editPolicy": "EDITABLE",
+      "isFinancial": false,
+      "requiresPosting": false
+    },
+    {
+      "code": "pos_receipt",
+      "name": "POS Receipt",
+      "description": "Thermal receipt issued by the POS terminal at tender.",
+      "category": "pos",
+      "numberingKey": "posreceipt",
+      "numberingPrefix": "RCPT-",
+      "lifecycle": "receipt_doc",
+      "postingPolicy": {
+        "behavior": "accounting",
+        "journalHints": [
+          "sales"
+        ]
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "printProfile": {
+        "formats": [
+          "thermal"
+        ],
+        "reprintable": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "org"
+      },
+      "isFinancial": true,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "delivery_note",
+      "name": "Delivery Note",
+      "description": "Goods-out document — inventory effects, no accounting.",
+      "category": "retail",
+      "numberingKey": "deliverynote",
+      "numberingPrefix": "DLV-",
+      "lifecycle": "sales_doc",
+      "postingPolicy": {
+        "behavior": "inventory"
+      },
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": false,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "quotation",
+      "name": "Quotation",
+      "description": "Proposal to a customer — fully editable until accepted.",
+      "category": "retail",
+      "numberingKey": "quotation",
+      "numberingPrefix": "QT-",
+      "lifecycle": "sales_doc",
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": false
+      },
+      "editPolicy": "EDITABLE",
+      "isFinancial": false,
+      "requiresPosting": false
+    },
+    {
+      "code": "rental_agreement",
+      "name": "Rental Agreement",
+      "description": "Binding lease contract (contract_doc lifecycle). Domain truth lives in the rental module; the DMS only links via DocumentSource.",
+      "category": "rental",
+      "numberingKey": "rentalagreement",
+      "numberingPrefix": "RA-",
+      "lifecycle": "contract_doc",
+      "approvalPolicy": {
+        "requiresApproval": true
+      },
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": true
+      },
+      "editPolicy": "VERSIONED",
+      "snapshotPolicy": {
+        "captureOn": [
+          "issue",
+          "amend"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": true
+      },
+      "printProfile": {
+        "formats": [
+          "a4"
+        ],
+        "reprintable": true
+      },
+      "businessEffects": {
+        "notify": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "branch"
+      },
+      "isFinancial": false,
+      "isInventoryRelevant": true,
+      "requiresPosting": false
+    },
+    {
+      "code": "rental_return",
+      "name": "Rental Return",
+      "description": "Return-of-unit document — inventory effects; \"deposit refund only if returned\" is a rental-module rule, never DMS.",
+      "category": "rental",
+      "numberingKey": "rentalreturn",
+      "numberingPrefix": "RTN-",
+      "lifecycle": "receipt_doc",
+      "postingPolicy": {
+        "behavior": "inventory"
+      },
+      "cancellationPolicy": {
+        "reversable": false,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": false,
+      "isInventoryRelevant": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "rental_deposit",
+      "name": "Rental Deposit",
+      "description": "Cash deposit received against an agreement.",
+      "category": "rental",
+      "numberingKey": "rentaldeposit",
+      "numberingPrefix": "DEP-",
+      "lifecycle": "receipt_doc",
+      "postingPolicy": {
+        "behavior": "accounting"
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "rental_service_order",
+      "name": "Rental Service Order",
+      "description": "Chargeable service on a rental (cleaning, late fee) — approval-gated.",
+      "category": "rental",
+      "numberingKey": "rentalserviceorder",
+      "numberingPrefix": "RSO-",
+      "lifecycle": "approval_doc",
+      "approvalPolicy": {
+        "requiresApproval": true
+      },
+      "postingPolicy": {
+        "behavior": "accounting"
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "isFinancial": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "school_fee_invoice",
+      "name": "School Fee Invoice",
+      "description": "Tuition/fee invoice against a student (school_fee invoice).",
+      "category": "school",
+      "numberingKey": "feeinvoice",
+      "numberingPrefix": "SFI-",
+      "lifecycle": "approval_doc",
+      "approvalPolicy": {
+        "requiresApproval": true
+      },
+      "postingPolicy": {
+        "behavior": "accounting",
+        "journalHints": [
+          "school_fees"
+        ]
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "snapshotPolicy": {
+        "captureOn": [
+          "issue",
+          "post",
+          "amend"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": true
+      },
+      "printProfile": {
+        "formats": [
+          "a4"
+        ],
+        "reprintable": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "branch"
+      },
+      "isFinancial": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "school_receipt",
+      "name": "School Receipt",
+      "description": "Payment receipt against fee invoices (or cash).",
+      "category": "school",
+      "numberingKey": "feereceipt",
+      "numberingPrefix": "SFR-",
+      "lifecycle": "receipt_doc",
+      "postingPolicy": {
+        "behavior": "accounting"
+      },
+      "cancellationPolicy": {
+        "reversable": true,
+        "needsReason": true
+      },
+      "editPolicy": "IMMUTABLE_AFTER_ISSUE",
+      "printProfile": {
+        "formats": [
+          "a4",
+          "thermal"
+        ],
+        "reprintable": true
+      },
+      "isFinancial": true,
+      "requiresPosting": true
+    },
+    {
+      "code": "school_admission_letter",
+      "name": "Admission Letter",
+      "description": "Offer/admission letter — editable, issued once.",
+      "category": "school",
+      "numberingKey": "admission",
+      "numberingPrefix": "ADM-",
+      "lifecycle": "certificate_doc",
+      "editPolicy": "EDITABLE",
+      "snapshotPolicy": {
+        "captureOn": [
+          "issue"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": true
+      },
+      "printProfile": {
+        "formats": [
+          "a4"
+        ],
+        "reprintable": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "branch"
+      },
+      "isFinancial": false,
+      "requiresPosting": false
+    },
+    {
+      "code": "school_certificate",
+      "name": "Certificate",
+      "description": "Completion/participation certificate — versioned content.",
+      "category": "school",
+      "numberingKey": "certificate",
+      "numberingPrefix": "CERT-",
+      "lifecycle": "certificate_doc",
+      "editPolicy": "VERSIONED",
+      "snapshotPolicy": {
+        "captureOn": [
+          "issue"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": true
+      },
+      "printProfile": {
+        "formats": [
+          "a4"
+        ],
+        "reprintable": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "branch"
+      },
+      "isFinancial": false,
+      "requiresPosting": false
+    },
+    {
+      "code": "school_report_card",
+      "name": "Report Card",
+      "description": "Term report card — versioned, re-issued each term change.",
+      "category": "school",
+      "numberingKey": "reportcard",
+      "numberingPrefix": "RC-",
+      "lifecycle": "certificate_doc",
+      "editPolicy": "VERSIONED",
+      "snapshotPolicy": {
+        "captureOn": [
+          "issue"
+        ],
+        "snapshotOnPrint": false,
+        "keepRenderedFile": true
+      },
+      "printProfile": {
+        "formats": [
+          "a4"
+        ],
+        "reprintable": true
+      },
+      "security": {
+        "basePermission": "document",
+        "visibility": "branch"
+      },
+      "isFinancial": false,
+      "requiresPosting": false
+    }
+  ],
+  "relationTypes": [
+    {
+      "code": "CONVERTED_FROM",
+      "name": "Converted from",
+      "description": "Source document that this one was converted from (quotation → sales order → invoice).",
+      "direction": "out",
+      "allowedSourceCategories": [
+        "pos",
+        "retail",
+        "finance"
+      ],
+      "allowedTargetCategories": [
+        "pos",
+        "retail",
+        "finance"
+      ],
+      "cardinality": "one",
+      "inverseImplicit": false,
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "CONVERTED_TO",
+      "name": "Converted to",
+      "description": "Explicit reverse of CONVERTED_FROM.",
+      "direction": "out",
+      "allowedSourceCategories": [
+        "pos",
+        "retail",
+        "finance"
+      ],
+      "allowedTargetCategories": [
+        "pos",
+        "retail",
+        "finance"
+      ],
+      "cardinality": "one",
+      "inverseImplicit": false,
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "GENERATED_FROM",
+      "name": "Generated from",
+      "description": "Generated from a parent (recurring children, fee invoices from terms).",
+      "direction": "out",
+      "cardinality": "many",
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "REFERENCES",
+      "name": "References",
+      "description": "Generic cross-reference (audit trail, contextual linking).",
+      "direction": "out",
+      "cardinality": "many",
+      "duplicatesAllowed": true
+    },
+    {
+      "code": "FULFILLS",
+      "name": "Fulfills",
+      "description": "Delivery note / GRN fulfills an order or invoice. One fulfill-per-source enforced.",
+      "direction": "out",
+      "cardinality": "one",
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "CANCELS",
+      "name": "Cancels",
+      "description": "Reversal document cancels the original (credit note → invoice). Implicit inverse maintained.",
+      "direction": "out",
+      "cardinality": "one",
+      "inverseImplicit": true,
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "REISSUES",
+      "name": "Reissues",
+      "description": "Phase 6 — reissue reverses a reversal (original → reversal counterpart). Mirror of CANCELS for the reissued doc.",
+      "direction": "out",
+      "cardinality": "one",
+      "inverseImplicit": true,
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "AMENDS",
+      "name": "Amends",
+      "description": "New version supersedes the previous issuance (contracts, certificates).",
+      "direction": "out",
+      "cardinality": "many",
+      "inverseImplicit": true,
+      "duplicatesAllowed": false
+    },
+    {
+      "code": "REPLACES",
+      "name": "Replaces",
+      "description": "Direct replacement, same type (re-issue of a corrupted/lost document).",
+      "direction": "out",
+      "cardinality": "one",
+      "inverseImplicit": true,
+      "duplicatesAllowed": false
+    }
+  ],
+  "templates": [
+    {
+      "typeCode": "sales_invoice",
+      "templateKey": "sales_invoice:a4",
+      "format": "a4",
+      "name": "Sales Invoice — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "credit_note",
+      "templateKey": "credit_note:a4",
+      "format": "a4",
+      "name": "Credit Note — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "vendor_bill",
+      "templateKey": "vendor_bill:a4",
+      "format": "a4",
+      "name": "Vendor Bill — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "debit_note",
+      "templateKey": "debit_note:a4",
+      "format": "a4",
+      "name": "Debit Note — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "proforma_invoice",
+      "templateKey": "proforma_invoice:a4",
+      "format": "a4",
+      "name": "Proforma Invoice — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "pos_receipt",
+      "templateKey": "pos_receipt:a4",
+      "format": "a4",
+      "name": "POS Receipt — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "delivery_note",
+      "templateKey": "delivery_note:a4",
+      "format": "a4",
+      "name": "Delivery Note — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "quotation",
+      "templateKey": "quotation:a4",
+      "format": "a4",
+      "name": "Quotation — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "rental_agreement",
+      "templateKey": "rental_agreement:a4",
+      "format": "a4",
+      "name": "Rental Agreement — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "rental_return",
+      "templateKey": "rental_return:a4",
+      "format": "a4",
+      "name": "Rental Return — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "rental_deposit",
+      "templateKey": "rental_deposit:a4",
+      "format": "a4",
+      "name": "Rental Deposit — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "rental_service_order",
+      "templateKey": "rental_service_order:a4",
+      "format": "a4",
+      "name": "Rental Service Order — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "school_fee_invoice",
+      "templateKey": "school_fee_invoice:a4",
+      "format": "a4",
+      "name": "School Fee Invoice — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "school_receipt",
+      "templateKey": "school_receipt:a4",
+      "format": "a4",
+      "name": "School Receipt — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "school_admission_letter",
+      "templateKey": "school_admission_letter:a4",
+      "format": "a4",
+      "name": "Admission Letter — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "school_certificate",
+      "templateKey": "school_certificate:a4",
+      "format": "a4",
+      "name": "Certificate — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "school_report_card",
+      "templateKey": "school_report_card:a4",
+      "format": "a4",
+      "name": "Report Card — A4",
+      "content": "<html><head><meta charset=\"utf-8\"><style>\nbody{font-family:Georgia,serif;color:#1a1a1a;margin:48px}\nh1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}\ntable{width:100%;border-collapse:collapse;margin-top:16px}\nth,td{border:1px solid #ccc;padding:6px 8px;text-align:left;font-size:13px}\nth{background:#f4f4f4}\n.meta{font-size:12px;color:#555;margin-top:8px}\n.totals{width:280px;margin-left:auto;margin-top:16px}\n.totals td{padding:4px 8px;font-size:13px}\n.totals .grand td{font-weight:bold;border-top:2px solid #333}\n</style></head><body>\n<h1>{{companyName}} — {{documentTypeName}}</h1>\n<div class=\"meta\">\n{{documentNumber}} · {{issueDate}} · Status: {{status}}<br/>\nPartner: {{partnerCode}} · Branch: {{branchName}}\n</div>\n<table>\n<tr><th>#</th><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr>\n{{#each lines}}<tr><td>{{lineNumber}}</td><td>{{description}}</td><td>{{quantity}}</td><td>{{unitPrice}}</td><td>{{total}}</td></tr>{{/each}}\n</table>\n<table class=\"totals\">\n<tr><td>Subtotal</td><td>{{subtotal}}</td></tr>\n<tr><td>Tax</td><td>{{taxAmount}}</td></tr>\n<tr class=\"grand\"><td>Total</td><td>{{totalAmount}}</td></tr>\n</table>\n<div class=\"meta\">Generated by POS-CAFE · DMS · {{generatedAt}}</div>\n</body></html>",
+      "engine": "puppeteer"
+    },
+    {
+      "typeCode": "sales_invoice",
+      "templateKey": "sales_invoice:thermal",
+      "format": "thermal",
+      "name": "Sales Invoice — Thermal receipt",
+      "content": "{{companyName}}\n{{documentTypeName}}\n--------------------------------\n{{documentNumber}}   {{issueDate}}\nPartner: {{partnerCode}}\n--------------------------------\n{{#each lines}}{{quantity}} x {{description}}\n    {{unitPrice}} = {{total}}\n{{/each}}\n--------------------------------\nSubtotal   {{subtotal}}\nTax        {{taxAmount}}\nTOTAL      {{totalAmount}}\n--------------------------------\n{{generatedAt}}\n",
+      "engine": "escpos"
+    },
+    {
+      "typeCode": "pos_receipt",
+      "templateKey": "pos_receipt:thermal",
+      "format": "thermal",
+      "name": "POS Receipt — Thermal receipt",
+      "content": "{{companyName}}\n{{documentTypeName}}\n--------------------------------\n{{documentNumber}}   {{issueDate}}\nPartner: {{partnerCode}}\n--------------------------------\n{{#each lines}}{{quantity}} x {{description}}\n    {{unitPrice}} = {{total}}\n{{/each}}\n--------------------------------\nSubtotal   {{subtotal}}\nTax        {{taxAmount}}\nTOTAL      {{totalAmount}}\n--------------------------------\n{{generatedAt}}\n",
+      "engine": "escpos"
+    },
+    {
+      "typeCode": "rental_deposit",
+      "templateKey": "rental_deposit:thermal",
+      "format": "thermal",
+      "name": "Rental Deposit — Thermal receipt",
+      "content": "{{companyName}}\n{{documentTypeName}}\n--------------------------------\n{{documentNumber}}   {{issueDate}}\nPartner: {{partnerCode}}\n--------------------------------\n{{#each lines}}{{quantity}} x {{description}}\n    {{unitPrice}} = {{total}}\n{{/each}}\n--------------------------------\nSubtotal   {{subtotal}}\nTax        {{taxAmount}}\nTOTAL      {{totalAmount}}\n--------------------------------\n{{generatedAt}}\n",
+      "engine": "escpos"
+    },
+    {
+      "typeCode": "school_receipt",
+      "templateKey": "school_receipt:thermal",
+      "format": "thermal",
+      "name": "School Receipt — Thermal receipt",
+      "content": "{{companyName}}\n{{documentTypeName}}\n--------------------------------\n{{documentNumber}}   {{issueDate}}\nPartner: {{partnerCode}}\n--------------------------------\n{{#each lines}}{{quantity}} x {{description}}\n    {{unitPrice}} = {{total}}\n{{/each}}\n--------------------------------\nSubtotal   {{subtotal}}\nTax        {{taxAmount}}\nTOTAL      {{totalAmount}}\n--------------------------------\n{{generatedAt}}\n",
+      "engine": "escpos"
+    }
+  ],
+  "permissions": [
+    {
+      "key": "document:create",
+      "resource": "document",
+      "action": "create",
+      "description": "Document (generic) — create"
+    },
+    {
+      "key": "document:read",
+      "resource": "document",
+      "action": "read",
+      "description": "Document (generic) — read"
+    },
+    {
+      "key": "document:update",
+      "resource": "document",
+      "action": "update",
+      "description": "Document (generic) — update"
+    },
+    {
+      "key": "document:delete",
+      "resource": "document",
+      "action": "delete",
+      "description": "Document (generic) — delete"
+    },
+    {
+      "key": "document:print",
+      "resource": "document",
+      "action": "print",
+      "description": "Document (generic) — print"
+    },
+    {
+      "key": "document:archive",
+      "resource": "document",
+      "action": "archive",
+      "description": "Document (generic) — archive"
+    },
+    {
+      "key": "document:manage",
+      "resource": "document",
+      "action": "manage",
+      "description": "Document (generic) — manage"
+    },
+    {
+      "key": "document:sales_invoice:submit",
+      "resource": "document:sales_invoice",
+      "action": "submit",
+      "description": "Document sales_invoice — submit"
+    },
+    {
+      "key": "document:sales_invoice:approve",
+      "resource": "document:sales_invoice",
+      "action": "approve",
+      "description": "Document sales_invoice — approve"
+    },
+    {
+      "key": "document:sales_invoice:reject",
+      "resource": "document:sales_invoice",
+      "action": "reject",
+      "description": "Document sales_invoice — reject"
+    },
+    {
+      "key": "document:sales_invoice:confirm",
+      "resource": "document:sales_invoice",
+      "action": "confirm",
+      "description": "Document sales_invoice — confirm"
+    },
+    {
+      "key": "document:sales_invoice:issue",
+      "resource": "document:sales_invoice",
+      "action": "issue",
+      "description": "Document sales_invoice — issue"
+    },
+    {
+      "key": "document:sales_invoice:activate",
+      "resource": "document:sales_invoice",
+      "action": "activate",
+      "description": "Document sales_invoice — activate"
+    },
+    {
+      "key": "document:sales_invoice:expire",
+      "resource": "document:sales_invoice",
+      "action": "expire",
+      "description": "Document sales_invoice — expire"
+    },
+    {
+      "key": "document:sales_invoice:revoke",
+      "resource": "document:sales_invoice",
+      "action": "revoke",
+      "description": "Document sales_invoice — revoke"
+    },
+    {
+      "key": "document:sales_invoice:post",
+      "resource": "document:sales_invoice",
+      "action": "post",
+      "description": "Document sales_invoice — post"
+    },
+    {
+      "key": "document:sales_invoice:pay",
+      "resource": "document:sales_invoice",
+      "action": "pay",
+      "description": "Document sales_invoice — pay"
+    },
+    {
+      "key": "document:sales_invoice:close",
+      "resource": "document:sales_invoice",
+      "action": "close",
+      "description": "Document sales_invoice — close"
+    },
+    {
+      "key": "document:sales_invoice:cancel",
+      "resource": "document:sales_invoice",
+      "action": "cancel",
+      "description": "Document sales_invoice — cancel"
+    },
+    {
+      "key": "document:sales_invoice:reverse",
+      "resource": "document:sales_invoice",
+      "action": "reverse",
+      "description": "Document sales_invoice — reverse"
+    },
+    {
+      "key": "document:sales_invoice:reissue",
+      "resource": "document:sales_invoice",
+      "action": "reissue",
+      "description": "Document sales_invoice — reissue"
+    },
+    {
+      "key": "document:sales_invoice:terminate",
+      "resource": "document:sales_invoice",
+      "action": "terminate",
+      "description": "Document sales_invoice — terminate"
+    },
+    {
+      "key": "document:sales_invoice:archive",
+      "resource": "document:sales_invoice",
+      "action": "archive",
+      "description": "Document sales_invoice — archive"
+    },
+    {
+      "key": "document:sales_invoice:amend",
+      "resource": "document:sales_invoice",
+      "action": "amend",
+      "description": "Document sales_invoice — amend"
+    },
+    {
+      "key": "document:credit_note:submit",
+      "resource": "document:credit_note",
+      "action": "submit",
+      "description": "Document credit_note — submit"
+    },
+    {
+      "key": "document:credit_note:approve",
+      "resource": "document:credit_note",
+      "action": "approve",
+      "description": "Document credit_note — approve"
+    },
+    {
+      "key": "document:credit_note:reject",
+      "resource": "document:credit_note",
+      "action": "reject",
+      "description": "Document credit_note — reject"
+    },
+    {
+      "key": "document:credit_note:confirm",
+      "resource": "document:credit_note",
+      "action": "confirm",
+      "description": "Document credit_note — confirm"
+    },
+    {
+      "key": "document:credit_note:issue",
+      "resource": "document:credit_note",
+      "action": "issue",
+      "description": "Document credit_note — issue"
+    },
+    {
+      "key": "document:credit_note:activate",
+      "resource": "document:credit_note",
+      "action": "activate",
+      "description": "Document credit_note — activate"
+    },
+    {
+      "key": "document:credit_note:expire",
+      "resource": "document:credit_note",
+      "action": "expire",
+      "description": "Document credit_note — expire"
+    },
+    {
+      "key": "document:credit_note:revoke",
+      "resource": "document:credit_note",
+      "action": "revoke",
+      "description": "Document credit_note — revoke"
+    },
+    {
+      "key": "document:credit_note:post",
+      "resource": "document:credit_note",
+      "action": "post",
+      "description": "Document credit_note — post"
+    },
+    {
+      "key": "document:credit_note:pay",
+      "resource": "document:credit_note",
+      "action": "pay",
+      "description": "Document credit_note — pay"
+    },
+    {
+      "key": "document:credit_note:close",
+      "resource": "document:credit_note",
+      "action": "close",
+      "description": "Document credit_note — close"
+    },
+    {
+      "key": "document:credit_note:cancel",
+      "resource": "document:credit_note",
+      "action": "cancel",
+      "description": "Document credit_note — cancel"
+    },
+    {
+      "key": "document:credit_note:reverse",
+      "resource": "document:credit_note",
+      "action": "reverse",
+      "description": "Document credit_note — reverse"
+    },
+    {
+      "key": "document:credit_note:reissue",
+      "resource": "document:credit_note",
+      "action": "reissue",
+      "description": "Document credit_note — reissue"
+    },
+    {
+      "key": "document:credit_note:terminate",
+      "resource": "document:credit_note",
+      "action": "terminate",
+      "description": "Document credit_note — terminate"
+    },
+    {
+      "key": "document:credit_note:archive",
+      "resource": "document:credit_note",
+      "action": "archive",
+      "description": "Document credit_note — archive"
+    },
+    {
+      "key": "document:credit_note:amend",
+      "resource": "document:credit_note",
+      "action": "amend",
+      "description": "Document credit_note — amend"
+    },
+    {
+      "key": "document:vendor_bill:submit",
+      "resource": "document:vendor_bill",
+      "action": "submit",
+      "description": "Document vendor_bill — submit"
+    },
+    {
+      "key": "document:vendor_bill:approve",
+      "resource": "document:vendor_bill",
+      "action": "approve",
+      "description": "Document vendor_bill — approve"
+    },
+    {
+      "key": "document:vendor_bill:reject",
+      "resource": "document:vendor_bill",
+      "action": "reject",
+      "description": "Document vendor_bill — reject"
+    },
+    {
+      "key": "document:vendor_bill:confirm",
+      "resource": "document:vendor_bill",
+      "action": "confirm",
+      "description": "Document vendor_bill — confirm"
+    },
+    {
+      "key": "document:vendor_bill:issue",
+      "resource": "document:vendor_bill",
+      "action": "issue",
+      "description": "Document vendor_bill — issue"
+    },
+    {
+      "key": "document:vendor_bill:activate",
+      "resource": "document:vendor_bill",
+      "action": "activate",
+      "description": "Document vendor_bill — activate"
+    },
+    {
+      "key": "document:vendor_bill:expire",
+      "resource": "document:vendor_bill",
+      "action": "expire",
+      "description": "Document vendor_bill — expire"
+    },
+    {
+      "key": "document:vendor_bill:revoke",
+      "resource": "document:vendor_bill",
+      "action": "revoke",
+      "description": "Document vendor_bill — revoke"
+    },
+    {
+      "key": "document:vendor_bill:post",
+      "resource": "document:vendor_bill",
+      "action": "post",
+      "description": "Document vendor_bill — post"
+    },
+    {
+      "key": "document:vendor_bill:pay",
+      "resource": "document:vendor_bill",
+      "action": "pay",
+      "description": "Document vendor_bill — pay"
+    },
+    {
+      "key": "document:vendor_bill:close",
+      "resource": "document:vendor_bill",
+      "action": "close",
+      "description": "Document vendor_bill — close"
+    },
+    {
+      "key": "document:vendor_bill:cancel",
+      "resource": "document:vendor_bill",
+      "action": "cancel",
+      "description": "Document vendor_bill — cancel"
+    },
+    {
+      "key": "document:vendor_bill:reverse",
+      "resource": "document:vendor_bill",
+      "action": "reverse",
+      "description": "Document vendor_bill — reverse"
+    },
+    {
+      "key": "document:vendor_bill:reissue",
+      "resource": "document:vendor_bill",
+      "action": "reissue",
+      "description": "Document vendor_bill — reissue"
+    },
+    {
+      "key": "document:vendor_bill:terminate",
+      "resource": "document:vendor_bill",
+      "action": "terminate",
+      "description": "Document vendor_bill — terminate"
+    },
+    {
+      "key": "document:vendor_bill:archive",
+      "resource": "document:vendor_bill",
+      "action": "archive",
+      "description": "Document vendor_bill — archive"
+    },
+    {
+      "key": "document:vendor_bill:amend",
+      "resource": "document:vendor_bill",
+      "action": "amend",
+      "description": "Document vendor_bill — amend"
+    },
+    {
+      "key": "document:debit_note:submit",
+      "resource": "document:debit_note",
+      "action": "submit",
+      "description": "Document debit_note — submit"
+    },
+    {
+      "key": "document:debit_note:approve",
+      "resource": "document:debit_note",
+      "action": "approve",
+      "description": "Document debit_note — approve"
+    },
+    {
+      "key": "document:debit_note:reject",
+      "resource": "document:debit_note",
+      "action": "reject",
+      "description": "Document debit_note — reject"
+    },
+    {
+      "key": "document:debit_note:confirm",
+      "resource": "document:debit_note",
+      "action": "confirm",
+      "description": "Document debit_note — confirm"
+    },
+    {
+      "key": "document:debit_note:issue",
+      "resource": "document:debit_note",
+      "action": "issue",
+      "description": "Document debit_note — issue"
+    },
+    {
+      "key": "document:debit_note:activate",
+      "resource": "document:debit_note",
+      "action": "activate",
+      "description": "Document debit_note — activate"
+    },
+    {
+      "key": "document:debit_note:expire",
+      "resource": "document:debit_note",
+      "action": "expire",
+      "description": "Document debit_note — expire"
+    },
+    {
+      "key": "document:debit_note:revoke",
+      "resource": "document:debit_note",
+      "action": "revoke",
+      "description": "Document debit_note — revoke"
+    },
+    {
+      "key": "document:debit_note:post",
+      "resource": "document:debit_note",
+      "action": "post",
+      "description": "Document debit_note — post"
+    },
+    {
+      "key": "document:debit_note:pay",
+      "resource": "document:debit_note",
+      "action": "pay",
+      "description": "Document debit_note — pay"
+    },
+    {
+      "key": "document:debit_note:close",
+      "resource": "document:debit_note",
+      "action": "close",
+      "description": "Document debit_note — close"
+    },
+    {
+      "key": "document:debit_note:cancel",
+      "resource": "document:debit_note",
+      "action": "cancel",
+      "description": "Document debit_note — cancel"
+    },
+    {
+      "key": "document:debit_note:reverse",
+      "resource": "document:debit_note",
+      "action": "reverse",
+      "description": "Document debit_note — reverse"
+    },
+    {
+      "key": "document:debit_note:reissue",
+      "resource": "document:debit_note",
+      "action": "reissue",
+      "description": "Document debit_note — reissue"
+    },
+    {
+      "key": "document:debit_note:terminate",
+      "resource": "document:debit_note",
+      "action": "terminate",
+      "description": "Document debit_note — terminate"
+    },
+    {
+      "key": "document:debit_note:archive",
+      "resource": "document:debit_note",
+      "action": "archive",
+      "description": "Document debit_note — archive"
+    },
+    {
+      "key": "document:debit_note:amend",
+      "resource": "document:debit_note",
+      "action": "amend",
+      "description": "Document debit_note — amend"
+    },
+    {
+      "key": "document:proforma_invoice:submit",
+      "resource": "document:proforma_invoice",
+      "action": "submit",
+      "description": "Document proforma_invoice — submit"
+    },
+    {
+      "key": "document:proforma_invoice:approve",
+      "resource": "document:proforma_invoice",
+      "action": "approve",
+      "description": "Document proforma_invoice — approve"
+    },
+    {
+      "key": "document:proforma_invoice:reject",
+      "resource": "document:proforma_invoice",
+      "action": "reject",
+      "description": "Document proforma_invoice — reject"
+    },
+    {
+      "key": "document:proforma_invoice:confirm",
+      "resource": "document:proforma_invoice",
+      "action": "confirm",
+      "description": "Document proforma_invoice — confirm"
+    },
+    {
+      "key": "document:proforma_invoice:issue",
+      "resource": "document:proforma_invoice",
+      "action": "issue",
+      "description": "Document proforma_invoice — issue"
+    },
+    {
+      "key": "document:proforma_invoice:activate",
+      "resource": "document:proforma_invoice",
+      "action": "activate",
+      "description": "Document proforma_invoice — activate"
+    },
+    {
+      "key": "document:proforma_invoice:expire",
+      "resource": "document:proforma_invoice",
+      "action": "expire",
+      "description": "Document proforma_invoice — expire"
+    },
+    {
+      "key": "document:proforma_invoice:revoke",
+      "resource": "document:proforma_invoice",
+      "action": "revoke",
+      "description": "Document proforma_invoice — revoke"
+    },
+    {
+      "key": "document:proforma_invoice:post",
+      "resource": "document:proforma_invoice",
+      "action": "post",
+      "description": "Document proforma_invoice — post"
+    },
+    {
+      "key": "document:proforma_invoice:pay",
+      "resource": "document:proforma_invoice",
+      "action": "pay",
+      "description": "Document proforma_invoice — pay"
+    },
+    {
+      "key": "document:proforma_invoice:close",
+      "resource": "document:proforma_invoice",
+      "action": "close",
+      "description": "Document proforma_invoice — close"
+    },
+    {
+      "key": "document:proforma_invoice:cancel",
+      "resource": "document:proforma_invoice",
+      "action": "cancel",
+      "description": "Document proforma_invoice — cancel"
+    },
+    {
+      "key": "document:proforma_invoice:reverse",
+      "resource": "document:proforma_invoice",
+      "action": "reverse",
+      "description": "Document proforma_invoice — reverse"
+    },
+    {
+      "key": "document:proforma_invoice:reissue",
+      "resource": "document:proforma_invoice",
+      "action": "reissue",
+      "description": "Document proforma_invoice — reissue"
+    },
+    {
+      "key": "document:proforma_invoice:terminate",
+      "resource": "document:proforma_invoice",
+      "action": "terminate",
+      "description": "Document proforma_invoice — terminate"
+    },
+    {
+      "key": "document:proforma_invoice:archive",
+      "resource": "document:proforma_invoice",
+      "action": "archive",
+      "description": "Document proforma_invoice — archive"
+    },
+    {
+      "key": "document:proforma_invoice:amend",
+      "resource": "document:proforma_invoice",
+      "action": "amend",
+      "description": "Document proforma_invoice — amend"
+    },
+    {
+      "key": "document:pos_receipt:submit",
+      "resource": "document:pos_receipt",
+      "action": "submit",
+      "description": "Document pos_receipt — submit"
+    },
+    {
+      "key": "document:pos_receipt:approve",
+      "resource": "document:pos_receipt",
+      "action": "approve",
+      "description": "Document pos_receipt — approve"
+    },
+    {
+      "key": "document:pos_receipt:reject",
+      "resource": "document:pos_receipt",
+      "action": "reject",
+      "description": "Document pos_receipt — reject"
+    },
+    {
+      "key": "document:pos_receipt:confirm",
+      "resource": "document:pos_receipt",
+      "action": "confirm",
+      "description": "Document pos_receipt — confirm"
+    },
+    {
+      "key": "document:pos_receipt:issue",
+      "resource": "document:pos_receipt",
+      "action": "issue",
+      "description": "Document pos_receipt — issue"
+    },
+    {
+      "key": "document:pos_receipt:activate",
+      "resource": "document:pos_receipt",
+      "action": "activate",
+      "description": "Document pos_receipt — activate"
+    },
+    {
+      "key": "document:pos_receipt:expire",
+      "resource": "document:pos_receipt",
+      "action": "expire",
+      "description": "Document pos_receipt — expire"
+    },
+    {
+      "key": "document:pos_receipt:revoke",
+      "resource": "document:pos_receipt",
+      "action": "revoke",
+      "description": "Document pos_receipt — revoke"
+    },
+    {
+      "key": "document:pos_receipt:post",
+      "resource": "document:pos_receipt",
+      "action": "post",
+      "description": "Document pos_receipt — post"
+    },
+    {
+      "key": "document:pos_receipt:pay",
+      "resource": "document:pos_receipt",
+      "action": "pay",
+      "description": "Document pos_receipt — pay"
+    },
+    {
+      "key": "document:pos_receipt:close",
+      "resource": "document:pos_receipt",
+      "action": "close",
+      "description": "Document pos_receipt — close"
+    },
+    {
+      "key": "document:pos_receipt:cancel",
+      "resource": "document:pos_receipt",
+      "action": "cancel",
+      "description": "Document pos_receipt — cancel"
+    },
+    {
+      "key": "document:pos_receipt:reverse",
+      "resource": "document:pos_receipt",
+      "action": "reverse",
+      "description": "Document pos_receipt — reverse"
+    },
+    {
+      "key": "document:pos_receipt:reissue",
+      "resource": "document:pos_receipt",
+      "action": "reissue",
+      "description": "Document pos_receipt — reissue"
+    },
+    {
+      "key": "document:pos_receipt:terminate",
+      "resource": "document:pos_receipt",
+      "action": "terminate",
+      "description": "Document pos_receipt — terminate"
+    },
+    {
+      "key": "document:pos_receipt:archive",
+      "resource": "document:pos_receipt",
+      "action": "archive",
+      "description": "Document pos_receipt — archive"
+    },
+    {
+      "key": "document:pos_receipt:amend",
+      "resource": "document:pos_receipt",
+      "action": "amend",
+      "description": "Document pos_receipt — amend"
+    },
+    {
+      "key": "document:delivery_note:submit",
+      "resource": "document:delivery_note",
+      "action": "submit",
+      "description": "Document delivery_note — submit"
+    },
+    {
+      "key": "document:delivery_note:approve",
+      "resource": "document:delivery_note",
+      "action": "approve",
+      "description": "Document delivery_note — approve"
+    },
+    {
+      "key": "document:delivery_note:reject",
+      "resource": "document:delivery_note",
+      "action": "reject",
+      "description": "Document delivery_note — reject"
+    },
+    {
+      "key": "document:delivery_note:confirm",
+      "resource": "document:delivery_note",
+      "action": "confirm",
+      "description": "Document delivery_note — confirm"
+    },
+    {
+      "key": "document:delivery_note:issue",
+      "resource": "document:delivery_note",
+      "action": "issue",
+      "description": "Document delivery_note — issue"
+    },
+    {
+      "key": "document:delivery_note:activate",
+      "resource": "document:delivery_note",
+      "action": "activate",
+      "description": "Document delivery_note — activate"
+    },
+    {
+      "key": "document:delivery_note:expire",
+      "resource": "document:delivery_note",
+      "action": "expire",
+      "description": "Document delivery_note — expire"
+    },
+    {
+      "key": "document:delivery_note:revoke",
+      "resource": "document:delivery_note",
+      "action": "revoke",
+      "description": "Document delivery_note — revoke"
+    },
+    {
+      "key": "document:delivery_note:post",
+      "resource": "document:delivery_note",
+      "action": "post",
+      "description": "Document delivery_note — post"
+    },
+    {
+      "key": "document:delivery_note:pay",
+      "resource": "document:delivery_note",
+      "action": "pay",
+      "description": "Document delivery_note — pay"
+    },
+    {
+      "key": "document:delivery_note:close",
+      "resource": "document:delivery_note",
+      "action": "close",
+      "description": "Document delivery_note — close"
+    },
+    {
+      "key": "document:delivery_note:cancel",
+      "resource": "document:delivery_note",
+      "action": "cancel",
+      "description": "Document delivery_note — cancel"
+    },
+    {
+      "key": "document:delivery_note:reverse",
+      "resource": "document:delivery_note",
+      "action": "reverse",
+      "description": "Document delivery_note — reverse"
+    },
+    {
+      "key": "document:delivery_note:reissue",
+      "resource": "document:delivery_note",
+      "action": "reissue",
+      "description": "Document delivery_note — reissue"
+    },
+    {
+      "key": "document:delivery_note:terminate",
+      "resource": "document:delivery_note",
+      "action": "terminate",
+      "description": "Document delivery_note — terminate"
+    },
+    {
+      "key": "document:delivery_note:archive",
+      "resource": "document:delivery_note",
+      "action": "archive",
+      "description": "Document delivery_note — archive"
+    },
+    {
+      "key": "document:delivery_note:amend",
+      "resource": "document:delivery_note",
+      "action": "amend",
+      "description": "Document delivery_note — amend"
+    },
+    {
+      "key": "document:quotation:submit",
+      "resource": "document:quotation",
+      "action": "submit",
+      "description": "Document quotation — submit"
+    },
+    {
+      "key": "document:quotation:approve",
+      "resource": "document:quotation",
+      "action": "approve",
+      "description": "Document quotation — approve"
+    },
+    {
+      "key": "document:quotation:reject",
+      "resource": "document:quotation",
+      "action": "reject",
+      "description": "Document quotation — reject"
+    },
+    {
+      "key": "document:quotation:confirm",
+      "resource": "document:quotation",
+      "action": "confirm",
+      "description": "Document quotation — confirm"
+    },
+    {
+      "key": "document:quotation:issue",
+      "resource": "document:quotation",
+      "action": "issue",
+      "description": "Document quotation — issue"
+    },
+    {
+      "key": "document:quotation:activate",
+      "resource": "document:quotation",
+      "action": "activate",
+      "description": "Document quotation — activate"
+    },
+    {
+      "key": "document:quotation:expire",
+      "resource": "document:quotation",
+      "action": "expire",
+      "description": "Document quotation — expire"
+    },
+    {
+      "key": "document:quotation:revoke",
+      "resource": "document:quotation",
+      "action": "revoke",
+      "description": "Document quotation — revoke"
+    },
+    {
+      "key": "document:quotation:post",
+      "resource": "document:quotation",
+      "action": "post",
+      "description": "Document quotation — post"
+    },
+    {
+      "key": "document:quotation:pay",
+      "resource": "document:quotation",
+      "action": "pay",
+      "description": "Document quotation — pay"
+    },
+    {
+      "key": "document:quotation:close",
+      "resource": "document:quotation",
+      "action": "close",
+      "description": "Document quotation — close"
+    },
+    {
+      "key": "document:quotation:cancel",
+      "resource": "document:quotation",
+      "action": "cancel",
+      "description": "Document quotation — cancel"
+    },
+    {
+      "key": "document:quotation:reverse",
+      "resource": "document:quotation",
+      "action": "reverse",
+      "description": "Document quotation — reverse"
+    },
+    {
+      "key": "document:quotation:reissue",
+      "resource": "document:quotation",
+      "action": "reissue",
+      "description": "Document quotation — reissue"
+    },
+    {
+      "key": "document:quotation:terminate",
+      "resource": "document:quotation",
+      "action": "terminate",
+      "description": "Document quotation — terminate"
+    },
+    {
+      "key": "document:quotation:archive",
+      "resource": "document:quotation",
+      "action": "archive",
+      "description": "Document quotation — archive"
+    },
+    {
+      "key": "document:quotation:amend",
+      "resource": "document:quotation",
+      "action": "amend",
+      "description": "Document quotation — amend"
+    },
+    {
+      "key": "document:rental_agreement:submit",
+      "resource": "document:rental_agreement",
+      "action": "submit",
+      "description": "Document rental_agreement — submit"
+    },
+    {
+      "key": "document:rental_agreement:approve",
+      "resource": "document:rental_agreement",
+      "action": "approve",
+      "description": "Document rental_agreement — approve"
+    },
+    {
+      "key": "document:rental_agreement:reject",
+      "resource": "document:rental_agreement",
+      "action": "reject",
+      "description": "Document rental_agreement — reject"
+    },
+    {
+      "key": "document:rental_agreement:confirm",
+      "resource": "document:rental_agreement",
+      "action": "confirm",
+      "description": "Document rental_agreement — confirm"
+    },
+    {
+      "key": "document:rental_agreement:issue",
+      "resource": "document:rental_agreement",
+      "action": "issue",
+      "description": "Document rental_agreement — issue"
+    },
+    {
+      "key": "document:rental_agreement:activate",
+      "resource": "document:rental_agreement",
+      "action": "activate",
+      "description": "Document rental_agreement — activate"
+    },
+    {
+      "key": "document:rental_agreement:expire",
+      "resource": "document:rental_agreement",
+      "action": "expire",
+      "description": "Document rental_agreement — expire"
+    },
+    {
+      "key": "document:rental_agreement:revoke",
+      "resource": "document:rental_agreement",
+      "action": "revoke",
+      "description": "Document rental_agreement — revoke"
+    },
+    {
+      "key": "document:rental_agreement:post",
+      "resource": "document:rental_agreement",
+      "action": "post",
+      "description": "Document rental_agreement — post"
+    },
+    {
+      "key": "document:rental_agreement:pay",
+      "resource": "document:rental_agreement",
+      "action": "pay",
+      "description": "Document rental_agreement — pay"
+    },
+    {
+      "key": "document:rental_agreement:close",
+      "resource": "document:rental_agreement",
+      "action": "close",
+      "description": "Document rental_agreement — close"
+    },
+    {
+      "key": "document:rental_agreement:cancel",
+      "resource": "document:rental_agreement",
+      "action": "cancel",
+      "description": "Document rental_agreement — cancel"
+    },
+    {
+      "key": "document:rental_agreement:reverse",
+      "resource": "document:rental_agreement",
+      "action": "reverse",
+      "description": "Document rental_agreement — reverse"
+    },
+    {
+      "key": "document:rental_agreement:reissue",
+      "resource": "document:rental_agreement",
+      "action": "reissue",
+      "description": "Document rental_agreement — reissue"
+    },
+    {
+      "key": "document:rental_agreement:terminate",
+      "resource": "document:rental_agreement",
+      "action": "terminate",
+      "description": "Document rental_agreement — terminate"
+    },
+    {
+      "key": "document:rental_agreement:archive",
+      "resource": "document:rental_agreement",
+      "action": "archive",
+      "description": "Document rental_agreement — archive"
+    },
+    {
+      "key": "document:rental_agreement:amend",
+      "resource": "document:rental_agreement",
+      "action": "amend",
+      "description": "Document rental_agreement — amend"
+    },
+    {
+      "key": "document:rental_return:submit",
+      "resource": "document:rental_return",
+      "action": "submit",
+      "description": "Document rental_return — submit"
+    },
+    {
+      "key": "document:rental_return:approve",
+      "resource": "document:rental_return",
+      "action": "approve",
+      "description": "Document rental_return — approve"
+    },
+    {
+      "key": "document:rental_return:reject",
+      "resource": "document:rental_return",
+      "action": "reject",
+      "description": "Document rental_return — reject"
+    },
+    {
+      "key": "document:rental_return:confirm",
+      "resource": "document:rental_return",
+      "action": "confirm",
+      "description": "Document rental_return — confirm"
+    },
+    {
+      "key": "document:rental_return:issue",
+      "resource": "document:rental_return",
+      "action": "issue",
+      "description": "Document rental_return — issue"
+    },
+    {
+      "key": "document:rental_return:activate",
+      "resource": "document:rental_return",
+      "action": "activate",
+      "description": "Document rental_return — activate"
+    },
+    {
+      "key": "document:rental_return:expire",
+      "resource": "document:rental_return",
+      "action": "expire",
+      "description": "Document rental_return — expire"
+    },
+    {
+      "key": "document:rental_return:revoke",
+      "resource": "document:rental_return",
+      "action": "revoke",
+      "description": "Document rental_return — revoke"
+    },
+    {
+      "key": "document:rental_return:post",
+      "resource": "document:rental_return",
+      "action": "post",
+      "description": "Document rental_return — post"
+    },
+    {
+      "key": "document:rental_return:pay",
+      "resource": "document:rental_return",
+      "action": "pay",
+      "description": "Document rental_return — pay"
+    },
+    {
+      "key": "document:rental_return:close",
+      "resource": "document:rental_return",
+      "action": "close",
+      "description": "Document rental_return — close"
+    },
+    {
+      "key": "document:rental_return:cancel",
+      "resource": "document:rental_return",
+      "action": "cancel",
+      "description": "Document rental_return — cancel"
+    },
+    {
+      "key": "document:rental_return:reverse",
+      "resource": "document:rental_return",
+      "action": "reverse",
+      "description": "Document rental_return — reverse"
+    },
+    {
+      "key": "document:rental_return:reissue",
+      "resource": "document:rental_return",
+      "action": "reissue",
+      "description": "Document rental_return — reissue"
+    },
+    {
+      "key": "document:rental_return:terminate",
+      "resource": "document:rental_return",
+      "action": "terminate",
+      "description": "Document rental_return — terminate"
+    },
+    {
+      "key": "document:rental_return:archive",
+      "resource": "document:rental_return",
+      "action": "archive",
+      "description": "Document rental_return — archive"
+    },
+    {
+      "key": "document:rental_return:amend",
+      "resource": "document:rental_return",
+      "action": "amend",
+      "description": "Document rental_return — amend"
+    },
+    {
+      "key": "document:rental_deposit:submit",
+      "resource": "document:rental_deposit",
+      "action": "submit",
+      "description": "Document rental_deposit — submit"
+    },
+    {
+      "key": "document:rental_deposit:approve",
+      "resource": "document:rental_deposit",
+      "action": "approve",
+      "description": "Document rental_deposit — approve"
+    },
+    {
+      "key": "document:rental_deposit:reject",
+      "resource": "document:rental_deposit",
+      "action": "reject",
+      "description": "Document rental_deposit — reject"
+    },
+    {
+      "key": "document:rental_deposit:confirm",
+      "resource": "document:rental_deposit",
+      "action": "confirm",
+      "description": "Document rental_deposit — confirm"
+    },
+    {
+      "key": "document:rental_deposit:issue",
+      "resource": "document:rental_deposit",
+      "action": "issue",
+      "description": "Document rental_deposit — issue"
+    },
+    {
+      "key": "document:rental_deposit:activate",
+      "resource": "document:rental_deposit",
+      "action": "activate",
+      "description": "Document rental_deposit — activate"
+    },
+    {
+      "key": "document:rental_deposit:expire",
+      "resource": "document:rental_deposit",
+      "action": "expire",
+      "description": "Document rental_deposit — expire"
+    },
+    {
+      "key": "document:rental_deposit:revoke",
+      "resource": "document:rental_deposit",
+      "action": "revoke",
+      "description": "Document rental_deposit — revoke"
+    },
+    {
+      "key": "document:rental_deposit:post",
+      "resource": "document:rental_deposit",
+      "action": "post",
+      "description": "Document rental_deposit — post"
+    },
+    {
+      "key": "document:rental_deposit:pay",
+      "resource": "document:rental_deposit",
+      "action": "pay",
+      "description": "Document rental_deposit — pay"
+    },
+    {
+      "key": "document:rental_deposit:close",
+      "resource": "document:rental_deposit",
+      "action": "close",
+      "description": "Document rental_deposit — close"
+    },
+    {
+      "key": "document:rental_deposit:cancel",
+      "resource": "document:rental_deposit",
+      "action": "cancel",
+      "description": "Document rental_deposit — cancel"
+    },
+    {
+      "key": "document:rental_deposit:reverse",
+      "resource": "document:rental_deposit",
+      "action": "reverse",
+      "description": "Document rental_deposit — reverse"
+    },
+    {
+      "key": "document:rental_deposit:reissue",
+      "resource": "document:rental_deposit",
+      "action": "reissue",
+      "description": "Document rental_deposit — reissue"
+    },
+    {
+      "key": "document:rental_deposit:terminate",
+      "resource": "document:rental_deposit",
+      "action": "terminate",
+      "description": "Document rental_deposit — terminate"
+    },
+    {
+      "key": "document:rental_deposit:archive",
+      "resource": "document:rental_deposit",
+      "action": "archive",
+      "description": "Document rental_deposit — archive"
+    },
+    {
+      "key": "document:rental_deposit:amend",
+      "resource": "document:rental_deposit",
+      "action": "amend",
+      "description": "Document rental_deposit — amend"
+    },
+    {
+      "key": "document:rental_service_order:submit",
+      "resource": "document:rental_service_order",
+      "action": "submit",
+      "description": "Document rental_service_order — submit"
+    },
+    {
+      "key": "document:rental_service_order:approve",
+      "resource": "document:rental_service_order",
+      "action": "approve",
+      "description": "Document rental_service_order — approve"
+    },
+    {
+      "key": "document:rental_service_order:reject",
+      "resource": "document:rental_service_order",
+      "action": "reject",
+      "description": "Document rental_service_order — reject"
+    },
+    {
+      "key": "document:rental_service_order:confirm",
+      "resource": "document:rental_service_order",
+      "action": "confirm",
+      "description": "Document rental_service_order — confirm"
+    },
+    {
+      "key": "document:rental_service_order:issue",
+      "resource": "document:rental_service_order",
+      "action": "issue",
+      "description": "Document rental_service_order — issue"
+    },
+    {
+      "key": "document:rental_service_order:activate",
+      "resource": "document:rental_service_order",
+      "action": "activate",
+      "description": "Document rental_service_order — activate"
+    },
+    {
+      "key": "document:rental_service_order:expire",
+      "resource": "document:rental_service_order",
+      "action": "expire",
+      "description": "Document rental_service_order — expire"
+    },
+    {
+      "key": "document:rental_service_order:revoke",
+      "resource": "document:rental_service_order",
+      "action": "revoke",
+      "description": "Document rental_service_order — revoke"
+    },
+    {
+      "key": "document:rental_service_order:post",
+      "resource": "document:rental_service_order",
+      "action": "post",
+      "description": "Document rental_service_order — post"
+    },
+    {
+      "key": "document:rental_service_order:pay",
+      "resource": "document:rental_service_order",
+      "action": "pay",
+      "description": "Document rental_service_order — pay"
+    },
+    {
+      "key": "document:rental_service_order:close",
+      "resource": "document:rental_service_order",
+      "action": "close",
+      "description": "Document rental_service_order — close"
+    },
+    {
+      "key": "document:rental_service_order:cancel",
+      "resource": "document:rental_service_order",
+      "action": "cancel",
+      "description": "Document rental_service_order — cancel"
+    },
+    {
+      "key": "document:rental_service_order:reverse",
+      "resource": "document:rental_service_order",
+      "action": "reverse",
+      "description": "Document rental_service_order — reverse"
+    },
+    {
+      "key": "document:rental_service_order:reissue",
+      "resource": "document:rental_service_order",
+      "action": "reissue",
+      "description": "Document rental_service_order — reissue"
+    },
+    {
+      "key": "document:rental_service_order:terminate",
+      "resource": "document:rental_service_order",
+      "action": "terminate",
+      "description": "Document rental_service_order — terminate"
+    },
+    {
+      "key": "document:rental_service_order:archive",
+      "resource": "document:rental_service_order",
+      "action": "archive",
+      "description": "Document rental_service_order — archive"
+    },
+    {
+      "key": "document:rental_service_order:amend",
+      "resource": "document:rental_service_order",
+      "action": "amend",
+      "description": "Document rental_service_order — amend"
+    },
+    {
+      "key": "document:school_fee_invoice:submit",
+      "resource": "document:school_fee_invoice",
+      "action": "submit",
+      "description": "Document school_fee_invoice — submit"
+    },
+    {
+      "key": "document:school_fee_invoice:approve",
+      "resource": "document:school_fee_invoice",
+      "action": "approve",
+      "description": "Document school_fee_invoice — approve"
+    },
+    {
+      "key": "document:school_fee_invoice:reject",
+      "resource": "document:school_fee_invoice",
+      "action": "reject",
+      "description": "Document school_fee_invoice — reject"
+    },
+    {
+      "key": "document:school_fee_invoice:confirm",
+      "resource": "document:school_fee_invoice",
+      "action": "confirm",
+      "description": "Document school_fee_invoice — confirm"
+    },
+    {
+      "key": "document:school_fee_invoice:issue",
+      "resource": "document:school_fee_invoice",
+      "action": "issue",
+      "description": "Document school_fee_invoice — issue"
+    },
+    {
+      "key": "document:school_fee_invoice:activate",
+      "resource": "document:school_fee_invoice",
+      "action": "activate",
+      "description": "Document school_fee_invoice — activate"
+    },
+    {
+      "key": "document:school_fee_invoice:expire",
+      "resource": "document:school_fee_invoice",
+      "action": "expire",
+      "description": "Document school_fee_invoice — expire"
+    },
+    {
+      "key": "document:school_fee_invoice:revoke",
+      "resource": "document:school_fee_invoice",
+      "action": "revoke",
+      "description": "Document school_fee_invoice — revoke"
+    },
+    {
+      "key": "document:school_fee_invoice:post",
+      "resource": "document:school_fee_invoice",
+      "action": "post",
+      "description": "Document school_fee_invoice — post"
+    },
+    {
+      "key": "document:school_fee_invoice:pay",
+      "resource": "document:school_fee_invoice",
+      "action": "pay",
+      "description": "Document school_fee_invoice — pay"
+    },
+    {
+      "key": "document:school_fee_invoice:close",
+      "resource": "document:school_fee_invoice",
+      "action": "close",
+      "description": "Document school_fee_invoice — close"
+    },
+    {
+      "key": "document:school_fee_invoice:cancel",
+      "resource": "document:school_fee_invoice",
+      "action": "cancel",
+      "description": "Document school_fee_invoice — cancel"
+    },
+    {
+      "key": "document:school_fee_invoice:reverse",
+      "resource": "document:school_fee_invoice",
+      "action": "reverse",
+      "description": "Document school_fee_invoice — reverse"
+    },
+    {
+      "key": "document:school_fee_invoice:reissue",
+      "resource": "document:school_fee_invoice",
+      "action": "reissue",
+      "description": "Document school_fee_invoice — reissue"
+    },
+    {
+      "key": "document:school_fee_invoice:terminate",
+      "resource": "document:school_fee_invoice",
+      "action": "terminate",
+      "description": "Document school_fee_invoice — terminate"
+    },
+    {
+      "key": "document:school_fee_invoice:archive",
+      "resource": "document:school_fee_invoice",
+      "action": "archive",
+      "description": "Document school_fee_invoice — archive"
+    },
+    {
+      "key": "document:school_fee_invoice:amend",
+      "resource": "document:school_fee_invoice",
+      "action": "amend",
+      "description": "Document school_fee_invoice — amend"
+    },
+    {
+      "key": "document:school_receipt:submit",
+      "resource": "document:school_receipt",
+      "action": "submit",
+      "description": "Document school_receipt — submit"
+    },
+    {
+      "key": "document:school_receipt:approve",
+      "resource": "document:school_receipt",
+      "action": "approve",
+      "description": "Document school_receipt — approve"
+    },
+    {
+      "key": "document:school_receipt:reject",
+      "resource": "document:school_receipt",
+      "action": "reject",
+      "description": "Document school_receipt — reject"
+    },
+    {
+      "key": "document:school_receipt:confirm",
+      "resource": "document:school_receipt",
+      "action": "confirm",
+      "description": "Document school_receipt — confirm"
+    },
+    {
+      "key": "document:school_receipt:issue",
+      "resource": "document:school_receipt",
+      "action": "issue",
+      "description": "Document school_receipt — issue"
+    },
+    {
+      "key": "document:school_receipt:activate",
+      "resource": "document:school_receipt",
+      "action": "activate",
+      "description": "Document school_receipt — activate"
+    },
+    {
+      "key": "document:school_receipt:expire",
+      "resource": "document:school_receipt",
+      "action": "expire",
+      "description": "Document school_receipt — expire"
+    },
+    {
+      "key": "document:school_receipt:revoke",
+      "resource": "document:school_receipt",
+      "action": "revoke",
+      "description": "Document school_receipt — revoke"
+    },
+    {
+      "key": "document:school_receipt:post",
+      "resource": "document:school_receipt",
+      "action": "post",
+      "description": "Document school_receipt — post"
+    },
+    {
+      "key": "document:school_receipt:pay",
+      "resource": "document:school_receipt",
+      "action": "pay",
+      "description": "Document school_receipt — pay"
+    },
+    {
+      "key": "document:school_receipt:close",
+      "resource": "document:school_receipt",
+      "action": "close",
+      "description": "Document school_receipt — close"
+    },
+    {
+      "key": "document:school_receipt:cancel",
+      "resource": "document:school_receipt",
+      "action": "cancel",
+      "description": "Document school_receipt — cancel"
+    },
+    {
+      "key": "document:school_receipt:reverse",
+      "resource": "document:school_receipt",
+      "action": "reverse",
+      "description": "Document school_receipt — reverse"
+    },
+    {
+      "key": "document:school_receipt:reissue",
+      "resource": "document:school_receipt",
+      "action": "reissue",
+      "description": "Document school_receipt — reissue"
+    },
+    {
+      "key": "document:school_receipt:terminate",
+      "resource": "document:school_receipt",
+      "action": "terminate",
+      "description": "Document school_receipt — terminate"
+    },
+    {
+      "key": "document:school_receipt:archive",
+      "resource": "document:school_receipt",
+      "action": "archive",
+      "description": "Document school_receipt — archive"
+    },
+    {
+      "key": "document:school_receipt:amend",
+      "resource": "document:school_receipt",
+      "action": "amend",
+      "description": "Document school_receipt — amend"
+    },
+    {
+      "key": "document:school_admission_letter:submit",
+      "resource": "document:school_admission_letter",
+      "action": "submit",
+      "description": "Document school_admission_letter — submit"
+    },
+    {
+      "key": "document:school_admission_letter:approve",
+      "resource": "document:school_admission_letter",
+      "action": "approve",
+      "description": "Document school_admission_letter — approve"
+    },
+    {
+      "key": "document:school_admission_letter:reject",
+      "resource": "document:school_admission_letter",
+      "action": "reject",
+      "description": "Document school_admission_letter — reject"
+    },
+    {
+      "key": "document:school_admission_letter:confirm",
+      "resource": "document:school_admission_letter",
+      "action": "confirm",
+      "description": "Document school_admission_letter — confirm"
+    },
+    {
+      "key": "document:school_admission_letter:issue",
+      "resource": "document:school_admission_letter",
+      "action": "issue",
+      "description": "Document school_admission_letter — issue"
+    },
+    {
+      "key": "document:school_admission_letter:activate",
+      "resource": "document:school_admission_letter",
+      "action": "activate",
+      "description": "Document school_admission_letter — activate"
+    },
+    {
+      "key": "document:school_admission_letter:expire",
+      "resource": "document:school_admission_letter",
+      "action": "expire",
+      "description": "Document school_admission_letter — expire"
+    },
+    {
+      "key": "document:school_admission_letter:revoke",
+      "resource": "document:school_admission_letter",
+      "action": "revoke",
+      "description": "Document school_admission_letter — revoke"
+    },
+    {
+      "key": "document:school_admission_letter:post",
+      "resource": "document:school_admission_letter",
+      "action": "post",
+      "description": "Document school_admission_letter — post"
+    },
+    {
+      "key": "document:school_admission_letter:pay",
+      "resource": "document:school_admission_letter",
+      "action": "pay",
+      "description": "Document school_admission_letter — pay"
+    },
+    {
+      "key": "document:school_admission_letter:close",
+      "resource": "document:school_admission_letter",
+      "action": "close",
+      "description": "Document school_admission_letter — close"
+    },
+    {
+      "key": "document:school_admission_letter:cancel",
+      "resource": "document:school_admission_letter",
+      "action": "cancel",
+      "description": "Document school_admission_letter — cancel"
+    },
+    {
+      "key": "document:school_admission_letter:reverse",
+      "resource": "document:school_admission_letter",
+      "action": "reverse",
+      "description": "Document school_admission_letter — reverse"
+    },
+    {
+      "key": "document:school_admission_letter:reissue",
+      "resource": "document:school_admission_letter",
+      "action": "reissue",
+      "description": "Document school_admission_letter — reissue"
+    },
+    {
+      "key": "document:school_admission_letter:terminate",
+      "resource": "document:school_admission_letter",
+      "action": "terminate",
+      "description": "Document school_admission_letter — terminate"
+    },
+    {
+      "key": "document:school_admission_letter:archive",
+      "resource": "document:school_admission_letter",
+      "action": "archive",
+      "description": "Document school_admission_letter — archive"
+    },
+    {
+      "key": "document:school_admission_letter:amend",
+      "resource": "document:school_admission_letter",
+      "action": "amend",
+      "description": "Document school_admission_letter — amend"
+    },
+    {
+      "key": "document:school_certificate:submit",
+      "resource": "document:school_certificate",
+      "action": "submit",
+      "description": "Document school_certificate — submit"
+    },
+    {
+      "key": "document:school_certificate:approve",
+      "resource": "document:school_certificate",
+      "action": "approve",
+      "description": "Document school_certificate — approve"
+    },
+    {
+      "key": "document:school_certificate:reject",
+      "resource": "document:school_certificate",
+      "action": "reject",
+      "description": "Document school_certificate — reject"
+    },
+    {
+      "key": "document:school_certificate:confirm",
+      "resource": "document:school_certificate",
+      "action": "confirm",
+      "description": "Document school_certificate — confirm"
+    },
+    {
+      "key": "document:school_certificate:issue",
+      "resource": "document:school_certificate",
+      "action": "issue",
+      "description": "Document school_certificate — issue"
+    },
+    {
+      "key": "document:school_certificate:activate",
+      "resource": "document:school_certificate",
+      "action": "activate",
+      "description": "Document school_certificate — activate"
+    },
+    {
+      "key": "document:school_certificate:expire",
+      "resource": "document:school_certificate",
+      "action": "expire",
+      "description": "Document school_certificate — expire"
+    },
+    {
+      "key": "document:school_certificate:revoke",
+      "resource": "document:school_certificate",
+      "action": "revoke",
+      "description": "Document school_certificate — revoke"
+    },
+    {
+      "key": "document:school_certificate:post",
+      "resource": "document:school_certificate",
+      "action": "post",
+      "description": "Document school_certificate — post"
+    },
+    {
+      "key": "document:school_certificate:pay",
+      "resource": "document:school_certificate",
+      "action": "pay",
+      "description": "Document school_certificate — pay"
+    },
+    {
+      "key": "document:school_certificate:close",
+      "resource": "document:school_certificate",
+      "action": "close",
+      "description": "Document school_certificate — close"
+    },
+    {
+      "key": "document:school_certificate:cancel",
+      "resource": "document:school_certificate",
+      "action": "cancel",
+      "description": "Document school_certificate — cancel"
+    },
+    {
+      "key": "document:school_certificate:reverse",
+      "resource": "document:school_certificate",
+      "action": "reverse",
+      "description": "Document school_certificate — reverse"
+    },
+    {
+      "key": "document:school_certificate:reissue",
+      "resource": "document:school_certificate",
+      "action": "reissue",
+      "description": "Document school_certificate — reissue"
+    },
+    {
+      "key": "document:school_certificate:terminate",
+      "resource": "document:school_certificate",
+      "action": "terminate",
+      "description": "Document school_certificate — terminate"
+    },
+    {
+      "key": "document:school_certificate:archive",
+      "resource": "document:school_certificate",
+      "action": "archive",
+      "description": "Document school_certificate — archive"
+    },
+    {
+      "key": "document:school_certificate:amend",
+      "resource": "document:school_certificate",
+      "action": "amend",
+      "description": "Document school_certificate — amend"
+    },
+    {
+      "key": "document:school_report_card:submit",
+      "resource": "document:school_report_card",
+      "action": "submit",
+      "description": "Document school_report_card — submit"
+    },
+    {
+      "key": "document:school_report_card:approve",
+      "resource": "document:school_report_card",
+      "action": "approve",
+      "description": "Document school_report_card — approve"
+    },
+    {
+      "key": "document:school_report_card:reject",
+      "resource": "document:school_report_card",
+      "action": "reject",
+      "description": "Document school_report_card — reject"
+    },
+    {
+      "key": "document:school_report_card:confirm",
+      "resource": "document:school_report_card",
+      "action": "confirm",
+      "description": "Document school_report_card — confirm"
+    },
+    {
+      "key": "document:school_report_card:issue",
+      "resource": "document:school_report_card",
+      "action": "issue",
+      "description": "Document school_report_card — issue"
+    },
+    {
+      "key": "document:school_report_card:activate",
+      "resource": "document:school_report_card",
+      "action": "activate",
+      "description": "Document school_report_card — activate"
+    },
+    {
+      "key": "document:school_report_card:expire",
+      "resource": "document:school_report_card",
+      "action": "expire",
+      "description": "Document school_report_card — expire"
+    },
+    {
+      "key": "document:school_report_card:revoke",
+      "resource": "document:school_report_card",
+      "action": "revoke",
+      "description": "Document school_report_card — revoke"
+    },
+    {
+      "key": "document:school_report_card:post",
+      "resource": "document:school_report_card",
+      "action": "post",
+      "description": "Document school_report_card — post"
+    },
+    {
+      "key": "document:school_report_card:pay",
+      "resource": "document:school_report_card",
+      "action": "pay",
+      "description": "Document school_report_card — pay"
+    },
+    {
+      "key": "document:school_report_card:close",
+      "resource": "document:school_report_card",
+      "action": "close",
+      "description": "Document school_report_card — close"
+    },
+    {
+      "key": "document:school_report_card:cancel",
+      "resource": "document:school_report_card",
+      "action": "cancel",
+      "description": "Document school_report_card — cancel"
+    },
+    {
+      "key": "document:school_report_card:reverse",
+      "resource": "document:school_report_card",
+      "action": "reverse",
+      "description": "Document school_report_card — reverse"
+    },
+    {
+      "key": "document:school_report_card:reissue",
+      "resource": "document:school_report_card",
+      "action": "reissue",
+      "description": "Document school_report_card — reissue"
+    },
+    {
+      "key": "document:school_report_card:terminate",
+      "resource": "document:school_report_card",
+      "action": "terminate",
+      "description": "Document school_report_card — terminate"
+    },
+    {
+      "key": "document:school_report_card:archive",
+      "resource": "document:school_report_card",
+      "action": "archive",
+      "description": "Document school_report_card — archive"
+    },
+    {
+      "key": "document:school_report_card:amend",
+      "resource": "document:school_report_card",
+      "action": "amend",
+      "description": "Document school_report_card — amend"
+    }
+  ]
+}

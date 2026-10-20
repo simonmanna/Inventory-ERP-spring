@@ -1,0 +1,15 @@
+{
+  "name": "Expenses: categories, list/stats/meta, validation and idempotency",
+  "vars": {"org": "DEMO", "email": "admin@demo.test", "password": "Admin@123"},
+  "steps": [
+    {"name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": {"organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}"}, "capture": {"token": "$.accessToken"}},
+    {"name": "categories", "method": "GET", "path": "/api/v1/expense-categories"},
+    {"name": "category: bad ledger account", "method": "POST", "path": "/api/v1/expense-categories", "body": {"name": "Parity", "ledgerAccountId": "00000000-0000-0000-0000-000000000000"}},
+    {"name": "expenses", "method": "GET", "path": "/api/v1/expenses?limit=5"},
+    {"name": "stats", "method": "GET", "path": "/api/v1/expenses/stats"},
+    {"name": "meta accounts", "method": "GET", "path": "/api/v1/expenses/meta/accounts"},
+    {"name": "meta suppliers", "method": "GET", "path": "/api/v1/expenses/meta/suppliers"},
+    {"name": "expense: missing key", "method": "POST", "path": "/api/v1/expenses", "body": {"title": "X", "amount": 1, "expenseDate": "2026-03-15", "paymentType": "CREDIT"}},
+    {"name": "expense: not found", "method": "GET", "path": "/api/v1/expenses/00000000-0000-0000-0000-000000000000"}
+  ]
+}

@@ -175,7 +175,11 @@ class KernelIT {
         assertThat(ok.body().get("refreshToken").asString()).hasSize(64);
         assertThat(ok.body().at("/user/roles/0").asString()).isEqualTo("Administrator");
         assertThat(ok.body().at("/organization/code").asString()).isEqualTo("DEMO");
-        assertThat(ok.body().get("permissions").size()).isEqualTo(com.inventoryerp.kernel.security.Permissions.ALL.size());
+        // The full catalog; once DmsRegistrySeeder has run, system roles also hold the per-type DMS keys
+        // (Nest wireDmsRoleKeys), so the exact count depends on boot / seed order.
+        java.util.List<String> granted = new java.util.ArrayList<>();
+        ok.body().get("permissions").forEach(n -> granted.add(n.asString()));
+        assertThat(granted).containsAll(com.inventoryerp.kernel.security.Permissions.ALL);
 
         Res bad = call("POST", "/auth/login", Map.of("organizationCode", "DEMO", "email", "admin@demo.test", "password", "nope"), (String) null);
         assertThat(bad.status()).isEqualTo(401);

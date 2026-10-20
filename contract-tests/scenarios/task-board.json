@@ -1,0 +1,15 @@
+{
+  "name": "Tasks (ENABLE_TASKS=true on both sides): CRUD, validation, dashboard, labels, templates, rules",
+  "vars": {"org": "DEMO", "email": "admin@demo.test", "password": "Admin@123"},
+  "steps": [
+    {"name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": {"organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}"}, "capture": {"token": "$.accessToken"}},
+    {"name": "tasks", "method": "GET", "path": "/api/v1/tasks?limit=5"},
+    {"name": "tasks: bad page", "method": "GET", "path": "/api/v1/tasks?page=0"},
+    {"name": "tasks: unknown query field", "method": "GET", "path": "/api/v1/tasks?foo=1"},
+    {"name": "task: missing title", "method": "POST", "path": "/api/v1/tasks", "body": {}},
+    {"name": "task: not found", "method": "GET", "path": "/api/v1/tasks/00000000-0000-0000-0000-000000000000"},
+    {"name": "labels", "method": "GET", "path": "/api/v1/tasks/labels"},
+    {"name": "templates", "method": "GET", "path": "/api/v1/tasks/templates"},
+    {"name": "auto rules", "method": "GET", "path": "/api/v1/tasks/auto-rules"}
+  ]
+}

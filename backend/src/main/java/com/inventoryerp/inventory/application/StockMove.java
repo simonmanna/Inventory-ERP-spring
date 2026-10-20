@@ -1,0 +1,154 @@
+package com.inventoryerp.inventory.application;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * Input of a {@link StockService} movement (port of {@code ReceiveStockDto} / {@code IssueStockDto} /
+ * {@code AdjustStockDto} / {@code TransferStockDto} plus the internal-only issue flags). Fluent setters keep
+ * call sites readable; unset fields are {@code null} like the optional Nest DTO properties.
+ */
+public final class StockMove {
+
+    public String productId;
+    public String variantId;
+    public String locationId;
+    public String fromLocationId;
+    public String toLocationId;
+    /** Movement quantity in {@link #uomId} (base unit when null). */
+    public BigDecimal quantity;
+    /** Adjust only: the counted on-hand. */
+    public BigDecimal countedQuantity;
+    public BigDecimal unitCost;
+    public String uomId;
+    public String batchNumber;
+    public String expiryDate;
+    public String mfgDate;
+    public String reference;
+    public String sourceType;
+    public String sourceId;
+    public String notes;
+    /** StockMoveType value; defaults per operation. */
+    public String moveType;
+    public List<String> serialNumbers;
+    /** FEFO | FIFO | MANUAL | SERIAL. */
+    public String distStrategy;
+    public String responsibleById;
+    public String approvedById;
+    /** Issue only: movement date (period check + GL date); now when null. */
+    public Instant date;
+    /** Issue only: quantity-only (the caller posts the balanced entry itself). */
+    public boolean skipGlPosting;
+    /** Issue only: refuse when pickable on-hand is short, regardless of the negative-stock setting. */
+    public boolean requireAvailable;
+
+    public static StockMove of(String productId, String locationId, BigDecimal quantity) {
+        StockMove m = new StockMove();
+        m.productId = productId;
+        m.locationId = locationId;
+        m.quantity = quantity;
+        return m;
+    }
+
+    public static StockMove transfer(String productId, String fromLocationId, String toLocationId, BigDecimal quantity) {
+        StockMove m = new StockMove();
+        m.productId = productId;
+        m.fromLocationId = fromLocationId;
+        m.toLocationId = toLocationId;
+        m.quantity = quantity;
+        return m;
+    }
+
+    public StockMove variant(String v) {
+        this.variantId = v;
+        return this;
+    }
+
+    public StockMove unitCost(BigDecimal v) {
+        this.unitCost = v;
+        return this;
+    }
+
+    public StockMove uom(String v) {
+        this.uomId = v;
+        return this;
+    }
+
+    public StockMove batch(String v) {
+        this.batchNumber = v;
+        return this;
+    }
+
+    public StockMove expiry(String v) {
+        this.expiryDate = v;
+        return this;
+    }
+
+    public StockMove reference(String v) {
+        this.reference = v;
+        return this;
+    }
+
+    public StockMove source(String type, String id) {
+        this.sourceType = type;
+        this.sourceId = id;
+        return this;
+    }
+
+    public StockMove notes(String v) {
+        this.notes = v;
+        return this;
+    }
+
+    public StockMove moveType(String v) {
+        this.moveType = v;
+        return this;
+    }
+
+    public StockMove serials(List<String> v) {
+        this.serialNumbers = v;
+        return this;
+    }
+
+    public StockMove strategy(String v) {
+        this.distStrategy = v;
+        return this;
+    }
+
+    public StockMove people(String responsible, String approved) {
+        this.responsibleById = responsible;
+        this.approvedById = approved;
+        return this;
+    }
+
+    public StockMove date(Instant v) {
+        this.date = v;
+        return this;
+    }
+
+    public StockMove skipGl() {
+        this.skipGlPosting = true;
+        return this;
+    }
+
+    public StockMove requireAvailable(boolean v) {
+        this.requireAvailable = v;
+        return this;
+    }
+
+    /** Result of a receipt: {@code quantity} echoes the caller's unit; values are per base unit. */
+    public record Received(String ledgerCode, BigDecimal quantity, BigDecimal unitCost, BigDecimal totalValue,
+            BigDecimal runningAverageCost) {}
+
+    /** Result of an issue: {@code baseQuantity}/{@code baseUomId} are what actually left stock. */
+    public record Issued(String ledgerCode, BigDecimal quantity, BigDecimal baseQuantity, String baseUomId,
+            BigDecimal unitCost, BigDecimal totalValue) {}
+
+    /** Result of an adjustment ({@code ledgerCode} null when nothing changed). */
+    public record Adjusted(String ledgerCode, BigDecimal previousQuantity, BigDecimal newQuantity, BigDecimal delta,
+            BigDecimal unitCost) {}
+
+    /** Result of a transfer. */
+    public record Transferred(String ledgerCode, BigDecimal quantity, String fromLocationId, String toLocationId) {}
+}

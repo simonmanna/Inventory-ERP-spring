@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Documents (DMS) — `documents`
 
 | | |
@@ -45,21 +44,49 @@ document lifecycle events.
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/documents-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Pending owner approval:
+
+1. **A4 PDF rendering** (`GET /:id/preview?format=a4`, `POST /:id/print`): Nest drives the system Chrome
+   (`--print-to-pdf`); Java renders the substituted HTML's text with OpenPDF. `content`
+   (`PDF <n> bytes (seal-reproducible)`) and `base64` therefore differ in bytes; html / thermal / plain
+   output is identical (same `{{key}}` substitution, ported verbatim).
+
+Same as Nest, kept on purpose:
+
+- **Route shadowing**: Express matches in registration order, so `GET /documents/templates` is served by
+  `GET /documents/:id` (404 `Document not found`) and `GET /documents/types/categories` by
+  `GET /documents/types/:code` (404 `Unknown document type code: categories`). The Java handlers delegate the
+  same way; the intended list endpoints exist as service methods only.
+- Reversal / reissue counterparts carry no lines (the engine maps `doc.lines`, which it never loads).
+- `DocumentRelation` has no unique index, so duplicate relations are accepted (the 409 branch is unreachable).
+- Lifecycle actions and prints resolve `document:<type>:<action>` → `document:<category>:<action>` →
+  `document:<action>`; Nest reads the grants from the JWT, Java from the role tables (`PermissionService`) —
+  same set.
+
+Registry seeding: `DmsRegistrySeeder` upserts `classpath:dms/registry.json` on every boot and appends the DMS
+keys to system roles (also as a demo-seed contributor). The JSON is exported from the Nest
+`dms.seed-data.ts` by `node tools/dms-registry/export.mjs` — re-run it when the Nest seed changes.
 
 ## Status
 
-Not started.
+P3c: 28/28 routes. Tests: `DmsRulesTest` (ports of `dms.lifecycle`, `dms.relations`, `dms.snapshot`
+(seal + render byte-checked against the Nest code), `dms.seed-validation`, `document-permissions` specs),
+`DocumentsIT` (registry + type admin, route shadowing, engine idempotency / guards / version lock / snapshot /
+outbox fact, reversal counterpart + CANCELS, patch, detail, list, preview, print / replay / reprint reason,
+templates, relations + chain, sources, attachments validation, tenant isolation, authorization matrix = 28
+routes). `dms-type-resolver.service.spec.ts` is covered by the existing resolver usage in invoicing. The
+remaining Jest files listed in the generated spec are cross-module integration suites (POS / procurement /
+HR / sync) ported with their phases. Parity scenario: `contract-tests/scenarios/documents-dms.json`.

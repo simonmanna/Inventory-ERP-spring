@@ -1,0 +1,153 @@
+package com.inventoryerp.inventory.application;
+
+import static com.inventoryerp.inventory.application.StockService.NOW;
+
+import com.inventoryerp.inventory.domain.StockReservation;
+import com.inventoryerp.kernel.common.JsNumbers;
+import com.inventoryerp.kernel.common.Money;
+import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.settings.SettingResolverService;
+import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Soft stock reservations → available-to-promise (port of {@code stock-reservation.service.ts}). A reservation
+ * holds quantity for a source document without touching the ledger; re-reserving a line sets its quantity.
+ * Absent filters are dropped like Prisma drops {@code undefined} where keys.
+ */
+@Service
+public class StockReservationService {
+
+    /** {@code ReserveDto}. */
+    public record Reserve(String productId, String variantId, String locationId, BigDecimal quantity,
+            String sourceType, String sourceId, String reason) {}
+
+    private final JdbcClient jdbc;
+    private final SettingResolverService settings;
+
+    public StockReservationService(JdbcClient jdbc, SettingResolverService settings) {
+        this.jdbc = jdbc;
+        this.settings = settings;
+    }
+
+    /** {@code none | order | invoice}. */
+    @Transactional(readOnly = true)
+    public String mode() {
+        return settings.resolveString("inventory.reservationMode", SettingContext.EMPTY);
+    }
+
+    /** Reserve (idempotent per source line) under the StockItem row lock. */
+    @Transactional
+    public Map<String, Object> reserve(Reserve dto) {
+        String org = TenantContext.organizationId();
+        String variantKey = dto.variantId() == null ? "" : dto.variantId();
+        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                        + " AND \"locationId\" = ? FOR UPDATE")
+                .params(org, dto.productId(), variantKey, dto.locationId()).query().listOfRows();
+        Map<String, Object> existing = SqlRows.one(jdbc.sql("SELECT * FROM \"StockReservation\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND \"sourceType\" = ?"
+                        + " AND \"sourceId\" = ? AND status = 'active' LIMIT 1")
+                .params(org, dto.productId(), variantKey, dto.locationId(), dto.sourceType(), dto.sourceId()));
+        if (existing != null) {
+            return SqlRows.one(StockReservation.class, jdbc.sql("UPDATE \"StockReservation\" SET quantity = ?,"
+                            + " reason = ?, \"updatedAt\" = " + NOW + " WHERE id = ? RETURNING *")
+                    .params(dto.quantity(), dto.reason() != null ? dto.reason() : existing.get("reason"),
+                            existing.get("id")));
+        }
+        return SqlRows.one(StockReservation.class, jdbc.sql("INSERT INTO \"StockReservation\" (id, \"organizationId\","
+                        + " \"productId\", \"variantId\", \"variantKey\", \"locationId\", quantity, \"sourceType\", \"sourceId\","
+                        + " reason, \"createdById\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        + NOW + ", " + NOW + ") RETURNING *")
+                .params(UUID.randomUUID().toString(), org, dto.productId(), dto.variantId(), variantKey,
+                        dto.locationId(), dto.quantity(), dto.sourceType(), dto.sourceId(), dto.reason(),
+                        TenantContext.userId()));
+    }
+
+    /** Release every active reservation of a source. */
+    @Transactional
+    public Map<String, Object> release(String sourceType, String sourceId) {
+        return Obj.of("released", close(sourceType, sourceId, "released", "releasedAt"));
+    }
+
+    /** Mark a source's reservations consumed. */
+    @Transactional
+    public Map<String, Object> consume(String sourceType, String sourceId) {
+        return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt"));
+    }
+
+    private int close(String sourceType, String sourceId, String status, String stamp) {
+        List<Object> params = new ArrayList<>(List.of(status));
+        String where = filters(sourceType, sourceId, params);
+        return jdbc.sql("UPDATE \"StockReservation\" SET status = ?::\"StockReservationStatus\", \"" + stamp + "\" = "
+                + NOW + ", \"updatedAt\" = " + NOW + " WHERE" + where + " AND status = 'active'").params(params).update();
+    }
+
+    private static String filters(String sourceType, String sourceId, List<Object> params) {
+        StringBuilder sb = new StringBuilder(" \"organizationId\" = ?");
+        params.add(TenantContext.organizationId());
+        if (sourceType != null) {
+            sb.append(" AND \"sourceType\" = ?");
+            params.add(sourceType);
+        }
+        if (sourceId != null) {
+            sb.append(" AND \"sourceId\" = ?");
+            params.add(sourceId);
+        }
+        return sb.toString();
+    }
+
+    /** Sum of active reservations for a stock line. */
+    @Transactional(readOnly = true)
+    public BigDecimal reservedQty(String productId, String locationId, String variantId) {
+        List<Object> params = new ArrayList<>();
+        String where = cell(productId, locationId, variantId, params);
+        return jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE" + where
+                + " AND status = 'active'").params(params).query(BigDecimal.class).single();
+    }
+
+    /** on-hand − active reservations. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> availableToPromise(String productId, String locationId, String variantId) {
+        List<Object> params = new ArrayList<>();
+        String where = cell(productId, locationId, variantId, params);
+        List<BigDecimal> rows = jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE" + where + " LIMIT 1").params(params)
+                .query(BigDecimal.class).list();
+        BigDecimal onHand = rows.isEmpty() ? Money.ZERO : rows.getFirst();
+        BigDecimal reserved = reservedQty(productId, locationId, variantId);
+        return Obj.of("onHand", JsNumbers.dec(onHand), "reserved", JsNumbers.dec(reserved), "available",
+                JsNumbers.dec(onHand.subtract(reserved)));
+    }
+
+    private static String cell(String productId, String locationId, String variantId, List<Object> params) {
+        StringBuilder sb = new StringBuilder(" \"organizationId\" = ? AND \"variantKey\" = ?");
+        params.add(TenantContext.organizationId());
+        params.add(variantId == null ? "" : variantId);
+        if (productId != null) {
+            sb.append(" AND \"productId\" = ?");
+            params.add(productId);
+        }
+        if (locationId != null) {
+            sb.append(" AND \"locationId\" = ?");
+            params.add(locationId);
+        }
+        return sb.toString();
+    }
+
+    /** Reservations of a source, newest first. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> listForSource(String sourceType, String sourceId) {
+        List<Object> params = new ArrayList<>();
+        String where = filters(sourceType, sourceId, params);
+        return SqlRows.list(StockReservation.class, jdbc.sql("SELECT * FROM \"StockReservation\" WHERE" + where
+                + " ORDER BY \"createdAt\" DESC").params(params));
+    }
+}
