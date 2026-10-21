@@ -199,6 +199,7 @@ public class WorkflowService {
     static final class JdbcStore implements Store {
         private final JdbcClient jdbc;
         private final Map<String, Set<String>> columns = new ConcurrentHashMap<>();
+        private final Map<String, String> statusTypes = new ConcurrentHashMap<>();
 
         JdbcStore(JdbcClient jdbc) {
             this.jdbc = jdbc;
@@ -256,11 +257,12 @@ public class WorkflowService {
                     .param(t).query(String.class).list()));
         }
 
+        /** Schema is fixed at runtime (Flyway, {@code ddl-auto=validate}): cached like {@link #columns}. */
         private String statusType(String table) {
-            return jdbc.sql("""
+            return statusTypes.computeIfAbsent(table, t -> jdbc.sql("""
                             SELECT udt_name FROM information_schema.columns
                             WHERE table_schema = 'public' AND table_name = ? AND column_name = 'status'""")
-                    .param(table).query(String.class).optional().orElse("text");
+                    .param(t).query(String.class).optional().orElse("text"));
         }
     }
 }

@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # POS (cafe vertical) — `pos`
 
 | | |
@@ -70,21 +69,116 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
-- [ ] Parity scenarios `contract-tests/scenarios/pos-*.json` — zero unexplained diffs
-- [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — none needed: services are JdbcClient SQL
+- [x] DTO records with Bean Validation mirroring class-validator rules (untyped Nest bodies stay unvalidated maps)
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests (see Status for what is not ported)
+- [ ] Parity scenarios `contract-tests/scenarios/pos-*.json` — written, not yet run against a live Nest
+- [ ] Web screens for this module work against Spring (no console errors) — not exercised
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+_None._
+
+Same as Nest, kept on purpose:
+
+- `/menu/public/*` ("public" digital menu) is **not** `@Public()` in Nest: the global JWT guard applies, so a bearer
+  token is required (no permission). Unauthenticated callers get 401.
+- `PATCH /pos/menu/orders/:id/status`: `UpdateOrderStatusDto.status` has no class-validator decorator, so the global
+  whitelist rejects it (`property status should not exist`); an empty body bumps `updatedAt` only (unknown id → 500).
+- `POST /pos/tables/:id/split-bill` always answers 409 (`This operation conflicts with one that was just completed…`):
+  the child orders are raised while the source tab still holds the table, which the
+  `Order_one_open_dine_in_tab_per_table` index rejects. Split bills work through `/pos/tabs/:tableId/split*`.
+- `POST /pos/tabs/:tableId/split/equal` answers 500: Nest writes split type `'equal'`, which the `SplitType` enum
+  does not have.
+- `CreateReservationBody` has no `id`, so the offline client-minted reservation id is rejected by the whitelist.
+- `POST /pos/tables/:id/transfer/:targetId` checks the target's status before the source's open orders.
+- Reports read "local" days in the server time zone (UTC), like the Nest host; `toLocaleTimeString()` /
+  `toLocaleDateString()` columns use the en-US ICU format of Node 22 (`3:04:05 PM` with U+202F).
+- `GET /pos/posting-monitor/jobs?status=` / `/exceptions?status=` with an unknown status → 500 (Prisma enum/where error).
+- Business timestamps Nest sets with `new Date()` use the database clock (`clock_timestamp()`), as in every module.
 
 ## Status
 
-Not started.
+P5: 219/219 routes in 30 controllers (`pos.web`). Services (`pos.application`): settings/lookup, kitchen stations,
+menu / variants / accompaniments / modifiers / combos, PIN auth + overrides, orders (F10 line signature, mutation
+policy, kitchen waste), tabs / checkout / settle (`PosService`), billing (`PosInvoiceService`: invoice, payments,
+credit, write-off, refund, stock-posting jobs), split bills, tables / zones (SSE), reservations (+ no-show and
+refresh crons in `PosReservationWorker`), KDS (SSE, reports), print lifecycle + receipts (text / HTML / PDF / ESC/POS
+over TCP 9100 or the Windows spooler), loyalty / store credit / customer tabs, holds, shift handover, customer
+statement + open credit, posting monitor (`PosStockPostingService`) and the 30 s drain / 5 min health worker
+(`StockPostingWorker`, ShedLock), stock-posting timing subscribers, POS reports (X/Z, 13 range reports), table
+reports, digital menu. `PosCashSessionHooks` plugs the shift-close drain and the Z-report lookup into accounting.
+
+Kernel / cross-module changes made in P5: `kernel.web.EmptyBodyAdvice` (a bodiless request reads as `{}` like
+Express), `kernel.common.Savepoints` (Prisma nested writes as JDBC savepoints — `PROPAGATION_NESTED` is not supported
+by the Hibernate JpaDialect; also used by `CreditNoteService`).
+
+Tests:
+- `PosUnitTest` — `order-mutation-policy.spec.ts`, `pricing-policy.spec.ts`, `order/line-signature.spec.ts`.
+- `PosMenuIT` — settings, lookup, stations, menu lifecycle, variants, accompaniments, modifiers, combos.
+- `PosSaleIT` — `pos-sale-pipeline.spec.ts` (checkout → Order/Invoice/Receipt, balanced GL, over-tender change,
+  tableless order resume/settle, discounts through save/resume, tab version guard, split settle atomicity +
+  replay), checkout idempotency (key required, replay = one sale), KDS lifecycle, posting monitor, holds, loyalty,
+  statements, reservations, all reports, digital menu, shift close + Z snapshot, tenant isolation,
+  authorization matrix (219 routes).
+- `PosStockPostingIT` — `stock-posting-job.spec.ts` (F-COGS exception, exactly-once under the reclaim race,
+  period-close guard, recipe snapshot) + the shift drain.
+- `PosTablesIT` — `pos-table-zones.spec.ts`, `pos-tables.spec.ts`, `pos-table-tab-uniqueness.spec.ts` (incl. the
+  concurrent-open race), merge / unmerge / transfer / transfer-items / split-bill / table revenue.
+- `PosMoneyIT` — refund cases of `pos-money-foundations.spec.ts`, sale void, `pos-orders.void.spec.ts` (fired-line
+  void + cancel), `pos-credit-settlement.spec.ts` (credit sale, collection, statement, write-off),
+  `pos-store-credit-issuance.spec.ts`, `pos-kot-print-delta.spec.ts`, `test/unit/pos-tender-validation.spec.ts`,
+  shift handover.
+- `PosTablesIT#recomputeTableStatus` — `table-status.util.spec.ts` against real rows.
+- `PosLakeviewSimIT` — reduced port of the Lakeview simulations: deterministic trading days (`mulberry32` +
+  `planDay`) on two tills; every day the X/Z cash and net sales, drawer ledgers, trial balance, on-hand, stock
+  valuation and recipe COGS must tie out to an independent oracle (`-Dsim.days`, `-Dsim.ops`).
+
+Not ported / not done (owner decision or later phase):
+- The procurement / transfer / landed-cost / release-preflight days of `lakeview-15day`, `lakeview-d0-d1`,
+  `lakeview-m3` (P4 services + `scripts/pos-release-preflight.cjs`); the shadow-pilot comparison.
+- `pos-offline-inventory-replay.spec.ts` and the audit `inv-audit-*` POS cases that drive the sync queue → P6.
+- Mock-heavy unit specs of `pos-orders.service`, `pos-invoice.service`, `pos-kds.service`, `pos-receipts.service`
+  (golden ESC/POS bytes), `pos-reports.service`, `pos-print-lifecycle.service`, `pos.workflows`,
+  `pos-tables.split-lifecycle` are covered behaviourally by the ITs above, not line by line.
+- k6 p95 < 150 ms at 50 terminals: **not met** (see "Exit-criteria runs" below).
+- Web POS terminal: blocked by a client bug (see below); customer display and QR menu screens not exercised.
+- Parity scenarios not run against a live Nest.
+
+### Exit-criteria runs (2026-10-20, Windows 11 + Docker Desktop Postgres 16, fresh `seed` database)
+
+- **Sell loop e2e**: `contract-tests/e2e/pos-sell-loop.spec.ts` (= `reference/e2e/` copy + Idempotency-Key on
+  `/cash-sessions/open|close`, which Nest also requires — the reference copy fails against Nest too): 5/5 green, twice
+  on the same database.
+- **Offline kill-and-replay**: `tools/perf/kill-replay.mjs` — checkout in flight, API hard-killed after 20–300 ms,
+  restarted, same request replayed twice with the same key: exactly one `Order` per key, both replays identical, 7/7
+  timings. A replay answers 201 when the sale committed but the response was lost (record `business_completed`,
+  statusCode 201 — same as Nest `business-outcome.ts`).
+- **Emulated ESC/POS printer**: `tools/perf/escpos-capture.mjs` on TCP with `pos.printerHost/printerPort` set: a
+  checkout prints the KOT and the customer receipt (CP437 text, feed, `GS V 0` cut, `ESC p` drawer kick on the
+  receipt; no `ESC @`, like Nest); `print` on an already printed receipt → 403 like Nest.
+- **Web screens** (Vite dev server proxied to Spring): dashboard, tables (zones, stats), KDS (tickets + a transition)
+  work, every API call 2xx. The terminal page crashes client-side: `ShiftCloseDialog.tsx` calls `usePosSettings()`
+  after `if (!session) return null;` ("Rendered more hooks than during the previous render") whenever an open shift
+  exists. The file is identical in POS-CAFE (regression from its commit `17126b5`, 2026-10-18), so it fails against
+  Nest too; not fixed here (`web/` is no-change) — owner decision.
+- **Load smoke** (`tools/perf/checkout-smoke.mjs`, one register + session per virtual till, `THROTTLE_ENABLED=false`
+  because the throttle is per user and every till shares the admin): 1 till p50 ≈ 240 ms; 10 tills ≈ 13 checkouts/s,
+  p95 ≈ 0.9 s; 50 tills ≈ 20/s, p95 ≈ 3 s. One checkout runs ~400 SQL statements in ~36 transactions (Order → KOT →
+  Invoice → GL → Payment → receipt/print lifecycle → outbox, as in Nest); Postgres CPU is the limit on this host.
+  The outbox worker drains 50 rows/s (Nest default `OUTBOX_BATCH`/`OUTBOX_POLL_MS`) while a checkout writes ~13
+  events, so under sustained load the backlog grows — same as Nest.
+- Fixed on the way (all found by the load smoke): pool-starvation deadlocks — `EventBus.publish` and
+  `AuditService.record` opened a `REQUIRES_NEW` transaction (second pooled connection) while the caller held one, and
+  `SequenceService` did the same on the first use of a sequence (`order:YYYYMMDD` is daily, `invoice:YYYY` yearly).
+  Fire-and-forget writes now run after the caller's transaction completes (`kernel.common.DetachedWrites`; Nest does
+  not await them either) and a missing sequence is created in the caller's transaction under a savepoint. The
+  workflow engine cached column sets but queried `information_schema` for the status type on every update; now
+  cached too.
+- Same as Nest, kept: the first concurrent sales of a fresh organization can race on creating the `WALKIN` partner
+  (find-then-create, `Partner_organizationId_code_key` → 409 for the loser).

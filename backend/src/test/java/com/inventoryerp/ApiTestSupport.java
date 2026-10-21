@@ -58,6 +58,9 @@ public abstract class ApiTestSupport {
     protected PlatformTransactionManager txm;
 
     @Autowired
+    protected com.inventoryerp.kernel.common.DetachedWrites detachedWrites;
+
+    @Autowired
     protected List<com.inventoryerp.kernel.seed.SeedContributor> seedContributors;
 
     @Autowired
@@ -126,6 +129,9 @@ public abstract class ApiTestSupport {
                 b.method(method, HttpRequest.BodyPublishers.noBody());
             }
             HttpResponse<String> r = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            // Fire-and-forget event/audit writes made inside a transaction run after it completes (Nest: un-awaited
+            // publish/record); wait for them so "call, then read the outbox / audit log" stays deterministic.
+            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
             JsonNode json = r.body() == null || r.body().isEmpty() ? null : mapper.readTree(r.body());
             return new Res(r.statusCode(), json, r);
         } catch (Exception e) {
@@ -158,6 +164,71 @@ public abstract class ApiTestSupport {
                 (String) null);
         assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
         return r.body().get("accessToken").asString();
+    }
+
+    /**
+     * {@code uncountedAccounts} for every tracked tender method of DEMO, so a shift close does not depend on which
+     * tracked methods other suites created in the shared org.
+     */
+    protected Map<String, Object> uncountedTenders() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String id : jdbc.sql("SELECT DISTINCT \"accountId\" FROM \"PosPaymentMethod\" WHERE \"organizationId\" = ?"
+                + " AND \"isActive\" = true AND \"deletedAt\" IS NULL AND \"trackInShift\" = true AND \"accountId\" IS NOT NULL")
+                .param(demoOrg).query(String.class).list()) {
+            out.put(id, "Not counted in this test");
+        }
+        return out;
+    }
+
+    private String closingManagerId;
+
+    /** Unique per suite: other suites give their managers short PINs, and a shared PIN is ambiguous. */
+    private final String closingManagerPin = String.valueOf(10_000_000 + (int) (Math.random() * 89_999_999));
+
+    /**
+     * A shift-close body with {@link #uncountedTenders()} added. Marking a tender "not counted" needs a manager who
+     * is not the cashier, so when there is any tracked tender a second DEMO administrator with a PIN approves it.
+     */
+    protected Map<String, Object> withUncountedTenders(Map<String, Object> body) {
+        Map<String, Object> out = new LinkedHashMap<>(body);
+        Map<String, Object> uncounted = uncountedTenders();
+        out.put("uncountedAccounts", uncounted);
+        if (!uncounted.isEmpty()) {
+            if (closingManagerId == null) {
+                String role = jdbc.sql("SELECT r.id FROM \"Role\" r JOIN \"_UserRoles\" ur ON ur.\"A\" = r.id"
+                        + " JOIN \"User\" u ON u.id = ur.\"B\" WHERE u.email = 'admin@demo.test' LIMIT 1")
+                        .query(String.class).single();
+                String email = "closer-" + UUID.randomUUID().toString().substring(0, 8) + "@demo.test";
+                closingManagerId = createUser(demoOrg, email, "Closer@12345", role);
+                Res pin = call("POST", "/pos/override/pin", Map.of("pin", closingManagerPin),
+                        login("DEMO", email, "Closer@12345"));
+                assertThat(pin.status()).as(pin.raw().body()).isEqualTo(201);
+            }
+            out.put("approvedById", closingManagerId);
+            out.put("managerPin", closingManagerPin);
+        }
+        return out;
+    }
+
+    /**
+     * Pin {@code pos.stockLocationId} to DEMO's first active warehouse: with several warehouses (other suites add
+     * some) and no setting, POS has no stock location at all.
+     */
+    protected String pinPosWarehouse() {
+        String id = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
+                + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY code ASC LIMIT 1").param(demoOrg)
+                .query(String.class).single();
+        Res r = as("PUT", "/settings/pos.stockLocationId", Map.of("value", id));
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        return id;
+    }
+
+    /** Test cleanup: force-close the POS shifts a suite left open on its registers (shared DEMO org). */
+    protected void forceCloseSessions(java.util.Collection<String> registerIds) {
+        for (String r : registerIds) {
+            jdbc.sql("UPDATE \"CashSession\" SET status = 'closed', \"closedAt\" = now() WHERE \"cashRegisterId\" = ?"
+                    + " AND status = 'open'").param(r).update();
+        }
     }
 
     /** A DEMO user with no permissions at all. */

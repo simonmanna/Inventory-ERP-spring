@@ -131,7 +131,7 @@ class TreasurySpecsIT extends ApiTestSupport {
         // Reaches the transaction: the admin has no open shift.
         ApiException reached = apiError(() -> asCashier(() -> sessions.recordMovement(null,
                 movement("adjustment", -50, "Count correction", accountId("5400")))));
-        assertThat(reached.status()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(reached.status()).as(reached.getMessage()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(reached.getMessage()).isEqualTo("No open cash session");
 
         assertThat(apiError(() -> asCashier(() -> sessions.close(close(new BigDecimal("-1"), null), false))).getMessage())

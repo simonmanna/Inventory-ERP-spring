@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.audit;
 
+import com.inventoryerp.kernel.common.DetachedWrites;
 import com.inventoryerp.kernel.domain.AuditAction;
 import com.inventoryerp.kernel.domain.AuditLog;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -43,10 +44,12 @@ public class AuditService {
     }
 
     private final EntityManager em;
+    private final DetachedWrites detached;
     private final TransactionTemplate newTx;
 
-    public AuditService(EntityManager em, PlatformTransactionManager txm) {
+    public AuditService(EntityManager em, DetachedWrites detached, PlatformTransactionManager txm) {
         this.em = em;
+        this.detached = detached;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -61,17 +64,23 @@ public class AuditService {
         em.persist(row(organizationId, input));
     }
 
-    /** Fire-and-forget audit write; silently skipped without a tenant, failures only logged. */
+    /**
+     * Fire-and-forget audit write; silently skipped without a tenant, failures only logged. Inside a transaction
+     * the write runs after it completes ({@link DetachedWrites}), never holding two pooled connections.
+     */
     public void record(AuditInput input) {
         String organizationId = TenantContext.optionalOrganizationId();
         if (organizationId == null) {
             return;
         }
-        try {
-            newTx.executeWithoutResult(s -> em.persist(row(organizationId, input)));
-        } catch (RuntimeException err) {
-            log.warn("Fire-and-forget audit failed (non-critical): {}", err.toString());
-        }
+        AuditLog row = row(organizationId, input);
+        detached.submit(() -> {
+            try {
+                newTx.executeWithoutResult(s -> em.persist(row));
+            } catch (RuntimeException err) {
+                log.warn("Fire-and-forget audit failed (non-critical): {}", err.toString());
+            }
+        });
     }
 
     private static AuditLog row(String organizationId, AuditInput input) {

@@ -16,6 +16,7 @@ import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
@@ -59,7 +60,6 @@ public class CreditNoteService {
     private final ApprovalsService approvals;
     private final PosStockLocation posLocation;
     private final TransactionTemplate newTx;
-    private final TransactionTemplate nested;
 
     public CreditNoteService(JdbcClient jdbc, EventBus events, PostingService posting, DocumentBuilderService builder,
             StockService stock, ApprovalsService approvals, PosStockLocation posLocation, PlatformTransactionManager txm) {
@@ -72,8 +72,6 @@ public class CreditNoteService {
         this.posLocation = posLocation;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.nested = new TransactionTemplate(txm);
-        this.nested.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     private static String org() {
@@ -189,7 +187,7 @@ public class CreditNoteService {
                     if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))
                             && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                         try {
-                            nested.executeWithoutResult(s -> stock.receiveReturn(StockMove.of(productId, warehouse, qty)
+                            Savepoints.run(jdbc, () -> stock.receiveReturn(StockMove.of(productId, warehouse, qty)
                                     .reference((String) cn.get("documentNumber")).source("credit_note", id)
                                     .date(issueDate)));
                         } catch (RuntimeException e) {

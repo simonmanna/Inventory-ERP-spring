@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.sequence;
 
+import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.util.List;
 import java.util.Set;
@@ -10,9 +11,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Native Postgres SEQUENCE numbering per (organization, key) (port of {@code sequence.service.ts}):
@@ -39,12 +38,9 @@ public class SequenceService {
 
     private final JdbcClient jdbc;
     private final Set<String> ensured = ConcurrentHashMap.newKeySet();
-    private final TransactionTemplate outsideTx;
 
-    public SequenceService(JdbcClient jdbc, PlatformTransactionManager txm) {
+    public SequenceService(JdbcClient jdbc) {
         this.jdbc = jdbc;
-        this.outsideTx = new TransactionTemplate(txm);
-        this.outsideTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** Remove sequences left by deleted tenants. */
@@ -84,20 +80,51 @@ public class SequenceService {
         if (ensured.contains(name)) {
             return;
         }
+        // Already there (committed): no write at all. This is every call after a restart.
+        if (Boolean.TRUE.equals(jdbc.sql("SELECT to_regclass(?) IS NOT NULL").param("\"" + name + "\"")
+                .query(Boolean.class).single())) {
+            ensured.add(name);
+            return;
+        }
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            create(name);
+            ensured.add(name);
+            return;
+        }
+        // Nest creates it on the raw client, outside the caller's transaction. A REQUIRES_NEW transaction here would
+        // hold the caller's pooled connection while waiting for a second one, and many tills taking the first number
+        // of a fresh sequence (e.g. the first invoice of a new year) then deadlock the pool. Create it inside the
+        // caller's transaction under a savepoint instead, and do not cache it: if the caller rolls back, the
+        // sequence goes with it and the next call creates it again.
         try {
-            // Nest creates it on the raw client, outside the caller's transaction: a rollback of the business
-            // transaction must not drop a sequence this cache already considers present.
-            outsideTx.executeWithoutResult(s -> jdbc.sql("CREATE SEQUENCE IF NOT EXISTS \"" + name
-                    + "\" INCREMENT BY 1 START WITH 1").update());
+            // Raw CREATE: the duplicate error must reach Savepoints so it rolls back to the savepoint.
+            Savepoints.run(jdbc, () -> jdbc.sql(createSql(name)).update());
         } catch (RuntimeException err) {
-            // Concurrent first use: Postgres can still raise "already exists" / a pg_type duplicate key.
-            String cause = String.valueOf(org.springframework.core.NestedExceptionUtils.getMostSpecificCause(err)
-                    .getMessage());
-            if (!cause.contains("already exists") && !cause.contains("duplicate key")) {
+            if (!duplicate(err)) {
                 throw err;
             }
         }
-        ensured.add(name);
+    }
+
+    private void create(String name) {
+        try {
+            jdbc.sql(createSql(name)).update();
+        } catch (RuntimeException err) {
+            // Concurrent first use: Postgres can still raise "already exists" / a pg_type duplicate key.
+            if (!duplicate(err)) {
+                throw err;
+            }
+        }
+    }
+
+    private static String createSql(String name) {
+        return "CREATE SEQUENCE IF NOT EXISTS \"" + name + "\" INCREMENT BY 1 START WITH 1";
+    }
+
+    private static boolean duplicate(RuntimeException err) {
+        String cause = String.valueOf(org.springframework.core.NestedExceptionUtils.getMostSpecificCause(err)
+                .getMessage());
+        return cause.contains("already exists") || cause.contains("duplicate key");
     }
 
     /** {@code seq_<orgShort>_<keySafe>}. */

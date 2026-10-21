@@ -54,10 +54,17 @@ class AccountingIT extends ApiTestSupport {
         assertThat(registry.get(0).get("key").asString()).isEqualTo("accounts_receivable");
         JsonNode page = ok(200, "GET", "/accounts", null);
         assertThat(page.get("meta").get("pageSize").asInt()).isEqualTo(200);
-        assertThat(page.get("data").get(0).get("code").asString()).isEqualTo("1000");
+        // Other suites add accounts (register drawers) to the shared org, so check presence, not position.
+        assertThat(page.get("data").findValuesAsString("code")).contains("1000");
         JsonNode tree = ok(200, "GET", "/accounts/tree?includeBalances=true", null);
-        JsonNode assets = tree.get("nodes").get(0);
-        assertThat(assets.get("code").asString()).isEqualTo("1000");
+        // POS suites add root-level drawer accounts to the shared org, so find the assets root by code.
+        JsonNode assets = null;
+        for (JsonNode n : tree.get("nodes")) {
+            if ("1000".equals(n.get("code").asString())) {
+                assets = n;
+            }
+        }
+        assertThat(assets).isNotNull();
         assertThat(assets.get("children").size()).isGreaterThan(5);
         assertThat(assets.get("subtotal")).isNotNull();
     }

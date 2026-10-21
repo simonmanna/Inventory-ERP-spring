@@ -329,8 +329,8 @@ class KernelIT {
         assertThat(revoked.status()).isEqualTo(401);
         assertThat(revoked.raw().headers().firstValue("X-Pos-Session")).contains("revoked");
         assertThat(revoked.body().get("message").asString()).isEqualTo("This cashier can no longer use the POS. Sign in with another PIN.");
-        // PIN screen: falls back to the bearer identity (route itself is P5 → 404, but not 401).
-        assertThat(call("GET", "/pos/auth/staff", null, h2).status()).isEqualTo(404);
+        // PIN screen: falls back to the bearer identity (not 401).
+        assertThat(call("GET", "/pos/auth/staff", null, h2).status()).isEqualTo(200);
         // POS token of another org is ignored.
         String foreign = jwt.signPos(cashier, otherOrg, email);
         Res ignored = call("GET", "/auth/me", null, Map.of("Authorization", "Bearer " + adminToken, "X-Pos-User", foreign));

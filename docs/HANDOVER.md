@@ -1,4 +1,4 @@
-# Handover — state after P4 (2026-10-20)
+# Handover — state after P5 (2026-10-20)
 
 Read `AGENTS.md` and `CLAUDE.md` first. This file only records where the port stands and the conventions
 and pitfalls learned so far.
@@ -11,12 +11,13 @@ and pitfalls learned so far.
 | P2 | core, accounting | 81/81, 110/110 | `phase/P2-core-accounting` (last commit `feat(accounting): complete P2 reporting surface`) |
 | P3 | inventory, invoicing, expenses, crm, task, documents | 69, 30, 18, 21, 16, 28 — all done | `phase/P3-inventory-invoicing-crm` (branched from P2) |
 | P4 | procurement | 36/36 | `phase/P4-procurement` (branched from P3) |
-| P5 | pos | 0/219 | next — brief `docs/phases/P5-pos.md` |
+| P5 | pos | 219/219 | `phase/P5-pos` (branched from P4) |
+| P6 | sync, backup | 0/21 | next — brief `docs/phases/P6-sync-backup.md` |
 
 Nothing is pushed or merged. `main` does not contain P2/P3/P4 yet; the owner decides on merge / PRs.
 Run `cd backend && ./gradlew build --offline` (Docker required for Testcontainers) before claiming green.
 
-Totals and per-route ticks: `docs/PORT_STATUS.md` (488/1118). Per-module status, deviations and
+Totals and per-route ticks: `docs/PORT_STATUS.md` (707/1118). Per-module status, deviations and
 "same as Nest, kept on purpose" notes: `docs/spec/<module>.md`.
 
 ## Open items (not done, do not claim them)
@@ -29,10 +30,16 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (488/1118). Per-module status,
 4. **Deviations awaiting owner approval**: inventory `lowStock` filter, task date-only `dueDate`, DMS A4 PDF
    via OpenPDF (see each spec's "Deviations"). Procurement has none, but lists Nest bugs kept on purpose
    (PO search → 500, inbound non-RTV debit note never balances) — the owner may want those fixed after parity.
-5. Deferred Jest suites still open: POS / sync driven (`pos-*`, `sync-*`, the remaining `inv-*` POS cases) and the
-   Lakeview simulations (`test/business-simulation/*`, need POS) — port with P5–P6. The procurement ones
-   (`procurement-flow`, `purchase-bill-matching`, `supplier-payment-withholding`, purchasing cases of `inv-*`) are
-   in `ProcurementIT`.
+5. Deferred Jest suites still open: sync driven (`sync-*`, `pos-offline-inventory-replay`, the `inv-*` POS cases that
+   go through the sync queue) → P6; the procurement / transfer / preflight days of the Lakeview simulations (the POS
+   trading core is ported as `PosLakeviewSimIT`). See `docs/spec/pos.md` → Status for the full POS list.
+6. P5 exit criteria: sell-loop e2e, offline kill-and-replay, emulated ESC/POS printer, web tables / KDS: **done**
+   (results in `docs/spec/pos.md` → "Exit-criteria runs"). Still open: p95 < 150 ms at 50 terminals (measured ≈ 3 s on
+   Docker Desktop; ~400 statements per checkout), the web terminal crash (client bug in `ShiftCloseDialog.tsx`,
+   identical in POS-CAFE — owner decision), customer display / QR screens, parity runs against Nest.
+7. POS behaviour kept on purpose that the owner may want fixed after parity (`docs/spec/pos.md`): `/menu/public/*`
+   needs a JWT, `/pos/tables/:id/split-bill` always 409s, `/pos/tabs/:id/split/equal` 500s, online-order status
+   PATCH is rejected by the whitelist.
 
 ## How the code is written (follow it)
 
@@ -89,6 +96,18 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (488/1118). Per-module status,
 - Expected values for tricky JS behaviour: run the Nest TypeScript directly with Node 22.18 type stripping
   (copy the `.ts` to a temp `.mts`, import, print) — done for the DMS seal in `DmsRulesTest`.
 
+- POS ITs share the DEMO org with every other suite: close shifts with `uncountedTenders()` (other suites create
+  tracked tender methods), pin the POS stock location with `pinPosWarehouse()` (several warehouses + no setting =
+  no location), and `forceCloseSessions(...)` in `@AfterAll` so later suites (procurement cash receive) do not pick
+  an empty drawer. Server-side pricing is authoritative: a product line's `unitPrice` is replaced by the catalog price.
+- `JdbcClient.query(Object.class)` is NOT a scalar query (Object is not a "simple" type → bean mapping →
+  `new Object()`). Use `query(PosSql.SCALAR)` or a concrete type.
+- `PROPAGATION_NESTED` does not work (Hibernate JpaDialect has no savepoints) — use `kernel.common.Savepoints.run`.
+- Never open a `REQUIRES_NEW` transaction for a fire-and-forget write inside a business transaction: it holds a second
+  pooled connection and deadlocks the pool under load. Use `kernel.common.DetachedWrites.submit` (runs after the
+  caller's transaction completes). `ApiTestSupport.call` waits for those writes, so ITs can read them right away.
+- Shift close in ITs: `withUncountedTenders(body)` adds the uncounted tracked tenders and a second manager's approval.
+
 ## Tooling notes (Windows, Git Bash)
 
 - The test JVM runs with `-Duser.timezone=UTC` (`build.gradle.kts`). `Application.main` pins UTC in production, but
@@ -101,6 +120,6 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (488/1118). Per-module status,
 
 ## Next step
 
-Start P5 (POS) on a new branch from `phase/P4-procurement`: read `docs/phases/P5-pos.md`, `docs/spec/pos.md` and
-`docs/spec/generated/pos.md`. Procurement services other modules may call: `procurement.application.*`
-(`PurchaseOrdersService`, `GoodsReceiptsService`, ...). Port the Lakeview simulations with P5.
+Start P6 (sync, backup) on a new branch from `phase/P5-pos`: `docs/phases/P6-sync-backup.md`. Then port
+`pos-offline-inventory-replay.spec.ts` and the sync-driven `inv-*` POS cases. POS services other modules may call:
+`pos.application.*` (`PosService.checkout`, `PosInvoiceService`, `PosOrdersService`, `PosReportsService`).

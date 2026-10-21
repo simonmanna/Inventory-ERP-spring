@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.events;
 
+import com.inventoryerp.kernel.common.DetachedWrites;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -15,6 +16,9 @@ import tools.jackson.databind.JsonNode;
  * outbox row in its own transaction, so it survives a later rollback of the caller — tolerable for a
  * notification, wrong for a recorded fact: facts must use {@link EventOutboxService#publish} inside the
  * business transaction. Consumers must be idempotent.
+ *
+ * <p>Nest does {@code void this.outbox.publish(...)}: the caller never waits. Inside a transaction the write is
+ * deferred until that transaction completes ({@link DetachedWrites}), so it never holds two pooled connections.
  */
 @Service
 public class EventBus {
@@ -23,21 +27,26 @@ public class EventBus {
 
     private final EventOutboxService outbox;
     private final OutboxHandlers handlers;
+    private final DetachedWrites detached;
     private final TransactionTemplate newTx;
 
-    public EventBus(EventOutboxService outbox, OutboxHandlers handlers, PlatformTransactionManager txm) {
+    public EventBus(EventOutboxService outbox, OutboxHandlers handlers, DetachedWrites detached,
+            PlatformTransactionManager txm) {
         this.outbox = outbox;
         this.handlers = handlers;
+        this.detached = detached;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public void publish(String eventName, Map<String, Object> payload) {
-        try {
-            newTx.executeWithoutResult(s -> outbox.publish(eventName, payload));
-        } catch (RuntimeException err) {
-            log.error("Failed to publish {}: {}", eventName, err.toString());
-        }
+        detached.submit(() -> {
+            try {
+                newTx.executeWithoutResult(s -> outbox.publish(eventName, payload));
+            } catch (RuntimeException err) {
+                log.error("Failed to publish {}: {}", eventName, err.toString());
+            }
+        });
     }
 
     /** Subscribe an in-process handler, dispatched by the outbox worker (at-least-once). */

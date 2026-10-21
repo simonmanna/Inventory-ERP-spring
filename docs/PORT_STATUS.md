@@ -17,7 +17,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [task](spec/task.md) | P3c | 16 | 16 |
 | [documents](spec/documents.md) | P3c | 28 | 28 |
 | [procurement](spec/procurement.md) | P4 | 36 | 36 |
-| [pos](spec/pos.md) | P5 | 219 | 0 |
+| [pos](spec/pos.md) | P5 | 219 | 219 |
 | [sync](spec/sync.md) | P6 | 8 | 0 |
 | [backup](spec/backup.md) | P6 | 13 | 0 |
 | [beverage](spec/beverage.md) | P7 | 10 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 0 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **488** |
+| **total** | | **1118** | **707** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -575,225 +575,225 @@ procurement section (P4) with the procurement tables it reads.
 
 ## pos
 
-- [ ] GET /api/v1/menu/public/catalog — DigitalMenuPublicController.catalog
-- [ ] POST /api/v1/menu/public/orders — DigitalMenuPublicController.placeOrder
-- [ ] GET /api/v1/menu/public/orders/:id/track — DigitalMenuPublicController.track
-- [ ] POST /api/v1/pos/auth/change-password — PosAuthController.changePassword
-- [ ] POST /api/v1/pos/auth/change-pin — PosAuthController.changePin
-- [ ] POST /api/v1/pos/auth/logoff — PosAuthController.logoff
-- [ ] POST /api/v1/pos/auth/pin-login — PosAuthController.pinLogin
-- [ ] GET /api/v1/pos/auth/staff — PosAuthController.listStaff
-- [ ] POST /api/v1/pos/checkout — PosController.checkout
-- [ ] GET /api/v1/pos/credit/open — PosCreditController.open
-- [ ] GET /api/v1/pos/customers/:partnerId/credit — PosCustomerStatementController.credit
-- [ ] GET /api/v1/pos/customers/:partnerId/statement — PosCustomerStatementController.statement
-- [ ] GET /api/v1/pos/holds — PosHoldsController.list
-- [ ] POST /api/v1/pos/holds — PosHoldsController.create
-- [ ] DELETE /api/v1/pos/holds/:id — PosHoldsController.cancel
-- [ ] GET /api/v1/pos/holds/:id — PosHoldsController.get
-- [ ] PATCH /api/v1/pos/holds/:id/notes — PosHoldsController.updateNotes
-- [ ] POST /api/v1/pos/holds/:id/recall — PosHoldsController.recall
-- [ ] POST /api/v1/pos/invoices/:id/credit — PosBillingController.settleCredit
-- [ ] POST /api/v1/pos/invoices/:id/payments — PosBillingController.receivePayment
-- [ ] POST /api/v1/pos/invoices/:id/refund — PosBillingController.refund
-- [ ] POST /api/v1/pos/invoices/:id/write-off — PosBillingController.writeOff
-- [ ] GET /api/v1/pos/kds/reports/live — PosKdsReportsController.live
-- [ ] GET /api/v1/pos/kds/reports/summary — PosKdsReportsController.summary
-- [ ] POST /api/v1/pos/kds/send-to-kitchen — PosKdsController.sendToKitchen
-- [ ] GET /api/v1/pos/kds/stream — PosKdsController.stream
-- [ ] GET /api/v1/pos/kds/tickets — PosKdsController.list
-- [ ] GET /api/v1/pos/kds/tickets/:id — PosKdsController.get
-- [ ] POST /api/v1/pos/kds/tickets/:id/assign — PosKdsController.assign
-- [ ] POST /api/v1/pos/kds/tickets/:id/priority — PosKdsController.priority
-- [ ] POST /api/v1/pos/kds/tickets/:id/transition — PosKdsController.transition
-- [ ] POST /api/v1/pos/kds/tickets/bulk-transition — PosKdsController.bulkTransition
-- [ ] GET /api/v1/pos/kitchen-stations — KitchenStationController.list
-- [ ] POST /api/v1/pos/kitchen-stations — KitchenStationController.create
-- [ ] DELETE /api/v1/pos/kitchen-stations/:id — KitchenStationController.remove
-- [ ] PATCH /api/v1/pos/kitchen-stations/:id — KitchenStationController.update
-- [ ] PATCH /api/v1/pos/kitchen-stations/reorder — KitchenStationController.reorder
-- [ ] POST /api/v1/pos/kitchen-stations/seed-defaults — KitchenStationController.seedDefaults
-- [ ] GET /api/v1/pos/lookup — PosController.lookup
-- [ ] GET /api/v1/pos/loyalty/balance/:partnerId — PosLoyaltyController.balance
-- [ ] GET /api/v1/pos/loyalty/credit/:partnerId — PosLoyaltyController.credit
-- [ ] POST /api/v1/pos/loyalty/credit/issue — PosLoyaltyController.issueCredit
-- [ ] POST /api/v1/pos/loyalty/credit/redeem — PosLoyaltyController.redeemCredit
-- [ ] POST /api/v1/pos/loyalty/earn — PosLoyaltyController.earn
-- [ ] GET /api/v1/pos/loyalty/earned/:partnerId — PosLoyaltyController.earned
-- [ ] GET /api/v1/pos/loyalty/program — PosLoyaltyController.getProgram
-- [ ] POST /api/v1/pos/loyalty/program/ensure — PosLoyaltyController.ensure
-- [ ] POST /api/v1/pos/loyalty/redeem — PosLoyaltyController.redeem
-- [ ] GET /api/v1/pos/loyalty/tab/:partnerId — PosLoyaltyController.tab
-- [ ] POST /api/v1/pos/loyalty/tab/charge — PosLoyaltyController.chargeTab
-- [ ] POST /api/v1/pos/loyalty/tab/open — PosLoyaltyController.openTab
-- [ ] POST /api/v1/pos/loyalty/tab/settle — PosLoyaltyController.settleTab
-- [ ] GET /api/v1/pos/menu/accompaniments/groups — PosMenuController.listAllAccompanimentGroups
-- [ ] POST /api/v1/pos/menu/accompaniments/groups — PosMenuController.createAccompanimentGroup
-- [ ] DELETE /api/v1/pos/menu/accompaniments/groups/:groupId — PosMenuController.deleteAccompanimentGroup
-- [ ] PATCH /api/v1/pos/menu/accompaniments/groups/:groupId — PosMenuController.updateAccompanimentGroup
-- [ ] POST /api/v1/pos/menu/accompaniments/groups/:groupId/options — PosMenuController.createAccompanimentOption
-- [ ] DELETE /api/v1/pos/menu/accompaniments/options/:optionId — PosMenuController.deleteAccompanimentOption
-- [ ] PATCH /api/v1/pos/menu/accompaniments/options/:optionId — PosMenuController.updateAccompanimentOption
-- [ ] GET /api/v1/pos/menu/accompaniments/report/sales — PosMenuController.accompanimentSalesReport
-- [ ] GET /api/v1/pos/menu/categories — PosMenuController.listCategories
-- [ ] POST /api/v1/pos/menu/categories — PosMenuController.createCategory
-- [ ] DELETE /api/v1/pos/menu/categories/:id — PosMenuController.deleteCategory
-- [ ] PATCH /api/v1/pos/menu/categories/:id — PosMenuController.updateCategory
-- [ ] PATCH /api/v1/pos/menu/categories/:id/restore — PosMenuController.restoreCategory
-- [ ] GET /api/v1/pos/menu/categories/deleted — PosMenuController.listDeletedCategories
-- [ ] GET /api/v1/pos/menu/items — PosMenuController.list
-- [ ] POST /api/v1/pos/menu/items — PosMenuController.create
-- [ ] DELETE /api/v1/pos/menu/items/:id — PosMenuController.remove
-- [ ] GET /api/v1/pos/menu/items/:id — PosMenuController.getOne
-- [ ] PATCH /api/v1/pos/menu/items/:id — PosMenuController.update
-- [ ] PATCH /api/v1/pos/menu/items/:id/availability — PosMenuController.setAvail
-- [ ] GET /api/v1/pos/menu/items/:id/bundle — PosMenuController.getBundle
-- [ ] DELETE /api/v1/pos/menu/items/:id/hard — PosMenuController.hardDelete
-- [ ] PATCH /api/v1/pos/menu/items/:id/restore — PosMenuController.restoreItem
-- [ ] GET /api/v1/pos/menu/items/:menuItemId/accompaniments — PosMenuController.listMenuItemAccompaniments
-- [ ] POST /api/v1/pos/menu/items/:menuItemId/accompaniments — PosMenuController.assignAccompanimentGroup
-- [ ] DELETE /api/v1/pos/menu/items/:menuItemId/accompaniments/:groupId — PosMenuController.unassignAccompanimentGroup
-- [ ] GET /api/v1/pos/menu/items/:menuItemId/variants — PosMenuController.listVariants
-- [ ] POST /api/v1/pos/menu/items/:menuItemId/variants — PosMenuController.createVariant
-- [ ] DELETE /api/v1/pos/menu/items/:menuItemId/variants/:variantId — PosMenuController.deleteVariant
-- [ ] PATCH /api/v1/pos/menu/items/:menuItemId/variants/:variantId — PosMenuController.updateVariant
-- [ ] GET /api/v1/pos/menu/items/available — PosMenuController.available
-- [ ] GET /api/v1/pos/menu/items/deleted — PosMenuController.listDeletedItems
-- [ ] GET /api/v1/pos/menu/orders — DigitalMenuController.listOrders
-- [ ] PATCH /api/v1/pos/menu/orders/:id/status — DigitalMenuController.updateStatus
-- [ ] GET /api/v1/pos/menu/sessions — DigitalMenuController.listSessions
-- [ ] POST /api/v1/pos/menu/sessions — DigitalMenuController.createSession
-- [ ] DELETE /api/v1/pos/menu/sessions/:id — DigitalMenuController.revokeSession
-- [ ] GET /api/v1/pos/modifiers/combos — PosModifiersController.listCombos
-- [ ] POST /api/v1/pos/modifiers/combos — PosModifiersController.createCombo
-- [ ] DELETE /api/v1/pos/modifiers/combos/:id — PosModifiersController.deleteCombo
-- [ ] GET /api/v1/pos/modifiers/combos/:id — PosModifiersController.getCombo
-- [ ] PATCH /api/v1/pos/modifiers/combos/:id — PosModifiersController.updateCombo
-- [ ] GET /api/v1/pos/modifiers/groups — PosModifiersController.listGroups
-- [ ] POST /api/v1/pos/modifiers/groups — PosModifiersController.createGroup
-- [ ] DELETE /api/v1/pos/modifiers/groups/:id — PosModifiersController.deleteGroup
-- [ ] PATCH /api/v1/pos/modifiers/groups/:id — PosModifiersController.updateGroup
-- [ ] GET /api/v1/pos/modifiers/groups/:id/menu-items — PosModifiersController.getGroupMenuItems
-- [ ] GET /api/v1/pos/modifiers/menu-items/:menuItemId/bundle — PosModifiersController.getMenuItemBundle
-- [ ] POST /api/v1/pos/modifiers/menu-items/:menuItemId/groups — PosModifiersController.assignGroupToMenuItem
-- [ ] DELETE /api/v1/pos/modifiers/menu-items/:menuItemId/groups/:groupId — PosModifiersController.unassignGroupFromMenuItem
-- [ ] POST /api/v1/pos/modifiers/modifiers — PosModifiersController.createModifier
-- [ ] DELETE /api/v1/pos/modifiers/modifiers/:id — PosModifiersController.deleteModifier
-- [ ] PATCH /api/v1/pos/modifiers/modifiers/:id — PosModifiersController.updateModifier
-- [ ] GET /api/v1/pos/modifiers/products/:productId/bundle — PosModifiersController.getProductBundle
-- [ ] POST /api/v1/pos/modifiers/products/:productId/groups — PosModifiersController.assignGroup
-- [ ] DELETE /api/v1/pos/modifiers/products/:productId/groups/:groupId — PosModifiersController.unassignGroup
-- [ ] GET /api/v1/pos/modifiers/report/sales — PosModifiersController.modifierSalesReport
-- [ ] POST /api/v1/pos/operation-approval — PosController.operationApproval
-- [ ] GET /api/v1/pos/orders — PosOrdersController.list
-- [ ] POST /api/v1/pos/orders — PosOrdersController.create
-- [ ] GET /api/v1/pos/orders/:id — PosOrdersController.get
-- [ ] POST /api/v1/pos/orders/:id/cancel — PosOrdersController.cancel
-- [ ] POST /api/v1/pos/orders/:id/fire-kitchen — PosOrdersController.fireKitchen
-- [ ] POST /api/v1/pos/orders/:id/invoice — PosOrdersController.generateInvoice
-- [ ] POST /api/v1/pos/orders/:id/items — PosOrdersController.addItems
-- [ ] PUT /api/v1/pos/orders/:id/items — PosOrdersController.saveItems
-- [ ] DELETE /api/v1/pos/orders/:id/items/:itemId — PosOrdersController.voidItem
-- [ ] POST /api/v1/pos/orders/:id/merge — PosOrdersController.merge
-- [ ] GET /api/v1/pos/orders/:id/milestones — PosOrdersController.milestones
-- [ ] POST /api/v1/pos/orders/:id/move — PosOrdersController.move
-- [ ] POST /api/v1/pos/orders/:id/reopen — PosOrdersController.reopen
-- [ ] GET /api/v1/pos/orders/:id/resume — PosController.resumeOrder
-- [ ] POST /api/v1/pos/orders/:id/settle — PosController.settleOrder
-- [ ] GET /api/v1/pos/orders/by-table/:tableId — PosOrdersController.byTable
-- [ ] GET /api/v1/pos/orders/open — PosOrdersController.listOpen
-- [ ] POST /api/v1/pos/orders/quote — PosOrdersController.quote
-- [ ] POST /api/v1/pos/override/pin — PosOverridesController.setPin
-- [ ] POST /api/v1/pos/override/verify — PosOverridesController.verify
-- [ ] POST /api/v1/pos/override/verify-pin — PosOverridesController.verifyPin
-- [ ] GET /api/v1/pos/payment-accounts — PosController.paymentAccounts
-- [ ] GET /api/v1/pos/payment-methods — PosController.listPaymentMethods
-- [ ] GET /api/v1/pos/posting-monitor/counts — StockPostingController.counts
-- [ ] GET /api/v1/pos/posting-monitor/exceptions — StockPostingController.exceptions
-- [ ] POST /api/v1/pos/posting-monitor/exceptions/:id/assign — StockPostingController.assign
-- [ ] POST /api/v1/pos/posting-monitor/exceptions/:id/resolve — StockPostingController.resolve
-- [ ] GET /api/v1/pos/posting-monitor/jobs — StockPostingController.jobs
-- [ ] POST /api/v1/pos/posting-monitor/jobs/:id/retry — StockPostingController.retryJob
-- [ ] GET /api/v1/pos/receipts — PosReceiptsController.list
-- [ ] GET /api/v1/pos/receipts/:invoiceId — PosReceiptsController.get
-- [ ] POST /api/v1/pos/receipts/:invoiceId/email — PosReceiptsController.email
-- [ ] GET /api/v1/pos/receipts/:invoiceId/pdf — PosReceiptsController.pdf
-- [ ] POST /api/v1/pos/receipts/:invoiceId/print — PosReceiptsController.print
-- [ ] POST /api/v1/pos/receipts/:invoiceId/print-additional-bill — PosReceiptsController.printAdditionalBill
-- [ ] POST /api/v1/pos/receipts/:invoiceId/print-bill — PosReceiptsController.printBill
-- [ ] POST /api/v1/pos/receipts/:invoiceId/print-kot — PosReceiptsController.printKot
-- [ ] POST /api/v1/pos/receipts/:invoiceId/reprint — PosReceiptsController.reprint
-- [ ] POST /api/v1/pos/receipts/:invoiceId/reprint-bill — PosReceiptsController.reprintBill
-- [ ] PATCH /api/v1/pos/receipts/:invoiceId/settings/receipt — PosReceiptsController.updateReceiptSettings
-- [ ] GET /api/v1/pos/receipts/:invoiceId/text — PosReceiptsController.text
-- [ ] POST /api/v1/pos/receipts/print-closing-statement — PosReceiptsController.printClosingStatement
-- [ ] GET /api/v1/pos/reports/cashier-report — PosReportsController.cashierReport
-- [ ] GET /api/v1/pos/reports/cashier-shift-summary — PosReportsController.cashierShiftSummary
-- [ ] GET /api/v1/pos/reports/filter-options — PosReportsController.filterOptions
-- [ ] GET /api/v1/pos/reports/item-sales — PosReportsController.itemSales
-- [ ] GET /api/v1/pos/reports/items-by-group — PosReportsController.itemsByGroup
-- [ ] GET /api/v1/pos/reports/items-by-server — PosReportsController.itemsByServer
-- [ ] GET /api/v1/pos/reports/order-report — PosReportsController.orderReport
-- [ ] GET /api/v1/pos/reports/reservations — PosReservationReportsController.reservations
-- [ ] GET /api/v1/pos/reports/sales-by-hour — PosReportsController.salesByHour
-- [ ] GET /api/v1/pos/reports/sales-report — PosReportsController.salesReport
-- [ ] GET /api/v1/pos/reports/sales-summary — PosReportsController.salesSummary
-- [ ] GET /api/v1/pos/reports/sold-items — PosReportsController.soldItems
-- [ ] GET /api/v1/pos/reports/tables/revenue — PosTableReportsController.revenue
-- [ ] GET /api/v1/pos/reports/tables/utilization — PosTableReportsController.utilization
-- [ ] GET /api/v1/pos/reports/top-items — PosReportsController.topItems
-- [ ] GET /api/v1/pos/reports/waiter-report — PosReportsController.waiterReport
-- [ ] GET /api/v1/pos/reports/x-report — PosReportsController.xReport
-- [ ] GET /api/v1/pos/reports/z-report — PosReportsController.zReport
-- [ ] GET /api/v1/pos/reports/z-report/:cashSessionId — PosReportsController.getZReport
-- [ ] GET /api/v1/pos/reservations — PosReservationsController.list
-- [ ] POST /api/v1/pos/reservations — PosReservationsController.create
-- [ ] GET /api/v1/pos/reservations/:id — PosReservationsController.get
-- [ ] PATCH /api/v1/pos/reservations/:id — PosReservationsController.update
-- [ ] POST /api/v1/pos/reservations/:id/cancel — PosReservationsController.cancel
-- [ ] POST /api/v1/pos/reservations/:id/complete — PosReservationsController.complete
-- [ ] POST /api/v1/pos/reservations/:id/no-show — PosReservationsController.noShow
-- [ ] POST /api/v1/pos/reservations/:id/seat — PosReservationsController.seat
-- [ ] POST /api/v1/pos/sales/:id/void — PosController.void
-- [ ] GET /api/v1/pos/settings — PosController.getSettings
-- [ ] PATCH /api/v1/pos/settings — PosController.updateSettings
-- [ ] POST /api/v1/pos/shift/handover — PosShiftController.handover
-- [ ] DELETE /api/v1/pos/split-bills/:billId — PosSplitController.deleteBill
-- [ ] POST /api/v1/pos/split-bills/:billId/assign — PosSplitController.assign
-- [ ] POST /api/v1/pos/split-bills/:billId/merge/:targetBillId — PosSplitController.merge
-- [ ] POST /api/v1/pos/split-bills/:billId/move/:targetBillId — PosSplitController.move
-- [ ] POST /api/v1/pos/split-bills/:billId/settle — PosSplitController.settle
-- [ ] POST /api/v1/pos/split-bills/:billId/unassign — PosSplitController.unassign
-- [ ] GET /api/v1/pos/tables — PosTablesController.list
-- [ ] POST /api/v1/pos/tables — PosTablesController.create
-- [ ] DELETE /api/v1/pos/tables/:id — PosTablesController.archive
-- [ ] GET /api/v1/pos/tables/:id — PosTablesController.get
-- [ ] PATCH /api/v1/pos/tables/:id — PosTablesController.update
-- [ ] POST /api/v1/pos/tables/:id/assign-waiter — PosTablesController.assignWaiter
-- [ ] POST /api/v1/pos/tables/:id/attach-sale — PosTablesController.attachSale
-- [ ] POST /api/v1/pos/tables/:id/merge/:targetId — PosTablesController.merge
-- [ ] POST /api/v1/pos/tables/:id/split-bill — PosTablesController.splitBill
-- [ ] PUT /api/v1/pos/tables/:id/status — PosTablesController.setStatus
-- [ ] POST /api/v1/pos/tables/:id/transfer-items/:targetId — PosTablesController.transferItems
-- [ ] POST /api/v1/pos/tables/:id/transfer/:targetId — PosTablesController.transfer
-- [ ] POST /api/v1/pos/tables/:id/unmerge — PosTablesController.unmerge
-- [ ] GET /api/v1/pos/tables/stats — PosTablesController.stats
-- [ ] GET /api/v1/pos/tables/stream — PosTablesController.stream
-- [ ] GET /api/v1/pos/tables/zones — PosTableZonesController.list
-- [ ] POST /api/v1/pos/tables/zones — PosTableZonesController.create
-- [ ] DELETE /api/v1/pos/tables/zones/:id — PosTableZonesController.archive
-- [ ] PATCH /api/v1/pos/tables/zones/:id — PosTableZonesController.update
-- [ ] PATCH /api/v1/pos/tables/zones/:id/restore — PosTableZonesController.restore
-- [ ] GET /api/v1/pos/tables/zones/deleted — PosTableZonesController.listDeleted
-- [ ] GET /api/v1/pos/tabs/:tableId — PosController.getTab
-- [ ] POST /api/v1/pos/tabs/:tableId/fire-kitchen — PosController.fireKitchen
-- [ ] POST /api/v1/pos/tabs/:tableId/items — PosController.addToTab
-- [ ] POST /api/v1/pos/tabs/:tableId/save — PosController.saveTab
-- [ ] POST /api/v1/pos/tabs/:tableId/settle — PosController.settleTab
-- [ ] GET /api/v1/pos/tabs/:tableId/split — PosSplitController.getState
-- [ ] POST /api/v1/pos/tabs/:tableId/split/bills — PosSplitController.addBills
-- [ ] POST /api/v1/pos/tabs/:tableId/split/cancel — PosSplitController.cancelSplit
-- [ ] POST /api/v1/pos/tabs/:tableId/split/equal — PosSplitController.splitEqually
+- [x] GET /api/v1/menu/public/catalog — DigitalMenuPublicController.catalog
+- [x] POST /api/v1/menu/public/orders — DigitalMenuPublicController.placeOrder
+- [x] GET /api/v1/menu/public/orders/:id/track — DigitalMenuPublicController.track
+- [x] POST /api/v1/pos/auth/change-password — PosAuthController.changePassword
+- [x] POST /api/v1/pos/auth/change-pin — PosAuthController.changePin
+- [x] POST /api/v1/pos/auth/logoff — PosAuthController.logoff
+- [x] POST /api/v1/pos/auth/pin-login — PosAuthController.pinLogin
+- [x] GET /api/v1/pos/auth/staff — PosAuthController.listStaff
+- [x] POST /api/v1/pos/checkout — PosController.checkout
+- [x] GET /api/v1/pos/credit/open — PosCreditController.open
+- [x] GET /api/v1/pos/customers/:partnerId/credit — PosCustomerStatementController.credit
+- [x] GET /api/v1/pos/customers/:partnerId/statement — PosCustomerStatementController.statement
+- [x] GET /api/v1/pos/holds — PosHoldsController.list
+- [x] POST /api/v1/pos/holds — PosHoldsController.create
+- [x] DELETE /api/v1/pos/holds/:id — PosHoldsController.cancel
+- [x] GET /api/v1/pos/holds/:id — PosHoldsController.get
+- [x] PATCH /api/v1/pos/holds/:id/notes — PosHoldsController.updateNotes
+- [x] POST /api/v1/pos/holds/:id/recall — PosHoldsController.recall
+- [x] POST /api/v1/pos/invoices/:id/credit — PosBillingController.settleCredit
+- [x] POST /api/v1/pos/invoices/:id/payments — PosBillingController.receivePayment
+- [x] POST /api/v1/pos/invoices/:id/refund — PosBillingController.refund
+- [x] POST /api/v1/pos/invoices/:id/write-off — PosBillingController.writeOff
+- [x] GET /api/v1/pos/kds/reports/live — PosKdsReportsController.live
+- [x] GET /api/v1/pos/kds/reports/summary — PosKdsReportsController.summary
+- [x] POST /api/v1/pos/kds/send-to-kitchen — PosKdsController.sendToKitchen
+- [x] GET /api/v1/pos/kds/stream — PosKdsController.stream
+- [x] GET /api/v1/pos/kds/tickets — PosKdsController.list
+- [x] GET /api/v1/pos/kds/tickets/:id — PosKdsController.get
+- [x] POST /api/v1/pos/kds/tickets/:id/assign — PosKdsController.assign
+- [x] POST /api/v1/pos/kds/tickets/:id/priority — PosKdsController.priority
+- [x] POST /api/v1/pos/kds/tickets/:id/transition — PosKdsController.transition
+- [x] POST /api/v1/pos/kds/tickets/bulk-transition — PosKdsController.bulkTransition
+- [x] GET /api/v1/pos/kitchen-stations — KitchenStationController.list
+- [x] POST /api/v1/pos/kitchen-stations — KitchenStationController.create
+- [x] DELETE /api/v1/pos/kitchen-stations/:id — KitchenStationController.remove
+- [x] PATCH /api/v1/pos/kitchen-stations/:id — KitchenStationController.update
+- [x] PATCH /api/v1/pos/kitchen-stations/reorder — KitchenStationController.reorder
+- [x] POST /api/v1/pos/kitchen-stations/seed-defaults — KitchenStationController.seedDefaults
+- [x] GET /api/v1/pos/lookup — PosController.lookup
+- [x] GET /api/v1/pos/loyalty/balance/:partnerId — PosLoyaltyController.balance
+- [x] GET /api/v1/pos/loyalty/credit/:partnerId — PosLoyaltyController.credit
+- [x] POST /api/v1/pos/loyalty/credit/issue — PosLoyaltyController.issueCredit
+- [x] POST /api/v1/pos/loyalty/credit/redeem — PosLoyaltyController.redeemCredit
+- [x] POST /api/v1/pos/loyalty/earn — PosLoyaltyController.earn
+- [x] GET /api/v1/pos/loyalty/earned/:partnerId — PosLoyaltyController.earned
+- [x] GET /api/v1/pos/loyalty/program — PosLoyaltyController.getProgram
+- [x] POST /api/v1/pos/loyalty/program/ensure — PosLoyaltyController.ensure
+- [x] POST /api/v1/pos/loyalty/redeem — PosLoyaltyController.redeem
+- [x] GET /api/v1/pos/loyalty/tab/:partnerId — PosLoyaltyController.tab
+- [x] POST /api/v1/pos/loyalty/tab/charge — PosLoyaltyController.chargeTab
+- [x] POST /api/v1/pos/loyalty/tab/open — PosLoyaltyController.openTab
+- [x] POST /api/v1/pos/loyalty/tab/settle — PosLoyaltyController.settleTab
+- [x] GET /api/v1/pos/menu/accompaniments/groups — PosMenuController.listAllAccompanimentGroups
+- [x] POST /api/v1/pos/menu/accompaniments/groups — PosMenuController.createAccompanimentGroup
+- [x] DELETE /api/v1/pos/menu/accompaniments/groups/:groupId — PosMenuController.deleteAccompanimentGroup
+- [x] PATCH /api/v1/pos/menu/accompaniments/groups/:groupId — PosMenuController.updateAccompanimentGroup
+- [x] POST /api/v1/pos/menu/accompaniments/groups/:groupId/options — PosMenuController.createAccompanimentOption
+- [x] DELETE /api/v1/pos/menu/accompaniments/options/:optionId — PosMenuController.deleteAccompanimentOption
+- [x] PATCH /api/v1/pos/menu/accompaniments/options/:optionId — PosMenuController.updateAccompanimentOption
+- [x] GET /api/v1/pos/menu/accompaniments/report/sales — PosMenuController.accompanimentSalesReport
+- [x] GET /api/v1/pos/menu/categories — PosMenuController.listCategories
+- [x] POST /api/v1/pos/menu/categories — PosMenuController.createCategory
+- [x] DELETE /api/v1/pos/menu/categories/:id — PosMenuController.deleteCategory
+- [x] PATCH /api/v1/pos/menu/categories/:id — PosMenuController.updateCategory
+- [x] PATCH /api/v1/pos/menu/categories/:id/restore — PosMenuController.restoreCategory
+- [x] GET /api/v1/pos/menu/categories/deleted — PosMenuController.listDeletedCategories
+- [x] GET /api/v1/pos/menu/items — PosMenuController.list
+- [x] POST /api/v1/pos/menu/items — PosMenuController.create
+- [x] DELETE /api/v1/pos/menu/items/:id — PosMenuController.remove
+- [x] GET /api/v1/pos/menu/items/:id — PosMenuController.getOne
+- [x] PATCH /api/v1/pos/menu/items/:id — PosMenuController.update
+- [x] PATCH /api/v1/pos/menu/items/:id/availability — PosMenuController.setAvail
+- [x] GET /api/v1/pos/menu/items/:id/bundle — PosMenuController.getBundle
+- [x] DELETE /api/v1/pos/menu/items/:id/hard — PosMenuController.hardDelete
+- [x] PATCH /api/v1/pos/menu/items/:id/restore — PosMenuController.restoreItem
+- [x] GET /api/v1/pos/menu/items/:menuItemId/accompaniments — PosMenuController.listMenuItemAccompaniments
+- [x] POST /api/v1/pos/menu/items/:menuItemId/accompaniments — PosMenuController.assignAccompanimentGroup
+- [x] DELETE /api/v1/pos/menu/items/:menuItemId/accompaniments/:groupId — PosMenuController.unassignAccompanimentGroup
+- [x] GET /api/v1/pos/menu/items/:menuItemId/variants — PosMenuController.listVariants
+- [x] POST /api/v1/pos/menu/items/:menuItemId/variants — PosMenuController.createVariant
+- [x] DELETE /api/v1/pos/menu/items/:menuItemId/variants/:variantId — PosMenuController.deleteVariant
+- [x] PATCH /api/v1/pos/menu/items/:menuItemId/variants/:variantId — PosMenuController.updateVariant
+- [x] GET /api/v1/pos/menu/items/available — PosMenuController.available
+- [x] GET /api/v1/pos/menu/items/deleted — PosMenuController.listDeletedItems
+- [x] GET /api/v1/pos/menu/orders — DigitalMenuController.listOrders
+- [x] PATCH /api/v1/pos/menu/orders/:id/status — DigitalMenuController.updateStatus
+- [x] GET /api/v1/pos/menu/sessions — DigitalMenuController.listSessions
+- [x] POST /api/v1/pos/menu/sessions — DigitalMenuController.createSession
+- [x] DELETE /api/v1/pos/menu/sessions/:id — DigitalMenuController.revokeSession
+- [x] GET /api/v1/pos/modifiers/combos — PosModifiersController.listCombos
+- [x] POST /api/v1/pos/modifiers/combos — PosModifiersController.createCombo
+- [x] DELETE /api/v1/pos/modifiers/combos/:id — PosModifiersController.deleteCombo
+- [x] GET /api/v1/pos/modifiers/combos/:id — PosModifiersController.getCombo
+- [x] PATCH /api/v1/pos/modifiers/combos/:id — PosModifiersController.updateCombo
+- [x] GET /api/v1/pos/modifiers/groups — PosModifiersController.listGroups
+- [x] POST /api/v1/pos/modifiers/groups — PosModifiersController.createGroup
+- [x] DELETE /api/v1/pos/modifiers/groups/:id — PosModifiersController.deleteGroup
+- [x] PATCH /api/v1/pos/modifiers/groups/:id — PosModifiersController.updateGroup
+- [x] GET /api/v1/pos/modifiers/groups/:id/menu-items — PosModifiersController.getGroupMenuItems
+- [x] GET /api/v1/pos/modifiers/menu-items/:menuItemId/bundle — PosModifiersController.getMenuItemBundle
+- [x] POST /api/v1/pos/modifiers/menu-items/:menuItemId/groups — PosModifiersController.assignGroupToMenuItem
+- [x] DELETE /api/v1/pos/modifiers/menu-items/:menuItemId/groups/:groupId — PosModifiersController.unassignGroupFromMenuItem
+- [x] POST /api/v1/pos/modifiers/modifiers — PosModifiersController.createModifier
+- [x] DELETE /api/v1/pos/modifiers/modifiers/:id — PosModifiersController.deleteModifier
+- [x] PATCH /api/v1/pos/modifiers/modifiers/:id — PosModifiersController.updateModifier
+- [x] GET /api/v1/pos/modifiers/products/:productId/bundle — PosModifiersController.getProductBundle
+- [x] POST /api/v1/pos/modifiers/products/:productId/groups — PosModifiersController.assignGroup
+- [x] DELETE /api/v1/pos/modifiers/products/:productId/groups/:groupId — PosModifiersController.unassignGroup
+- [x] GET /api/v1/pos/modifiers/report/sales — PosModifiersController.modifierSalesReport
+- [x] POST /api/v1/pos/operation-approval — PosController.operationApproval
+- [x] GET /api/v1/pos/orders — PosOrdersController.list
+- [x] POST /api/v1/pos/orders — PosOrdersController.create
+- [x] GET /api/v1/pos/orders/:id — PosOrdersController.get
+- [x] POST /api/v1/pos/orders/:id/cancel — PosOrdersController.cancel
+- [x] POST /api/v1/pos/orders/:id/fire-kitchen — PosOrdersController.fireKitchen
+- [x] POST /api/v1/pos/orders/:id/invoice — PosOrdersController.generateInvoice
+- [x] POST /api/v1/pos/orders/:id/items — PosOrdersController.addItems
+- [x] PUT /api/v1/pos/orders/:id/items — PosOrdersController.saveItems
+- [x] DELETE /api/v1/pos/orders/:id/items/:itemId — PosOrdersController.voidItem
+- [x] POST /api/v1/pos/orders/:id/merge — PosOrdersController.merge
+- [x] GET /api/v1/pos/orders/:id/milestones — PosOrdersController.milestones
+- [x] POST /api/v1/pos/orders/:id/move — PosOrdersController.move
+- [x] POST /api/v1/pos/orders/:id/reopen — PosOrdersController.reopen
+- [x] GET /api/v1/pos/orders/:id/resume — PosController.resumeOrder
+- [x] POST /api/v1/pos/orders/:id/settle — PosController.settleOrder
+- [x] GET /api/v1/pos/orders/by-table/:tableId — PosOrdersController.byTable
+- [x] GET /api/v1/pos/orders/open — PosOrdersController.listOpen
+- [x] POST /api/v1/pos/orders/quote — PosOrdersController.quote
+- [x] POST /api/v1/pos/override/pin — PosOverridesController.setPin
+- [x] POST /api/v1/pos/override/verify — PosOverridesController.verify
+- [x] POST /api/v1/pos/override/verify-pin — PosOverridesController.verifyPin
+- [x] GET /api/v1/pos/payment-accounts — PosController.paymentAccounts
+- [x] GET /api/v1/pos/payment-methods — PosController.listPaymentMethods
+- [x] GET /api/v1/pos/posting-monitor/counts — StockPostingController.counts
+- [x] GET /api/v1/pos/posting-monitor/exceptions — StockPostingController.exceptions
+- [x] POST /api/v1/pos/posting-monitor/exceptions/:id/assign — StockPostingController.assign
+- [x] POST /api/v1/pos/posting-monitor/exceptions/:id/resolve — StockPostingController.resolve
+- [x] GET /api/v1/pos/posting-monitor/jobs — StockPostingController.jobs
+- [x] POST /api/v1/pos/posting-monitor/jobs/:id/retry — StockPostingController.retryJob
+- [x] GET /api/v1/pos/receipts — PosReceiptsController.list
+- [x] GET /api/v1/pos/receipts/:invoiceId — PosReceiptsController.get
+- [x] POST /api/v1/pos/receipts/:invoiceId/email — PosReceiptsController.email
+- [x] GET /api/v1/pos/receipts/:invoiceId/pdf — PosReceiptsController.pdf
+- [x] POST /api/v1/pos/receipts/:invoiceId/print — PosReceiptsController.print
+- [x] POST /api/v1/pos/receipts/:invoiceId/print-additional-bill — PosReceiptsController.printAdditionalBill
+- [x] POST /api/v1/pos/receipts/:invoiceId/print-bill — PosReceiptsController.printBill
+- [x] POST /api/v1/pos/receipts/:invoiceId/print-kot — PosReceiptsController.printKot
+- [x] POST /api/v1/pos/receipts/:invoiceId/reprint — PosReceiptsController.reprint
+- [x] POST /api/v1/pos/receipts/:invoiceId/reprint-bill — PosReceiptsController.reprintBill
+- [x] PATCH /api/v1/pos/receipts/:invoiceId/settings/receipt — PosReceiptsController.updateReceiptSettings
+- [x] GET /api/v1/pos/receipts/:invoiceId/text — PosReceiptsController.text
+- [x] POST /api/v1/pos/receipts/print-closing-statement — PosReceiptsController.printClosingStatement
+- [x] GET /api/v1/pos/reports/cashier-report — PosReportsController.cashierReport
+- [x] GET /api/v1/pos/reports/cashier-shift-summary — PosReportsController.cashierShiftSummary
+- [x] GET /api/v1/pos/reports/filter-options — PosReportsController.filterOptions
+- [x] GET /api/v1/pos/reports/item-sales — PosReportsController.itemSales
+- [x] GET /api/v1/pos/reports/items-by-group — PosReportsController.itemsByGroup
+- [x] GET /api/v1/pos/reports/items-by-server — PosReportsController.itemsByServer
+- [x] GET /api/v1/pos/reports/order-report — PosReportsController.orderReport
+- [x] GET /api/v1/pos/reports/reservations — PosReservationReportsController.reservations
+- [x] GET /api/v1/pos/reports/sales-by-hour — PosReportsController.salesByHour
+- [x] GET /api/v1/pos/reports/sales-report — PosReportsController.salesReport
+- [x] GET /api/v1/pos/reports/sales-summary — PosReportsController.salesSummary
+- [x] GET /api/v1/pos/reports/sold-items — PosReportsController.soldItems
+- [x] GET /api/v1/pos/reports/tables/revenue — PosTableReportsController.revenue
+- [x] GET /api/v1/pos/reports/tables/utilization — PosTableReportsController.utilization
+- [x] GET /api/v1/pos/reports/top-items — PosReportsController.topItems
+- [x] GET /api/v1/pos/reports/waiter-report — PosReportsController.waiterReport
+- [x] GET /api/v1/pos/reports/x-report — PosReportsController.xReport
+- [x] GET /api/v1/pos/reports/z-report — PosReportsController.zReport
+- [x] GET /api/v1/pos/reports/z-report/:cashSessionId — PosReportsController.getZReport
+- [x] GET /api/v1/pos/reservations — PosReservationsController.list
+- [x] POST /api/v1/pos/reservations — PosReservationsController.create
+- [x] GET /api/v1/pos/reservations/:id — PosReservationsController.get
+- [x] PATCH /api/v1/pos/reservations/:id — PosReservationsController.update
+- [x] POST /api/v1/pos/reservations/:id/cancel — PosReservationsController.cancel
+- [x] POST /api/v1/pos/reservations/:id/complete — PosReservationsController.complete
+- [x] POST /api/v1/pos/reservations/:id/no-show — PosReservationsController.noShow
+- [x] POST /api/v1/pos/reservations/:id/seat — PosReservationsController.seat
+- [x] POST /api/v1/pos/sales/:id/void — PosController.void
+- [x] GET /api/v1/pos/settings — PosController.getSettings
+- [x] PATCH /api/v1/pos/settings — PosController.updateSettings
+- [x] POST /api/v1/pos/shift/handover — PosShiftController.handover
+- [x] DELETE /api/v1/pos/split-bills/:billId — PosSplitController.deleteBill
+- [x] POST /api/v1/pos/split-bills/:billId/assign — PosSplitController.assign
+- [x] POST /api/v1/pos/split-bills/:billId/merge/:targetBillId — PosSplitController.merge
+- [x] POST /api/v1/pos/split-bills/:billId/move/:targetBillId — PosSplitController.move
+- [x] POST /api/v1/pos/split-bills/:billId/settle — PosSplitController.settle
+- [x] POST /api/v1/pos/split-bills/:billId/unassign — PosSplitController.unassign
+- [x] GET /api/v1/pos/tables — PosTablesController.list
+- [x] POST /api/v1/pos/tables — PosTablesController.create
+- [x] DELETE /api/v1/pos/tables/:id — PosTablesController.archive
+- [x] GET /api/v1/pos/tables/:id — PosTablesController.get
+- [x] PATCH /api/v1/pos/tables/:id — PosTablesController.update
+- [x] POST /api/v1/pos/tables/:id/assign-waiter — PosTablesController.assignWaiter
+- [x] POST /api/v1/pos/tables/:id/attach-sale — PosTablesController.attachSale
+- [x] POST /api/v1/pos/tables/:id/merge/:targetId — PosTablesController.merge
+- [x] POST /api/v1/pos/tables/:id/split-bill — PosTablesController.splitBill
+- [x] PUT /api/v1/pos/tables/:id/status — PosTablesController.setStatus
+- [x] POST /api/v1/pos/tables/:id/transfer-items/:targetId — PosTablesController.transferItems
+- [x] POST /api/v1/pos/tables/:id/transfer/:targetId — PosTablesController.transfer
+- [x] POST /api/v1/pos/tables/:id/unmerge — PosTablesController.unmerge
+- [x] GET /api/v1/pos/tables/stats — PosTablesController.stats
+- [x] GET /api/v1/pos/tables/stream — PosTablesController.stream
+- [x] GET /api/v1/pos/tables/zones — PosTableZonesController.list
+- [x] POST /api/v1/pos/tables/zones — PosTableZonesController.create
+- [x] DELETE /api/v1/pos/tables/zones/:id — PosTableZonesController.archive
+- [x] PATCH /api/v1/pos/tables/zones/:id — PosTableZonesController.update
+- [x] PATCH /api/v1/pos/tables/zones/:id/restore — PosTableZonesController.restore
+- [x] GET /api/v1/pos/tables/zones/deleted — PosTableZonesController.listDeleted
+- [x] GET /api/v1/pos/tabs/:tableId — PosController.getTab
+- [x] POST /api/v1/pos/tabs/:tableId/fire-kitchen — PosController.fireKitchen
+- [x] POST /api/v1/pos/tabs/:tableId/items — PosController.addToTab
+- [x] POST /api/v1/pos/tabs/:tableId/save — PosController.saveTab
+- [x] POST /api/v1/pos/tabs/:tableId/settle — PosController.settleTab
+- [x] GET /api/v1/pos/tabs/:tableId/split — PosSplitController.getState
+- [x] POST /api/v1/pos/tabs/:tableId/split/bills — PosSplitController.addBills
+- [x] POST /api/v1/pos/tabs/:tableId/split/cancel — PosSplitController.cancelSplit
+- [x] POST /api/v1/pos/tabs/:tableId/split/equal — PosSplitController.splitEqually
 
 ## sync
 

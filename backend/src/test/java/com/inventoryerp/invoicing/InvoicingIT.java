@@ -218,6 +218,8 @@ class InvoicingIT extends ApiTestSupport {
         // Nest parity: the ledger only lists draft / posted / cancelled bills, so a fully paid bill drops out.
         assertThat(ledger.get("closingBalance").asInt()).isEqualTo(-60);
         assertThat(ledger.get("transactions")).hasSize(1);
+        // A suite that rebuilt report snapshots moments ago would make the aging answer from them.
+        jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
         assertThat(ok(200, "GET", "/reports/ap/aging", null).get("source").asString()).isEqualTo("live");
         assertThat(ok(200, "GET", "/supplier-payments?partnerId=" + supplier, null).get("data")).hasSize(1);
         assertThat(wh).isNotNull();
