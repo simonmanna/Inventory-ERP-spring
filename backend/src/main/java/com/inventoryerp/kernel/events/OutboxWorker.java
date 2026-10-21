@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -17,6 +19,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Ships pending {@code EventOutbox} rows to in-process handlers (port of {@code outbox.worker.ts}).
  * Multi-replica safe: rows are claimed with a unique token via {@code FOR UPDATE SKIP LOCKED}; a claim
  * older than 30 s is considered stale and re-claimable. Polls every {@code OUTBOX_POLL_MS} (1 s).
+ * The per-row ship / fail marks commit with {@code synchronous_commit = off}: losing one in a database crash only
+ * re-delivers that row, which at-least-once delivery already allows, and it saves a WAL flush per event.
  */
 @Component
 public class OutboxWorker {
@@ -24,16 +28,18 @@ public class OutboxWorker {
     private static final Logger log = LoggerFactory.getLogger(OutboxWorker.class);
     private static final long STALE_CLAIM_MS = 30_000;
 
-    private record Claimed(String id, String eventName, String payload) {}
+    private record Claimed(String id, String eventName, String payload, int attempts) {}
 
     private final JdbcClient jdbc;
     private final OutboxHandlers handlers;
     private final JsonMapper mapper;
+    private final TransactionTemplate tx;
     private final int batchSize;
 
-    public OutboxWorker(JdbcClient jdbc, OutboxHandlers handlers, JsonMapper mapper,
+    public OutboxWorker(JdbcClient jdbc, OutboxHandlers handlers, JsonMapper mapper, PlatformTransactionManager txm,
             @Value("${OUTBOX_BATCH:50}") int batchSize) {
         this.jdbc = jdbc;
+        this.tx = new TransactionTemplate(txm);
         this.handlers = handlers;
         this.mapper = mapper;
         this.batchSize = batchSize;
@@ -62,34 +68,36 @@ public class OutboxWorker {
                           LIMIT ?
                           FOR UPDATE SKIP LOCKED
                         )
-                        RETURNING "id", "eventName", "payload"::text AS payload""")
+                        RETURNING "id", "eventName", "payload"::text AS payload, attempts""")
                 .params(claimToken, staleBefore, batchSize)
-                .query((rs, n) -> new Claimed(rs.getString("id"), rs.getString("eventName"), rs.getString("payload")))
+                .query((rs, n) -> new Claimed(rs.getString("id"), rs.getString("eventName"), rs.getString("payload"),
+                        rs.getInt("attempts")))
                 .list();
         int shipped = 0;
         for (Claimed row : claimed) {
-            int attempts = jdbc.sql("SELECT attempts FROM \"EventOutbox\" WHERE id = ?").param(row.id())
-                    .query(Integer.class).optional().orElse(0);
             try {
                 JsonNode payload = row.payload() == null ? mapper.nullNode() : mapper.readTree(row.payload());
                 handlers.dispatch(row.eventName(), payload);
-                jdbc.sql("""
+                mark("""
                                 UPDATE "EventOutbox" SET status = 'shipped', "shippedAt" = now(), "claimToken" = NULL,
-                                       "claimedAt" = NULL WHERE id = ?""")
-                        .param(row.id())
-                        .update();
+                                       "claimedAt" = NULL WHERE id = ?""", row.id());
                 shipped++;
             } catch (RuntimeException err) {
                 String msg = err.toString();
                 msg = msg.length() > 500 ? msg.substring(0, 500) : msg;
-                log.warn("Outbox row {} failed (attempt {}): {}", row.id(), attempts + 1, msg);
-                jdbc.sql("""
+                log.warn("Outbox row {} failed (attempt {}): {}", row.id(), row.attempts() + 1, msg);
+                mark("""
                                 UPDATE "EventOutbox" SET attempts = attempts + 1, "lastError" = ?, "claimToken" = NULL,
-                                       "claimedAt" = NULL WHERE id = ?""")
-                        .params(msg, row.id())
-                        .update();
+                                       "claimedAt" = NULL WHERE id = ?""", msg, row.id());
             }
         }
         return shipped;
+    }
+
+    private void mark(String sql, Object... params) {
+        tx.executeWithoutResult(s -> {
+            jdbc.sql("SET LOCAL synchronous_commit = off").update();
+            jdbc.sql(sql).params(params).update();
+        });
     }
 }

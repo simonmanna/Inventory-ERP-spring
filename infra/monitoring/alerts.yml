@@ -1,0 +1,101 @@
+# Prometheus alert rules for Inventory-ERP-spring.
+# Metric names: Micrometer (http_server_requests_seconds, jvm_*, hikaricp_*, process_*) plus the erp_* gauges
+# served by the API (kernel MetricsController and the module MeterBinders).
+groups:
+  - name: inventory-erp-availability
+    rules:
+      - alert: ApiDown
+        expr: up{job="inventory-erp-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "API not scrapeable for 2 minutes"
+          description: "Prometheus cannot reach /api/v1/metrics on {{ $labels.instance }}. Check the container and /api/v1/health/ready."
+
+      - alert: ApiHigh5xxRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="inventory-erp-api",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_server_requests_seconds_count{job="inventory-erp-api"}[5m])), 1) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 2% of API requests fail with 5xx"
+          description: "Check the API logs (requestId in the error body) for the failing route."
+
+      - alert: CheckoutLatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job="inventory-erp-api",uri="/api/v1/pos/checkout"}[5m]))) > 1.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "POS checkout p95 above 1.5 s"
+          description: "Tills feel slow. Check DB CPU, Hikari pending connections and the stock-posting backlog."
+
+  - name: inventory-erp-resources
+    rules:
+      - alert: HikariPoolExhausted
+        expr: max(hikaricp_connections_pending{job="inventory-erp-api"}) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Requests are waiting for DB connections"
+          description: "Raise DB_POOL_SIZE (and Postgres max_connections) or find the slow queries (pg_stat_statements)."
+
+      - alert: JvmHeapHigh
+        expr: |
+          sum(jvm_memory_used_bytes{job="inventory-erp-api",area="heap"})
+            / sum(jvm_memory_max_bytes{job="inventory-erp-api",area="heap"}) > 0.9
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "JVM heap above 90% for 10 minutes"
+          description: "Check for a leak or raise the container memory (heap = 75% of it via MaxRAMPercentage)."
+
+      - alert: GcPausesLong
+        expr: sum(rate(jvm_gc_pause_seconds_sum{job="inventory-erp-api"}[5m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 10% of time spent in GC"
+
+  - name: inventory-erp-business
+    rules:
+      - alert: StockPostingBacklog
+        expr: max(erp_stock_posting_jobs_pending{job="inventory-erp-api"}) > 50
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "POS sales are not reaching stock"
+          description: "Pending stock-posting jobs keep growing; shift close will be refused. See runbook: stock-posting."
+
+      - alert: OfflineSyncDeadLetters
+        expr: max(erp_sync_dead_letters_open{job="inventory-erp-api"}) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Offline sales were refused on sync and await a manager decision"
+          description: "Open dead letters block cash-session close. Review them in POS → Sync dead letters."
+
+      - alert: EventOutboxStuck
+        expr: max(erp_event_publications_incomplete{job="inventory-erp-api"}) > 100
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Domain events are not being delivered"
+
+  - name: inventory-erp-backups
+    rules:
+      - alert: BackupCritical
+        expr: max(erp_backup_health{job="inventory-erp-api"}) >= 2
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Backups are failing or stale"
+          description: "GET /api/v1/admin/backups/health lists the issues. A stale backup means data loss on a disk failure."
+
+      - alert: BackupStale
+        expr: max(erp_backup_last_full_age_seconds{job="inventory-erp-api"}) > 36 * 3600
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: "No successful full backup in 36 hours"

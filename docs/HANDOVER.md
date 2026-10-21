@@ -1,4 +1,4 @@
-# Handover — state after P5 (2026-10-20)
+# Handover — state after P8 / 1.0.0 candidate (2026-10-21)
 
 Read `AGENTS.md` and `CLAUDE.md` first. This file only records where the port stands and the conventions
 and pitfalls learned so far.
@@ -12,12 +12,16 @@ and pitfalls learned so far.
 | P3 | inventory, invoicing, expenses, crm, task, documents | 69, 30, 18, 21, 16, 28 — all done | `phase/P3-inventory-invoicing-crm` (branched from P2) |
 | P4 | procurement | 36/36 | `phase/P4-procurement` (branched from P3) |
 | P5 | pos | 219/219 | `phase/P5-pos` (branched from P4) |
-| P6 | sync, backup | 0/21 | next — brief `docs/phases/P6-sync-backup.md` |
+| P7 | orders, hr (cash flow + roles/permissions/users verified) | 11/11, 140/140 | `phase/P5-pos` (orders), `phase/P7-hr-orders` (hr) |
+| P6 | sync, backup | 8/8, 13/13 | `phase/P6-sync-backup` (branched from P7) |
+| P8 | hardening + release prep | — | `phase/P8-hardening` (branched from P6) |
 
-Nothing is pushed or merged. `main` does not contain P2/P3/P4 yet; the owner decides on merge / PRs.
+Optional P7 modules (beverage, fixedasset, manufacturing, rental, repair, communication — 239 routes) are not in
+1.0; their flags stay off. Nothing is pushed, merged or tagged; the owner decides on merge / PRs and on tagging
+`v1.0.0` (that triggers `.github/workflows/release.yml`). Release notes: `docs/releases/v1.0.0.md`.
 Run `cd backend && ./gradlew build --offline` (Docker required for Testcontainers) before claiming green.
 
-Totals and per-route ticks: `docs/PORT_STATUS.md` (707/1118). Per-module status, deviations and
+Totals and per-route ticks: `docs/PORT_STATUS.md` (879/1118). Per-module status, deviations and
 "same as Nest, kept on purpose" notes: `docs/spec/<module>.md`.
 
 ## Open items (not done, do not claim them)
@@ -25,21 +29,24 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (707/1118). Per-module status,
 1. **Parity harness not run** against a live Nest for any P2/P3 scenario (`contract-tests/scenarios/*.json`
    exist; `node contract-tests/run.mjs` needs both servers + same seed). Spec checklists leave the
    "Parity scenarios" and "Web screens" boxes unticked for this reason.
-2. **Web screens** for P3 modules not exercised against Spring.
-3. **JaCoCo ≥ 80 %** on `application` packages not measured.
+2. **Web screens**: P8 Playwright smoke over 31 pages (POS, KDS, HR, orders, reports) is clean; no deeper per-screen
+   walkthrough was done.
+3. **JaCoCo ≥ 80 %** on `application` packages not reached: 74 % overall, 57–92 % per package. The build gate is a
+   ratchet (`coverage.application.min` in `backend/gradle.properties`, 0.55) — raise it as coverage grows.
 4. **Deviations awaiting owner approval**: inventory `lowStock` filter, task date-only `dueDate`, DMS A4 PDF
    via OpenPDF (see each spec's "Deviations"). Procurement has none, but lists Nest bugs kept on purpose
    (PO search → 500, inbound non-RTV debit note never balances) — the owner may want those fixed after parity.
-5. Deferred Jest suites still open: sync driven (`sync-*`, `pos-offline-inventory-replay`, the `inv-*` POS cases that
-   go through the sync queue) → P6; the procurement / transfer / preflight days of the Lakeview simulations (the POS
+5. Deferred Jest suites: sync-driven ones ported in P6 (`SyncIT`, `SyncInventoryReplayIT`); still open: the procurement / transfer / preflight days of the Lakeview simulations (the POS
    trading core is ported as `PosLakeviewSimIT`). See `docs/spec/pos.md` → Status for the full POS list.
 6. P5 exit criteria: sell-loop e2e, offline kill-and-replay, emulated ESC/POS printer, web tables / KDS: **done**
-   (results in `docs/spec/pos.md` → "Exit-criteria runs"). Still open: p95 < 150 ms at 50 terminals (measured ≈ 3 s on
-   Docker Desktop; ~400 statements per checkout), the web terminal crash (client bug in `ShiftCloseDialog.tsx`,
+   (results in `docs/spec/pos.md` → "Exit-criteria runs"). Still open: p95 < 150 ms (P8: 1 till 342 ms, 10 tills 527 ms,
+   50 tills 1.8 s on Docker Desktop; ~400 statements / ~34 commits per checkout — see `docs/releases/v1.0.0.md`), the web terminal crash (client bug in `ShiftCloseDialog.tsx`,
    identical in POS-CAFE — owner decision), customer display / QR screens, parity runs against Nest.
 7. POS behaviour kept on purpose that the owner may want fixed after parity (`docs/spec/pos.md`): `/menu/public/*`
    needs a JWT, `/pos/tables/:id/split-bill` always 409s, `/pos/tabs/:id/split/equal` 500s, online-order status
    PATCH is rejected by the whitelist.
+8. P8 owner items: cut-over rehearsal on a production copy, RLS enforced with a non-superuser role on staging,
+   decision on revoking the successor of a replayed refresh token, approval of all listed deviations.
 
 ## How the code is written (follow it)
 
@@ -118,8 +125,15 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (707/1118). Per-module status,
   per call / a Python script.
 - `tools/dms-registry/export.mjs` regenerates `backend/src/main/resources/dms/registry.json` from the Nest seed.
 
+- Docker volume paths from Git Bash: prefix with `MSYS_NO_PATHCONV=1`. No `jq` on the dev box — scripts are Node.
+- Backup tests: the restore IT runs only when the local `pg_restore` major equals the server's (16). Production
+  `PG_BIN` must point at PostgreSQL 16 client tools.
+- Shared DEMO org in ITs: leave no open orders / tabs / dead letters behind (`ApiTestSupport.releaseHeldOrders()`,
+  `@AfterAll` cleanups) or later shift-close tests fail.
+
 ## Next step
 
-Start P6 (sync, backup) on a new branch from `phase/P5-pos`: `docs/phases/P6-sync-backup.md`. Then port
-`pos-offline-inventory-replay.spec.ts` and the sync-driven `inv-*` POS cases. POS services other modules may call:
-`pos.application.*` (`PosService.checkout`, `PosInvoiceService`, `PosOrdersService`, `PosReportsService`).
+1. Run the parity harness against a built Nest (`contract-tests/run.mjs`) and close diffs.
+2. Checkout latency: fewer transactions per checkout (batch settings reads, stock-posting job inside the sale tx).
+3. Coverage to 80 % on `application` packages; raise the ratchet.
+4. Optional modules (P7 extras) if the owner wants them after 1.0.

@@ -76,7 +76,11 @@ public class AuditService {
         AuditLog row = row(organizationId, input);
         detached.submit(() -> {
             try {
-                newTx.executeWithoutResult(s -> em.persist(row));
+                newTx.executeWithoutResult(s -> {
+                    // Login-type events only (never money): skip the WAL flush wait, see docs/OPERATIONS.md §7b.
+                    em.createNativeQuery("SET LOCAL synchronous_commit = off").executeUpdate();
+                    em.persist(row);
+                });
             } catch (RuntimeException err) {
                 log.warn("Fire-and-forget audit failed (non-critical): {}", err.toString());
             }

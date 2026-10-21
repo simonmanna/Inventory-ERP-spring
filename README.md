@@ -9,8 +9,11 @@ The React web client (`web/`) is the unchanged POS-CAFE client; the Spring API i
 replacement for the original NestJS API, which is kept read-only in `reference/nest-api/` as the
 behavioural specification.
 
-> **Status:** foundation (phase P0) complete — schema, entities, build, CI, docs. Feature modules
-> are built phase by phase; see [`docs/PORT_STATUS.md`](docs/PORT_STATUS.md).
+> **Status:** 1.0.0 release candidate. Ported and tested: kernel, core, accounting, inventory, invoicing, expenses,
+> CRM, tasks, documents, procurement, POS, offline sync, backup, HR & payroll and back-office orders — 879 of 1,118
+> routes. Not in 1.0 (flag-gated, off by default): beverage, fixed assets, manufacturing, rental, repair,
+> communication. Details: [`docs/PORT_STATUS.md`](docs/PORT_STATUS.md), release notes in
+> [`docs/releases/`](docs/releases).
 
 ## Quick start
 
@@ -21,7 +24,8 @@ pnpm install && pnpm web:dev                  # Web  http://localhost:5173
 ```
 
 Full stack in containers: `cp .env.example .env` (fill secrets) then `docker compose up -d --build`
-→ http://localhost:8080.
+→ http://localhost:8080. Production with published images: `docker-compose.prod.yml`; upgrades
+`scripts/upgrade.sh` (automatic rollback); monitoring `infra/monitoring/`; DR drill `node scripts/dr-drill.mjs`.
 
 Requirements: Docker, Node 22+, pnpm 10, any JDK 17+ to launch Gradle (JDK 25 toolchain is
 downloaded automatically).
@@ -49,8 +53,11 @@ backend/            Spring Boot application (Gradle, com.inventoryerp.*)
 web/                React 18 + Vite client (from POS-CAFE)
 packages/shared/    TS contract constants (permissions, events, enums) shared with web
 tools/              generators: prisma2jpa, contracts2java, extract-routes, specs
-contract-tests/     parity harness (Nest vs Spring)
+contract-tests/     parity harness (Nest vs Spring) + POS sell-loop e2e
 infra/docker/       Dockerfiles + nginx
+infra/monitoring/   Prometheus config + alert rules, Grafana dashboard
+scripts/            upgrade / rollback / DR drill
+tests/load/         k6 load suite
 reference/          read-only NestJS source of truth (+ Prisma schema/migrations/seed, e2e)
 docs/               specifications and guides
 ```

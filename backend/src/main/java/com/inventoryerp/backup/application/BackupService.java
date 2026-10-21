@@ -1410,6 +1410,12 @@ public class BackupService {
         return null;
     }
 
+    /** When the newest successful full backup finished, or {@code null}. */
+    public Instant lastSuccessfulFullAt() {
+        Map<String, Object> last = lastSuccessful("full");
+        return last == null ? null : Instant.parse((String) last.get("finishedAt"));
+    }
+
     private Map<String, Object> lastSuccessful(String kind) {
         return find(r -> kind.equals(r.get("kind")) && "success".equals(r.get("status")));
     }

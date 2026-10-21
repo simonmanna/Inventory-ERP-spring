@@ -1,0 +1,18 @@
+# Production override: run the published images instead of building from the checkout.
+#   IMAGE_REGISTRY=ghcr.io/<owner> IMAGE_TAG=1.0.0 \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Upgrades: IMAGE_TAG=<new> scripts/upgrade.sh --pull   (COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml")
+services:
+  api:
+    image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-api:${IMAGE_TAG:-latest}
+    pull_policy: always
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  web:
+    image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-web:${IMAGE_TAG:-latest}
+    pull_policy: always

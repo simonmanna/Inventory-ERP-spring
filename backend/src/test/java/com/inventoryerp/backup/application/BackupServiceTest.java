@@ -229,4 +229,101 @@ class BackupServiceTest {
         assertThatThrownBy(() -> BackupCrypto.decryptFile(src, backupDir.resolve("y"), "pw"))
                 .hasMessage("not an encrypted backup (missing Salted__ header)");
     }
+
+    @Test
+    @DisplayName("schedules: every frequency resolves to a 5-field cron Spring can parse; interval hours")
+    void schedules() {
+        Map<String, Object> cfg = service.getConfig();
+        for (String f : List.of("every_hour", "every_2_hours", "every_4_hours", "every_6_hours", "every_12_hours",
+                "daily", "weekly", "monthly")) {
+            cfg.put("frequency", f);
+            List<String[]> exprs = BackupService.resolveCronExpressions(cfg);
+            assertThat(exprs).isNotEmpty();
+            exprs.forEach(e -> BackupService.springCron(e[1]));
+        }
+        cfg.put("frequency", "custom_minutes");
+        cfg.put("customIntervalMinutes", 15);
+        assertThat(BackupService.resolveCronExpressions(cfg).getFirst()[1]).isEqualTo("*/15 * * * *");
+        cfg.put("frequency", "custom_hours");
+        cfg.put("customIntervalMinutes", 3);
+        assertThat(BackupService.resolveCronExpressions(cfg).getFirst()[1]).isEqualTo("0 */3 * * *");
+        cfg.put("frequency", "cron");
+        cfg.put("customCronExpression", " 5 4 * * 1 ");
+        assertThat(BackupService.resolveCronExpressions(cfg).getFirst()[1]).isEqualTo("5 4 * * 1");
+        cfg.put("frequency", "manual");
+        assertThat(BackupService.resolveCronExpressions(cfg)).isEmpty();
+        service.useConfig(cfg);
+        assertThat(service.expectedIntervalHours()).isInfinite();
+        cfg.put("frequency", "every_6_hours");
+        service.useConfig(cfg);
+        assertThat(service.expectedIntervalHours()).isEqualTo(6.0);
+        assertThatThrownBy(() -> BackupService.hhmm("25:00")).hasMessageContaining("is not a HH:MM time");
+    }
+
+    @Test
+    @DisplayName("file names follow the naming format; scratch database names are bounded and stamped")
+    void naming() {
+        assertThat(service.buildFileName("FULL")).matches("POS-CAFE_FULL_\\d{4}-\\d{2}-\\d{2}_\\d{6}\\.dump");
+        assertThat(service.buildFileName("CONFIG")).endsWith(".txt");
+        assertThat(service.buildFileName("INCREMENTAL")).endsWith(".wal.txt");
+        String name = BackupService.scratchDbName("Cafe-POS.v2" + "x".repeat(80), "restoretest");
+        assertThat(name.length()).isLessThanOrEqualTo(63);
+        assertThat(name).matches("[a-z0-9_]+_restoretest_\\d{14}");
+    }
+
+    @Test
+    @DisplayName("a failing full backup is recorded, cleans up, and turns health critical")
+    void failedBackup() {
+        env.setProperty("PG_BIN", backupDir.resolve("no-such-bin").toString());
+        Map<String, Object> r = service.runFullBackup(false);
+        assertThat(r.get("status")).isEqualTo("failed");
+        assertThat(r.get("error")).isNotNull();
+        try (var s = Files.list(backupDir.resolve("full"))) {
+            assertThat(s.toList()).isEmpty();
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        Map<String, Object> health = service.getHealthStatus();
+        assertThat(health.get("status")).isEqualTo("critical");
+        assertThat(health.get("issues").toString()).contains("Last full backup FAILED");
+        assertThat(((Map<?, ?>) service.getStatus().get("lastByKind")).containsKey("full")).isTrue();
+        Map<String, Object> inc = service.runIncrementalBackup();
+        assertThat(inc.get("status")).isEqualTo("failed");
+        Map<String, Object> test = service.runRestoreTest(null);
+        assertThat(test.get("status")).isEqualTo("failed");
+        assertThat(test.get("error").toString()).contains("No full backup available to test");
+    }
+
+    @Test
+    @DisplayName("config backup captures .env with the encryption password redacted; files backup mirrors uploads")
+    void configAndFiles() throws IOException {
+        Path uploads = backupDir.resolve("uploads-src");
+        Files.createDirectories(uploads.resolve("a"));
+        Files.writeString(uploads.resolve("a").resolve("logo.png"), "png");
+        env.setProperty("STORAGE_LOCAL_DIR", uploads.toString());
+        Map<String, Object> files = service.runFilesBackup();
+        assertThat(files.get("status")).isEqualTo("success");
+        assertThat(Files.readString(backupDir.resolve("files").resolve("uploads").resolve("a").resolve("logo.png")))
+                .isEqualTo("png");
+        env.setProperty("STORAGE_DRIVER", "s3");
+        assertThat(service.runFilesBackup().get("status")).isEqualTo("skipped");
+        Map<String, Object> cfg = service.runConfigBackup();
+        assertThat(cfg.get("status")).isIn("success", "failed");
+        if ("success".equals(cfg.get("status"))) {
+            String content = Files.readString(Path.of((String) cfg.get("target")));
+            assertThat(content).doesNotContainPattern("BACKUP_ENCRYPTION_PASSWORD\\s*=\\s*[^\"<]");
+            assertThat(cfg.get("warnings").toString()).contains("plain text");
+        }
+    }
+
+    @Test
+    @DisplayName("restore checks flag an incomplete restored database")
+    void restoreChecks() {
+        assertThat(BackupService.checkProblems(Map.of("migrations", Map.of("restored", 5L, "live", 5L),
+                "tables", Map.of("restored", 10L, "live", 12L), "organizations", Map.of("restored", 0L, "live", 2L))))
+                .containsExactly("10 tables restored, live has 12", "no organizations in the restored database");
+        assertThat(BackupService.checkProblems(Map.of("migrations", Map.of("restored", 0L, "live", 5L),
+                "tables", Map.of("restored", 1L, "live", 12L), "organizations", Map.of("restored", 1L, "live", 1L))))
+                .containsExactly("no applied migrations in the restored database");
+    }
 }

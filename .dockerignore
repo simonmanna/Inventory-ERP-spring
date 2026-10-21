@@ -1,0 +1,17 @@
+# Keep the Docker build context small and free of host-specific symlinks (pnpm node_modules).
+.git
+**/node_modules
+**/dist
+**/build
+**/.gradle
+backend/build
+reference
+var
+backup
+backend/backup
+contract-tests
+tests
+*.log
+.env
+.env.*
+!.env.example

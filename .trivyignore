@@ -1,0 +1,3 @@
+# Trivy waivers. One CVE per line, each with a reason, an owner and a review date:
+#   CVE-YYYY-NNNNN  # reason — owner — review by YYYY-MM-DD
+# Empty = no accepted HIGH/CRITICAL findings.

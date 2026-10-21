@@ -3,6 +3,9 @@ plugins {
     jacoco
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.management)
+    alias(libs.plugins.cyclonedx)
+    alias(libs.plugins.spotless)
+    alias(libs.plugins.pitest)
 }
 
 group = "com.inventoryerp"
@@ -17,6 +20,11 @@ java {
 repositories {
     mavenCentral()
 }
+
+// Security patch levels over the Spring Boot BOM (Trivy findings, P8). Drop each line once Boot ships the fix.
+extra["tomcat.version"] = "11.0.25" // CVE fixes in tomcat-embed-core 11.0.24 (CRITICAL)
+extra["jackson-bom.version"] = "3.1.7" // tools.jackson DoS fixes (CVE-2026-89407, -89425, -68497, -91776, -91777)
+extra["jackson-2-bom.version"] = "2.21.7" // com.fasterxml.jackson 2.x (transitive) — same fixes
 
 dependencyManagement {
     imports {
@@ -60,7 +68,11 @@ dependencies {
     implementation(libs.openpdf)
     implementation(libs.zxing)
     implementation(libs.commons.csv)
-    implementation(libs.web.push)
+    // Only the Apache-client PushService is used; the AsyncHttpClient-based PushAsyncService (and its CVEs) is not.
+    implementation(libs.web.push) { exclude(group = "org.asynchttpclient") }
+    constraints {
+        implementation("org.bitbucket.b_c:jose4j:0.9.6") { because("CVE-2023-31582, CVE-2024-29371 in 0.7.9 via web-push") }
+    }
     implementation(libs.bouncycastle)
     implementation(libs.totp)
 
@@ -98,6 +110,70 @@ tasks.withType<Test> {
 
 tasks.jacocoTestReport {
     reports { xml.required = true; html.required = true }
+}
+
+// Quality gate (P8): line coverage of the application (use-case) packages. The floor is a ratchet — raise
+// `coverage.application.min` in gradle.properties as coverage grows; never lower it.
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        rule {
+            element = "PACKAGE"
+            includes = listOf("com.inventoryerp.*.application")
+            limit {
+                counter = "LINE"
+                minimum = (findProperty("coverage.application.min") as String? ?: "0.80").toBigDecimal()
+            }
+        }
+    }
+}
+tasks.check { dependsOn(tasks.jacocoTestCoverageVerification) }
+
+// Formatting gate: whitespace / line-ending hygiene on every Java source (CI runs spotlessCheck).
+spotless {
+    java {
+        target("src/**/*.java")
+        trimTrailingWhitespace()
+        leadingTabsToSpaces(4)
+        endWithNewline()
+    }
+    lineEndings = com.diffplug.spotless.LineEnding.UNIX
+}
+
+// Mutation testing (P8) on the money / quantity calculators — not part of `build`; CI runs it nightly.
+pitest {
+    pitestVersion = libs.versions.pitest.asProvider().get()
+    junit5PluginVersion = libs.versions.pitest.junit5.get()
+    addJUnitPlatformLauncher = false // Boot 4 brings JUnit Platform 6; the plugin would pin 1.x
+    targetClasses = listOf(
+        "com.inventoryerp.pos.application.PricingPolicy*",
+        "com.inventoryerp.pos.application.OrderMutationPolicy*",
+        "com.inventoryerp.kernel.common.*",
+        "com.inventoryerp.invoicing.application.TaxCalculationService*",
+        "com.inventoryerp.inventory.application.CostResolver*",
+        "com.inventoryerp.inventory.application.StockPosting*",
+        "com.inventoryerp.accounting.application.*Calculator*",
+    )
+    targetTests = listOf(
+        "com.inventoryerp.pos.PosUnitTest*",
+        "com.inventoryerp.kernel.common.*Test*",
+        "com.inventoryerp.invoicing.TaxCalculationServiceTest*",
+        "com.inventoryerp.inventory.InventoryUnitTest*",
+        "com.inventoryerp.accounting.AccountingUnitTest*",
+        "com.inventoryerp.accounting.AccountingSpecsTest*",
+    )
+    threads = 4
+    outputFormats = listOf("HTML", "XML")
+    timestampedReports = false
+    mutationThreshold = (findProperty("pitest.mutation.min") as String? ?: "0").toInt()
+}
+
+// CycloneDX SBOM of the runtime classpath (attached to releases).
+tasks.withType<org.cyclonedx.gradle.CyclonedxDirectTask>().configureEach {
+    includeConfigs.set(listOf("runtimeClasspath"))
+    projectType.set(org.cyclonedx.model.Component.Type.APPLICATION)
+    jsonOutput.set(layout.buildDirectory.file("reports/cyclonedx/inventory-erp-sbom.json"))
+    xmlOutput.set(layout.buildDirectory.file("reports/cyclonedx/inventory-erp-sbom.xml"))
 }
 
 // Regenerates Permissions.java / DomainEvents.java from packages/shared (the TS source of truth).

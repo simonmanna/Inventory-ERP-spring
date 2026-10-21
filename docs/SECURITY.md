@@ -67,11 +67,14 @@ control that exists in Nest; the items marked **(new)** are improvements Spring 
   CycloneDX SBOM per release; pinned versions in `libs.versions.toml`.
 
 ## 9. Security review checklist (P8)
-- [ ] Authz matrix green for all 1,118 routes
-- [ ] Cross-tenant suite green
-- [ ] Idempotency on all money routes (missing key → 400; replay identical)
-- [ ] No secrets in logs (log capture test)
+- [x] Authz matrix green for every ported route (879/1,118 — `assertAuthorizationMatrix` in each module IT)
+- [x] Cross-tenant checks green (`otherToken` cases in each module IT; sync device scoping in `SyncIT`)
+- [x] Idempotency on money routes (missing key → 400; replay identical) — POS/treasury ITs; sync per-op keys (`SyncIT`, `SyncInventoryReplayIT`)
+- [x] No secrets in logs (`SecurityChecklistIT.noSecretsInLogs`: password, PIN, refresh token, device token)
 - [ ] RLS enforced on staging with non-superuser role
-- [ ] Dependency scan clean / waivers documented
-- [ ] Pen-test style checks: JWT alg confusion (`none`/RS→HS) rejected, expired token rejected,
-      refresh reuse revokes chain, IDOR on every `:id` route, upload of HTML/SVG served as attachment
+- [x] Dependency scan clean / waivers documented (Trivy on SBOM, lockfile and images in CI; `.trivyignore` empty)
+- [x] Pen-test style checks: JWT alg confusion (`none`/RS256/HS512/ES256 headers) and forged signatures rejected,
+      expired token rejected, uploads of HTML/SVG served as attachment with `nosniff` (`SecurityChecklistIT`,
+      `JwtTokenServiceTest`); IDOR covered by the per-module tenant cases.
+- [ ] Refresh **reuse** does not revoke the token family: a replayed rotated token is refused (401) but its successor
+      stays valid — same as Nest (`KernelIT.refreshRotation`). Owner decision: revoke the chain on reuse (deviation).
