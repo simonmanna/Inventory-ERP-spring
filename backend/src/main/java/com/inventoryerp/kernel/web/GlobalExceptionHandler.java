@@ -207,6 +207,12 @@ public class GlobalExceptionHandler {
         List<String> out = new ArrayList<>();
         for (ObjectError e : errors) {
             String field = e instanceof FieldError fe ? fe.getField() : e.getObjectName();
+            String msg = e.getDefaultMessage();
+            if (msg != null && msg.startsWith("@")) {
+                // object-level constraint on a nested element: class-validator joins "<path>.<message>"
+                out.add(field.replaceAll("\\[(\\d+)]", ".$1") + "." + msg.substring(1));
+                continue;
+            }
             if (field.contains(".")) {
                 // nested: class-validator reports the leaf with its parent path
                 field = field.replaceAll("\\[(\\d+)]", ".$1");

@@ -116,6 +116,42 @@ public final class EntityPatch {
         return out;
     }
 
+    /**
+     * The request body as a plain JS-shaped map: present top-level components (see {@link #data}), nested records
+     * turned into maps of their non-null components, lists converted element-wise. A {@code null} record gives an
+     * empty map.
+     */
+    public static Map<String, Object> deepData(Record dto) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        if (dto != null) {
+            data(dto).forEach((k, v) -> out.put(k, plain(v)));
+        }
+        return out;
+    }
+
+    private static Object plain(Object v) {
+        if (v instanceof Record r) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            for (RecordComponent c : r.getClass().getRecordComponents()) {
+                try {
+                    Object val = c.getAccessor().invoke(r);
+                    if (val != null) {
+                        m.put(c.getName(), plain(val));
+                    }
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            return m;
+        }
+        if (v instanceof java.util.Collection<?> c) {
+            java.util.List<Object> l = new java.util.ArrayList<>();
+            c.forEach(o -> l.add(plain(o)));
+            return l;
+        }
+        return v;
+    }
+
     /** Apply a map of field → value (all keys written). */
     public static <T> T apply(T entity, Map<String, ?> data) {
         data.forEach((k, v) -> set(entity, k, v));

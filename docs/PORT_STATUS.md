@@ -26,9 +26,9 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 0 |
 | [rental](spec/rental.md) | P7 | 47 | 0 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
-| [orders](spec/orders.md) | P7 | 11 | 0 |
+| [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **707** |
+| **total** | | **1118** | **718** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -1199,17 +1199,17 @@ procurement section (P4) with the procurement tables it reads.
 
 ## orders
 
-- [ ] GET /api/v1/orders — OrdersController.list
-- [ ] POST /api/v1/orders — OrdersController.create
-- [ ] GET /api/v1/orders/:id — OrdersController.findOne
-- [ ] PATCH /api/v1/orders/:id — OrdersController.updateHeader
-- [ ] POST /api/v1/orders/:id/cancel — OrdersController.cancel
-- [ ] POST /api/v1/orders/:id/invoice — OrdersController.generateInvoice
-- [ ] POST /api/v1/orders/:id/items — OrdersController.addItems
-- [ ] PUT /api/v1/orders/:id/items — OrdersController.saveItems
-- [ ] POST /api/v1/orders/:id/reopen — OrdersController.reopen
-- [ ] GET /api/v1/orders/settings — OrdersController.getSettings
-- [ ] PATCH /api/v1/orders/settings — OrdersController.updateSettings
+- [x] GET /api/v1/orders — OrdersController.list
+- [x] POST /api/v1/orders — OrdersController.create
+- [x] GET /api/v1/orders/:id — OrdersController.findOne
+- [x] PATCH /api/v1/orders/:id — OrdersController.updateHeader
+- [x] POST /api/v1/orders/:id/cancel — OrdersController.cancel
+- [x] POST /api/v1/orders/:id/invoice — OrdersController.generateInvoice
+- [x] POST /api/v1/orders/:id/items — OrdersController.addItems
+- [x] PUT /api/v1/orders/:id/items — OrdersController.saveItems
+- [x] POST /api/v1/orders/:id/reopen — OrdersController.reopen
+- [x] GET /api/v1/orders/settings — OrdersController.getSettings
+- [x] PATCH /api/v1/orders/settings — OrdersController.updateSettings
 
 ## communication
 
