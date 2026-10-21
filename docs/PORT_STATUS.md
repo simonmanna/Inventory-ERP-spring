@@ -18,8 +18,8 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [documents](spec/documents.md) | P3c | 28 | 28 |
 | [procurement](spec/procurement.md) | P4 | 36 | 36 |
 | [pos](spec/pos.md) | P5 | 219 | 219 |
-| [sync](spec/sync.md) | P6 | 8 | 0 |
-| [backup](spec/backup.md) | P6 | 13 | 0 |
+| [sync](spec/sync.md) | P6 | 8 | 8 |
+| [backup](spec/backup.md) | P6 | 13 | 13 |
 | [beverage](spec/beverage.md) | P7 | 10 | 0 |
 | [fixedasset](spec/fixedasset.md) | P7 | 54 | 0 |
 | [hr](spec/hr.md) | P7 | 140 | 140 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **858** |
+| **total** | | **1118** | **879** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -797,30 +797,30 @@ procurement section (P4) with the procurement tables it reads.
 
 ## sync
 
-- [ ] GET /api/v1/sync/dead-letters — SyncController.listDeadLetters
-- [ ] POST /api/v1/sync/dead-letters/:id/resolve — SyncController.resolveDeadLetter
-- [ ] GET /api/v1/sync/dead-letters/counts — SyncController.deadLetterCounts
-- [ ] GET /api/v1/sync/devices — SyncController.list
-- [ ] POST /api/v1/sync/devices/:id/revoke — SyncController.revoke
-- [ ] POST /api/v1/sync/devices/register — SyncController.register
-- [ ] GET /api/v1/sync/pull — SyncController.pull
-- [ ] POST /api/v1/sync/push — SyncController.push
+- [x] GET /api/v1/sync/dead-letters — SyncController.listDeadLetters
+- [x] POST /api/v1/sync/dead-letters/:id/resolve — SyncController.resolveDeadLetter
+- [x] GET /api/v1/sync/dead-letters/counts — SyncController.deadLetterCounts
+- [x] GET /api/v1/sync/devices — SyncController.list
+- [x] POST /api/v1/sync/devices/:id/revoke — SyncController.revoke
+- [x] POST /api/v1/sync/devices/register — SyncController.register
+- [x] GET /api/v1/sync/pull — SyncController.pull
+- [x] POST /api/v1/sync/push — SyncController.push
 
 ## backup
 
-- [ ] POST /api/v1/admin/backups/cleanup — BackupController.cleanup
-- [ ] POST /api/v1/admin/backups/config — BackupController.runConfig
-- [ ] POST /api/v1/admin/backups/files — BackupController.runFiles
-- [ ] POST /api/v1/admin/backups/full — BackupController.runFull
-- [ ] GET /api/v1/admin/backups/health — BackupController.health
-- [ ] POST /api/v1/admin/backups/incremental — BackupController.runIncremental
-- [ ] GET /api/v1/admin/backups/list — BackupController.list
-- [ ] POST /api/v1/admin/backups/restore — BackupController.restore
-- [ ] POST /api/v1/admin/backups/restore/test — BackupController.testRestore
-- [ ] POST /api/v1/admin/backups/restore/verify — BackupController.verifyRestore
-- [ ] GET /api/v1/admin/backups/settings — BackupController.getSettings
-- [ ] PUT /api/v1/admin/backups/settings — BackupController.updateSettings
-- [ ] GET /api/v1/admin/backups/status — BackupController.status
+- [x] POST /api/v1/admin/backups/cleanup — BackupController.cleanup
+- [x] POST /api/v1/admin/backups/config — BackupController.runConfig
+- [x] POST /api/v1/admin/backups/files — BackupController.runFiles
+- [x] POST /api/v1/admin/backups/full — BackupController.runFull
+- [x] GET /api/v1/admin/backups/health — BackupController.health
+- [x] POST /api/v1/admin/backups/incremental — BackupController.runIncremental
+- [x] GET /api/v1/admin/backups/list — BackupController.list
+- [x] POST /api/v1/admin/backups/restore — BackupController.restore
+- [x] POST /api/v1/admin/backups/restore/test — BackupController.testRestore
+- [x] POST /api/v1/admin/backups/restore/verify — BackupController.verifyRestore
+- [x] GET /api/v1/admin/backups/settings — BackupController.getSettings
+- [x] PUT /api/v1/admin/backups/settings — BackupController.updateSettings
+- [x] GET /api/v1/admin/backups/status — BackupController.status
 
 ## beverage
 

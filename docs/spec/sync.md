@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Offline sync — `sync`
 
 | | |
@@ -45,21 +44,36 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/sync-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
 _None. Any deviation from Nest behaviour must be listed here with the owner's approval._
 
+## Notes
+
+- Push ops run in a tenant context built from the verified actor (current role permissions) and through
+  `IdempotencyService.executeWithKey(opId)`, calling the same Java services as the online routes.
+- `product.upsert` hands `ProductService` a record built from the payload; `EntityPatch.withPresentKeys` makes the
+  explicit nulls Nest sends (`sku: payload.sku ?? null`) clear columns exactly as Prisma would.
+- Like Nest, delta scopes read through the tenancy predicate, so soft-deleted rows of `SOFT_DELETE` models never reach
+  a device (only `staff` reads raw and ships tombstones). Kept on purpose.
+
 ## Status
 
-Not started.
+8/8 routes. `SyncController` + `SyncDevicesService`, `SyncPullService`, `SyncPushService`, `SyncDeadLetterService`
+(`com.inventoryerp.sync.application`). Device-token transport auth reuses the kernel `AuthenticationFilter`
+(`X-Device-Token` → sha256 lookup); the guard (401) runs before push-body validation, as in Nest.
+Tests: `SyncIT` (8 — registry, revoke, pull scopes + cursor + staff revocation (`sync-staff-revocation.spec.ts`),
+push shift/sale/close with provisional → final numbers, replay, 424 dependency, dead letters, master data, stock ops
+with approver PIN, push validation, authz matrix) and `SyncInventoryReplayIT` (5 — `pos-offline-inventory-replay.spec.ts`).
+`sync-cash-inventory.spec.ts` is covered by both against the shared DEMO org.

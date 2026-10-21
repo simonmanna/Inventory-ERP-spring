@@ -3,6 +3,7 @@ package com.inventoryerp.kernel.health;
 import com.inventoryerp.kernel.web.JsonConfig;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -12,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Port of apps/api/src/health/health.controller.ts. {@code GET /health} is the offline probe used
- * by the web POS (no auth, no DB). Backup health joins as an advisory check in phase P6.
+ * by the web POS (no auth, no DB). Modules contribute {@link AdvisoryHealthCheck}s (backup health).
  */
 @RestController
 @com.inventoryerp.kernel.security.Public
@@ -20,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class HealthController {
 
     private final JdbcClient jdbc;
+    private final List<AdvisoryHealthCheck> advisoryChecks;
 
-    public HealthController(JdbcClient jdbc) {
+    public HealthController(JdbcClient jdbc, List<AdvisoryHealthCheck> advisoryChecks) {
         this.jdbc = jdbc;
+        this.advisoryChecks = advisoryChecks;
     }
 
     @GetMapping({"", "/live"})
@@ -36,14 +39,33 @@ public class HealthController {
         Map<String, Object> database = probeDb();
         boolean criticalOk = Boolean.TRUE.equals(database.get("ok"));
         Map<String, Object> critical = Map.of("database", database);
+        Map<String, Object> advisory = new LinkedHashMap<>();
+        for (AdvisoryHealthCheck c : advisoryChecks) {
+            Map<String, Object> check = new LinkedHashMap<>();
+            try {
+                String problems = c.problems();
+                check.put("ok", problems == null);
+                check.put("latencyMs", 0);
+                if (problems != null && !problems.isEmpty()) {
+                    check.put("error", problems);
+                }
+            } catch (RuntimeException e) {
+                check.put("ok", false);
+                check.put("error", e.toString());
+            }
+            advisory.put(c.name(), check);
+        }
+        boolean advisoryOk = advisory.values().stream().allMatch(v -> Boolean.TRUE.equals(((Map<?, ?>) v).get("ok")));
+        Map<String, Object> checks = new LinkedHashMap<>(critical);
+        checks.putAll(advisory);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", criticalOk ? "ok" : "unavailable");
+        body.put("status", criticalOk ? (advisoryOk ? "ok" : "degraded") : "unavailable");
         body.put("criticalOk", criticalOk);
         body.put("timestamp", JsonConfig.toJsIso(Instant.now()));
         body.put("durationMs", System.currentTimeMillis() - started);
-        body.put("checks", critical);
+        body.put("checks", checks);
         body.put("critical", critical);
-        body.put("advisory", Map.of());
+        body.put("advisory", advisory);
         return ResponseEntity.status(criticalOk ? 200 : 503).body(body);
     }
 

@@ -231,6 +231,16 @@ public abstract class ApiTestSupport {
         }
     }
 
+    /**
+     * Test isolation for the shared DEMO org: unbilled held orders left by earlier suites block every shift close
+     * (org-wide floor rule), so a suite that closes a shift cancels them first.
+     */
+    protected void releaseHeldOrders() {
+        jdbc.sql("UPDATE \"Order\" SET status = 'cancelled', \"cancelledAt\" = now() WHERE \"organizationId\" = ?"
+                + " AND \"invoiceId\" IS NULL AND status::text IN ('draft', 'confirmed', 'in_progress')").param(demoOrg)
+                .update();
+    }
+
     /** A DEMO user with no permissions at all. */
     protected String weakToken() {
         String role = UUID.randomUUID().toString();
