@@ -67,6 +67,26 @@ public final class EntityPatch {
 
     private static final String PRESENT_KEYS = "erp.presentKeys";
 
+    /**
+     * Run {@code body} with {@link #presentKeys()} answering {@code keys} — for in-process callers (sync push) that
+     * hand a service a record built from something other than the request body, so explicit nulls still clear.
+     */
+    public static <T> T withPresentKeys(Set<String> keys, java.util.function.Supplier<T> body) {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
+            return body.get();
+        }
+        HttpServletRequest req = attrs.getRequest();
+        Object previous = req.getAttribute(PRESENT_KEYS);
+        presentKeys();
+        Object saved = previous != null ? previous : req.getAttribute(PRESENT_KEYS);
+        req.setAttribute(PRESENT_KEYS, keys);
+        try {
+            return body.get();
+        } finally {
+            req.setAttribute(PRESENT_KEYS, saved);
+        }
+    }
+
     /** True when {@code key} has a value or was sent explicitly (possibly as null). */
     public static boolean present(String key, Object value) {
         return value != null || presentKeys().contains(key);

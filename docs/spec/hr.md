@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # HR and payroll — `hr`
 
 | | |
@@ -40,21 +39,46 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Porting checklist
 
-- [ ] Read every file under "Source files to port" in the generated spec
-- [ ] Entities tuned (collections/locks/query methods) — generator marker removed where edited
-- [ ] DTO records with Bean Validation mirroring class-validator rules
-- [ ] Services: rules above + verbatim errors + same transaction/locking boundaries
-- [ ] Controllers: same paths/verbs/status/permissions/response shapes
-- [ ] Events published/consumed as in Nest
-- [ ] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Read every file under "Source files to port" in the generated spec
+- [x] Entities tuned (collections/locks/query methods) — generator marker removed where edited
+- [x] DTO records with Bean Validation mirroring class-validator rules
+- [x] Services: rules above + verbatim errors + same transaction/locking boundaries
+- [x] Controllers: same paths/verbs/status/permissions/response shapes
+- [x] Events published/consumed as in Nest
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests
 - [ ] Parity scenarios `contract-tests/scenarios/hr-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
-- [ ] `docs/PORT_STATUS.md` updated
+- [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
 
 _None. Any deviation from Nest behaviour must be listed here with the owner's approval._
 
+## Same as Nest, kept on purpose (owner may want these fixed after parity)
+
+1. `POST /hr/leave/balances/adjust` adds the delta to the stored Decimal by **string concatenation** (`Decimal + number`
+   in JS): `0` + `2` stores `2`, but `2.5` + `1` stores `2.51`, and a negative delta (`"0-2"`) is a 500.
+2. `HrPayrollItem.overtimeHours` is an `Int` column but receives `round(h·100)/100`; any non-whole overtime makes
+   `POST /hr/payroll/runs/:id/calculate` fail with a 500 (Prisma rejects the float).
+3. `GET /hr/attendance/summary` starts its window **30 days before** `from`; `GET /hr/reports/attendance-register`
+   starts **6 days before** `from`.
+4. `POST /hr/reviews` without `employeeId` answers **404** `employeeId is required`.
+5. `GET /hr/team/today` uses the server-local (UTC) day, not the organisation's attendance day.
+6. Payroll `date: { gte: start, lt: end }` excludes attendance on the period's last day.
+
+## Notes
+
+- Untyped bodies (`dto: any`) are taken as `Map` and never validated (Nest skips `any` metatypes); only the identity /
+  lifecycle DTOs are typed.
+- Shared helper `HrDb` mirrors the Prisma tenancy extension: org + soft-delete scope from the entity's Hibernate filters
+  (the generated `SOFT_DELETE` / `ORG_SCOPED` sets), unfiltered includes, `_count`, JS `Number()` / `take` / `skip`.
+- `HrPosAttendanceSubscriber` listens for `pos.pin.login` / `pos.pin.logoff` (bean only with `ENABLE_HR=true`).
+
 ## Status
 
-Not started.
+140/140 routes (`HrController`, 11 services in `com.inventoryerp.hr.application`).
+Tests: `HrRulesTest` (ports `hr-dates.spec.ts`, `hr-employee-projection.spec.ts`), `HrIT` (9 scenarios: org masters,
+compensation redaction, identity spine + lifecycle (covers `hr-access.service.spec.ts` rules end to end), attendance
+maths in the org zone, leave balance / overlap / approval stamping, timesheets, payroll calculate → approve (balanced
+GL, payslips, loan / advance balances) → bank payment → reverse, documents / training / reviews / reports, and the
+140-route authorization matrix). Parity scenarios and web screens not yet run against Nest.

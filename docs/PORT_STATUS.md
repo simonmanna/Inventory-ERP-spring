@@ -22,13 +22,13 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [backup](spec/backup.md) | P6 | 13 | 0 |
 | [beverage](spec/beverage.md) | P7 | 10 | 0 |
 | [fixedasset](spec/fixedasset.md) | P7 | 54 | 0 |
-| [hr](spec/hr.md) | P7 | 140 | 0 |
+| [hr](spec/hr.md) | P7 | 140 | 140 |
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 0 |
 | [rental](spec/rental.md) | P7 | 47 | 0 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **718** |
+| **total** | | **1118** | **858** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -894,146 +894,146 @@ procurement section (P4) with the procurement tables it reads.
 
 ## hr
 
-- [ ] GET /api/v1/hr/access/linkable-users — HrController.linkableUsers
-- [ ] GET /api/v1/hr/advances — HrController.listAdvances
-- [ ] POST /api/v1/hr/advances — HrController.createAdvance
-- [ ] POST /api/v1/hr/advances/:id/approve — HrController.approveAdvance
-- [ ] POST /api/v1/hr/advances/:id/paid — HrController.markAdvancePaid
-- [ ] POST /api/v1/hr/advances/:id/reject — HrController.rejectAdvance
-- [ ] GET /api/v1/hr/assignments — HrController.listAssignments
-- [ ] POST /api/v1/hr/assignments — HrController.assignShift
-- [ ] DELETE /api/v1/hr/assignments/:id — HrController.revokeAssignment
-- [ ] GET /api/v1/hr/attendance — HrController.listAttendance
-- [ ] GET /api/v1/hr/attendance-logs — HrController.listLogs
-- [ ] GET /api/v1/hr/attendance/:id — HrController.getAttendance
-- [ ] POST /api/v1/hr/attendance/clock — HrController.clock
-- [ ] POST /api/v1/hr/attendance/manual — HrController.upsertManual
-- [ ] GET /api/v1/hr/attendance/summary — HrController.attendanceSummary
-- [ ] GET /api/v1/hr/bank-payments — HrController.listBankPayments
-- [ ] PATCH /api/v1/hr/bank-payments/:id/status — HrController.updateBankPaymentStatus
-- [ ] POST /api/v1/hr/bank-payments/generate — HrController.generateBankPayment
-- [ ] GET /api/v1/hr/dashboard — HrController.dashboard
-- [ ] GET /api/v1/hr/departments — HrController.listDepartments
-- [ ] POST /api/v1/hr/departments — HrController.createDepartment
-- [ ] DELETE /api/v1/hr/departments/:id — HrController.deleteDepartment
-- [ ] GET /api/v1/hr/departments/:id — HrController.getDepartment
-- [ ] PATCH /api/v1/hr/departments/:id — HrController.updateDepartment
-- [ ] GET /api/v1/hr/documents — HrController.listDocuments
-- [ ] POST /api/v1/hr/documents — HrController.createDocument
-- [ ] DELETE /api/v1/hr/documents/:id — HrController.deleteDocument
-- [ ] PATCH /api/v1/hr/documents/:id — HrController.updateDocument
-- [ ] GET /api/v1/hr/documents/expiring — HrController.expiringDocuments
-- [ ] GET /api/v1/hr/employees — HrController.listEmployees
-- [ ] POST /api/v1/hr/employees — HrController.createEmployee
-- [ ] DELETE /api/v1/hr/employees/:id — HrController.deleteEmployee
-- [ ] GET /api/v1/hr/employees/:id — HrController.getEmployee
-- [ ] PATCH /api/v1/hr/employees/:id — HrController.updateEmployee
-- [ ] GET /api/v1/hr/employees/:id/access — HrController.getAccess
-- [ ] PATCH /api/v1/hr/employees/:id/access — HrController.updateAccess
-- [ ] DELETE /api/v1/hr/employees/:id/access/pin — HrController.clearPin
-- [ ] POST /api/v1/hr/employees/:id/access/pin — HrController.setPin
-- [ ] POST /api/v1/hr/employees/:id/confirm — HrController.confirmEmployee
-- [ ] DELETE /api/v1/hr/employees/:id/link-user — HrController.unlinkUser
-- [ ] POST /api/v1/hr/employees/:id/link-user — HrController.linkUser
-- [ ] GET /api/v1/hr/employees/:id/pos-activity — HrController.posActivity
-- [ ] POST /api/v1/hr/employees/:id/provision-user — HrController.provisionUser
-- [ ] POST /api/v1/hr/employees/:id/reactivate — HrController.reactivate
-- [ ] GET /api/v1/hr/employees/:id/status-history — HrController.statusHistory
-- [ ] POST /api/v1/hr/employees/:id/suspend — HrController.suspend
-- [ ] POST /api/v1/hr/employees/:id/terminate — HrController.terminate
-- [ ] POST /api/v1/hr/employees/:id/transfer — HrController.transfer
-- [ ] GET /api/v1/hr/employees/:id/transfers — HrController.transferHistory
-- [ ] GET /api/v1/hr/holidays — HrController.listHolidays
-- [ ] POST /api/v1/hr/holidays — HrController.createHoliday
-- [ ] DELETE /api/v1/hr/holidays/:id — HrController.deleteHoliday
-- [ ] PATCH /api/v1/hr/holidays/:id — HrController.updateHoliday
-- [ ] GET /api/v1/hr/leave/balances — HrController.listLeaveBalances
-- [ ] POST /api/v1/hr/leave/balances/adjust — HrController.adjustBalance
-- [ ] GET /api/v1/hr/leave/requests — HrController.listLeaveRequests
-- [ ] POST /api/v1/hr/leave/requests — HrController.createLeaveRequest
-- [ ] POST /api/v1/hr/leave/requests/:id/approve — HrController.approveLeaveRequest
-- [ ] POST /api/v1/hr/leave/requests/:id/cancel — HrController.cancelLeaveRequest
-- [ ] POST /api/v1/hr/leave/requests/:id/reject — HrController.rejectLeaveRequest
-- [ ] GET /api/v1/hr/leave/types — HrController.listLeaveTypes
-- [ ] POST /api/v1/hr/leave/types — HrController.createLeaveType
-- [ ] DELETE /api/v1/hr/leave/types/:id — HrController.deleteLeaveType
-- [ ] PATCH /api/v1/hr/leave/types/:id — HrController.updateLeaveType
-- [ ] GET /api/v1/hr/loans — HrController.listLoans
-- [ ] POST /api/v1/hr/loans — HrController.createLoan
-- [ ] DELETE /api/v1/hr/loans/:id — HrController.deleteLoan
-- [ ] PATCH /api/v1/hr/loans/:id — HrController.updateLoan
-- [ ] GET /api/v1/hr/me — HrController.me
-- [ ] GET /api/v1/hr/me/attendance — HrController.myAttendance
-- [ ] POST /api/v1/hr/me/clock — HrController.clockSelf
-- [ ] GET /api/v1/hr/me/leave — HrController.myLeave
-- [ ] POST /api/v1/hr/me/leave — HrController.requestOwnLeave
-- [ ] POST /api/v1/hr/me/leave/:id/cancel — HrController.cancelOwnLeave
-- [ ] GET /api/v1/hr/me/leave/balances — HrController.myLeaveBalances
-- [ ] GET /api/v1/hr/me/payslips — HrController.myPayslips
-- [ ] GET /api/v1/hr/me/trainings — HrController.myTrainings
-- [ ] GET /api/v1/hr/payroll/components — HrController.listComponents
-- [ ] POST /api/v1/hr/payroll/components — HrController.createComponent
-- [ ] DELETE /api/v1/hr/payroll/components/:id — HrController.deleteComponent
-- [ ] PATCH /api/v1/hr/payroll/components/:id — HrController.updateComponent
-- [ ] GET /api/v1/hr/payroll/periods — HrController.listPeriods
-- [ ] POST /api/v1/hr/payroll/periods — HrController.createPeriod
-- [ ] PATCH /api/v1/hr/payroll/periods/:id — HrController.updatePeriod
-- [ ] GET /api/v1/hr/payroll/runs — HrController.listRuns
-- [ ] POST /api/v1/hr/payroll/runs — HrController.createRun
-- [ ] DELETE /api/v1/hr/payroll/runs/:id — HrController.deleteRun
-- [ ] GET /api/v1/hr/payroll/runs/:id — HrController.getRun
-- [ ] POST /api/v1/hr/payroll/runs/:id/approve — HrController.approveRun
-- [ ] POST /api/v1/hr/payroll/runs/:id/calculate — HrController.calculateRun
-- [ ] POST /api/v1/hr/payroll/runs/:id/reverse — HrController.reverseRun
-- [ ] GET /api/v1/hr/payroll/tax-tables — HrController.listTaxTables
-- [ ] POST /api/v1/hr/payroll/tax-tables — HrController.createTaxTable
-- [ ] DELETE /api/v1/hr/payroll/tax-tables/:id — HrController.deleteTaxTable
-- [ ] PATCH /api/v1/hr/payroll/tax-tables/:id — HrController.updateTaxTable
-- [ ] GET /api/v1/hr/payslips — HrController.listPayslips
-- [ ] GET /api/v1/hr/payslips/:id — HrController.getPayslip
-- [ ] POST /api/v1/hr/payslips/:id/paid — HrController.markPayslipPaid
-- [ ] GET /api/v1/hr/positions — HrController.listPositions
-- [ ] POST /api/v1/hr/positions — HrController.createPosition
-- [ ] DELETE /api/v1/hr/positions/:id — HrController.deletePosition
-- [ ] PATCH /api/v1/hr/positions/:id — HrController.updatePosition
-- [ ] GET /api/v1/hr/reports/attendance-register — HrController.attendanceRegister
-- [ ] GET /api/v1/hr/reports/headcount-trend — HrController.headcountTrend
-- [ ] GET /api/v1/hr/reports/leave-overview — HrController.leaveOverview
-- [ ] GET /api/v1/hr/reports/payroll-register/:runId — HrController.payrollRegister
-- [ ] GET /api/v1/hr/reports/workforce-access — HrController.workforceAccess
-- [ ] GET /api/v1/hr/reports/workforce-sales — HrController.workforceSales
-- [ ] GET /api/v1/hr/reviews — HrController.listReviews
-- [ ] POST /api/v1/hr/reviews — HrController.createReview
-- [ ] DELETE /api/v1/hr/reviews/:id — HrController.deleteReview
-- [ ] PATCH /api/v1/hr/reviews/:id — HrController.updateReview
-- [ ] GET /api/v1/hr/shifts — HrController.listShifts
-- [ ] POST /api/v1/hr/shifts — HrController.createShift
-- [ ] DELETE /api/v1/hr/shifts/:id — HrController.deleteShift
-- [ ] PATCH /api/v1/hr/shifts/:id — HrController.updateShift
-- [ ] GET /api/v1/hr/team — HrController.team
-- [ ] GET /api/v1/hr/team/leave — HrController.teamLeave
-- [ ] POST /api/v1/hr/team/leave/:id/approve — HrController.approveTeamLeave
-- [ ] POST /api/v1/hr/team/leave/:id/reject — HrController.rejectTeamLeave
-- [ ] GET /api/v1/hr/team/today — HrController.teamToday
-- [ ] GET /api/v1/hr/timesheets — HrController.listTimesheets
-- [ ] POST /api/v1/hr/timesheets — HrController.createTimesheet
-- [ ] DELETE /api/v1/hr/timesheets/:id — HrController.deleteTimesheet
-- [ ] GET /api/v1/hr/timesheets/:id — HrController.getTimesheet
-- [ ] PATCH /api/v1/hr/timesheets/:id — HrController.updateTimesheet
-- [ ] POST /api/v1/hr/timesheets/:id/approve — HrController.approveTimesheet
-- [ ] POST /api/v1/hr/timesheets/:id/entries — HrController.addEntry
-- [ ] POST /api/v1/hr/timesheets/:id/reject — HrController.rejectTimesheet
-- [ ] POST /api/v1/hr/timesheets/:id/submit — HrController.submitTimesheet
-- [ ] DELETE /api/v1/hr/timesheets/entries/:entryId — HrController.deleteEntry
-- [ ] PATCH /api/v1/hr/timesheets/entries/:entryId — HrController.updateEntry
-- [ ] GET /api/v1/hr/training/enrolments — HrController.listEnrolments
-- [ ] POST /api/v1/hr/training/enrolments — HrController.enrol
-- [ ] DELETE /api/v1/hr/training/enrolments/:id — HrController.deleteEnrolment
-- [ ] PATCH /api/v1/hr/training/enrolments/:id — HrController.updateEnrolment
-- [ ] GET /api/v1/hr/training/programs — HrController.listPrograms
-- [ ] POST /api/v1/hr/training/programs — HrController.createProgram
-- [ ] DELETE /api/v1/hr/training/programs/:id — HrController.deleteProgram
-- [ ] PATCH /api/v1/hr/training/programs/:id — HrController.updateProgram
+- [x] GET /api/v1/hr/access/linkable-users — HrController.linkableUsers
+- [x] GET /api/v1/hr/advances — HrController.listAdvances
+- [x] POST /api/v1/hr/advances — HrController.createAdvance
+- [x] POST /api/v1/hr/advances/:id/approve — HrController.approveAdvance
+- [x] POST /api/v1/hr/advances/:id/paid — HrController.markAdvancePaid
+- [x] POST /api/v1/hr/advances/:id/reject — HrController.rejectAdvance
+- [x] GET /api/v1/hr/assignments — HrController.listAssignments
+- [x] POST /api/v1/hr/assignments — HrController.assignShift
+- [x] DELETE /api/v1/hr/assignments/:id — HrController.revokeAssignment
+- [x] GET /api/v1/hr/attendance — HrController.listAttendance
+- [x] GET /api/v1/hr/attendance-logs — HrController.listLogs
+- [x] GET /api/v1/hr/attendance/:id — HrController.getAttendance
+- [x] POST /api/v1/hr/attendance/clock — HrController.clock
+- [x] POST /api/v1/hr/attendance/manual — HrController.upsertManual
+- [x] GET /api/v1/hr/attendance/summary — HrController.attendanceSummary
+- [x] GET /api/v1/hr/bank-payments — HrController.listBankPayments
+- [x] PATCH /api/v1/hr/bank-payments/:id/status — HrController.updateBankPaymentStatus
+- [x] POST /api/v1/hr/bank-payments/generate — HrController.generateBankPayment
+- [x] GET /api/v1/hr/dashboard — HrController.dashboard
+- [x] GET /api/v1/hr/departments — HrController.listDepartments
+- [x] POST /api/v1/hr/departments — HrController.createDepartment
+- [x] DELETE /api/v1/hr/departments/:id — HrController.deleteDepartment
+- [x] GET /api/v1/hr/departments/:id — HrController.getDepartment
+- [x] PATCH /api/v1/hr/departments/:id — HrController.updateDepartment
+- [x] GET /api/v1/hr/documents — HrController.listDocuments
+- [x] POST /api/v1/hr/documents — HrController.createDocument
+- [x] DELETE /api/v1/hr/documents/:id — HrController.deleteDocument
+- [x] PATCH /api/v1/hr/documents/:id — HrController.updateDocument
+- [x] GET /api/v1/hr/documents/expiring — HrController.expiringDocuments
+- [x] GET /api/v1/hr/employees — HrController.listEmployees
+- [x] POST /api/v1/hr/employees — HrController.createEmployee
+- [x] DELETE /api/v1/hr/employees/:id — HrController.deleteEmployee
+- [x] GET /api/v1/hr/employees/:id — HrController.getEmployee
+- [x] PATCH /api/v1/hr/employees/:id — HrController.updateEmployee
+- [x] GET /api/v1/hr/employees/:id/access — HrController.getAccess
+- [x] PATCH /api/v1/hr/employees/:id/access — HrController.updateAccess
+- [x] DELETE /api/v1/hr/employees/:id/access/pin — HrController.clearPin
+- [x] POST /api/v1/hr/employees/:id/access/pin — HrController.setPin
+- [x] POST /api/v1/hr/employees/:id/confirm — HrController.confirmEmployee
+- [x] DELETE /api/v1/hr/employees/:id/link-user — HrController.unlinkUser
+- [x] POST /api/v1/hr/employees/:id/link-user — HrController.linkUser
+- [x] GET /api/v1/hr/employees/:id/pos-activity — HrController.posActivity
+- [x] POST /api/v1/hr/employees/:id/provision-user — HrController.provisionUser
+- [x] POST /api/v1/hr/employees/:id/reactivate — HrController.reactivate
+- [x] GET /api/v1/hr/employees/:id/status-history — HrController.statusHistory
+- [x] POST /api/v1/hr/employees/:id/suspend — HrController.suspend
+- [x] POST /api/v1/hr/employees/:id/terminate — HrController.terminate
+- [x] POST /api/v1/hr/employees/:id/transfer — HrController.transfer
+- [x] GET /api/v1/hr/employees/:id/transfers — HrController.transferHistory
+- [x] GET /api/v1/hr/holidays — HrController.listHolidays
+- [x] POST /api/v1/hr/holidays — HrController.createHoliday
+- [x] DELETE /api/v1/hr/holidays/:id — HrController.deleteHoliday
+- [x] PATCH /api/v1/hr/holidays/:id — HrController.updateHoliday
+- [x] GET /api/v1/hr/leave/balances — HrController.listLeaveBalances
+- [x] POST /api/v1/hr/leave/balances/adjust — HrController.adjustBalance
+- [x] GET /api/v1/hr/leave/requests — HrController.listLeaveRequests
+- [x] POST /api/v1/hr/leave/requests — HrController.createLeaveRequest
+- [x] POST /api/v1/hr/leave/requests/:id/approve — HrController.approveLeaveRequest
+- [x] POST /api/v1/hr/leave/requests/:id/cancel — HrController.cancelLeaveRequest
+- [x] POST /api/v1/hr/leave/requests/:id/reject — HrController.rejectLeaveRequest
+- [x] GET /api/v1/hr/leave/types — HrController.listLeaveTypes
+- [x] POST /api/v1/hr/leave/types — HrController.createLeaveType
+- [x] DELETE /api/v1/hr/leave/types/:id — HrController.deleteLeaveType
+- [x] PATCH /api/v1/hr/leave/types/:id — HrController.updateLeaveType
+- [x] GET /api/v1/hr/loans — HrController.listLoans
+- [x] POST /api/v1/hr/loans — HrController.createLoan
+- [x] DELETE /api/v1/hr/loans/:id — HrController.deleteLoan
+- [x] PATCH /api/v1/hr/loans/:id — HrController.updateLoan
+- [x] GET /api/v1/hr/me — HrController.me
+- [x] GET /api/v1/hr/me/attendance — HrController.myAttendance
+- [x] POST /api/v1/hr/me/clock — HrController.clockSelf
+- [x] GET /api/v1/hr/me/leave — HrController.myLeave
+- [x] POST /api/v1/hr/me/leave — HrController.requestOwnLeave
+- [x] POST /api/v1/hr/me/leave/:id/cancel — HrController.cancelOwnLeave
+- [x] GET /api/v1/hr/me/leave/balances — HrController.myLeaveBalances
+- [x] GET /api/v1/hr/me/payslips — HrController.myPayslips
+- [x] GET /api/v1/hr/me/trainings — HrController.myTrainings
+- [x] GET /api/v1/hr/payroll/components — HrController.listComponents
+- [x] POST /api/v1/hr/payroll/components — HrController.createComponent
+- [x] DELETE /api/v1/hr/payroll/components/:id — HrController.deleteComponent
+- [x] PATCH /api/v1/hr/payroll/components/:id — HrController.updateComponent
+- [x] GET /api/v1/hr/payroll/periods — HrController.listPeriods
+- [x] POST /api/v1/hr/payroll/periods — HrController.createPeriod
+- [x] PATCH /api/v1/hr/payroll/periods/:id — HrController.updatePeriod
+- [x] GET /api/v1/hr/payroll/runs — HrController.listRuns
+- [x] POST /api/v1/hr/payroll/runs — HrController.createRun
+- [x] DELETE /api/v1/hr/payroll/runs/:id — HrController.deleteRun
+- [x] GET /api/v1/hr/payroll/runs/:id — HrController.getRun
+- [x] POST /api/v1/hr/payroll/runs/:id/approve — HrController.approveRun
+- [x] POST /api/v1/hr/payroll/runs/:id/calculate — HrController.calculateRun
+- [x] POST /api/v1/hr/payroll/runs/:id/reverse — HrController.reverseRun
+- [x] GET /api/v1/hr/payroll/tax-tables — HrController.listTaxTables
+- [x] POST /api/v1/hr/payroll/tax-tables — HrController.createTaxTable
+- [x] DELETE /api/v1/hr/payroll/tax-tables/:id — HrController.deleteTaxTable
+- [x] PATCH /api/v1/hr/payroll/tax-tables/:id — HrController.updateTaxTable
+- [x] GET /api/v1/hr/payslips — HrController.listPayslips
+- [x] GET /api/v1/hr/payslips/:id — HrController.getPayslip
+- [x] POST /api/v1/hr/payslips/:id/paid — HrController.markPayslipPaid
+- [x] GET /api/v1/hr/positions — HrController.listPositions
+- [x] POST /api/v1/hr/positions — HrController.createPosition
+- [x] DELETE /api/v1/hr/positions/:id — HrController.deletePosition
+- [x] PATCH /api/v1/hr/positions/:id — HrController.updatePosition
+- [x] GET /api/v1/hr/reports/attendance-register — HrController.attendanceRegister
+- [x] GET /api/v1/hr/reports/headcount-trend — HrController.headcountTrend
+- [x] GET /api/v1/hr/reports/leave-overview — HrController.leaveOverview
+- [x] GET /api/v1/hr/reports/payroll-register/:runId — HrController.payrollRegister
+- [x] GET /api/v1/hr/reports/workforce-access — HrController.workforceAccess
+- [x] GET /api/v1/hr/reports/workforce-sales — HrController.workforceSales
+- [x] GET /api/v1/hr/reviews — HrController.listReviews
+- [x] POST /api/v1/hr/reviews — HrController.createReview
+- [x] DELETE /api/v1/hr/reviews/:id — HrController.deleteReview
+- [x] PATCH /api/v1/hr/reviews/:id — HrController.updateReview
+- [x] GET /api/v1/hr/shifts — HrController.listShifts
+- [x] POST /api/v1/hr/shifts — HrController.createShift
+- [x] DELETE /api/v1/hr/shifts/:id — HrController.deleteShift
+- [x] PATCH /api/v1/hr/shifts/:id — HrController.updateShift
+- [x] GET /api/v1/hr/team — HrController.team
+- [x] GET /api/v1/hr/team/leave — HrController.teamLeave
+- [x] POST /api/v1/hr/team/leave/:id/approve — HrController.approveTeamLeave
+- [x] POST /api/v1/hr/team/leave/:id/reject — HrController.rejectTeamLeave
+- [x] GET /api/v1/hr/team/today — HrController.teamToday
+- [x] GET /api/v1/hr/timesheets — HrController.listTimesheets
+- [x] POST /api/v1/hr/timesheets — HrController.createTimesheet
+- [x] DELETE /api/v1/hr/timesheets/:id — HrController.deleteTimesheet
+- [x] GET /api/v1/hr/timesheets/:id — HrController.getTimesheet
+- [x] PATCH /api/v1/hr/timesheets/:id — HrController.updateTimesheet
+- [x] POST /api/v1/hr/timesheets/:id/approve — HrController.approveTimesheet
+- [x] POST /api/v1/hr/timesheets/:id/entries — HrController.addEntry
+- [x] POST /api/v1/hr/timesheets/:id/reject — HrController.rejectTimesheet
+- [x] POST /api/v1/hr/timesheets/:id/submit — HrController.submitTimesheet
+- [x] DELETE /api/v1/hr/timesheets/entries/:entryId — HrController.deleteEntry
+- [x] PATCH /api/v1/hr/timesheets/entries/:entryId — HrController.updateEntry
+- [x] GET /api/v1/hr/training/enrolments — HrController.listEnrolments
+- [x] POST /api/v1/hr/training/enrolments — HrController.enrol
+- [x] DELETE /api/v1/hr/training/enrolments/:id — HrController.deleteEnrolment
+- [x] PATCH /api/v1/hr/training/enrolments/:id — HrController.updateEnrolment
+- [x] GET /api/v1/hr/training/programs — HrController.listPrograms
+- [x] POST /api/v1/hr/training/programs — HrController.createProgram
+- [x] DELETE /api/v1/hr/training/programs/:id — HrController.deleteProgram
+- [x] PATCH /api/v1/hr/training/programs/:id — HrController.updateProgram
 
 ## manufacturing
 

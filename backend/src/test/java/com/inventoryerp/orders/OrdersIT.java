@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,10 +34,22 @@ class OrdersIT extends ApiTestSupport {
                 "isCustomer", true)).get("id").asString();
     }
 
+    final List<String> created = new java.util.ArrayList<>();
+
     JsonNode create(Map<String, Object> extra) {
         Map<String, Object> body = new HashMap<>(Map.of("lines", List.of(Map.of("productId", productId, "quantity", 2))));
         body.putAll(extra);
-        return ok(200, "POST", "/orders", body);
+        JsonNode o = ok(200, "POST", "/orders", body);
+        created.add(o.get("id").asString());
+        return o;
+    }
+
+    /** Unbilled open orders block every later POS shift close in the shared DEMO org (Nest rule) — cancel ours. */
+    @AfterAll
+    void cancelLeftovers() {
+        jdbc.sql("UPDATE \"Order\" SET status = 'cancelled', \"cancelledAt\" = now() WHERE id = ANY(?)"
+                + " AND \"invoiceId\" IS NULL AND status::text <> 'cancelled'").param(created.toArray(String[]::new))
+                .update();
     }
 
     @Test
