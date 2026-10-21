@@ -593,6 +593,12 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
     builtOnce.current = false;
   }, [open]);
 
+  /* POS Settings → "Closing amounts visible to the cashier". On (default) the
+   * expected figures are shown before the count; off makes the close blind —
+   * the cashier counts first and only learns the difference afterwards. */
+  // Called before the early return below: hooks must run on every render.
+  const { data: posSettings } = usePosSettings();
+
   if (!session) return null;
 
   const submit = async () => {
@@ -700,10 +706,6 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
   /* Live drawer difference on the confirm step (display only — the server
    * recomputes authoritatively at close time). */
   const expectedCash = recon ? Number(recon.report?.totals?.expectedCash ?? 0) : null;
-  /* POS Settings → "Closing amounts visible to the cashier". On (default) the
-   * expected figures are shown before the count; off makes the close blind —
-   * the cashier counts first and only learns the difference afterwards. */
-  const { data: posSettings } = usePosSettings();
   const showClosingAmounts = posSettings?.showClosingAmounts !== false;
   const cashVariance = expectedCash != null && countedValid ? countedNum - expectedCash : null;
 
