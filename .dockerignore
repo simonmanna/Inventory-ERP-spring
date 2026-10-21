@@ -6,6 +6,7 @@
 **/.gradle
 backend/build
 reference
+android
 var
 backup
 backend/backup

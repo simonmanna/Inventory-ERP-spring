@@ -45,12 +45,14 @@ downloaded automatically).
 | [docs/spec/](docs/spec) | per-module specs + generated route/DTO/error inventories (1,118 routes) |
 | [docs/phases/](docs/phases) | self-contained briefs for each build phase |
 | [docs/legacy/](docs/legacy) | original POS-CAFE docs, ADRs, sync protocol, runbooks |
+| [android/README.md](android/README.md) | offline-first Android POS: build, enroll against Spring, pricing parity |
 
 ## Repository layout
 
 ```
 backend/            Spring Boot application (Gradle, com.inventoryerp.*)
 web/                React 18 + Vite client (from POS-CAFE)
+android/            Kotlin offline-first POS app (from POS-CAFE), syncs with the Spring API
 packages/shared/    TS contract constants (permissions, events, enums) shared with web
 tools/              generators: prisma2jpa, contracts2java, extract-routes, specs
 contract-tests/     parity harness (Nest vs Spring) + POS sell-loop e2e

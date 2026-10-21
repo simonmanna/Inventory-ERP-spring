@@ -6,6 +6,10 @@ The wire contract (paths, JSON, status codes, error messages) is the NestJS POS-
 ## [Unreleased] — 1.0.0 release candidate
 
 ### Added
+- **Android POS** (`android/`): the offline-first Kotlin terminal migrated from POS-CAFE and retargeted at the
+  Spring API (`/sync/pull`, `/sync/push`, `X-Device-Token`; default URL `:8080/api/v1`). Pricing parity is pinned
+  on both sides by one golden file — backend `CartVectorParityTest` runs `TaxCalculationService` over
+  `android/app/src/test/resources/cart-vectors.json`.
 - **HR & payroll** (`ENABLE_HR`, 140 routes): departments, positions, employees with compensation redaction, the
   employee ↔ login identity spine (link / provision / PIN), employment lifecycle (suspend, terminate, rehire,
   transfer) with an immutable ledger, shifts, attendance in the organisation time zone (POS PIN sign-in/off becomes

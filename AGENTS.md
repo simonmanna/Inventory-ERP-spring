@@ -63,6 +63,7 @@ backend/                       Spring Boot app (Gradle). Package root com.invent
   .../<module>/web/            @RestController + request/response records + mappers         <- you write
   src/main/resources/db/migration/   V1 baseline (never edit), V2 reference rows, V3 platform, V4+ yours
 web/                           React 18 + Vite client (copied unchanged from POS-CAFE)
+android/                       Kotlin offline-first POS (from POS-CAFE apps/android), syncs via /sync/pull|push
 packages/shared/               TS contract constants: permissions, events, enums, pagination (source of truth)
 tools/prisma2jpa/              schema.prisma -> JPA entities/enums/repositories
 tools/contracts2java/          packages/shared -> Permissions.java, DomainEvents.java
