@@ -73,6 +73,8 @@ import {
   Zap,
   CalendarClock,
   ChevronDown,
+  Undo2,
+  ListRestart,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -191,6 +193,14 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/pos/receipts', label: 'POS Receipts', icon: ScrollText, permission: PERMISSIONS.pos.read },
       { to: '/pos/receivables', label: 'Credit / Receivables', icon: HandCoins, permission: PERMISSIONS.pos.read },
       { to: '/pos/reports', label: 'POS Reports', icon: BarChart3, permission: PERMISSIONS.pos.reports, reportId: POS_REPORT_TAB_IDS },
+    ],
+  },
+  {
+    title: 'Returns',
+    icon: Undo2,
+    items: [
+      { to: '/returns', label: 'Returns Register', icon: ListRestart, permission: PERMISSIONS.pos.read },
+      { to: '/returns/new', label: 'New Return', icon: Undo2, permission: PERMISSIONS.pos.refund },
     ],
   },
   {
@@ -665,7 +675,7 @@ export function AppShell() {
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === '/' || item.to === '/accounts' || item.to === '/accounts/cash-accounts'}
+                    end={item.to === '/' || item.to === '/returns' || item.to === '/accounts' || item.to === '/accounts/cash-accounts'}
                     onClick={onItemClick}
                     className={({ isActive }) =>
                       cn(

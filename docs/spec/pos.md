@@ -82,7 +82,20 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
-_None._
+_None in the ported Nest contract._
+
+Post-parity additions (no Nest counterpart, explicitly labelled):
+
+- **Sales returns register** (`SalesReturnsController`, `/returns`): read-only routes over the immutable `PosRefund`
+  events — `GET /returns` (paged, filters `search`, `channel` = `retail|restaurant`, `stockDisposition`, `dateFrom`,
+  `dateTo`; extra `summary` {count, amount}), `GET /returns/:id` (lines, payouts, journal entry),
+  `GET /returns/invoices?search=` and `GET /returns/invoices/:invoiceId` (returnable sales with remaining qty per line),
+  `GET /returns/registers` (open cash sessions for a cash payout). Reads need `pos:read`; preparation routes need
+  `pos:refund`. Creating a return still goes through `POST /pos/invoices/:id/refund` — no new write path, no schema
+  change. Channel is derived: a sale with any menu-item line is `restaurant`, otherwise `retail`. `returnNumber` is
+  `<invoiceNumber>-R<n>` (n = order of the refund on that invoice). Web: "Returns" sidebar group.
+  The 5 routes live in the `pos` package, so the `PosSaleIT` authorization matrix covers 224 routes
+  (219 ported + 5 returns).
 
 Same as Nest, kept on purpose:
 

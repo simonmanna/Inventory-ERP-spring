@@ -795,6 +795,14 @@ procurement section (P4) with the procurement tables it reads.
 - [x] POST /api/v1/pos/tabs/:tableId/split/cancel — PosSplitController.cancelSplit
 - [x] POST /api/v1/pos/tabs/:tableId/split/equal — PosSplitController.splitEqually
 
+### pos — post-parity additions (sales returns)
+
+- [x] GET /api/v1/returns — SalesReturnsController.list
+- [x] GET /api/v1/returns/:id — SalesReturnsController.get
+- [x] GET /api/v1/returns/invoices — SalesReturnsController.returnableInvoices
+- [x] GET /api/v1/returns/invoices/:invoiceId — SalesReturnsController.returnableInvoice
+- [x] GET /api/v1/returns/registers — SalesReturnsController.openRegisters
+
 ## sync
 
 - [x] GET /api/v1/sync/dead-letters — SyncController.listDeadLetters

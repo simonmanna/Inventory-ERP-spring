@@ -520,6 +520,7 @@ class PosSaleIT extends ApiTestSupport {
     @Order(40)
     @DisplayName("authorization matrix covers every POS route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.pos")).isEqualTo(219);
+        // 219 ported Nest routes + 5 post-parity /returns routes (docs/spec/pos.md "Deviations").
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.pos")).isEqualTo(224);
     }
 }

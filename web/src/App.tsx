@@ -96,6 +96,9 @@ import { PaymentsPage } from '@/pages/invoicing/payments';
 import { PaymentDetailPage } from '@/pages/invoicing/payment-detail';
 import { ReceiptsPage } from '@/pages/pos/ReceiptsPage';
 import { ReceiptDetailPage } from '@/pages/pos/ReceiptDetailPage';
+import { ReturnsPage } from '@/pages/returns/ReturnsPage';
+import { NewReturnPage } from '@/pages/returns/NewReturnPage';
+import { ReturnDetailPage } from '@/pages/returns/ReturnDetailPage';
 import { ReceivablesPage } from '@/pages/pos/ReceivablesPage';
 import { ExpensesPage } from '@/pages/expenses/ExpensesPage';
 import ExpensesReportPage from '@/pages/expenses/ExpensesReportPage';
@@ -253,6 +256,10 @@ export function App() {
           <Route path="/payments/:id" element={<PaymentDetailPage />} />
           <Route path="/pos/receipts" element={<ReceiptsPage />} />
           <Route path="/pos/receipts/:invoiceId" element={<ReceiptDetailPage />} />
+          {/* Sales returns (retail + café/restaurant), recorded through the POS refund engine. */}
+          <Route path="/returns" element={<ReturnsPage />} />
+          <Route path="/returns/new" element={<NewReturnPage />} />
+          <Route path="/returns/:id" element={<ReturnDetailPage />} />
           {/* Sales charged to a customer's account, awaiting payment. */}
           <Route path="/pos/receivables" element={<ReceivablesPage />} />
           <Route path="/expenses" element={<ExpensesPage />} />

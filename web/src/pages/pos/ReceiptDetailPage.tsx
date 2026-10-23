@@ -1,6 +1,6 @@
 import { useAuthStore } from '@/stores/auth.store';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Printer } from 'lucide-react';
+import { Printer, Undo2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -47,6 +47,11 @@ export function ReceiptDetailPage() {
           {tx('Back')}
         </Button>
         <div className="flex gap-2">
+          {has(PERMISSIONS.pos.refund) && receipt.status !== 'refunded' && receipt.settlementStatus !== 'written_off' && (
+            <Button variant="outline" onClick={() => navigate(`/returns/new?invoiceId=${receipt.id}`)}>
+              <Undo2 className="mr-2 h-4 w-4" /> {tx('Return items')}
+            </Button>
+          )}
           {has(PERMISSIONS.pos.reports) && (
             <Button variant="outline" onClick={() => window.print()}>
               <Printer className="mr-2 h-4 w-4" /> {tx('Print')}
