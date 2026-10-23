@@ -174,6 +174,9 @@ interface SyncStateDao {
     @Query("SELECT * FROM sync_state WHERE id = 1")
     suspend fun get(): SyncStateEntity?
 
+    @Query("SELECT * FROM sync_state WHERE id = 1")
+    fun observe(): Flow<SyncStateEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(state: SyncStateEntity)
 }
@@ -467,6 +470,9 @@ interface OpQueueDao {
 
     @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE opId = :opId")
     suspend fun retry(opId: String)
+
+    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE status = 'failed'")
+    suspend fun retryAllFailed()
 
     @Query("SELECT COALESCE(MAX(deviceSeq), 0) FROM op_queue")
     suspend fun maxSeq(): Long

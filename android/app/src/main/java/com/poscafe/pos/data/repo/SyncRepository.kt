@@ -66,6 +66,25 @@ class SyncRepository @Inject constructor(
         )
     }
 
+    /**
+     * Drain the whole queue, one 100-op batch at a time. A till that sold
+     * offline all day can have hundreds of ops; a single [push] would leave
+     * the rest waiting for the next periodic run. Stops as soon as a batch
+     * makes no progress (server returned fewer results than sent).
+     * @return ops rejected across all batches.
+     */
+    suspend fun pushAll(): Int {
+        var rejected = 0
+        var remaining = db.opQueueDao().queuedNow()
+        while (remaining > 0) {
+            rejected += push()
+            val after = db.opQueueDao().queuedNow()
+            if (after >= remaining) break
+            remaining = after
+        }
+        return rejected
+    }
+
     /** @return number of ops that remain queued or failed after this push. */
     suspend fun push(): Int {
         val deviceId = config.deviceId ?: error("Device not enrolled")

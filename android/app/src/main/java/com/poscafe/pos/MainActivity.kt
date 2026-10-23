@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.sync.SyncWorker
 import com.poscafe.pos.ui.screens.HomeScreen
 import com.poscafe.pos.ui.screens.PinLoginScreen
 import com.poscafe.pos.ui.screens.SetupScreen
@@ -84,5 +85,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** App foreground: push whatever was sold while backgrounded (no-op standalone). */
+    override fun onStart() {
+        super.onStart()
+        if (config.isEnrolled) SyncWorker.syncNow(this)
     }
 }

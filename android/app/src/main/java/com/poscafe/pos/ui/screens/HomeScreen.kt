@@ -70,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.poscafe.pos.ui.components.SyncBanner
 import kotlinx.coroutines.launch
 
 private enum class HomeTab(
@@ -283,13 +284,17 @@ private fun TabContent(
     modifier: Modifier = Modifier,
     onGoSell: () -> Unit,
 ) {
-    Crossfade(targetState = tab, animationSpec = tween(200), label = "homeTab", modifier = modifier) { t ->
-        Column(Modifier.fillMaxSize()) {
-            when (t) {
-                HomeTab.Sell -> TerminalScreen(terminalVm, onMenu = onMenu)
-                HomeTab.Tables -> TablesScreen(terminalVm, onTableChosen = onGoSell, onMenu = onMenu)
-                HomeTab.Orders -> OrdersScreen(onMenu = onMenu)
-                HomeTab.More -> MoreScreen(onOpenSync = onOpenSync, onLock = onLock, onMenu = onMenu)
+    Column(modifier) {
+        // Offline / syncing / rejected strip — server-connected tills only.
+        if (!terminalVm.config.standalone) SyncBanner(onOpenSync = onOpenSync)
+        Crossfade(targetState = tab, animationSpec = tween(200), label = "homeTab", modifier = Modifier.weight(1f)) { t ->
+            Column(Modifier.fillMaxSize()) {
+                when (t) {
+                    HomeTab.Sell -> TerminalScreen(terminalVm, onMenu = onMenu)
+                    HomeTab.Tables -> TablesScreen(terminalVm, onTableChosen = onGoSell, onMenu = onMenu)
+                    HomeTab.Orders -> OrdersScreen(onMenu = onMenu)
+                    HomeTab.More -> MoreScreen(onOpenSync = onOpenSync, onLock = onLock, onMenu = onMenu)
+                }
             }
         }
     }

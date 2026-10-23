@@ -1,5 +1,11 @@
 package com.poscafe.pos.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,12 +24,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.poscafe.pos.data.local.dao.OpQueueDao
 import com.poscafe.pos.data.local.entity.OpQueueEntity
+import com.poscafe.pos.sync.SyncSnapshot
+import com.poscafe.pos.sync.SyncStatus
 import com.poscafe.pos.sync.SyncWorker
 import com.poscafe.pos.ui.components.PosCard
 import com.poscafe.pos.ui.components.PrimaryButton
 import com.poscafe.pos.ui.components.StatCard
+import com.poscafe.pos.ui.components.StatusDot
 import com.poscafe.pos.ui.components.StatusPill
+import com.poscafe.pos.ui.components.relativeTime
+import com.poscafe.pos.ui.theme.PosColors
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -35,20 +47,26 @@ import javax.inject.Inject
  * until a human retries or discards it.
  */
 @HiltViewModel
-class SyncViewModel @Inject constructor(private val opQueue: OpQueueDao) : ViewModel() {
-    val queued = opQueue.queuedCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
-    val failedCount = opQueue.failedCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+class SyncViewModel @Inject constructor(
+    private val opQueue: OpQueueDao,
+    status: SyncStatus,
+) : ViewModel() {
+    val snapshot = status.snapshot.stateIn(viewModelScope, SharingStarted.Eagerly, SyncSnapshot())
     val failed = opQueue.failed().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList<OpQueueEntity>())
 
     fun retry(opId: String) = viewModelScope.launch { opQueue.retry(opId) }
+    fun retryAll() = viewModelScope.launch { opQueue.retryAllFailed() }
 }
 
 @Composable
 fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
     val context = LocalContext.current
-    val queued by vm.queued.collectAsStateWithLifecycle()
-    val failedCount by vm.failedCount.collectAsStateWithLifecycle()
+    val s by vm.snapshot.collectAsStateWithLifecycle()
     val failed by vm.failed.collectAsStateWithLifecycle()
+
+    // Re-render "x min ago" once a minute without any data change.
+    var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); tick = System.currentTimeMillis() } }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(
@@ -61,21 +79,33 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
             }
             Text("Sync", style = MaterialTheme.typography.headlineSmall)
         }
+
+        ConnectionCard(s, tick)
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard("$queued", "Waiting to push", Modifier.weight(1f))
+            StatCard("${s.queued}", "Waiting to push", Modifier.weight(1f))
             StatCard(
-                "$failedCount", "Rejected",
+                "${s.failed}", "Rejected",
                 Modifier.weight(1f),
-                accent = if (failedCount > 0) MaterialTheme.colorScheme.error else null,
+                accent = if (s.failed > 0) MaterialTheme.colorScheme.error else null,
             )
         }
         Spacer(Modifier.height(12.dp))
         PrimaryButton(
-            text = "Sync now",
+            text = when {
+                s.running -> "Syncing…"
+                !s.online -> "Sync when back online"
+                else -> "Sync now"
+            },
+            enabled = !s.running,
             onClick = { SyncWorker.syncNow(context) },
             modifier = Modifier.fillMaxWidth(),
             height = 48.dp,
         )
+        if (s.running) {
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(16.dp))
         if (failed.isEmpty()) {
             Column(
@@ -95,17 +125,26 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
                 )
             }
         } else {
-            Text(
-                "Rejected by server — review each one",
-                style = MaterialTheme.typography.titleMedium,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Rejected by server — review each one",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (failed.size > 1) {
+                    TextButton(onClick = { vm.retryAll(); SyncWorker.syncNow(context) }) { Text("Retry all") }
+                }
+            }
             Spacer(Modifier.height(10.dp))
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
                 items(failed, key = { it.opId }) { op ->
-                    PosCard(Modifier.fillMaxWidth()) {
+                    PosCard(Modifier.fillMaxWidth().animateItem()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -124,10 +163,49 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            TextButton(onClick = { vm.retry(op.opId) }) { Text("Retry") }
+                            TextButton(onClick = { vm.retry(op.opId); SyncWorker.syncNow(context) }) { Text("Retry") }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Online/offline dot + last successful contact with the server. */
+@Composable
+private fun ConnectionCard(s: SyncSnapshot, now: Long) {
+    val dot by animateColorAsState(
+        when {
+            !s.online -> PosColors.Warning
+            s.running -> PosColors.Info
+            else -> PosColors.Green
+        },
+        tween(250),
+        label = "syncDot",
+    )
+    PosCard(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            StatusDot(dot, size = 12.dp)
+            Column(Modifier.weight(1f)) {
+                AnimatedContent(
+                    targetState = when {
+                        !s.online -> "Offline — sales are stored on this device"
+                        s.running -> "Syncing with server…"
+                        else -> "Online"
+                    },
+                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                    label = "syncTitle",
+                ) { Text(it, style = MaterialTheme.typography.titleSmall) }
+                Text(
+                    "Last synced ${relativeTime(s.lastSyncAt, now)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

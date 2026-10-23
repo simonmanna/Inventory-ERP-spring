@@ -3,6 +3,7 @@ package com.poscafe.pos
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.poscafe.pos.sync.ConnectivityMonitor
 import com.poscafe.pos.sync.SyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -11,6 +12,7 @@ import javax.inject.Inject
 class PosApp : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
+    @Inject lateinit var connectivity: ConnectivityMonitor
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -18,5 +20,6 @@ class PosApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         SyncWorker.schedule(this)
+        connectivity.start()
     }
 }

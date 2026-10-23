@@ -36,7 +36,7 @@ class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         if (!config.isEnrolled) return Result.success()
         return try {
-            sync.push()
+            sync.pushAll()
             sync.pull()
             Result.success()
         } catch (e: Exception) {
@@ -48,8 +48,8 @@ class SyncWorker @AssistedInject constructor(
     }
 
     companion object {
-        private const val PERIODIC = "pos-sync-periodic"
-        private const val ONESHOT = "pos-sync-now"
+        const val PERIODIC = "pos-sync-periodic"
+        const val ONESHOT = "pos-sync-now"
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -62,11 +62,16 @@ class SyncWorker @AssistedInject constructor(
             )
         }
 
+        /**
+         * KEEP, not REPLACE: foreground/reconnect/manual triggers can fire
+         * together, and replacing would cancel an in-flight push mid-request
+         * (safe thanks to per-op idempotency, but wasted work).
+         */
         fun syncNow(context: Context) {
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 ONESHOT,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.KEEP,
                 OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).build(),
             )
         }
