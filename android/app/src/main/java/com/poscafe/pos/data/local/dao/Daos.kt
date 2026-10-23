@@ -474,6 +474,12 @@ interface OpQueueDao {
     @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE status = 'failed'")
     suspend fun retryAllFailed()
 
+    @Query("SELECT * FROM op_queue WHERE type = :type AND status != 'pushed' AND occurredAt < :before")
+    suspend fun unpushedOfTypeBefore(type: String, before: Long): List<OpQueueEntity>
+
+    @Query("UPDATE op_queue SET payloadJson = :payloadJson WHERE opId = :opId")
+    suspend fun updatePayload(opId: String, payloadJson: String)
+
     @Query("SELECT COALESCE(MAX(deviceSeq), 0) FROM op_queue")
     suspend fun maxSeq(): Long
 

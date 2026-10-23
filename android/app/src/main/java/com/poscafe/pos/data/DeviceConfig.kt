@@ -18,7 +18,7 @@ import javax.inject.Singleton
  *   - saleCounter    monotonic counter behind provisional numbers
  */
 @Singleton
-class DeviceConfig @Inject constructor(@ApplicationContext context: Context) {
+class DeviceConfig @Inject constructor(@ApplicationContext private val context: Context) {
 
     private val prefs = EncryptedSharedPreferences.create(
         context,
@@ -76,6 +76,24 @@ class DeviceConfig @Inject constructor(@ApplicationContext context: Context) {
         businessAddress?.takeIf { it.isNotBlank() }?.let { add(it) }
         businessTin?.takeIf { it.isNotBlank() }?.let { add("TIN: $it") }
     }
+
+    /**
+     * Catalog price-units schema applied to the local Room catalog.
+     * 0 = legacy builds that stored menu basePrice ÷100; 1 = MAJOR as on the server.
+     * See SyncRepository.ensureCatalogUnits.
+     */
+    var catalogUnitsVersion: Int
+        get() = prefs.getInt("catalogUnitsVersion", 0)
+        set(v) = prefs.edit().putInt("catalogUnitsVersion", v).apply()
+
+    /** Queued legacy menuItem.upsert payloads already rescaled (one-shot). */
+    var legacyMenuQueueRescaled: Boolean
+        get() = prefs.getBoolean("legacyMenuQueueRescaled", false)
+        set(v) = prefs.edit().putBoolean("legacyMenuQueueRescaled", v).apply()
+
+    /** When this APK was installed/updated — ops older than this came from a previous build. */
+    val appUpdatedAt: Long
+        get() = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
 
     val isEnrolled: Boolean get() = !deviceToken.isNullOrBlank() && !serverUrl.isNullOrBlank()
 

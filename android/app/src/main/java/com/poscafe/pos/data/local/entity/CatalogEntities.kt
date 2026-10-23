@@ -25,8 +25,8 @@ data class MenuItemEntity(
     val name: String,
     val description: String?,
     val categoryId: String?,
-    /** Server stores basePrice in MINOR units (×100); everything else MAJOR.
-     *  Converted to MAJOR here at pull-apply time so the app math is uniform. */
+    /** Server `MenuItem.basePrice`, MAJOR units (same as variants/modifiers).
+     *  Column name kept from when it was wrongly converted from MINOR. */
     val basePriceMajor: Double?,
     val taxId: String?,
     val image: String?,

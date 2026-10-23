@@ -1,6 +1,10 @@
 package com.poscafe.pos
 
 import com.poscafe.pos.data.repo.CartEngine
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -75,7 +79,17 @@ class CartEngineTest {
     }
 
     @Test
-    fun `minor to major conversion for menu base price`() {
-        assertEquals(85.0, CartEngine.basePriceToMajor(8500.0)!!, 0.001)
+    fun `legacy queued menu upsert price is rescaled from x100 to major`() {
+        val legacy = """{"id":"m1","name":"Eclair","basePrice":700000.0,"isAvailable":true}"""
+        val fixed = Json.parseToJsonElement(CartEngine.rescaleLegacyMenuItemPayload(legacy)).jsonObject
+        assertEquals(7000.0, fixed["basePrice"]!!.jsonPrimitive.double, 0.001)
+        assertEquals("Eclair", fixed["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `payload without basePrice or not json is left alone`() {
+        val noPrice = """{"id":"m1","name":"Eclair"}"""
+        assertEquals(noPrice, CartEngine.rescaleLegacyMenuItemPayload(noPrice))
+        assertEquals("not json", CartEngine.rescaleLegacyMenuItemPayload("not json"))
     }
 }

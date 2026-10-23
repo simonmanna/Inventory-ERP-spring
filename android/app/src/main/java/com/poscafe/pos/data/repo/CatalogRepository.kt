@@ -76,8 +76,8 @@ class CatalogRepository @Inject constructor(
             put("name", item.name)
             item.description?.let { put("description", it) }
             item.categoryId?.let { put("categoryId", it) }
-            // Server stores basePrice in MINOR units.
-            CartEngine.majorToBasePrice(item.basePriceMajor)?.let { put("basePrice", it) }
+            // MAJOR units, same as the server column (see CartEngine.rescaleLegacyMenuItemPayload).
+            item.basePriceMajor?.let { put("basePrice", it) }
             item.taxId?.let { put("taxId", it) }
             item.image?.let { put("image", it) }
             put("isAvailable", item.isAvailable)

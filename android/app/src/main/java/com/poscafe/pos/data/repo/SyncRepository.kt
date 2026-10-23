@@ -30,9 +30,30 @@ class SyncRepository @Inject constructor(
     private val db: PosDatabase,
     private val config: DeviceConfig,
 ) {
+    /**
+     * One-time repair for devices upgraded from builds that stored menu
+     * basePrice ÷100 (see [CartEngine.rescaleLegacyMenuItemPayload]):
+     *  1. queued menuItem.upsert ops from the old build carry a ×100 price —
+     *     rescale them before they are pushed (runs once, own flag);
+     *  2. every pulled menu item in Room is ÷100 — [pull] ignores the cursor
+     *     until one full snapshot has re-applied the catalog at true prices.
+     * Sales already queued keep the price they were rung up at: that is what
+     * the customer paid, so they are never rewritten.
+     */
+    private suspend fun ensureCatalogUnits() {
+        if (config.legacyMenuQueueRescaled) return
+        val dao = db.opQueueDao()
+        for (op in dao.unpushedOfTypeBefore("menuItem.upsert", config.appUpdatedAt)) {
+            dao.updatePayload(op.opId, CartEngine.rescaleLegacyMenuItemPayload(op.payloadJson))
+        }
+        config.legacyMenuQueueRescaled = true
+    }
+
     suspend fun pull() {
+        ensureCatalogUnits()
+        val fullResync = config.catalogUnitsVersion < CATALOG_UNITS_VERSION
         val state = db.syncStateDao().get()
-        val res = api.pull(cursor = state?.cursor)
+        val res = api.pull(cursor = if (fullResync) null else state?.cursor)
 
         res.data["menuCategories"]?.let { applyCategories(it) }
         res.data["taxes"]?.let { applyTaxes(it) }
@@ -64,6 +85,7 @@ class SyncRepository @Inject constructor(
                 lastPushAt = state?.lastPushAt,
             ),
         )
+        if (fullResync) config.catalogUnitsVersion = CATALOG_UNITS_VERSION
     }
 
     /**
@@ -87,6 +109,7 @@ class SyncRepository @Inject constructor(
 
     /** @return number of ops that remain queued or failed after this push. */
     suspend fun push(): Int {
+        ensureCatalogUnits()
         val deviceId = config.deviceId ?: error("Device not enrolled")
         val ops = db.opQueueDao().nextBatch()
         if (ops.isEmpty()) return 0
@@ -272,7 +295,7 @@ class SyncRepository @Inject constructor(
                         name = row.str("name") ?: "",
                         description = row.str("description"),
                         categoryId = row.str("categoryId"),
-                        basePriceMajor = CartEngine.basePriceToMajor(row.num("basePrice")),
+                        basePriceMajor = row.num("basePrice"), // already MAJOR on the server
                         taxId = row.str("taxId"),
                         image = row.str("image"),
                         isAvailable = row.bool("isAvailable") ?: true,
@@ -773,5 +796,10 @@ class SyncRepository @Inject constructor(
         val n = s.toLongOrNull()
         if (n != null) return n
         return try { java.time.Instant.parse(s).toEpochMilli() } catch (_: Exception) { 0L }
+    }
+
+    companion object {
+        /** Bump to force one full catalog re-pull after a local price-units fix. */
+        const val CATALOG_UNITS_VERSION = 1
     }
 }

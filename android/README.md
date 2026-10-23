@@ -99,9 +99,15 @@ cd android && ./gradlew :app:testDebugUnitTest
 After a deliberate server pricing change, update the expected totals so the
 backend test passes, then make the Android test pass too.
 
-Note `MenuItem.basePrice` arrives in MINOR units (×100) and is converted once at
-pull-apply (`CartEngine.basePriceToMajor`); variants, modifier deltas and
-accompaniment upcharges are already MAJOR.
+All prices on the wire are MAJOR units, `MenuItem.basePrice` included (the
+server's checkout and the web terminal use it as the unit price as is; the seed
+stores 7000 for a UGX 7,000 item). Builds before catalog-units v1 wrongly
+treated basePrice as MINOR (÷100 on pull, ×100 on push) and sold menu items at
+1/100 of their price. On upgrade, an enrolled device rescales its queued
+`menuItem.upsert` ops once and does one full catalog re-pull
+(`SyncRepository.ensureCatalogUnits`, `CATALOG_UNITS_VERSION`). Sales rung up
+by an old build are not rewritten — that is what was charged; void them in the
+back office if needed.
 
 ## Networking
 

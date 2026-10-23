@@ -1,6 +1,11 @@
 package com.poscafe.pos.data.repo
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlin.math.max
 import kotlin.math.round
 
@@ -102,12 +107,18 @@ object CartEngine {
         )
     }
 
-    /** Server stores MenuItem.basePrice in MINOR units (×100); convert once at
-     *  pull-apply. Variants/modifiers/accompaniments are already MAJOR. */
-    fun basePriceToMajor(basePriceMinor: Double?): Double? =
-        basePriceMinor?.let { it / 100.0 }
-
-    /** Inverse of [basePriceToMajor] — server-shape a MAJOR price for a
-     *  menuItem.upsert push payload (the server stores basePrice in MINOR). */
-    fun majorToBasePrice(major: Double?): Double? = major?.let { it * 100.0 }
+    /**
+     * `MenuItem.basePrice` is MAJOR units on the server, like every other
+     * price: the web terminal and `pos.checkout` use it as the unit price
+     * as is, and the seed stores e.g. 7000 for a UGX 7,000 eclair.
+     * Builds before catalog-units v1 assumed MINOR (÷100 on pull, ×100 on
+     * push), so a `menuItem.upsert` still sitting in the queue from such a
+     * build carries a ×100 basePrice. This rescales one payload; any other
+     * payload is returned unchanged.
+     */
+    fun rescaleLegacyMenuItemPayload(payloadJson: String): String {
+        val obj = runCatching { Json.parseToJsonElement(payloadJson).jsonObject }.getOrNull() ?: return payloadJson
+        val price = (obj["basePrice"] as? JsonPrimitive)?.doubleOrNull ?: return payloadJson
+        return JsonObject(obj + ("basePrice" to JsonPrimitive(price / 100.0))).toString()
+    }
 }
