@@ -11,6 +11,7 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -80,10 +81,12 @@ public class SequenceService {
         if (ensured.contains(name)) {
             return;
         }
-        // Already there (committed): no write at all. This is every call after a restart.
+        // Already there: no write at all. This is every call after a restart. Inside a transaction the sequence may
+        // be one this same transaction created under a savepoint (still uncommitted), so only cache it once the
+        // transaction commits; a rollback drops it and the next call must create it again.
         if (Boolean.TRUE.equals(jdbc.sql("SELECT to_regclass(?) IS NOT NULL").param("\"" + name + "\"")
                 .query(Boolean.class).single())) {
-            ensured.add(name);
+            cacheAfterCommit(name);
             return;
         }
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
@@ -104,6 +107,19 @@ public class SequenceService {
                 throw err;
             }
         }
+    }
+
+    private void cacheAfterCommit(String name) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            ensured.add(name);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                ensured.add(name);
+            }
+        });
     }
 
     private void create(String name) {

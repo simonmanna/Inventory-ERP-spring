@@ -588,6 +588,23 @@ class KernelIT {
     }
 
     @Test
+    @DisplayName("a sequence first created in a rolled-back transaction is created again on the next call")
+    void sequenceSurvivesRollbackOfItsCreator() {
+        String key = "stock_move_" + UUID.randomUUID().toString().substring(0, 6);
+        TenantContext.run(TenantStore.organization(demoOrg), () -> {
+            assertThatThrownBy(() -> new TransactionTemplate(txm).executeWithoutResult(s -> {
+                sequences.next(key, "STK/", 6);
+                // Second call in the same transaction sees the uncommitted sequence; it must not be cached.
+                sequences.next(key, "STK/", 6);
+                throw new IllegalStateException("rollback");
+            })).hasMessage("rollback");
+            assertThat(sequences.next(key, "STK/", 6)).isEqualTo("STK/000001");
+            String next = new TransactionTemplate(txm).execute(s -> sequences.next(key, "STK/", 6));
+            assertThat(next).isEqualTo("STK/000002");
+        });
+    }
+
+    @Test
     @DisplayName("recurring tick generates a draft document and advances the schedule")
     void recurringTick() {
         String partner = jdbc.sql("SELECT id FROM \"Partner\" WHERE \"organizationId\" = ? AND code = 'CUST-001'").param(demoOrg)
