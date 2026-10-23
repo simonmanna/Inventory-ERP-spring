@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -1001,22 +1002,25 @@ private fun HeaderChip(
     active: Boolean,
     onClick: () -> Unit,
 ) {
+    // Phones: an unset chip collapses to its icon so the "New order" title
+    // isn't squeezed to "New …". Once set (customer/table picked) it shows the label.
+    val iconOnly = !active && LocalConfiguration.current.screenWidthDp < 600
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(999.dp),
         color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            Modifier.padding(horizontal = if (iconOnly) 10.dp else 12.dp, vertical = if (iconOnly) 10.dp else 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Icon(
-                icon, null,
-                modifier = Modifier.size(16.dp),
+                icon, if (iconOnly) fallback else null,
+                modifier = Modifier.size(if (iconOnly) 20.dp else 16.dp),
                 tint = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(
+            if (!iconOnly) Text(
                 label ?: fallback,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1329,7 +1333,9 @@ private fun CartPanel(vm: TerminalViewModel, table: PosTableEntity?, onCharge: (
         }
         table?.let {
             StatusPill(
-                "Table ${it.number}${it.name?.let { n -> " · $n" } ?: ""}",
+                // Skip the name when it just repeats the number ("Table 3 · Table 3").
+                "Table ${it.number}" + (it.name?.takeIf { n -> n.isNotBlank() && n != "Table ${it.number}" }
+                    ?.let { n -> " · $n" } ?: ""),
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 container = MaterialTheme.colorScheme.primaryContainer,
             )

@@ -8,6 +8,7 @@ import com.poscafe.pos.data.local.dao.OpQueueDao
 import com.poscafe.pos.data.local.dao.SyncStateDao
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
@@ -24,6 +25,8 @@ data class SyncSnapshot(
     val failed: Int = 0,
     /** Epoch millis of the most recent successful push or pull; null = never. */
     val lastSyncAt: Long? = null,
+    /** Why the last run failed (network/server), cleared on success. In-memory only. */
+    val lastError: String? = null,
 )
 
 /**
@@ -41,6 +44,9 @@ class SyncStatus @Inject constructor(
 ) {
     private val work = WorkManager.getInstance(context)
 
+    /** Written by [SyncWorker]; same process, so a plain state flow is enough. */
+    val lastError = MutableStateFlow<String?>(null)
+
     private val running: Flow<Boolean> = combine(
         work.getWorkInfosForUniqueWorkFlow(SyncWorker.ONESHOT),
         work.getWorkInfosForUniqueWorkFlow(SyncWorker.PERIODIC),
@@ -51,13 +57,13 @@ class SyncStatus @Inject constructor(
             flowOf(SyncSnapshot(standalone = true))
         } else {
             combine(
-                connectivity.online,
-                running,
+                combine(connectivity.online, running, ::Pair),
                 opQueue.queuedCount(),
                 opQueue.failedCount(),
                 syncState.observe().map { s -> listOfNotNull(s?.lastPullAt, s?.lastPushAt).maxOrNull() },
-            ) { online, run, queued, failed, last ->
-                SyncSnapshot(false, online, run, queued, failed, last)
+                lastError,
+            ) { (online, run), queued, failed, last, err ->
+                SyncSnapshot(false, online, run, queued, failed, last, err)
             }.distinctUntilChanged()
         }
 }

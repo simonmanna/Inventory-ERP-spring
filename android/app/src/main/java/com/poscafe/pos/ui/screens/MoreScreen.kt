@@ -197,11 +197,13 @@ fun MoreScreen(
                             StatCard(Money.bare(x.expectedCash), "Expected cash", Modifier.weight(1f), accent = MaterialTheme.colorScheme.primary)
                         }
                     }
+                    // Two rows: three buttons in one row wrapped/clipped their
+                    // labels ("Cash\nin") on phone widths.
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SecondaryButton("Cash in", { vm.loadCashContext(); showMovement = "pay_in" }, Modifier.weight(1f), height = 48.dp)
                         SecondaryButton("Cash out", { vm.loadCashContext(); showMovement = "pay_out" }, Modifier.weight(1f), height = 48.dp)
-                        PrimaryButton("Close session", { vm.loadCashContext(); showClose = true }, Modifier.weight(1.2f), height = 48.dp)
                     }
+                    PrimaryButton("Close session", { vm.loadCashContext(); showClose = true }, Modifier.fillMaxWidth(), height = 48.dp)
                 } else {
                     Text(
                         "Open a session to track the drawer for this shift.",

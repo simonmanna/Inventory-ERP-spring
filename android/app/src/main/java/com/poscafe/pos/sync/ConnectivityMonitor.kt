@@ -49,8 +49,7 @@ class ConnectivityMonitor @Inject constructor(
         val was = _online.value
         _online.value = now
         // Back online: flush the queue right away instead of waiting up to
-        // 15 min for the periodic run. syncNow uses KEEP, so flapping
-        // networks collapse into a single run.
+        // 15 min for the periodic run (or a long retry backoff).
         if (now && !was && config.isEnrolled) SyncWorker.syncNow(context)
     }
 

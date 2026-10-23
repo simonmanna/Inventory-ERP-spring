@@ -206,6 +206,13 @@ private fun ConnectionCard(s: SyncSnapshot, now: Long) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (s.online && !s.running && s.lastError != null) {
+                    Text(
+                        "Last attempt failed: ${s.lastError} — retrying automatically",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

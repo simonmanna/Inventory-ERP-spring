@@ -1,6 +1,7 @@
 package com.poscafe.pos.sync
 
 import android.content.Context
+import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -31,6 +32,7 @@ class SyncWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val sync: SyncRepository,
     private val config: DeviceConfig,
+    private val status: SyncStatus,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
@@ -38,8 +40,11 @@ class SyncWorker @AssistedInject constructor(
         return try {
             sync.pushAll()
             sync.pull()
+            status.lastError.value = null
             Result.success()
         } catch (e: Exception) {
+            Log.w("SyncWorker", "sync failed, will retry", e)
+            status.lastError.value = e.message ?: e.javaClass.simpleName
             // Connectivity or server trouble — retry with backoff. Failed OPS
             // (server rejections) are already parked locally + dead-lettered
             // server-side; retry only re-attempts queued ones.
@@ -63,15 +68,16 @@ class SyncWorker @AssistedInject constructor(
         }
 
         /**
-         * KEEP, not REPLACE: foreground/reconnect/manual triggers can fire
-         * together, and replacing would cancel an in-flight push mid-request
-         * (safe thanks to per-op idempotency, but wasted work).
+         * @param replace true (manual / reconnect): cancel any pending run,
+         *   including one parked in retry backoff, and go now. false (app
+         *   foreground, fires on every rotation): leave an existing run alone
+         *   rather than cancel an in-flight push mid-request.
          */
-        fun syncNow(context: Context) {
+        fun syncNow(context: Context, replace: Boolean = true) {
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             WorkManager.getInstance(context).enqueueUniqueWork(
                 ONESHOT,
-                ExistingWorkPolicy.KEEP,
+                if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
                 OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).build(),
             )
         }

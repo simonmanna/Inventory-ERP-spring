@@ -90,6 +90,6 @@ class MainActivity : ComponentActivity() {
     /** App foreground: push whatever was sold while backgrounded (no-op standalone). */
     override fun onStart() {
         super.onStart()
-        if (config.isEnrolled) SyncWorker.syncNow(this)
+        if (config.isEnrolled) SyncWorker.syncNow(this, replace = false)
     }
 }

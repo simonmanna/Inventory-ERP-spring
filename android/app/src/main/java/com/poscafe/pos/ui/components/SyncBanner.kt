@@ -51,13 +51,16 @@ class SyncBannerViewModel @Inject constructor(status: SyncStatus) : ViewModel() 
         status.snapshot.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncSnapshot())
 }
 
-private enum class BannerKind { Rejected, Offline, Syncing }
+private enum class BannerKind { Rejected, Offline, Unreachable, Syncing }
 
 private fun SyncSnapshot.bannerKind(): BannerKind? = when {
     standalone -> null
     failed > 0 -> BannerKind.Rejected
     !online -> BannerKind.Offline
     running && queued > 0 -> BannerKind.Syncing
+    // On Wi-Fi but the server didn't answer (wrong URL, server down, other
+    // subnet). Same outcome for the cashier as offline, so say so.
+    lastError != null && queued > 0 -> BannerKind.Unreachable
     else -> null
 }
 
@@ -103,6 +106,15 @@ fun SyncBanner(onOpenSync: () -> Unit, vm: SyncBannerViewModel = hiltViewModel()
                         "Everything is saved on this device"
                     },
                     action = null,
+                    onClick = onOpenSync,
+                )
+                BannerKind.Unreachable -> BannerRow(
+                    icon = Icons.Outlined.CloudOff,
+                    fg = Color(0xFF92400E),
+                    bg = PosColors.WarningSoft,
+                    title = "Can't reach the server — keep selling",
+                    subtitle = "${s.queued} waiting · retrying automatically",
+                    action = "Details",
                     onClick = onOpenSync,
                 )
                 BannerKind.Syncing -> BannerRow(
