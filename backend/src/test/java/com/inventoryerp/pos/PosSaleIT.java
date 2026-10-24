@@ -300,6 +300,34 @@ class PosSaleIT extends ApiTestSupport {
         assertThat(jdbc.sql("SELECT count(*) FROM \"Invoice\" WHERE \"organizationId\" = ?").param(demoOrg)
                 .query(Long.class).single()).isEqualTo(before + 1);
         ok(200, "GET", "/pos/tabs/" + table2 + "/split", null);
+
+        // Equal split (post-parity fix: Nest wrote splitType 'equal' and always answered 500).
+        JsonNode t3 = ok(201, "POST", "/pos/tables", Map.of("name", "Equal split " + UUID.randomUUID(), "number",
+                (int) (Math.random() * 100000) + 500000));
+        String table3 = t3.get("id").asString();
+        Map<String, Object> third = new LinkedHashMap<>(input);
+        third.put("lines", List.of(line(3)));
+        ok(201, "POST", "/pos/tabs/" + table3 + "/save", third);
+        JsonNode equal = ok(201, "POST", "/pos/tabs/" + table3 + "/split/equal", Map.of("count", 2));
+        assertThat(equal.get("bills").size()).isEqualTo(2);
+        assertThat(equal.get("summary").get("fullyAssigned").asBoolean()).isTrue();
+        double billTotals = 0;
+        for (JsonNode bill : equal.get("bills")) {
+            billTotals += bill.get("totalAmount").asDouble();
+        }
+        assertThat(billTotals).isEqualTo(equal.get("summary").get("tableTotal").asDouble());
+        assertThat(jdbc.sql("SELECT DISTINCT \"splitType\"::text FROM \"SplitBill\" WHERE \"tableId\" = ?")
+                .param(table3).query(String.class).list()).containsExactly("even");
+        Res twice = as("POST", "/pos/tabs/" + table3 + "/split/equal", Map.of("count", 2));
+        assertThat(twice.status()).isEqualTo(409);
+        for (JsonNode bill : equal.get("bills")) {
+            double due = bill.get("totalAmount").asDouble();
+            Res settled = keyed("POST", "/pos/split-bills/" + bill.get("id").asString() + "/settle", Map.of(
+                    "cashSessionId", sessionId, "expectedTotal", due, "tenders",
+                    List.of(Map.of("method", "cash", "amount", due))), UUID.randomUUID().toString());
+            assertThat(settled.status()).as(settled.raw().body()).isEqualTo(200);
+        }
+        assertThat(ok(200, "GET", "/pos/tables/" + table3, null).get("status").asString()).isEqualTo("available");
     }
 
     @Test
@@ -416,13 +444,18 @@ class PosSaleIT extends ApiTestSupport {
     @Order(10)
     @DisplayName("sales reports read the POS invoices of the range")
     void reports() {
-        String today = java.time.LocalDate.now().toString();
+        // POS sales carry the trading date (the day starts at 06:00 local; DEMO is UTC), not the calendar date.
+        String today = com.inventoryerp.accounting.application.OrgDates.tradingDate(java.time.Instant.now(),
+                java.time.ZoneOffset.UTC).atOffset(java.time.ZoneOffset.UTC).toLocalDate().toString();
         String range = "?fromDate=" + today + "&toDate=" + today;
         JsonNode summary = ok(200, "GET", "/pos/reports/sales-summary" + range + "&groupBy=day", null);
         assertThat(summary.get("totals").get("orders").asInt()).isGreaterThanOrEqualTo(4);
         assertThat(summary.get("periods").get(0).get("periodKey").asString()).isEqualTo(today);
         Res badGroup = as("GET", "/pos/reports/sales-summary" + range + "&groupBy=year", null);
         assertThat(badGroup.body().get("message").asString()).isEqualTo("Unknown groupBy \"year\"");
+        Res noGroup = as("GET", "/pos/reports/sales-summary" + range, null);
+        assertThat(noGroup.status()).isEqualTo(400);
+        assertThat(noGroup.body().get("message").asString()).isEqualTo("Unknown groupBy \"undefined\"");
         Res badType = as("GET", "/pos/reports/sales-report" + range + "&orderType=boat", null);
         assertThat(badType.body().get("message").asString()).isEqualTo("Unknown orderType \"boat\"");
         Res badRange = as("GET", "/pos/reports/sales-report?fromDate=nope&toDate=" + today, null);
@@ -445,8 +478,10 @@ class PosSaleIT extends ApiTestSupport {
         JsonNode byServer = ok(200, "GET", "/pos/reports/items-by-server" + range + "&groupBy=shift", null);
         assertThat(byServer.get("groupBy").asString()).isEqualTo("shift");
         ok(200, "GET", "/pos/reports/filter-options" + range, null);
-        JsonNode shifts = ok(200, "GET", "/pos/reports/cashier-shift-summary" + range + "&registerId=" + registerId,
-                null);
+        // Shifts are picked by their opening instant, i.e. the calendar day.
+        String calendarDay = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+        JsonNode shifts = ok(200, "GET", "/pos/reports/cashier-shift-summary?fromDate=" + calendarDay + "&toDate="
+                + calendarDay + "&registerId=" + registerId, null);
         assertThat(shifts.get(0).get("sessionId").asString()).isEqualTo(sessionId);
         JsonNode x = ok(200, "GET", "/pos/reports/x-report?cashSessionId=" + sessionId, null);
         assertThat(x.has("issues")).isTrue();

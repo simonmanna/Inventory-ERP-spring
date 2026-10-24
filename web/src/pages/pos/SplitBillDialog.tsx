@@ -37,7 +37,7 @@ interface Props {
 }
 
 export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, cashSessionId, onClose, onTableClosed }) => {
-  const { data: state, isLoading } = useSplitState(tableId ?? undefined, open);
+  const { data: state, isLoading, isFetching, refetch } = useSplitState(tableId ?? undefined, open);
   const addBills = useAddSplitBills();
   const assignItems = useAssignSplitItems();
   const unassignItems = useUnassignSplitItems();
@@ -56,6 +56,12 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
   const lines = state?.lines ?? [];
   const summary = state?.summary;
   const openBills = useMemo(() => bills.filter((b) => b.status === 'open'), [bills]);
+
+  // The terminal shares this query (it watches splitActive) and may have cached the tab before the
+  // latest items were saved, so always reload the split state when the dialog opens.
+  useEffect(() => {
+    if (open && tableId) refetch();
+  }, [open, tableId, refetch]);
 
   // Keep an active (open) bill selected as the assignment target.
   useEffect(() => {
@@ -164,7 +170,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
             {/* Left — current order */}
             <div className="border-r border-slate-200 p-3 overflow-y-auto">
               <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{tx('Current Order')}</div>
-              {isLoading ? (
+              {isLoading || (isFetching && lines.length === 0) ? (
                 <div className="text-center text-slate-400 py-8 text-sm">{tx('Loading…')}</div>
               ) : lines.length === 0 ? (
                 <div className="text-center text-slate-400 py-8 text-sm">{tx('No open tab on this table.')}</div>

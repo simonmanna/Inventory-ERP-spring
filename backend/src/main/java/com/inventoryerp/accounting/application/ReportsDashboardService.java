@@ -1,5 +1,6 @@
 package com.inventoryerp.accounting.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.web.JsonConfig;
@@ -7,7 +8,6 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -50,7 +50,7 @@ public class ReportsDashboardService {
         String org = TenantContext.organizationId();
         Instant now = Instant.now();
         // `new Date(y, m, 1)` — first of the month in the server's local zone.
-        Instant startOfMonth = LocalDate.now(ZoneId.systemDefault()).withDayOfMonth(1).atStartOfDay(ZoneId.systemDefault()).toInstant();
+        Instant startOfMonth = LocalDate.now(BusinessZone.get()).withDayOfMonth(1).atStartOfDay(BusinessZone.get()).toInstant();
         Timestamp nowTs = FiscalPeriodControl.ts(now);
 
         long openInvoices = jdbc.sql("SELECT count(*)" + OPEN_SALES_INVOICE).param("org", org).query(Long.class).single();

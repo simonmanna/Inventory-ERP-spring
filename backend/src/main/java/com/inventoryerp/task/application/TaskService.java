@@ -1,5 +1,6 @@
 package com.inventoryerp.task.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
@@ -278,7 +279,7 @@ public class TaskService {
     /** Today / backlog counters, completion rate, average completion time and top assignees. */
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard() {
-        ZoneId zone = ZoneId.systemDefault();
+        ZoneId zone = BusinessZone.get();
         Instant now = Instant.now();
         Instant todayStart = LocalDate.now(zone).atStartOfDay(zone).toInstant();
         Instant todayEnd = todayStart.plusMillis(86_400_000L);
@@ -478,7 +479,7 @@ public class TaskService {
             return "null";
         }
         if (v instanceof Instant i) {
-            ZoneId zone = ZoneId.systemDefault();
+            ZoneId zone = BusinessZone.get();
             ZonedDateTime z = i.atZone(zone);
             String offset = z.getOffset().getId().equals("Z") ? "+0000" : z.getOffset().getId().replace(":", "");
             boolean dst = TimeZone.getTimeZone(zone).inDaylightTime(java.util.Date.from(i));

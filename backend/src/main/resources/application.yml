@@ -86,6 +86,8 @@ app:
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}
+  # Business "local" zone for receipts, report days and date filters (Nest: host TZ). JVM/JDBC stay UTC.
+  timezone: ${APP_TIMEZONE:UTC}
   throttle:
     enabled: ${THROTTLE_ENABLED:true}
   storage:

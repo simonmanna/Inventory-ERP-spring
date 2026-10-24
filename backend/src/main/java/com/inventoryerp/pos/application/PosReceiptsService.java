@@ -15,6 +15,7 @@ import com.inventoryerp.invoicing.domain.InvoiceItem;
 import com.inventoryerp.invoicing.domain.InvoiceItemModifier;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.notifications.NotificationsService;
@@ -1300,8 +1301,8 @@ public class PosReceiptsService {
             params.add(SqlRows.ts(from));
         }
         if (to != null) {
-            Instant end = java.time.LocalDateTime.of(to.atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
-                    java.time.LocalTime.of(23, 59, 59, 999_000_000)).atZone(java.time.ZoneId.systemDefault()).toInstant();
+            Instant end = java.time.LocalDateTime.of(to.atZone(BusinessZone.get()).toLocalDate(),
+                    java.time.LocalTime.of(23, 59, 59, 999_000_000)).atZone(BusinessZone.get()).toInstant();
             where.append(" AND i.\"issueDate\" <= ?");
             params.add(SqlRows.ts(end));
         }

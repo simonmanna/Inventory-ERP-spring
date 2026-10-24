@@ -632,7 +632,7 @@ public class CashSessionService {
     public Map<String, Object> recordMovement(String sessionId, MovementInput dto) {
         String organizationId = org();
         BigDecimal amount = dto.amount();
-        if (!List.of("pay_in", "pay_out", "adjustment").contains(dto.movementType())) {
+        if (dto.movementType() == null || !List.of("pay_in", "pay_out", "adjustment").contains(dto.movementType())) {
             throw ApiException.badRequest("Movement type must be pay_in, pay_out or adjustment");
         }
         if (amount == null || amount.signum() == 0) {

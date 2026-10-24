@@ -6,6 +6,7 @@ import static com.inventoryerp.inventory.application.InventoryQueryService.notBl
 import static com.inventoryerp.kernel.common.JsNumbers.js;
 import static com.inventoryerp.kernel.common.JsNumbers.round;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
@@ -76,7 +77,7 @@ public class InventoryReportsService {
         if (value == null || value.isEmpty()) {
             return null;
         }
-        ZoneId zone = ZoneId.systemDefault();
+        ZoneId zone = BusinessZone.get();
         LocalDate day;
         Matcher m = DAY.matcher(value.trim());
         if (m.find()) {
@@ -98,7 +99,7 @@ public class InventoryReportsService {
     }
 
     public static String localIso(Instant i) {
-        return i.atZone(ZoneId.systemDefault()).toLocalDate().toString();
+        return i.atZone(BusinessZone.get()).toLocalDate().toString();
     }
 
     record Range(Instant start, Instant end) {}
@@ -524,7 +525,7 @@ public class InventoryReportsService {
         List<String> productIds = scopedProductIds(q);
         Instant effEnd = r.end() != null ? r.end() : parseLocalDay(localIso(Instant.now()), false);
         Instant effStart = r.start() != null ? r.start()
-                : parseLocalDay(effEnd.atZone(ZoneId.systemDefault()).toLocalDate().minusDays(29).toString(), true);
+                : parseLocalDay(effEnd.atZone(BusinessZone.get()).toLocalDate().minusDays(29).toString(), true);
         if (effEnd.toEpochMilli() - effStart.toEpochMilli() > 400L * 86_400_000L) {
             throw ApiException.badRequest("Movement analysis is limited to a 400-day window");
         }
@@ -556,7 +557,7 @@ public class InventoryReportsService {
         }
         byType.sort((a, b) -> Double.compare(n(b.get("value")), n(a.get("value"))));
         Map<String, double[]> days = new LinkedHashMap<>();
-        ZoneId zone = ZoneId.systemDefault();
+        ZoneId zone = BusinessZone.get();
         for (LocalDate d = effStart.atZone(zone).toLocalDate(); !d.atStartOfDay(zone).toInstant().isAfter(effEnd);
                 d = d.plusDays(1)) {
             days.put(d.toString(), new double[5]);

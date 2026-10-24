@@ -2,6 +2,7 @@ package com.inventoryerp.accounting.application;
 
 import static com.inventoryerp.accounting.application.PostingService.plain;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -12,7 +13,6 @@ import java.sql.Timestamp;
 import java.text.Collator;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -87,7 +87,7 @@ public class InventoryValuationService {
         // A bare date means "end of that day" (server-local, like `new Date('YYYY-MM-DDT23:59:59.999')`).
         if (asOf.length() <= 10) {
             try {
-                date = LocalDateTime.parse(asOf + "T23:59:59.999").atZone(ZoneId.systemDefault()).toInstant();
+                date = LocalDateTime.parse(asOf + "T23:59:59.999").atZone(BusinessZone.get()).toInstant();
             } catch (DateTimeParseException e) {
                 date = null;
             }

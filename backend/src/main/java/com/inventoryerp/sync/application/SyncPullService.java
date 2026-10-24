@@ -393,13 +393,13 @@ public class SyncPullService {
             if (isDrawer) {
                 roles.add("drawer");
             } else {
-                if (cashEq && List.of("cash", "petty_cash", "bank").contains(key)) {
+                if (cashEq && key != null && List.of("cash", "petty_cash", "bank").contains(key)) {
                     roles.add("float_source");
                 }
-                if (cashEq || List.of("equity", "liability").contains(classification)) {
+                if (cashEq || classification != null && List.of("equity", "liability").contains(classification)) {
                     roles.add("pay_in");
                 }
-                if (cashEq || List.of("expense", "liability", "equity").contains(classification)) {
+                if (cashEq || classification != null && List.of("expense", "liability", "equity").contains(classification)) {
                     roles.add("pay_out");
                 }
                 if (cashEq) {

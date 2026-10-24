@@ -17,6 +17,10 @@ All configuration is environment variables (`.env.example` documents every key).
 Same variable names as POS-CAFE, plus `JDBC_DATABASE_URL`, `DB_USER`, `DB_PASSWORD`,
 `APP_ENCRYPTION_KEY`, S3/SMTP/Twilio/VAPID keys.
 
+Set `APP_TIMEZONE` to the shop's zone (e.g. `Africa/Kampala`). It plays the role of the Nest host's `TZ`:
+receipt/bill/KOT date and time, report "local" days and date-only filters. The JVM and the database session
+stay UTC (stored timestamps do not change). Default `UTC` = a Nest host without `TZ`.
+
 ## 3. First install
 
 ```bash

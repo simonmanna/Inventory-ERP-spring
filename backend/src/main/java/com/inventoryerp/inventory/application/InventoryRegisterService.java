@@ -7,6 +7,7 @@ import static com.inventoryerp.inventory.application.InventoryReportsService.par
 import static com.inventoryerp.kernel.common.JsNumbers.js;
 import static com.inventoryerp.kernel.common.JsNumbers.round;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -140,7 +141,7 @@ public class InventoryRegisterService {
     }
 
     private static ZonedDateTime local(Instant i) {
-        return i.atZone(ZoneId.systemDefault());
+        return i.atZone(BusinessZone.get());
     }
 
     /** Register of one kind over local days [start, end] (default: from the first movement, max 2 years). */
@@ -158,7 +159,7 @@ public class InventoryRegisterService {
                             + " ORDER BY \"createdAt\" ASC LIMIT 1").param(org())
                     .query((rs, n) -> SqlRows.value(rs.getTimestamp(1))).optional().map(o -> (Instant) o).orElse(null);
             LocalDate endDay = local(end).toLocalDate();
-            Instant floor = endDay.minusDays(730).atStartOfDay(ZoneId.systemDefault()).toInstant();
+            Instant floor = endDay.minusDays(730).atStartOfDay(BusinessZone.get()).toInstant();
             start = parseLocalDay(localIso(first != null && first.isAfter(floor) ? first : floor), true);
         }
         if (start.isAfter(end)) {
@@ -572,7 +573,7 @@ public class InventoryRegisterService {
             return d.toString();
         };
         Map<String, double[]> map = new LinkedHashMap<>();
-        ZoneId zone = ZoneId.systemDefault();
+        ZoneId zone = BusinessZone.get();
         for (LocalDate d = local(start).toLocalDate(); !d.atStartOfDay(zone).toInstant().isAfter(end); d = d.plusDays(1)) {
             map.putIfAbsent(keyOf.apply(d.atStartOfDay(zone).toInstant()), new double[5]);
         }

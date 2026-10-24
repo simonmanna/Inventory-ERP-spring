@@ -416,7 +416,8 @@ public class StockPostingService {
 
     private List<Line> fallbackLinesIssue(String movementType, BigDecimal totalValue, String productName) {
         String v = JsNumbers.dec(totalValue);
-        if (List.of("WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE").contains(movementType)) {
+        if (movementType != null
+                && List.of("WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE").contains(movementType)) {
             String sv = determination.mapped("stock_valuation");
             String expense = determination.mapped("stock_adjustment_expense");
             return List.of(Line.debit(expense, v, movementType + " · " + productName),

@@ -150,11 +150,15 @@ public class PosSplitService {
     }
 
     /**
-     * Nest parity: the bills are created with {@code splitType: 'equal'}, which is not a {@code SplitType} value
-     * (item | even | percent), so Prisma rejects the insert (500). Kept on purpose until parity is signed off.
+     * Atomically create N bills and distribute every source line equally.
+     *
+     * <p>Post-parity fix: Nest writes {@code splitType: 'equal'}, which is not a {@code SplitType} value
+     * (item | even | percent), so Prisma rejects the insert and the route always answers 500. The bills are
+     * written as {@code even} instead; everything else follows {@code pos-split.service.ts#splitEqually}.
      */
     public Map<String, Object> splitEqually(String tableId, double count) {
         String orgId = org();
+        int n = (int) Math.max(2, Math.min(20, Math.floor(count)));
         return withTableLock(tableId, () -> {
             Object[] tab = loadOpenTab(tableId);
             if (order(tab) == null) {
@@ -167,7 +171,30 @@ public class PosSplitService {
                     order(tab).get("id"), orgId) > 0) {
                 throw ApiException.conflict("A split is already in progress. Cancel it before splitting equally.");
             }
-            throw new IllegalStateException("Invalid value for argument `splitType`. Expected SplitType.");
+            String orderId = (String) order(tab).get("id");
+            List<String> billIds = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                billIds.add((String) db.insert(SplitBill.class, Obj.of("organizationId", orgId, "tableId", tableId,
+                        "sourceOrderId", orderId, "label", "Bill " + (i + 1), "splitType", "even", "status", "open",
+                        "createdBy", user())).get("id"));
+            }
+            for (Map<String, Object> item : items(tab)) {
+                double total = num(item.get("quantity"));
+                double allocated = 0;
+                for (int i = 0; i < n; i++) {
+                    double quantity = i == n - 1 ? fixed6(total - allocated) : fixed6(total / n);
+                    allocated += quantity;
+                    if (quantity > 0) {
+                        upsertItem(billIds.get(i), (String) item.get("id"), quantity);
+                    }
+                }
+            }
+            for (String billId : billIds) {
+                recomputeBill(billId);
+            }
+            audit.recordInTx(AuditInput.of("SplitBill", orderId, "create", null,
+                    Obj.of("tableId", tableId, "count", n, "splitType", "even")));
+            return reloadState(tableId, orderId);
         });
     }
 
@@ -486,6 +513,11 @@ public class PosSplitService {
         if ("void".equals(bill.get("status"))) {
             throw ApiException.conflict("That bill was cancelled");
         }
+    }
+
+    /** JS {@code Number(x.toFixed(6))}. */
+    private static double fixed6(double x) {
+        return BigDecimal.valueOf(x).setScale(6, RoundingMode.HALF_UP).doubleValue();
     }
 
     private void upsertItem(String billId, String sourceItemId, double qty) {

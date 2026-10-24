@@ -6,6 +6,7 @@ import com.inventoryerp.accounting.application.SessionReconciliation;
 import com.inventoryerp.accounting.domain.CashSession;
 import com.inventoryerp.invoicing.domain.Invoice;
 import com.inventoryerp.invoicing.domain.InvoiceItem;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -95,7 +96,7 @@ public class PosReportsService {
     // ───────────────────────────── date helpers ─────────────────────────────
 
     private static ZoneId zone() {
-        return ZoneId.systemDefault();
+        return BusinessZone.get();
     }
 
     private static ZonedDateTime local(Instant i) {
@@ -646,7 +647,7 @@ public class PosReportsService {
     public Map<String, Object> salesSummary(String fromDate, String toDate, String groupBy, Filters filters) {
         String orgId = org();
         Range r = parseRange(fromDate, toDate);
-        if (!List.of("day", "week", "month").contains(groupBy)) {
+        if (groupBy == null || !List.of("day", "week", "month").contains(groupBy)) {
             throw ApiException.badRequest("Unknown groupBy \"" + (groupBy == null ? "undefined" : groupBy) + "\"");
         }
         List<Map<String, Object>> invoices = invoices(r, filters, "i.\"createdAt\" ASC");
@@ -1263,8 +1264,8 @@ public class PosReportsService {
     public Map<String, Object> itemsByServer(String fromDate, String toDate, String groupBy, Filters saleFilters,
             String categoryId, String itemSearch) {
         Range r = parseRange(fromDate, toDate);
-        if (!List.of("day", "shift", "none").contains(groupBy)) {
-            throw ApiException.badRequest("Unknown groupBy \"" + groupBy + "\"");
+        if (groupBy == null || !List.of("day", "shift", "none").contains(groupBy)) {
+            throw ApiException.badRequest("Unknown groupBy \"" + (groupBy == null ? "undefined" : groupBy) + "\"");
         }
         List<Map<String, Object>> invoices = invoices(r, saleFilters, "i.\"issueDate\" ASC");
         attachItems(invoices);

@@ -6,6 +6,7 @@ import com.inventoryerp.documents.application.DmsRules.GuardContext;
 import com.inventoryerp.documents.application.DmsRules.Transition;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventOutboxService;
@@ -14,7 +15,6 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -171,7 +171,7 @@ public class DocumentEngineService {
         }
 
         // --- Numbering (placeholder / empty numbers only)
-        int year = LocalDate.now(ZoneId.systemDefault()).getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         String documentNumber = (String) doc.get("documentNumber");
         boolean numberingApplied = false;
         String numberingKey = (String) def.get("numberingKey");
@@ -380,7 +380,7 @@ public class DocumentEngineService {
      * engine never loads, so the counterpart carries no lines.
      */
     private String createCounterpart(Map<String, Object> doc, String counterpartCode, String userId) {
-        int year = LocalDate.now(ZoneId.systemDefault()).getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         Map<String, Object> cpDef = store.rawDefByCode(counterpartCode);
         if (cpDef == null) {
             throw ApiException.badRequest("Counterpart type '" + counterpartCode + "' not registered");

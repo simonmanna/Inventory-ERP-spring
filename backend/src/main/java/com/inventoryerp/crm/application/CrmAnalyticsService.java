@@ -1,5 +1,6 @@
 package com.inventoryerp.crm.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
@@ -8,7 +9,6 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -108,10 +108,10 @@ public class CrmAnalyticsService {
     public List<Map<String, Object>> getForecast(Double months) {
         double m = months == null ? 3 : months;
         double limit = Double.isNaN(m) ? Double.NaN : Math.min(12, Math.max(1, m));
-        ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
+        ZonedDateTime now = ZonedDateTime.now(BusinessZone.get());
         Instant nowInstant = now.toInstant();
         Instant horizon = Double.isNaN(limit) ? null : now.withDayOfMonth(1).toLocalDate()
-                .plusMonths((long) Math.floor(limit)).atStartOfDay(ZoneId.systemDefault()).toInstant();
+                .plusMonths((long) Math.floor(limit)).atStartOfDay(BusinessZone.get()).toInstant();
         Map<String, Double> buckets = new LinkedHashMap<>();
         for (int i = 0; i < limit; i++) {
             buckets.put(now.getYear() + "-" + pad(now.getMonthValue() + i), 0d);
@@ -123,7 +123,7 @@ public class CrmAnalyticsService {
             if (close.isBefore(nowInstant) || (horizon != null && !close.isBefore(horizon))) {
                 continue;
             }
-            ZonedDateTime local = close.atZone(ZoneId.systemDefault());
+            ZonedDateTime local = close.atZone(BusinessZone.get());
             String key = local.getYear() + "-" + pad(local.getMonthValue());
             buckets.put(key, buckets.getOrDefault(key, 0d) + num(d.get("amount")));
         }

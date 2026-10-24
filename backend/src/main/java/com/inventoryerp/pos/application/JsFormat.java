@@ -1,10 +1,10 @@
 package com.inventoryerp.pos.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 /** JavaScript string / number formatting used by the receipt and report builders. */
@@ -76,7 +76,7 @@ public final class JsFormat {
     }
 
     private static ZonedDateTime local(Instant i) {
-        return i.atZone(ZoneId.systemDefault());
+        return i.atZone(BusinessZone.get());
     }
 
     /** {@code d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. */

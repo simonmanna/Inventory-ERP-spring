@@ -2,6 +2,7 @@ package com.inventoryerp.pos.application;
 
 import static com.inventoryerp.pos.application.PosSql.org;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.shared.web.ApiException;
@@ -9,7 +10,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -68,11 +68,11 @@ public class SalesReturnsService {
         LocalDate to = day(dateTo);
         if (from != null) {
             where.append(" AND r.\"createdAt\" >= ?");
-            params.add(SqlRows.ts(from.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+            params.add(SqlRows.ts(from.atStartOfDay(BusinessZone.get()).toInstant()));
         }
         if (to != null) {
             where.append(" AND r.\"createdAt\" <= ?");
-            params.add(SqlRows.ts(to.atTime(LocalTime.of(23, 59, 59, 999_000_000)).atZone(ZoneId.systemDefault())
+            params.add(SqlRows.ts(to.atTime(LocalTime.of(23, 59, 59, 999_000_000)).atZone(BusinessZone.get())
                     .toInstant()));
         }
         String fromSql = " FROM \"PosRefund\" r JOIN \"Invoice\" i ON i.id = r.\"invoiceId\""

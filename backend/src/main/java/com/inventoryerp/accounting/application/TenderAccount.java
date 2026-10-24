@@ -33,7 +33,7 @@ public final class TenderAccount {
 
     public static Resolved resolve(JdbcClient jdbc, AccountDeterminationService determination, String organizationId,
             String method, String accountId, String cashSessionId) {
-        if (!List.of("cash", "bank", "cheque", "card", "mobile_money", "store_credit").contains(method)) {
+        if (method == null || !List.of("cash", "bank", "cheque", "card", "mobile_money", "store_credit").contains(method)) {
             throw ApiException.badRequest("Unsupported payment method");
         }
         String sessionId = null;

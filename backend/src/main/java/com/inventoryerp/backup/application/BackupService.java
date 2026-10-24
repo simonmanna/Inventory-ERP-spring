@@ -1,5 +1,6 @@
 package com.inventoryerp.backup.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.settings.SettingsService;
 import com.inventoryerp.kernel.web.JsonConfig;
 import com.inventoryerp.shared.web.ApiException;
@@ -1227,7 +1228,7 @@ public class BackupService {
         }
         if ("smart".equals(mode)) {
             Set<Path> keep = new LinkedHashSet<>();
-            ZoneId zone = ZoneId.systemDefault();
+            ZoneId zone = BusinessZone.get();
             take(items, keep, i -> Instant.ofEpochMilli(i.mtime()).atZone(zone).toLocalDate().toString(),
                     intOr(r.get("smartDaily"), 14));
             take(items, keep, i -> String.valueOf((long) Math.floor((i.mtime() / 86_400_000.0 + 3) / 7)),

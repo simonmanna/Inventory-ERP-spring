@@ -77,7 +77,8 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 - [x] Events published/consumed as in Nest
 - [x] Jest specs ported; integration tests; authz + tenant isolation tests (see Status for what is not ported)
 - [ ] Parity scenarios `contract-tests/scenarios/pos-*.json` — written, not yet run against a live Nest
-- [ ] Web screens for this module work against Spring (no console errors) — not exercised
+- [x] Web screens for this module work against Spring (no console errors) — walkthrough 2026-10-24, see
+  "Exit-criteria runs"; QR ordering (`/menu/public/*`) still needs a JWT, see below
 - [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations
@@ -97,6 +98,21 @@ Post-parity additions (no Nest counterpart, explicitly labelled):
   The 5 routes live in the `pos` package, so the `PosSaleIT` authorization matrix covers 224 routes
   (219 ported + 5 returns).
 
+Post-parity fixes (found in the 2026-10-24 web walkthrough, explicitly labelled):
+
+- `POST /pos/tabs/:tableId/split/equal` works: the bills are written with split type `even` (Nest wrote `'equal'`,
+  which the `SplitType` enum rejects, so the route always answered 500). Allocation is Nest's
+  (`total / n` to 6 dp, the last bill takes the remainder). `PosSaleIT#tabsAndSplit` covers it.
+- `GET /pos/reports/sales-summary` without `groupBy` answers 400 `Unknown groupBy "undefined"` like Nest (was a 500
+  NPE). The same null guard was added where a missing request value reached `List.of(..).contains` (items-by-server,
+  cash movement type, tender method, stock-posting movement type, sync pull account roles).
+- `APP_TIMEZONE` (default `UTC`) replaces the host zone wherever Nest reads local time (receipt / bill / KOT date and
+  time, report days, date-only filters) — Nest follows the host `TZ`, Spring pins the JVM to UTC for Prisma parity.
+- SSE clients that disconnect (`/pos/tables/stream`, `/pos/kds/stream`) no longer log an ERROR with a stack trace and
+  a failed JSON error write per disconnect.
+- Web: `SplitBillDialog` refetches the split state when it opens (the terminal caches the same query when the table
+  opens, so a freshly filled tab showed "No open tab on this table" for 30 s). Same client bug in POS-CAFE.
+
 Same as Nest, kept on purpose:
 
 - `/menu/public/*` ("public" digital menu) is **not** `@Public()` in Nest: the global JWT guard applies, so a bearer
@@ -106,8 +122,6 @@ Same as Nest, kept on purpose:
 - `POST /pos/tables/:id/split-bill` always answers 409 (`This operation conflicts with one that was just completed…`):
   the child orders are raised while the source tab still holds the table, which the
   `Order_one_open_dine_in_tab_per_table` index rejects. Split bills work through `/pos/tabs/:tableId/split*`.
-- `POST /pos/tabs/:tableId/split/equal` answers 500: Nest writes split type `'equal'`, which the `SplitType` enum
-  does not have.
 - `CreateReservationBody` has no `id`, so the offline client-minted reservation id is rejected by the whitelist.
 - `POST /pos/tables/:id/transfer/:targetId` checks the target's status before the source's open orders.
 - Reports read "local" days in the server time zone (UTC), like the Nest host; `toLocaleTimeString()` /
@@ -160,7 +174,8 @@ Not ported / not done (owner decision or later phase):
   (golden ESC/POS bytes), `pos-reports.service`, `pos-print-lifecycle.service`, `pos.workflows`,
   `pos-tables.split-lifecycle` are covered behaviourally by the ITs above, not line by line.
 - k6 p95 < 150 ms at 50 terminals: **not met** (see "Exit-criteria runs" below).
-- Web POS terminal: blocked by a client bug (see below); customer display and QR menu screens not exercised.
+- QR menu ordering: `/menu/public/*` needs a JWT (Nest bug kept), so a customer's phone cannot load or order. Opening
+  it means running a checkout with no staff user, drawer or verified payment — owner decision, not done.
 - Parity scenarios not run against a live Nest.
 
 ### Exit-criteria runs (2026-10-20, Windows 11 + Docker Desktop Postgres 16, fresh `seed` database)
@@ -179,7 +194,15 @@ Not ported / not done (owner decision or later phase):
   work, every API call 2xx. The terminal page crashes client-side: `ShiftCloseDialog.tsx` calls `usePosSettings()`
   after `if (!session) return null;` ("Rendered more hooks than during the previous render") whenever an open shift
   exists. The file is identical in POS-CAFE (regression from its commit `17126b5`, 2026-10-18), so it fails against
-  Nest too; not fixed here (`web/` is no-change) — owner decision.
+  Nest too. Fixed later in commit b46233c.
+- **Web walkthrough** (2026-10-24, fresh `seed` database, Vite → Spring, failed-request recorder in the page): PIN
+  login, open shift, table tab → KOT → bill → cash settle with change, item split with mobile-money + cash bills,
+  equal split, fired-line void with manager override, sales return with manager approval, close shift (cash and MoMo
+  tie out), KDS start → ready → served, customer display, and 19 back-office POS pages (reports, stations, KDS
+  reports, registers, tables / reservations / zones / table reports, menu / modifiers / combos / accompaniments,
+  receipts, receivables, returns, posting monitor, GL reconciliation, staff, dashboard): no failed request and no
+  console error after the fixes listed under "Post-parity fixes". GL balanced, every stock-posting job done, no
+  inventory exception.
 - **Load smoke** (`tools/perf/checkout-smoke.mjs`, one register + session per virtual till, `THROTTLE_ENABLED=false`
   because the throttle is per user and every till shares the admin): 1 till p50 ≈ 240 ms; 10 tills ≈ 13 checkouts/s,
   p95 ≈ 0.9 s; 50 tills ≈ 20/s, p95 ≈ 3 s. One checkout runs ~400 SQL statements in ~36 transactions (Order → KOT →

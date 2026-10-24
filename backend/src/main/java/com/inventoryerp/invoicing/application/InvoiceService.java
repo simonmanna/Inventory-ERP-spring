@@ -16,6 +16,7 @@ import com.inventoryerp.invoicing.domain.InvoiceItem;
 import com.inventoryerp.invoicing.domain.Payment;
 import com.inventoryerp.invoicing.domain.PaymentAllocation;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -31,7 +32,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -129,8 +129,8 @@ public class InvoiceService {
             ip.add(ts(f.dateFrom()));
         }
         if (notBlank(f.dateTo())) {
-            Instant end = LocalDateTime.of(EntityPatch.toInstant(f.dateTo()).atZone(ZoneId.systemDefault()).toLocalDate(),
-                    LocalTime.of(23, 59, 59, 999_000_000)).atZone(ZoneId.systemDefault()).toInstant();
+            Instant end = LocalDateTime.of(EntityPatch.toInstant(f.dateTo()).atZone(BusinessZone.get()).toLocalDate(),
+                    LocalTime.of(23, 59, 59, 999_000_000)).atZone(BusinessZone.get()).toInstant();
             dw.append(" AND \"issueDate\" <= ?");
             iw.append(" AND \"issueDate\" <= ?");
             dp.add(SqlRows.ts(end));
@@ -293,7 +293,7 @@ public class InvoiceService {
             if (term != null) {
                 name = (String) term.get("name");
                 if (due == null) {
-                    due = terms.dueDateFor(paymentTermId, EntityPatch.toInstant(issueDate), ZoneId.systemDefault());
+                    due = terms.dueDateFor(paymentTermId, EntityPatch.toInstant(issueDate), BusinessZone.get());
                 }
             }
         }

@@ -40,10 +40,10 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (879/1118). Per-module status,
    trading core is ported as `PosLakeviewSimIT`). See `docs/spec/pos.md` → Status for the full POS list.
 6. P5 exit criteria: sell-loop e2e, offline kill-and-replay, emulated ESC/POS printer, web tables / KDS: **done**
    (results in `docs/spec/pos.md` → "Exit-criteria runs"). Still open: p95 < 150 ms (P8: 1 till 342 ms, 10 tills 527 ms,
-   50 tills 1.8 s on Docker Desktop; ~400 statements / ~34 commits per checkout — see `docs/releases/v1.0.0.md`), the web terminal crash (client bug in `ShiftCloseDialog.tsx`,
-   identical in POS-CAFE — owner decision), customer display / QR screens, parity runs against Nest.
+   50 tills 1.8 s on Docker Desktop; ~400 statements / ~34 commits per checkout — see `docs/releases/v1.0.0.md`), QR ordering (`/menu/public/*` needs a JWT), parity runs against Nest. Web
+   walkthrough of the POS screens done 2026-10-24 (`docs/spec/pos.md` → Exit-criteria runs).
 7. POS behaviour kept on purpose that the owner may want fixed after parity (`docs/spec/pos.md`): `/menu/public/*`
-   needs a JWT, `/pos/tables/:id/split-bill` always 409s, `/pos/tabs/:id/split/equal` 500s, online-order status
+   needs a JWT, `/pos/tables/:id/split-bill` always 409s, online-order status
    PATCH is rejected by the whitelist.
 8. P8 owner items: cut-over rehearsal on a production copy, RLS enforced with a non-superuser role on staging,
    decision on revoking the successor of a replayed refresh token, approval of all listed deviations.

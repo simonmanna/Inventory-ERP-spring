@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -7,7 +8,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -34,8 +34,8 @@ final class ProcurementSql {
 
     /** JS {@code d.setHours(23, 59, 59, 999)} in the server's local zone. */
     static Instant endOfLocalDay(Instant d) {
-        return LocalDateTime.of(d.atZone(ZoneId.systemDefault()).toLocalDate(), LocalTime.of(23, 59, 59, 999_000_000))
-                .atZone(ZoneId.systemDefault()).toInstant();
+        return LocalDateTime.of(d.atZone(BusinessZone.get()).toLocalDate(), LocalTime.of(23, 59, 59, 999_000_000))
+                .atZone(BusinessZone.get()).toInstant();
     }
 
     /** A JS double stored into a Prisma Decimal column ({@code new Decimal(n)} = {@code String(n)}). */

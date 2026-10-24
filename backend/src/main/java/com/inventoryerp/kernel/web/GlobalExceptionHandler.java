@@ -27,6 +27,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
@@ -165,6 +167,15 @@ public class GlobalExceptionHandler {
         body.put("statusCode", 409);
         body.put("requestId", req.getAttribute(RequestIdFilter.ATTRIBUTE));
         return respond(req, ex, HttpStatus.CONFLICT, body);
+    }
+
+    /**
+     * The client went away (closed tab, SSE stream dropped) or an async stream timed out. There is nobody to answer
+     * and the response may already be {@code text/event-stream}, so write nothing instead of a JSON error body.
+     */
+    @ExceptionHandler({AsyncRequestNotUsableException.class, AsyncRequestTimeoutException.class})
+    void clientGone(Exception ex, HttpServletRequest req) {
+        log.debug("Async request ended on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.toString());
     }
 
     @ExceptionHandler(Exception.class)

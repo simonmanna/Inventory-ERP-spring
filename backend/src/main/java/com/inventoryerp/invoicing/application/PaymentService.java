@@ -15,6 +15,7 @@ import com.inventoryerp.invoicing.domain.PaymentAllocation;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -33,7 +34,6 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -131,8 +131,8 @@ public class PaymentService {
             params.add(ts(dateFrom));
         }
         if (dateTo != null && !dateTo.isEmpty()) {
-            Instant end = LocalDateTime.of(EntityPatch.toInstant(dateTo).atZone(ZoneId.systemDefault()).toLocalDate(),
-                    LocalTime.of(23, 59, 59, 999_000_000)).atZone(ZoneId.systemDefault()).toInstant();
+            Instant end = LocalDateTime.of(EntityPatch.toInstant(dateTo).atZone(BusinessZone.get()).toLocalDate(),
+                    LocalTime.of(23, 59, 59, 999_000_000)).atZone(BusinessZone.get()).toInstant();
             where.append(" AND \"paymentDate\" <= ?");
             params.add(SqlRows.ts(end));
         }

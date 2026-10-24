@@ -14,6 +14,7 @@ import com.inventoryerp.inventory.application.StockMove.Received;
 import com.inventoryerp.inventory.application.StockMove.Transferred;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -28,7 +29,6 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -205,7 +205,7 @@ public class StockService {
     private String generateBatchNumber() {
         String format = settings.resolveString("inventory.batchNumberFormat", SettingContext.EMPTY);
         String n = seq.next("batch_no", "", 4);
-        LocalDate d = LocalDate.now(ZoneId.systemDefault());
+        LocalDate d = LocalDate.now(BusinessZone.get());
         return format.replace("YYYY", String.valueOf(d.getYear()))
                 .replace("MM", String.format("%02d", d.getMonthValue()))
                 .replace("DD", String.format("%02d", d.getDayOfMonth()))

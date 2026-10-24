@@ -12,6 +12,7 @@ import com.inventoryerp.inventory.domain.InventoryLocation;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -23,7 +24,6 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -261,7 +261,7 @@ public class InventoryCountService {
     }
 
     private static String autoName(String countType) {
-        LocalDate now = LocalDate.now(ZoneId.systemDefault());
+        LocalDate now = LocalDate.now(BusinessZone.get());
         return LABELS.get(countType) + " Count – " + MONTHS[now.getMonthValue() - 1] + " "
                 + String.format("%02d", now.getDayOfMonth()) + ", " + now.getYear();
     }
