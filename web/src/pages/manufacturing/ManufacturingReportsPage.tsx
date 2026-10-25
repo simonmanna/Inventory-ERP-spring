@@ -15,7 +15,7 @@ export function ManufacturingReportsPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold"><BarChart3 className="h-6 w-6" /> {tx('Manufacturing Reports')}</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-semibold"><BarChart3 className="h-6 w-6" /> {tx('Production Reports')}</h1>
         <p className="text-sm text-muted-foreground">{tx('Costing controls and production analytics.')}</p>
       </div>
 

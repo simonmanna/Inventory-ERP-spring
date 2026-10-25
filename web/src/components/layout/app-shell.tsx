@@ -61,7 +61,7 @@ import {
   Handshake,
   Wrench,
   Timer,
-  Database,
+  LayoutGrid,
   Wine,
   KeyRound,
   Calculator,
@@ -225,6 +225,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/waste', label: 'Damages & Waste', icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/transfers', label: 'Stock Transfers', icon: Truck, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/locations', label: 'Locations', icon: MapPin, permission: PERMISSIONS.inventoryLocation.read },
+      { to: '/products', label: 'Products', icon: Package, permission: PERMISSIONS.products.view },
+      { to: '/uom', label: 'Units of Measure', icon: Ruler, permission: PERMISSIONS.uom.read },
       { to: '/inventory/reports', label: 'Inventory Reports', icon: BarChart3, permission: 'inventory:read', reportId: 'inventory.reports' },
     ],
   },
@@ -254,12 +256,11 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: 'Master Data',
-    icon: Database,
+    title: 'Tables',
+    icon: LayoutGrid,
     items: [
-      { to: '/products', label: 'Products', icon: Package, permission: PERMISSIONS.products.view },
-      { to: '/uom', label: 'Units of Measure', icon: Ruler, permission: PERMISSIONS.uom.read },
       { to: '/tables', label: 'Tables', icon: Coffee, permission: PERMISSIONS.menu.view },
+      { to: '/tables/zones', label: 'Areas', icon: MapPin, permission: PERMISSIONS.menu.view },
     ],
   },
   {
@@ -365,10 +366,10 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: 'Manufacturing/Bakery',
+    title: 'Production',
     icon: Factory,
     items: [
-      { to: '/manufacturing', label: 'Production', icon: Factory },
+      { to: '/manufacturing', label: 'Dashboard', icon: Factory },
       { to: '/manufacturing/orders', label: 'Orders', icon: ClipboardList },
       { to: '/manufacturing/boms', label: 'Recipes (BOM)', icon: ScrollText },
       { to: '/manufacturing/planning', label: 'Planning', icon: CalendarDays },
@@ -675,12 +676,13 @@ export function AppShell() {
                 <button
                   type="button"
                   onClick={() => toggleSection(section.title as string)}
-                  className="press mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[14px] font-bold uppercase tracking-[0.14em] hover:bg-white/[0.06]"
-                  style={{ color: isOpen ? sb.sidebarActive : sb.sidebarMuted, marginBottom: 2 }}
+                  className="sb-link press relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[15px]"
                   aria-expanded={isOpen}
                 >
-                  {section.icon && <section.icon className="h-4 w-4 shrink-0" />}
-                  <span className="flex-1 truncate text-left">{sectionTitle(section.title, t)}</span>
+                  {section.icon && (
+                    <section.icon className="sb-link-icon h-4 w-4 shrink-0" style={{ width: 16, height: 16 }} />
+                  )}
+                  <span className="flex-1 truncate text-left tracking-[0.01em]">{sectionTitle(section.title, t)}</span>
                   <ChevronDown
                     className={cn('h-3.5 w-3.5 shrink-0 opacity-70 transition-transform duration-200 ease-out', !isOpen && '-rotate-90')}
                   />
@@ -693,12 +695,12 @@ export function AppShell() {
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === '/' || item.to === '/returns' || item.to === '/accounts' || item.to === '/accounts/cash-accounts'}
+                    end={item.to === '/' || item.to === '/returns' || item.to === '/accounts' || item.to === '/accounts/cash-accounts' || item.to === '/tables'}
                     onClick={onItemClick}
                     className={({ isActive }) =>
                       cn(
                         'sb-link press group relative flex items-center gap-3 rounded-lg px-3 py-2 text-[15px]',
-                        section.title && !collapsed && 'enter-up',
+                        section.title && !collapsed && 'enter-up pl-6',
                         isActive && 'is-active',
                         collapsed && 'justify-center px-2',
                       )
