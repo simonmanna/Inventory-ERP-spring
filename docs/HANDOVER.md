@@ -17,8 +17,8 @@ and pitfalls learned so far.
 | P8 | hardening + release prep | — | `phase/P8-hardening` (branched from P6) |
 
 Optional P7 modules (beverage, fixedasset, manufacturing, rental, repair, communication — 239 routes) are not in
-1.0; their flags stay off. Nothing is pushed, merged or tagged; the owner decides on merge / PRs and on tagging
-`v1.0.0` (that triggers `.github/workflows/release.yml`). Release notes: `docs/releases/v1.0.0.md`.
+1.0; their flags stay off. All phase branches and the `perf/pos-checkout` work are merged into `main` and pushed;
+`v1.0.0` is not tagged yet — the owner decides (tagging triggers `.github/workflows/release.yml`). Release notes: `docs/releases/v1.0.0.md`.
 Run `cd backend && ./gradlew build --offline` (Docker required for Testcontainers) before claiming green.
 
 Totals and per-route ticks: `docs/PORT_STATUS.md` (879/1118). Per-module status, deviations and

@@ -3,11 +3,16 @@
 #     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # Upgrades: IMAGE_TAG=<new> scripts/upgrade.sh --pull   (COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml")
 services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (never the dev default)}
+
   api:
     image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-api:${IMAGE_TAG:-latest}
     pull_policy: always
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (never the dev default)}
     deploy:
       resources:
         limits:
