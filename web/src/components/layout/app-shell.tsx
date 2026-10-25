@@ -313,7 +313,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: 'Purchasing',
+    title: 'Purchases',
     icon: Truck,
     items: [
       { to: '/procurement/purchase-orders', label: 'Purchases', icon: ShoppingCart, permission: 'purchase_order:read' },
@@ -469,7 +469,7 @@ const SECTION_TITLE_KEYS: Record<string, string> = {
   Rentals: 'nav.rentals',
   'Repair & Maintenance': 'nav.repairMaintenance',
   'Human Resources': 'nav.workforce',
-  Purchasing: 'nav.purchasing',
+  Purchases: 'nav.purchasing',
   Expenses: 'nav.expenses',
   'Cash Flow': 'nav.cashFlow',
   Tasks: 'nav.tasks',
