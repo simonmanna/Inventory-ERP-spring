@@ -478,12 +478,12 @@ html.theme-anim *::after {
      ──────────────────────────────────────────────────────────────────────── */
   .sb-link {
     color: var(--sb-text);
+    font-weight: 600;
     transition: background-color 160ms ease, color 160ms ease;
   }
   .sb-link.is-active {
     color: var(--sb-active);
     background: var(--sb-active-bg);
-    font-weight: 600;
   }
   @media (hover: hover) and (pointer: fine) {
     .sb-link:not(.is-active):hover { background: var(--sb-hover); color: var(--sb-active); }

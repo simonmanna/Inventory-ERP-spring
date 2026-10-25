@@ -229,23 +229,41 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: 'Master Data',
-    icon: Database,
+    title: 'Customers',
+    icon: Users,
     items: [
       { to: '/customers', label: 'Customers', icon: Users, permission: PERMISSIONS.partners.view },
-      { to: '/suppliers', label: 'Suppliers', icon: Building2, permission: PERMISSIONS.partners.view },
-      { to: '/products', label: 'Products', icon: Package, permission: PERMISSIONS.products.view },
-      { to: '/uom', label: 'Units of Measure', icon: Ruler, permission: PERMISSIONS.uom.read },
-      { to: '/menu', label: 'Menu', icon: Coffee, permission: PERMISSIONS.menu.view },
-      { to: '/tables', label: 'Tables', icon: Coffee, permission: PERMISSIONS.menu.view },
-      { to: '/menu/modifiers', label: 'Modifiers', icon: Tag, permission: PERMISSIONS.menu.view },
-      // F13 — combo authoring hidden while combo selling is paused (the POS
-      // checkout guard rejects combo lines). Route kept for when it is finished.
-      { to: '/menu/accompaniments', label: 'Accompaniments', icon: Tag, permission: PERMISSIONS.menu.view },
     ],
   },
   {
-    title: 'Money & Accounts',
+    title: 'Suppliers',
+    icon: Building2,
+    items: [
+      { to: '/suppliers', label: 'Suppliers', icon: Building2, permission: PERMISSIONS.partners.view },
+    ],
+  },
+  {
+    title: 'Menus',
+    icon: Coffee,
+    items: [
+      { to: '/menu', label: 'Menu', icon: Coffee, permission: PERMISSIONS.menu.view },
+      // F13 — combo authoring hidden while combo selling is paused (the POS
+      // checkout guard rejects combo lines). Route kept for when it is finished.
+      { to: '/menu/accompaniments', label: 'Accompaniments', icon: Tag, permission: PERMISSIONS.menu.view },
+      { to: '/menu/modifiers', label: 'Modifiers', icon: Tag, permission: PERMISSIONS.menu.view },
+    ],
+  },
+  {
+    title: 'Master Data',
+    icon: Database,
+    items: [
+      { to: '/products', label: 'Products', icon: Package, permission: PERMISSIONS.products.view },
+      { to: '/uom', label: 'Units of Measure', icon: Ruler, permission: PERMISSIONS.uom.read },
+      { to: '/tables', label: 'Tables', icon: Coffee, permission: PERMISSIONS.menu.view },
+    ],
+  },
+  {
+    title: 'Cash Flow & Accounts',
     icon: Wallet,
     items: [
       { to: '/accounts/cash-accounts', label: 'Overview', icon: LayoutDashboard, permission: PERMISSIONS.account.read },
@@ -657,7 +675,7 @@ export function AppShell() {
                 <button
                   type="button"
                   onClick={() => toggleSection(section.title as string)}
-                  className="press mt-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[14px] font-bold uppercase tracking-[0.14em] hover:bg-white/[0.06]"
+                  className="press mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[14px] font-bold uppercase tracking-[0.14em] hover:bg-white/[0.06]"
                   style={{ color: isOpen ? sb.sidebarActive : sb.sidebarMuted, marginBottom: 2 }}
                   aria-expanded={isOpen}
                 >
