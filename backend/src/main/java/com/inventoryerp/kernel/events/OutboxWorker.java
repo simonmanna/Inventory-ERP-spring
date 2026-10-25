@@ -2,6 +2,7 @@ package com.inventoryerp.kernel.events;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -73,25 +74,37 @@ public class OutboxWorker {
                 .query((rs, n) -> new Claimed(rs.getString("id"), rs.getString("eventName"), rs.getString("payload"),
                         rs.getInt("attempts")))
                 .list();
-        int shipped = 0;
-        for (Claimed row : claimed) {
-            try {
-                JsonNode payload = row.payload() == null ? mapper.nullNode() : mapper.readTree(row.payload());
-                handlers.dispatch(row.eventName(), payload);
-                mark("""
-                                UPDATE "EventOutbox" SET status = 'shipped', "shippedAt" = now(), "claimToken" = NULL,
-                                       "claimedAt" = NULL WHERE id = ?""", row.id());
-                shipped++;
-            } catch (RuntimeException err) {
-                String msg = err.toString();
-                msg = msg.length() > 500 ? msg.substring(0, 500) : msg;
-                log.warn("Outbox row {} failed (attempt {}): {}", row.id(), row.attempts() + 1, msg);
-                mark("""
-                                UPDATE "EventOutbox" SET attempts = attempts + 1, "lastError" = ?, "claimToken" = NULL,
-                                       "claimedAt" = NULL WHERE id = ?""", msg, row.id());
+        // Dispatched rows are marked shipped together (one statement / commit per batch instead of per row). A crash
+        // before that leaves them claimed; the stale-claim rule re-ships them, as it would a crash mid-dispatch.
+        List<String> shipped = new ArrayList<>();
+        try {
+            for (Claimed row : claimed) {
+                try {
+                    JsonNode payload = row.payload() == null ? mapper.nullNode() : mapper.readTree(row.payload());
+                    handlers.dispatch(row.eventName(), payload);
+                    shipped.add(row.id());
+                } catch (RuntimeException err) {
+                    String msg = err.toString();
+                    msg = msg.length() > 500 ? msg.substring(0, 500) : msg;
+                    log.warn("Outbox row {} failed (attempt {}): {}", row.id(), row.attempts() + 1, msg);
+                    mark("""
+                                    UPDATE "EventOutbox" SET attempts = attempts + 1, "lastError" = ?, "claimToken" = NULL,
+                                           "claimedAt" = NULL WHERE id = ?""", msg, row.id());
+                }
+            }
+        } finally {
+            if (!shipped.isEmpty()) {
+                tx.executeWithoutResult(s -> {
+                    jdbc.sql("SET LOCAL synchronous_commit = off").update();
+                    jdbc.sql("""
+                                    UPDATE "EventOutbox" SET status = 'shipped', "shippedAt" = now(), "claimToken" = NULL,
+                                           "claimedAt" = NULL WHERE id IN (:ids)""")
+                            .param("ids", shipped)
+                            .update();
+                });
             }
         }
-        return shipped;
+        return shipped.size();
     }
 
     private void mark(String sql, Object... params) {

@@ -1,6 +1,7 @@
 package com.inventoryerp.accounting.application;
 
 import com.inventoryerp.accounting.domain.AccountMapping;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
@@ -56,6 +57,7 @@ public class AccountMappingService {
                         + " VALUES (gen_random_uuid()::text, ?1, ?2, ?3, now()) ON CONFLICT (\"organizationId\", key)"
                         + " DO UPDATE SET \"accountId\" = EXCLUDED.\"accountId\", \"updatedAt\" = now()")
                 .setParameter(1, organizationId).setParameter(2, key).setParameter(3, accountId).executeUpdate();
+        ReadMemo.clear();
         em.clear();
         AccountMapping row = em.createQuery("select m from AccountMapping m where m.organizationId = :org and m.key = :key",
                 AccountMapping.class).setParameter("org", organizationId).setParameter("key", key).getSingleResult();

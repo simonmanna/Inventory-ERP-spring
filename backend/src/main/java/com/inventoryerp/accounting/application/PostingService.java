@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.domain.JournalEntry;
 import com.inventoryerp.accounting.domain.JournalEntryStatus;
 import com.inventoryerp.accounting.domain.JournalLine;
 import com.inventoryerp.kernel.common.Money;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.AfterCommit;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.sequence.SequenceService;
@@ -24,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -331,8 +333,10 @@ public class PostingService {
     }
 
     private BigDecimal rate(PostingRequest request, Instant date) {
-        String baseCode = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
-                .param(TenantContext.organizationId()).query(String.class).optional().orElse("USD");
+        String orgId = TenantContext.organizationId();
+        String baseCode = Optional.ofNullable(ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\""
+                + " WHERE id = ?").param(orgId).query(String.class).optional().orElse(null), "org.currencyCode", orgId))
+                .orElse("USD");
         BigDecimal rate = Money.dec(request.exchangeRate() == null ? 1 : request.exchangeRate());
         if (request.currencyId() != null && !request.currencyId().equals(baseCode)) {
             try {

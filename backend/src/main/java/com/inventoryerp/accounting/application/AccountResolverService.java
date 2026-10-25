@@ -2,6 +2,7 @@ package com.inventoryerp.accounting.application;
 
 import com.inventoryerp.accounting.domain.Account;
 import com.inventoryerp.accounting.domain.AccountCategory;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.persistence.DbEnum;
 import com.inventoryerp.shared.web.ApiException;
@@ -92,13 +93,16 @@ public class AccountResolverService {
     }
 
     public String byMappingOptional(String key) {
-        List<String> rows = em.createQuery("select m.accountId from AccountMapping m where m.key = :key"
-                        + " and m.organizationId = :org", String.class)
-                .setParameter("key", key)
-                .setParameter("org", TenantContext.organizationId())
-                .setMaxResults(1)
-                .getResultList();
-        return rows.isEmpty() ? null : rows.getFirst();
+        String organizationId = TenantContext.organizationId();
+        return ReadMemo.get(() -> {
+            List<String> rows = em.createQuery("select m.accountId from AccountMapping m where m.key = :key"
+                            + " and m.organizationId = :org", String.class)
+                    .setParameter("key", key)
+                    .setParameter("org", organizationId)
+                    .setMaxResults(1)
+                    .getResultList();
+            return rows.isEmpty() ? null : rows.getFirst();
+        }, "accountMapping", organizationId, key);
     }
 
     // ------------------------------------------------------------------ category keys
@@ -179,6 +183,7 @@ public class AccountResolverService {
                             + " ON CONFLICT (\"organizationId\", key) DO NOTHING")
                     .setParameter(1, organizationId).setParameter(2, mappingKey).setParameter(3, account.getId())
                     .executeUpdate();
+            ReadMemo.clear();
         }
         return account.getId();
     }

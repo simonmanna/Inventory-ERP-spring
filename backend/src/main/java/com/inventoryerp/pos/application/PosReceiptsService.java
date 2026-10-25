@@ -17,6 +17,7 @@ import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.kernel.settings.SettingsService;
@@ -40,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.openpdf.text.Document;
 import org.openpdf.text.Font;
@@ -226,8 +228,9 @@ public class PosReceiptsService {
         return out;
     }
 
+    /** Org-level setting value; memoized for the request ({@link ReadMemo}) so one receipt render reads it once. */
     private Object settingValue(String key) {
-        return settings.getValue(key);
+        return ReadMemo.get(() -> Optional.ofNullable(settings.getValue(key)), "setting", org(), key).orElse(null);
     }
 
     /** {@code receipt.header} / {@code receipt.footer} setting values. */
@@ -280,7 +283,11 @@ public class PosReceiptsService {
 
     /** Plain-text 48-column receipt. */
     public String buildTextReceipt(String invoiceId, boolean isReprint, String copyLabel) {
-        Map<String, Object> inv = resolveInvoice(invoiceId);
+        return buildTextReceipt(resolveInvoice(invoiceId), isReprint, copyLabel);
+    }
+
+    /** Plain-text receipt from an already {@link #resolveInvoice resolved} invoice (read only). */
+    public String buildTextReceipt(Map<String, Object> inv, boolean isReprint, String copyLabel) {
         Map<String, Object> header = header();
         Map<String, Object> footer = footer();
         List<String> lines = new ArrayList<>();
@@ -383,7 +390,11 @@ public class PosReceiptsService {
 
     /** HTML receipt (46 columns, opens the browser print dialog). */
     public String buildHtmlReceipt(String invoiceId, boolean isReprint, String copyLabel) {
-        Map<String, Object> inv = resolveInvoice(invoiceId);
+        return buildHtmlReceipt(resolveInvoice(invoiceId), isReprint, copyLabel);
+    }
+
+    /** HTML receipt from an already {@link #resolveInvoice resolved} invoice (read only). */
+    public String buildHtmlReceipt(Map<String, Object> inv, boolean isReprint, String copyLabel) {
         Map<String, Object> header = header();
         Map<String, Object> footer = footer();
         List<String> lines = new ArrayList<>();
@@ -1210,10 +1221,12 @@ public class PosReceiptsService {
                         "Receipt already printed. Use the reprint endpoint (Admin/Manager only, with a reason).");
             }
         }
-        String customerText = buildTextReceipt(invoiceId, isReprint, "CUSTOMER COPY");
+        // Both copies render the same resolution: marking the receipt printed only bumps its print counters.
+        Map<String, Object> inv = resolveInvoice(invoiceId);
+        String customerText = buildTextReceipt(inv, isReprint, "CUSTOMER COPY");
         printLifecycle.markReceiptPrinted(invoiceId, userId);
         boolean printCashierCopy = !"false".equals(settingValue("pos.printCashierCopy"));
-        String merchantText = printCashierCopy ? buildTextReceipt(invoiceId, isReprint, "CASHIER COPY") : null;
+        String merchantText = printCashierCopy ? buildTextReceipt(inv, isReprint, "CASHIER COPY") : null;
         int copies = merchantText != null ? 2 : 1;
         Target target = resolvePrintTarget();
         if ("none".equals(target.kind())) {

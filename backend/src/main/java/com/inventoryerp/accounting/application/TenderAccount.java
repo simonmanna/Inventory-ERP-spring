@@ -1,5 +1,6 @@
 package com.inventoryerp.accounting.application;
 
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.shared.web.ApiException;
 import java.util.List;
 import java.util.Map;
@@ -78,8 +79,8 @@ public final class TenderAccount {
             throw ApiException.badRequest("Payment account is inactive or unavailable");
         }
         if (account.currencyId() != null) {
-            String orgCurrency = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(organizationId)
-                    .query(String.class).optional().orElse(null);
+            String orgCurrency = ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
+                    .param(organizationId).query(String.class).optional().orElse(null), "org.currencyCode", organizationId);
             if (orgCurrency != null && !account.currencyId().equals(orgCurrency)) {
                 throw ApiException.badRequest("POS tenders must use the organization currency; convert foreign currency"
                         + " through treasury first");

@@ -2,15 +2,22 @@ package com.inventoryerp.pos.application;
 
 import static com.inventoryerp.pos.application.PosSql.NOW;
 
+import com.inventoryerp.core.domain.Partner;
+import com.inventoryerp.core.domain.Product;
+import com.inventoryerp.core.domain.ProductCategory;
+import com.inventoryerp.core.domain.Tax;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.shared.web.EntityJson;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
@@ -32,6 +39,10 @@ public class PosDb {
 
     private final JdbcClient jdbc;
 
+    /** Rows {@link #first} may memoize inside a {@link ReadMemo} scope; writes through this class clear the memo. */
+    private static final Set<Class<?>> MASTER_DATA = Set.of(Product.class, Tax.class, ProductCategory.class,
+            Partner.class);
+
     public PosDb(JdbcClient jdbc) {
         this.jdbc = jdbc;
     }
@@ -50,6 +61,7 @@ public class PosDb {
 
     /** {@code prisma.<model>.create({ data })}. */
     public Map<String, Object> insert(Class<?> entity, Map<String, Object> data) {
+        forget(entity);
         String table = table(entity);
         List<String> cols = EntityJson.columnNames(entity);
         Map<String, Object> d = new LinkedHashMap<>();
@@ -83,6 +95,7 @@ public class PosDb {
      */
     public List<Map<String, Object>> updateWhere(Class<?> entity, Map<String, Object> data, String where,
             Object... whereParams) {
+        forget(entity);
         String table = table(entity);
         List<String> cols = EntityJson.columnNames(entity);
         StringBuilder set = new StringBuilder();
@@ -130,6 +143,22 @@ public class PosDb {
 
     /** {@code SELECT * ... LIMIT 1} in Prisma shape, or {@code null}. */
     public Map<String, Object> first(Class<?> entity, String where, Object... params) {
+        if (MASTER_DATA.contains(entity) && ReadMemo.active()) {
+            // Master data a sale only reads: found rows are memoized for the request, each caller gets its own copy.
+            Map<String, Object> row = ReadMemo.get(() -> load(entity, where, params), "PosDb.first", entity, where,
+                    Arrays.asList(params));
+            return row == null ? null : new LinkedHashMap<>(row);
+        }
+        return load(entity, where, params);
+    }
+
+    private static void forget(Class<?> entity) {
+        if (MASTER_DATA.contains(entity)) {
+            ReadMemo.clear();
+        }
+    }
+
+    private Map<String, Object> load(Class<?> entity, String where, Object... params) {
         return SqlRows.one(entity, jdbc.sql("SELECT * FROM \"" + table(entity) + "\" WHERE " + where + " LIMIT 1")
                 .params(params));
     }

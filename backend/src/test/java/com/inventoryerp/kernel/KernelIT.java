@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.inventoryerp.TestcontainersConfiguration;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.auth.PasswordService;
+import com.inventoryerp.kernel.common.DetachedWrites;
+import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.idempotency.IdempotencyService;
 import com.inventoryerp.kernel.recurring.RecurringService;
@@ -89,6 +91,12 @@ class KernelIT {
 
     @Autowired
     PlatformTransactionManager txm;
+
+    @Autowired
+    DetachedWrites detached;
+
+    @Autowired
+    EventBus eventBus;
 
     @Autowired
     @org.springframework.beans.factory.annotation.Qualifier("requestMappingHandlerMapping")
@@ -624,5 +632,37 @@ class KernelIT {
                         WHERE r."recurringId" = ?""").param(id).query(java.math.BigDecimal.class).single();
         assertThat(doc).isEqualByComparingTo("90.9");
         assertThat(call("PATCH", "/recurring/" + id + "/pause", null, adminToken).body().get("status").asString()).isEqualTo("paused");
+    }
+
+    /** Fire-and-forget writes collected by {@link DetachedWrites#batch} land after it ends; one failure spares the rest. */
+    @Test
+    @DisplayName("DetachedWrites.batch defers outbox + audit writes and isolates a failing one")
+    void detachedBatch() {
+        String marker = "batch-" + UUID.randomUUID();
+        String entityId = UUID.randomUUID().toString();
+        String eventName = "test.batch." + marker;
+        TenantContext.run(TenantStore.user(demoOrg, "test-user"), () -> {
+            detached.batch(() -> {
+                eventBus.publish(eventName, Map.of("n", 1));
+                new TransactionTemplate(txm).executeWithoutResult(s -> eventBus.publish(eventName, Map.of("n", 2)));
+                detached.submit(() -> {
+                    try {
+                        new TransactionTemplate(txm).executeWithoutResult(s -> jdbc.sql("SELECT no_such_column FROM"
+                                + " \"Organization\"").query().listOfRows());
+                    } catch (RuntimeException expected) {
+                        // logged by real writers; the batch must still persist the others
+                    }
+                });
+                audit.record(AuditService.AuditInput.of("Partner", entityId, "create"));
+                assertThat(jdbc.sql("SELECT count(*) FROM \"EventOutbox\" WHERE \"eventName\" = ?").param(eventName)
+                        .query(Long.class).single()).isZero();
+                return null;
+            });
+        });
+        assertThat(detached.awaitIdle(java.time.Duration.ofSeconds(10))).isTrue();
+        assertThat(jdbc.sql("SELECT payload->>'n' FROM \"EventOutbox\" WHERE \"eventName\" = ? ORDER BY payload->>'n'")
+                .param(eventName).query(String.class).list()).containsExactly("1", "2");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE \"entityId\" = ? AND \"organizationId\" = ?")
+                .params(entityId, demoOrg).query(Long.class).single()).isEqualTo(1);
     }
 }

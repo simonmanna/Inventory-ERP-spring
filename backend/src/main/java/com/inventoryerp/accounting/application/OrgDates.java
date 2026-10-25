@@ -1,5 +1,6 @@
 package com.inventoryerp.accounting.application;
 
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.shared.web.ApiException;
 import java.time.DateTimeException;
 import java.time.Instant;
@@ -26,8 +27,8 @@ public final class OrgDates {
 
     /** The organisation's IANA time zone (UTC when unset or invalid). */
     public static ZoneId orgTimezone(JdbcClient jdbc, String organizationId) {
-        String tz = jdbc.sql("SELECT timezone FROM \"Organization\" WHERE id = ?").param(organizationId)
-                .query(String.class).optional().orElse(null);
+        String tz = ReadMemo.get(() -> jdbc.sql("SELECT timezone FROM \"Organization\" WHERE id = ?").param(organizationId)
+                .query(String.class).optional().orElse(null), "org.timezone", organizationId);
         if (tz == null || tz.isEmpty()) {
             return ZoneOffset.UTC;
         }

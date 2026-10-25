@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -50,8 +49,8 @@ public class AuditService {
     public AuditService(EntityManager em, DetachedWrites detached, PlatformTransactionManager txm) {
         this.em = em;
         this.detached = detached;
+        // REQUIRED: a detached write never runs inside the caller's transaction (DetachedWrites), but joins a batch flush.
         this.newTx = new TransactionTemplate(txm);
-        this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** Write the audit row inside the current business transaction. Throws on failure. */
@@ -61,7 +60,7 @@ public class AuditService {
         if (organizationId == null) {
             throw new IllegalStateException("recordInTx called without a tenant context");
         }
-        em.persist(row(organizationId, input));
+        em.persist(row(organizationId, TenantContext.userId(), input));
     }
 
     /**
@@ -73,13 +72,14 @@ public class AuditService {
         if (organizationId == null) {
             return;
         }
-        AuditLog row = row(organizationId, input);
+        AuditLog row = row(organizationId, TenantContext.userId(), input);
+        // A fresh copy per run: a batched flush that rolls back retries each write on its own.
         detached.submit(() -> {
             try {
                 newTx.executeWithoutResult(s -> {
                     // Login-type events only (never money): skip the WAL flush wait, see docs/OPERATIONS.md §7b.
                     em.createNativeQuery("SET LOCAL synchronous_commit = off").executeUpdate();
-                    em.persist(row);
+                    em.persist(copy(row));
                 });
             } catch (RuntimeException err) {
                 log.warn("Fire-and-forget audit failed (non-critical): {}", err.toString());
@@ -87,7 +87,21 @@ public class AuditService {
         });
     }
 
-    private static AuditLog row(String organizationId, AuditInput input) {
+    private static AuditLog copy(AuditLog src) {
+        AuditLog row = new AuditLog();
+        row.setOrganizationId(src.getOrganizationId());
+        row.setEntity(src.getEntity());
+        row.setEntityId(src.getEntityId());
+        row.setAction(src.getAction());
+        row.setOldValues(src.getOldValues());
+        row.setNewValues(src.getNewValues());
+        row.setActorId(src.getActorId());
+        row.setIpAddress(src.getIpAddress());
+        row.setUserAgent(src.getUserAgent());
+        return row;
+    }
+
+    private static AuditLog row(String organizationId, String actorId, AuditInput input) {
         AuditLog row = new AuditLog();
         row.setOrganizationId(organizationId);
         row.setEntity(input.entity());
@@ -95,7 +109,7 @@ public class AuditService {
         row.setAction(DbEnum.fromValue(AuditAction.class, input.action()));
         row.setOldValues(EntityJson.toJson(input.oldValues()));
         row.setNewValues(EntityJson.toJson(input.newValues()));
-        row.setActorId(TenantContext.userId());
+        row.setActorId(actorId);
         row.setIpAddress(input.ipAddress());
         row.setUserAgent(input.userAgent());
         return row;

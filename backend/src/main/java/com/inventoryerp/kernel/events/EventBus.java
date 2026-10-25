@@ -7,7 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 
@@ -35,8 +34,8 @@ public class EventBus {
         this.outbox = outbox;
         this.handlers = handlers;
         this.detached = detached;
+        // REQUIRED: a detached write never runs inside the caller's transaction (DetachedWrites), but joins a batch flush.
         this.newTx = new TransactionTemplate(txm);
-        this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public void publish(String eventName, Map<String, Object> payload) {

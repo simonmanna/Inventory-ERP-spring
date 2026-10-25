@@ -1,6 +1,7 @@
 package com.inventoryerp.kernel.settings;
 
 import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.domain.Setting;
 import com.inventoryerp.kernel.settings.SettingRegistry.Definition;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
@@ -100,6 +101,7 @@ public class SettingsService {
             em.persist(row);
         }
         em.flush();
+        ReadMemo.clear();
         Map<String, Object> nv = new LinkedHashMap<>();
         nv.put("key", key);
         nv.put("scopeType", "server");
@@ -143,6 +145,7 @@ public class SettingsService {
         }
         em.flush();
         resolver.invalidate(organizationId);
+        ReadMemo.clear();
         Map<String, Object> nv = new LinkedHashMap<>();
         nv.put("key", key);
         nv.put("scopeType", scopeType);
@@ -166,6 +169,7 @@ public class SettingsService {
                 .setParameter("key", key)
                 .executeUpdate();
         resolver.invalidate(organizationId);
+        ReadMemo.clear();
         Map<String, Object> nv = new LinkedHashMap<>();
         nv.put("key", key);
         nv.put("scopeType", scopeType);

@@ -5,8 +5,10 @@ import static com.inventoryerp.pos.application.PosSql.num;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.kernel.common.DetachedWrites;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.common.OccurredAt;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
@@ -21,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -50,10 +53,11 @@ public class PosService {
     private final PosSettingsService settings;
     private final PricingPolicy pricing;
     private final TransactionTemplate tx;
+    private final DetachedWrites detached;
 
     public PosService(PosDb db, EventBus events, PosOrdersService orders, PosInvoiceService billing,
             PosTablesService tables, PosLoyaltyService loyalty, PosReceiptsService receipts, PosOverridesService overrides,
-            PosSettingsService settings, PricingPolicy pricing, PlatformTransactionManager txm) {
+            PosSettingsService settings, PricingPolicy pricing, PlatformTransactionManager txm, DetachedWrites detached) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.events = events;
@@ -66,6 +70,7 @@ public class PosService {
         this.settings = settings;
         this.pricing = pricing;
         this.tx = new TransactionTemplate(txm);
+        this.detached = detached;
     }
 
     private static String recoveryOrderId() {
@@ -77,8 +82,20 @@ public class PosService {
         return r == null || r.isNull() ? null : r.asString();
     }
 
+    /**
+     * One sale request: configuration reads are memoized for its duration ({@link ReadMemo}) and its fire-and-forget
+     * outbox / audit writes go out in one detached transaction when it ends ({@link DetachedWrites#batch}).
+     */
+    private <T> T saleScope(Supplier<T> body) {
+        return ReadMemo.run(() -> detached.batch(body));
+    }
+
     /** Counter sale: Order → kitchen → Invoice (GL + stock job) → payment (Receipt, close). */
     public Map<String, Object> checkout(Map<String, Object> inputIn) {
+        return saleScope(() -> checkoutInScope(inputIn));
+    }
+
+    private Map<String, Object> checkoutInScope(Map<String, Object> inputIn) {
         Map<String, Object> input = new LinkedHashMap<>(inputIn);
         BusinessOutcome.Operation op = BusinessOutcome.current();
         String recovery = recoveryOrderId();
@@ -210,8 +227,9 @@ public class PosService {
         String receiptText = null;
         String receiptHtml = null;
         try {
-            receiptText = receipts.buildTextReceipt((String) invoice.get("id"));
-            receiptHtml = receipts.buildHtmlReceipt((String) invoice.get("id"));
+            Map<String, Object> resolved = receipts.resolveInvoice((String) invoice.get("id"));
+            receiptText = receipts.buildTextReceipt(resolved, false, null);
+            receiptHtml = receipts.buildHtmlReceipt(resolved, false, null);
         } catch (RuntimeException ignored) {
             // non-fatal
         }
@@ -508,6 +526,10 @@ public class PosService {
 
     /** Settle a table's open tab. */
     public Map<String, Object> settleTab(String tableId, Map<String, Object> inputIn) {
+        return saleScope(() -> settleTabInScope(tableId, inputIn));
+    }
+
+    private Map<String, Object> settleTabInScope(String tableId, Map<String, Object> inputIn) {
         Map<String, Object> input = new LinkedHashMap<>(inputIn);
         String orgId = org();
         OccurredAt.resolve((String) input.get("occurredAt"));
@@ -527,6 +549,10 @@ public class PosService {
 
     /** Settle any open order by id. */
     public Map<String, Object> settleOrder(String orderId, Map<String, Object> inputIn) {
+        return saleScope(() -> settleOrderInScope(orderId, inputIn));
+    }
+
+    private Map<String, Object> settleOrderInScope(String orderId, Map<String, Object> inputIn) {
         Map<String, Object> input = new LinkedHashMap<>(inputIn);
         String orgId = org();
         OccurredAt.resolve((String) input.get("occurredAt"));

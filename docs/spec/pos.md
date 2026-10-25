@@ -218,3 +218,53 @@ Not ported / not done (owner decision or later phase):
   cached too.
 - Same as Nest, kept: the first concurrent sales of a fresh organization can race on creating the `WALKIN` partner
   (find-then-create, `Partner_organizationId_code_key` → 409 for the loser).
+
+### Checkout DB-work reduction (2026-10-20, no behaviour change)
+
+Profiled with `ALTER DATABASE … SET log_min_duration_statement = 0` on a fresh `seed` database: 5 warm-up + 10
+sequential `POST /pos/checkout` (1 cash line, 1 cash tender), statements grouped by text, per checkout (includes the
+outbox worker's share):
+
+| | before | after |
+|---|---|---|
+| SQL statements | 379 | 247 |
+| transactions (`BEGIN`) | 33 | 14 |
+| write commits on the request path | 24 | 12 (+1 detached batch) |
+| outbox worker statements | ~23 (claim + per row `SELECT attempts` + `UPDATE shipped`) | ~2 per batch |
+
+Changes (all internal; responses, rows written, GL, events, audit rows and error messages unchanged — verified by
+diffing normalized checkout responses and per-table / per-event / per-audit-action row counts, before vs after):
+
+- `kernel.common.ReadMemo`: a per-request, thread-confined memo opened around `checkout` / `settleTab` /
+  `settleOrder`. Inside it, org currency / time zone, currency decimals, account mappings, org-level settings (receipt
+  header/footer, printer keys), tax rows and `PosDb.first` of Product / Tax / ProductCategory / Partner are read once.
+  Misses are never memoized; settings and account-mapping writes (and `PosDb` writes of those tables) clear it.
+  Outside a scope every lookup hits the database as before.
+- `DetachedWrites.batch`: the fire-and-forget outbox / audit writes of one sale (≈ 10 single-row transactions) run in
+  one detached transaction when the sale returns; if that transaction fails, every write is retried on its own, so a
+  failing write still cannot take the others down. `EventBus` / `AuditService` now open their transaction with
+  `REQUIRED` (they never run inside a caller's transaction, so this equals the old `REQUIRES_NEW` outside a batch).
+- `OutboxWorker`: `attempts` comes back from the claim's `RETURNING`; dispatched rows are marked shipped with one
+  `UPDATE … WHERE id IN (…)` per batch instead of one per row (a crash before it leaves them claimed; the 30 s
+  stale-claim rule re-ships them — at-least-once, as before).
+- Receipts: one `resolveInvoice` for the customer + cashier copies in `printReceipt` (marking the receipt printed only
+  bumps its print counters) and one for the text + HTML receipt in the sale response; print-target lookups
+  (`Invoice` / `Order` / `Document`) memoized.
+
+Not changed on purpose: the Order → kitchen → Invoice → Payment transaction boundaries, row locks (`FOR UPDATE` on
+cash session / order / invoice, `FOR SHARE` on the fiscal period), the fiscal-period / books-lock reads, and the
+print-counter / print-log autocommit writes — they follow Nest's call structure.
+
+Load smoke, same host, fresh database per run, interleaved before / after (the host was shared with other heavy
+processes; run-to-run variance is large):
+
+| tills | before r1 | after r1 | before r2 | after r2 |
+|---|---|---|---|---|
+| 1 | p50 612 / p95 1068 ms | 526 / 849 ms | 575 / 993 ms | 245 / 339 ms |
+| 10 | 7.3/s, p95 1.9 s | 10.2/s, p95 1.5 s | 6.9/s, p95 2.3 s | 17.1/s, p95 0.89 s |
+| 50 | 9.7/s, p95 10.5 s | 16.7/s, p95 4.1 s | 7.0/s, p95 36 s | 21.0/s, p95 3.3 s |
+
+The 150 ms p95 at 50 tills is still **not met** here. Postgres-side time per checkout dropped (commit fsyncs were
+most of it: 137 ms → 10 ms of `COMMIT` in the profile), but on this Windows + Docker Desktop host most of the wall time
+is between statements (JVM ↔ Postgres round trips through the Docker port forward, host CPU contention): ~245
+round trips per sale remain, most of them Nest's per-step reads/writes.

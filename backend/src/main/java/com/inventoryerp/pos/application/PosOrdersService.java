@@ -13,6 +13,7 @@ import com.inventoryerp.invoicing.domain.Invoice;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
@@ -1021,9 +1022,9 @@ public class PosOrdersService {
                 throw ApiException.badRequest("Catalog price must be finite and non-negative");
             }
             String taxId = (String) catalog.get("taxId");
-            Boolean taxRowInclusive = taxId == null ? null : jdbc.sql("SELECT \"isInclusive\" FROM \"Tax\" WHERE id = ?"
-                    + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(taxId, orgId).query(Boolean.class)
-                    .optional().orElse(null);
+            Boolean taxRowInclusive = taxId == null ? null : ReadMemo.get(() -> jdbc.sql("SELECT \"isInclusive\" FROM"
+                    + " \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(taxId, orgId)
+                    .query(Boolean.class).optional().orElse(null), "Tax.isInclusive", orgId, taxId);
             boolean taxInclusive = l.get("taxInclusive") instanceof Boolean b ? b
                     : taxRowInclusive != null ? taxRowInclusive : Boolean.TRUE.equals(catalog.get("taxInclusive"));
             List<String> noteParts = new ArrayList<>();

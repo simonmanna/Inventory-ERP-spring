@@ -5,6 +5,7 @@ import static com.inventoryerp.pos.application.PosSql.org;
 
 import com.inventoryerp.documents.domain.DocumentPrintLog;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.pos.domain.OrderItem;
 import java.util.ArrayList;
@@ -33,13 +34,10 @@ public class PosPrintLifecycleService {
     /** {@code "Invoice"}, {@code "Order"} or {@code "Document"} for a print-record id. */
     String target(String recordId) {
         String orgId = org();
-        if (exists("Invoice", recordId, orgId)) {
-            return "Invoice";
-        }
-        if (exists("Order", recordId, orgId)) {
-            return "Order";
-        }
-        return "Document";
+        // An existing Invoice / Order id keeps its table for the request; "not found" is never memoized.
+        String found = ReadMemo.get(() -> exists("Invoice", recordId, orgId) ? "Invoice"
+                : exists("Order", recordId, orgId) ? "Order" : null, "printTarget", orgId, recordId);
+        return found == null ? "Document" : found;
     }
 
     private boolean exists(String table, String id, String orgId) {

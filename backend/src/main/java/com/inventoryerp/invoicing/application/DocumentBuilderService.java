@@ -9,6 +9,7 @@ import com.inventoryerp.documents.domain.DocumentLine;
 import com.inventoryerp.invoicing.application.TaxCalculationService.LineTaxResult;
 import com.inventoryerp.invoicing.application.TaxCalculationService.TaxLike;
 import com.inventoryerp.kernel.common.Money;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.sequence.SequenceService;
@@ -108,13 +109,13 @@ public class DocumentBuilderService {
         if (orgId == null) {
             return null;
         }
-        String code = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(orgId)
-                .query(String.class).optional().orElse(null);
+        String code = ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
+                .param(orgId).query(String.class).optional().orElse(null), "org.currencyCode", orgId);
         if (code == null) {
             return null;
         }
-        return jdbc.sql("SELECT \"decimalPlaces\" FROM \"Currency\" WHERE code = ?").param(code).query(Integer.class)
-                .optional().orElse(null);
+        return ReadMemo.get(() -> jdbc.sql("SELECT \"decimalPlaces\" FROM \"Currency\" WHERE code = ?").param(code)
+                .query(Integer.class).optional().orElse(null), "currency.decimalPlaces", code);
     }
 
     /** Server-side line math: price, discount, tax engine, totals. */
@@ -129,8 +130,11 @@ public class DocumentBuilderService {
             boolean meta = !"product".equals(lineType);
             Map<String, Object> product = null;
             if (l.productId() != null && !meta) {
-                product = SqlRows.one(jdbc.sql("SELECT * FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
-                        + " AND \"deletedAt\" IS NULL LIMIT 1").params(l.productId(), org()));
+                String productId = l.productId();
+                String productOrg = org();
+                product = ReadMemo.get(() -> SqlRows.one(jdbc.sql("SELECT * FROM \"Product\" WHERE id = ? AND"
+                        + " \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(productId, productOrg)),
+                        "Product", productOrg, productId);
             }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
                     : product != null && product.get("salesPrice") != null ? (BigDecimal) product.get("salesPrice") : ZERO;
@@ -147,8 +151,10 @@ public class DocumentBuilderService {
             BigDecimal effectivePct = gross.signum() > 0
                     ? Money.div(effectiveDiscount, gross).multiply(BigDecimal.valueOf(100)) : ZERO;
             String taxId = meta ? null : l.taxId() != null ? l.taxId() : product == null ? null : (String) product.get("taxId");
-            Map<String, Object> taxRow = taxId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"Tax\" WHERE id = ?"
-                    + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(taxId, org()));
+            String taxOrg = org();
+            Map<String, Object> taxRow = taxId == null ? null : ReadMemo.get(() -> SqlRows.one(jdbc.sql("SELECT * FROM"
+                    + " \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(taxId, taxOrg)),
+                    "Tax", taxOrg, taxId);
             boolean taxInclusive = l.taxInclusive() != null ? l.taxInclusive()
                     : taxRow != null ? Boolean.TRUE.equals(taxRow.get("isInclusive"))
                     : product != null && Boolean.TRUE.equals(product.get("taxInclusive"));
