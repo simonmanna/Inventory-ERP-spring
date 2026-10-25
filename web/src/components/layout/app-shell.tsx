@@ -196,19 +196,13 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    title: 'Returns',
-    icon: Undo2,
-    items: [
-      { to: '/returns', label: 'Returns Register', icon: ListRestart, permission: PERMISSIONS.pos.read },
-      { to: '/returns/new', label: 'New Return', icon: Undo2, permission: PERMISSIONS.pos.refund },
-    ],
-  },
-  {
     title: 'Sales',
     icon: ShoppingCart,
     items: [
       { to: '/invoices', label: 'Sales/Invoices', icon: Receipt, permission: PERMISSIONS.invoice.read },
       { to: '/orders', label: 'Orders', icon: ClipboardList },
+      { to: '/returns', label: 'Returns Register', icon: ListRestart, permission: PERMISSIONS.pos.read },
+      { to: '/returns/new', label: 'New Return', icon: Undo2, permission: PERMISSIONS.pos.refund },
       { to: '/credit-notes', label: 'Credit Notes', icon: FileMinus, permission: PERMISSIONS.creditNote.read },
       { to: '/payments', label: 'Receipts', icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: 'Accounts Receivable', icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
@@ -260,7 +254,7 @@ const NAV_SECTIONS: NavSection[] = [
     icon: LayoutGrid,
     items: [
       { to: '/tables', label: 'Tables', icon: Coffee, permission: PERMISSIONS.menu.view },
-      { to: '/tables/zones', label: 'Areas', icon: MapPin, permission: PERMISSIONS.menu.view },
+      { to: '/tables/zones', label: 'Areas/Zones', icon: MapPin, permission: PERMISSIONS.menu.view },
     ],
   },
   {
