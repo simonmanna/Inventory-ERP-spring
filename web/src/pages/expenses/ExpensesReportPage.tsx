@@ -42,13 +42,13 @@ function StatusBadge({ status }: { status: string }) {
     string,
     { label: string; bg: string; text: string; dot: string }
   > = {
-    DRAFT: { label: "Draft", bg: "bg-slate-100", text: "text-slate-600", dot: "bg-slate-400" },
-    APPROVED: { label: "Approved", bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
-    POSTED: { label: "Posted", bg: "bg-indigo-50", text: "text-indigo-700", dot: "bg-indigo-500" },
-    REJECTED: { label: "Rejected", bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" },
-    CANCELLED: { label: "Cancelled", bg: "bg-slate-100", text: "text-slate-500", dot: "bg-slate-400" },
-    VOID: { label: "Void", bg: "bg-rose-50", text: "text-rose-700", dot: "bg-rose-500" },
-    PENDING: { label: "Pending", bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
+    DRAFT: { label: tx('Draft'), bg: "bg-slate-100", text: "text-slate-600", dot: "bg-slate-400" },
+    APPROVED: { label: tx('Approved'), bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+    POSTED: { label: tx('Posted'), bg: "bg-indigo-50", text: "text-indigo-700", dot: "bg-indigo-500" },
+    REJECTED: { label: tx('Rejected'), bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" },
+    CANCELLED: { label: tx('Cancelled'), bg: "bg-slate-100", text: "text-slate-500", dot: "bg-slate-400" },
+    VOID: { label: tx('Void'), bg: "bg-rose-50", text: "text-rose-700", dot: "bg-rose-500" },
+    PENDING: { label: tx('Pending'), bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
   };
   const c = cfg[status] ?? cfg.DRAFT;
   return (
@@ -208,7 +208,7 @@ export default function ExpensesReportPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      alert("Failed to export CSV");
+      alert(tx('Failed to export CSV'));
     } finally {
       setExporting(false);
     }
@@ -217,40 +217,40 @@ export default function ExpensesReportPage() {
   const columns: Column<Expense>[] = [
     {
       key: "expenseDate",
-      header: "Date",
+      header: tx('Date'),
       className: "whitespace-nowrap",
       render: (r) => <span className="font-mono text-sm">{date(r.expenseDate)}</span>,
     },
     {
       key: "expenseCode",
-      header: "Code",
+      header: tx('Code'),
       className: "font-mono text-sm text-slate-500",
       render: (r) => r.expenseCode,
     },
     {
       key: "title",
-      header: "Title",
+      header: tx('Title'),
       render: (r) => <span className="font-medium text-slate-700">{r.title}</span>,
     },
     {
       key: "category",
-      header: "Category",
+      header: tx('Category'),
       render: (r) => <span className="text-sm">{categoryLabel(r)}</span>,
     },
     {
       key: "amount",
-      header: "Amount",
+      header: tx('Amount'),
       className: "text-right font-mono font-semibold",
       render: (r) => <span className="text-slate-800">{money(r.amount)}</span>,
     },
     {
       key: "status",
-      header: "Status",
+      header: tx('Status'),
       render: (r) => <StatusBadge status={r.status} />,
     },
     {
       key: "createdBy",
-      header: "Created By",
+      header: tx('Created By'),
       render: (r) => {
         const n = r.createdBy?.staff
           ? r.createdBy.staff.firstName
@@ -375,7 +375,7 @@ export default function ExpensesReportPage() {
         <div className="flex items-center justify-between px-3 py-2.5 border-t border-slate-100">
           <p className="text-sm text-slate-500">
             {tx('Showing')} {total === 0 ? 0 : (page - 1) * 20 + 1}–
-            {Math.min(page * 20, total)} of {total}
+            {Math.min(page * 20, total)} {tx('of')} {total}
           </p>
           <div className="flex items-center gap-1">
             <Button

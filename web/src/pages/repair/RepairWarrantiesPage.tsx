@@ -11,11 +11,11 @@ import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
 const STATUS_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'active', label: 'Active' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'claimed', label: 'Claimed' },
-  { value: 'void', label: 'Void' },
+  { value: '', label: tx('All') },
+  { value: 'active', label: tx('Active') },
+  { value: 'expired', label: tx('Expired') },
+  { value: 'claimed', label: tx('Claimed') },
+  { value: 'void', label: tx('Void') },
 ];
 
 const STATUS_STYLES: Record<string, string> = {
@@ -130,12 +130,12 @@ export function RepairWarrantiesPage() {
                   <ShieldCheck className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <p className="text-sm font-medium">
-                      {w.order?.repairNumber ?? 'Warranty'} · {w.warrantyType.replace(/_/g, ' ')}
-                      {w.coveredLabour ? ' · labour covered' : ''}
+                      {w.order?.repairNumber ?? tx('Warranty')} · {w.warrantyType.replace(/_/g, ' ')}
+                      {w.coveredLabour ? tx(' · labour covered') : ''}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {w.coverageStart ? date(w.coverageStart) : '—'} → {w.coverageEnd ? date(w.coverageEnd) : '—'}
-                      {w.claims?.length ? ` · ${w.claims.length} claim(s)` : ''}
+                      {w.claims?.length ? tx(' · {{length}} claim(s)', { length: w.claims.length }) : ''}
                     </p>
                   </div>
                 </div>

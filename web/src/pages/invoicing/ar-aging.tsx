@@ -5,22 +5,22 @@ import { useArAging, type AgingRow } from '@/features/invoicing/api';
 import { tx } from '@/lib/i18n/tx';
 
 const BUCKETS: { key: keyof import('@/features/invoicing/api').AgingBuckets; label: string }[] = [
-  { key: 'current', label: 'Current' },
-  { key: 'd1_30', label: '1-30 days' },
-  { key: 'd31_60', label: '31-60 days' },
-  { key: 'd61_90', label: '61-90 days' },
-  { key: 'd90_plus', label: '90+ days' },
+  { key: 'current', label: tx('Current') },
+  { key: 'd1_30', label: tx('1-30 days') },
+  { key: 'd31_60', label: tx('31-60 days') },
+  { key: 'd61_90', label: tx('61-90 days') },
+  { key: 'd90_plus', label: tx('90+ days') },
 ];
 
 export function ArAgingPage() {
   const { data, isLoading } = useArAging();
 
   const columns: Column<AgingRow>[] = [
-    { key: 'documentNumber', header: 'Invoice' },
-    { key: 'partnerName', header: 'Customer' },
-    { key: 'dueDate', header: 'Due', render: (r) => date(r.dueDate) },
-    { key: 'daysOverdue', header: 'Days overdue', render: (r) => (r.daysOverdue > 0 ? r.daysOverdue : '-') },
-    { key: 'residual', header: 'Outstanding', className: 'text-right', render: (r) => money(r.residual) },
+    { key: 'documentNumber', header: tx('Invoice') },
+    { key: 'partnerName', header: tx('Customer') },
+    { key: 'dueDate', header: tx('Due'), render: (r) => date(r.dueDate) },
+    { key: 'daysOverdue', header: tx('Days overdue'), render: (r) => (r.daysOverdue > 0 ? r.daysOverdue : '-') },
+    { key: 'residual', header: tx('Outstanding'), className: 'text-right', render: (r) => money(r.residual) },
   ];
 
   return (

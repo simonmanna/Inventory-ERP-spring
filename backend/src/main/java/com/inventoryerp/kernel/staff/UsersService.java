@@ -4,6 +4,7 @@ import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.events.EventBus;
+import com.inventoryerp.kernel.licensing.LicenseLimits;
 import com.inventoryerp.kernel.security.PermissionService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.events.DomainEvents;
@@ -49,14 +50,16 @@ public class UsersService {
     private final EventBus events;
     private final PasswordService password;
     private final PermissionService permissionCache;
+    private final LicenseLimits licenseLimits;
 
     public UsersService(JdbcClient jdbc, AuditService audit, EventBus events, PasswordService password,
-            PermissionService permissionCache) {
+            PermissionService permissionCache, LicenseLimits licenseLimits) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.events = events;
         this.password = password;
         this.permissionCache = permissionCache;
+        this.licenseLimits = licenseLimits;
     }
 
     @Transactional(readOnly = true)
@@ -103,6 +106,11 @@ public class UsersService {
                 .params(orgId, dto.email()).query(Long.class).single() > 0;
         if (exists) {
             throw ApiException.conflict("A user with email \"" + dto.email() + "\" already exists");
+        }
+        // Seat caps are checked where a seat is actually taken, not in a guard: only here is it
+        // known that this request adds a user rather than editing one (docs/spec/licensing.md §1).
+        if (dto.isActive() == null || dto.isActive()) {
+            licenseLimits.assertCanAddUser();
         }
         List<RoleRow> roles = resolveRoles(orgId, dto.roleIds());
         String hash = password.hash(dto.password());

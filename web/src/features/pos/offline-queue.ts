@@ -384,7 +384,13 @@ export async function replaySale(sale: QueuedSale): Promise<ReplayOutcome> {
   }
   try {
     const result = await api.post(sale.endpoint ?? '/pos/checkout', sale.payload, {
-      headers: { 'Idempotency-Key': sale.idempotencyKey },
+      headers: {
+        'Idempotency-Key': sale.idempotencyKey,
+        // When the money changed hands, not when we got round to sending it. If the licence
+        // lapsed in between, the server uses this to let an already-taken sale reach the books
+        // rather than refusing it with a 402 — a day's takings must never be lost to billing.
+        'X-Offline-Recorded-At': new Date(sale.createdAt).toISOString(),
+      },
     });
     await idbPut({ ...sale, response: result.data }, COMPLETED_STORE);
     await removePending(sale.idempotencyKey);

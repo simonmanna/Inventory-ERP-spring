@@ -38,7 +38,7 @@ export function DebitNotesPage() {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['debit-notes'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   return (
@@ -72,7 +72,7 @@ export function DebitNotesPage() {
                 <div>
                   <CardTitle className="text-base">{n.noteNumber}</CardTitle>
                   <CardDescription>
-                    {n.direction === 'outbound' ? 'To customer' : 'From supplier'} · {n.partner?.name ?? n.partnerId} · {n.reason.replace('_', ' ')}
+                    {n.direction === 'outbound' ? tx('To customer') : tx('From supplier')} · {n.partner?.name ?? n.partnerId} · {n.reason.replace('_', ' ')}
                   </CardDescription>
                 </div>
                 <Badge variant={n.direction === 'outbound' ? 'default' : 'secondary'}>{n.direction}</Badge>

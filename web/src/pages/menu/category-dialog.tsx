@@ -36,9 +36,9 @@ export function CategoryDialog({ open, category, onOpenChange, onSubmit }: Props
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md p-0 gap-0 overflow-hidden">
         <div className="bg-[#3b82f6] text-white px-6 py-4">
-          <h2 className="text-base font-semibold">{isEdit ? 'Edit Category' : 'Add New Category'}</h2>
+          <h2 className="text-base font-semibold">{isEdit ? tx('Edit Category') : tx('Add New Category')}</h2>
           <p className="text-white/75 text-xs mt-0.5">
-            {isEdit ? 'Update category details below.' : 'Fill in the details to create a new category.'}
+            {isEdit ? tx('Update category details below.') : tx('Fill in the details to create a new category.')}
           </p>
         </div>
         <form
@@ -84,7 +84,7 @@ export function CategoryDialog({ open, category, onOpenChange, onSubmit }: Props
               {tx('Cancel')}
             </Button>
             <Button type="submit" disabled={submitting || !name.trim()} className="rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] text-white">
-              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create category'}
+              {submitting ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create category')}
             </Button>
           </DialogFooter>
         </form>

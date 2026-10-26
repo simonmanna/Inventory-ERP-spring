@@ -65,10 +65,10 @@ function RegisterDialog({ open, onClose, editing }: { open: boolean; onClose: ()
         locationId: locationId || undefined,
         defaultAccountId: advanced && drawerId && drawerId !== editing?.defaultAccountId ? drawerId : undefined,
       });
-      toast.success(editing ? 'Register updated' : 'Register created with its drawer account');
+      toast.success(editing ? tx('Register updated') : tx('Register created with its drawer account'));
       onClose();
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'The register was not saved'));
+      toast.error(apiErrorMessage(err, tx('The register was not saved')));
     }
   };
 
@@ -76,7 +76,7 @@ function RegisterDialog({ open, onClose, editing }: { open: boolean; onClose: ()
     <Dialog open={open} onOpenChange={(v) => { if (!v && !save.isPending) onClose(); }}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{editing ? `Edit ${editing.name}` : 'Add a register'}</DialogTitle>
+          <DialogTitle>{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('Add a register')}</DialogTitle>
           <DialogDescription>{tx('A till where cashiers open shifts and take cash. Each register has its own drawer account.')}</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
@@ -122,7 +122,7 @@ function RegisterDialog({ open, onClose, editing }: { open: boolean; onClose: ()
             {advanced ? (
               <div className="mt-2 space-y-1">
                 <select aria-label={tx('Existing drawer account')} className="min-h-[40px] w-full rounded-md border bg-background px-3 text-sm" value={drawerId} onChange={(e) => setDrawerId(e.target.value)}>
-                  <option value="">{editing ? 'Keep current account' : 'Create automatically'}</option>
+                  <option value="">{editing ? tx('Keep current account') : tx('Create automatically')}</option>
                   {eligibleDrawers.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.code}</option>)}
                 </select>
                 <p className="text-[11px] text-muted-foreground">{tx('Only unused cash or petty-cash accounts are listed. The account cannot change while a shift is open.')}</p>
@@ -132,7 +132,7 @@ function RegisterDialog({ open, onClose, editing }: { open: boolean; onClose: ()
 
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={onClose} disabled={save.isPending}>{tx('Cancel')}</Button>
-            <Button type="submit" disabled={save.isPending}>{save.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{editing ? 'Save changes' : 'Add register'}</Button>
+            <Button type="submit" disabled={save.isPending}>{save.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{editing ? tx('Save changes') : tx('Add register')}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -153,7 +153,7 @@ export function RegistersSettingsPage() {
       await save.mutateAsync({ id: r.id, isActive: !r.isActive });
       toast.success(r.isActive ? `${r.name} deactivated` : `${r.name} activated`);
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'The register was not changed'));
+      toast.error(apiErrorMessage(err, tx('The register was not changed')));
     }
   };
 
@@ -183,12 +183,12 @@ export function RegistersSettingsPage() {
                 <p className="font-medium text-foreground">{r.name} <span className="font-mono text-xs text-muted-foreground">{r.code}</span></p>
                 <p className="text-xs text-muted-foreground">
                   {tx('Drawer:')} {r.defaultAccount ? `${r.defaultAccount.name} (${r.defaultAccount.code})` : '—'}
-                  {r.location ? ` · Stock from ${r.location.name}` : ''}
+                  {r.location ? tx(' · Stock from {{name}}', { name: r.location.name }) : ''}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${r.isActive ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>
-                  {r.isActive ? 'Active' : 'Inactive'}
+                  {r.isActive ? tx('Active') : tx('Inactive')}
                 </span>
                 {canEdit ? (
                   <>

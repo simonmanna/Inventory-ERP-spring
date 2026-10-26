@@ -33,10 +33,10 @@ interface ValuationResponse {
 }
 
 const STATUS: Record<ValuationRow['stockStatus'], { label: string; className: string }> = {
-  in_stock: { label: 'In stock', className: 'bg-emerald-100 text-emerald-700 border-transparent' },
-  low: { label: 'Low', className: 'bg-amber-100 text-amber-700 border-transparent' },
-  out: { label: 'Out', className: 'bg-muted text-muted-foreground border-transparent' },
-  negative: { label: 'Negative', className: 'bg-red-100 text-red-700 border-transparent' },
+  in_stock: { label: tx('In stock'), className: 'bg-emerald-100 text-emerald-700 border-transparent' },
+  low: { label: tx('Low'), className: 'bg-amber-100 text-amber-700 border-transparent' },
+  out: { label: tx('Out'), className: 'bg-muted text-muted-foreground border-transparent' },
+  negative: { label: tx('Negative'), className: 'bg-red-100 text-red-700 border-transparent' },
 };
 
 export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilters> }) {
@@ -51,28 +51,28 @@ export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilte
   const t = report.data?.totals;
 
   const columns: Column<ValuationRow>[] = [
-    { key: 'code', header: 'Code', render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.code}</span>, sort: (r) => r.code },
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name, footer: `Totals — ${t?.items ?? 0} item(s)` },
-    { key: 'category', header: 'Category', render: (r) => <span className="text-muted-foreground">{r.category ?? '—'}</span>, sort: (r) => r.category },
-    { key: 'status', header: 'Status', align: 'center', render: (r) => <Badge className={STATUS[r.stockStatus].className}>{STATUS[r.stockStatus].label}</Badge>, sort: (r) => r.stockStatus },
+    { key: 'code', header: tx('Code'), render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.code}</span>, sort: (r) => r.code },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name, footer: tx('Totals — {{v1}} item(s)', { v1: t?.items ?? 0 }) },
+    { key: 'category', header: tx('Category'), render: (r) => <span className="text-muted-foreground">{r.category ?? '—'}</span>, sort: (r) => r.category },
+    { key: 'status', header: tx('Status'), align: 'center', render: (r) => <Badge className={STATUS[r.stockStatus].className}>{STATUS[r.stockStatus].label}</Badge>, sort: (r) => r.stockStatus },
     {
-      key: 'locations', header: 'Locations',
+      key: 'locations', header: tx('Locations'),
       render: (r) => <span className="text-xs text-muted-foreground">{r.locations.map((l) => `${l.code}: ${qty(l.quantity)}`).join(' · ') || '—'}</span>,
       csv: (r) => r.locations.map((l) => `${l.code}: ${l.quantity}`).join(' | '),
     },
-    { key: 'quantity', header: 'On Hand', align: 'right', render: (r) => <span className={cn('font-semibold', r.quantity < 0 && 'text-destructive')}>{qty(r.quantity)}</span>, sort: (r) => r.quantity, footer: qty(t?.quantity) },
-    { key: 'minQuantity', header: 'Par', align: 'right', render: (r) => (r.minQuantity != null ? qty(r.minQuantity) : '—'), sort: (r) => r.minQuantity },
-    { key: 'avgCost', header: 'Avg Cost', align: 'right', render: (r) => money(r.avgCost), sort: (r) => r.avgCost },
-    { key: 'value', header: 'Stock Value', align: 'right', render: (r) => <span className="font-semibold">{money(r.value)}</span>, sort: (r) => r.value, footer: money(t?.value) },
-    { key: 'share', header: '% of Value', align: 'right', render: (r) => (t?.value ? `${((r.value / t.value) * 100).toFixed(1)}%` : '—'), sort: (r) => r.value },
-    { key: 'retailValue', header: 'Retail Value', align: 'right', render: (r) => (r.salesPrice ? money(r.retailValue) : '—'), sort: (r) => r.retailValue, footer: money(t?.retailValue) },
-    { key: 'lastMovedAt', header: 'Last Moved', render: (r) => <span className="whitespace-nowrap text-xs text-muted-foreground">{date(r.lastMovedAt)}</span>, sort: (r) => r.lastMovedAt },
+    { key: 'quantity', header: tx('On Hand'), align: 'right', render: (r) => <span className={cn('font-semibold', r.quantity < 0 && 'text-destructive')}>{qty(r.quantity)}</span>, sort: (r) => r.quantity, footer: qty(t?.quantity) },
+    { key: 'minQuantity', header: tx('Par'), align: 'right', render: (r) => (r.minQuantity != null ? qty(r.minQuantity) : '—'), sort: (r) => r.minQuantity },
+    { key: 'avgCost', header: tx('Avg Cost'), align: 'right', render: (r) => money(r.avgCost), sort: (r) => r.avgCost },
+    { key: 'value', header: tx('Stock Value'), align: 'right', render: (r) => <span className="font-semibold">{money(r.value)}</span>, sort: (r) => r.value, footer: money(t?.value) },
+    { key: 'share', header: tx('% of Value'), align: 'right', render: (r) => (t?.value ? `${((r.value / t.value) * 100).toFixed(1)}%` : '—'), sort: (r) => r.value },
+    { key: 'retailValue', header: tx('Retail Value'), align: 'right', render: (r) => (r.salesPrice ? money(r.retailValue) : '—'), sort: (r) => r.retailValue, footer: money(t?.retailValue) },
+    { key: 'lastMovedAt', header: tx('Last Moved'), render: (r) => <span className="whitespace-nowrap text-xs text-muted-foreground">{date(r.lastMovedAt)}</span>, sort: (r) => r.lastMovedAt },
   ];
 
   const statusTile = (key: string, label: string, count: number | undefined, tone?: 'good' | 'bad' | 'warn') => (
     <button type="button" className="text-left" onClick={() => set({ status: f.status === key ? 'all' : key })}>
       <div className={cn('rounded-lg ring-offset-2', f.status === key && 'ring-2 ring-primary')}>
-        <Kpi label={label} value={(count ?? 0).toLocaleString()} tone={tone} hint={f.status === key ? 'Filtering — click to clear' : 'Click to filter'} />
+        <Kpi label={label} value={(count ?? 0).toLocaleString()} tone={tone} hint={f.status === key ? tx('Filtering — click to clear') : tx('Click to filter')} />
       </div>
     </button>
   );
@@ -83,12 +83,12 @@ export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilte
       <ReportState query={report}>
         {t && (
           <KpiGrid>
-            <Kpi label={tx('Stock value (cost)')} value={money(t.value)} hint={`${t.items} item(s) shown`} />
-            <Kpi label={tx('Retail value')} value={money(t.retailValue)} hint={t.retailValue > t.value ? `Potential margin ${money(t.retailValue - t.value)}` : undefined} />
-            {statusTile('in_stock', 'In stock', t.inStock, 'good')}
-            {statusTile('low', 'Low stock', t.low, 'warn')}
-            {statusTile('out', 'Out of stock', t.out)}
-            {statusTile('negative', 'Negative stock', t.negative, 'bad')}
+            <Kpi label={tx('Stock value (cost)')} value={money(t.value)} hint={tx('{{items}} item(s) shown', { items: t.items })} />
+            <Kpi label={tx('Retail value')} value={money(t.retailValue)} hint={t.retailValue > t.value ? tx('Potential margin {{v1}}', { v1: money(t.retailValue - t.value) }) : undefined} />
+            {statusTile('in_stock', tx('In stock'), t.inStock, 'good')}
+            {statusTile('low', tx('Low stock'), t.low, 'warn')}
+            {statusTile('out', tx('Out of stock'), t.out)}
+            {statusTile('negative', tx('Negative stock'), t.negative, 'bad')}
           </KpiGrid>
         )}
 

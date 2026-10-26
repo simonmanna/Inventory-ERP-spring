@@ -86,7 +86,7 @@ function buildThermalHtml(p: {
 
   if (p.type === 'kot') {
     // Kitchen ticket: quantity + item + modifiers/notes, no prices.
-    if (p.lines.length === 0) out.push(center('No items'));
+    if (p.lines.length === 0) out.push(center(tx('No items')));
     for (const it of p.lines) {
       out.push(`${('x' + it.quantity).padStart(4)}  ${it.name.slice(0, W - 6)}`);
       if (it.variantName) out.push(`       ${it.variantName}`);
@@ -95,7 +95,7 @@ function buildThermalHtml(p: {
       if (it.note) out.push(`       Note: ${it.note}`);
     }
     out.push('-'.repeat(W));
-    out.push(center('Prepare and serve with care'));
+    out.push(center(tx('Prepare and serve with care')));
   } else {
     const descW = 26;
     const qtyW = 3;
@@ -103,7 +103,7 @@ function buildThermalHtml(p: {
     const totalW = 5;
     out.push(`${'Item'.padEnd(descW)} ${'Qty'.padStart(qtyW)} ${'Price'.padStart(priceW)} ${'Total'.padStart(totalW)}`);
     out.push('-'.repeat(W));
-    if (p.lines.length === 0) out.push(center('No items'));
+    if (p.lines.length === 0) out.push(center(tx('No items')));
     let subtotal = 0;
     for (const it of p.lines) {
       const lineTotal = it.unitPrice * it.quantity;
@@ -123,16 +123,16 @@ function buildThermalHtml(p: {
       out.push(two(`Discount (${p.discountPercent}%)`, '-' + money(p.discountAmount ?? 0)));
     }
     if (p.subtitle && p.previousSubtotal != null && p.grandTotal != null) {
-      out.push(two('Previous Total', ugx(p.previousSubtotal)));
-      out.push(two('Additional Total', ugx(p.total)));
+      out.push(two(tx('Previous Total'), ugx(p.previousSubtotal)));
+      out.push(two(tx('Additional Total'), ugx(p.total)));
       out.push('='.repeat(W));
-      out.push(two('Grand Total Due', ugx(p.grandTotal)));
+      out.push(two(tx('Grand Total Due'), ugx(p.grandTotal)));
     } else {
       out.push('='.repeat(W));
       out.push(two('TOTAL', ugx(p.total)));
     }
     out.push('-'.repeat(W));
-    out.push(center('Thank you for your visit!'));
+    out.push(center(tx('Thank you for your visit!')));
   }
 
   const text = out.join('\n');
@@ -202,7 +202,7 @@ export const ReceiptPreview: React.FC<Props> = ({
             <Printer className="h-4 w-4" /> {title}
           </DialogTitle>
           <DialogDescription className="text-slate-300 text-xs">
-            {subtitle ?? (type === 'kot' ? 'Kitchen order ticket' : 'Bill receipt')}
+            {subtitle ?? (type === 'kot' ? tx('Kitchen order ticket') : tx('Bill receipt'))}
           </DialogDescription>
         </DialogHeader>
 
@@ -228,7 +228,7 @@ export const ReceiptPreview: React.FC<Props> = ({
             </Button>
             {!printed && (
               <Button onClick={doPrint} style={{ background: '#16a34a' }}>
-                <Printer className="h-4 w-4 mr-1" /> {tx('Print')} {type === 'kot' ? 'KOT' : 'Bill'}
+                <Printer className="h-4 w-4 mr-1" /> {tx('Print')} {type === 'kot' ? 'KOT' : tx('Bill')}
               </Button>
             )}
           </div>

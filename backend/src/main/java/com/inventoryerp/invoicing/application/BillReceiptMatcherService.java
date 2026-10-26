@@ -34,12 +34,23 @@ public class BillReceiptMatcherService {
 
     /** Read-only split of a bill line against posted receipts of the same supplier + product. */
     public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity) {
+        return matchLine(organizationId, partnerId, productId, quantity, null);
+    }
+
+    /**
+     * Unit-aware split (ADR-S003). When the bill line and a receipt line both carry a unit snapshot, quantities are
+     * compared in base units: billing 1 Box (24) consumes 24 Piece of an open receipt. Consumed quantities are
+     * stamped in each receipt line's own unit; the returned vouchered/accrued/unmatched quantities are in bill-line
+     * units. Lines without a snapshot compare 1:1 like before V5.
+     */
+    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity,
+            BigDecimal billUomFactor) {
         BigDecimal wanted = Money.dec(quantity);
         if (wanted.signum() <= 0 || partnerId == null) {
             return new BillLineMatch(Money.ZERO, Money.ZERO, wanted, List.of(), Money.ZERO, null);
         }
         List<Map<String, Object>> lines = SqlRows.list(jdbc.sql("SELECT l.id, l.\"purchaseOrderLineId\", l.quantity,"
-                        + " l.\"billedQuantity\", l.\"unitCost\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
+                        + " l.\"billedQuantity\", l.\"unitCost\", l.\"uomFactor\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
                         + " JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE l.\"organizationId\" = ?"
                         + " AND l.\"productId\" = ? AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
                         + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC")
@@ -58,21 +69,27 @@ public class BillReceiptMatcherService {
             if (open.signum() <= 0) {
                 continue;
             }
-            BigDecimal take = Money.min(open, remaining);
+            // ratio = receipt-line units per bill-line unit (1 when either side predates unit snapshots).
+            BigDecimal receiptFactor = line.get("uomFactor") == null ? null : Money.dec(line.get("uomFactor"));
+            BigDecimal ratio = billUomFactor == null || receiptFactor == null || receiptFactor.signum() <= 0
+                    ? BigDecimal.ONE : Money.div(billUomFactor, receiptFactor);
+            BigDecimal openInBill = Money.div(open, ratio);
+            BigDecimal takeInBill = Money.min(openInBill, remaining);
+            BigDecimal take = takeInBill.compareTo(openInBill) == 0 ? open : takeInBill.multiply(ratio);
             boolean isVouchered = line.get("purchaseOrderId") != null;
             BigDecimal unitCost = Money.dec(line.get("unitCost"));
             consumptions.add(new Consumption((String) line.get("id"), (String) line.get("purchaseOrderLineId"), take,
                     isVouchered, unitCost));
             if (isVouchered) {
-                vouchered = vouchered.add(take);
+                vouchered = vouchered.add(takeInBill);
             } else {
-                accrued = accrued.add(take);
+                accrued = accrued.add(takeInBill);
                 accruedValue = accruedValue.add(unitCost.multiply(take));
             }
             if (locationId == null && line.get("warehouseId") != null) {
                 locationId = (String) line.get("warehouseId");
             }
-            remaining = remaining.subtract(take);
+            remaining = remaining.subtract(takeInBill);
         }
         return new BillLineMatch(vouchered, accrued, remaining.signum() <= 0 ? Money.ZERO : remaining, consumptions,
                 accruedValue, locationId);

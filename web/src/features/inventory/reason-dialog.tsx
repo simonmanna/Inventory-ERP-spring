@@ -47,7 +47,7 @@ export function ReasonDialog({
             autoFocus
             rows={3}
             value={reason}
-            placeholder={placeholder ?? 'Why is this needed? This is kept in the audit trail.'}
+            placeholder={placeholder ?? tx('Why is this needed? This is kept in the audit trail.')}
             onChange={(e) => setReason(e.target.value)}
           />
         </div>
@@ -58,7 +58,7 @@ export function ReasonDialog({
             disabled={!trimmed || pending}
             onClick={() => onConfirm(trimmed)}
           >
-            {pending ? (pendingLabel ?? 'Working…') : confirmLabel}
+            {pending ? (pendingLabel ?? tx('Working…')) : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

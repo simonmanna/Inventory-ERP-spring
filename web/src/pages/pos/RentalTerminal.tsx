@@ -200,13 +200,13 @@ const RentalTerminal: React.FC = () => {
           paymentMode,
         },
       });
-      toast.success(`Checked out ${checkedOut.agreementNumber ?? 'agreement'}`);
+      toast.success(tx('Checked out {{v1}}', { v1: checkedOut.agreementNumber ?? 'agreement' }));
       setLines([]);
       setCustomer(null);
       setDepositAmount(0);
       navigate(`/rental/agreements/${agreement.id}`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Checkout failed');
+      toast.error(e?.response?.data?.message ?? tx('Checkout failed'));
     } finally {
       setBusy(false);
     }
@@ -261,7 +261,7 @@ const RentalTerminal: React.FC = () => {
                   <span className="line-clamp-2 text-sm font-medium">{p.name}</span>
                   <span className="text-xs text-muted-foreground">{p.sku ?? p.code ?? ''}</span>
                   <span className="mt-auto text-sm font-semibold text-primary">
-                    {rate ? `${fmt(rate.price)}/${rate.period}` : 'No rate'}
+                    {rate ? `${fmt(rate.price)}/${rate.period}` : tx('No rate')}
                   </span>
                 </button>
               );

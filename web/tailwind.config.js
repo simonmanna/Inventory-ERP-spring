@@ -19,7 +19,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Geist', ...defaultTheme.fontFamily.sans],
+        sans: ['Geist', 'Noto Sans Ethiopic', ...defaultTheme.fontFamily.sans],
       },
       colors: {
         sky: themedRamp('sky'),

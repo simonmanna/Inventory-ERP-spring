@@ -1,5 +1,8 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.UomConversionService;
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.defined;
 import static com.inventoryerp.procurement.application.ProcurementSql.num;
@@ -82,7 +85,7 @@ public class PurchaseOrdersService {
     record ReceiptLine(String purchaseOrderLineId, String productId, double quantity, String description) {}
 
     /** A receive line after PO-line resolution ({@code _resolvedLineId} / {@code _unitCost}). */
-    private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost) {}
+    private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit) {}
 
     private final JdbcClient jdbc;
     private final SequenceService sequence;
@@ -95,10 +98,13 @@ public class PurchaseOrdersService {
     private final TransactionTemplate tx;
     private final TransactionTemplate newTx;
 
+    private final UomConversionService units;
+
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
-            CashSessionService cashSession, PlatformTransactionManager txm) {
+            CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units) {
         this.jdbc = jdbc;
+        this.units = units;
         this.sequence = sequence;
         this.events = events;
         this.audit = audit;
@@ -154,6 +160,12 @@ public class PurchaseOrdersService {
         double sub = subtotal;
         double taxes = taxAmount;
 
+        // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
+        List<LineUnit> lineUnits = new ArrayList<>();
+        for (LineInput ln : dto.lines()) {
+            lineUnits.add(units.resolveLineUnit(ln.productId(), ln.unitOfMeasureId(), UnitRole.PURCHASE));
+        }
+
         Map<String, Object> order = tx.execute(st -> {
             String id = UUID.randomUUID().toString();
             Map<String, Object> created = SqlRows.one(PurchaseOrder.class, jdbc.sql("INSERT INTO \"PurchaseOrder\" (id,"
@@ -173,12 +185,13 @@ public class PurchaseOrdersService {
             List<Map<String, Object>> lines = new ArrayList<>();
             int idx = 0;
             for (LineInput ln : dto.lines()) {
+                LineUnit unit = lineUnits.get(idx);
                 lines.add(SqlRows.one(PurchaseOrderLine.class, jdbc.sql("INSERT INTO \"PurchaseOrderLine\" (id,"
                                 + " \"organizationId\", \"purchaseOrderId\", \"productId\", description, quantity,"
-                                + " \"unitOfMeasureId\", \"unitPrice\", \"taxId\", \"taxRate\", subtotal, \"lineNumber\", notes)"
-                                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                                + " \"unitOfMeasureId\", \"uomFactor\", \"unitPrice\", \"taxId\", \"taxRate\", subtotal,"
+                                + " \"lineNumber\", notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, ln.productId(), ln.description(), ln.quantity(),
-                                ln.unitOfMeasureId(), ln.unitPrice(), ln.taxId(),
+                                unit.uomId(), unit.factor(), ln.unitPrice(), ln.taxId(),
                                 ln.taxRate() != null ? ln.taxRate() : BigDecimal.ZERO,
                                 num(ln.quantity().doubleValue() * ln.unitPrice().doubleValue()), ++idx, ln.notes())));
             }
@@ -421,11 +434,12 @@ public class PurchaseOrdersService {
             ReceiveLineInput rln = r.line();
             lines.add(SqlRows.one(GoodsReceiptLine.class, jdbc.sql("INSERT INTO \"GoodsReceiptLine\" (id,"
                             + " \"organizationId\", \"goodsReceiptId\", \"purchaseOrderLineId\", \"productId\", description,"
-                            + " quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\") VALUES (?, ?,"
-                            + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                            + " quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\", \"uomId\","
+                            + " \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
                     .params(UUID.randomUUID().toString(), orgId, grnId, r.resolvedLineId(), rln.productId(),
                             rln.description(), rln.quantity(), r.unitCost() != null ? r.unitCost() : BigDecimal.ZERO,
-                            rln.batchNumber(), SqlRows.ts(ProcurementSql.date(rln.expiryDate())), rln.notes(), ++idx)));
+                            rln.batchNumber(), SqlRows.ts(ProcurementSql.date(rln.expiryDate())), rln.notes(), ++idx,
+                            r.unit().uomId(), r.unit().factor())));
         }
         grn.put("lines", lines);
         return grn;
@@ -539,7 +553,7 @@ public class PurchaseOrdersService {
             Map<String, Object> poLine = lineId == null ? null : poLines.get(lineId);
             BigDecimal unitCost = rln.unitCost() != null ? rln.unitCost()
                     : poLine != null ? num(Money.dec(poLine.get("unitPrice")).doubleValue()) : null;
-            resolved.add(new Resolved(rln, lineId, unitCost));
+            resolved.add(new Resolved(rln, lineId, unitCost, receiptUnit(poLine, rln.productId(), null)));
         }
 
         int year = year();
@@ -594,7 +608,8 @@ public class PurchaseOrdersService {
                 BigDecimal unitCost = r.unitCost() != null ? r.unitCost()
                         : num(Money.dec(product.get("costPrice")).doubleValue());
                 StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), rln.quantity()).unitCost(unitCost)
-                        .uom((String) product.get("purchaseUomId")).batch(rln.batchNumber()).expiry(rln.expiryDate())
+                        .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
+                        .expiry(rln.expiryDate())
                         .reference("GRN " + receiptNumber);
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", grnId, date));
                 BigDecimal lineNet = Money.dec(received.totalValue());
@@ -618,6 +633,29 @@ public class PurchaseOrdersService {
         events.publish("purchase_order.received", Obj.of("organizationId", orgId, "orderId", id, "receiptNumber",
                 receiptNumber, "status", result.get("status")));
         return result;
+    }
+
+    /**
+     * Unit snapshot for a receipt line (ADR-S003): a PO-backed line inherits the PO line's unit and factor so
+     * receipt, PO progress and billing all count in the unit that was ordered. PO lines written before V5 carry
+     * no factor and keep the legacy behaviour (null snapshot, converted with the product's purchase unit).
+     * Lines without a PO line use {@code requestedUomId}, else the product's purchase unit.
+     */
+    LineUnit receiptUnit(Map<String, Object> poLine, String productId, String requestedUomId) {
+        if (poLine != null) {
+            Object factor = poLine.get("uomFactor");
+            return factor == null ? new LineUnit(null, null)
+                    : new LineUnit((String) poLine.get("unitOfMeasureId"), Money.dec(factor));
+        }
+        if (productId == null || productId.isEmpty()) {
+            return new LineUnit(requestedUomId, null);
+        }
+        return units.resolveLineUnit(productId, requestedUomId, UnitRole.PURCHASE);
+    }
+
+    /** Unit handed to the stock engine: the snapshot unit, or the product's purchase unit for legacy lines. */
+    static String stockUnit(LineUnit unit, Map<String, Object> product) {
+        return unit.factor() != null ? unit.uomId() : (String) product.get("purchaseUomId");
     }
 
     /** Product row scoped like {@code tx.product.findFirst} (org + not deleted). */

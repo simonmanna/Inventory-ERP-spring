@@ -143,7 +143,7 @@ export function HrLeavePage() {
                       <p className="text-sm font-medium">{t.code} · {t.name}</p>
                       <p className="text-xs text-muted-foreground">
                         {t.daysPerYear} {tx('days/yr ·')} {t.isPaid ? 'paid' : 'unpaid'} {tx('· carry-over')} {t.carryForwardDays}
-                        {t.maxConsecutiveDays ? ` · max ${t.maxConsecutiveDays} consecutive` : ''}
+                        {t.maxConsecutiveDays ? tx(' · max {{maxConsecutiveDays}} consecutive', { maxConsecutiveDays: t.maxConsecutiveDays }) : ''}
                       </p>
                     </div>
                     {!t.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}

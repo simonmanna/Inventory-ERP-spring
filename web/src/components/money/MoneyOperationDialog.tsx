@@ -17,23 +17,23 @@ import { tx } from '@/lib/i18n/tx';
 export type MoneyOperationMode = 'in' | 'out' | 'transfer';
 
 const TITLES: Record<MoneyOperationMode, { title: string; icon: typeof ArrowDownLeft }> = {
-  in: { title: 'Record other money in', icon: ArrowDownLeft },
-  out: { title: 'Record other money out', icon: ArrowUpRight },
-  transfer: { title: 'Transfer between accounts', icon: ArrowLeftRight },
+  in: { title: tx('Record other money in'), icon: ArrowDownLeft },
+  out: { title: tx('Record other money out'), icon: ArrowUpRight },
+  transfer: { title: tx('Transfer between accounts'), icon: ArrowLeftRight },
 };
 
 /** Money that has its own workflow — send people there instead of posting a manual entry. */
 const ELSEWHERE: Record<'in' | 'out', { label: string; hint: string; href: string }[]> = {
   in: [
-    { label: 'A POS sale', hint: 'Recorded automatically when the cashier charges the order', href: '/pos/terminal' },
-    { label: 'A customer paying an invoice', hint: 'Use Receipts so the invoice is marked paid', href: '/payments' },
-    { label: 'Card or mobile-money payout to the bank', hint: 'Use Settlements so fees are recorded', href: '/accounts/cash-accounts/settlements' },
+    { label: tx('A POS sale'), hint: tx('Recorded automatically when the cashier charges the order'), href: '/pos/terminal' },
+    { label: tx('A customer paying an invoice'), hint: tx('Use Receipts so the invoice is marked paid'), href: '/payments' },
+    { label: tx('Card or mobile-money payout to the bank'), hint: tx('Use Settlements so fees are recorded'), href: '/accounts/cash-accounts/settlements' },
   ],
   out: [
-    { label: 'Pay a supplier invoice', hint: 'Use Supplier Payments so the bill is cleared', href: '/supplier-payments' },
-    { label: 'Record a business expense', hint: 'Use Expenses for approvals and receipts', href: '/expenses' },
-    { label: 'Pay salaries', hint: 'Use Payroll', href: '/hr/payroll' },
-    { label: 'Bank cash from a register', hint: 'Use the register page so the shift is updated', href: '/pos/cash-registers' },
+    { label: tx('Pay a supplier invoice'), hint: tx('Use Supplier Payments so the bill is cleared'), href: '/supplier-payments' },
+    { label: tx('Record a business expense'), hint: tx('Use Expenses for approvals and receipts'), href: '/expenses' },
+    { label: tx('Pay salaries'), hint: tx('Use Payroll'), href: '/hr/payroll' },
+    { label: tx('Bank cash from a register'), hint: tx('Use the register page so the shift is updated'), href: '/pos/cash-registers' },
   ],
 };
 
@@ -121,11 +121,11 @@ export function MoneyOperationDialog({
         const description = [note.trim(), reference.trim() ? `ref ${reference.trim()}` : ''].filter(Boolean).join(' · ');
         const input = { accountId, counterpartAccountId: counterpartId, operationType: operation, amount: n, description, date };
         if (mode === 'in') await deposit.mutateAsync(input); else await withdraw.mutateAsync(input);
-        toast.success(mode === 'in' ? 'Money in recorded' : 'Money out recorded');
+        toast.success(mode === 'in' ? tx('Money in recorded') : tx('Money out recorded'));
       }
       onClose();
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'The operation was not recorded'));
+      toast.error(apiErrorMessage(err, tx('The operation was not recorded')));
     }
   };
 
@@ -138,8 +138,8 @@ export function MoneyOperationDialog({
           <DialogTitle className="flex items-center gap-2"><Icon className="h-5 w-5" aria-hidden /> {TITLES[mode].title}</DialogTitle>
           <DialogDescription>
             {mode === 'transfer'
-              ? 'Move money between your own cash, bank and mobile-money accounts. Register drawers move only through their shifts.'
-              : 'Use this only for money not already recorded through POS sales, customer receipts, supplier payments, expenses, payroll or settlements.'}
+              ? tx('Move money between your own cash, bank and mobile-money accounts. Register drawers move only through their shifts.')
+              : tx('Use this only for money not already recorded through POS sales, customer receipts, supplier payments, expenses, payroll or settlements.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -202,7 +202,7 @@ export function MoneyOperationDialog({
             ) : null}
 
             <div className="space-y-1.5">
-              <Label htmlFor="money-op-account">{mode === 'in' ? 'Receive into' : mode === 'out' ? 'Pay from' : 'From'}</Label>
+              <Label htmlFor="money-op-account">{mode === 'in' ? tx('Receive into') : mode === 'out' ? tx('Pay from') : tx('From')}</Label>
               <select id="money-op-account" required className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                 <option value="">{tx('Choose account')}</option>
                 {eligible.map((a) => <option key={a.id} value={a.id}>{a.name} — {fmt(a.balance)}</option>)}
@@ -221,7 +221,7 @@ export function MoneyOperationDialog({
               <div className="space-y-1.5">
                 <Label htmlFor="money-op-counterpart">{tx('Accounting account')}</Label>
                 <select id="money-op-counterpart" required className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm" value={counterpartId} onChange={(e) => setCounterpartId(e.target.value)}>
-                  <option value="">{op.accounts.length ? 'Choose account' : 'No eligible account — add one to the chart of accounts'}</option>
+                  <option value="">{op.accounts.length ? tx('Choose account') : tx('No eligible account — add one to the chart of accounts')}</option>
                   {op.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
                 </select>
                 <p className="text-xs text-muted-foreground">{tx('Where this is recorded in the books (')}{op.accounts[0]?.classification ?? 'ledger'} {tx('account).')}</p>
@@ -234,7 +234,7 @@ export function MoneyOperationDialog({
                 <Input id="money-op-amount" type="number" inputMode="decimal" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
                 {source && needsFunds ? (
                   <p className={insufficient ? 'text-xs font-medium text-destructive' : 'text-xs text-muted-foreground'}>
-                    {insufficient ? 'More than is available: ' : 'Available: '}{fmt(source.balance)}
+                    {insufficient ? tx('More than is available: ') : tx('Available: ')}{fmt(source.balance)}
                   </p>
                 ) : null}
               </div>
@@ -252,7 +252,7 @@ export function MoneyOperationDialog({
             {mode !== 'transfer' ? (
               <div className="space-y-1.5">
                 <Label htmlFor="money-op-note">{tx('Description')}</Label>
-                <Input id="money-op-note" required value={note} onChange={(e) => setNote(e.target.value)} placeholder={mode === 'in' ? 'e.g. Capital from owner' : 'e.g. Monthly bank charges'} />
+                <Input id="money-op-note" required value={note} onChange={(e) => setNote(e.target.value)} placeholder={mode === 'in' ? tx('e.g. Capital from owner') : tx('e.g. Monthly bank charges')} />
               </div>
             ) : null}
 

@@ -89,8 +89,8 @@ export function BottleCountPage() {
     start.mutate(
       { locationId: locationId || undefined, countType },
       {
-        onSuccess: (s) => { loadSession(s); notify.success(`Count ${s.countCode} ready — ${s.lines.length} bottles`); },
-        onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not start count'),
+        onSuccess: (s) => { loadSession(s); notify.success(tx('Count {{countCode}} ready — {{length}} bottles', { countCode: s.countCode, length: s.lines.length })); },
+        onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not start count')),
       },
     );
 
@@ -145,13 +145,13 @@ export function BottleCountPage() {
     if (!session) return;
     saveDraft.mutate(
       { id: session.id, body: buildPayload() },
-      { onSuccess: (s) => { loadSession(s); notify.success(tx('Draft saved')); }, onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Save failed') },
+      { onSuccess: (s) => { loadSession(s); notify.success(tx('Draft saved')); }, onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Save failed')) },
     );
   };
 
   const doSubmit = (creds?: { approverEmail?: string; managerPin?: string }) => {
     if (!session) return;
-    if (missingReasons > 0) { notify.error(`${missingReasons} flagged line(s) need a reason`); return; }
+    if (missingReasons > 0) { notify.error(tx('{{missingReasons}} flagged line(s) need a reason', { missingReasons })); return; }
     const id = session.id;
     // Persist edits, then finalise (server recomputes + posts the variance adjustment).
     saveDraft.mutate(
@@ -161,17 +161,17 @@ export function BottleCountPage() {
           { id, body: creds },
           {
             onSuccess: (s) => {
-              notify.success(s.adjustmentId ? 'Count submitted — stock adjusted' : 'Count submitted');
+              notify.success(s.adjustmentId ? tx('Count submitted — stock adjusted') : tx('Count submitted'));
               setSession(null); setEdits({}); setApprovalOpen(false); setApproverEmail(''); setManagerPin('');
             },
             onError: (e: any) => {
-              const msg = e?.response?.data?.message ?? 'Submit failed';
+              const msg = e?.response?.data?.message ?? tx('Submit failed');
               if (/approval|approver/i.test(String(msg)) && !creds) { setApprovalOpen(true); return; }
               notify.error(msg);
             },
           },
         ),
-        onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Save failed'),
+        onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Save failed')),
       },
     );
   };
@@ -231,7 +231,7 @@ export function BottleCountPage() {
               <div className="flex items-end">
                 <Button className="w-full" disabled={start.isPending} onClick={onStart}>
                   <Play className="mr-2 h-4 w-4" />
-                  {start.isPending ? 'Starting…' : 'Start / Resume Count'}
+                  {start.isPending ? tx('Starting…') : tx('Start / Resume Count')}
                 </Button>
               </div>
             </div>
@@ -249,7 +249,7 @@ export function BottleCountPage() {
               <span className="text-sm font-medium truncate max-w-[280px]">{session.name ?? session.countCode}</span>
               <Badge variant="outline" className="shrink-0">{session.countCode}</Badge>
               <span className="text-sm text-muted-foreground">
-                {countedTotal} of {rows.length} {tx('weighed ·')} {flagged.length} {tx('flagged')}
+                {countedTotal} {tx('of')} {rows.length} {tx('weighed ·')} {flagged.length} {tx('flagged')}
               </span>
             </div>
             <div className="flex gap-2">
@@ -257,10 +257,10 @@ export function BottleCountPage() {
                 <XCircle className="mr-1 h-4 w-4" /> {tx('Cancel')}
               </Button>
               <Button size="sm" variant="outline" onClick={doSave} disabled={busy}>
-                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? 'Saving…' : 'Save Draft'}
+                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? tx('Saving…') : tx('Save Draft')}
               </Button>
               <Button size="sm" onClick={onSubmitClick} disabled={busy || countedTotal === 0}>
-                <CheckCircle2 className="mr-1 h-4 w-4" /> {submit.isPending ? 'Submitting…' : 'Submit Count'}
+                <CheckCircle2 className="mr-1 h-4 w-4" /> {submit.isPending ? tx('Submitting…') : tx('Submit Count')}
               </Button>
             </div>
           </div>
@@ -281,8 +281,8 @@ export function BottleCountPage() {
                       <div className="min-w-[160px]">
                         <div className="font-medium">{ln.productName}</div>
                         <div className="text-xs text-muted-foreground">
-                          {tx('System')} {num(ln.systemMl).toFixed(0)} ml
-                          {cfg ? ` · pour ${cfg.standardPourMl || '—'} ml · tol ±${cfg.toleranceG} g` : ' · not configured'}
+                          {tx('System')} {num(ln.systemMl).toFixed(0)} {tx('ml')}
+                          {cfg ? tx(' · pour {{v1}} ml · tol ±{{toleranceG}} g', { v1: cfg.standardPourMl || '—', toleranceG: cfg.toleranceG }) : tx(' · not configured')}
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-4">
@@ -295,7 +295,7 @@ export function BottleCountPage() {
                           <div className={`font-mono font-semibold ${counted ? VAR_COLOR[confidence] : 'text-muted-foreground'}`}>
                             {counted ? `${varianceG > 0 ? '+' : ''}${varianceG.toFixed(1)} g` : '—'}
                           </div>
-                          {counted && <div className={`text-[11px] ${VAR_COLOR[confidence]}`}>{varianceMl > 0 ? '+' : ''}{varianceMl.toFixed(0)} ml</div>}
+                          {counted && <div className={`text-[11px] ${VAR_COLOR[confidence]}`}>{varianceMl > 0 ? '+' : ''}{varianceMl.toFixed(0)} {tx('ml')}</div>}
                         </div>
                         {counted && (
                           <Badge variant="outline" className={CONF_STYLES[confidence]}>{confidence.replace('_', ' ').toLowerCase()}</Badge>
@@ -383,7 +383,7 @@ export function BottleCountPage() {
                   {history.data.map((s) => (
                     <tr key={s.id} className="border-b hover:bg-muted/20">
                       <td className="px-3 py-2 font-mono">{s.countCode}</td>
-                      <td className="px-3 py-2">{s.countType === 'opening' ? 'Opening' : 'Closing'}</td>
+                      <td className="px-3 py-2">{s.countType === 'opening' ? tx('Opening') : tx('Closing')}</td>
                       <td className="px-3 py-2">
                         <Badge variant={s.status === 'submitted' ? 'default' : s.status === 'cancelled' ? 'destructive' : 'outline'}>{s.status}</Badge>
                       </td>

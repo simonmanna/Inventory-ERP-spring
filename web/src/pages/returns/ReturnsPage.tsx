@@ -24,7 +24,7 @@ const toOptions = (m: Record<string, string>) => Object.entries(m).map(([value, 
 const FILTERS = { channel: '', stockDisposition: '', dateFrom: '', dateTo: '' };
 
 const CHANNEL_TABS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'All returns' },
+  { value: '', label: tx('All returns') },
   { value: 'retail', label: CHANNEL_LABEL.retail },
   { value: 'restaurant', label: CHANNEL_LABEL.restaurant },
 ];
@@ -56,30 +56,30 @@ export function ReturnsPage() {
   ];
 
   const columns: Column<SalesReturn>[] = [
-    { key: 'returnNumber', header: 'Return #', render: (r) => <span className="font-medium text-primary">{r.returnNumber}</span> },
-    { key: 'createdAt', header: 'Date', render: (r) => <span className="whitespace-nowrap text-muted-foreground">{date(r.createdAt)}</span> },
+    { key: 'returnNumber', header: tx('Return #'), render: (r) => <span className="font-medium text-primary">{r.returnNumber}</span> },
+    { key: 'createdAt', header: tx('Date'), render: (r) => <span className="whitespace-nowrap text-muted-foreground">{date(r.createdAt)}</span> },
     {
       key: 'invoiceNumber',
-      header: 'Original sale',
+      header: tx('Original sale'),
       render: (r) => (
         <Link to={`/pos/receipts/${r.invoiceId}`} onClick={(e) => e.stopPropagation()} className="hover:underline">
           {r.invoiceNumber}
         </Link>
       ),
     },
-    { key: 'partner', header: 'Customer', render: (r) => r.partner?.name ?? <span className="text-muted-foreground">{tx('Walk-in')}</span> },
+    { key: 'partner', header: tx('Customer'), render: (r) => r.partner?.name ?? <span className="text-muted-foreground">{tx('Walk-in')}</span> },
     {
       key: 'channel',
-      header: 'Channel',
+      header: tx('Channel'),
       render: (r) => <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium">{CHANNEL_LABEL[r.channel]}</span>,
     },
-    { key: 'reason', header: 'Reason', render: (r) => <span className="line-clamp-1 max-w-[16rem] text-muted-foreground">{r.reason}</span> },
+    { key: 'reason', header: tx('Reason'), render: (r) => <span className="line-clamp-1 max-w-[16rem] text-muted-foreground">{r.reason}</span> },
     {
       key: 'stockDisposition',
-      header: 'Goods',
+      header: tx('Goods'),
       render: (r) => <StatusPill tone={dispositionTone[r.stockDisposition] ?? 'neutral'}>{DISPOSITION_LABEL[r.stockDisposition]}</StatusPill>,
     },
-    { key: 'amount', header: 'Amount', className: 'text-right', render: (r) => <span className="font-semibold tabular-nums text-rose-600">{money(r.amount, currency)}</span> },
+    { key: 'amount', header: tx('Amount'), className: 'text-right', render: (r) => <span className="font-semibold tabular-nums text-rose-600">{money(r.amount, currency)}</span> },
     {
       key: 'actions',
       header: '',
@@ -93,15 +93,15 @@ export function ReturnsPage() {
   ];
 
   const exportColumns: ExportColumn<SalesReturn>[] = [
-    { header: 'Return #', value: (r) => r.returnNumber },
-    { header: 'Date', value: (r) => date(r.createdAt) },
-    { header: 'Original sale', value: (r) => r.invoiceNumber },
-    { header: 'Customer', value: (r) => r.partner?.name ?? '' },
-    { header: 'Channel', value: (r) => CHANNEL_LABEL[r.channel] },
-    { header: 'Reason', value: (r) => r.reason },
-    { header: 'Goods', value: (r) => DISPOSITION_LABEL[r.stockDisposition] },
-    { header: 'Approved by', value: (r) => r.approvedByName ?? '' },
-    { header: 'Amount', value: (r) => money(r.amount, currency), align: 'right' },
+    { header: tx('Return #'), value: (r) => r.returnNumber },
+    { header: tx('Date'), value: (r) => date(r.createdAt) },
+    { header: tx('Original sale'), value: (r) => r.invoiceNumber },
+    { header: tx('Customer'), value: (r) => r.partner?.name ?? '' },
+    { header: tx('Channel'), value: (r) => CHANNEL_LABEL[r.channel] },
+    { header: tx('Reason'), value: (r) => r.reason },
+    { header: tx('Goods'), value: (r) => DISPOSITION_LABEL[r.stockDisposition] },
+    { header: tx('Approved by'), value: (r) => r.approvedByName ?? '' },
+    { header: tx('Amount'), value: (r) => money(r.amount, currency), align: 'right' },
   ];
 
   const fetchAll = () =>
@@ -165,7 +165,7 @@ export function ReturnsPage() {
 
       <ListToolbar chips={<FilterChips chips={chips} onClearAll={list.clearFilters} />}>
         <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder={tx('Search sale #, customer or reason…')} />
-        <FilterSelect value={stockDisposition} onChange={(v) => list.setFilter('stockDisposition', v)} options={toOptions(DISPOSITION_LABEL)} allLabel="All goods outcomes" />
+        <FilterSelect value={stockDisposition} onChange={(v) => list.setFilter('stockDisposition', v)} options={toOptions(DISPOSITION_LABEL)} allLabel={tx('All goods outcomes')} />
         <DateRangeFilter from={dateFrom} to={dateTo} onChange={(f, t) => list.setFilters({ dateFrom: f, dateTo: t })} />
       </ListToolbar>
 
@@ -180,7 +180,7 @@ export function ReturnsPage() {
             onRowClick={(r) => navigate(`/returns/${r.id}`)}
             cellClassName="py-2.5 px-4"
             headerRowClassName="h-10"
-            emptyMessage={chips.length ? 'No returns match these filters.' : 'No returns recorded yet.'}
+            emptyMessage={chips.length ? tx('No returns match these filters.') : tx('No returns recorded yet.')}
           />
         </div>
         {meta && (

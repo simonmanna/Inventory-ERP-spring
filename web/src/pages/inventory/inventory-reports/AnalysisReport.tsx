@@ -56,12 +56,12 @@ export function AnalysisReport({ ctl }: { ctl: ReturnType<typeof useReportFilter
   const s = d?.summary;
 
   const columns: Column<TypeRow>[] = [
-    { key: 'type', header: 'Movement type', className: 'font-medium', render: (r) => moveTypeLabel(r.type), sort: (r) => moveTypeLabel(r.type) },
-    { key: 'group', header: 'Group', render: (r) => <span className="capitalize text-muted-foreground">{r.group}</span>, sort: (r) => r.group },
-    { key: 'direction', header: 'Direction', align: 'center', render: (r) => <span className={r.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}>{r.direction === 'in' ? 'In' : 'Out'}</span>, sort: (r) => r.direction },
-    { key: 'movements', header: 'Movements', align: 'right', render: (r) => r.movements.toLocaleString(), sort: (r) => r.movements, footer: s?.movements.toLocaleString() },
-    { key: 'quantity', header: 'Net Qty', align: 'right', render: (r) => qty(r.quantity), sort: (r) => r.quantity },
-    { key: 'value', header: 'Value', align: 'right', render: (r) => <span className="font-semibold">{money(r.value)}</span>, sort: (r) => r.value },
+    { key: 'type', header: tx('Movement type'), className: 'font-medium', render: (r) => moveTypeLabel(r.type), sort: (r) => moveTypeLabel(r.type) },
+    { key: 'group', header: tx('Group'), render: (r) => <span className="capitalize text-muted-foreground">{r.group}</span>, sort: (r) => r.group },
+    { key: 'direction', header: tx('Direction'), align: 'center', render: (r) => <span className={r.direction === 'in' ? 'text-emerald-600' : 'text-destructive'}>{r.direction === 'in' ? tx('In') : tx('Out')}</span>, sort: (r) => r.direction },
+    { key: 'movements', header: tx('Movements'), align: 'right', render: (r) => r.movements.toLocaleString(), sort: (r) => r.movements, footer: s?.movements.toLocaleString() },
+    { key: 'quantity', header: tx('Net Qty'), align: 'right', render: (r) => qty(r.quantity), sort: (r) => r.quantity },
+    { key: 'value', header: tx('Value'), align: 'right', render: (r) => <span className="font-semibold">{money(r.value)}</span>, sort: (r) => r.value },
   ];
 
   return (
@@ -82,7 +82,7 @@ export function AnalysisReport({ ctl }: { ctl: ReturnType<typeof useReportFilter
                 label={tx('Loss rate')}
                 value={s.lossRatePct == null ? '—' : `${s.lossRatePct}%`}
                 tone={s.lossRatePct == null ? undefined : s.lossRatePct > 5 ? 'bad' : s.lossRatePct > 2 ? 'warn' : 'good'}
-                hint={s.lossRatePct == null ? 'No costed consumption in period' : 'Loss ÷ (consumed + loss), at cost'}
+                hint={s.lossRatePct == null ? tx('No costed consumption in period') : tx('Loss ÷ (consumed + loss), at cost')}
               />
               <Kpi label={tx('Movements')} value={s.movements.toLocaleString()} />
             </KpiGrid>
@@ -105,9 +105,9 @@ export function AnalysisReport({ ctl }: { ctl: ReturnType<typeof useReportFilter
             </Card>
 
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <TopList title={tx('Top consumed / sold (cost)')} rows={d.topConsumed} empty="No consumption in period." />
-              <TopList title={tx('Top waste & loss (cost)')} rows={d.topLost} empty="No waste or loss recorded." />
-              <TopList title={tx('Top received (cost)')} rows={d.topReceived} empty="No receipts in period." />
+              <TopList title={tx('Top consumed / sold (cost)')} rows={d.topConsumed} empty={tx('No consumption in period.')} />
+              <TopList title={tx('Top waste & loss (cost)')} rows={d.topLost} empty={tx('No waste or loss recorded.')} />
+              <TopList title={tx('Top received (cost)')} rows={d.topReceived} empty={tx('No receipts in period.')} />
             </div>
 
             <DataTable

@@ -22,10 +22,10 @@ import { tx } from '@/lib/i18n/tx';
 
 type CountType = 'opening' | 'closing' | 'cycle' | 'spot';
 const COUNT_TYPE_LABEL: Record<CountType, string> = {
-  opening: 'Morning',
-  closing: 'Evening',
-  cycle: 'Cycle',
-  spot: 'Spot check',
+  opening: tx('Morning'),
+  closing: tx('Evening'),
+  cycle: tx('Cycle'),
+  spot: tx('Spot check'),
 };
 
 interface Location { id: string; code: string; name: string }
@@ -110,7 +110,7 @@ export function InventoryCountPage() {
   const viewSession = useQuery<CountSession>({
     queryKey: ['inventory-count', viewSessionId],
     queryFn: async () => {
-      if (!viewSessionId) throw new Error('No session');
+      if (!viewSessionId) throw new Error(tx('No session'));
       return (await api.get<CountSession>(`/inventory/counts/${viewSessionId}`)).data;
     },
     enabled: !!viewSessionId,
@@ -223,9 +223,9 @@ export function InventoryCountPage() {
     onSuccess: (s) => {
       loadSession(s);
       qc.invalidateQueries({ queryKey: ['inventory-count-sheet'] });
-      notify.success(`Count ${s.countCode} ready — ${s.lines.length} items`);
+      notify.success(tx('Count {{countCode}} ready — {{length}} items', { countCode: s.countCode, length: s.lines.length }));
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not start count'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not start count')),
   });
 
   const buildPayload = () => ({
@@ -244,22 +244,22 @@ export function InventoryCountPage() {
 
   const saveDraft = useMutation({
     mutationFn: async () => {
-      if (!session) throw new Error('No session');
+      if (!session) throw new Error(tx('No session'));
       return (await api.patch<CountSession>(`/inventory/counts/${session.id}/draft`, buildPayload())).data;
     },
     onSuccess: (s) => { loadSession(s); notify.success(tx('Draft saved')); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Save failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Save failed')),
   });
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (!session) throw new Error('No session');
+      if (!session) throw new Error(tx('No session'));
       // Persist the latest edits, then finalise.
       await api.patch(`/inventory/counts/${session.id}/draft`, buildPayload());
       return (await api.post<CountSession>(`/inventory/counts/${session.id}/submit`)).data;
     },
     onSuccess: (s) => {
-      notify.success(s.adjustmentId ? 'Count submitted — stock adjusted' : 'Count submitted — no variances');
+      notify.success(s.adjustmentId ? tx('Count submitted — stock adjusted') : tx('Count submitted — no variances'));
       setSession(null);
       setEdits({});
       qc.invalidateQueries({ queryKey: ['inventory-counts'] });
@@ -268,23 +268,23 @@ export function InventoryCountPage() {
       qc.invalidateQueries({ queryKey: ['inventory-items'] });
       qc.invalidateQueries({ queryKey: ['inventory-ledger'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Submit failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Submit failed')),
   });
 
   /** Blind count: a submitter saves the counts, then loads the unmasked sheet to reconcile. */
   const review = useMutation({
     mutationFn: async () => {
-      if (!session) throw new Error('No session');
+      if (!session) throw new Error(tx('No session'));
       await api.patch(`/inventory/counts/${session.id}/draft`, buildPayload());
       return (await api.get<CountSession>(`/inventory/counts/${session.id}/review`)).data;
     },
     onSuccess: (s) => { loadSession(s); notify.success(tx('System quantities revealed for review')); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not load the review sheet'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not load the review sheet')),
   });
 
   const cancel = useMutation({
     mutationFn: async () => {
-      if (!session) throw new Error('No session');
+      if (!session) throw new Error(tx('No session'));
       return (await api.post(`/inventory/counts/${session.id}/cancel`)).data;
     },
     onSuccess: () => {
@@ -293,7 +293,7 @@ export function InventoryCountPage() {
       qc.invalidateQueries({ queryKey: ['inventory-count-sheet'] });
       notify.success(tx('Count cancelled'));
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Cancel failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Cancel failed')),
   });
 
   const setEdit = (id: string, patch: Partial<Edit>) =>
@@ -436,7 +436,7 @@ export function InventoryCountPage() {
                       size="sm" variant="ghost" className="h-7 shrink-0 text-xs"
                       disabled={start.isPending}
                       onClick={() => {
-                        if (window.confirm(`Discard ${session?.countCode ?? 'this count'} and every quantity entered so far, and start a fresh sheet?`)) start.mutate(true);
+                        if (window.confirm(tx('Discard {{v1}} and every quantity entered so far, and start a fresh sheet?', { v1: session?.countCode ?? 'this count' }))) start.mutate(true);
                       }}
                     >
                       {tx('Start over')}
@@ -445,7 +445,7 @@ export function InventoryCountPage() {
                 ) : (
                   <Button className="w-full" disabled={!locationId || start.isPending || locations.isLoading} onClick={() => start.mutate(false)}>
                     <Play className="mr-2 h-4 w-4" />
-                    {start.isPending ? 'Starting…' : locations.isLoading ? 'Loading locations…' : 'Start Count'}
+                    {start.isPending ? tx('Starting…') : locations.isLoading ? tx('Loading locations…') : tx('Start Count')}
                   </Button>
                 )}
               </div>
@@ -498,8 +498,8 @@ export function InventoryCountPage() {
             ) : (
               <p className="text-xs text-muted-foreground">
                 {isDraft
-                  ? 'An unfinished draft for this location and type was resumed. Save it and come back any time before submitting.'
-                  : 'The sheet below is what will be counted. Start the count to enter actual quantities.'}
+                  ? tx('An unfinished draft for this location and type was resumed. Save it and come back any time before submitting.')
+                  : tx('The sheet below is what will be counted. Start the count to enter actual quantities.')}
               </p>
             )}
           </CardContent>
@@ -517,7 +517,7 @@ export function InventoryCountPage() {
       {tab === 'count' && sheet.isError && (
         <Card>
           <CardContent className="flex items-center gap-3 p-6 text-sm">
-            <span>{(sheet.error as any)?.response?.data?.message ?? 'Could not load the count sheet.'}</span>
+            <span>{(sheet.error as any)?.response?.data?.message ?? tx('Could not load the count sheet.')}</span>
             <Button size="sm" variant="outline" onClick={() => sheet.refetch()}>{tx('Retry')}</Button>
           </CardContent>
         </Card>
@@ -530,15 +530,15 @@ export function InventoryCountPage() {
             <div className="flex items-center gap-3 min-w-0">
               <span className="text-sm font-medium truncate max-w-[280px]" title={session.name ?? ''}>{session.name ?? session.countCode}</span>
               <Badge variant={isPreview ? 'secondary' : 'outline'} className="shrink-0">
-                {isPreview ? 'Not started' : session.countCode}
+                {isPreview ? tx('Not started') : session.countCode}
               </Badge>
               <span className="text-sm text-muted-foreground hidden sm:inline">
-                {session.location?.code ?? ''} · {COUNT_TYPE_LABEL[session.countType] ?? session.countType}{session.blind ? ' · blind' : ''}
+                {session.location?.code ?? ''} · {COUNT_TYPE_LABEL[session.countType] ?? session.countType}{session.blind ? tx(' · blind') : ''}
               </span>
               <span className="text-sm text-muted-foreground">
                 {isPreview
-                  ? `${rows.length} items to count`
-                  : blindView ? `${countedTotal} of ${rows.length} counted · variances hidden` : `${countedTotal} of ${rows.length} · ${varianceCount} variance`}
+                  ? tx('{{length}} items to count', { length: rows.length })
+                  : blindView ? tx('{{countedTotal}} of {{length}} counted · variances hidden', { countedTotal, length: rows.length }) : tx('{{countedTotal}} of {{length}} · {{varianceCount}} variance', { countedTotal, length: rows.length, varianceCount })}
               </span>
             </div>
             <div className={`flex gap-2 ${isDraft ? '' : 'hidden'}`}>
@@ -547,21 +547,21 @@ export function InventoryCountPage() {
               </Button>
               {blindView && canReview && (
                 <Button size="sm" variant="outline" onClick={() => review.mutate()} disabled={review.isPending}>
-                  <Eye className="mr-1 h-4 w-4" /> {review.isPending ? 'Loading…' : 'Review variances'}
+                  <Eye className="mr-1 h-4 w-4" /> {review.isPending ? tx('Loading…') : tx('Review variances')}
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setSaveDraftOpen(true)} disabled={saveDraft.isPending}>
-                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? 'Saving…' : 'Save Draft'}
+                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? tx('Saving…') : tx('Save Draft')}
               </Button>
               <Button
                 size="sm"
                 onClick={() => {
-                  if (missingReasons > 0) { notify.error(`${missingReasons} variance line(s) need a reason`); return; }
+                  if (missingReasons > 0) { notify.error(tx('{{missingReasons}} variance line(s) need a reason', { missingReasons })); return; }
                   submit.mutate();
                 }}
                 disabled={submit.isPending || countedTotal === 0}
               >
-                <CheckCircle2 className="mr-1 h-4 w-4" /> {submit.isPending ? 'Submitting…' : 'Submit Count'}
+                <CheckCircle2 className="mr-1 h-4 w-4" /> {submit.isPending ? tx('Submitting…') : tx('Submit Count')}
               </Button>
             </div>
           </div>
@@ -611,14 +611,14 @@ export function InventoryCountPage() {
                         </td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums">{blindView ? <span className="text-xs text-muted-foreground">{tx('Hidden')}</span> : num(ln.systemQty)}</td>
                         <td className="px-3 py-1.5">
-                          <Input type="number" inputMode="decimal" className="h-8 text-right" placeholder={isDraft ? '—' : 'Start count'} disabled={!isDraft} value={ed.countedQty} onChange={(e) => setEdit(ln.id, { countedQty: e.target.value })} />
+                          <Input type="number" inputMode="decimal" className="h-8 text-right" placeholder={isDraft ? '—' : tx('Start count')} disabled={!isDraft} value={ed.countedQty} onChange={(e) => setEdit(ln.id, { countedQty: e.target.value })} />
                         </td>
                         <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${variance === null ? 'text-muted-foreground' : variance === 0 ? 'text-muted-foreground' : variance > 0 ? 'text-emerald-600' : 'text-destructive'}`}>
                           {variance === null ? '—' : `${variance > 0 ? '+' : ''}${variance}`}
                         </td>
                         <td className="px-3 py-1.5">
                           {hasVar || blindView ? (
-                            <Input className={`h-8 ${needReason ? 'border-destructive focus-visible:ring-destructive' : ''}`} placeholder={hasVar ? 'Reason required…' : 'Note (optional)'} disabled={!isDraft} value={ed.reason} onChange={(e) => setEdit(ln.id, { reason: e.target.value })} />
+                            <Input className={`h-8 ${needReason ? 'border-destructive focus-visible:ring-destructive' : ''}`} placeholder={hasVar ? tx('Reason required…') : tx('Note (optional)')} disabled={!isDraft} value={ed.reason} onChange={(e) => setEdit(ln.id, { reason: e.target.value })} />
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
@@ -653,14 +653,14 @@ export function InventoryCountPage() {
                             </td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums">{blindView ? <span className="text-xs text-muted-foreground">{tx('Hidden')}</span> : num(ln.systemQty)}</td>
                             <td className="px-3 py-1.5">
-                              <Input type="number" inputMode="decimal" className="h-8 text-right" placeholder={isDraft ? '—' : 'Start count'} disabled={!isDraft} value={ed.countedQty} onChange={(e) => setEdit(ln.id, { countedQty: e.target.value })} />
+                              <Input type="number" inputMode="decimal" className="h-8 text-right" placeholder={isDraft ? '—' : tx('Start count')} disabled={!isDraft} value={ed.countedQty} onChange={(e) => setEdit(ln.id, { countedQty: e.target.value })} />
                             </td>
                             <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${variance === null ? 'text-muted-foreground' : variance === 0 ? 'text-muted-foreground' : variance > 0 ? 'text-emerald-600' : 'text-destructive'}`}>
                               {variance === null ? '—' : `${variance > 0 ? '+' : ''}${variance}`}
                             </td>
                             <td className="px-3 py-1.5">
                               {hasVar || blindView ? (
-                                <Input className={`h-8 ${needReason ? 'border-destructive focus-visible:ring-destructive' : ''}`} placeholder={hasVar ? 'Reason required…' : 'Note (optional)'} disabled={!isDraft} value={ed.reason} onChange={(e) => setEdit(ln.id, { reason: e.target.value })} />
+                                <Input className={`h-8 ${needReason ? 'border-destructive focus-visible:ring-destructive' : ''}`} placeholder={hasVar ? tx('Reason required…') : tx('Note (optional)')} disabled={!isDraft} value={ed.reason} onChange={(e) => setEdit(ln.id, { reason: e.target.value })} />
                               ) : (
                                 <span className="text-xs text-muted-foreground">—</span>
                               )}
@@ -765,7 +765,7 @@ export function InventoryCountPage() {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setSaveDraftOpen(false)}>{tx('Cancel')}</Button>
               <Button onClick={() => { saveDraft.mutate(); setSaveDraftOpen(false); }} disabled={saveDraft.isPending || !draftName.trim()}>
-                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? 'Saving…' : 'Save Draft'}
+                <Save className="mr-1 h-4 w-4" /> {saveDraft.isPending ? tx('Saving…') : tx('Save Draft')}
               </Button>
             </div>
           </div>
@@ -793,7 +793,7 @@ export function InventoryCountPage() {
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-white/80">
                   <span>{viewSession.data.location?.name ?? viewSession.data.location?.code ?? '—'}</span>
                   <span className="text-white/50">|</span>
-                  <span>{`${COUNT_TYPE_LABEL[viewSession.data.countType] ?? viewSession.data.countType} Count`}</span>
+                  <span>{tx('{{v1}} Count', { v1: COUNT_TYPE_LABEL[viewSession.data.countType] ?? viewSession.data.countType })}</span>
                   <span className="text-white/50">|</span>
                   <Badge variant="secondary" className="bg-white/20 text-white border-0">
                     {viewSession.data.status}

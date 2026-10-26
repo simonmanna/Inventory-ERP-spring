@@ -58,7 +58,7 @@ export const AccompanimentPicker: React.FC<Props> = ({ open, productName, groups
         // UI fix — at the limit for a multi-select group, DON'T silently evict the
         // first pick. Block the extra selection and tell the cashier, so "choose
         // two sides" can't quietly drop a side when a third is tapped.
-        toast.error(`"${g.name}" allows at most ${g.maxSelect}. Deselect one first.`);
+        toast.error(tx('"{{name}}" allows at most {{maxSelect}}. Deselect one first.', { name: g.name, maxSelect: g.maxSelect }));
         return prev;
       } else {
         cur[optionId] = { optionId, optionName, priceImpact };
@@ -110,7 +110,7 @@ export const AccompanimentPicker: React.FC<Props> = ({ open, productName, groups
         <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
           {groups.map((g) => {
             const count = Object.keys(selections[g.id] ?? {}).length;
-            const limitLabel = g.maxSelect === 1 ? 'Pick one' : `Up to ${g.maxSelect}`;
+            const limitLabel = g.maxSelect === 1 ? tx('Pick one') : `Up to ${g.maxSelect}`;
             return (
               <div key={g.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -120,7 +120,7 @@ export const AccompanimentPicker: React.FC<Props> = ({ open, productName, groups
                       {count}/{g.maxSelect}
                     </span>
                     <div className="text-[11px] text-slate-500">
-                      {g.isRequired ? 'Required' : 'Optional'} · {limitLabel}
+                      {g.isRequired ? tx('Required') : tx('Optional')} · {limitLabel}
                     </div>
                   </div>
                 </div>
@@ -145,7 +145,7 @@ export const AccompanimentPicker: React.FC<Props> = ({ open, productName, groups
                           {o.name}
                         </span>
                         <span className="text-[11px] font-mono">
-                          {o.priceImpact === 0 ? '(included)' : `+${fmt(o.priceImpact)}`}
+                          {o.priceImpact === 0 ? tx('(included)') : `+${fmt(o.priceImpact)}`}
                         </span>
                       </button>
                     );

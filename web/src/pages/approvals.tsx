@@ -49,7 +49,7 @@ export function ApprovalsPage() {
       notify.success(tx('Decision recorded'));
       qc.invalidateQueries({ queryKey: ['approvals'] });
     },
-    onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed'),
+    onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
 
   return (
@@ -105,7 +105,7 @@ export function ApprovalsPage() {
                 {req.decisions.map((d, i) => (
                   <div key={i} className="flex items-center gap-2 text-muted-foreground">
                     <span className={`h-1.5 w-1.5 rounded-full ${d.status === 'approved' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                    {d.status} by {d.approverId.slice(0, 8)} · {new Date(d.decidedAt).toLocaleString()}
+                    {d.status} {tx('by')} {d.approverId.slice(0, 8)} · {new Date(d.decidedAt).toLocaleString()}
                     {d.comment && <span>· "{d.comment}"</span>}
                   </div>
                 ))}

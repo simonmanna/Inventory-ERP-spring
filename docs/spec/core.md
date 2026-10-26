@@ -84,6 +84,15 @@ Pending owner approval:
    them → 500).
 5. **`PATCH /fiscal-positions/:id`, `/payment-terms/:id`** (unvalidated `Partial<>` bodies) ignore unknown
    keys (Nest passed them to Prisma → 500 for fiscal positions).
+6. **Per-product units (ADR-S003, V5).** `POST/PATCH /products` accept `units[]` (`uomId`, `factor`,
+   `isPurchase`, `isSales`, `salePrice`, `purchasePrice`, `isActive`); a sent list replaces the product's
+   `ProductUom` rows. Product responses gain `units[]` (each with its `uom`). A product's own unit factor
+   wins over the category factor in `UomConversionService`. `uomConversion` from older clients becomes
+   the purchase unit's row. New errors (400): `Unit of measure <id> not found`,
+   `Unit <code> is the base unit of <name>; extra units must differ from the base unit`,
+   `Unit <code> is listed more than once`, `Conversion for unit <code> must be greater than 0`,
+   `The base unit of <name> cannot be changed after stock has moved. Add the new unit as an extra unit with
+   its conversion instead.`
 
 ## Status
 

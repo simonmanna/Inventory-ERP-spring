@@ -83,6 +83,19 @@ app:
   cors:
     origins: ${CORS_ORIGINS:}
     allow-lan: ${CORS_ALLOW_LAN:}
+  license:
+    # Base URL of the central licence authority. Empty means this install can only be licensed by an
+    # offline .lic file, which is the intended setup for an air-gapped shop.
+    server-url: ${LICENSE_SERVER_URL:}
+    # How long an install with no licence may run before it becomes read-only.
+    trial-days: ${LICENSE_TRIAL_DAYS:14}
+    # Master switch. false keeps the licence visible and warns, but never refuses a write - for
+    # development, and for a support session where billing must not be what blocks the diagnosis.
+    enforce: ${LICENSE_ENFORCE:true}
+    heartbeat: ${LICENSE_HEARTBEAT:true}
+    http-timeout: ${LICENSE_HTTP_TIMEOUT:10s}
+    # What this install calls itself in the authority's list of activations (default: hostname).
+    instance-name: ${LICENSE_INSTANCE_NAME:}
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}

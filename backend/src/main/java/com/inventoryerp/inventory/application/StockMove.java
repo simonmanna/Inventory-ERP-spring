@@ -22,6 +22,11 @@ public final class StockMove {
     public BigDecimal countedQuantity;
     public BigDecimal unitCost;
     public String uomId;
+    /**
+     * Snapshot of base units per 1 {@link #uomId}, taken when the source line was written (ADR-S003). When set it
+     * is used instead of the product's current unit setup; null keeps the live conversion.
+     */
+    public BigDecimal uomFactor;
     public String batchNumber;
     public String expiryDate;
     public String mfgDate;
@@ -72,6 +77,13 @@ public final class StockMove {
 
     public StockMove uom(String v) {
         this.uomId = v;
+        return this;
+    }
+
+    /** Line unit plus its snapshot factor (null factor: convert with the live unit setup). */
+    public StockMove uom(String v, BigDecimal factor) {
+        this.uomId = v;
+        this.uomFactor = factor;
         return this;
     }
 

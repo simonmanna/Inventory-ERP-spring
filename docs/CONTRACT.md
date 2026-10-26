@@ -177,6 +177,12 @@ Full protocol: `docs/legacy/sync-protocol.md` and `reference/nest-api/src/module
   per-op `{ opId, status: applied|replayed|failed, httpStatus, error, mapping, finalNumbers }`.
   ~40 op types (`SYNC_OP_TYPES`), client-id mapping, 424 on failed dependency, provisional → final
   numbers, dead letters block cash-session close. "A sale is never blocked."
+- **Additive (ADR-S002):** the `/sync/pull` response also carries `license`
+  (`{ mode, reason, writable, expiresAt, graceUntil, daysRemaining, androidPos, message }`) so a
+  terminal learns its enforcement mode on the call it already makes. Existing members keep their
+  names and order; the Android client parses with `ignoreUnknownKeys` and treats the member as
+  optional, so it still works against a server that does not send it. Parity scenarios for `sync`
+  must expect the extra member.
 
 ## 11. Offline web POS queue
 
@@ -198,7 +204,26 @@ Content-Type, Idempotency-Key, X-Pos-User, X-Device-Token, X-Device-Label, X-Req
 `READ_ONLY_MODE=true` (cloud read replica) rejects every non-GET with the body/status of
 `kernel/common/read-only.middleware.ts`.
 
-## 14. Health
+## 14. Licensing (`/license/*`) — additive, ADR-S002
+
+New surface with no Nest equivalent, so nothing in sections 1–13 changes. Full design:
+`docs/spec/licensing.md`.
+
+- `GET /license/status` — authenticated but unprivileged (every user's banner and sidebar need it,
+  like `GET /settings/features`). `GET /license/fingerprint` and the four mutating routes
+  (`activate`, `offline`, `refresh`, `deactivate`) need `setting:read` / `setting:update`.
+- **402 Payment Required** is the licence refusal, with the usual error body plus a `license` member
+  (`{ mode, reason, status, plan, expiresAt, graceUntil }`), or `{ ..., reason: "limit_exceeded",
+  limit: { devices|users|organizations: n } }` for a seat cap. 401 and 403 still win over it.
+- `X-License-Warning: <reason>` is set on any response while the licence needs attention.
+- Exempt from the gate in every mode: `GET`/`HEAD`/`OPTIONS`, `/auth/**`, `/license/**`,
+  `/health/**`, `/actuator/**`, `/sync/**`, and finishing open work
+  (`POST /pos/shifts/{id}/close`, `/pos/sessions/{id}/reconcile`, `/pos/orders/{id}/pay|void|close`).
+- `X-Offline-Recorded-At: <ISO instant>` on a web POS queue replay (`/pos/checkout`,
+  `/pos/operation-approval`, `/pos/cash-operations`, `/pos/sessions`) lets a sale taken *before*
+  writes stopped reach the books instead of answering 402.
+
+## 15. Health
 
 - `GET /health` and `/health/live` → `{ "status": "ok", "timestamp": "..." }` (no DB).
 - `GET /health/ready`, `/health/startup` → `{ status, criticalOk, timestamp, durationMs, checks, critical, advisory }`,

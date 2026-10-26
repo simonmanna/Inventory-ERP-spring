@@ -86,7 +86,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
       const res = await addBills.mutateAsync({ tableId });
       const created = res.bills.filter((b) => b.status === 'open');
       setActiveBillId(created[created.length - 1]?.id ?? activeBillId);
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Could not add a bill'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Could not add a bill')); }
   };
 
   const onSplitEqually = async () => {
@@ -94,7 +94,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
       const res = await splitEqually.mutateAsync({ tableId, count: 2 });
       setActiveBillId(res.bills.find((bill) => bill.status === 'open')?.id ?? null);
       toast.success(tx('Order split equally into 2 bills'));
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Could not split equally'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Could not split equally')); }
   };
 
   const onAssign = async (lineId: string, qty: number) => {
@@ -102,23 +102,23 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
     try {
       await assignItems.mutateAsync({ billId: activeBillId, tableId, items: [{ sourceItemId: lineId, quantity: qty }] });
       setQtyByLine((p) => ({ ...p, [lineId]: 0 }));
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Assign failed'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Assign failed')); }
   };
 
   const onReturn = async (billId: string, sourceItemId: string, quantity: number) => {
     try {
       await unassignItems.mutateAsync({ billId, tableId, items: [{ sourceItemId, quantity }] });
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Return failed'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Return failed')); }
   };
 
   const onMerge = async (billId: string, targetBillId: string) => {
     try { await mergeBills.mutateAsync({ billId, targetBillId }); }
-    catch (e: any) { toast.error(e?.response?.data?.message || 'Merge failed'); }
+    catch (e: any) { toast.error(e?.response?.data?.message || tx('Merge failed')); }
   };
 
   const onDelete = async (billId: string) => {
     try { await deleteBill.mutateAsync({ billId }); }
-    catch (e: any) { toast.error(e?.response?.data?.message || 'Delete failed'); }
+    catch (e: any) { toast.error(e?.response?.data?.message || tx('Delete failed')); }
   };
 
   const onCancelSplit = async () => {
@@ -126,7 +126,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
       await cancelSplit.mutateAsync({ tableId });
       toast.success(tx('Split cancelled'));
       onClose();
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Could not cancel the split'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Could not cancel the split')); }
   };
 
   const onPaySettle = async (input: { tenders: PaymentTender[]; amountTendered?: number }) => {
@@ -134,7 +134,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
     const res = await settleBill.mutateAsync({
       billId: payingBill.id, tableId, tenders: input.tenders, cashSessionId, amountTendered: input.amountTendered, expectedTotal: payingBill.totalAmount,
     });
-    toast.success(`${payingBill.label} paid — change ${fmt(res.change ?? 0)}`);
+    toast.success(tx('{{label}} paid — change {{v2}}', { label: payingBill.label, v2: fmt(res.change ?? 0) }));
     setPayingBill(null);
     if (res.invoiceId) setTimeout(() => setReceipt({ invoiceId: res.invoiceId, invoiceNumber: res.invoiceNumber, receiptHtml: res.receiptHtml }), 100);
     if (res.tableClosed) {
@@ -241,7 +241,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-slate-800">{b.label}</span>
                             {b.status === 'settled'
-                              ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">PAID</span>
+                              ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{tx('PAID')}</span>
                               : isActive ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">{tx('SELECTED')}</span> : null}
                           </div>
                           <span className="text-sm font-bold text-slate-800">{fmt(b.totalAmount)}</span>
@@ -307,7 +307,7 @@ export const SplitBillDialog: React.FC<Props> = ({ open, tableId, tableLabel, ca
               {tx('Cancel Split')}
             </Button>
             <div className="text-[11px] text-slate-500">
-              {summary?.fullyAssigned ? <span className="text-emerald-600 font-semibold flex items-center gap-1"><Check className="h-3.5 w-3.5" /> {tx('Every item assigned')}</span> : 'Assign every item to a bill, then pay each bill.'}
+              {summary?.fullyAssigned ? <span className="text-emerald-600 font-semibold flex items-center gap-1"><Check className="h-3.5 w-3.5" /> {tx('Every item assigned')}</span> : tx('Assign every item to a bill, then pay each bill.')}
             </div>
             <Button variant="outline" onClick={onClose}>{tx('Done')}</Button>
           </div>

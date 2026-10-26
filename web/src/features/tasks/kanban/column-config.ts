@@ -1,4 +1,5 @@
 import { TaskStatus } from '../types';
+import { tx } from '@/lib/i18n/tx';
 
 export interface ColumnDef {
   id: string;
@@ -12,63 +13,63 @@ export interface ColumnDef {
 export const COLUMNS: ColumnDef[] = [
   {
     id: 'todo',
-    title: 'To Do',
+    title: tx('To Do'),
     color: 'bg-slate-400',
     dotColor: '#94a3b8',
     statuses: [TaskStatus.DRAFT, TaskStatus.PENDING],
   },
   {
     id: 'assigned',
-    title: 'Assigned',
+    title: tx('Assigned'),
     color: 'bg-blue-500',
     dotColor: '#3b82f6',
     statuses: [TaskStatus.ASSIGNED],
   },
   {
     id: 'in_progress',
-    title: 'In Progress',
+    title: tx('In Progress'),
     color: 'bg-amber-500',
     dotColor: '#f59e0b',
     statuses: [TaskStatus.IN_PROGRESS],
   },
   {
     id: 'waiting',
-    title: 'Waiting',
+    title: tx('Waiting'),
     color: 'bg-purple-500',
     dotColor: '#a855f7',
     statuses: [TaskStatus.WAITING],
   },
   {
     id: 'review',
-    title: 'Review',
+    title: tx('Review'),
     color: 'bg-orange-500',
     dotColor: '#f97316',
     statuses: [TaskStatus.REVIEW],
   },
   {
     id: 'verified',
-    title: 'Verified',
+    title: tx('Verified'),
     color: 'bg-teal-500',
     dotColor: '#14b8a6',
     statuses: [TaskStatus.VERIFIED],
   },
   {
     id: 'completed',
-    title: 'Completed',
+    title: tx('Completed'),
     color: 'bg-emerald-500',
     dotColor: '#10b981',
     statuses: [TaskStatus.COMPLETED],
   },
   {
     id: 'cancelled',
-    title: 'Cancelled',
+    title: tx('Cancelled'),
     color: 'bg-red-400',
     dotColor: '#f87171',
     statuses: [TaskStatus.CANCELLED, TaskStatus.SKIPPED],
   },
   {
     id: 'overdue',
-    title: 'Overdue',
+    title: tx('Overdue'),
     color: 'bg-red-600',
     dotColor: '#dc2626',
     statuses: [], // computed — tasks with dueDate < now and not completed/cancelled
@@ -97,11 +98,11 @@ export const PRIORITY_COLORS: Record<string, string> = {
 };
 
 export const PRIORITY_LABELS: Record<string, string> = {
-  CRITICAL: 'Critical',
-  HIGH: 'High',
-  MEDIUM: 'Medium',
-  LOW: 'Low',
-  OPTIONAL: 'Optional',
+  CRITICAL: tx('Critical'),
+  HIGH: tx('High'),
+  MEDIUM: tx('Medium'),
+  LOW: tx('Low'),
+  OPTIONAL: tx('Optional'),
 };
 
 export const TASK_TYPE_ICONS: Record<string, string> = {
@@ -123,24 +124,24 @@ export const TASK_TYPE_ICONS: Record<string, string> = {
 };
 
 export const CATEGORY_LABELS: Record<string, string> = {
-  OPENING: 'Opening',
-  CLOSING: 'Closing',
-  CLEANING: 'Cleaning',
-  KITCHEN: 'Kitchen',
-  COFFEE_BAR: 'Coffee Bar',
-  DINING_AREA: 'Dining Area',
-  RETAIL_FLOOR: 'Retail Floor',
-  WAREHOUSE: 'Warehouse',
-  INVENTORY: 'Inventory',
-  PURCHASING: 'Purchasing',
-  ACCOUNTING: 'Accounting',
-  CASH_MANAGEMENT: 'Cash',
-  SECURITY: 'Security',
-  MAINTENANCE: 'Maintenance',
-  EQUIPMENT: 'Equipment',
-  MARKETING: 'Marketing',
-  COMPLIANCE: 'Compliance',
-  AUDIT: 'Audit',
-  CUSTOMER_SERVICE: 'Customer Service',
-  CUSTOM: 'Custom',
+  OPENING: tx('Opening'),
+  CLOSING: tx('Closing'),
+  CLEANING: tx('Cleaning'),
+  KITCHEN: tx('Kitchen'),
+  COFFEE_BAR: tx('Coffee Bar'),
+  DINING_AREA: tx('Dining Area'),
+  RETAIL_FLOOR: tx('Retail Floor'),
+  WAREHOUSE: tx('Warehouse'),
+  INVENTORY: tx('Inventory'),
+  PURCHASING: tx('Purchasing'),
+  ACCOUNTING: tx('Accounting'),
+  CASH_MANAGEMENT: tx('Cash'),
+  SECURITY: tx('Security'),
+  MAINTENANCE: tx('Maintenance'),
+  EQUIPMENT: tx('Equipment'),
+  MARKETING: tx('Marketing'),
+  COMPLIANCE: tx('Compliance'),
+  AUDIT: tx('Audit'),
+  CUSTOMER_SERVICE: tx('Customer Service'),
+  CUSTOM: tx('Custom'),
 };

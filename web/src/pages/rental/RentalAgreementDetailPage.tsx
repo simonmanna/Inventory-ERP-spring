@@ -113,17 +113,17 @@ export function RentalAgreementDetailPage() {
         </div>
         <div className="flex gap-2">
           {agreement.status === 'pending_approval' && (
-            <Button size="sm" onClick={() => run(() => confirm.mutateAsync(agreement.id), 'Agreement confirmed')}>
+            <Button size="sm" onClick={() => run(() => confirm.mutateAsync(agreement.id), tx('Agreement confirmed'))}>
               <CheckCircle2 className="h-4 w-4" /> {tx('Confirm')}
             </Button>
           )}
           {agreement.status === 'confirmed' && (
-            <Button size="sm" onClick={() => run(() => checkout.mutateAsync({ id: agreement.id }), 'Checked out')}>
+            <Button size="sm" onClick={() => run(() => checkout.mutateAsync({ id: agreement.id }), tx('Checked out'))}>
               <Layers className="h-4 w-4" /> {tx('Checkout')}
             </Button>
           )}
           {(agreement.status === 'draft' || agreement.status === 'confirmed') && (
-            <Button size="sm" variant="destructive" onClick={() => run(() => cancel.mutateAsync(agreement.id), 'Agreement cancelled')}>
+            <Button size="sm" variant="destructive" onClick={() => run(() => cancel.mutateAsync(agreement.id), tx('Agreement cancelled'))}>
               <X className="h-4 w-4" /> {tx('Cancel')}
             </Button>
           )}
@@ -166,7 +166,7 @@ export function RentalAgreementDetailPage() {
                           className="rounded border px-2 py-1 text-xs hover:bg-muted"
                           onClick={() => {
                             const to = window.prompt('Swap to unit ID (leave empty to pick first available):', '');
-                            run(() => swapUnit.mutateAsync({ agreementId: agreement.id, lineId: l.id, toUnitId: to ?? '' }), 'Unit swapped');
+                            run(() => swapUnit.mutateAsync({ agreementId: agreement.id, lineId: l.id, toUnitId: to ?? '' }), tx('Unit swapped'));
                           }}
                           title={tx('Swap unit')}
                         >
@@ -194,7 +194,7 @@ export function RentalAgreementDetailPage() {
                   size="sm"
                   onClick={() => run(
                     () => extendLine.mutateAsync({ agreementId: agreement.id, lineId: extendLineId, newDueAt: new Date(extendFor + 'T23:59:59').toISOString() }),
-                    'Line extended',
+                    tx('Line extended'),
                   )}
                   disabled={!extendFor}
                 >
@@ -246,7 +246,7 @@ export function RentalAgreementDetailPage() {
                     onChange={(e) => setCollectAmt(e.target.value)}
                     className="w-40 rounded-md border bg-card px-3 py-2 text-sm"
                   />
-                  <Button size="sm" onClick={() => run(() => collect.mutateAsync({ agreementId: agreement.id, method: 'cash', amount: Number(collectAmt) }), 'Deposit collected')}>
+                  <Button size="sm" onClick={() => run(() => collect.mutateAsync({ agreementId: agreement.id, method: 'cash', amount: Number(collectAmt) }), tx('Deposit collected'))}>
                     {tx('Collect')}
                   </Button>
                 </div>
@@ -260,7 +260,7 @@ export function RentalAgreementDetailPage() {
                     onChange={(e) => setRefundAmt(e.target.value)}
                     className="w-40 rounded-md border bg-card px-3 py-2 text-sm"
                   />
-                  <Button size="sm" onClick={() => run(() => refund.mutateAsync({ agreementId: agreement.id, method: 'cash', amount: Number(refundAmt) }), 'Deposit refunded')}>
+                  <Button size="sm" onClick={() => run(() => refund.mutateAsync({ agreementId: agreement.id, method: 'cash', amount: Number(refundAmt) }), tx('Deposit refunded'))}>
                     {tx('Refund')}
                   </Button>
                 </div>

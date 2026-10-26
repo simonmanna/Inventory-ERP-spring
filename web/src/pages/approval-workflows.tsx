@@ -73,32 +73,32 @@ function fmtBand(min: number | null, max: number | null): string {
 
 const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
   Procurement: [
-    { key: 'purchase_order', label: 'Purchase Orders' },
-    { key: 'goods_receipt', label: 'Goods Receipts' },
-    { key: 'debit_note', label: 'Debit Notes' },
-    { key: 'vendor_bill', label: 'Vendor Bills' },
+    { key: 'purchase_order', label: tx('Purchase Orders') },
+    { key: 'goods_receipt', label: tx('Goods Receipts') },
+    { key: 'debit_note', label: tx('Debit Notes') },
+    { key: 'vendor_bill', label: tx('Vendor Bills') },
   ],
   Expenses: [
-    { key: 'expense', label: 'Expenses' },
-    { key: 'credit_note', label: 'Credit Notes' },
-    { key: 'supplier_payment', label: 'Supplier Payments' },
-    { key: 'invoice_cancel', label: 'Invoice Cancel' },
+    { key: 'expense', label: tx('Expenses') },
+    { key: 'credit_note', label: tx('Credit Notes') },
+    { key: 'supplier_payment', label: tx('Supplier Payments') },
+    { key: 'invoice_cancel', label: tx('Invoice Cancel') },
   ],
   Inventory: [
-    { key: 'stock_out', label: 'Stock-Out' },
-    { key: 'waste', label: 'Waste' },
-    { key: 'inventory_count_submit', label: 'Inventory Count Submit' },
+    { key: 'stock_out', label: tx('Stock-Out') },
+    { key: 'waste', label: tx('Waste') },
+    { key: 'inventory_count_submit', label: tx('Inventory Count Submit') },
   ],
   Assets: [
-    { key: 'asset_acquisition', label: 'Asset Acquisition' },
-    { key: 'asset_disposal', label: 'Asset Disposal' },
-    { key: 'asset_transfer', label: 'Asset Transfer' },
-    { key: 'asset_revaluation', label: 'Asset Revaluation' },
-    { key: 'depreciation_run', label: 'Depreciation' },
+    { key: 'asset_acquisition', label: tx('Asset Acquisition') },
+    { key: 'asset_disposal', label: tx('Asset Disposal') },
+    { key: 'asset_transfer', label: tx('Asset Transfer') },
+    { key: 'asset_revaluation', label: tx('Asset Revaluation') },
+    { key: 'depreciation_run', label: tx('Depreciation') },
   ],
   POS: [
-    { key: 'pos_discount', label: 'POS Discount Override' },
-    { key: 'pos_refund', label: 'POS Refund Override' },
+    { key: 'pos_discount', label: tx('POS Discount Override') },
+    { key: 'pos_refund', label: tx('POS Refund Override') },
   ],
 };
 
@@ -131,7 +131,7 @@ function PermissionPicker({ permissions, onChange }: { permissions: string[]; on
         <DialogTrigger asChild>
           <Button variant="outline" className="w-full justify-between">
             <span className="truncate">
-              {permissions.length === 0 ? 'Select approver permissions…' : `${permissions.length} permission(s) selected`}
+              {permissions.length === 0 ? tx('Select approver permissions…') : tx('{{length}} permission(s) selected', { length: permissions.length })}
             </span>
             <ChevronDown className="h-4 w-4 ml-2" />
           </Button>
@@ -225,13 +225,13 @@ export function ApprovalWorkflowsPage() {
       qc.invalidateQueries({ queryKey: ['approval-workflows'] });
       notify.success(tx('Workflow updated'));
     },
-    onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed'),
+    onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
 
   const create = useMutation({
     mutationFn: async () => {
-      if (!form.entityType) throw new Error('Select a feature');
-      if (!form.steps.length) throw new Error('Add at least one step');
+      if (!form.entityType) throw new Error(tx('Select a feature'));
+      if (!form.steps.length) throw new Error(tx('Add at least one step'));
       return api.post('/approval-workflows', {
         name: form.name || form.entityType,
         entityType: form.entityType,
@@ -263,7 +263,7 @@ export function ApprovalWorkflowsPage() {
       qc.invalidateQueries({ queryKey: ['approval-workflows'] });
       notify.success(tx('Workflow deleted'));
     },
-    onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed'),
+    onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
 
   const setStep = (idx: number, patch: Partial<StepForm>) =>
@@ -306,7 +306,7 @@ export function ApprovalWorkflowsPage() {
                   <DialogTrigger asChild>
                     <Button variant="outline" className="w-full justify-between">
                       <span className="truncate">
-                        {form.entityType ? ENTITY_TYPE_LABELS[form.entityType] : 'Select feature…'}
+                        {form.entityType ? ENTITY_TYPE_LABELS[form.entityType] : tx('Select feature…')}
                       </span>
                       <ChevronDown className="h-4 w-4 ml-2" />
                     </Button>
@@ -508,7 +508,7 @@ export function ApprovalWorkflowsPage() {
                       size="icon"
                       disabled={toggle.isPending}
                       onClick={() => toggle.mutate({ id: w.id, isActive: !w.isActive })}
-                      title={w.isActive ? 'Active — click to disable' : 'Inactive — click to enable'}
+                      title={w.isActive ? tx('Active — click to disable') : tx('Inactive — click to enable')}
                     >
                       {w.isActive
                         ? <ToggleRight className="h-5 w-5 text-emerald-500" />
@@ -519,7 +519,7 @@ export function ApprovalWorkflowsPage() {
                       size="icon"
                       disabled={remove.isPending}
                       onClick={() => {
-                        if (confirm('Delete this workflow?')) remove.mutate(w.id);
+                        if (confirm(tx('Delete this workflow?'))) remove.mutate(w.id);
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-red-500" />

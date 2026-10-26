@@ -127,7 +127,7 @@ export function HrEmployeesPage() {
                   <div>
                     <p className="text-sm font-medium">{e.employeeCode} · {e.firstName}{e.lastName ? ' ' + e.lastName : ''}</p>
                     <p className="text-xs text-muted-foreground">
-                      {e.department?.name ?? 'No department'} · {e.position?.name ?? 'No position'}
+                      {e.department?.name ?? tx('No department')} · {e.position?.name ?? tx('No position')}
                       {e.email ? ` · ${e.email}` : ''}
                     </p>
                   </div>
@@ -146,7 +146,7 @@ export function HrEmployeesPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit employee' : 'New employee'}</DialogTitle>
+            <DialogTitle>{editing ? tx('Edit employee') : tx('New employee')}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
@@ -210,7 +210,7 @@ export function HrEmployeesPage() {
               </div>
             </div>
             <Button onClick={submit} disabled={!form.firstName || create.isPending || update.isPending}>
-              {editing ? 'Save changes' : 'Create employee'}
+              {editing ? tx('Save changes') : tx('Create employee')}
             </Button>
           </div>
         </DialogContent>

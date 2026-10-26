@@ -34,6 +34,36 @@ data class PullResponse(
     val data: Map<String, List<JsonObject>>,
     val cursor: String,
     val serverTime: String,
+    /**
+     * The installation's licence, as of this pull (Spring `LicenseSyncView`).
+     *
+     * Carried here rather than on a route of its own so a till learns its enforcement mode on the
+     * call it already makes — on a connection that may be about to disappear, a second round trip
+     * is a second chance to fail. Nullable because an older server does not send it, and a terminal
+     * must keep working against one that does not.
+     */
+    val license: LicenseView? = null,
+)
+
+/**
+ * What a till is told about the licence. Deliberately small: it needs to know whether it may take a
+ * sale, how long it has, and what to show. It is not told the customer, the plan or the fingerprint
+ * — a device token is a weaker credential than a user session.
+ */
+@Serializable
+data class LicenseView(
+    /** UNLICENSED, TRIAL, ACTIVE, GRACE, READ_ONLY or REVOKED. */
+    val mode: String,
+    val reason: String? = null,
+    /** The only thing the till branches on: may it start a new sale? */
+    val writable: Boolean = true,
+    val expiresAt: String? = null,
+    val graceUntil: String? = null,
+    val daysRemaining: Long? = null,
+    /** Whether POS terminals are included in the licence at all. */
+    val androidPos: Boolean = true,
+    /** The server's own wording for why writes are refused, or null when they are not. */
+    val message: String? = null,
 )
 
 @Serializable

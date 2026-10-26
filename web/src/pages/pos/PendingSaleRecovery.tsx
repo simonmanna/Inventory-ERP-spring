@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useCartStore } from '@/features/pos/cart.store';
 import { recoverSaleOperation } from '@/features/pos/offline-queue';
 import { toast } from 'sonner';
+import { tx } from '@/lib/i18n/tx';
 
 /** Grace period before retrying: a normal settle is still in flight by then. */
 const RETRY_AFTER_MS = 10_000;
@@ -26,7 +27,7 @@ export function PendingSaleRecovery() {
         const result = await recoverSaleOperation(idempotencyKey);
         if (stopped) return;
         useCartStore.getState().clear();
-        toast.success(`Confirmed ${result.invoiceNumber ?? result.invoiceId}. Receipt is available in Sales.`);
+        toast.success(tx('Confirmed {{v1}}. Receipt is available in Sales.', { v1: result.invoiceNumber ?? result.invoiceId }));
       } catch (e: any) {
         if (stopped) return;
         // Rejected before any sale committed: the cart is unlocked, say why once.

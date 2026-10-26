@@ -66,7 +66,7 @@ export function OrdersPage() {
   const columns: Column<Order>[] = [
     {
       key: 'orderNumber',
-      header: 'Order #',
+      header: tx('Order #'),
       render: (o) => (
         <Link to={`/orders/${o.id}`} className="font-medium text-primary hover:underline">
           {o.orderNumber}
@@ -75,24 +75,24 @@ export function OrdersPage() {
     },
     {
       key: 'partnerName',
-      header: 'Customer',
+      header: tx('Customer'),
       render: (o) => o.partnerName ?? <span className="text-muted-foreground">{tx('Walk-in')}</span>,
     },
     {
       key: 'orderType',
-      header: 'Type',
+      header: tx('Type'),
       render: (o) => <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium">{typeLabel(o)}</span>,
     },
-    { key: 'openedAt', header: 'Date', render: (o) => <span className="whitespace-nowrap text-muted-foreground">{dateTime(o.openedAt)}</span> },
-    { key: 'totalAmount', header: 'Total', className: 'text-right', render: (o) => <span className="font-semibold tabular-nums">{money(o.totalAmount, currency)}</span> },
+    { key: 'openedAt', header: tx('Date'), render: (o) => <span className="whitespace-nowrap text-muted-foreground">{dateTime(o.openedAt)}</span> },
+    { key: 'totalAmount', header: tx('Total'), className: 'text-right', render: (o) => <span className="font-semibold tabular-nums">{money(o.totalAmount, currency)}</span> },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (o) => <StatusPill tone={statusTone[o.status] ?? 'neutral'}>{statusLabel(o.status)}</StatusPill>,
     },
     {
       key: 'invoiceId',
-      header: 'Billed',
+      header: tx('Billed'),
       render: (o) =>
         o.invoiceId ? <StatusPill tone="success" dot={false}>{tx('Invoiced')}</StatusPill> : <span className="text-sm text-muted-foreground">—</span>,
     },
@@ -123,13 +123,13 @@ export function OrdersPage() {
   ];
 
   const exportColumns: ExportColumn<Order>[] = [
-    { header: 'Order #', value: (o) => o.orderNumber },
-    { header: 'Customer', value: (o) => o.partnerName ?? '' },
-    { header: 'Type', value: typeLabel },
-    { header: 'Date', value: (o) => dateTime(o.openedAt) },
-    { header: 'Total', value: (o) => money(o.totalAmount, currency), align: 'right' },
-    { header: 'Status', value: (o) => statusLabel(o.status) },
-    { header: 'Billed', value: (o) => (o.invoiceId ? 'Invoiced' : '') },
+    { header: tx('Order #'), value: (o) => o.orderNumber },
+    { header: tx('Customer'), value: (o) => o.partnerName ?? '' },
+    { header: tx('Type'), value: typeLabel },
+    { header: tx('Date'), value: (o) => dateTime(o.openedAt) },
+    { header: tx('Total'), value: (o) => money(o.totalAmount, currency), align: 'right' },
+    { header: tx('Status'), value: (o) => statusLabel(o.status) },
+    { header: tx('Billed'), value: (o) => (o.invoiceId ? 'Invoiced' : '') },
   ];
 
   const fetchAll = () =>
@@ -165,8 +165,8 @@ export function OrdersPage() {
 
       <ListToolbar chips={<FilterChips chips={chips} onClearAll={list.clearFilters} />}>
         <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder={tx('Search order # or customer…')} />
-        <FilterSelect value={status} onChange={(v) => list.setFilter('status', v)} options={STATUS_OPTIONS} allLabel="All statuses" />
-        <FilterSelect value={orderType} onChange={(v) => list.setFilter('orderType', v)} options={TYPE_OPTIONS} allLabel="All types" />
+        <FilterSelect value={status} onChange={(v) => list.setFilter('status', v)} options={STATUS_OPTIONS} allLabel={tx('All statuses')} />
+        <FilterSelect value={orderType} onChange={(v) => list.setFilter('orderType', v)} options={TYPE_OPTIONS} allLabel={tx('All types')} />
         <DateRangeFilter from={dateFrom} to={dateTo} onChange={(f, t) => list.setFilters({ dateFrom: f, dateTo: t })} />
       </ListToolbar>
 
@@ -181,7 +181,7 @@ export function OrdersPage() {
             onRowClick={(o) => navigate(`/orders/${o.id}`)}
             cellClassName="py-2.5 px-4"
             headerRowClassName="h-10"
-            emptyMessage={chips.length ? 'No orders match these filters.' : 'No orders yet. Create one with “New Order”.'}
+            emptyMessage={chips.length ? tx('No orders match these filters.') : tx('No orders yet. Create one with “New Order”.')}
           />
         </div>
         {meta && (

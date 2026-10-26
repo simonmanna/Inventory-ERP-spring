@@ -67,7 +67,7 @@ export function RepairTechniciansPage() {
       {showForm && (
         <Card>
           <CardHeader className="bg-muted/30 border-b rounded-t-lg">
-            <CardTitle className="text-sm">{editing ? `Edit ${editing.name}` : 'New technician'}</CardTitle>
+            <CardTitle className="text-sm">{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('New technician')}</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-4">
             <Input placeholder={tx('Code (TCH-001)')} value={form.code} onChange={(e) => set('code', e.target.value)} />
@@ -100,7 +100,7 @@ export function RepairTechniciansPage() {
                   <div>
                     <p className="text-sm font-medium">{t.name} <span className="text-xs text-muted-foreground">· {t.code}</span></p>
                     <p className="text-xs text-muted-foreground">
-                      {(t.skills ?? []).join(', ') || 'No skills'} {tx('· Rp')} {Number(t.hourlyRate ?? 0).toLocaleString('id-ID')}/h
+                      {(t.skills ?? []).join(', ') || tx('No skills')} {tx('· Rp')} {Number(t.hourlyRate ?? 0).toLocaleString('id-ID')}/h
                       {t.availability ? ` · ${t.availability}` : ''}
                     </p>
                   </div>

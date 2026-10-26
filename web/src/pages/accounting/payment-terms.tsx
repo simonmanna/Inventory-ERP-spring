@@ -65,9 +65,9 @@ export function describeTermDue(term: Pick<PaymentTerm, 'method' | 'netDays'>): 
   if (term.method === 'end_of_following_month') {
     return term.netDays > 0
       ? `End of following month + ${term.netDays} day${term.netDays !== 1 ? 's' : ''}`
-      : 'End of following month';
+      : tx('End of following month');
   }
-  if (term.netDays === 0) return 'Due on invoice date';
+  if (term.netDays === 0) return tx('Due on invoice date');
   return `${term.netDays} day${term.netDays !== 1 ? 's' : ''} after invoice date`;
 }
 
@@ -129,11 +129,11 @@ export default function PaymentTermsPage() {
   const handleSave = async () => {
     setFormError('');
     if (!form.name.trim()) {
-      setFormError('Name is required.');
+      setFormError(tx('Name is required.'));
       return;
     }
     if (!form.code.trim()) {
-      setFormError('Code is required.');
+      setFormError(tx('Code is required.'));
       return;
     }
     if (form.method !== 'immediate' && (isNaN(Number(form.netDays)) || Number(form.netDays) < 0)) {
@@ -147,7 +147,7 @@ export default function PaymentTermsPage() {
       return;
     }
     if (discountPercent != null && (discountPercent < 0 || discountPercent > 100)) {
-      setFormError('Discount percent must be between 0 and 100.');
+      setFormError(tx('Discount percent must be between 0 and 100.'));
       return;
     }
 
@@ -201,20 +201,20 @@ export default function PaymentTermsPage() {
   /* ── Columns ────────────────────────────────────────────── */
 
   const columns: Column<PaymentTerm>[] = [
-    { key: 'name', header: 'Name' },
-    { key: 'code', header: 'Code' },
+    { key: 'name', header: tx('Name') },
+    { key: 'code', header: tx('Code') },
     {
       key: 'due',
-      header: 'Due date computation',
+      header: tx('Due date computation'),
       render: (t) => <span className="text-sm">{describeTermDue(t)}</span>,
     },
     {
       key: 'discount',
-      header: 'Early-payment discount',
+      header: tx('Early-payment discount'),
       render: (t) =>
         t.discountDays != null && t.discountPercent != null ? (
           <span className="text-sm">
-            {Number(t.discountPercent)}{tx('% if paid within')} {t.discountDays} day
+            {Number(t.discountPercent)}{tx('% if paid within')} {t.discountDays} {tx('day')}
             {t.discountDays !== 1 ? 's' : ''}
           </span>
         ) : (
@@ -223,7 +223,7 @@ export default function PaymentTermsPage() {
     },
     {
       key: 'isActive',
-      header: 'Status',
+      header: tx('Status'),
       render: (t) =>
         t.isActive ? (
           <Badge className="bg-green-100 text-green-700 hover:bg-green-100">{tx('Active')}</Badge>
@@ -302,8 +302,8 @@ export default function PaymentTermsPage() {
         getRowId={(t) => t.id}
         emptyMessage={
           search
-            ? 'No payment terms match your search.'
-            : 'No payment terms yet. Create one to get started.'
+            ? tx('No payment terms match your search.')
+            : tx('No payment terms yet. Create one to get started.')
         }
       />
 
@@ -347,11 +347,11 @@ export default function PaymentTermsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit Payment Term' : 'New Payment Term'}</DialogTitle>
+            <DialogTitle>{editing ? tx('Edit Payment Term') : tx('New Payment Term')}</DialogTitle>
             <DialogDescription>
               {editing
-                ? 'Update the due-date computation for this payment term.'
-                : 'Add a payment term that can be selected on sales invoices.'}
+                ? tx('Update the due-date computation for this payment term.')
+                : tx('Add a payment term that can be selected on sales invoices.')}
             </DialogDescription>
           </DialogHeader>
 
@@ -401,8 +401,8 @@ export default function PaymentTermsPage() {
               <div className="space-y-1.5">
                 <Label htmlFor="netDays">
                   {form.method === 'end_of_following_month'
-                    ? 'Extra days after end of month (0 = end of month)'
-                    : 'Number of days'}
+                    ? tx('Extra days after end of month (0 = end of month)')
+                    : tx('Number of days')}
                 </Label>
                 <Input
                   id="netDays"
@@ -481,9 +481,9 @@ export default function PaymentTermsPage() {
                   <Loader2 className="h-4 w-4 animate-spin mr-2" /> {tx('Saving…')}
                 </>
               ) : editing ? (
-                'Save changes'
+                tx('Save changes')
               ) : (
-                'Create term'
+                tx('Create term')
               )}
             </Button>
           </DialogFooter>
@@ -514,7 +514,7 @@ export default function PaymentTermsPage() {
               disabled={archiveTerm.isPending}
               onClick={confirmArchive}
             >
-              {archiveTerm.isPending ? 'Archiving…' : 'Archive'}
+              {archiveTerm.isPending ? tx('Archiving…') : tx('Archive')}
             </Button>
           </DialogFooter>
         </DialogContent>

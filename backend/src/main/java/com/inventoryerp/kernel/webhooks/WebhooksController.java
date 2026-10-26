@@ -1,5 +1,7 @@
 package com.inventoryerp.kernel.webhooks;
 
+import com.inventoryerp.kernel.licensing.LicenseFeatures;
+import com.inventoryerp.kernel.licensing.RequiresFeature;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** {@code /webhooks/*} (port of {@code webhooks.controller.ts}); session required, no permission. */
 @RestController
+// Outbound webhooks are a paid add-on with no module row of its own to switch off.
+@RequiresFeature(LicenseFeatures.WEBHOOKS)
 @RequestMapping("/webhooks")
 public class WebhooksController {
 

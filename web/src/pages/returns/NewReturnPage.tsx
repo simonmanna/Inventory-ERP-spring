@@ -24,9 +24,9 @@ const QUICK_REASONS: Record<'retail' | 'restaurant', string[]> = {
 };
 
 const DISPOSITIONS: Array<{ value: StockDisposition; label: string; hint: string }> = [
-  { value: 'restock', label: 'Restock', hint: 'Saleable goods go back on the shelf' },
-  { value: 'waste', label: 'Waste', hint: 'Prepared, consumed or damaged — written off' },
-  { value: 'no_return', label: 'Not returned', hint: 'Money back only, no goods received' },
+  { value: 'restock', label: tx('Restock'), hint: tx('Saleable goods go back on the shelf') },
+  { value: 'waste', label: tx('Waste'), hint: tx('Prepared, consumed or damaged — written off') },
+  { value: 'no_return', label: tx('Not returned'), hint: tx('Money back only, no goods received') },
 ];
 
 const num = (v: string | number | null | undefined) => Number(v ?? 0);

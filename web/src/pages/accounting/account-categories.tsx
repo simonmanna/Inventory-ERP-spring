@@ -38,23 +38,23 @@ const REPORT_SECTIONS = [
 ] as const;
 
 const LABELS: Record<string, string> = {
-  asset: 'Asset', liability: 'Liability', equity: 'Equity', revenue: 'Revenue',
-  expense: 'Expense', off_balance: 'Off Balance Sheet',
-  debit: 'Debit', credit: 'Credit',
-  operating: 'Operating', investing: 'Investing', financing: 'Financing', none: 'Excluded',
-  current_assets: 'Current Assets', non_current_assets: 'Non-current Assets',
-  current_liabilities: 'Current Liabilities', long_term_liabilities: 'Long-term Liabilities',
-  contra_revenue: 'Contra Revenue', cogs: 'Cost of Sales',
-  operating_expense: 'Operating Expenses', other_income: 'Other Income',
-  other_expense: 'Other Expenses',
+  asset: tx('Asset'), liability: tx('Liability'), equity: tx('Equity'), revenue: tx('Revenue'),
+  expense: tx('Expense'), off_balance: tx('Off Balance Sheet'),
+  debit: tx('Debit'), credit: tx('Credit'),
+  operating: tx('Operating'), investing: tx('Investing'), financing: tx('Financing'), none: tx('Excluded'),
+  current_assets: tx('Current Assets'), non_current_assets: tx('Non-current Assets'),
+  current_liabilities: tx('Current Liabilities'), long_term_liabilities: tx('Long-term Liabilities'),
+  contra_revenue: tx('Contra Revenue'), cogs: tx('Cost of Sales'),
+  operating_expense: tx('Operating Expenses'), other_income: tx('Other Income'),
+  other_expense: tx('Other Expenses'),
 };
 
 const label = (v: string | null | undefined): string =>
   !v ? '—' : LABELS[v] ?? v.replace(/_/g, ' ');
 
 const schema = z.object({
-  key: z.string().regex(/^[a-z][a-z0-9_]{1,48}$/, 'Lower-case snake_case, 2-49 chars'),
-  name: z.string().min(1, 'Required'),
+  key: z.string().regex(/^[a-z][a-z0-9_]{1,48}$/, tx('Lower-case snake_case, 2-49 chars')),
+  name: z.string().min(1, tx('Required')),
   description: z.string().optional(),
   classification: z.enum(CLASSIFICATIONS),
   normalBalance: z.enum(NORMAL_BALANCES),
@@ -145,7 +145,7 @@ export function AccountCategoriesPage() {
   const columns: Column<AccountCategory>[] = [
     {
       key: 'key',
-      header: 'Key',
+      header: tx('Key'),
       render: (c) => (
         <div className="flex items-center gap-2">
           <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{c.key}</code>
@@ -153,21 +153,21 @@ export function AccountCategoriesPage() {
         </div>
       ),
     },
-    { key: 'name', header: 'Name', render: (c) => <span className="font-medium">{c.name}</span> },
-    { key: 'classification', header: 'Classification', render: (c) => label(c.classification) },
+    { key: 'name', header: tx('Name'), render: (c) => <span className="font-medium">{c.name}</span> },
+    { key: 'classification', header: tx('Classification'), render: (c) => label(c.classification) },
     {
       key: 'normalBalance',
-      header: 'Normal Balance',
+      header: tx('Normal Balance'),
       render: (c) => (
         <Badge variant={c.normalBalance === 'debit' ? 'secondary' : 'outline'} className="text-xs">
           {label(c.normalBalance)}
         </Badge>
       ),
     },
-    { key: 'reportSection', header: 'Report Section', render: (c) => label(c.reportSection) },
+    { key: 'reportSection', header: tx('Report Section'), render: (c) => label(c.reportSection) },
     {
       key: 'flags',
-      header: 'Flags',
+      header: tx('Flags'),
       render: (c) => (
         <div className="flex flex-wrap gap-1">
           {c.isContra && <Badge variant="outline" className="text-[10px]">{tx('Contra')}</Badge>}
@@ -179,7 +179,7 @@ export function AccountCategoriesPage() {
     },
     {
       key: 'accountCount',
-      header: 'Accounts',
+      header: tx('Accounts'),
       className: 'text-right',
       render: (c) => <span className="tabular-nums">{c.accountCount ?? 0}</span>,
     },
@@ -219,9 +219,7 @@ export function AccountCategoriesPage() {
         <div className="border-l-4 border-[#3b82f6] pl-4">
           <h1 className="text-3xl font-bold">{tx('Account Categories')}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {tx('Categories define accounting')} <em>{tx('behavior')}</em> — normal balance, which statement an
-            account lands on, and which modules can find it automatically. This is separate from
-            the chart-of-accounts hierarchy, which is for reporting and navigation only.
+            {tx('Categories define accounting')} <em>{tx('behavior')}</em> {tx('— normal balance, which statement an account lands on, and which modules can find it automatically. This is separate from the chart-of-accounts hierarchy, which is for reporting and navigation only.')}
           </p>
         </div>
         {canCreate && (
@@ -251,11 +249,11 @@ export function AccountCategoriesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editing ? `Edit ${editing.name}` : 'New Account Category'}</DialogTitle>
+            <DialogTitle>{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('New Account Category')}</DialogTitle>
             <DialogDescription>
               {isSystemEdit
-                ? 'This is a system category. Its key, classification, normal balance and contra flag are fixed — the posting engine and every report depend on them.'
-                : 'Modules resolve accounts by category key, so choose it carefully: it cannot be changed later.'}
+                ? tx('This is a system category. Its key, classification, normal balance and contra flag are fixed — the posting engine and every report depend on them.')
+                : tx('Modules resolve accounts by category key, so choose it carefully: it cannot be changed later.')}
             </DialogDescription>
           </DialogHeader>
 
@@ -350,7 +348,7 @@ export function AccountCategoriesPage() {
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4" {...form.register('isCashEquivalent')} />
-                <span>Cash &amp; cash equivalent</span>
+                <span>{tx('Cash & cash equivalent')}</span>
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="h-4 w-4" {...form.register('allowReconciliation')} />
@@ -373,7 +371,7 @@ export function AccountCategoriesPage() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{tx('Cancel')}</Button>
               <Button type="submit" disabled={isSaving}>
-                {isSaving ? 'Saving…' : editing ? 'Save' : 'Create'}
+                {isSaving ? tx('Saving…') : editing ? tx('Save') : tx('Create')}
               </Button>
             </DialogFooter>
           </form>
@@ -387,8 +385,8 @@ export function AccountCategoriesPage() {
             <AlertDialogTitle>{tx('Delete')} {deleting?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               {deleting?.accountCount
-                ? `${deleting.accountCount} account(s) still use this category. Reassign them first.`
-                : 'This category is not used by any account and can be safely removed.'}
+                ? tx('{{accountCount}} account(s) still use this category. Reassign them first.', { accountCount: deleting.accountCount })
+                : tx('This category is not used by any account and can be safely removed.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

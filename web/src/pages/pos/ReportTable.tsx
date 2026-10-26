@@ -57,7 +57,7 @@ export function ReportTable<T>({
   exportName,
   exportTitle,
   loading,
-  emptyMessage = 'No data for these filters.',
+  emptyMessage = tx('No data for these filters.'),
   rowKey,
   initialSortKey,
   initialSortDir = 'desc',
@@ -92,8 +92,8 @@ export function ReportTable<T>({
         </div>
         {rows.length > 0 && (
           <div className="flex gap-1 no-print">
-            <Button variant="outline" size="sm" onClick={handleCSV}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
-            <Button variant="outline" size="sm" onClick={handlePDF}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+            <Button variant="outline" size="sm" onClick={handleCSV}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
+            <Button variant="outline" size="sm" onClick={handlePDF}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
           </div>
         )}
       </div>
@@ -114,7 +114,7 @@ export function ReportTable<T>({
                       <button
                         className="inline-flex items-center gap-1 hover:text-slate-900"
                         onClick={() => toggle(c.key)}
-                        title={`Sort by ${c.header}`}
+                        title={tx('Sort by {{header}}', { header: c.header })}
                       >
                         {c.header}
                         {sortKey === c.key ? (

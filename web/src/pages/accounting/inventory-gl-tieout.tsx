@@ -12,29 +12,29 @@ import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
 const SOURCE_LABELS: Record<string, string> = {
-  goods_receipt: 'Goods receipts',
-  goods_receipt_reversal: 'Goods receipt reversals',
-  direct_stock_in: 'Direct stock in',
-  direct_stock_out: 'Direct stock out',
-  pos_invoice: 'POS sales',
-  menu_recipe: 'POS recipe consumption',
-  pos_invoice_combo: 'POS combo components',
-  pos_refund: 'POS refunds',
-  waste: 'Damages & waste',
-  waste_reversal: 'Waste reversals',
-  stock_out: 'Stock outs',
-  stock_out_reversal: 'Stock-out reversals',
-  stock_adjustment: 'Adjustments',
-  stock_adjustment_reversal: 'Adjustment reversals',
-  stock_adjust: 'Adjustments (legacy)',
-  stock_transfer: 'Transfers',
-  stock_transfer_reversal: 'Transfer reversals',
-  vendor_bill: 'Vendor bills',
-  debit_note: 'Supplier returns',
-  opening_balance: 'Opening balances',
-  opening_backfill: 'Opening balances (backfill)',
-  inventory_gl_gap_backfill: 'GL catch-up entries',
-  '(none)': 'Unreferenced',
+  goods_receipt: tx('Goods receipts'),
+  goods_receipt_reversal: tx('Goods receipt reversals'),
+  direct_stock_in: tx('Direct stock in'),
+  direct_stock_out: tx('Direct stock out'),
+  pos_invoice: tx('POS sales'),
+  menu_recipe: tx('POS recipe consumption'),
+  pos_invoice_combo: tx('POS combo components'),
+  pos_refund: tx('POS refunds'),
+  waste: tx('Damages & waste'),
+  waste_reversal: tx('Waste reversals'),
+  stock_out: tx('Stock outs'),
+  stock_out_reversal: tx('Stock-out reversals'),
+  stock_adjustment: tx('Adjustments'),
+  stock_adjustment_reversal: tx('Adjustment reversals'),
+  stock_adjust: tx('Adjustments (legacy)'),
+  stock_transfer: tx('Transfers'),
+  stock_transfer_reversal: tx('Transfer reversals'),
+  vendor_bill: tx('Vendor bills'),
+  debit_note: tx('Supplier returns'),
+  opening_balance: tx('Opening balances'),
+  opening_backfill: tx('Opening balances (backfill)'),
+  inventory_gl_gap_backfill: tx('GL catch-up entries'),
+  '(none)': tx('Unreferenced'),
 };
 const label = (s: string) => SOURCE_LABELS[s] ?? s.replace(/_/g, ' ');
 
@@ -67,7 +67,7 @@ export function InventoryGlTieOutPage() {
 
       {isLoading && <Skeleton className="h-40 w-full" />}
       {isError && (
-        <Card><CardContent className="p-6 text-sm text-destructive">{(error as any)?.response?.data?.message ?? 'Failed to load tie-out'}</CardContent></Card>
+        <Card><CardContent className="p-6 text-sm text-destructive">{(error as any)?.response?.data?.message ?? tx('Failed to load tie-out')}</CardContent></Card>
       )}
 
       {data && (
@@ -86,7 +86,7 @@ export function InventoryGlTieOutPage() {
             <Card>
               <CardHeader className="p-3 pb-1">
                 <CardTitle className="text-[10px] font-bold uppercase text-muted-foreground">
-                  GL {data.accounts.map((a) => a.code).join(', ') || 'inventory account'}
+                  {tx('GL')} {data.accounts.map((a) => a.code).join(', ') || tx('inventory account')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-3 pt-0"><span className="text-2xl font-bold">{money(data.glBalance)}</span></CardContent>
@@ -145,8 +145,7 @@ export function InventoryGlTieOutPage() {
             <CardHeader className="border-b bg-muted/30 px-5 pb-2 pt-4">
               <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{tx('Value by source')}</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Ledger value each source moved vs what it posted to the inventory account. Sources that post as one entry
-                (e.g. a receipt voucher) or corrections without a stock row show a difference here by design.
+                {tx('Ledger value each source moved vs what it posted to the inventory account. Sources that post as one entry (e.g. a receipt voucher) or corrections without a stock row show a difference here by design.')}
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto p-0">
@@ -155,7 +154,7 @@ export function InventoryGlTieOutPage() {
                   <TableRow>
                     <TableHead className="text-[10px] uppercase">{tx('Source')}</TableHead>
                     <TableHead className="text-right text-[10px] uppercase">{tx('Stock ledger')}</TableHead>
-                    <TableHead className="text-right text-[10px] uppercase">GL</TableHead>
+                    <TableHead className="text-right text-[10px] uppercase">{tx('GL')}</TableHead>
                     <TableHead className="pr-5 text-right text-[10px] uppercase">{tx('Difference')}</TableHead>
                   </TableRow>
                 </TableHeader>

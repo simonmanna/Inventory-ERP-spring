@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { api } from '@/lib/api';
+import type { ProductUnit, UomRef } from './units';
 
 export interface Product {
   id: string;
@@ -18,6 +19,11 @@ export interface Product {
   recipeUomId?: string | null;
   productionUomId?: string | null;
   uomConversion?: string | null;
+  uom?: UomRef | null;
+  purchaseUom?: UomRef | null;
+  salesUom?: UomRef | null;
+  /** Extra units with per-product conversions (ADR-S003). */
+  units?: ProductUnit[];
   reorderQty?: string | null;
   /** KDS routing: KitchenStation.code. */
   station?: string | null;
@@ -103,6 +109,11 @@ export interface CreateProductInput {
   minSaleQty?: number;
   maxSaleQty?: number;
   packagings?: { name: string; quantity: number; barcode?: string; isActive?: boolean }[];
+  /** Replaces the product's extra units when sent. */
+  units?: {
+    uomId: string; factor: number; isPurchase: boolean; isSales: boolean;
+    salePrice?: number; purchasePrice?: number; isActive?: boolean;
+  }[];
   salesPrice?: number;
   costPrice?: number;
   image?: string;

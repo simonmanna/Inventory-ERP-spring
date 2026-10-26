@@ -43,7 +43,7 @@ export function UomPage() {
       id: catEdit?.id,
       data: { name: catForm.name, referenceUomId: catForm.referenceUomId || undefined, isActive: catForm.isActive },
     });
-    notify.success(catEdit ? 'Category updated' : 'Category created');
+    notify.success(catEdit ? tx('Category updated') : tx('Category created'));
     setCatOpen(false);
   };
 
@@ -79,7 +79,7 @@ export function UomPage() {
         isActive: uomForm.isActive,
       },
     });
-    notify.success(uomEdit ? 'Unit updated' : 'Unit created');
+    notify.success(uomEdit ? tx('Unit updated') : tx('Unit created'));
     setUomOpen(false);
   };
 
@@ -108,7 +108,7 @@ export function UomPage() {
                 <tr key={c.id} className="border-b last:border-0">
                   <td className="py-2 font-medium">{c.name}</td>
                   <td>{units.find((u) => u.id === c.referenceUomId)?.code ?? '—'}</td>
-                  <td><Badge variant={c.isActive ? 'default' : 'secondary'}>{c.isActive ? 'Yes' : 'No'}</Badge></td>
+                  <td><Badge variant={c.isActive ? 'default' : 'secondary'}>{c.isActive ? tx('Yes') : tx('No')}</Badge></td>
                   <td className="text-right">
                     <Button size="sm" variant="ghost" onClick={() => openCat(c)}><Pencil className="h-3.5 w-3.5" /></Button>
                     <Button size="sm" variant="ghost" onClick={async () => { await delCat.mutateAsync(c.id); notify.success(tx('Deleted')); }}>
@@ -146,7 +146,7 @@ export function UomPage() {
                   <td>{catName(u.categoryId)}</td>
                   <td className="text-right font-mono">{u.factor}</td>
                   <td className="text-right font-mono">{u.roundingPrecision}</td>
-                  <td>{u.isBase ? <Badge>ref</Badge> : ''}</td>
+                  <td>{u.isBase ? <Badge>{tx('ref')}</Badge> : ''}</td>
                   <td className="text-right">
                     <Button size="sm" variant="ghost" onClick={() => openUom(u)}><Pencil className="h-3.5 w-3.5" /></Button>
                     <Button size="sm" variant="ghost" onClick={async () => { await delUom.mutateAsync(u.id); notify.success(tx('Deleted')); }}>
@@ -164,7 +164,7 @@ export function UomPage() {
       {/* Category dialog */}
       <Dialog open={catOpen} onOpenChange={setCatOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{catEdit ? 'Edit category' : 'New category'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{catEdit ? tx('Edit category') : tx('New category')}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label>{tx('Name')}</Label><Input value={catForm.name} onChange={(e) => setCatForm({ ...catForm, name: e.target.value })} /></div>
             <div>
@@ -193,7 +193,7 @@ export function UomPage() {
       {/* Unit dialog */}
       <Dialog open={uomOpen} onOpenChange={setUomOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{uomEdit ? 'Edit unit' : 'New unit'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{uomEdit ? tx('Edit unit') : tx('New unit')}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>{tx('Code')}</Label><Input value={uomForm.code} disabled={!!uomEdit} onChange={(e) => setUomForm({ ...uomForm, code: e.target.value })} /></div>
             <div><Label>{tx('Symbol')}</Label><Input value={uomForm.symbol} onChange={(e) => setUomForm({ ...uomForm, symbol: e.target.value })} /></div>

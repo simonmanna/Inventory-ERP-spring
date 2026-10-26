@@ -22,7 +22,7 @@ interface ReceiptSettings {
 export function ReceiptSettingsPage() {
   const [s, setS] = useState<ReceiptSettings>({
     businessName: '', addressLine1: '', addressLine2: '',
-    phone: '', taxId: '', footerMessage: 'Thank you!',
+    phone: '', taxId: '', footerMessage: tx('Thank you!'),
   });
 
   const q = useQuery({
@@ -40,7 +40,7 @@ export function ReceiptSettingsPage() {
         addressLine2: header.addressLine2 ?? '',
         phone: header.phone ?? '',
         taxId: header.taxId ?? '',
-        footerMessage: footer.message ?? 'Thank you!',
+        footerMessage: footer.message ?? tx('Thank you!'),
       };
     },
   });
@@ -52,7 +52,7 @@ export function ReceiptSettingsPage() {
   const save = useMutation({
     mutationFn: async () => (await api.patch('/pos/settings/receipt', s)).data,
     onSuccess: () => notify.success(tx('Receipt settings saved')),
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Save failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Save failed')),
   });
 
   const update = (field: keyof ReceiptSettings) => (e: React.ChangeEvent<HTMLInputElement>) =>

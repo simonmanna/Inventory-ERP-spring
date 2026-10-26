@@ -36,9 +36,9 @@ import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 
 const STATUS_BADGE: Record<FiscalPeriod['status'], { label: string; className: string }> = {
-  open: { label: 'Open', className: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' },
-  closed: { label: 'Closed', className: 'bg-amber-100 text-amber-700 hover:bg-amber-100' },
-  locked: { label: 'Locked', className: 'bg-slate-100 text-slate-600 hover:bg-slate-100' },
+  open: { label: tx('Open'), className: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' },
+  closed: { label: tx('Closed'), className: 'bg-amber-100 text-amber-700 hover:bg-amber-100' },
+  locked: { label: tx('Locked'), className: 'bg-slate-100 text-slate-600 hover:bg-slate-100' },
 };
 
 function FiscalPeriodsPage() {
@@ -253,7 +253,7 @@ function FiscalPeriodsPage() {
               {tx('Previous')}
             </Button>
             <span className="text-xs font-medium">
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"
@@ -323,7 +323,7 @@ function FiscalPeriodsPage() {
               onClick={handleCreate}
               disabled={!name || !startDate || !endDate || createMutation.isPending}
             >
-              {createMutation.isPending ? 'Creating…' : 'Create Period'}
+              {createMutation.isPending ? tx('Creating…') : tx('Create Period')}
             </Button>
           </DialogFooter>
         </DialogContent>

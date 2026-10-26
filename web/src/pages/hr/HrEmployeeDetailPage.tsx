@@ -128,7 +128,7 @@ export function HrEmployeeDetailPage() {
           <div>
             <h1 className="text-xl font-semibold">{fullName}</h1>
             <p className="text-sm text-muted-foreground">
-              {e.position?.name ?? 'No position'}
+              {e.position?.name ?? tx('No position')}
               {e.department?.name ? ` · ${e.department.name}` : ''}
               {e.branch?.name ? ` · ${e.branch.name}` : ''}
             </p>
@@ -139,7 +139,7 @@ export function HrEmployeeDetailPage() {
               </Badge>
               {access?.linked ? (
                 <Badge className="bg-sky-100 text-sky-800">
-                  {access.user?.posAccess ? 'POS access' : 'Back office'}
+                  {access.user?.posAccess ? tx('POS access') : tx('Back office')}
                 </Badge>
               ) : (
                 <Badge className="bg-muted text-muted-foreground">{tx('No login')}</Badge>
@@ -154,7 +154,7 @@ export function HrEmployeeDetailPage() {
       {/* A former employee stays fully readable — their history is the point. */}
       {ended && (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-900">
-          <strong>{tx('Former employee.')}</strong> {status === 'RESIGNED' ? 'Resigned' : 'Terminated'} on{' '}
+          <strong>{tx('Former employee.')}</strong> {status === 'RESIGNED' ? tx('Resigned') : tx('Terminated')} {tx('on')}{' '}
           {date(e.terminationDate)}
           {e.terminationReason ? ` — ${e.terminationReason}` : ''}{tx('. Their past orders, invoices, payments and cash sessions are unchanged and still resolve to them.')}
         </div>
@@ -466,7 +466,7 @@ export function HrEmployeeDetailPage() {
               ) : (
                 <Empty>
                   {posActivity?.message ??
-                    'No linked account, so no POS activity can be attributed.'}
+                    tx('No linked account, so no POS activity can be attributed.')}
                 </Empty>
               )}
             </CardContent>
@@ -486,9 +486,9 @@ export function HrEmployeeDetailPage() {
                       </Badge>
                       <div className="text-sm">
                         <div>
-                          {h.fromStatus ? `${h.fromStatus.replace(/_/g, ' ')} → ` : 'Recorded as '}
+                          {h.fromStatus ? `${h.fromStatus.replace(/_/g, ' ')} → ` : tx('Recorded as ')}
                           {h.toStatus.replace(/_/g, ' ')}
-                          {h.accountDisabled ? ' · login disabled' : ''}
+                          {h.accountDisabled ? tx(' · login disabled') : ''}
                         </div>
                         <div className="text-xs text-muted-foreground">
                           {dateTime(h.effectiveDate)}
@@ -513,7 +513,7 @@ export function HrEmployeeDetailPage() {
                 <ol className="space-y-2">
                   {transfers.rows.map((t) => (
                     <li key={t.id} className="border-b pb-2 text-sm last:border-0">
-                      <div>{t.reason ?? 'Transfer'}</div>
+                      <div>{t.reason ?? tx('Transfer')}</div>
                       <div className="text-xs text-muted-foreground">{date(t.effectiveDate)}</div>
                     </li>
                   ))}

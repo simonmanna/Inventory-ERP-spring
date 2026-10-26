@@ -8,9 +8,9 @@ import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
 const POS_MODES = [
-  { value: 'cafe', label: 'Cafe / Restaurant', desc: 'Menu items with variants, accompaniments, modifiers, tables, KDS, and KOT printing.' },
-  { value: 'retail', label: 'Retail', desc: 'Direct product selling with barcode scanning, no tables, no kitchen.' },
-  { value: 'rental', label: 'Rental', desc: 'Hire-out of serialized assets: agreements, deposits, returns, inspection and settlement.' },
+  { value: 'cafe', label: tx('Cafe / Restaurant'), desc: tx('Menu items with variants, accompaniments, modifiers, tables, KDS, and KOT printing.') },
+  { value: 'retail', label: tx('Retail'), desc: tx('Direct product selling with barcode scanning, no tables, no kitchen.') },
+  { value: 'rental', label: tx('Rental'), desc: tx('Hire-out of serialized assets: agreements, deposits, returns, inspection and settlement.') },
 ];
 
 export function PosSettingsPage() {
@@ -73,12 +73,9 @@ export function PosSettingsPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Register &amp; drawer</CardTitle>
+            <CardTitle className="text-base">{tx('Register & drawer')}</CardTitle>
             <CardDescription>
-              One till shared by several cashiers. When off, a collection can only
-              land in the drawer of the cashier who opened it — complete a shift
-              handover before another cashier sells on it. When on, any cashier may
-              settle into the open drawer; every sale still records who settled it.
+              {tx('One till shared by several cashiers. When off, a collection can only land in the drawer of the cashier who opened it — complete a shift handover before another cashier sells on it. When on, any cashier may settle into the open drawer; every sale still records who settled it.')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -97,12 +94,7 @@ export function PosSettingsPage() {
           <CardHeader>
             <CardTitle className="text-base">{tx('Closing amounts visible to the cashier')}</CardTitle>
             <CardDescription>
-              When on, the shift-close and handover dialogs show the expected
-              drawer cash and every wallet/bank figure before the count — the
-              count verifies a known target. When off the close is blind: the
-              cashier counts first and the expected figures and variance appear
-              only once the count is committed. Managers always see the figures
-              on the Cash Register page.
+              {tx('When on, the shift-close and handover dialogs show the expected drawer cash and every wallet/bank figure before the count — the count verifies a known target. When off the close is blind: the cashier counts first and the expected figures and variance appear only once the count is committed. Managers always see the figures on the Cash Register page.')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -118,7 +110,7 @@ export function PosSettingsPage() {
           </CardContent>
         </Card>
         <Button onClick={handleSave} disabled={update.isPending}>
-          {update.isPending ? 'Saving...' : 'Save'}
+          {update.isPending ? tx('Saving...') : tx('Save')}
         </Button>
         </>
       )}

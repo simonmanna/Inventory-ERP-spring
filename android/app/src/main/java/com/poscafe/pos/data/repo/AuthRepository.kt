@@ -6,6 +6,8 @@ import com.poscafe.pos.data.local.dao.OpQueueDao
 import com.poscafe.pos.data.local.dao.StaffDao
 import com.poscafe.pos.data.local.entity.OpQueueEntity
 import com.poscafe.pos.data.local.entity.StaffEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
@@ -17,6 +19,9 @@ import javax.inject.Singleton
  * bcrypt pinHash — no network needed. Lockout mirrors the server's
  * MAX_FAILED_ATTEMPTS=10 so a stolen tablet cannot brute-force PINs through
  * the UI (the DB itself is SQLCipher-encrypted against offline extraction).
+ * Failure counts live in [DeviceConfig], so force-stopping the app does not
+ * reset them; from [BACKOFF_AFTER] failures each attempt waits out a doubling
+ * delay. A PIN reset in the back office (a new hash on the next sync) clears it.
  */
 @Singleton
 class AuthRepository @Inject constructor(
@@ -25,8 +30,6 @@ class AuthRepository @Inject constructor(
     private val config: DeviceConfig,
 ) {
     data class LoggedIn(val userId: String, val displayName: String, val permissions: Set<String>)
-
-    private val failedAttempts = mutableMapOf<String, Int>()
 
     @Volatile
     var current: LoggedIn? = null
@@ -46,18 +49,22 @@ class AuthRepository @Inject constructor(
         val hash = user.pinHash
             ?: return@runCatching Result.failure(IllegalStateException("No PIN set for this user"))
 
-        val attempts = failedAttempts.getOrDefault(userId, 0)
+        val attempts = config.pinFailures(userId)
         if (attempts >= MAX_FAILED_ATTEMPTS) {
-            return@runCatching Result.failure(IllegalStateException("Account locked after $MAX_FAILED_ATTEMPTS failed attempts — sync online to unlock"))
+            return@runCatching Result.failure(IllegalStateException("Account locked after $MAX_FAILED_ATTEMPTS failed attempts — ask a manager to reset your PIN in the back office"))
+        }
+        val waitMs = backoffMs(attempts) - (System.currentTimeMillis() - config.lastPinFailureAt(userId))
+        if (waitMs > 0) {
+            return@runCatching Result.failure(IllegalStateException("Too many wrong PINs — try again in ${(waitMs + 999) / 1000}s"))
         }
 
         val ok = try {
-            BCrypt.verifyer().verify(pin.toCharArray(), hash.toCharArray()).verified
+            verifyPin(pin, hash)
         } catch (t: Throwable) {
             return@runCatching Result.failure(IllegalStateException("PIN verification error: ${t.message ?: t.javaClass.simpleName}"))
         }
         if (ok) {
-            failedAttempts.remove(userId)
+            config.clearPinFailures(userId)
             val session = LoggedIn(
                 userId = user.id,
                 displayName = listOfNotNull(user.firstName, user.lastName).joinToString(" "),
@@ -66,7 +73,7 @@ class AuthRepository @Inject constructor(
             current = session
             Result.success(session)
         } else {
-            failedAttempts[userId] = attempts + 1
+            config.recordPinFailure(userId)
             Result.failure(IllegalArgumentException("Wrong PIN"))
         }
     }.fold({ it }, { failure -> Result.failure(failure) })
@@ -88,14 +95,14 @@ class AuthRepository @Inject constructor(
         val hash = user.pinHash
             ?: return@runCatching Result.failure(IllegalStateException("No PIN set for this user"))
         val ok = try {
-            BCrypt.verifyer().verify(currentPin.toCharArray(), hash.toCharArray()).verified
+            verifyPin(currentPin, hash)
         } catch (t: Throwable) {
             return@runCatching Result.failure(IllegalStateException("PIN verification error: ${t.message ?: t.javaClass.simpleName}"))
         }
         if (!ok) return@runCatching Result.failure(IllegalArgumentException("Current PIN is incorrect"))
         if (currentPin == newPin) return@runCatching Result.failure(IllegalArgumentException("New PIN must be different"))
 
-        val newHash = BCrypt.withDefaults().hashToString(10, newPin.toCharArray())
+        val newHash = withContext(Dispatchers.Default) { BCrypt.withDefaults().hashToString(10, newPin.toCharArray()) }
         staffDao.upsertAll(listOf(user.copy(pinHash = newHash)))
 
         if (!config.standalone) {
@@ -148,7 +155,7 @@ class AuthRepository @Inject constructor(
         }
         for (m in managers) {
             val ok = try {
-                BCrypt.verifyer().verify(pin.toCharArray(), m.pinHash!!.toCharArray()).verified
+                verifyPin(pin, m.pinHash!!)
             } catch (t: Throwable) {
                 continue
             }
@@ -157,7 +164,18 @@ class AuthRepository @Inject constructor(
         Result.failure(IllegalArgumentException("PIN not recognised for a manager holding $permission"))
     }.fold({ it }, { failure -> Result.failure(failure) })
 
+    /** bcrypt is deliberately slow (~100 ms+ per hash); keep it off the main thread. */
+    private suspend fun verifyPin(pin: String, hash: String): Boolean = withContext(Dispatchers.Default) {
+        BCrypt.verifyer().verify(pin.toCharArray(), hash.toCharArray()).verified
+    }
+
     companion object {
         const val MAX_FAILED_ATTEMPTS = 10
+        const val BACKOFF_AFTER = 3
+        private const val BACKOFF_BASE_MS = 15_000L
+
+        /** 0 below [BACKOFF_AFTER] failures, then 15 s, 30 s, 60 s, … */
+        fun backoffMs(failures: Int): Long =
+            if (failures < BACKOFF_AFTER) 0L else BACKOFF_BASE_MS shl (failures - BACKOFF_AFTER).coerceAtMost(6)
     }
 }

@@ -22,6 +22,13 @@ import fr from './locales/fr.json';
 export const SUPPORTED_LOCALES = ['en', 'ti', 'lg', 'sw', 'es', 'fr'] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
+/**
+ * Languages offered in the picker: the fully translated ones (CI-enforced by
+ * `pnpm web:i18n`). Spanish and French only cover the keyed strings, so they
+ * stay loadable for users who already chose them but are not offered.
+ */
+export const PICKER_LOCALES: readonly SupportedLocale[] = ['en', 'ti', 'lg', 'sw'];
+
 /** Native names shown in the language picker. */
 export const LOCALE_NAMES: Record<SupportedLocale, string> = {
   en: 'English',

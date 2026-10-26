@@ -30,15 +30,15 @@ export function ReorderReport({ ctl }: { ctl: Ctl }) {
   const cost = rows.reduce((s, r) => s + r.estimatedCost, 0);
 
   const columns: Column<ReorderRow>[] = [
-    { key: 'code', header: 'Code', render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.code}</span>, sort: (r) => r.code },
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name },
-    { key: 'category', header: 'Category', render: (r) => r.category ?? '—', sort: (r) => r.category },
-    { key: 'supplier', header: 'Supplier', render: (r) => r.supplier?.name ?? <span className="text-muted-foreground">—</span>, sort: (r) => r.supplier?.name ?? null },
-    { key: 'onHand', header: 'On Hand', align: 'right', render: (r) => <span className={r.onHand <= 0 ? 'text-destructive font-semibold' : ''}>{qty(r.onHand)}</span>, sort: (r) => r.onHand },
-    { key: 'par', header: 'Par', align: 'right', render: (r) => qty(r.par), sort: (r) => r.par },
-    { key: 'shortfall', header: 'Shortfall', align: 'right', render: (r) => <span className="text-amber-600">{qty(r.shortfall)}</span>, sort: (r) => r.shortfall },
-    { key: 'suggestedOrderQty', header: 'Suggested Order (purchase units)', align: 'right', render: (r) => <span className="font-semibold">{qty(r.suggestedOrderQty)}</span>, sort: (r) => r.suggestedOrderQty },
-    { key: 'estimatedCost', header: 'Est. Cost', align: 'right', render: (r) => money(r.estimatedCost), sort: (r) => r.estimatedCost, footer: money(cost) },
+    { key: 'code', header: tx('Code'), render: (r) => <span className="font-mono text-xs text-muted-foreground">{r.code}</span>, sort: (r) => r.code },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name },
+    { key: 'category', header: tx('Category'), render: (r) => r.category ?? '—', sort: (r) => r.category },
+    { key: 'supplier', header: tx('Supplier'), render: (r) => r.supplier?.name ?? <span className="text-muted-foreground">—</span>, sort: (r) => r.supplier?.name ?? null },
+    { key: 'onHand', header: tx('On Hand'), align: 'right', render: (r) => <span className={r.onHand <= 0 ? 'text-destructive font-semibold' : ''}>{qty(r.onHand)}</span>, sort: (r) => r.onHand },
+    { key: 'par', header: tx('Par'), align: 'right', render: (r) => qty(r.par), sort: (r) => r.par },
+    { key: 'shortfall', header: tx('Shortfall'), align: 'right', render: (r) => <span className="text-amber-600">{qty(r.shortfall)}</span>, sort: (r) => r.shortfall },
+    { key: 'suggestedOrderQty', header: tx('Suggested Order (purchase units)'), align: 'right', render: (r) => <span className="font-semibold">{qty(r.suggestedOrderQty)}</span>, sort: (r) => r.suggestedOrderQty },
+    { key: 'estimatedCost', header: tx('Est. Cost'), align: 'right', render: (r) => money(r.estimatedCost), sort: (r) => r.estimatedCost, footer: money(cost) },
   ];
 
   return (
@@ -49,7 +49,7 @@ export function ReorderReport({ ctl }: { ctl: Ctl }) {
           <Kpi label={tx('Items at / below par')} value={rows.length} tone={rows.length ? 'warn' : 'good'} />
           <Kpi label={tx('Out of stock')} value={rows.filter((r) => r.onHand <= 0).length} tone="bad" />
           <Kpi label={tx('Without supplier')} value={rows.filter((r) => !r.supplier).length} />
-          <Kpi label={tx('Estimated reorder cost')} value={money(cost)} hint="Suggested qty × product cost price" />
+          <Kpi label={tx('Estimated reorder cost')} value={money(cost)} hint={tx('Suggested qty × product cost price')} />
         </KpiGrid>
         <DataTable
           rows={rows} columns={columns} rowKey={(r) => r.productId}
@@ -83,19 +83,19 @@ export function ExpiringReport({ ctl }: { ctl: Ctl }) {
   const expired = rows.filter((r) => r.expired);
 
   const columns: Column<ExpiringRow>[] = [
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{r.code}</span>}</>, sort: (r) => r.name },
-    { key: 'batchNumber', header: 'Batch', render: (r) => <span className="font-mono text-xs">{r.batchNumber}</span>, sort: (r) => r.batchNumber },
-    { key: 'location', header: 'Location', render: (r) => r.location ?? '—', sort: (r) => r.location },
-    { key: 'expiryDate', header: 'Expiry', render: (r) => date(r.expiryDate), sort: (r) => r.expiryDate },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{r.code}</span>}</>, sort: (r) => r.name },
+    { key: 'batchNumber', header: tx('Batch'), render: (r) => <span className="font-mono text-xs">{r.batchNumber}</span>, sort: (r) => r.batchNumber },
+    { key: 'location', header: tx('Location'), render: (r) => r.location ?? '—', sort: (r) => r.location },
+    { key: 'expiryDate', header: tx('Expiry'), render: (r) => date(r.expiryDate), sort: (r) => r.expiryDate },
     {
-      key: 'daysToExpiry', header: 'Days Left', align: 'right',
+      key: 'daysToExpiry', header: tx('Days Left'), align: 'right',
       render: (r) => r.expired
         ? <Badge variant="destructive">{tx('Expired')} {Math.abs(r.daysToExpiry ?? 0)}{tx('d ago')}</Badge>
         : <span className={(r.daysToExpiry ?? 99) <= 7 ? 'font-semibold text-amber-600' : ''}>{r.daysToExpiry}</span>,
       sort: (r) => r.daysToExpiry,
     },
-    { key: 'quantity', header: 'Qty', align: 'right', render: (r) => `${qty(r.quantity)}${r.uom ? ` ${r.uom}` : ''}`, sort: (r) => r.quantity },
-    { key: 'value', header: 'Value at Risk', align: 'right', render: (r) => money(r.value), sort: (r) => r.value, footer: money(rows.reduce((s, r) => s + r.value, 0)) },
+    { key: 'quantity', header: tx('Qty'), align: 'right', render: (r) => `${qty(r.quantity)}${r.uom ? ` ${r.uom}` : ''}`, sort: (r) => r.quantity },
+    { key: 'value', header: tx('Value at Risk'), align: 'right', render: (r) => money(r.value), sort: (r) => r.value, footer: money(rows.reduce((s, r) => s + r.value, 0)) },
   ];
 
   return (
@@ -103,7 +103,7 @@ export function ExpiringReport({ ctl }: { ctl: Ctl }) {
       <FilterBar ctl={ctl} show={['location', 'category', 'search', 'days']} />
       <ReportState query={report}>
         <KpiGrid>
-          <Kpi label={tx('Batches expiring')} value={rows.length} tone={rows.length ? 'warn' : 'good'} hint={`Within ${ctl.filters.days} days`} />
+          <Kpi label={tx('Batches expiring')} value={rows.length} tone={rows.length ? 'warn' : 'good'} hint={tx('Within {{days}} days', { days: ctl.filters.days })} />
           <Kpi label={tx('Already expired')} value={expired.length} tone={expired.length ? 'bad' : 'good'} />
           <Kpi label={tx('Value at risk')} value={money(rows.reduce((s, r) => s + r.value, 0))} />
           <Kpi label={tx('Expired value')} value={money(expired.reduce((s, r) => s + r.value, 0))} tone={expired.length ? 'bad' : undefined} />
@@ -144,12 +144,12 @@ export function NegativeStockReport({ ctl }: { ctl: Ctl }) {
   const s = report.data?.summary;
 
   const columns: Column<NegativeRow>[] = [
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{r.code}</span>}</>, sort: (r) => r.name },
-    { key: 'locationName', header: 'Location', render: (r) => r.locationName ?? '—', sort: (r) => r.locationName },
-    { key: 'quantity', header: 'On Hand', align: 'right', render: (r) => <span className="font-semibold text-destructive">{qty(r.quantity)}</span>, sort: (r) => Number(r.quantity) },
-    { key: 'unitCost', header: 'Unit Cost', align: 'right', render: (r) => (r.zeroCostBasis ? <Badge variant="destructive">{tx('No cost')}</Badge> : money(r.unitCost)), sort: (r) => Number(r.unitCost) },
-    { key: 'valuationExposure', header: 'Valuation Exposure', align: 'right', render: (r) => money(r.valuationExposure), sort: (r) => Number(r.valuationExposure), footer: money(s?.totalValuationExposure) },
-    { key: 'lastMovedAt', header: 'Last Moved', render: (r) => date(r.lastMovedAt), sort: (r) => r.lastMovedAt },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{r.code}</span>}</>, sort: (r) => r.name },
+    { key: 'locationName', header: tx('Location'), render: (r) => r.locationName ?? '—', sort: (r) => r.locationName },
+    { key: 'quantity', header: tx('On Hand'), align: 'right', render: (r) => <span className="font-semibold text-destructive">{qty(r.quantity)}</span>, sort: (r) => Number(r.quantity) },
+    { key: 'unitCost', header: tx('Unit Cost'), align: 'right', render: (r) => (r.zeroCostBasis ? <Badge variant="destructive">{tx('No cost')}</Badge> : money(r.unitCost)), sort: (r) => Number(r.unitCost) },
+    { key: 'valuationExposure', header: tx('Valuation Exposure'), align: 'right', render: (r) => money(r.valuationExposure), sort: (r) => Number(r.valuationExposure), footer: money(s?.totalValuationExposure) },
+    { key: 'lastMovedAt', header: tx('Last Moved'), render: (r) => date(r.lastMovedAt), sort: (r) => r.lastMovedAt },
   ];
 
   return (
@@ -158,9 +158,9 @@ export function NegativeStockReport({ ctl }: { ctl: Ctl }) {
       <ReportState query={report}>
         {s && (
           <KpiGrid>
-            <Kpi label={tx('Negative cells')} value={s.cells} tone={s.cells ? 'bad' : 'good'} hint="Item × location" />
-            <Kpi label={tx('Valuation exposure')} value={money(s.totalValuationExposure)} tone={s.cells ? 'bad' : undefined} hint="Inventory overstated / COGS understated" />
-            <Kpi label={tx('Zero cost basis')} value={s.zeroCostBasisCells} tone={s.zeroCostBasisCells ? 'bad' : undefined} hint="Sold with no cost — receive stock" />
+            <Kpi label={tx('Negative cells')} value={s.cells} tone={s.cells ? 'bad' : 'good'} hint={tx('Item × location')} />
+            <Kpi label={tx('Valuation exposure')} value={money(s.totalValuationExposure)} tone={s.cells ? 'bad' : undefined} hint={tx('Inventory overstated / COGS understated')} />
+            <Kpi label={tx('Zero cost basis')} value={s.zeroCostBasisCells} tone={s.zeroCostBasisCells ? 'bad' : undefined} hint={tx('Sold with no cost — receive stock')} />
           </KpiGrid>
         )}
         <DataTable

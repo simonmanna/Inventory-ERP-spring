@@ -67,7 +67,7 @@ export function RepairLabourPage() {
       {showForm && (
         <Card>
           <CardHeader className="bg-muted/30 border-b rounded-t-lg">
-            <CardTitle className="text-sm">{editing ? `Edit ${editing.name}` : 'New labour type'}</CardTitle>
+            <CardTitle className="text-sm">{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('New labour type')}</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-4">
             <Input placeholder={tx('Code (LBR-DIAG)')} value={form.code} onChange={(e) => set('code', e.target.value)} />
@@ -99,7 +99,7 @@ export function RepairLabourPage() {
                   <div>
                     <p className="text-sm font-medium">{t.name} <span className="text-xs text-muted-foreground">· {t.code}</span></p>
                     <p className="text-xs text-muted-foreground">
-                      {t.description ?? ''} {t.durationMinutes ? `· ${t.durationMinutes} min` : ''}
+                      {t.description ?? ''} {t.durationMinutes ? tx('· {{durationMinutes}} min', { durationMinutes: t.durationMinutes }) : ''}
                     </p>
                   </div>
                 </div>

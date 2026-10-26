@@ -223,8 +223,8 @@ export function CrmDashboardPage() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{t.title}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          {t.dueAt ? `Due ${date(t.dueAt)}` : 'No due date'}
-                          {t.dealId ? ' · on deal' : ''}
+                          {t.dueAt ? tx('Due {{v1}}', { v1: date(t.dueAt) }) : tx('No due date')}
+                          {t.dealId ? tx(' · on deal') : ''}
                         </p>
                       </div>
                       <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => completeActivity.mutate(t.id)}>

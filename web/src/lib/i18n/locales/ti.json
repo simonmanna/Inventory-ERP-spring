@@ -79,7 +79,13 @@
     "accounting": "ሕሳብ",
     "fixedAssets": "ቀዋሚ ንብረት",
     "manufacturing": "ምፍራይ",
-    "bakery": "ቤት ባኒ"
+    "bakery": "ቤት ባኒ",
+    "customers": "ዓማዊል",
+    "suppliers": "ኣቕረብቲ",
+    "menus": "መዝገብ ምግቢ",
+    "tables": "ጣውላታት",
+    "cashFlowAccounts": "ዋሕዚ ገንዘብን ሕሳባትን",
+    "production": "ምፍራይ"
   },
   "dashboard": {
     "title": "ዳሽቦርድ",

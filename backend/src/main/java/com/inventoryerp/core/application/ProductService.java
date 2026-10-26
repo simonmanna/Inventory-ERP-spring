@@ -4,6 +4,7 @@ import com.inventoryerp.core.domain.Product;
 import com.inventoryerp.core.domain.ProductCategory;
 import com.inventoryerp.core.domain.ProductPackaging;
 import com.inventoryerp.core.domain.ProductType;
+import com.inventoryerp.core.domain.ProductUom;
 import com.inventoryerp.core.domain.Tax;
 import com.inventoryerp.core.domain.UnitOfMeasure;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -28,7 +29,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
@@ -58,6 +61,13 @@ public class ProductService extends BaseCrudService<Product> {
     /** One packaging row ({@code PackagingDto}). */
     public record Packaging(String id, String name, BigDecimal quantity, String barcode, Boolean isActive) {}
 
+    /**
+     * One extra unit the product is bought or sold in (ADR-S003): {@code factor} base units per 1 of it. Null
+     * flags default to enabled; null prices mean "derive from the base price".
+     */
+    public record Unit(String uomId, BigDecimal factor, Boolean isPurchase, Boolean isSales, BigDecimal salePrice,
+            BigDecimal purchasePrice, Boolean isActive) {}
+
     private final AuditService audit;
     private final EventBus events;
     private final FilesService files;
@@ -85,6 +95,10 @@ public class ProductService extends BaseCrudService<Product> {
         Map<Object, List<Map<String, Object>>> packs = ids.isEmpty() ? Map.of() : groupBy(em.createQuery(
                         "select p from ProductPackaging p where p.productId in :ids", ProductPackaging.class)
                 .setParameter("ids", ids).getResultList(), "productId");
+        Map<Object, List<Map<String, Object>>> units = ids.isEmpty() ? Map.of() : groupBy(em.createQuery(
+                        "select u from ProductUom u where u.productId in :ids order by u.factor", ProductUom.class)
+                .setParameter("ids", ids).getResultList(), "productId");
+        units.values().forEach(list -> list.forEach(u -> u.put("uom", one(em, UnitOfMeasure.class, u.get("uomId")))));
         List<Map<String, Object>> out = new ArrayList<>(rows.size());
         for (Product p : rows) {
             Map<String, Object> m = EntityJson.of(p);
@@ -93,6 +107,7 @@ public class ProductService extends BaseCrudService<Product> {
             m.put("purchaseUom", one(em, UnitOfMeasure.class, p.getPurchaseUomId()));
             m.put("salesUom", one(em, UnitOfMeasure.class, p.getSalesUomId()));
             m.put("packagings", packs.getOrDefault(p.getId(), List.of()));
+            m.put("units", units.getOrDefault(p.getId(), List.of()));
             m.put("tax", one(em, Tax.class, p.getTaxId()));
             out.add(m);
         }
@@ -145,11 +160,19 @@ public class ProductService extends BaseCrudService<Product> {
     /** Create; {@code packagings} rows are written after the insert (so the response lists none). */
     @Transactional
     public Map<String, Object> create(Record dto, List<Packaging> packagings) {
-        Map<String, Object> data = applyBeverageComputation(EntityPatch.data(dto, "packagings"), null);
+        return create(dto, packagings, null);
+    }
+
+    /** Create with the product's extra units ({@code units} null: derive from the legacy {@code uomConversion}). */
+    @Transactional
+    public Map<String, Object> create(Record dto, List<Packaging> packagings, List<Unit> units) {
+        Map<String, Object> data = applyBeverageComputation(EntityPatch.data(dto, "packagings", "units"), null);
         applyOrgInventoryDefaults(data);
         applyInventoryConfig(data, null);
         Product row = EntityPatch.apply(newInstance(), data);
-        Map<String, Object> product = render(persist(row));
+        Product saved = persist(row);
+        syncUnits(saved, units, data);
+        Map<String, Object> product = render(saved);
         if (packagings != null) {
             syncPackagings(row.getId(), packagings);
         }
@@ -163,7 +186,13 @@ public class ProductService extends BaseCrudService<Product> {
 
     @Transactional
     public Map<String, Object> update(String id, Record dto, List<Packaging> packagings) {
-        Map<String, Object> data = EntityPatch.data(dto, "packagings");
+        return update(id, dto, packagings, null);
+    }
+
+    /** Update; a non-null {@code units} list replaces the product's extra units. */
+    @Transactional
+    public Map<String, Object> update(String id, Record dto, List<Packaging> packagings, List<Unit> units) {
+        Map<String, Object> data = EntityPatch.data(dto, "packagings", "units");
         boolean beverageTouched = BEVERAGE_FIELDS.stream().anyMatch(data::containsKey);
         boolean inventoryTouched = INVENTORY_CONFIG_FIELDS.stream().anyMatch(data::containsKey);
         if (beverageTouched || inventoryTouched) {
@@ -176,8 +205,10 @@ public class ProductService extends BaseCrudService<Product> {
             }
         }
         Product row = require(id);
+        assertBaseUnitChangeAllowed(row, data);
         EntityPatch.apply(row, data);
         em.flush();
+        syncUnits(row, units, data);
         Map<String, Object> product = findOne(id);
         if (packagings != null) {
             syncPackagings(id, packagings);
@@ -408,6 +439,92 @@ public class ProductService extends BaseCrudService<Product> {
                 data.put(fk[0], v);
             }
         }
+    }
+
+    /**
+     * The stock ledger is kept in the base unit, so the base unit is frozen once stock has moved: changing it
+     * would silently re-denominate every balance and historical movement (ADR-S003).
+     */
+    private void assertBaseUnitChangeAllowed(Product row, Map<String, Object> data) {
+        if (!data.containsKey("uomId") || row.getUomId() == null || row.getUomId().equals(data.get("uomId"))) {
+            return;
+        }
+        Number moved = (Number) em.createNativeQuery("SELECT count(*) FROM \"InventoryLedger\" WHERE \"productId\" = ?1"
+                + " AND \"organizationId\" = ?2").setParameter(1, row.getId())
+                .setParameter(2, TenantContext.organizationId()).getSingleResult();
+        if (moved.longValue() > 0) {
+            throw ApiException.badRequest("The base unit of " + row.getName() + " cannot be changed after stock has"
+                    + " moved. Add the new unit as an extra unit with its conversion instead.");
+        }
+    }
+
+    /**
+     * Replace the product's extra units with {@code units}. When {@code units} is null but the legacy
+     * {@code uomConversion} was sent with a purchase unit, keep that pair as the purchase unit's conversion so
+     * older clients keep working.
+     */
+    private void syncUnits(Product product, List<Unit> units, Map<String, Object> data) {
+        String orgId = TenantContext.organizationId();
+        if (units == null) {
+            Object conversion = data.get("uomConversion");
+            String purchaseUom = product.getPurchaseUomId();
+            if (conversion == null || purchaseUom == null || purchaseUom.equals(product.getUomId())) {
+                return;
+            }
+            BigDecimal factor = new BigDecimal(conversion.toString());
+            if (factor.signum() <= 0 || factor.compareTo(BigDecimal.ONE) == 0) {
+                return;
+            }
+            ProductUom existing = em.createQuery("select u from ProductUom u where u.productId = :p and u.uomId = :u",
+                            ProductUom.class).setParameter("p", product.getId()).setParameter("u", purchaseUom)
+                    .getResultList().stream().findFirst().orElse(null);
+            if (existing != null) {
+                existing.setFactor(factor);
+            } else {
+                em.persist(newUnit(orgId, product.getId(), new Unit(purchaseUom, factor, true, false, null, null, true)));
+            }
+            em.flush();
+            return;
+        }
+        Set<String> seen = new HashSet<>();
+        for (Unit u : units) {
+            UnitOfMeasure uom = u.uomId() == null ? null : em.createQuery(
+                            "select u from UnitOfMeasure u where u.id = :id and u.deletedAt is null", UnitOfMeasure.class)
+                    .setParameter("id", u.uomId()).getResultList().stream().findFirst().orElse(null);
+            if (uom == null) {
+                throw ApiException.badRequest("Unit of measure " + u.uomId() + " not found");
+            }
+            if (u.uomId().equals(product.getUomId())) {
+                throw ApiException.badRequest("Unit " + uom.getCode() + " is the base unit of " + product.getName()
+                        + "; extra units must differ from the base unit");
+            }
+            if (!seen.add(u.uomId())) {
+                throw ApiException.badRequest("Unit " + uom.getCode() + " is listed more than once");
+            }
+            if (u.factor() == null || u.factor().signum() <= 0) {
+                throw ApiException.badRequest("Conversion for unit " + uom.getCode() + " must be greater than 0");
+            }
+        }
+        em.createQuery("delete from ProductUom u where u.productId = :pid and u.organizationId = :org")
+                .setParameter("pid", product.getId()).setParameter("org", orgId).executeUpdate();
+        for (Unit u : units) {
+            em.persist(newUnit(orgId, product.getId(), u));
+        }
+        em.flush();
+    }
+
+    private static ProductUom newUnit(String orgId, String productId, Unit u) {
+        ProductUom row = new ProductUom();
+        row.setOrganizationId(orgId);
+        row.setProductId(productId);
+        row.setUomId(u.uomId());
+        row.setFactor(u.factor());
+        row.setIsPurchase(u.isPurchase() == null || u.isPurchase());
+        row.setIsSales(u.isSales() == null || u.isSales());
+        row.setSalePrice(u.salePrice());
+        row.setPurchasePrice(u.purchasePrice());
+        row.setIsActive(u.isActive() == null || u.isActive());
+        return row;
     }
 
     /** Replace a product's packaging rows with the supplied set (delete-all + create). */

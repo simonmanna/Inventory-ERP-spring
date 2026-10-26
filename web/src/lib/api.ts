@@ -2,6 +2,8 @@ import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 import { getPosToken, posSessionRevoked } from '@/features/pos/pos-session';
 import { notify } from '@/lib/notify';
+import { tx } from '@/lib/i18n/tx';
+import { refusalFromResponse, useLicenseStore } from '@/features/license/license.store';
 
 function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_API_URL;
@@ -106,8 +108,24 @@ async function refresh(): Promise<string | null> {
   }
 }
 
+/* ── Licence state ───────────────────────────────────────────────────────────
+ * The API advertises the licence on every response it has a view on:
+ * `X-License-Warning` while the licence needs attention, and HTTP 402 when a
+ * write was refused because it has run out. Both are recorded centrally so one
+ * banner and one dialog cover the whole app, rather than every call site having
+ * to think about billing.
+ *
+ * 402 deliberately does NOT toast: an expired licence is not a transient error
+ * to be waved away, and a toast per blocked keystroke would be unusable. The
+ * blocking dialog in the app shell explains it once, with a way out.
+ */
+function noteLicenceHeaders(headers: unknown): void {
+  const warning = (headers as Record<string, string> | undefined)?.['x-license-warning'];
+  if (warning) useLicenseStore.getState().noteWarning(warning);
+}
+
 api.interceptors.response.use(
-  (r) => { noteServerReachable(); return r; },
+  (r) => { noteServerReachable(); noteLicenceHeaders(r.headers); return r; },
   async (err: AxiosError) => {
     const status = err.response?.status;
     // The server answered — whatever it said, it is up.
@@ -118,7 +136,7 @@ api.interceptors.response.use(
     // the terminal out: drop the cashier and return to the PIN screen.
     if (status === 401 && err.response?.headers?.['x-pos-session'] === 'revoked') {
       posSessionRevoked();
-      notify.error((err.response?.data as any)?.message || 'This cashier can no longer use the POS.');
+      notify.error((err.response?.data as any)?.message || tx('This cashier can no longer use the POS.'));
       throw err;
     }
     if (status === 401 && original && !original._retry && !original.url?.includes('/auth/')) {
@@ -138,8 +156,15 @@ api.interceptors.response.use(
     const body: any = err.response?.data;
     const serverMsg = Array.isArray(body?.message) ? body.message.join('; ') : (typeof body?.message === 'string' ? body.message : undefined);
     (err as any).userMessage = serverMsg;
-    if (status === 403) notify.error(serverMsg || 'Permission denied');
-    if (status && status >= 500) notify.error(serverMsg || 'Server error — please retry');
+    noteLicenceHeaders(err.response?.headers);
+    if (status === 402) {
+      useLicenseStore.getState().noteRefusal(
+        refusalFromResponse(body, serverMsg || tx('Your licence does not allow this.')),
+      );
+      throw err;
+    }
+    if (status === 403) notify.error(serverMsg || tx('Permission denied'));
+    if (status && status >= 500) notify.error(serverMsg || tx('Server error — please retry'));
     // A cancelled request (a component unmounted, a query superseded) says
     // nothing about the server, so it must not be read as an outage.
     if (!status && !axios.isCancel(err) && err.code !== 'ERR_CANCELED') {
@@ -147,7 +172,7 @@ api.interceptors.response.use(
       // quotes and polls constantly, and it used to toast on every one of them.
       const alreadyKnown = serverUnreachable();
       noteServerUnreachable();
-      if (!alreadyKnown) notify.error('No connection to the server — work is kept on this device');
+      if (!alreadyKnown) notify.error(tx('No connection to the server — work is kept on this device'));
     }
     throw err;
   },

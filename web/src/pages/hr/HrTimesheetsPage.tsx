@@ -177,7 +177,7 @@ export function HrTimesheetsPage() {
                 <div>
                   <p className="text-sm font-medium">{en.date} · {en.startAt.slice(11, 16)}–{en.endAt.slice(11, 16)} · {fmtH(en.minutes)}</p>
                   <p className="text-xs text-muted-foreground">
-                    {en.workType.replace(/_/g, ' ')}{en.description ? ` · ${en.description}` : ''}{en.isBillable ? ' · billable' : ''}
+                    {en.workType.replace(/_/g, ' ')}{en.description ? ` · ${en.description}` : ''}{en.isBillable ? tx(' · billable') : ''}
                   </p>
                 </div>
                 <button onClick={() => delEntry.mutate(en.id)} className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>

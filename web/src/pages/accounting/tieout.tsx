@@ -60,7 +60,7 @@ export function TieOutPage() {
                   <CardTitle className="text-sm font-bold uppercase tracking-wider">{tx('Accounts Receivable')}</CardTitle>
                 </div>
                 <Badge variant={data.arBalanced ? 'secondary' : 'destructive'} className="text-[10px]">
-                  {data.arBalanced ? 'Balanced' : `Variance ${money(data.arVariance)}`}
+                  {data.arBalanced ? tx('Balanced') : tx('Variance {{v1}}', { v1: money(data.arVariance) })}
                 </Badge>
               </div>
             </CardHeader>
@@ -81,8 +81,8 @@ export function TieOutPage() {
               </div>
               <p className="text-[10px] text-muted-foreground italic">
                 {data.arBalanced
-                  ? 'AR sub-ledger matches the GL control account.'
-                  : 'Variance detected. Check for manual journal entries or missed allocations.'}
+                  ? tx('AR sub-ledger matches the GL control account.')
+                  : tx('Variance detected. Check for manual journal entries or missed allocations.')}
               </p>
             </CardContent>
           </Card>
@@ -100,7 +100,7 @@ export function TieOutPage() {
                   <CardTitle className="text-sm font-bold uppercase tracking-wider">{tx('Accounts Payable')}</CardTitle>
                 </div>
                 <Badge variant={data.apBalanced ? 'secondary' : 'destructive'} className="text-[10px]">
-                  {data.apBalanced ? 'Balanced' : `Variance ${money(data.apVariance)}`}
+                  {data.apBalanced ? tx('Balanced') : tx('Variance {{v1}}', { v1: money(data.apVariance) })}
                 </Badge>
               </div>
             </CardHeader>
@@ -121,8 +121,8 @@ export function TieOutPage() {
               </div>
               <p className="text-[10px] text-muted-foreground italic">
                 {data.apBalanced
-                  ? 'AP sub-ledger matches the GL control account.'
-                  : 'Variance detected. Check for unallocated payments or manual adjustments.'}
+                  ? tx('AP sub-ledger matches the GL control account.')
+                  : tx('Variance detected. Check for unallocated payments or manual adjustments.')}
               </p>
             </CardContent>
           </Card>

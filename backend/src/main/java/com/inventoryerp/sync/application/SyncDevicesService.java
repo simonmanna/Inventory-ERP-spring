@@ -3,6 +3,7 @@ package com.inventoryerp.sync.application;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.licensing.LicenseLimits;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosSql;
@@ -30,10 +31,12 @@ public class SyncDevicesService {
 
     private final PosDb db;
     private final AuditService audit;
+    private final LicenseLimits licenseLimits;
 
-    public SyncDevicesService(PosDb db, AuditService audit) {
+    public SyncDevicesService(PosDb db, AuditService audit, LicenseLimits licenseLimits) {
         this.db = db;
         this.audit = audit;
+        this.licenseLimits = licenseLimits;
     }
 
     static String sha256Hex(String s) {
@@ -49,6 +52,8 @@ public class SyncDevicesService {
         if (name.isEmpty()) {
             throw ApiException.badRequest("A device name is required");
         }
+        // A terminal is a licensed seat, so the cap is checked before one is issued a token.
+        licenseLimits.assertCanAddDevice();
         byte[] raw = new byte[32];
         RANDOM.nextBytes(raw);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Dark window shell: edge-to-edge system bars are transparent, so this
+         colour shows behind them. Matches PosColors.DarkBackground. -->
+    <style name="Theme.PosCafe" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0B1220</item>
+        <item name="android:windowBackground">#0B1220</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+</resources>

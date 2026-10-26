@@ -25,7 +25,7 @@ data class LocalSaleEntity(
     val total: Double,
     val tendersJson: String,
     val linesJson: String,
-    /** queued | pushed | failed */
+    /** queued | pushed | failed | discarded */
     val syncStatus: String,
     val serverInvoiceId: String?,
     val finalInvoiceNumber: String?,
@@ -108,7 +108,7 @@ data class LocalRefundEntity(
     val overrideById: String?,
     val cashSessionLocalId: String?,
     val occurredAt: Long,
-    /** queued | pushed | failed */
+    /** queued | pushed | failed | discarded */
     val syncStatus: String,
     val lastError: String?,
 )
@@ -147,7 +147,15 @@ data class OpQueueEntity(
     val actorUserId: String,
     val occurredAt: Long,
     val payloadJson: String,
-    val status: String, // queued | pushed | failed
+    val status: String, // queued | pushed | failed | discarded
     val attempts: Int,
     val lastError: String?,
+    /** Idempotency key sent to the server; null = [opId]. Replaced when a rejected op is resent. */
+    val wireOpId: String? = null,
+    /**
+     * HTTP status of a definitive rejection (4xx: the server committed nothing).
+     * Its key stays locked server-side, so a retry must go out under a new key.
+     * Null for transient/ambiguous failures, which must keep their key.
+     */
+    val rejectedStatus: Int? = null,
 )

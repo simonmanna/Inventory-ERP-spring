@@ -14,7 +14,7 @@ export function FinancialAccountCounts({ value, onChange, stage }: { value: Reco
   const { data: methods = [] } = usePosPaymentMethods();
   const accounts = shiftTrackedAccounts(methods);
   return <fieldset className="space-y-2 rounded border p-3">
-    <legend className="text-sm font-semibold">{stage === 'opening' ? 'Opening' : 'Closing'} {tx('bank and wallet balances')}</legend>
+    <legend className="text-sm font-semibold">{stage === 'opening' ? tx('Opening') : tx('Closing')} {tx('bank and wallet balances')}</legend>
     <p className="text-xs text-slate-500">{tx('Record the balances shown by each provider. These are separate from physical cash. Leave accounts you did not check blank.')}</p>
     <div className="max-h-44 overflow-y-auto space-y-2">
       {accounts.map((a) => <label key={a.accountId} className="flex items-center justify-between gap-2 text-xs">

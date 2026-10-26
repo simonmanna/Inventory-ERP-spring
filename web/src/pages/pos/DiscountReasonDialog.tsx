@@ -13,16 +13,16 @@ interface Props {
 }
 
 const REASONS = [
-  { value: 'promotion', label: 'Promotion' },
-  { value: 'loyalty', label: 'Loyalty Program' },
-  { value: 'employee', label: 'Employee Discount' },
-  { value: 'senior', label: 'Senior Citizen' },
-  { value: 'student', label: 'Student Discount' },
-  { value: 'defect', label: 'Defective Item' },
-  { value: 'complaint', label: 'Customer Complaint' },
-  { value: 'clearance', label: 'Clearance Sale' },
-  { value: 'wholesale', label: 'Wholesale / Bulk' },
-  { value: 'voucher', label: 'Voucher / Gift Card' },
+  { value: 'promotion', label: tx('Promotion') },
+  { value: 'loyalty', label: tx('Loyalty Program') },
+  { value: 'employee', label: tx('Employee Discount') },
+  { value: 'senior', label: tx('Senior Citizen') },
+  { value: 'student', label: tx('Student Discount') },
+  { value: 'defect', label: tx('Defective Item') },
+  { value: 'complaint', label: tx('Customer Complaint') },
+  { value: 'clearance', label: tx('Clearance Sale') },
+  { value: 'wholesale', label: tx('Wholesale / Bulk') },
+  { value: 'voucher', label: tx('Voucher / Gift Card') },
 ];
 
 export const DiscountReasonDialog: React.FC<Props> = ({ open, onClose, onSelect }) => {

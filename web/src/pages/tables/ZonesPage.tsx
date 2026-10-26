@@ -157,11 +157,11 @@ export const ZonesPage: React.FC = () => {
       await update.mutateAsync({ id: z.id, body: { active: !z.active } });
       toast.success(
         z.active
-          ? `Zone "${z.name}" is now Inactive — hidden from POS`
-          : `Zone "${z.name}" is now Active — visible in POS`,
+          ? tx('Zone "{{name}}" is now Inactive — hidden from POS', { name: z.name })
+          : tx('Zone "{{name}}" is now Active — visible in POS', { name: z.name }),
       );
     } catch (e: any) {
-      zoneError(e, 'Failed to change zone status');
+      zoneError(e, tx('Failed to change zone status'));
     }
   }
 
@@ -179,7 +179,7 @@ export const ZonesPage: React.FC = () => {
           sortOrder: fOrder,
           active: fActive,
         });
-        toast.success(`Zone "${fName.trim()}" created`);
+        toast.success(tx('Zone "{{v1}}" created', { v1: fName.trim() }));
       } else {
         await update.mutateAsync({
           id: dialog.zone.id,
@@ -200,7 +200,7 @@ export const ZonesPage: React.FC = () => {
         toast.error(tx('That zone no longer exists — list refreshed'));
         return;
       }
-      zoneError(e, 'Failed to save zone');
+      zoneError(e, tx('Failed to save zone'));
     }
   }
 
@@ -231,7 +231,7 @@ export const ZonesPage: React.FC = () => {
         await update.mutateAsync({ id: zone.id, body: { sortOrder: order } });
       }
     } catch (e: any) {
-      zoneError(e, 'Failed to reorder zone');
+      zoneError(e, tx('Failed to reorder zone'));
     }
   }
 
@@ -239,10 +239,10 @@ export const ZonesPage: React.FC = () => {
     if (!archiveTarget) return;
     try {
       await archive.mutateAsync(archiveTarget.id);
-      toast.success(`Zone "${archiveTarget.name}" archived`);
+      toast.success(tx('Zone "{{name}}" archived', { name: archiveTarget.name }));
       setArchiveTarget(null);
     } catch (e: any) {
-      zoneError(e, 'Failed to archive zone');
+      zoneError(e, tx('Failed to archive zone'));
       setArchiveTarget(null);
     }
   }
@@ -250,9 +250,9 @@ export const ZonesPage: React.FC = () => {
   async function doRestore(z: PosTableZoneConfig) {
     try {
       await restore.mutateAsync(z.id);
-      toast.success(`Zone "${z.name}" restored`);
+      toast.success(tx('Zone "{{name}}" restored', { name: z.name }));
     } catch (e: any) {
-      zoneError(e, 'Failed to restore zone');
+      zoneError(e, tx('Failed to restore zone'));
     }
   }
 
@@ -367,10 +367,10 @@ export const ZonesPage: React.FC = () => {
                   <UtensilsCrossed className="w-8 h-8 mx-auto mb-2 opacity-40" />
                   <p className="font-medium text-muted-foreground">
                     {showArchived
-                      ? 'No archived zones'
+                      ? tx('No archived zones')
                       : q
-                        ? `No zones matching "${search}"`
-                        : 'No zones yet — create your first dining area'}
+                        ? tx('No zones matching "{{search}}"', { search })
+                        : tx('No zones yet — create your first dining area')}
                   </p>
                   {!showArchived && !q && canManage ? (
                     <Button onClick={openCreate} size="sm" className="mt-3">
@@ -428,9 +428,9 @@ export const ZonesPage: React.FC = () => {
                           title={
                             canManage
                               ? z.active
-                                ? 'Click to hide this zone from the POS terminal'
-                                : 'Click to show this zone in the POS terminal'
-                              : 'Requires the tables:zones permission'
+                                ? tx('Click to hide this zone from the POS terminal')
+                                : tx('Click to show this zone in the POS terminal')
+                              : tx('Requires the tables:zones permission')
                           }
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition ${
                             z.active
@@ -441,7 +441,7 @@ export const ZonesPage: React.FC = () => {
                           <span
                             className={`w-2 h-2 rounded-full ${z.active ? 'bg-emerald-500' : 'bg-slate-400'}`}
                           />
-                          {z.active ? 'Active' : 'Inactive'}
+                          {z.active ? tx('Active') : tx('Inactive')}
                         </button>
                       )}
                     </td>
@@ -532,12 +532,12 @@ export const ZonesPage: React.FC = () => {
         <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
             <DialogTitle>
-              {dialog?.mode === 'edit' ? 'Edit zone' : 'New zone'}
+              {dialog?.mode === 'edit' ? tx('Edit zone') : tx('New zone')}
             </DialogTitle>
             <DialogDescription>
               {dialog?.mode === 'edit'
-                ? 'Rename, recolor, reorder or hide this zone from the POS.'
-                : 'A dining area that groups tables on the POS floor map.'}
+                ? tx('Rename, recolor, reorder or hide this zone from the POS.')
+                : tx('A dining area that groups tables on the POS floor map.')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -567,7 +567,7 @@ export const ZonesPage: React.FC = () => {
                         : 'border-transparent hover:scale-105'
                     }`}
                     style={{ background: c }}
-                    aria-label={`Color ${c}`}
+                    aria-label={tx('Color {{c}}', { c })}
                   />
                 ))}
                 <input
@@ -623,8 +623,8 @@ export const ZonesPage: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-400 mt-1.5">
                 {fActive
-                  ? 'Zone and its tables are shown in the POS selling terminal.'
-                  : 'Zone and its tables are hidden from the POS selling terminal (tables keep their zone assignment).'}
+                  ? tx('Zone and its tables are shown in the POS selling terminal.')
+                  : tx('Zone and its tables are hidden from the POS selling terminal (tables keep their zone assignment).')}
               </p>
             </div>
             <div className="w-36">
@@ -646,7 +646,7 @@ export const ZonesPage: React.FC = () => {
               {tx('Cancel')}
             </Button>
             <Button onClick={submitDialog} disabled={busy}>
-              {dialog?.mode === 'edit' ? 'Save changes' : 'Create zone'}
+              {dialog?.mode === 'edit' ? tx('Save changes') : tx('Create zone')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -661,11 +661,7 @@ export const ZonesPage: React.FC = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>{tx('Archive "')}{archiveTarget?.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              The zone is removed from the POS floor map and from table
-              assignment. Zones with active tables cannot be archived —
-              reassign those tables first. Archived zones can be restored
-              anytime. (To temporarily hide a zone from the POS without
-              removing it, set its status to Inactive instead.)
+              {tx('The zone is removed from the POS floor map and from table assignment. Zones with active tables cannot be archived — reassign those tables first. Archived zones can be restored anytime. (To temporarily hide a zone from the POS without removing it, set its status to Inactive instead.)')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

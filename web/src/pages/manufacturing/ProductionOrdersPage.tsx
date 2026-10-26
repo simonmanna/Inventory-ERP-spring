@@ -57,7 +57,7 @@ export function ProductionOrdersPage() {
         runs: Number(runs) || 1,
         locationId: locationId || undefined,
       });
-      notify.success(`Order ${order.orderCode} created.`);
+      notify.success(tx('Order {{orderCode}} created.', { orderCode: order.orderCode }));
       setOpen(false);
       setBomId('');
       setRuns('1');

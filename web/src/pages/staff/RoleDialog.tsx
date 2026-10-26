@@ -20,9 +20,9 @@ import type { Role } from '@/features/staff/types';
 import { tx } from '@/lib/i18n/tx';
 
 const schema = z.object({
-  name: z.string().min(2, 'At least 2 characters').max(64),
+  name: z.string().min(2, tx('At least 2 characters')).max(64),
   description: z.string().max(250).optional(),
-  permissions: z.array(z.string()).min(1, 'Pick at least one permission'),
+  permissions: z.array(z.string()).min(1, tx('Pick at least one permission')),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -133,12 +133,12 @@ export function RoleDialog({ open, onOpenChange, role }: RoleDialogProps) {
             ) : (
               <ShieldCheck className="h-5 w-5 text-primary" />
             )}
-            {isEdit ? 'Edit Role' : 'New Role'}
+            {isEdit ? tx('Edit Role') : tx('New Role')}
           </DialogTitle>
           <DialogDescription>
             {isSystem
-              ? 'This is a seeded system role. You can rename it, change its description, and modify its permissions here.'
-              : 'Define a role by naming it and selecting the permissions it grants.'}
+              ? tx('This is a seeded system role. You can rename it, change its description, and modify its permissions here.')
+              : tx('Define a role by naming it and selecting the permissions it grants.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -162,7 +162,7 @@ export function RoleDialog({ open, onOpenChange, role }: RoleDialogProps) {
               <div className="flex items-center justify-between">
                 <Label>{tx('Permissions')}</Label>
                 <span className="text-xs text-muted-foreground">
-                  {selectedCount} of {totalCount} {tx('selected')}
+                  {selectedCount} {tx('of')} {totalCount} {tx('selected')}
                 </span>
               </div>
               <div className="h-[320px] overflow-y-auto rounded-md border bg-muted/30 p-3">
@@ -235,7 +235,7 @@ export function RoleDialog({ open, onOpenChange, role }: RoleDialogProps) {
               {tx('Cancel')}
             </Button>
             <Button type="submit" disabled={isPending}>
-              {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create role'}
+              {isPending ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create role')}
             </Button>
           </DialogFooter>
         </form>

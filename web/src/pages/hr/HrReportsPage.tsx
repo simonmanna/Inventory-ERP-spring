@@ -50,14 +50,14 @@ export function HrReportsPage() {
                   <div key={r.employeeId} className="flex items-center justify-between px-4 py-3">
                     <div>
                       <p className="text-sm font-medium">{r.employeeCode} {r.firstName}{r.lastName ? ' ' + r.lastName : ''}</p>
-                      <p className="text-xs text-muted-foreground">{r.department ?? 'No department'}</p>
+                      <p className="text-xs text-muted-foreground">{r.department ?? tx('No department')}</p>
                     </div>
                     <div className="flex items-center gap-4 text-xs">
                       <span>{tx('Present')} <b>{r.present}</b></span>
                       <span className="text-amber-600">{tx('Late')} <b>{r.late}</b></span>
                       <span className="text-rose-600">{tx('Absent')} <b>{r.absent}</b></span>
                       <span>{tx('On leave')} <b>{r.onLeave}</b></span>
-                      <span className="hidden md:inline">OT <b>{Math.floor((r.overtimeMinutes ?? 0) / 60)}h {(r.overtimeMinutes ?? 0) % 60}m</b></span>
+                      <span className="hidden md:inline">{tx('OT')} <b>{Math.floor((r.overtimeMinutes ?? 0) / 60)}h {(r.overtimeMinutes ?? 0) % 60}m</b></span>
                     </div>
                   </div>
                 ))}
@@ -80,7 +80,7 @@ export function HrReportsPage() {
                     <div key={`${r.employeeId}-${r.leaveTypeId}`} className="flex items-center justify-between px-4 py-3">
                       <div>
                         <p className="text-sm font-medium">{r.employeeCode} {r.firstName} · {r.leaveType}</p>
-                        <p className="text-xs text-muted-foreground">{r.department ?? 'No department'}</p>
+                        <p className="text-xs text-muted-foreground">{r.department ?? tx('No department')}</p>
                       </div>
                       <div className="flex items-center gap-4 text-xs">
                         <span>{tx('Accrued')} <b>{r.accrued}</b></span>

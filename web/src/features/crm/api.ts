@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { api } from '@/lib/api';
+import { tx } from '@/lib/i18n/tx';
 
 /* ───────────────────────── Types (mirror backend contract) ───────────────────────── */
 
@@ -12,12 +13,12 @@ export const DEAL_STAGES: DealStage[] = ['lead', 'qualified', 'proposal', 'negot
 export const ACTIVITY_TYPES: ActivityType[] = ['call', 'email', 'meeting', 'note', 'task'];
 
 export const STAGE_META: Record<DealStage, { label: string; dot: string; chip: string }> = {
-  lead: { label: 'Lead', dot: 'bg-slate-400', chip: 'bg-slate-100 text-slate-700' },
-  qualified: { label: 'Qualified', dot: 'bg-sky-500', chip: 'bg-sky-100 text-sky-700' },
-  proposal: { label: 'Proposal', dot: 'bg-violet-500', chip: 'bg-violet-100 text-violet-700' },
-  negotiation: { label: 'Negotiation', dot: 'bg-amber-500', chip: 'bg-amber-100 text-amber-700' },
-  won: { label: 'Won', dot: 'bg-emerald-500', chip: 'bg-emerald-100 text-emerald-700' },
-  lost: { label: 'Lost', dot: 'bg-rose-500', chip: 'bg-rose-100 text-rose-700' },
+  lead: { label: tx('Lead'), dot: 'bg-slate-400', chip: 'bg-slate-100 text-slate-700' },
+  qualified: { label: tx('Qualified'), dot: 'bg-sky-500', chip: 'bg-sky-100 text-sky-700' },
+  proposal: { label: tx('Proposal'), dot: 'bg-violet-500', chip: 'bg-violet-100 text-violet-700' },
+  negotiation: { label: tx('Negotiation'), dot: 'bg-amber-500', chip: 'bg-amber-100 text-amber-700' },
+  won: { label: tx('Won'), dot: 'bg-emerald-500', chip: 'bg-emerald-100 text-emerald-700' },
+  lost: { label: tx('Lost'), dot: 'bg-rose-500', chip: 'bg-rose-100 text-rose-700' },
 };
 
 /** Deal amounts default to the org currency (IDR) on the frontend; fall back to

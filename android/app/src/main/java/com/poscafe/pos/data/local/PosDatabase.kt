@@ -54,7 +54,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         StockLocationEntity::class,
         StockLevelEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class PosDatabase : RoomDatabase() {
@@ -236,8 +236,8 @@ abstract class PosDatabase : RoomDatabase() {
         }
 
         /** v10 → v11: offline staff messaging (additive). Sales/session data must
-         *  survive — this migration is written explicitly even though
-         *  fallbackToDestructiveMigration() is set, or a bump would wipe the till. */
+         *  survive. There is deliberately no destructive fallback: a version bump
+         *  without a migration crashes on open instead of wiping unsynced sales. */
         val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -303,6 +303,15 @@ abstract class PosDatabase : RoomDatabase() {
             }
         }
 
+        /** v12 → v13: per-op wire key + definitive rejection status, so a
+         *  rejected op can be resent under a fresh idempotency key. Additive. */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `wireOpId` TEXT")
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `rejectedStatus` INTEGER")
+            }
+        }
+
         /** SQLCipher-encrypted. Passphrase stored in EncryptedSharedPreferences
          *  (Android Keystore-backed) — stolen device yields ciphertext only. */
         fun build(context: Context, passphrase: ByteArray): PosDatabase {
@@ -312,9 +321,8 @@ abstract class PosDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
                     MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12,
+                    MIGRATION_11_12, MIGRATION_12_13,
                 )
-                .fallbackToDestructiveMigration()
                 .build()
         }
     }

@@ -119,7 +119,7 @@ export function RentalUnitsPage() {
                   <div>
                     <p className="text-sm font-medium">{u.unitCode}</p>
                     <p className="text-xs text-muted-foreground">
-                      {u.product?.name ?? u.productId.slice(0, 8)} · {u.barcode ?? 'no barcode'} {tx('· rentals')} {u.rentalCount}
+                      {u.product?.name ?? u.productId.slice(0, 8)} · {u.barcode ?? tx('no barcode')} {tx('· rentals')} {u.rentalCount}
                     </p>
                   </div>
                 </div>
@@ -136,7 +136,7 @@ export function RentalUnitsPage() {
                   {u.status === 'available' && (
                     <button
                       className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-                      onClick={() => run(() => retire.mutateAsync({ id: u.id }), 'Unit retired')}
+                      onClick={() => run(() => retire.mutateAsync({ id: u.id }), tx('Unit retired'))}
                     >
                       {tx('Retire')}
                     </button>
@@ -167,7 +167,7 @@ export function RentalUnitsPage() {
               size="sm"
               onClick={() => run(
                 () => createSo.mutateAsync({ unitId: soUnit, type: soType }),
-                'Service order created',
+                tx('Service order created'),
               )}
             >
               {tx('Create')}
@@ -191,7 +191,7 @@ export function RentalUnitsPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   {so.status === 'open' && (
-                    <Button size="sm" variant="outline" onClick={() => run(() => completeSo.mutateAsync({ id: so.id }), 'Service order completed')}>
+                    <Button size="sm" variant="outline" onClick={() => run(() => completeSo.mutateAsync({ id: so.id }), tx('Service order completed'))}>
                       {tx('Complete')}
                     </Button>
                   )}

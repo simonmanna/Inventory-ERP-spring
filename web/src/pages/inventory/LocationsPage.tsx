@@ -21,17 +21,17 @@ import { locationsApi, type InventoryLocation } from "@/lib/api/locations";
 import { tx } from '@/lib/i18n/tx';
 
 const LOCATION_TYPES = [
-  { value: "warehouse", label: "Warehouse" },
-  { value: "store", label: "Store" },
-  { value: "virtual", label: "Virtual" },
-  { value: "main_kitchen", label: "Main Kitchen" },
-  { value: "bar", label: "Bar" },
-  { value: "storage_room", label: "Storage Room" },
-  { value: "walkin_fridge", label: "Walk-in Fridge" },
-  { value: "freezer", label: "Freezer" },
-  { value: "dry_storage", label: "Dry Storage" },
-  { value: "front_counter", label: "Front Counter" },
-  { value: "branch", label: "Branch" },
+  { value: "warehouse", label: tx('Warehouse') },
+  { value: "store", label: tx('Store') },
+  { value: "virtual", label: tx('Virtual') },
+  { value: "main_kitchen", label: tx('Main Kitchen') },
+  { value: "bar", label: tx('Bar') },
+  { value: "storage_room", label: tx('Storage Room') },
+  { value: "walkin_fridge", label: tx('Walk-in Fridge') },
+  { value: "freezer", label: tx('Freezer') },
+  { value: "dry_storage", label: tx('Dry Storage') },
+  { value: "front_counter", label: tx('Front Counter') },
+  { value: "branch", label: tx('Branch') },
 ];
 
 function LocationDialog({
@@ -52,8 +52,8 @@ function LocationDialog({
   const [error, setError] = useState("");
 
   const save = async () => {
-    if (!code.trim()) return setError("Code is required");
-    if (!name.trim()) return setError("Name is required");
+    if (!code.trim()) return setError(tx('Code is required'));
+    if (!name.trim()) return setError(tx('Name is required'));
     setSaving(true);
     setError("");
     try {
@@ -85,7 +85,7 @@ function LocationDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Edit "${location?.name}"` : "New Location"}
+            {isEdit ? tx('Edit "{{name}}"', { name: location?.name }) : tx('New Location')}
           </DialogTitle>
         </DialogHeader>
 
@@ -160,7 +160,7 @@ function LocationDialog({
           </Button>
           <Button onClick={save} disabled={saving}>
             {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-            {isEdit ? "Save" : "Create"}
+            {isEdit ? tx('Save') : tx('Create')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -196,7 +196,7 @@ export default function LocationsPage() {
   }, [load]);
 
   const remove = async (loc: InventoryLocation) => {
-    if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
+    if (!confirm(tx('Delete "{{name}}"? This cannot be undone.', { name: loc.name }))) return;
     try {
       await locationsApi.delete(loc.id);
       load();
@@ -287,7 +287,7 @@ export default function LocationsPage() {
                           : "bg-slate-100 text-slate-500"
                       }`}
                     >
-                      {loc.isActive ? "Active" : "Disabled"}
+                      {loc.isActive ? tx('Active') : tx('Disabled')}
                     </button>
                   </td>
                   <td className="px-4 py-2.5 text-right whitespace-nowrap">

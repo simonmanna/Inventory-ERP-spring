@@ -59,11 +59,11 @@ export function SetPinDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>{hasPin ? 'Reset' : 'Set'} {tx('POS PIN for')} {personName}</DialogTitle>
+          <DialogTitle>{hasPin ? tx('Reset') : tx('Set')} {tx('POS PIN for')} {personName}</DialogTitle>
           <DialogDescription>
             {hasPin
-              ? 'The old PIN stops working immediately. Any PIN lockout is cleared.'
-              : 'They sign in to the POS with this PIN. Give it to them in person.'}
+              ? tx('The old PIN stops working immediately. Any PIN lockout is cleared.')
+              : tx('They sign in to the POS with this PIN. Give it to them in person.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -74,10 +74,10 @@ export function SetPinDialog({
             if (!valid || !matches) return;
             try {
               await onSave(pin);
-              notify.success(hasPin ? 'PIN reset' : 'PIN set');
+              notify.success(hasPin ? tx('PIN reset') : tx('PIN set'));
               onOpenChange(false);
             } catch (err) {
-              notify.error(apiErrorMessage(err, 'Could not save the PIN'));
+              notify.error(apiErrorMessage(err, tx('Could not save the PIN')));
             }
           }}
         >
@@ -122,7 +122,7 @@ export function SetPinDialog({
                     notify.success(tx('PIN removed'));
                     onOpenChange(false);
                   } catch (err) {
-                    notify.error(apiErrorMessage(err, 'Could not remove the PIN'));
+                    notify.error(apiErrorMessage(err, tx('Could not remove the PIN')));
                   }
                 }}
               >
@@ -136,7 +136,7 @@ export function SetPinDialog({
                 {tx('Cancel')}
               </Button>
               <Button type="submit" disabled={pending || !valid || !matches}>
-                {hasPin ? 'Reset PIN' : 'Set PIN'}
+                {hasPin ? tx('Reset PIN') : tx('Set PIN')}
               </Button>
             </div>
           </DialogFooter>

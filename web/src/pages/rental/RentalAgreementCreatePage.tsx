@@ -87,7 +87,7 @@ export function RentalAgreementCreatePage() {
       toast.success(tx('Agreement created'));
       navigate(`/rental/agreements/${agreement.id}`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Create failed');
+      toast.error(e?.response?.data?.message ?? tx('Create failed'));
     } finally {
       setBusy(false);
     }
@@ -170,7 +170,7 @@ export function RentalAgreementCreatePage() {
               ))}
             </div>
             <Button className="w-full" disabled={busy || !lines.length} onClick={handleCreate}>
-              <CalendarDays className="h-4 w-4" /> {busy ? 'Creating…' : 'Create agreement'}
+              <CalendarDays className="h-4 w-4" /> {busy ? tx('Creating…') : tx('Create agreement')}
             </Button>
           </CardContent>
         </Card>

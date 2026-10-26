@@ -19,12 +19,12 @@ export function AssetDashboardPage() {
   if (!canView) return <div className="p-8 text-center text-muted-foreground">{tx('No permission to view fixed assets.')}</div>;
 
   const cards = [
-    { title: 'Total Assets', value: summary?.totalAssets ?? 0, icon: Building2, color: 'text-blue-600' },
-    { title: 'Active', value: summary?.activeAssets ?? 0, icon: Building2, color: 'text-green-600' },
-    { title: 'Under Maintenance', value: summary?.maintenanceAssets ?? 0, icon: Wrench, color: 'text-yellow-600' },
-    { title: 'Disposed', value: summary?.disposedAssets ?? 0, icon: AlertTriangle, color: 'text-red-600' },
-    { title: 'Total Value', value: formatCurrency(summary?.totalValue ?? 0), icon: DollarSign, color: 'text-green-600' },
-    { title: 'Purchase Cost', value: formatCurrency(summary?.totalPurchaseCost ?? 0), icon: FileText, color: 'text-purple-600' },
+    { title: tx('Total Assets'), value: summary?.totalAssets ?? 0, icon: Building2, color: 'text-blue-600' },
+    { title: tx('Active'), value: summary?.activeAssets ?? 0, icon: Building2, color: 'text-green-600' },
+    { title: tx('Under Maintenance'), value: summary?.maintenanceAssets ?? 0, icon: Wrench, color: 'text-yellow-600' },
+    { title: tx('Disposed'), value: summary?.disposedAssets ?? 0, icon: AlertTriangle, color: 'text-red-600' },
+    { title: tx('Total Value'), value: formatCurrency(summary?.totalValue ?? 0), icon: DollarSign, color: 'text-green-600' },
+    { title: tx('Purchase Cost'), value: formatCurrency(summary?.totalPurchaseCost ?? 0), icon: FileText, color: 'text-purple-600' },
   ];
 
   return (

@@ -90,12 +90,12 @@ export function useOrgToday(): string {
 // ───────────────────────────── Account types ─────────────────────────────
 
 const ACCOUNT_TYPE_META: Record<string, { label: string; icon: LucideIcon; tone: string }> = {
-  drawers: { label: 'Register drawers', icon: Banknote, tone: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' },
-  cash: { label: 'Cash & safe', icon: Vault, tone: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' },
-  bank: { label: 'Bank', icon: Landmark, tone: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300' },
-  mobile_money: { label: 'Mobile money', icon: Smartphone, tone: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
-  petty_cash: { label: 'Petty cash', icon: Wallet, tone: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300' },
-  current_asset: { label: 'Card clearing', icon: CreditCard, tone: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
+  drawers: { label: tx('Register drawers'), icon: Banknote, tone: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' },
+  cash: { label: tx('Cash & safe'), icon: Vault, tone: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' },
+  bank: { label: tx('Bank'), icon: Landmark, tone: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300' },
+  mobile_money: { label: tx('Mobile money'), icon: Smartphone, tone: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
+  petty_cash: { label: tx('Petty cash'), icon: Wallet, tone: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300' },
+  current_asset: { label: tx('Card clearing'), icon: CreditCard, tone: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
 };
 
 export const accountTypeLabel = (key?: string | null) => ACCOUNT_TYPE_META[key ?? '']?.label ?? (key ? key.replace(/_/g, ' ') : 'Other');
@@ -140,10 +140,10 @@ export function CategoryBadge({ category, label }: { category: string; label: st
 }
 
 export const DIRECTION_META: Record<string, { label: string; className: string; icon: LucideIcon }> = {
-  in: { label: 'Money in', className: 'text-emerald-700 dark:text-emerald-400', icon: ArrowDownLeft },
-  out: { label: 'Money out', className: 'text-rose-700 dark:text-rose-400', icon: ArrowUpRight },
-  internal: { label: 'Moved between accounts', className: 'text-sky-700 dark:text-sky-400', icon: ArrowLeftRight },
-  adjustment: { label: 'Adjustment', className: 'text-amber-700 dark:text-amber-400', icon: SlidersHorizontal },
+  in: { label: tx('Money in'), className: 'text-emerald-700 dark:text-emerald-400', icon: ArrowDownLeft },
+  out: { label: tx('Money out'), className: 'text-rose-700 dark:text-rose-400', icon: ArrowUpRight },
+  internal: { label: tx('Moved between accounts'), className: 'text-sky-700 dark:text-sky-400', icon: ArrowLeftRight },
+  adjustment: { label: tx('Adjustment'), className: 'text-amber-700 dark:text-amber-400', icon: SlidersHorizontal },
 };
 
 export function DirectionLabel({ direction }: { direction: string }) {
@@ -204,10 +204,10 @@ export function MoneyPageHeader({ title, description, actions }: { title: string
 }
 
 const SECTION_TABS = [
-  { to: '/accounts/cash-accounts', label: 'Overview', end: true, permission: PERMISSIONS.account.read },
-  { to: '/accounts/cash-accounts/accounts', label: 'Accounts', end: false, permission: PERMISSIONS.account.read },
-  { to: '/accounts/cash-accounts/activity', label: 'Activity', end: false, permission: PERMISSIONS.account.read },
-  { to: '/accounts/cash-accounts/settlements', label: 'Settlements', end: false, permission: PERMISSIONS.cashSession.reconcile },
+  { to: '/accounts/cash-accounts', label: tx('Overview'), end: true, permission: PERMISSIONS.account.read },
+  { to: '/accounts/cash-accounts/accounts', label: tx('Accounts'), end: false, permission: PERMISSIONS.account.read },
+  { to: '/accounts/cash-accounts/activity', label: tx('Activity'), end: false, permission: PERMISSIONS.account.read },
+  { to: '/accounts/cash-accounts/settlements', label: tx('Settlements'), end: false, permission: PERMISSIONS.cashSession.reconcile },
 ];
 
 /** Routed section navigation: real links (history, reload, deep links), styled as tabs. */
@@ -253,7 +253,7 @@ export function LoadError({ message, onRetry, retrying }: { message: string; onR
         {message}
       </span>
       <Button variant="outline" className="min-h-[44px] self-start sm:self-auto" onClick={onRetry} disabled={retrying}>
-        {retrying ? 'Retrying…' : 'Try again'}
+        {retrying ? tx('Retrying…') : tx('Try again')}
       </Button>
     </div>
   );
@@ -262,7 +262,7 @@ export function LoadError({ message, onRetry, retrying }: { message: string; onR
 export function Pager({ page, totalPages, onChange, summary }: { page: number; totalPages: number; onChange: (p: number) => void; summary?: ReactNode }) {
   return (
     <nav aria-label={tx('Pagination')} className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
-      <span className="text-muted-foreground">{summary ?? `Page ${page} of ${totalPages}`}</span>
+      <span className="text-muted-foreground">{summary ?? tx('Page {{page}} of {{totalPages}}', { page, totalPages })}</span>
       <div className="grid grid-cols-2 gap-2 sm:flex">
         <Button variant="outline" className="min-h-[44px]" disabled={page <= 1} onClick={() => onChange(page - 1)}><ChevronLeft className="mr-1 h-4 w-4" aria-hidden /> {tx('Previous')}</Button>
         <Button variant="outline" className="min-h-[44px]" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>{tx('Next')} <ChevronRight className="ml-1 h-4 w-4" aria-hidden /></Button>

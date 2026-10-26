@@ -55,7 +55,7 @@ function AccountFormDialog({ open, onClose, editing, initialType }: { open: bool
       }
       onClose();
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'The account was not saved'));
+      toast.error(apiErrorMessage(err, tx('The account was not saved')));
     }
   };
 
@@ -63,7 +63,7 @@ function AccountFormDialog({ open, onClose, editing, initialType }: { open: bool
     <Dialog open={open} onOpenChange={(v) => { if (!v && !saving) onClose(); }}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{editing ? `Edit ${editing.name}` : 'Add a money account'}</DialogTitle>
+          <DialogTitle>{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('Add a money account')}</DialogTitle>
           <DialogDescription>{tx('A place where the business holds money: a bank account, mobile-money wallet, safe or petty-cash box. Register drawers are created with their register.')}</DialogDescription>
         </DialogHeader>
         <form onSubmit={save} className="space-y-4">
@@ -87,7 +87,7 @@ function AccountFormDialog({ open, onClose, editing, initialType }: { open: bool
             <Label htmlFor="acct-currency">{tx('Currency')}</Label>
             <select id="acct-currency" disabled={!!editing} className="min-h-[40px] w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60" value={form.currencyId} onChange={(e) => setForm({ ...form, currencyId: e.target.value })}>
               {!base ? <option value="">{tx('Organisation currency')}</option> : null}
-              {(currencies as any[]).map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}{c.code === base ? ' (base)' : ''}</option>)}
+              {(currencies as any[]).map((c) => <option key={c.code} value={c.code}>{c.code} · {c.name}{c.code === base ? tx(' (base)') : ''}</option>)}
               {base && !(currencies as any[]).some((c) => c.code === base) ? <option value={base}>{base} {tx('(base)')}</option> : null}
             </select>
             {form.currencyId && base && form.currencyId !== base ? (
@@ -97,11 +97,11 @@ function AccountFormDialog({ open, onClose, editing, initialType }: { open: bool
           {form.type === 'bank' || form.type === 'mobile_money' ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="acct-bank">{form.type === 'bank' ? 'Bank' : 'Provider'}</Label>
-                <Input id="acct-bank" value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} placeholder={form.type === 'bank' ? 'e.g. Stanbic' : 'e.g. MTN'} />
+                <Label htmlFor="acct-bank">{form.type === 'bank' ? tx('Bank') : tx('Provider')}</Label>
+                <Input id="acct-bank" value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} placeholder={form.type === 'bank' ? tx('e.g. Stanbic') : tx('e.g. MTN')} />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="acct-number">{form.type === 'bank' ? 'Account number' : 'Wallet number'}</Label>
+                <Label htmlFor="acct-number">{form.type === 'bank' ? tx('Account number') : tx('Wallet number')}</Label>
                 <Input id="acct-number" value={form.accountNumber} onChange={(e) => setForm({ ...form, accountNumber: e.target.value })} />
               </div>
             </div>
@@ -115,7 +115,7 @@ function AccountFormDialog({ open, onClose, editing, initialType }: { open: bool
           </label>
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>{tx('Cancel')}</Button>
-            <Button type="submit" disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{editing ? 'Save changes' : 'Add account'}</Button>
+            <Button type="submit" disabled={saving}>{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{editing ? tx('Save changes') : tx('Add account')}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -191,7 +191,7 @@ export function MoneyAccountsPage() {
               className={cn('inline-flex min-h-[36px] items-center rounded-full border px-3 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 type === g ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-muted')}
             >
-              {g === 'all' ? `All (${list.length})` : `${accountTypeLabel(g)} (${totals.get(g)?.count ?? 0})`}
+              {g === 'all' ? tx('All ({{length}})', { length: list.length }) : `${accountTypeLabel(g)} (${totals.get(g)?.count ?? 0})`}
             </button>
           ))}
         </div>
@@ -200,10 +200,10 @@ export function MoneyAccountsPage() {
       {isLoading ? (
         <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
       ) : isError ? (
-        <LoadError message="Accounts could not be loaded." onRetry={() => refetch()} />
+        <LoadError message={tx('Accounts could not be loaded.')} onRetry={() => refetch()} />
       ) : filtered.length === 0 ? (
-        <EmptyState title={q || type !== 'all' ? 'No accounts match' : 'No money accounts yet'}>
-          {q || type !== 'all' ? 'Try another search or type.' : 'Add your bank, mobile-money and petty-cash accounts to start tracking money.'}
+        <EmptyState title={q || type !== 'all' ? tx('No accounts match') : tx('No money accounts yet')}>
+          {q || type !== 'all' ? tx('Try another search or type.') : tx('Add your bank, mobile-money and petty-cash accounts to start tracking money.')}
         </EmptyState>
       ) : (
         <div className="space-y-6">
@@ -250,7 +250,7 @@ export function MoneyAccountsPage() {
                           <p className="text-[11px] text-muted-foreground">
                             {Number(a.todayIn ?? 0) || Number(a.todayOut ?? 0)
                               ? <>{tx('Today +')}<MoneyAmount value={a.todayIn} currency="" /> / −<MoneyAmount value={a.todayOut} currency="" /></>
-                              : a.lastActivityAt ? `Last activity ${new Date(a.lastActivityAt).toLocaleDateString(undefined, { timeZone })}` : 'No activity yet'}
+                              : a.lastActivityAt ? tx('Last activity {{v1}}', { v1: new Date(a.lastActivityAt).toLocaleDateString(undefined, { timeZone }) }) : tx('No activity yet')}
                           </p>
                         </div>
                         {hasPermission(PERMISSIONS.account.update) ? (

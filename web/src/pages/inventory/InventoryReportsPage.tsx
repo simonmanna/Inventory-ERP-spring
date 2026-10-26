@@ -14,18 +14,18 @@ import { tx } from '@/lib/i18n/tx';
 const REGISTER_TABS: RegisterKind[] = ['stock_in', 'stock_out', 'damages', 'adjustments', 'transfers'];
 
 const TABS = [
-  { value: 'movements', label: 'Stock Movement', description: 'Opening, in, out and closing per item — quantity and value.' },
-  { value: 'stock_in', label: 'Stock In', description: 'Everything received — purchases, direct stock-in, returns, production — with trends and sources.' },
-  { value: 'stock_out', label: 'Stock Out', description: 'Everything issued — POS sales, recipe consumption, internal use, supplier returns.' },
-  { value: 'damages', label: 'Damages', description: 'Waste, breakage, expiry write-offs and damage/theft adjustments — cost of loss and root causes.' },
-  { value: 'adjustments', label: 'Adjustments', description: 'Count corrections: gains vs losses, reasons, and who adjusted what.' },
-  { value: 'transfers', label: 'Stock Transfers', description: 'Stock moved between locations — routes, items and value in transit.' },
-  { value: 'valuation', label: 'Stock Valuation', description: 'Current on-hand at running average cost, by status and category.' },
-  { value: 'health', label: 'Stock Health', description: 'Aging, turnover, days of cover and slow-moving / dead stock per item and location.' },
-  { value: 'analysis', label: 'Movement Analysis', description: 'Flow by movement type, daily trend, top consumed / wasted / received.' },
-  { value: 'reorder', label: 'Reorder', description: 'Items at or below par with suggested purchase quantities.' },
-  { value: 'expiring', label: 'Expiring Batches', description: 'Batch-tracked stock nearing or past expiry.' },
-  { value: 'negative', label: 'Negative Stock', description: 'Items sold before being received, and the valuation exposure.' },
+  { value: 'movements', label: tx('Stock Movement'), description: tx('Opening, in, out and closing per item — quantity and value.') },
+  { value: 'stock_in', label: tx('Stock In'), description: tx('Everything received — purchases, direct stock-in, returns, production — with trends and sources.') },
+  { value: 'stock_out', label: tx('Stock Out'), description: tx('Everything issued — POS sales, recipe consumption, internal use, supplier returns.') },
+  { value: 'damages', label: tx('Damages'), description: tx('Waste, breakage, expiry write-offs and damage/theft adjustments — cost of loss and root causes.') },
+  { value: 'adjustments', label: tx('Adjustments'), description: tx('Count corrections: gains vs losses, reasons, and who adjusted what.') },
+  { value: 'transfers', label: tx('Stock Transfers'), description: tx('Stock moved between locations — routes, items and value in transit.') },
+  { value: 'valuation', label: tx('Stock Valuation'), description: tx('Current on-hand at running average cost, by status and category.') },
+  { value: 'health', label: tx('Stock Health'), description: tx('Aging, turnover, days of cover and slow-moving / dead stock per item and location.') },
+  { value: 'analysis', label: tx('Movement Analysis'), description: tx('Flow by movement type, daily trend, top consumed / wasted / received.') },
+  { value: 'reorder', label: tx('Reorder'), description: tx('Items at or below par with suggested purchase quantities.') },
+  { value: 'expiring', label: tx('Expiring Batches'), description: tx('Batch-tracked stock nearing or past expiry.') },
+  { value: 'negative', label: tx('Negative Stock'), description: tx('Items sold before being received, and the valuation exposure.') },
 ];
 
 export function InventoryReportsPage() {

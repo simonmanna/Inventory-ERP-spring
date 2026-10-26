@@ -84,7 +84,7 @@ export function RepairDashboardPage() {
                   <div>
                     <p className="text-sm font-medium">{o.repairNumber}</p>
                     <p className="text-xs text-muted-foreground">
-                      {o.itemType ?? 'Item'} {o.brand && o.model ? `· ${o.brand} ${o.model}` : o.brand ? `· ${o.brand}` : ''} · {o.partner?.name ?? 'Walk-in'}
+                      {o.itemType ?? tx('Item')} {o.brand && o.model ? `· ${o.brand} ${o.model}` : o.brand ? `· ${o.brand}` : ''} · {o.partner?.name ?? tx('Walk-in')}
                     </p>
                   </div>
                 </div>

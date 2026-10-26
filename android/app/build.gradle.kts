@@ -7,23 +7,64 @@ plugins {
     id("com.google.dagger.hilt.android")
 }
 
+// Release signing comes from the environment (CI secrets) or ~/.gradle/gradle.properties,
+// never from the repo: POS_KEYSTORE_FILE, POS_KEYSTORE_PASSWORD, POS_KEY_ALIAS, POS_KEY_PASSWORD.
+fun secret(name: String): String? =
+    System.getenv(name)?.takeIf { it.isNotBlank() } ?: (findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+
+val releaseKeystore = secret("POS_KEYSTORE_FILE")?.let { file(it) }
+
+// versionCode must grow with every build handed to a device; CI passes -Ppos.versionCode=<run number>.
+// Locally it falls back to the commit count, which only grows on main.
+val posVersionCode = (findProperty("pos.versionCode") as String?)?.toInt()
+    ?: providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+        .standardOutput.asText.get().trim().toInt()
+val posVersionName = (findProperty("pos.versionName") as String?) ?: "0.2.0"
+
 android {
     namespace = "com.poscafe.pos"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.poscafe.pos"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        versionCode = posVersionCode
+        versionName = posVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Public cleartext HTTP to the server; see ServerUrlPolicy. Off unless -Ppos.allowPublicCleartext=true.
+        buildConfigField(
+            "boolean", "ALLOW_PUBLIC_CLEARTEXT",
+            ((findProperty("pos.allowPublicCleartext") as String?) == "true").toString(),
+        )
+    }
+
+    // `-Ppos.testBuildType=release` builds the instrumented tests against the
+    // signed, minified release so the device E2E suite can drive what ships.
+    testBuildType = (findProperty("pos.testBuildType") as String?) ?: "debug"
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = secret("POS_KEYSTORE_PASSWORD")
+                keyAlias = secret("POS_KEY_ALIAS")
+                keyPassword = secret("POS_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "ALLOW_PUBLIC_CLEARTEXT", "true")
+        }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            testProguardFiles("proguard-test-rules.pro")
+            if (testBuildType == "release") proguardFiles("proguard-release-under-test.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -32,9 +73,31 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
-    lint { abortOnError = false }
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        // Existing findings are frozen here; new ones fail the build.
+        baseline = file("lint-baseline.xml")
+    }
+    testOptions { unitTests.isIncludeAndroidResources = true }
+    sourceSets {
+        // Exported Room schemas, so migration tests can open every historic version.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+}
+
+// An unsigned release APK cannot be installed; fail before any work instead of producing one.
+gradle.taskGraph.whenReady {
+    val wantsRelease = allTasks.any { it.project == project && it.name in setOf("assembleRelease", "bundleRelease") }
+    check(!wantsRelease || releaseKeystore != null) {
+        "Release signing is not configured: set POS_KEYSTORE_FILE, POS_KEYSTORE_PASSWORD, " +
+            "POS_KEY_ALIAS and POS_KEY_PASSWORD (env or ~/.gradle/gradle.properties)."
+    }
 }
 
 // Room schema history — lets migrations be checked against generated DDL.
@@ -103,4 +166,16 @@ dependencies {
     // Tests
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // Room + Android framework on the JVM, so sync and auth run without a device.
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core:1.6.1")
+    // Compose UI tests on the JVM (Robolectric native graphics renders real pixels).
+    testImplementation(platform("androidx.compose:compose-bom:2024.09.02"))
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
+    // Real-device end-to-end tests (PosDeviceE2ETest) drive the installed app through its UI.
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }

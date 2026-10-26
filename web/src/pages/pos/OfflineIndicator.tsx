@@ -63,7 +63,7 @@ const FailedSaleRow: React.FC<{
         {amount != null && <span className="font-semibold whitespace-nowrap">{amount.toLocaleString()}</span>}
       </div>
       <div className="text-xs text-rose-300 break-words">
-        {sale.httpStatus ? `HTTP ${sale.httpStatus} — ` : ''}{sale.lastError || 'Rejected by server'}
+        {sale.httpStatus ? tx('HTTP {{httpStatus}} — ', { httpStatus: sale.httpStatus }) : ''}{sale.lastError || tx('Rejected by server')}
       </div>
       <div className="flex justify-end gap-2 pt-1">
         {confirmingDiscard ? (
@@ -122,15 +122,15 @@ export const OfflineIndicator: React.FC = () => {
   const onClick = () => {
     if (pending.length === 0) return;
     if (!monitor) {
-      toast.info(`Saving ${pending.length} unsaved payment${pending.length === 1 ? '' : 's'}…`);
+      toast.info(tx('Saving {{length}} unsaved payment{{v2}}…', { length: pending.length, v2: pending.length === 1 ? '' : 's' }));
       replay();
       return;
     }
     if (!online) {
-      toast.warning(`Offline — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. They will sync when the network returns.`);
+      toast.warning(tx('Offline — {{length}} sale{{v2}} queued. They will sync when the network returns.', { length: pending.length, v2: pending.length === 1 ? '' : 's' }));
       return;
     }
-    toast.info(`Syncing ${pending.length} pending sale${pending.length === 1 ? '' : 's'}…`);
+    toast.info(tx('Syncing {{length}} pending sale{{v2}}…', { length: pending.length, v2: pending.length === 1 ? '' : 's' }));
     replay();
   };
 
@@ -144,7 +144,7 @@ export const OfflineIndicator: React.FC = () => {
             type="button"
             onClick={onClick}
             disabled={replaying}
-            title={`${pending.length} payment${pending.length === 1 ? '' : 's'} not yet saved. Click to retry.`}
+            title={tx('{{length}} payment{{v2}} not yet saved. Click to retry.', { length: pending.length, v2: pending.length === 1 ? '' : 's' })}
             className="pos-tbl-pill !px-2.5 !gap-1 !bg-amber-500/20 !border-amber-400/50"
           >
             <AlertTriangle className="h-4 w-4 text-amber-200" />
@@ -160,9 +160,9 @@ export const OfflineIndicator: React.FC = () => {
         title={
           online
             ? pending.length > 0
-              ? `Online — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. Click to sync.`
-              : 'Online — all sales synced'
-            : `Offline — ${pending.length} sale${pending.length === 1 ? '' : 's'} queued. Sales are stored locally and will sync when the network returns.`
+              ? tx('Online — {{length}} sale{{v2}} queued. Click to sync.', { length: pending.length, v2: pending.length === 1 ? '' : 's' })
+              : tx('Online — all sales synced')
+            : tx('Offline — {{length}} sale{{v2}} queued. Sales are stored locally and will sync when the network returns.', { length: pending.length, v2: pending.length === 1 ? '' : 's' })
         }
         className={
           'pos-tbl-pill !px-2.5 !gap-1 ' +
@@ -191,7 +191,7 @@ export const OfflineIndicator: React.FC = () => {
         <button
           type="button"
           onClick={() => setReviewOpen(true)}
-          title={`${failed.length} sale${failed.length === 1 ? '' : 's'} rejected by the server — click to review`}
+          title={tx('{{length}} sale{{v2}} rejected by the server — click to review', { length: failed.length, v2: failed.length === 1 ? '' : 's' })}
           className="pos-tbl-pill !bg-rose-600/30 !border-rose-400/70 animate-pulse"
         >
           <AlertTriangle className="h-3.5 w-3.5 text-rose-200" />

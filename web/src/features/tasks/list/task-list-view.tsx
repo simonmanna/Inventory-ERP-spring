@@ -39,17 +39,17 @@ const STATUS_OPTIONS: TaskStatus[] = [
 ];
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Draft',
-  PENDING: 'Pending',
-  ASSIGNED: 'Assigned',
-  IN_PROGRESS: 'In Progress',
-  WAITING: 'Waiting',
-  REVIEW: 'Review',
-  VERIFIED: 'Verified',
-  COMPLETED: 'Completed',
-  CANCELLED: 'Cancelled',
-  SKIPPED: 'Skipped',
-  OVERDUE: 'Overdue',
+  DRAFT: tx('Draft'),
+  PENDING: tx('Pending'),
+  ASSIGNED: tx('Assigned'),
+  IN_PROGRESS: tx('In Progress'),
+  WAITING: tx('Waiting'),
+  REVIEW: tx('Review'),
+  VERIFIED: tx('Verified'),
+  COMPLETED: tx('Completed'),
+  CANCELLED: tx('Cancelled'),
+  SKIPPED: tx('Skipped'),
+  OVERDUE: tx('Overdue'),
 };
 
 export function TaskListView() {
@@ -73,7 +73,7 @@ export function TaskListView() {
   const columns: Column<Task>[] = [
     {
       key: 'title',
-      header: 'Task',
+      header: tx('Task'),
       className: 'min-w-[200px]',
       render: (row) => (
         <div>
@@ -86,28 +86,28 @@ export function TaskListView() {
     },
     {
       key: 'category',
-      header: 'Category',
+      header: tx('Category'),
       render: (row) => row.category ? CATEGORY_LABELS[row.category] ?? row.category : '-',
     },
     {
       key: 'branch',
-      header: 'Branch',
+      header: tx('Branch'),
       render: (row) => row.branch?.name ?? '-',
     },
     {
       key: 'area',
-      header: 'Area',
+      header: tx('Area'),
       render: (row) => row.area ?? '-',
     },
     {
       key: 'assignedTo',
-      header: 'Assigned To',
+      header: tx('Assigned To'),
       render: (row) =>
         row.assignedTo ? `${row.assignedTo.firstName} ${row.assignedTo.lastName ?? ''}`.trim() : '-',
     },
     {
       key: 'priority',
-      header: 'Priority',
+      header: tx('Priority'),
       render: (row) => (
         <Badge
           variant="outline"
@@ -124,7 +124,7 @@ export function TaskListView() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (row) => (
         <Select
           value={row.status}
@@ -148,7 +148,7 @@ export function TaskListView() {
     },
     {
       key: 'dueDate',
-      header: 'Due Date',
+      header: tx('Due Date'),
       render: (row) =>
         row.dueDate
           ? new Date(row.dueDate).toLocaleDateString(undefined, {
@@ -160,13 +160,13 @@ export function TaskListView() {
     },
     {
       key: 'checklistProgress',
-      header: 'Progress',
+      header: tx('Progress'),
       render: (row) =>
         row.checklistTotal > 0 ? `${row.checklistProgress}%` : '-',
     },
     {
       key: 'updatedAt',
-      header: 'Last Updated',
+      header: tx('Last Updated'),
       render: (row) => new Date(row.updatedAt).toLocaleDateString(),
     },
     {

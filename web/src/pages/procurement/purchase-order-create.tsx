@@ -8,9 +8,11 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { UnitSelect } from '@/components/unit-select';
+import { defaultUnitId, unitPrice, type UnitAwareProduct } from '@/features/products/units';
 
 interface Partner { id: string; name: string; code: string }
-interface Product { id: string; name: string; code: string; salesPrice?: number; costPrice?: number; taxId?: string }
+interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
 interface Warehouse { id: string; name: string; code: string }
 
 interface Line {
@@ -19,6 +21,8 @@ interface Line {
   quantity: number;
   unitPrice: number;
   taxId?: string;
+  /** Unit the quantity and price are in (ADR-S003); defaults to the product's purchase unit. */
+  unitOfMeasureId?: string;
 }
 
 export function PurchaseOrderCreatePage() {
@@ -62,11 +66,11 @@ export function PurchaseOrderCreatePage() {
         lines: lines.filter((l) => l.quantity > 0),
       })).data,
     onSuccess: (data: any) => {
-      notify.success(`Purchase ${data.orderNumber} created`);
+      notify.success(tx('Purchase {{orderNumber}} created', { orderNumber: data.orderNumber }));
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate('/procurement/purchase-orders');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
@@ -77,13 +81,22 @@ export function PurchaseOrderCreatePage() {
     const product = products.data?.find((p) => p.id === productId);
     if (!product) return;
     const next = [...lines];
+    const unitOfMeasureId = defaultUnitId(product, 'purchase');
     next[idx] = {
       productId,
       description: product.name,
       quantity: next[idx].quantity || 1,
-      unitPrice: Number(product.costPrice ?? product.salesPrice ?? 0),
+      unitPrice: unitPrice(product, unitOfMeasureId, 'purchase') ?? Number(product.costPrice ?? product.salesPrice ?? 0),
       taxId: product.taxId,
+      unitOfMeasureId,
     };
+    setLines(next);
+  };
+  const pickUnit = (idx: number, uomId: string) => {
+    const product = products.data?.find((p) => p.id === lines[idx].productId);
+    const next = [...lines];
+    const price = unitPrice(product, uomId, 'purchase');
+    next[idx] = { ...next[idx], unitOfMeasureId: uomId, unitPrice: price ?? next[idx].unitPrice };
     setLines(next);
   };
 
@@ -158,8 +171,9 @@ export function PurchaseOrderCreatePage() {
         <CardContent>
           <div className="grid gap-2 md:grid-cols-12 items-center text-xs text-muted-foreground font-medium px-1 pb-1 border-b mb-1">
             <div className="md:col-span-4">{tx('Product')}</div>
-            <div className="md:col-span-4">{tx('Description')}</div>
+            <div className="md:col-span-3">{tx('Description')}</div>
             <div className="md:col-span-1 text-right">{tx('Qty')}</div>
+            <div className="md:col-span-1">{tx('Unit')}</div>
             <div className="md:col-span-2 text-right">{tx('Unit Price')}</div>
             <div className="md:col-span-1 text-right">{tx('Total')}</div>
           </div>
@@ -182,7 +196,7 @@ export function PurchaseOrderCreatePage() {
                     )}
                   </select>
                 </div>
-                <div className="md:col-span-4">
+                <div className="md:col-span-3">
                   <Input
                     placeholder={tx('Description')}
                     value={ln.description}
@@ -204,6 +218,14 @@ export function PurchaseOrderCreatePage() {
                       next[idx] = { ...next[idx], quantity: Number(e.target.value) };
                       setLines(next);
                     }}
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <UnitSelect
+                    product={products.data?.find((p) => p.id === ln.productId)}
+                    role="purchase"
+                    value={ln.unitOfMeasureId}
+                    onChange={(uomId) => pickUnit(idx, uomId)}
                   />
                 </div>
                 <div className="md:col-span-2">
@@ -244,7 +266,7 @@ export function PurchaseOrderCreatePage() {
           disabled={!partnerId || !warehouseId || lines.length === 0 || create.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
-          {create.isPending ? 'Saving…' : 'Save Purchase'}
+          {create.isPending ? tx('Saving…') : tx('Save Purchase')}
         </Button>
       </div>
     </div>

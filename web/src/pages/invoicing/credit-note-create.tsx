@@ -15,6 +15,8 @@ import {
   type CreateCreditNoteInput,
 } from '@/features/invoicing/api';
 import { tx } from '@/lib/i18n/tx';
+import { UnitSelect } from '@/components/unit-select';
+import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -25,6 +27,8 @@ interface LineForm {
   quantity: number;
   unitPrice?: number;
   discountPercent?: number;
+  /** Product unit (ADR-S003). */
+  uomId?: string;
 }
 interface FormValues {
   partnerId: string;
@@ -43,7 +47,7 @@ export function CreditNoteCreatePage() {
   const postCreditNote = usePostCreditNote();
 
   const today = new Date().toISOString().slice(0, 10);
-  const { register, control, handleSubmit, watch, setValue } = useForm<FormValues>({
+  const { register, control, handleSubmit, watch, setValue, getValues } = useForm<FormValues>({
     defaultValues: { partnerId: '', issueDate: today, reversedDocumentId: '', reference: '', lines: [{ quantity: 1 }] },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'lines' });
@@ -74,8 +78,16 @@ export function CreditNoteCreatePage() {
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
+      setValue(`lines.${index}.uomId`, defaultUnitId(p, 'sales'));
       if (p.salesPrice != null) setValue(`lines.${index}.unitPrice`, Number(p.salesPrice));
     }
+  };
+
+  const onUnitChange = (index: number, uomId: string) => {
+    setValue(`lines.${index}.uomId`, uomId);
+    const p = productList.find((x) => x.id === getValues(`lines.${index}.productId`));
+    const price = priceForUnit(p, uomId, 'sales');
+    if (price !== null) setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
   };
 
   const onSubmit = handleSubmit(async (values, event) => {
@@ -95,6 +107,7 @@ export function CreditNoteCreatePage() {
         quantity: Number.isFinite(l.quantity) ? Number(l.quantity) : 1,
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
+        uomId: l.productId ? l.uomId || undefined : undefined,
       })),
     };
 
@@ -114,7 +127,7 @@ export function CreditNoteCreatePage() {
             {tx('Save draft')}
           </Button>
           <Button type="submit" name="action" value="post" disabled={busy}>
-            Save &amp; Post
+            {tx('Save & Post')}
           </Button>
         </div>
       </div>
@@ -182,13 +195,23 @@ export function CreditNoteCreatePage() {
                   ))}
                 </select>
               </div>
-              <div className="col-span-3">
+              <div className="col-span-2">
                 <Label className="text-xs">{tx('Description')}</Label>
                 <Input {...register(`lines.${index}.description`)} />
               </div>
               <div className="col-span-1">
                 <Label className="text-xs">{tx('Qty')}</Label>
                 <Input type="number" step="any" {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+              </div>
+              <div className="col-span-1 pb-1.5">
+                <Label className="text-xs">{tx('Unit')}</Label>
+                <UnitSelect
+                  className={selectClass}
+                  product={productList.find((p) => p.id === watch(`lines.${index}.productId`))}
+                  role="sales"
+                  value={watch(`lines.${index}.uomId`)}
+                  onChange={(uomId) => onUnitChange(index, uomId)}
+                />
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">{tx('Unit price')}</Label>

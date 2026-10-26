@@ -60,17 +60,17 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 const TXN_COLORS: Record<string, { bg: string; text: string; label: string }> = {
-  receipt: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'Receipt' },
-  issue: { bg: 'bg-purple-50', text: 'text-purple-700', label: 'Issue' },
-  adjustment_in: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'Adj In' },
-  adjustment_out: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'Adj Out' },
-  transfer_in: { bg: 'bg-slate-50', text: 'text-slate-700', label: 'Transfer In' },
-  transfer_out: { bg: 'bg-slate-50', text: 'text-slate-700', label: 'Transfer Out' },
-  waste: { bg: 'bg-red-50', text: 'text-red-700', label: 'Waste' },
-  return_in: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Return In' },
-  return_to_supplier: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Return Out' },
-  expiry_write_off: { bg: 'bg-red-50', text: 'text-red-700', label: 'Expired' },
-  opening_balance: { bg: 'bg-gray-50', text: 'text-gray-700', label: 'Opening' },
+  receipt: { bg: 'bg-blue-50', text: 'text-blue-700', label: tx('Receipt') },
+  issue: { bg: 'bg-purple-50', text: 'text-purple-700', label: tx('Issue') },
+  adjustment_in: { bg: 'bg-amber-50', text: 'text-amber-700', label: tx('Adj In') },
+  adjustment_out: { bg: 'bg-amber-50', text: 'text-amber-700', label: tx('Adj Out') },
+  transfer_in: { bg: 'bg-slate-50', text: 'text-slate-700', label: tx('Transfer In') },
+  transfer_out: { bg: 'bg-slate-50', text: 'text-slate-700', label: tx('Transfer Out') },
+  waste: { bg: 'bg-red-50', text: 'text-red-700', label: tx('Waste') },
+  return_in: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: tx('Return In') },
+  return_to_supplier: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: tx('Return Out') },
+  expiry_write_off: { bg: 'bg-red-50', text: 'text-red-700', label: tx('Expired') },
+  opening_balance: { bg: 'bg-gray-50', text: 'text-gray-700', label: tx('Opening') },
 };
 
 function TxnTypePill({ type }: { type: string }) {
@@ -150,10 +150,10 @@ function TabOverview({ data }: { data: InventoryItemDetail }) {
           <CardContent className="px-5 pb-4">
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: 'Locations', value: data.items.length, icon: MapPin },
-                { label: 'Ledger Entries', value: data.recentLedger.length, icon: ArrowRightLeft },
-                { label: 'Menu Items', value: data.menuProducts.length, icon: UtensilsCrossed },
-                { label: 'PO Lines', value: data.purchaseOrderLines.length, icon: ShoppingCart },
+                { label: tx('Locations'), value: data.items.length, icon: MapPin },
+                { label: tx('Ledger Entries'), value: data.recentLedger.length, icon: ArrowRightLeft },
+                { label: tx('Menu Items'), value: data.menuProducts.length, icon: UtensilsCrossed },
+                { label: tx('PO Lines'), value: data.purchaseOrderLines.length, icon: ShoppingCart },
               ].map(({ label, value: v, icon: Icon }) => (
                 <div key={label} className="flex items-center gap-2.5 p-3 bg-muted/30 rounded-lg border">
                   <div className="p-1.5 bg-primary/10 rounded-md"><Icon className="h-4 w-4 text-primary" /></div>
@@ -443,14 +443,14 @@ function TabPurchaseOrders({ data }: { data: InventoryItemDetail }) {
 
 /** Lookup label for an account mapping key. */
 const ACCOUNT_LABELS: Record<string, string> = {
-  sales_revenue: 'Sales Revenue (Income)',
-  accounts_receivable: 'Accounts Receivable',
-  cogs: 'Cost of Goods Sold (Expense)',
-  stock_valuation: 'Stock Valuation (Inventory)',
-  grni_accrued: 'GRNI Accrued',
-  stock_adjustment_income: 'Stock Adjustment Income',
-  stock_adjustment_expense: 'Stock Adjustment Expense',
-  default_cash: 'Cash (Default)',
+  sales_revenue: tx('Sales Revenue (Income)'),
+  accounts_receivable: tx('Accounts Receivable'),
+  cogs: tx('Cost of Goods Sold (Expense)'),
+  stock_valuation: tx('Stock Valuation (Inventory)'),
+  grni_accrued: tx('GRNI Accrued'),
+  stock_adjustment_income: tx('Stock Adjustment Income'),
+  stock_adjustment_expense: tx('Stock Adjustment Expense'),
+  default_cash: tx('Cash (Default)'),
 };
 
 interface AccField {
@@ -464,14 +464,14 @@ interface AccField {
 function TabAccounting({ data }: { data: InventoryItemDetail }) {
   const p = data.product;
   const fields: AccField[] = [
-    { key: 'income',  label: 'Income (Revenue)',  mappingKey: 'sales_revenue',          productOverride: p.incomeAccountOverrideId, categoryField: 'incomeAccountId' },
-    { key: 'expense', label: 'Expense (COGS)',     mappingKey: 'cogs',                   productOverride: p.expenseAccountOverrideId, categoryField: 'expenseAccountId' },
-    { key: 'inventory', label: 'Inventory (Stock)', mappingKey: 'stock_valuation',       productOverride: p.inventoryAccountOverrideId, categoryField: 'inventoryAccountId' },
-    { key: 'cogs_sep', label: 'COGS (separate)',   mappingKey: 'cogs',                   productOverride: p.cogsAccountOverrideId, categoryField: 'cogsAccountId' },
-    { key: 'shrinkage', label: 'Shrinkage / Adj Loss', mappingKey: 'stock_adjustment_expense', productOverride: p.shrinkageAccountOverrideId, categoryField: 'shrinkageAccountId' },
-    { key: 'variance', label: 'Adj Gain / Variance', mappingKey: 'stock_adjustment_income',    productOverride: p.varianceGainAccountOverrideId, categoryField: 'varianceGainAccountId' },
-    { key: 'damage',   label: 'Damage Write-Off',   mappingKey: 'stock_adjustment_expense', productOverride: p.damageAccountOverrideId, categoryField: 'damageAccountId' },
-    { key: 'expiry',   label: 'Expiry Write-Off',   mappingKey: 'stock_adjustment_expense', productOverride: p.expiryAccountOverrideId, categoryField: 'expiryAccountId' },
+    { key: 'income',  label: tx('Income (Revenue)'),  mappingKey: 'sales_revenue',          productOverride: p.incomeAccountOverrideId, categoryField: 'incomeAccountId' },
+    { key: 'expense', label: tx('Expense (COGS)'),     mappingKey: 'cogs',                   productOverride: p.expenseAccountOverrideId, categoryField: 'expenseAccountId' },
+    { key: 'inventory', label: tx('Inventory (Stock)'), mappingKey: 'stock_valuation',       productOverride: p.inventoryAccountOverrideId, categoryField: 'inventoryAccountId' },
+    { key: 'cogs_sep', label: tx('COGS (separate)'),   mappingKey: 'cogs',                   productOverride: p.cogsAccountOverrideId, categoryField: 'cogsAccountId' },
+    { key: 'shrinkage', label: tx('Shrinkage / Adj Loss'), mappingKey: 'stock_adjustment_expense', productOverride: p.shrinkageAccountOverrideId, categoryField: 'shrinkageAccountId' },
+    { key: 'variance', label: tx('Adj Gain / Variance'), mappingKey: 'stock_adjustment_income',    productOverride: p.varianceGainAccountOverrideId, categoryField: 'varianceGainAccountId' },
+    { key: 'damage',   label: tx('Damage Write-Off'),   mappingKey: 'stock_adjustment_expense', productOverride: p.damageAccountOverrideId, categoryField: 'damageAccountId' },
+    { key: 'expiry',   label: tx('Expiry Write-Off'),   mappingKey: 'stock_adjustment_expense', productOverride: p.expiryAccountOverrideId, categoryField: 'expiryAccountId' },
   ];
   const overrideCount = fields.filter((f) => f.productOverride).length;
 
@@ -485,7 +485,7 @@ function TabAccounting({ data }: { data: InventoryItemDetail }) {
             <ol className="text-xs text-blue-700 space-y-0.5 list-decimal list-inside mt-1">
               <li><strong>{tx('Product override')}</strong> {tx('— set below')}</li>
               <li><strong>{tx('Category default')}</strong> — <code className="bg-blue-100 px-1 rounded">{p.category?.name ?? '—'}</code></li>
-              <li><strong>{tx('Org Account Mapping')}</strong> — Accounting &gt; Account Mappings</li>
+              <li><strong>{tx('Org Account Mapping')}</strong> {tx('— Accounting > Account Mappings')}</li>
             </ol>
           </div>
         </CardContent>
@@ -530,7 +530,7 @@ function TabAccounting({ data }: { data: InventoryItemDetail }) {
       <Card>
         <CardContent className="p-4 flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            {tx('Configure per-movement-type posting rules at')} <strong className="text-foreground">Accounting &gt; Posting Rules</strong>
+            {tx('Configure per-movement-type posting rules at')} <strong className="text-foreground">{tx('Accounting > Posting Rules')}</strong>
           </p>
           <Button variant="outline" size="sm" onClick={() => window.open('/accounts/posting-rules', '_self')}>
             <BookOpen className="h-4 w-4 mr-1" /> {tx('Posting Rules')}
@@ -548,13 +548,13 @@ export default function InventoryDetailPage() {
   const [activeTab, setActiveTab] = useState('overview');
 
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: FileText, count: null },
-    { id: 'stock-moves', label: 'Stock Moves', icon: ArrowRightLeft, count: data?.recentLedger.length },
-    { id: 'locations', label: 'Locations & Qty', icon: MapPin, count: data?.items.length },
-    { id: 'transactions', label: 'Transactions', icon: Activity, count: data?.recentLedger.length },
-    { id: 'menu-usage', label: 'Menu Usage', icon: UtensilsCrossed, count: data?.menuProducts.length },
-    { id: 'purchases', label: 'Purchases', icon: ShoppingCart, count: data?.purchaseOrderLines.length },
-    { id: 'accounting', label: 'Accounting', icon: BookOpen, count: null },
+    { id: 'overview', label: tx('Overview'), icon: FileText, count: null },
+    { id: 'stock-moves', label: tx('Stock Moves'), icon: ArrowRightLeft, count: data?.recentLedger.length },
+    { id: 'locations', label: tx('Locations & Qty'), icon: MapPin, count: data?.items.length },
+    { id: 'transactions', label: tx('Transactions'), icon: Activity, count: data?.recentLedger.length },
+    { id: 'menu-usage', label: tx('Menu Usage'), icon: UtensilsCrossed, count: data?.menuProducts.length },
+    { id: 'purchases', label: tx('Purchases'), icon: ShoppingCart, count: data?.purchaseOrderLines.length },
+    { id: 'accounting', label: tx('Accounting'), icon: BookOpen, count: null },
   ];
 
   if (isLoading) {

@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
 import type { CartLine } from './types';
+import { tx } from '@/lib/i18n/tx';
 
 /**
  * A numpad-cleared line sits on the order at quantity 0 (see OrderPanel) — it is
@@ -15,13 +16,13 @@ import type { CartLine } from './types';
  */
 export function cartReadyToCommit(lines: CartLine[]): boolean {
   if (lines.length === 0) {
-    toast.error('Cart is empty');
+    toast.error(tx('Cart is empty'));
     return false;
   }
   const zero = lines.filter((l) => !(l.quantity > 0));
   if (zero.length) {
     toast.error(
-      `Set a quantity for ${zero.map((l) => l.name).join(', ')} — or void the line — before continuing`,
+      tx('Set a quantity for {{v1}} — or void the line — before continuing', { v1: zero.map((l) => l.name).join(', ') }),
     );
     return false;
   }

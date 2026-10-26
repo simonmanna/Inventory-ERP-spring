@@ -248,7 +248,7 @@ export function DealsPage() {
                 {meta && meta.totalPages > 1 && (
                   <div className="flex items-center justify-between border-t px-4 py-3">
                     <span className="text-xs text-muted-foreground">
-                      {tx('Page')} {meta.page} of {meta.totalPages} · {meta.total} {tx('deals')}
+                      {tx('Page')} {meta.page} {tx('of')} {meta.totalPages} · {meta.total} {tx('deals')}
                     </span>
                     <div className="flex gap-2">
                       <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{tx('Prev')}</Button>

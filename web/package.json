@@ -8,6 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "i18n:check": "node scripts/i18n-phrases.cjs --check",
     "lint": "eslint \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {

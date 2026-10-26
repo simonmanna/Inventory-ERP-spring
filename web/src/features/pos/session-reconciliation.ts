@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { tx } from '@/lib/i18n/tx';
 
 /** One tender account's movement across a shift, as the ledger recorded it. */
 export interface ReconAccount {
@@ -93,7 +94,7 @@ export function closeBlockers(recon?: SessionReconciliationData): BlockerGroup[]
     if (openCount > listed.length && listed.length) items.push(`+${openCount - listed.length} more`);
     out.push({
       text: `${openCount} open order${s(openCount)} must be settled or voided`,
-      hint: 'Settle them, or void them through the normal order controls (manager approval applies), then check again.',
+      hint: tx('Settle them, or void them through the normal order controls (manager approval applies), then check again.'),
       items: items.length ? items : undefined,
       count: openCount,
     });
@@ -101,7 +102,7 @@ export function closeBlockers(recon?: SessionReconciliationData): BlockerGroup[]
   if (recon.pendingPayments) {
     out.push({
       text: `${recon.pendingPayments} sale${s(recon.pendingPayments)} not fully paid`,
-      hint: 'Take the balance, or move it to the customer’s house account.',
+      hint: tx('Take the balance, or move it to the customer’s house account.'),
     });
   }
   // Stock postings are not listed: they never block the close (the server posts
@@ -111,7 +112,7 @@ export function closeBlockers(recon?: SessionReconciliationData): BlockerGroup[]
   if (issues.length) {
     out.push({
       text: `${issues.length} bookkeeping check${s(issues.length)} did not pass`,
-      hint: 'A manager needs to look at these before the drawer closes.',
+      hint: tx('A manager needs to look at these before the drawer closes.'),
       items: issues,
     });
   }
@@ -119,7 +120,7 @@ export function closeBlockers(recon?: SessionReconciliationData): BlockerGroup[]
 }
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
-  dine_in: 'Dine-in', takeaway: 'Takeaway', delivery: 'Delivery', counter: 'Counter',
+  dine_in: tx('Dine-in'), takeaway: tx('Takeaway'), delivery: tx('Delivery'), counter: tx('Counter'),
 };
 
 /** "Table 4 · ORD-123 · Mary · 45,000" — enough for a cashier to find it on the floor. */

@@ -78,7 +78,7 @@ export function JournalEntryCreatePage() {
     } catch (e) {
       const message =
         (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message;
-      setError(Array.isArray(message) ? message.join(', ') : (message ?? 'Failed to post entry'));
+      setError(Array.isArray(message) ? message.join(', ') : (message ?? tx('Failed to post entry')));
     }
   });
 
@@ -88,10 +88,10 @@ export function JournalEntryCreatePage() {
         <h1 className="text-2xl font-semibold">{tx('New Journal Entry')}</h1>
         <div className="flex items-center gap-3">
           <Badge variant={balanced ? 'default' : 'secondary'}>
-            {balanced ? 'Balanced' : `Diff ${money(diff)}`}
+            {balanced ? tx('Balanced') : tx('Diff {{v1}}', { v1: money(diff) })}
           </Badge>
           <Button type="submit" disabled={!canSubmit}>
-            {createEntry.isPending ? 'Posting...' : 'Post entry'}
+            {createEntry.isPending ? tx('Posting...') : tx('Post entry')}
           </Button>
         </div>
       </div>

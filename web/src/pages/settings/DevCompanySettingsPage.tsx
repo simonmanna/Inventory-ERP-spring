@@ -11,7 +11,8 @@ import { usePosSettings, useUpdatePosSettings } from '@/features/pos/api';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
-import { MODULE_FEATURES, featureEnabled } from '@/lib/features';
+import { MODULE_FEATURES, featureEnabled, featureLicensed } from '@/lib/features';
+import { useLicense } from '@/features/license/api';
 import { ORG_FEATURES_QUERY_KEY } from '@/lib/use-org-features';
 import { tx } from '@/lib/i18n/tx';
 
@@ -26,17 +27,17 @@ interface DeveloperSettings {
  * navigation live in MODULE_FEATURES so the sidebar and this page cannot drift.
  */
 const KNOWN_FEATURES: Array<{ key: string; label: string; description: string }> = [
-  { key: 'inventory', label: 'Inventory', description: 'Stock tracking, batches, serial numbers' },
-  { key: 'multiCurrency', label: 'Multi-Currency', description: 'Foreign currency support and FX revaluation' },
-  { key: 'alcoholBeverageMonitor', label: 'Alcohol Beverage Monitor', description: 'Alcohol stock, duty tracking, and compliance reporting' },
-  { key: 'offlineDevices', label: 'Offline Devices', description: 'Offline-capable POS terminals and device sync management' },
-  { key: 'procurement', label: 'Procurement', description: 'Purchase requests, orders, and receipts' },
+  { key: 'inventory', label: tx('Inventory'), description: tx('Stock tracking, batches, serial numbers') },
+  { key: 'multiCurrency', label: tx('Multi-Currency'), description: tx('Foreign currency support and FX revaluation') },
+  { key: 'alcoholBeverageMonitor', label: tx('Alcohol Beverage Monitor'), description: tx('Alcohol stock, duty tracking, and compliance reporting') },
+  { key: 'offlineDevices', label: tx('Offline Devices'), description: tx('Offline-capable POS terminals and device sync management') },
+  { key: 'procurement', label: tx('Procurement'), description: tx('Purchase requests, orders, and receipts') },
 ];
 
 const POS_MODES = [
-  { value: 'cafe', label: 'Cafe / Restaurant', desc: 'Menu items with variants, accompaniments, modifiers, tables, KDS, and KOT printing.' },
-  { value: 'retail', label: 'Retail', desc: 'Direct product selling with barcode scanning, no tables, no kitchen.' },
-  { value: 'rental', label: 'Rental', desc: 'Hire-out of serialized assets: agreements, deposits, returns, inspection and settlement.' },
+  { value: 'cafe', label: tx('Cafe / Restaurant'), desc: tx('Menu items with variants, accompaniments, modifiers, tables, KDS, and KOT printing.') },
+  { value: 'retail', label: tx('Retail'), desc: tx('Direct product selling with barcode scanning, no tables, no kitchen.') },
+  { value: 'rental', label: tx('Rental'), desc: tx('Hire-out of serialized assets: agreements, deposits, returns, inspection and settlement.') },
 ];
 
 export function DevCompanySettingsPage() {
@@ -59,6 +60,10 @@ export function DevCompanySettingsPage() {
     queryKey: ['settings-developer'],
     queryFn: async () => (await api.get<DeveloperSettings>('/settings/developer')).data,
   });
+
+  // What the licence covers. While it is loading nothing is treated as unlicensed, so the page
+  // does not briefly grey out toggles that are in fact paid for.
+  const { data: license } = useLicense();
 
   useEffect(() => {
     if (q.data) {
@@ -88,7 +93,7 @@ export function DevCompanySettingsPage() {
       qc.invalidateQueries({ queryKey: ['settings-developer'] });
       qc.invalidateQueries({ queryKey: ORG_FEATURES_QUERY_KEY });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,7 +121,7 @@ export function DevCompanySettingsPage() {
       setLogoUrl(signedRes.data.url);
       notify.success(tx('Logo uploaded'));
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Upload failed');
+      notify.error(err?.response?.data?.message ?? tx('Upload failed'));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -201,7 +206,7 @@ export function DevCompanySettingsPage() {
                         ) : (
                           <Upload className="mr-2 h-3 w-3" />
                         )}
-                        {logoUrl ? 'Replace' : 'Upload'}
+                        {logoUrl ? tx('Replace') : tx('Upload')}
                       </Button>
                       {logoUrl && (
                         <Button
@@ -282,7 +287,7 @@ export function DevCompanySettingsPage() {
                           notify.error(tx('Failed to save POS settings'));
                         }
                       }} disabled={updatePos.isPending} size="sm">
-                        {updatePos.isPending ? 'Saving...' : 'Save POS Mode'}
+                        {updatePos.isPending ? tx('Saving...') : tx('Save POS Mode')}
                       </Button>
                     </div>
                   )}
@@ -311,26 +316,37 @@ export function DevCompanySettingsPage() {
             ) : (
               <div className="space-y-3">
                 {MODULE_FEATURES.map((feat) => {
-                  const on = featureEnabled(features, feat.key);
+                  // The licence is the ceiling: a module it does not include cannot be switched
+                  // on here, so the toggle is disabled and says why rather than appearing to work
+                  // and then being refused by the server.
+                  const licensed = featureLicensed(license?.features, feat.key);
+                  const on = licensed && featureEnabled(features, feat.key);
                   return (
                     <label
                       key={feat.key}
-                      className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50"
+                      className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${
+                        licensed ? 'cursor-pointer hover:bg-muted/50' : 'cursor-not-allowed opacity-60'
+                      }`}
                     >
                       <input
                         type="checkbox"
                         className="mt-0.5 rounded"
                         checked={on}
+                        disabled={!licensed}
                         onChange={() => toggleModule(feat.key)}
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium">
                           {feat.label}
                           <Badge variant={on ? 'secondary' : 'outline'} className="text-[10px]">
-                            {on ? 'visible' : 'hidden'}
+                            {!licensed ? 'not in your plan' : on ? 'visible' : 'hidden'}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">{feat.description}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {licensed
+                            ? feat.description
+                            : tx('Not included in your licence. See Settings → Licence to upgrade.')}
+                        </p>
                       </div>
                     </label>
                   );

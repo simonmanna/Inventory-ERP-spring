@@ -92,32 +92,32 @@ interface InventoryDefaults {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const COSTING_METHODS = [
-  { value: 'AVCO', label: 'Average Cost (AVCO)' },
-  { value: 'FIFO', label: 'First-In, First-Out (FIFO)' },
-  { value: 'STANDARD', label: 'Standard Cost' },
-  { value: 'SPECIFIC', label: 'Specific Identification' },
+  { value: 'AVCO', label: tx('Average Cost (AVCO)') },
+  { value: 'FIFO', label: tx('First-In, First-Out (FIFO)') },
+  { value: 'STANDARD', label: tx('Standard Cost') },
+  { value: 'SPECIFIC', label: tx('Specific Identification') },
 ] as const;
 
 const PICKING_STRATEGIES = [
-  { value: 'FEFO', label: 'FEFO — nearest expiry first' },
-  { value: 'FIFO', label: 'FIFO — oldest receipt first' },
-  { value: 'MANUAL', label: 'Manual batch selection' },
-  { value: 'SERIAL', label: 'Serial selection' },
+  { value: 'FEFO', label: tx('FEFO — nearest expiry first') },
+  { value: 'FIFO', label: tx('FIFO — oldest receipt first') },
+  { value: 'MANUAL', label: tx('Manual batch selection') },
+  { value: 'SERIAL', label: tx('Serial selection') },
 ] as const;
 
 const FISCAL_MONTHS = [
-  { value: 1, label: 'January' },
-  { value: 2, label: 'February' },
-  { value: 3, label: 'March' },
-  { value: 4, label: 'April' },
-  { value: 5, label: 'May' },
-  { value: 6, label: 'June' },
-  { value: 7, label: 'July' },
-  { value: 8, label: 'August' },
-  { value: 9, label: 'September' },
-  { value: 10, label: 'October' },
-  { value: 11, label: 'November' },
-  { value: 12, label: 'December' },
+  { value: 1, label: tx('January') },
+  { value: 2, label: tx('February') },
+  { value: 3, label: tx('March') },
+  { value: 4, label: tx('April') },
+  { value: 5, label: tx('May') },
+  { value: 6, label: tx('June') },
+  { value: 7, label: tx('July') },
+  { value: 8, label: tx('August') },
+  { value: 9, label: tx('September') },
+  { value: 10, label: tx('October') },
+  { value: 11, label: tx('November') },
+  { value: 12, label: tx('December') },
 ] as const;
 
 // ── Reusable field wrappers ──────────────────────────────────────────────────
@@ -213,7 +213,7 @@ function DocumentConfigSection() {
       notify.success(tx('Document type updated'));
       qc.invalidateQueries({ queryKey: ['document-types'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const types = data ?? [];
@@ -271,7 +271,7 @@ function DocumentConfigSection() {
                       onChange={(e) => toggle.mutate({ code: t.code, isActive: e.target.checked })}
                       disabled={toggle.isPending}
                     />
-                    {t.isActive ? 'Enabled' : 'Disabled'}
+                    {t.isActive ? tx('Enabled') : tx('Disabled')}
                   </label>
                 </div>
               </div>
@@ -309,18 +309,18 @@ function BranchConfigSection() {
     mutationFn: async (body: { code: string; name: string; timezone?: string }) =>
       (await api.post('/branches', body)).data,
     onSuccess: () => { notify.success(tx('Branch created')); qc.invalidateQueries({ queryKey: ['branches'] }); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
   const updateBranch = useMutation({
     mutationFn: async ({ id, ...body }: { id: string; name?: string; timezone?: string; isActive?: boolean }) =>
       (await api.patch(`/branches/${id}`, body)).data,
     onSuccess: () => { notify.success(tx('Branch updated')); qc.invalidateQueries({ queryKey: ['branches'] }); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
   const deleteBranch = useMutation({
     mutationFn: async (id: string) => (await api.delete(`/branches/${id}`)).data,
     onSuccess: () => { notify.success(tx('Branch deleted')); qc.invalidateQueries({ queryKey: ['branches'] }); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -381,7 +381,7 @@ function BranchConfigSection() {
                       <Badge variant="secondary">{tx('Inactive')}</Badge>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">{b.timezone || 'No timezone set'}</p>
+                  <p className="text-xs text-muted-foreground">{b.timezone || tx('No timezone set')}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {canUpdate && (
@@ -395,7 +395,7 @@ function BranchConfigSection() {
                           onChange={(e) => updateBranch.mutate({ id: b.id, isActive: e.target.checked })}
                           disabled={updateBranch.isPending}
                         />
-                        {b.isActive ? 'On' : 'Off'}
+                        {b.isActive ? tx('On') : tx('Off')}
                       </label>
                     </>
                   )}
@@ -412,7 +412,7 @@ function BranchConfigSection() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit Branch' : 'Add Branch'}</DialogTitle>
+            <DialogTitle>{editing ? tx('Edit Branch') : tx('Add Branch')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div className="grid grid-cols-2 gap-3">
@@ -433,7 +433,7 @@ function BranchConfigSection() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{tx('Cancel')}</Button>
             <Button onClick={save} disabled={createBranch.isPending || updateBranch.isPending}>
-              {editing ? 'Save' : 'Create'}
+              {editing ? tx('Save') : tx('Create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -558,7 +558,7 @@ export function CompanySettingsPage() {
       if (data.baseCurrencyCode && o) auth.setOrganization({ ...o, currencyCode: data.baseCurrencyCode });
       qc.invalidateQueries({ queryKey: ['settings-company'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const updateOrg = useMutation({
@@ -569,7 +569,7 @@ export function CompanySettingsPage() {
       if (o) auth.setOrganization({ ...o, timezone: data.timezone });
       qc.invalidateQueries({ queryKey: ['organization-me'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const saveInvDefaults = useMutation({
@@ -583,7 +583,7 @@ export function CompanySettingsPage() {
       notify.success(tx('Inventory defaults saved'));
       qc.invalidateQueries({ queryKey: ['inventory-defaults'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const invite = useMutation({
@@ -591,14 +591,14 @@ export function CompanySettingsPage() {
       email: inviteEmail, firstName: inviteFirst, lastName: inviteLast || undefined,
     })).data,
     onSuccess: (data: any) => {
-      notify.success(tx('Invited'), `Token: ${data.inviteToken?.slice(0, 12)}…`);
+      notify.success(tx('Invited'), tx('Token: {{v1}}…', { v1: data.inviteToken?.slice(0, 12) }));
       setInviteOpen(false);
       setInviteEmail('');
       setInviteFirst('');
       setInviteLast('');
       qc.invalidateQueries({ queryKey: ['organization-users'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const deactivate = useMutation({
@@ -616,7 +616,7 @@ export function CompanySettingsPage() {
       auth.clear();
       window.location.href = '/login';
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   // -- Derived --
@@ -1003,7 +1003,7 @@ export function CompanySettingsPage() {
                     <div key={u.id} className="flex items-center justify-between border-b py-2 last:border-b-0">
                       <div>
                         <div className="font-medium">{u.firstName}</div>
-                        <div className="text-xs text-muted-foreground">{u.email} · {u.roles.map((r) => r.name).join(', ') || 'no role'}</div>
+                        <div className="text-xs text-muted-foreground">{u.email} · {u.roles.map((r) => r.name).join(', ') || tx('no role')}</div>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={u.isActive ? 'default' : 'outline'}>{u.isActive ? 'active' : 'inactive'}</Badge>

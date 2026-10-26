@@ -1,6 +1,8 @@
 package com.inventoryerp.sync.web;
 
 import com.inventoryerp.kernel.security.AuthenticationFilter;
+import com.inventoryerp.kernel.licensing.LicenseService;
+import com.inventoryerp.kernel.licensing.LicenseSyncView;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.Public;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -96,14 +98,16 @@ public class SyncController {
     private final SyncPushService pushSvc;
     private final SyncDeadLetterService deadLetters;
     private final Validator validator;
+    private final LicenseService licenses;
 
     public SyncController(SyncDevicesService devices, SyncPullService pullSvc, SyncPushService pushSvc,
-            SyncDeadLetterService deadLetters, Validator validator) {
+            SyncDeadLetterService deadLetters, Validator validator, LicenseService licenses) {
         this.validator = validator;
         this.devices = devices;
         this.pullSvc = pullSvc;
         this.pushSvc = pushSvc;
         this.deadLetters = deadLetters;
+        this.licenses = licenses;
     }
 
     @PostMapping("/devices/register")
@@ -146,12 +150,20 @@ public class SyncController {
         return deadLetters.resolve(id, dto.status(), dto.note());
     }
 
+    /**
+     * Additive to the Nest contract: the response carries a {@code license} member so an Android
+     * terminal learns its enforcement mode on the call it already makes, rather than needing a
+     * second round trip on a connection that may be about to disappear. Existing members are
+     * untouched and in their original order.
+     */
     @GetMapping("/pull")
     @Public
     public Map<String, Object> pull(HttpServletRequest request, @RequestParam(required = false) String cursor,
             @RequestParam(required = false) String scopes) {
         requireDevice(request);
-        return pullSvc.pull(cursor, scopes);
+        Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes));
+        body.put("license", LicenseSyncView.of(licenses.current()));
+        return body;
     }
 
     @PostMapping("/push")

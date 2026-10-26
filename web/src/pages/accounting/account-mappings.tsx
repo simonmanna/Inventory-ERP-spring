@@ -34,14 +34,14 @@ import { toast } from 'sonner';
 import { tx } from '@/lib/i18n/tx';
 
 const GROUP_LABELS: Record<string, string> = {
-  ar_ap: 'Receivables & Payables',
-  sales: 'Sales & Revenue',
-  tax: 'Tax',
-  treasury: 'Cash & Treasury',
-  inventory: 'Inventory',
-  fixed_assets: 'Fixed Assets',
-  fx: 'Foreign Exchange',
-  system: 'System',
+  ar_ap: tx('Receivables & Payables'),
+  sales: tx('Sales & Revenue'),
+  tax: tx('Tax'),
+  treasury: tx('Cash & Treasury'),
+  inventory: tx('Inventory'),
+  fixed_assets: tx('Fixed Assets'),
+  fx: tx('Foreign Exchange'),
+  system: tx('System'),
 };
 
 const GROUP_ORDER = ['ar_ap', 'sales', 'tax', 'treasury', 'inventory', 'fixed_assets', 'fx', 'system'];
@@ -134,19 +134,19 @@ function AccountMappingsPage() {
     if (!editingKey || !selectedAccountId) return;
     await updateMutation.mutateAsync({ key: editingKey, accountId: selectedAccountId });
     const linked = accountMap.get(selectedAccountId);
-    toast.success(`Mapped "${editingDef?.label ?? editingKey}" → ${linked?.code} ${linked?.name}`);
+    toast.success(tx('Mapped "{{v1}}" → {{code}} {{name}}', { v1: editingDef?.label ?? editingKey, code: linked?.code, name: linked?.name }));
     setEditingKey(null);
   }
 
   const columns: Column<MappingRow>[] = [
     {
       key: 'key',
-      header: 'Key',
+      header: tx('Key'),
       render: (m) => <code className="text-xs bg-slate-100 px-2 py-0.5 rounded">{m.key}</code>,
     },
     {
       key: 'label',
-      header: 'Label',
+      header: tx('Label'),
       render: (m) => (
         <div>
           <div className="flex items-center gap-1.5">
@@ -161,7 +161,7 @@ function AccountMappingsPage() {
     },
     {
       key: 'account',
-      header: 'Linked Account',
+      header: tx('Linked Account'),
       render: (m) => {
         if (!m.accountId) return <span className="text-slate-400">{tx('Not configured')}</span>;
         const acc = accountMap.get(m.accountId);
@@ -177,7 +177,7 @@ function AccountMappingsPage() {
     },
     {
       key: 'category',
-      header: 'Category',
+      header: tx('Category'),
       render: (m) => {
         const acc = m.accountId ? accountMap.get(m.accountId) : undefined;
         if (!acc?.category) {
@@ -195,7 +195,7 @@ function AccountMappingsPage() {
             {mismatched && (
               <span
                 className="text-xs text-destructive"
-                title={`Expected ${m.expectedCategories.join(' or ')}`}
+                title={tx('Expected {{v1}}', { v1: m.expectedCategories.join(' or ') })}
               >
                 <AlertTriangle className="h-3.5 w-3.5" />
               </span>
@@ -289,8 +289,8 @@ function AccountMappingsPage() {
               </Select>
               <p className="text-xs text-slate-400">
                 {editingDef && editingDef.expectedCategories.length > 0
-                  ? `Showing postable ${editingDef.expectedCategories.join(' / ')} accounts.`
-                  : 'Only postable (non-group, active) accounts are shown.'}
+                  ? tx('Showing postable {{v1}} accounts.', { v1: editingDef.expectedCategories.join(' / ') })
+                  : tx('Only postable (non-group, active) accounts are shown.')}
               </p>
               {eligibleAccounts.length === 0 && (
                 <p className="text-xs text-destructive">
@@ -305,7 +305,7 @@ function AccountMappingsPage() {
               onClick={handleSave}
               disabled={!selectedAccountId || updateMutation.isPending}
             >
-              {updateMutation.isPending ? 'Saving…' : 'Save'}
+              {updateMutation.isPending ? tx('Saving…') : tx('Save')}
             </Button>
           </DialogFooter>
         </DialogContent>

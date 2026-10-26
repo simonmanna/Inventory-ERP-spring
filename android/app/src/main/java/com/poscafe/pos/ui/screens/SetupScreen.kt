@@ -26,16 +26,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.ServerUrlPolicy
 import com.poscafe.pos.data.local.dao.RegisterDao
 import com.poscafe.pos.data.local.dao.StaffDao
 import com.poscafe.pos.data.local.entity.CashRegisterEntity
 import com.poscafe.pos.data.local.entity.StaffEntity
+import com.poscafe.pos.data.repo.DeviceRevokedException
 import com.poscafe.pos.data.repo.SyncRepository
 import com.poscafe.pos.sync.SyncWorker
 import com.poscafe.pos.ui.components.PosCard
 import com.poscafe.pos.ui.components.PrimaryButton
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import javax.inject.Inject
 
@@ -60,12 +64,19 @@ class SetupViewModel @Inject constructor(
         viewModelScope.launch {
             busy = true; error = null
             try {
-                config.serverUrl = serverUrl.trim().removeSuffix("/") + "/"
+                val url = serverUrl.trim().removeSuffix("/") + "/"
+                ServerUrlPolicy.problem(url)?.let { throw IllegalArgumentException(it) }
+                config.serverUrl = url
                 config.deviceId = deviceId.trim()
                 config.deviceToken = token.trim()
                 config.prefix = prefix.trim().ifBlank { "D1" }
+                sync.resetForEnrollment()
                 sync.pull() // validates the token + seeds the catalog
+                config.markRevoked(false)
+                config.acknowledgeKeystoreReset()
                 onDone()
+            } catch (e: DeviceRevokedException) {
+                error = "The server rejected this device id or token"
             } catch (e: Exception) {
                 error = e.message ?: "Enrollment failed"
                 config.clearEnrollment()
@@ -81,7 +92,7 @@ class SetupViewModel @Inject constructor(
             try {
                 require(pin.length in 4..8 && pin.all { it.isDigit() }) { "PIN must be 4–8 digits" }
                 require(adminName.isNotBlank()) { "Admin name is required" }
-                val pinHash = BCrypt.withDefaults().hashToString(10, pin.toCharArray())
+                val pinHash = withContext(Dispatchers.Default) { BCrypt.withDefaults().hashToString(10, pin.toCharArray()) }
                 staffDao.upsertAll(
                     listOf(
                         StaffEntity(
@@ -101,6 +112,8 @@ class SetupViewModel @Inject constructor(
                 config.businessName = businessName.trim().ifBlank { "POS CAFE" }
                 config.prefix = prefix.trim().ifBlank { "R1" }
                 config.standalone = true
+                config.markRevoked(false)
+                config.acknowledgeKeystoreReset()
                 onDone()
             } catch (e: Exception) {
                 error = e.message ?: "Setup failed"
@@ -146,6 +159,26 @@ fun SetupScreen(onDone: () -> Unit, vm: SetupViewModel = hiltViewModel()) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
+            val notice = when {
+                vm.config.revoked.collectAsState().value ->
+                    "This terminal was revoked in the back office and has been signed out. " +
+                        "Any unsynced sales are kept and will upload once a manager re-enrolls it."
+                vm.config.keystoreReset ->
+                    "This device's secure key store was reset, so local data could not be recovered. " +
+                        "Set the terminal up again."
+                else -> null
+            }
+            if (notice != null) {
+                Spacer(Modifier.height(16.dp))
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
+                    Text(
+                        notice,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(14.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeCard(
@@ -247,7 +280,10 @@ private fun StandaloneForm(vm: SetupViewModel, onDone: () -> Unit) {
 
 @Composable
 private fun ServerForm(vm: SetupViewModel, onEnrolled: () -> Unit) {
-    var serverUrl by remember { mutableStateOf("http://192.168.1.10:8080/api/v1") }
+    // Re-enrolling keeps the last server address; a fresh device gets an example.
+    var serverUrl by remember {
+        mutableStateOf(vm.config.serverUrl?.removeSuffix("/") ?: "http://192.168.1.10:8080/api/v1")
+    }
     var deviceId by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
     var prefix by remember { mutableStateOf("D1") }

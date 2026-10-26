@@ -58,7 +58,7 @@ export const DiscountDialog: React.FC<Props> = ({ open, initialPercent, onClose,
 
   const doApply = () => {
     if (!valid) {
-      setErr(mode === 'percentage' ? 'Enter a percent between 0 and 100' : 'Enter a valid amount');
+      setErr(mode === 'percentage' ? tx('Enter a percent between 0 and 100') : tx('Enter a valid amount'));
       return;
     }
     if (onApplyEx) {
@@ -119,7 +119,7 @@ export const DiscountDialog: React.FC<Props> = ({ open, initialPercent, onClose,
         </div>
 
         <div>
-          <Label>{mode === 'percentage' ? 'Percent off (%)' : 'Amount off ({orgCur()})'}</Label>
+          <Label>{mode === 'percentage' ? tx('Percent off (%)') : 'Amount off ({orgCur()})'}</Label>
           <Input
             type="number"
             value={value}

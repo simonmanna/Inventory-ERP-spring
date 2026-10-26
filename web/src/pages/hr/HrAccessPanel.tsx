@@ -127,7 +127,7 @@ export function HrAccessPanel({
               <div className="flex flex-wrap gap-2 border-t pt-4">
                 <Button size="sm" variant="outline" onClick={() => setPinOpen(true)}>
                   <KeyRound className="mr-1.5 h-3.5 w-3.5" />
-                  {user.hasPin ? 'Reset POS PIN' : 'Set POS PIN'}
+                  {user.hasPin ? tx('Reset POS PIN') : tx('Set POS PIN')}
                 </Button>
                 <Button
                   variant="outline"
@@ -141,9 +141,7 @@ export function HrAccessPanel({
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Roles decide what this person can do. Employment status adds one rule on top: while
-                someone is suspended or has left, they cannot sign in at a POS till, even if their
-                login is still enabled. Change roles from the Staff screen.
+                {tx('Roles decide what this person can do. Employment status adds one rule on top: while someone is suspended or has left, they cannot sign in at a POS till, even if their login is still enabled. Change roles from the Staff screen.')}
               </p>
             </div>
           ) : (
@@ -193,10 +191,7 @@ export function HrAccessPanel({
           <DialogHeader>
             <DialogTitle>{tx('Unlink account?')}</DialogTitle>
             <DialogDescription>
-              {tx('This detaches the login from')} {employeeName}. The account itself is not disabled or
-              deleted, and their past orders, invoices and cash sessions are untouched — those keep
-              resolving to the same person. To stop someone signing in, terminate or suspend them
-              instead.
+              {tx('This detaches the login from')} {employeeName}{tx('. The account itself is not disabled or deleted, and their past orders, invoices and cash sessions are untouched — those keep resolving to the same person. To stop someone signing in, terminate or suspend them instead.')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -210,7 +205,7 @@ export function HrAccessPanel({
                   notify.success(tx('Account unlinked'));
                   setUnlinkOpen(false);
                 } catch (err) {
-                  notify.error(apiErrorMessage(err, 'Could not unlink the account'));
+                  notify.error(apiErrorMessage(err, tx('Could not unlink the account')));
                 }
               }}
               disabled={unlink.isPending}
@@ -288,7 +283,7 @@ function LinkDialog({
                   <span className="block text-xs text-muted-foreground">{u.email}</span>
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {u.roles.map((r) => r.name).join(', ') || 'No roles'}
+                  {u.roles.map((r) => r.name).join(', ') || tx('No roles')}
                 </span>
               </button>
             ))}
@@ -309,7 +304,7 @@ function LinkDialog({
                 onOpenChange(false);
                 setSelected(null);
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not link the account'));
+                notify.error(apiErrorMessage(err, tx('Could not link the account')));
               }
             }}
           >
@@ -432,7 +427,7 @@ function ProvisionDialog({
                 notify.success(tx('Account created and linked'));
                 onOpenChange(false);
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not create the account'));
+                notify.error(apiErrorMessage(err, tx('Could not create the account')));
               }
             }}
           >

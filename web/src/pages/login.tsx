@@ -162,10 +162,10 @@ export function LoginPage() {
         return;
       }
       setSession(data);
-      notify.success(`Welcome back, ${data.user.firstName}`);
+      notify.success(tx('Welcome back, {{firstName}}', { firstName: data.user.firstName }));
       navigate('/');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Sign in failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Sign in failed')),
   });
 
   const mfa = useMutation({
@@ -173,10 +173,10 @@ export function LoginPage() {
       (await api.post<LoginResponse>('/auth/mfa-login', { mfaToken, code: mfaCode })).data,
     onSuccess: (data) => {
       setSession(data);
-      notify.success(`Welcome back, ${data.user.firstName}`);
+      notify.success(tx('Welcome back, {{firstName}}', { firstName: data.user.firstName }));
       navigate('/');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Invalid MFA code'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Invalid MFA code')),
   });
 
   const forgot = useMutation({
@@ -294,7 +294,7 @@ export function LoginPage() {
                                 </div>
                               </div>
                             )}
-                            <Field label={DEMO_MODE ? 'Username' : t('auth.email')}>
+                            <Field label={DEMO_MODE ? tx('Username') : t('auth.email')}>
                               <Input
                                 type={DEMO_MODE ? 'text' : 'email'}
                                 value={email}
@@ -320,7 +320,7 @@ export function LoginPage() {
                                   type="button"
                                   onClick={() => setShowPwd(!showPwd)}
                                   className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
-                                  aria-label={showPwd ? 'Hide password' : 'Show password'}
+                                  aria-label={showPwd ? tx('Hide password') : tx('Show password')}
                                 >
                                   {showPwd ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                                 </button>

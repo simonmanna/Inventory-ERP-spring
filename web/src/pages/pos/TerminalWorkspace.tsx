@@ -31,7 +31,7 @@ export function TerminalWorkspace({ children }: { children: ReactNode }) {
   }, []);
   if (!ready) return <main className="mx-auto max-w-lg p-8 text-center" role="status">
     <h1 className="text-lg font-semibold">{tx('Protecting your selling workspace')}</h1>
-    <p className="mt-3">{error || 'If another POS tab is open, finish there or close it. This tab will then restore your saved cart automatically.'}</p>
+    <p className="mt-3">{error || tx('If another POS tab is open, finish there or close it. This tab will then restore your saved cart automatically.')}</p>
   </main>;
   return <>{children}</>;
 }

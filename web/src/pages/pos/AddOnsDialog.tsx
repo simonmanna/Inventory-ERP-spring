@@ -222,8 +222,8 @@ export const AddOnsDialog: React.FC<Props> = ({ open, productId, basePrice, onCl
           <div className="font-bold text-sm">{g.name}</div>
           <div className="text-[11px] text-slate-500">
             {isAddOn
-              ? `${g.minSelect > 0 ? 'Required' : 'Optional'} · up to ${g.maxSelect}`
-              : `${g.minSelect > 0 ? 'Required' : 'Optional'} · ${g.maxSelect === 1 ? 'Pick one' : `Up to ${g.maxSelect}`}`}
+              ? tx('{{v1}} · up to {{maxSelect}}', { v1: g.minSelect > 0 ? 'Required' : 'Optional', maxSelect: g.maxSelect })
+              : `${g.minSelect > 0 ? 'Required' : 'Optional'} · ${g.maxSelect === 1 ? tx('Pick one') : `Up to ${g.maxSelect}`}`}
           </div>
         </div>
         <div className={isAddOn ? 'space-y-1.5 max-h-48 overflow-y-auto pr-0.5' : 'grid grid-cols-2 gap-1.5'}>
@@ -242,7 +242,7 @@ export const AddOnsDialog: React.FC<Props> = ({ open, productId, basePrice, onCl
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2">
               <Coffee className="h-4 w-4" />
-              {isLoading ? 'Loading…' : bundle?.product.name}
+              {isLoading ? tx('Loading…') : bundle?.product.name}
             </DialogTitle>
             <StepDots current={2} total={3} />
           </div>
@@ -296,7 +296,7 @@ export const AddOnsDialog: React.FC<Props> = ({ open, productId, basePrice, onCl
             <div className="rounded-lg bg-slate-900 text-white px-3 py-3 flex items-center justify-between">
               <span className="text-sm font-semibold">
                 {tx('Item price')}
-                {quantity > 1 ? ` (×${quantity} @ ${fmt(effectiveBasePrice + extraPrice)} each)` : ''}
+                {quantity > 1 ? tx(' (×{{quantity}} @ {{v2}} each)', { quantity, v2: fmt(effectiveBasePrice + extraPrice) }) : ''}
               </span>
               <span className="font-mono font-bold text-lg">{fmt((effectiveBasePrice + extraPrice) * quantity)}</span>
             </div>

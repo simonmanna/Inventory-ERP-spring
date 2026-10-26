@@ -3,6 +3,7 @@ package com.poscafe.pos.di
 import android.content.Context
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.ServerUrlPolicy
 import com.poscafe.pos.data.local.PosDatabase
 import com.poscafe.pos.data.local.dao.*
 import com.poscafe.pos.data.remote.SyncApi
@@ -17,6 +18,7 @@ import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -76,6 +78,8 @@ object AppModule {
                 .host(base.host)
                 .port(base.port)
                 .build()
+            // Never send the device token over public cleartext HTTP.
+            ServerUrlPolicy.problem(rebuilt)?.let { throw IOException(it) }
 
             val builder = request.newBuilder().url(rebuilt)
             config.deviceToken?.let { builder.header("X-Device-Token", it) }

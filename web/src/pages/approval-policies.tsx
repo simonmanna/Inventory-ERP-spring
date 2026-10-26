@@ -51,12 +51,12 @@ export function ApprovalPoliciesPage() {
     mutationFn: async (vars: { id: string; isActive: boolean }) =>
       api.patch(`/approval-policies/${vars.id}`, { isActive: vars.isActive }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['approval-policies'] }); notify.success(tx('Policy updated')); },
-    onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed'),
+    onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
 
   const create = useMutation({
     mutationFn: async () => {
-      if (!form.entityType) throw new Error('Select a feature');
+      if (!form.entityType) throw new Error(tx('Select a feature'));
       return api.post('/approval-policies', {
         name: form.name || form.entityType,
         entityType: form.entityType,
@@ -78,7 +78,7 @@ export function ApprovalPoliciesPage() {
   const remove = useMutation({
     mutationFn: async (id: string) => api.delete(`/approval-policies/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['approval-policies'] }); notify.success(tx('Policy deleted')); },
-    onError: (err: any) => notify.error(err?.response?.data?.message ?? 'Failed'),
+    onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
 
   return (
@@ -209,7 +209,7 @@ export function ApprovalPoliciesPage() {
                         size="icon"
                         disabled={toggle.isPending}
                         onClick={() => toggle.mutate({ id: p.id, isActive: !p.isActive })}
-                        title={p.isActive ? 'Active — click to disable' : 'Inactive — click to enable'}
+                        title={p.isActive ? tx('Active — click to disable') : tx('Inactive — click to enable')}
                       >
                         {p.isActive
                           ? <ToggleRight className="h-5 w-5 text-emerald-500" />
@@ -222,7 +222,7 @@ export function ApprovalPoliciesPage() {
                         size="icon"
                         disabled={remove.isPending}
                         onClick={() => {
-                          if (confirm('Delete this policy?')) remove.mutate(p.id);
+                          if (confirm(tx('Delete this policy?'))) remove.mutate(p.id);
                         }}
                       >
                         <Trash2 className="h-4 w-4 text-red-500" />

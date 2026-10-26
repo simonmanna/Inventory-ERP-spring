@@ -82,7 +82,7 @@ export function HrLifecycleActions({
           )}
           {(ended || suspended) && (
             <DropdownMenuItem onSelect={() => setAction('reactivate')}>
-              {ended ? 'Rehire…' : 'Lift suspension…'}
+              {ended ? tx('Rehire…') : tx('Lift suspension…')}
             </DropdownMenuItem>
           )}
           {!ended && (
@@ -157,7 +157,7 @@ function TerminateDialog({
         <DialogHeader>
           <DialogTitle>{tx('End employment')}</DialogTitle>
           <DialogDescription>
-            {tx('Records that')} {employee.firstName} {tx('has left. Their orders, invoices, payments, cash sessions and audit history are')} <strong>not</strong> {tx('changed — they stay attributed to this person, and the record remains readable as a former employee.')}
+            {tx('Records that')} {employee.firstName} {tx('has left. Their orders, invoices, payments, cash sessions and audit history are')} <strong>{tx('not')}</strong> {tx('changed — they stay attributed to this person, and the record remains readable as a former employee.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -224,7 +224,7 @@ function TerminateDialog({
                 notify.success(tx('Employment ended'));
                 onClose();
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not end employment'));
+                notify.error(apiErrorMessage(err, tx('Could not end employment')));
               }
             }}
           >
@@ -298,7 +298,7 @@ function SuspendDialog({
                 notify.success(tx('Employee suspended'));
                 onClose();
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not suspend the employee'));
+                notify.error(apiErrorMessage(err, tx('Could not suspend the employee')));
               }
             }}
           >
@@ -332,11 +332,11 @@ function ReactivateDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{wasTerminated ? 'Rehire' : 'Lift suspension'}</DialogTitle>
+          <DialogTitle>{wasTerminated ? tx('Rehire') : tx('Lift suspension')}</DialogTitle>
           <DialogDescription>
             {wasTerminated
-              ? 'Brings this person back on the same record, so their earlier service history stays with them rather than starting a duplicate employee.'
-              : 'Returns this employee to active status.'}
+              ? tx('Brings this person back on the same record, so their earlier service history stays with them rather than starting a duplicate employee.')
+              : tx('Returns this employee to active status.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -386,14 +386,14 @@ function ReactivateDialog({
                   enableAccount: hasAccount ? enableAccount : false,
                   toProbation,
                 });
-                notify.success(wasTerminated ? 'Employee rehired' : 'Suspension lifted');
+                notify.success(wasTerminated ? tx('Employee rehired') : tx('Suspension lifted'));
                 onClose();
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not reactivate the employee'));
+                notify.error(apiErrorMessage(err, tx('Could not reactivate the employee')));
               }
             }}
           >
-            {wasTerminated ? 'Rehire' : 'Reactivate'}
+            {wasTerminated ? tx('Rehire') : tx('Reactivate')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -439,7 +439,7 @@ function ConfirmDialog({
                 notify.success(tx('Employee confirmed'));
                 onClose();
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not confirm the employee'));
+                notify.error(apiErrorMessage(err, tx('Could not confirm the employee')));
               }
             }}
           >
@@ -541,7 +541,7 @@ function TransferDialog({
                 notify.success(tx('Employee transferred'));
                 onClose();
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not transfer the employee'));
+                notify.error(apiErrorMessage(err, tx('Could not transfer the employee')));
               }
             }}
           >

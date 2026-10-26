@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- Cleartext must stay on for LAN servers (this file cannot express IP ranges).
+         ServerUrlPolicy rejects plain HTTP to public hosts in code. -->
     <base-config cleartextTrafficPermitted="true" />
+
+    <!-- Hosted server (https://169.58.5.88:8443). Its certificate comes from a
+         private CA whose key stays on the VPS; the CA is name-constrained to this
+         one IP and trusted here for this address only — public CAs are not, so a
+         mis-issued public certificate cannot intercept tills. Rotate by replacing
+         res/raw/ierp_vps_ca.pem (see README, "Hosted server TLS"). -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">169.58.5.88</domain>
+        <trust-anchors>
+            <certificates src="@raw/ierp_vps_ca" />
+        </trust-anchors>
+    </domain-config>
 </network-security-config>

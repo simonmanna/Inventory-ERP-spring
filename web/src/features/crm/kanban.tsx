@@ -47,7 +47,7 @@ function DealCard({ deal }: { deal: CrmDeal }) {
       <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <CalendarDays className="h-3 w-3" />
-          {deal.expectedClose ? new Date(deal.expectedClose).toLocaleDateString() : 'No close date'}
+          {deal.expectedClose ? new Date(deal.expectedClose).toLocaleDateString() : tx('No close date')}
         </span>
         {deal.owner ? (
           <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary" title={deal.owner.name}>

@@ -22,18 +22,18 @@ export function PaymentsPage() {
   const columns: Column<Payment>[] = [
     {
       key: 'paymentNumber',
-      header: 'Receipt #',
+      header: tx('Receipt #'),
       render: (p) => (
         <Link to={`/payments/${p.id}`} className="font-medium text-primary hover:underline">
           {p.paymentNumber}
         </Link>
       ),
     },
-    { key: 'partner', header: 'Customer', render: (p) => p.partner?.name ?? '-' },
-    { key: 'paymentDate', header: 'Date', render: (p) => date(p.paymentDate) },
-    { key: 'paymentMethod', header: 'Method', render: (p) => <Badge variant="secondary">{statusLabel(p.paymentMethod)}</Badge> },
-    { key: 'amount', header: 'Amount', className: 'text-right', render: (p) => money(p.amount) },
-    { key: 'unallocatedAmount', header: 'Unapplied', className: 'text-right', render: (p) => money(p.unallocatedAmount) },
+    { key: 'partner', header: tx('Customer'), render: (p) => p.partner?.name ?? '-' },
+    { key: 'paymentDate', header: tx('Date'), render: (p) => date(p.paymentDate) },
+    { key: 'paymentMethod', header: tx('Method'), render: (p) => <Badge variant="secondary">{statusLabel(p.paymentMethod)}</Badge> },
+    { key: 'amount', header: tx('Amount'), className: 'text-right', render: (p) => money(p.amount) },
+    { key: 'unallocatedAmount', header: tx('Unapplied'), className: 'text-right', render: (p) => money(p.unallocatedAmount) },
     {
       key: 'actions',
       header: '',
@@ -77,7 +77,7 @@ export function PaymentsPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"

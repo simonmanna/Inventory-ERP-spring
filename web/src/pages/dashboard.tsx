@@ -46,10 +46,10 @@ const addDays = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.get
 
 type RangeId = 'today' | '7d' | '30d' | 'mtd';
 const RANGES: { id: RangeId; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: '7d', label: '7 days' },
-  { id: '30d', label: '30 days' },
-  { id: 'mtd', label: 'Month' },
+  { id: 'today', label: tx('Today') },
+  { id: '7d', label: tx('7 days') },
+  { id: '30d', label: tx('30 days') },
+  { id: 'mtd', label: tx('Month') },
 ];
 
 function resolveRange(id: RangeId) {
@@ -216,7 +216,7 @@ export function DashboardPage() {
   const kpiCards = canPosReports
     ? [
         {
-          title: 'Total Sales',
+          title: tx('Total Sales'),
           value: totals ? compactMoney(num(totals.grossSales), currency) : undefined,
           change: totals && prevTotals ? delta(num(totals.grossSales), num(prevTotals.grossSales)) : null,
           icon: Wallet,
@@ -225,7 +225,7 @@ export function DashboardPage() {
           href: '/pos/reports',
         },
         {
-          title: 'Orders',
+          title: tx('Orders'),
           value: totals ? String(totals.orders ?? 0) : undefined,
           change: totals && prevTotals ? delta(num(totals.orders), num(prevTotals.orders)) : null,
           icon: ShoppingCart,
@@ -234,7 +234,7 @@ export function DashboardPage() {
           href: '/pos/reports',
         },
         {
-          title: 'Avg Order',
+          title: tx('Avg Order'),
           value: totals ? compactMoney(num(totals.avgOrderValue), currency) : undefined,
           change: totals && prevTotals ? delta(num(totals.avgOrderValue), num(prevTotals.avgOrderValue)) : null,
           icon: Receipt,
@@ -243,7 +243,7 @@ export function DashboardPage() {
           href: '/pos/reports',
         },
         {
-          title: 'Refunds',
+          title: tx('Refunds'),
           value: totals ? compactMoney(num(totals.refunds), currency) : undefined,
           change: totals && prevTotals ? delta(num(totals.refunds), num(prevTotals.refunds)) : null,
           invertChange: true,
@@ -253,7 +253,7 @@ export function DashboardPage() {
           href: '/pos/reports',
         },
         {
-          title: 'Cash Position',
+          title: tx('Cash Position'),
           value: kpi.data?.cashPosition != null ? compactMoney(kpi.data.cashPosition, currency) : undefined,
           change: null,
           icon: CreditCard,
@@ -264,27 +264,27 @@ export function DashboardPage() {
       ]
     : [
         {
-          title: 'Open Invoices',
+          title: tx('Open Invoices'),
           value: kpi.data?.openInvoices != null ? String(kpi.data.openInvoices) : undefined,
           change: null, icon: Receipt, tone: 'from-sky-500 to-blue-600', spark: [] as number[], href: '/invoices',
         },
         {
-          title: 'Overdue',
+          title: tx('Overdue'),
           value: kpi.data?.overdueInvoices != null ? String(kpi.data.overdueInvoices) : undefined,
           change: null, icon: AlertCircle, tone: 'from-rose-500 to-red-600', spark: [] as number[], href: '/ar-aging',
         },
         {
-          title: 'Cash Position',
+          title: tx('Cash Position'),
           value: kpi.data?.cashPosition != null ? compactMoney(kpi.data.cashPosition, currency) : undefined,
           change: null, icon: Wallet, tone: 'from-cyan-500 to-teal-600', spark: [] as number[], href: '/trial-balance',
         },
         {
-          title: 'Revenue (Month)',
+          title: tx('Revenue (Month)'),
           value: kpi.data?.revenueMonth != null ? compactMoney(kpi.data.revenueMonth, currency) : undefined,
           change: null, icon: TrendingUp, tone: 'from-blue-500 to-indigo-600', spark: [] as number[], href: '/trial-balance',
         },
         {
-          title: 'Net Income (Month)',
+          title: tx('Net Income (Month)'),
           value: kpi.data?.netIncomeMonth != null ? compactMoney(kpi.data.netIncomeMonth, currency) : undefined,
           change: null,
           icon: kpi.data && kpi.data.netIncomeMonth >= 0 ? ArrowUpRight : ArrowDownRight,
@@ -295,9 +295,9 @@ export function DashboardPage() {
 
   const greeting = (() => {
     const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
+    if (h < 12) return tx('Good morning');
+    if (h < 18) return tx('Good afternoon');
+    return tx('Good evening');
   })();
 
   const refreshAll = () => {
@@ -388,7 +388,7 @@ export function DashboardPage() {
                   <TrendingUp className="h-4 w-4 text-sky-600" /> {tx('Sales Overview')}
                 </CardTitle>
                 <CardDescription>
-                  {range === 'today' ? 'Gross sales by hour' : `Gross sales by ${groupBy}`}
+                  {range === 'today' ? tx('Gross sales by hour') : tx('Gross sales by {{groupBy}}', { groupBy })}
                 </CardDescription>
               </div>
               {totals && (
@@ -730,8 +730,8 @@ export function DashboardPage() {
           <span className="hidden h-4 w-px bg-border sm:block" />
           <span className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${kpi.isError ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`} />
-            <span className="text-muted-foreground">API</span>
-            <strong>{kpi.isError ? 'Unreachable' : 'Online'}</strong>
+            <span className="text-muted-foreground">{tx('API')}</span>
+            <strong>{kpi.isError ? tx('Unreachable') : tx('Online')}</strong>
           </span>
           <span className="hidden h-4 w-px bg-border sm:block" />
           <span className="flex items-center gap-2">

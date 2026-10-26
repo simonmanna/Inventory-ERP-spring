@@ -89,27 +89,27 @@ export function SupplierPaymentsPage() {
         accountId: '',
       });
     } catch (error) {
-      notify.error(error instanceof Error ? error.message : 'Failed to record payment');
+      notify.error(error instanceof Error ? error.message : tx('Failed to record payment'));
     }
   });
 
   const columns: Column<Payment>[] = [
     {
       key: 'paymentNumber',
-      header: 'Voucher #',
+      header: tx('Voucher #'),
       render: (p) => (
         <Link to={`/payments/${p.id}`} className="font-medium text-primary hover:underline">
           {p.paymentNumber}
         </Link>
       ),
     },
-    { key: 'partner', header: 'Supplier', render: (p) => p.partner?.name ?? '-' },
-    { key: 'paymentDate', header: 'Date', render: (p) => date(p.paymentDate) },
-    { key: 'paymentMethod', header: 'Method', render: (p) => <Badge variant="secondary">{statusLabel(p.paymentMethod)}</Badge> },
-    { key: 'amount', header: 'Amount', className: 'text-right', render: (p) => money(p.amount) },
+    { key: 'partner', header: tx('Supplier'), render: (p) => p.partner?.name ?? '-' },
+    { key: 'paymentDate', header: tx('Date'), render: (p) => date(p.paymentDate) },
+    { key: 'paymentMethod', header: tx('Method'), render: (p) => <Badge variant="secondary">{statusLabel(p.paymentMethod)}</Badge> },
+    { key: 'amount', header: tx('Amount'), className: 'text-right', render: (p) => money(p.amount) },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (p) => <Badge variant={statusVariant[p.status] ?? 'secondary'}>{p.status}</Badge>,
     },
   ];
@@ -152,7 +152,7 @@ export function SupplierPaymentsPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"
@@ -229,7 +229,7 @@ export function SupplierPaymentsPage() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>{tx('Cancel')}</Button>
               <Button type="submit" disabled={createPayment.isPending}>
-                {createPayment.isPending ? 'Saving...' : 'Save payment'}
+                {createPayment.isPending ? tx('Saving...') : tx('Save payment')}
               </Button>
             </DialogFooter>
           </form>

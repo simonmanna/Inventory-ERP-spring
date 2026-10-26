@@ -35,28 +35,28 @@ import { tx } from '@/lib/i18n/tx';
 const NONE = '__none__';
 
 const CASH_FLOW_OPTIONS = [
-  { value: 'operating', label: 'Operating' },
-  { value: 'investing', label: 'Investing' },
-  { value: 'financing', label: 'Financing' },
-  { value: 'none', label: 'Excluded' },
+  { value: 'operating', label: tx('Operating') },
+  { value: 'investing', label: tx('Investing') },
+  { value: 'financing', label: tx('Financing') },
+  { value: 'none', label: tx('Excluded') },
 ] as const;
 
 const CLASSIFICATION_LABELS: Record<string, string> = {
-  asset: 'Assets',
-  liability: 'Liabilities',
-  equity: 'Equity',
-  revenue: 'Income',
-  expense: 'Expenses',
-  off_balance: 'Off Balance Sheet',
+  asset: tx('Assets'),
+  liability: tx('Liabilities'),
+  equity: tx('Equity'),
+  revenue: tx('Income'),
+  expense: tx('Expenses'),
+  off_balance: tx('Off Balance Sheet'),
 };
 
 const CLASSIFICATION_ORDER = ['asset', 'liability', 'equity', 'revenue', 'expense', 'off_balance'];
 
 /** Tri-state behavior override: inherit the category default, or force on/off. */
 const OVERRIDE_OPTIONS = [
-  { value: 'inherit', label: 'Inherit from category' },
-  { value: 'yes', label: 'Always allow' },
-  { value: 'no', label: 'Never allow' },
+  { value: 'inherit', label: tx('Inherit from category') },
+  { value: 'yes', label: tx('Always allow') },
+  { value: 'no', label: tx('Never allow') },
 ] as const;
 
 type OverrideValue = 'inherit' | 'yes' | 'no';
@@ -74,9 +74,9 @@ function humanize(value: string | null | undefined): string {
 // ── Schema ──────────────────────────────────────────────────────────────────
 
 const accountSchema = z.object({
-  code: z.string().min(1, 'Required'),
-  name: z.string().min(1, 'Required'),
-  categoryId: z.string().min(1, 'Required'),
+  code: z.string().min(1, tx('Required')),
+  name: z.string().min(1, tx('Required')),
+  categoryId: z.string().min(1, tx('Required')),
   isGroup: z.boolean(),
   isControlAccount: z.boolean(),
   parentAccountId: z.string().optional().nullable(),
@@ -267,7 +267,7 @@ export function AccountDetailPage() {
     try {
       await updateAccount.mutateAsync({ id, isActive: !account.data?.isActive });
       setDeleteOpen(false);
-      notify.success(account.data?.isActive ? 'Account deactivated' : 'Account activated');
+      notify.success(account.data?.isActive ? tx('Account deactivated') : tx('Account activated'));
     } catch { /* handled */ }
   };
 
@@ -281,7 +281,7 @@ export function AccountDetailPage() {
         <button onClick={() => navigate('/accounts')} className="hover:text-foreground transition-colors">{tx('Chart of Accounts')}</button>
         <span>/</span>
         <span className="text-foreground font-medium">
-          {isNew ? 'New Account' : a ? `${a.code} — ${a.name}` : 'Loading...'}
+          {isNew ? tx('New Account') : a ? `${a.code} — ${a.name}` : tx('Loading...')}
         </span>
       </div>
 
@@ -298,13 +298,13 @@ export function AccountDetailPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-semibold">
-                  {isNew ? 'New Account' : a?.name ?? 'Account'}
+                  {isNew ? tx('New Account') : a?.name ?? tx('Account')}
                 </h1>
                 {!isNew && a && (
                   <>
                     <Badge variant="secondary" className="font-mono text-xs">{a.code}</Badge>
                     <Badge variant={a.isActive ? 'default' : 'secondary'} className="text-xs">
-                      {a.isActive ? 'Active' : 'Inactive'}
+                      {a.isActive ? tx('Active') : tx('Inactive')}
                     </Badge>
                     {a.isGroup && (
                       <Badge variant="outline" className="text-xs">{tx('Group')}</Badge>
@@ -323,7 +323,7 @@ export function AccountDetailPage() {
               </div>
               {a && (
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {a.category?.name ?? 'Uncategorized'} · {humanize(a.normalBalance)}{tx('-normal')}
+                  {a.category?.name ?? tx('Uncategorized')} · {humanize(a.normalBalance)}{tx('-normal')}
                   {a.parent && <> {tx('· Parent:')} {a.parent.code} — {a.parent.name}</>}
                 </p>
               )}
@@ -337,7 +337,7 @@ export function AccountDetailPage() {
           </Button>
           <Button size="sm" onClick={onSubmit} disabled={isPending || account.isLoading}>
             {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-            {isNew ? 'Create' : 'Save'}
+            {isNew ? tx('Create') : tx('Save')}
           </Button>
         </div>
       </div>
@@ -468,7 +468,7 @@ export function AccountDetailPage() {
                       <InfoRow label={tx('Group')} value={a.isGroup ? 'Yes — summary account' : 'No — postable account'} />
                       <InfoRow label={tx('Status')} value={
                         <Badge variant={a.isActive ? 'default' : 'secondary'} className="text-xs">
-                          {a.isActive ? 'Active' : 'Inactive'}
+                          {a.isActive ? tx('Active') : tx('Inactive')}
                         </Badge>
                       } />
                       <InfoRow label={tx('Protected')} value={a.isProtected ? 'Yes' : 'No'} />
@@ -599,9 +599,9 @@ export function AccountDetailPage() {
                       {tx('Each defaults to the category setting. Override only when this one account needs to differ.')}
                     </p>
                     {([
-                      ['allowManualPosting', 'Manual journal entries', a.category?.allowManualPosting],
-                      ['allowReconciliation', 'Reconciliation', a.category?.allowReconciliation],
-                      ['allowBudgeting', 'Budgeting', a.category?.allowBudgeting],
+                      ['allowManualPosting', tx('Manual journal entries'), a.category?.allowManualPosting],
+                      ['allowReconciliation', tx('Reconciliation'), a.category?.allowReconciliation],
+                      ['allowBudgeting', tx('Budgeting'), a.category?.allowBudgeting],
                     ] as const).map(([field, label, inherited]) => (
                       <div key={field} className="space-y-2">
                         <Label>{label}</Label>
@@ -637,7 +637,7 @@ export function AccountDetailPage() {
               onClick={() => setDeleteOpen(true)}
             >
               <AlertCircle className="h-4 w-4 mr-1" />
-              {a.isActive ? 'Deactivate Account' : 'Activate Account'}
+              {a.isActive ? tx('Deactivate Account') : tx('Activate Account')}
             </Button>
             {a.isActive && (
               <p className="text-xs text-muted-foreground">
@@ -650,11 +650,11 @@ export function AccountDetailPage() {
           <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
-                <DialogTitle>{a.isActive ? 'Deactivate Account' : 'Activate Account'}</DialogTitle>
+                <DialogTitle>{a.isActive ? tx('Deactivate Account') : tx('Activate Account')}</DialogTitle>
                 <DialogDescription>
                   {a.isActive
-                    ? `"${a.code} — ${a.name}" will be deactivated. It won't appear in selection lists for new transactions.`
-                    : `"${a.code} — ${a.name}" will be reactivated and available for use.`
+                    ? tx('"{{code}} — {{name}}" will be deactivated. It won\'t appear in selection lists for new transactions.', { code: a.code, name: a.name })
+                    : tx('"{{code}} — {{name}}" will be reactivated and available for use.', { code: a.code, name: a.name })
                   }
                 </DialogDescription>
               </DialogHeader>
@@ -671,7 +671,7 @@ export function AccountDetailPage() {
                   disabled={updateAccount.isPending}
                   onClick={handleDelete}
                 >
-                  {updateAccount.isPending ? 'Saving…' : a.isActive ? 'Deactivate' : 'Activate'}
+                  {updateAccount.isPending ? tx('Saving…') : a.isActive ? tx('Deactivate') : tx('Activate')}
                 </Button>
               </DialogFooter>
             </DialogContent>

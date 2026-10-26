@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { useUomCode } from '@/features/uom/api';
 
 interface PO {
   id: string; orderNumber: string; status: string;
@@ -17,12 +18,14 @@ interface PO {
     id: string; description: string; quantity: number;
     unitPrice: number; receivedQuantity: number;
     productId?: string;
+    unitOfMeasureId?: string | null;
   }>;
 }
 
 interface Warehouse { id: string; name: string; code: string }
 
 export function PurchaseOrderReceivePage() {
+  const uomCode = useUomCode();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -62,7 +65,7 @@ export function PurchaseOrderReceivePage() {
       })).data,
     onSuccess: (res: any) => {
       if (res?.approvalRequired) {
-        notify.success(`Receipt ${res.grn?.receiptNumber ?? ''} saved as a draft — awaiting goods-receipt approval before stock is posted`);
+        notify.success(tx('Receipt {{v1}} saved as a draft — awaiting goods-receipt approval before stock is posted', { v1: res.grn?.receiptNumber ?? '' }));
       } else {
         notify.success(tx('Stock received successfully'));
       }
@@ -70,7 +73,7 @@ export function PurchaseOrderReceivePage() {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate(`/procurement/purchase-orders/${id}`);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;
@@ -162,7 +165,12 @@ export function PurchaseOrderReceivePage() {
                 const remaining = ordered - received;
                 return (
                   <tr key={l.id} className="border-b hover:bg-muted/30">
-                    <td className="px-3 py-2 font-medium">{l.description}</td>
+                    <td className="px-3 py-2 font-medium">
+                      {l.description}
+                      {uomCode(l.unitOfMeasureId) && (
+                        <span className="ml-1 text-xs text-muted-foreground">({uomCode(l.unitOfMeasureId)})</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right font-mono">{ordered}</td>
                     <td className="px-3 py-2 text-right font-mono">{received}</td>
                     <td className="px-3 py-2 text-right font-mono">{remaining}</td>
@@ -192,8 +200,8 @@ export function PurchaseOrderReceivePage() {
             <div>
               <p className="text-sm font-medium">
                 {data.paymentType === 'cash'
-                  ? 'This is a cash purchase — payment will be auto-settled on receive.'
-                  : 'This is a credit purchase — payment will be recorded separately.'}
+                  ? tx('This is a cash purchase — payment will be auto-settled on receive.')
+                  : tx('This is a credit purchase — payment will be recorded separately.')}
               </p>
             </div>
           </div>
@@ -207,7 +215,7 @@ export function PurchaseOrderReceivePage() {
           disabled={!warehouseId || !Object.values(receivedQtys).some((v) => v > 0) || receiveMut.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
-          {receiveMut.isPending ? 'Receiving…' : 'Receive Stock'}
+          {receiveMut.isPending ? tx('Receiving…') : tx('Receive Stock')}
         </Button>
       </div>
     </div>

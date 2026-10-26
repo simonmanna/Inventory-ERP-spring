@@ -52,9 +52,9 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
 
   const submit = async () => {
     setErr(null);
-    if (!registerId) { setErr('Pick a cash register'); return; }
+    if (!registerId) { setErr(tx('Pick a cash register')); return; }
     const float = Number(openingFloat);
-    if (!Number.isFinite(float) || float < 0) { setErr('Opening float must be a non-negative number'); return; }
+    if (!Number.isFinite(float) || float < 0) { setErr(tx('Opening float must be a non-negative number')); return; }
     try {
       await openShift.mutateAsync({
         cashRegisterId: registerId,
@@ -68,7 +68,7 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
       onOpened();
       onClose();
     } catch (e: any) {
-      setErr(e?.response?.data?.message || 'Failed to open shift');
+      setErr(e?.response?.data?.message || tx('Failed to open shift'));
     }
   };
 
@@ -124,7 +124,7 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
                 className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-xs font-bold"
                 onClick={() => setOpeningFloat(String(q))}
               >
-                {q === 0 ? 'No float' : q.toLocaleString()}
+                {q === 0 ? tx('No float') : q.toLocaleString()}
               </button>
             ))}
           </div>
@@ -153,7 +153,7 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
             </label>
             {!autoAdjust ? (
               <p className="mt-1 text-xs text-amber-800">
-                {tx('Without accepting, the count must match the drawer')}{drawerDiff > 0 ? ' (and a funding source is required)' : ''}.
+                {tx('Without accepting, the count must match the drawer')}{drawerDiff > 0 ? tx(' (and a funding source is required)') : ''}.
               </p>
             ) : null}
           </div>
@@ -185,7 +185,7 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
             disabled={openShift.isPending || registers.length === 0}
             style={{ background: '#16a34a' }}
           >
-            {openShift.isPending ? 'Opening…' : 'Open shift'}
+            {openShift.isPending ? tx('Opening…') : tx('Open shift')}
           </Button>
         </DialogFooter>
       </DialogContent>

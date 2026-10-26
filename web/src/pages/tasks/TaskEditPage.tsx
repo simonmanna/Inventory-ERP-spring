@@ -34,7 +34,7 @@ function Checkbox({ label, checked, onChange }: { label: string; checked: boolea
 }
 
 const taskSchema = z.object({
-  title: z.string().min(1, 'Title is required'),
+  title: z.string().min(1, tx('Title is required')),
   description: z.string().optional(),
   taskType: z.nativeEnum(TaskType).default(TaskType.ONE_TIME),
   priority: z.nativeEnum(TaskPriority).default(TaskPriority.MEDIUM),
@@ -55,89 +55,89 @@ const taskSchema = z.object({
 type TaskFormData = z.infer<typeof taskSchema>;
 
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  [TaskPriority.CRITICAL]: 'Critical',
-  [TaskPriority.HIGH]: 'High',
-  [TaskPriority.MEDIUM]: 'Medium',
-  [TaskPriority.LOW]: 'Low',
-  [TaskPriority.OPTIONAL]: 'Optional',
+  [TaskPriority.CRITICAL]: tx('Critical'),
+  [TaskPriority.HIGH]: tx('High'),
+  [TaskPriority.MEDIUM]: tx('Medium'),
+  [TaskPriority.LOW]: tx('Low'),
+  [TaskPriority.OPTIONAL]: tx('Optional'),
 };
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  [TaskStatus.DRAFT]: 'Draft',
-  [TaskStatus.PENDING]: 'Pending',
-  [TaskStatus.ASSIGNED]: 'Assigned',
-  [TaskStatus.IN_PROGRESS]: 'In Progress',
-  [TaskStatus.WAITING]: 'Waiting',
-  [TaskStatus.REVIEW]: 'Review',
-  [TaskStatus.VERIFIED]: 'Verified',
-  [TaskStatus.COMPLETED]: 'Completed',
-  [TaskStatus.CANCELLED]: 'Cancelled',
-  [TaskStatus.SKIPPED]: 'Skipped',
-  [TaskStatus.OVERDUE]: 'Overdue',
+  [TaskStatus.DRAFT]: tx('Draft'),
+  [TaskStatus.PENDING]: tx('Pending'),
+  [TaskStatus.ASSIGNED]: tx('Assigned'),
+  [TaskStatus.IN_PROGRESS]: tx('In Progress'),
+  [TaskStatus.WAITING]: tx('Waiting'),
+  [TaskStatus.REVIEW]: tx('Review'),
+  [TaskStatus.VERIFIED]: tx('Verified'),
+  [TaskStatus.COMPLETED]: tx('Completed'),
+  [TaskStatus.CANCELLED]: tx('Cancelled'),
+  [TaskStatus.SKIPPED]: tx('Skipped'),
+  [TaskStatus.OVERDUE]: tx('Overdue'),
 };
 
 const TYPE_LABELS: Record<TaskType, string> = {
-  [TaskType.ONE_TIME]: 'One-Time',
-  [TaskType.RECURRING]: 'Recurring',
-  [TaskType.SHIFT]: 'Shift',
-  [TaskType.OPENING]: 'Opening',
-  [TaskType.CLOSING]: 'Closing',
-  [TaskType.CLEANING]: 'Cleaning',
-  [TaskType.MAINTENANCE]: 'Maintenance',
-  [TaskType.INVENTORY]: 'Inventory',
-  [TaskType.AUDIT]: 'Audit',
-  [TaskType.PURCHASE]: 'Purchase',
-  [TaskType.INCIDENT]: 'Incident',
-  [TaskType.COMPLIANCE]: 'Compliance',
-  [TaskType.FOOD_SAFETY]: 'Food Safety',
-  [TaskType.EQUIPMENT_INSPECTION]: 'Equipment Inspection',
-  [TaskType.CUSTOM]: 'Custom',
+  [TaskType.ONE_TIME]: tx('One-Time'),
+  [TaskType.RECURRING]: tx('Recurring'),
+  [TaskType.SHIFT]: tx('Shift'),
+  [TaskType.OPENING]: tx('Opening'),
+  [TaskType.CLOSING]: tx('Closing'),
+  [TaskType.CLEANING]: tx('Cleaning'),
+  [TaskType.MAINTENANCE]: tx('Maintenance'),
+  [TaskType.INVENTORY]: tx('Inventory'),
+  [TaskType.AUDIT]: tx('Audit'),
+  [TaskType.PURCHASE]: tx('Purchase'),
+  [TaskType.INCIDENT]: tx('Incident'),
+  [TaskType.COMPLIANCE]: tx('Compliance'),
+  [TaskType.FOOD_SAFETY]: tx('Food Safety'),
+  [TaskType.EQUIPMENT_INSPECTION]: tx('Equipment Inspection'),
+  [TaskType.CUSTOM]: tx('Custom'),
 };
 
 const CATEGORY_LABELS: Record<TaskCategory, string> = {
-  [TaskCategory.OPENING]: 'Opening',
-  [TaskCategory.CLOSING]: 'Closing',
-  [TaskCategory.CLEANING]: 'Cleaning',
-  [TaskCategory.KITCHEN]: 'Kitchen',
-  [TaskCategory.COFFEE_BAR]: 'Coffee Bar',
-  [TaskCategory.DINING_AREA]: 'Dining Area',
-  [TaskCategory.RETAIL_FLOOR]: 'Retail Floor',
-  [TaskCategory.WAREHOUSE]: 'Warehouse',
-  [TaskCategory.INVENTORY]: 'Inventory',
-  [TaskCategory.PURCHASING]: 'Purchasing',
-  [TaskCategory.ACCOUNTING]: 'Accounting',
-  [TaskCategory.CASH_MANAGEMENT]: 'Cash Management',
-  [TaskCategory.SECURITY]: 'Security',
-  [TaskCategory.MAINTENANCE]: 'Maintenance',
-  [TaskCategory.EQUIPMENT]: 'Equipment',
-  [TaskCategory.MARKETING]: 'Marketing',
-  [TaskCategory.COMPLIANCE]: 'Compliance',
-  [TaskCategory.AUDIT]: 'Audit',
-  [TaskCategory.CUSTOMER_SERVICE]: 'Customer Service',
-  [TaskCategory.CUSTOM]: 'Custom',
+  [TaskCategory.OPENING]: tx('Opening'),
+  [TaskCategory.CLOSING]: tx('Closing'),
+  [TaskCategory.CLEANING]: tx('Cleaning'),
+  [TaskCategory.KITCHEN]: tx('Kitchen'),
+  [TaskCategory.COFFEE_BAR]: tx('Coffee Bar'),
+  [TaskCategory.DINING_AREA]: tx('Dining Area'),
+  [TaskCategory.RETAIL_FLOOR]: tx('Retail Floor'),
+  [TaskCategory.WAREHOUSE]: tx('Warehouse'),
+  [TaskCategory.INVENTORY]: tx('Inventory'),
+  [TaskCategory.PURCHASING]: tx('Purchasing'),
+  [TaskCategory.ACCOUNTING]: tx('Accounting'),
+  [TaskCategory.CASH_MANAGEMENT]: tx('Cash Management'),
+  [TaskCategory.SECURITY]: tx('Security'),
+  [TaskCategory.MAINTENANCE]: tx('Maintenance'),
+  [TaskCategory.EQUIPMENT]: tx('Equipment'),
+  [TaskCategory.MARKETING]: tx('Marketing'),
+  [TaskCategory.COMPLIANCE]: tx('Compliance'),
+  [TaskCategory.AUDIT]: tx('Audit'),
+  [TaskCategory.CUSTOMER_SERVICE]: tx('Customer Service'),
+  [TaskCategory.CUSTOM]: tx('Custom'),
 };
 
 const AREA_LABELS: Record<TaskArea, string> = {
-  [TaskArea.KITCHEN]: 'Kitchen',
-  [TaskArea.COFFEE_STATION]: 'Coffee Station',
-  [TaskArea.BAR]: 'Bar',
-  [TaskArea.DINING_AREA]: 'Dining Area',
-  [TaskArea.RETAIL_FLOOR]: 'Retail Floor',
-  [TaskArea.WAREHOUSE]: 'Warehouse',
-  [TaskArea.OFFICE]: 'Office',
-  [TaskArea.CASHIER]: 'Cashier',
-  [TaskArea.STORAGE]: 'Storage',
-  [TaskArea.DELIVERY]: 'Delivery',
-  [TaskArea.RESTROOM]: 'Restroom',
-  [TaskArea.PARKING]: 'Parking',
-  [TaskArea.OTHER]: 'Other',
+  [TaskArea.KITCHEN]: tx('Kitchen'),
+  [TaskArea.COFFEE_STATION]: tx('Coffee Station'),
+  [TaskArea.BAR]: tx('Bar'),
+  [TaskArea.DINING_AREA]: tx('Dining Area'),
+  [TaskArea.RETAIL_FLOOR]: tx('Retail Floor'),
+  [TaskArea.WAREHOUSE]: tx('Warehouse'),
+  [TaskArea.OFFICE]: tx('Office'),
+  [TaskArea.CASHIER]: tx('Cashier'),
+  [TaskArea.STORAGE]: tx('Storage'),
+  [TaskArea.DELIVERY]: tx('Delivery'),
+  [TaskArea.RESTROOM]: tx('Restroom'),
+  [TaskArea.PARKING]: tx('Parking'),
+  [TaskArea.OTHER]: tx('Other'),
 };
 
 const TABS = [
-  { id: 'general', label: 'General', icon: Package },
-  { id: 'scheduling', label: 'Scheduling', icon: Calendar },
-  { id: 'assignment', label: 'Assignment', icon: User },
-  { id: 'recurrence', label: 'Recurrence', icon: Repeat },
+  { id: 'general', label: tx('General'), icon: Package },
+  { id: 'scheduling', label: tx('Scheduling'), icon: Calendar },
+  { id: 'assignment', label: tx('Assignment'), icon: User },
+  { id: 'recurrence', label: tx('Recurrence'), icon: Repeat },
 ] as const;
 
 export function TaskEditPage() {
@@ -231,7 +231,7 @@ export function TaskEditPage() {
       }
       navigate('/tasks');
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Save failed');
+      notify.error(err?.response?.data?.message ?? tx('Save failed'));
     } finally {
       setSaving(false);
     }
@@ -247,10 +247,10 @@ export function TaskEditPage() {
     );
   }
 
-  const title = isNew ? 'New Task' : existingTask?.title ?? 'Edit Task';
+  const title = isNew ? tx('New Task') : existingTask?.title ?? tx('Edit Task');
   const subtitle = isNew
-    ? 'Fill in the details to create a new task.'
-    : existingTask?.category ? `Category: ${CATEGORY_LABELS[existingTask.category]}` : 'Update task details below.';
+    ? tx('Fill in the details to create a new task.')
+    : existingTask?.category ? `Category: ${CATEGORY_LABELS[existingTask.category]}` : tx('Update task details below.');
 
   const priorityColor: Record<TaskPriority, string> = {
     [TaskPriority.CRITICAL]: 'bg-red-100 text-red-800',
@@ -269,7 +269,7 @@ export function TaskEditPage() {
             {tx('Tasks')}
           </button>
           <ChevronRight className="h-3 w-3" />
-          <span className="font-semibold">{isNew ? 'New Task' : existingTask?.title}</span>
+          <span className="font-semibold">{isNew ? tx('New Task') : existingTask?.title}</span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -285,7 +285,7 @@ export function TaskEditPage() {
                   <>
                     <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono text-muted-foreground font-semibold">{existingTask.id.slice(0, 8)}</code>
                     <Badge variant={existingTask.isRecurring ? 'default' : 'secondary'} className="text-xs">
-                      {existingTask.isRecurring ? 'Recurring' : 'One-Time'}
+                      {existingTask.isRecurring ? tx('Recurring') : tx('One-Time')}
                     </Badge>
                   </>
                 )}
@@ -300,7 +300,7 @@ export function TaskEditPage() {
             </Button>
             <Button size="sm" onClick={onSubmit} disabled={saving}>
               <Save className="h-4 w-4 mr-1.5" />
-              {saving ? 'Saving…' : 'Save Task'}
+              {saving ? tx('Saving…') : tx('Save Task')}
             </Button>
           </div>
         </div>
@@ -500,7 +500,7 @@ export function TaskEditPage() {
                         defaultValue={form.watch('assignedToId') ?? ''}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder={loadingAssignees ? 'Loading users…' : 'Select user'} />
+                          <SelectValue placeholder={loadingAssignees ? tx('Loading users…') : tx('Select user')} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="">{tx('Unassigned')}</SelectItem>
@@ -519,7 +519,7 @@ export function TaskEditPage() {
                       <Label htmlFor="supervisorId" className="text-sm font-medium">{tx('Supervisor')}</Label>
                       <Select onValueChange={handleSelectChange('supervisorId')} defaultValue={form.watch('supervisorId') ?? ''}>
                         <SelectTrigger>
-                          <SelectValue placeholder={loadingAssignees ? 'Loading users…' : 'Select supervisor'} />
+                          <SelectValue placeholder={loadingAssignees ? tx('Loading users…') : tx('Select supervisor')} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="">{tx('None')}</SelectItem>

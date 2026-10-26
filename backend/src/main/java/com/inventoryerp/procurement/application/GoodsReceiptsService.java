@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
@@ -179,10 +180,16 @@ public class GoodsReceiptsService {
                     throw new IllegalStateException("Invalid GoodsReceiptLine data");
                 }
                 Object expiry = ln.get("expiryDate");
+                String poLineId = stringOrNull(ln.get("purchaseOrderLineId"));
+                Map<String, Object> poLine = poLineId == null ? null : SqlRows.one(jdbc.sql("SELECT \"unitOfMeasureId\","
+                        + " \"uomFactor\" FROM \"PurchaseOrderLine\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(poLineId, orgId));
+                LineUnit unit = purchaseOrders.receiptUnit(poLine, stringOrNull(ln.get("productId")),
+                        stringOrNull(ln.get("uomId")));
                 created.add(SqlRows.one(GoodsReceiptLine.class, jdbc.sql("INSERT INTO \"GoodsReceiptLine\" (id,"
                                 + " \"organizationId\", \"goodsReceiptId\", \"purchaseOrderLineId\", \"productId\","
-                                + " description, quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\")"
-                                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                                + " description, quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\","
+                                + " \"uomId\", \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, stringOrNull(ln.get("purchaseOrderLineId")),
                                 stringOrNull(ln.get("productId")), requiredString(ln.get("description")),
                                 requiredDecimal(ln.get("quantity")),
@@ -190,7 +197,7 @@ public class GoodsReceiptsService {
                                 stringOrNull(ln.get("batchNumber")),
                                 ProcurementSql.truthy(expiry) ? SqlRows.ts(EntityPatch.toInstant(String.valueOf(expiry)))
                                         : null,
-                                stringOrNull(ln.get("notes")), ++idx)));
+                                stringOrNull(ln.get("notes")), ++idx, unit.uomId(), unit.factor())));
             }
             row.put("lines", created);
             return row;
@@ -321,7 +328,10 @@ public class GoodsReceiptsService {
                                 Money.dec(ln.get("quantity")))
                         .unitCost(unitCost.doubleValue() > 0 ? unitCost
                                 : ProcurementSql.num(Money.dec(product.get("costPrice")).doubleValue()))
-                        .uom((String) product.get("purchaseUomId")).batch((String) ln.get("batchNumber"))
+                        .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
+                                ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),
+                                ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
+                        .batch((String) ln.get("batchNumber"))
                         .expiry(ln.get("expiryDate") == null ? null : ln.get("expiryDate").toString())
                         .reference("GRN " + grn.get("receiptNumber"));
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", id, date));

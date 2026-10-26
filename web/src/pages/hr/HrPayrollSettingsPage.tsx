@@ -100,8 +100,8 @@ export function HrPayrollSettingsPage() {
                         <p className="text-sm font-medium">{c.code} · {c.name}</p>
                         <p className="text-xs text-muted-foreground">
                           {c.componentType === 'ALLOWANCE' ? '+' : '−'}{' '}
-                          {c.calcMethod === 'FIXED' ? `Rp ${Number(c.amount ?? 0).toLocaleString('id-ID')}` : fmtPct(c.rate)}
-                          {c.isTaxable ? ' · taxable' : ' · non-taxable'} · {c.isRecurring ? 'recurring' : 'one-off'}
+                          {c.calcMethod === 'FIXED' ? tx('Rp {{v1}}', { v1: Number(c.amount ?? 0).toLocaleString('id-ID') }) : fmtPct(c.rate)}
+                          {c.isTaxable ? tx(' · taxable') : tx(' · non-taxable')} · {c.isRecurring ? 'recurring' : 'one-off'}
                           {c.appliesTo ? ` · ${c.appliesTo.replace(/_/g, ' ')}` : ''}
                         </p>
                       </div>
@@ -109,7 +109,7 @@ export function HrPayrollSettingsPage() {
                     <div className="flex items-center gap-2">
                       {!c.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}
                       <button onClick={() => openCompEdit(c)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                      <button onClick={() => { if (confirm(`Delete component ${c.name}?`)) deleteC.mutate(c.id); }}
+                      <button onClick={() => { if (confirm(tx('Delete component {{name}}?', { name: c.name }))) deleteC.mutate(c.id); }}
                         className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                     </div>
                   </div>
@@ -142,7 +142,7 @@ export function HrPayrollSettingsPage() {
                     <div className="flex items-center gap-2">
                       {!t.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}
                       <button onClick={() => openTableEdit(t)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                      <button onClick={() => { if (confirm(`Delete tax table ${t.name}?`)) deleteT.mutate(t.id); }}
+                      <button onClick={() => { if (confirm(tx('Delete tax table {{name}}?', { name: t.name }))) deleteT.mutate(t.id); }}
                         className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                     </div>
                   </div>
@@ -158,8 +158,8 @@ export function HrPayrollSettingsPage() {
           <DialogHeader>
             <DialogTitle>
               {editing
-                ? tab === 'components' ? 'Edit component' : 'Edit tax table'
-                : tab === 'components' ? 'New component' : 'New tax table'}
+                ? tab === 'components' ? tx('Edit component') : tx('Edit tax table')
+                : tab === 'components' ? tx('New component') : tx('New tax table')}
             </DialogTitle>
           </DialogHeader>
           {tab === 'components' ? (
@@ -194,7 +194,7 @@ export function HrPayrollSettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label>{form.calcMethod === 'FIXED' ? 'Amount' : 'Rate (0.05 = 5%)'}</Label>
+                  <Label>{form.calcMethod === 'FIXED' ? tx('Amount') : tx('Rate (0.05 = 5%)')}</Label>
                   <Input type="number" step="0.0001" value={form.amount ?? (form.calcMethod === 'PERCENTAGE' ? '' : form.amount ?? '')}
                     onChange={(e) => setForm({ ...form, [form.calcMethod === 'FIXED' ? 'amount' : 'rate']: e.target.value })} />
                 </div>
@@ -215,7 +215,7 @@ export function HrPayrollSettingsPage() {
                 <label className="flex items-center gap-1"><input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} /> {tx('Active')}</label>
               </div>
               <Button onClick={submitComp} disabled={!form.code || !form.name || createC.isPending || updateC.isPending}>
-                {editing ? 'Save changes' : 'Create component'}
+                {editing ? tx('Save changes') : tx('Create component')}
               </Button>
             </div>
           ) : (
@@ -235,7 +235,7 @@ export function HrPayrollSettingsPage() {
                   <Label>{tx('Tax type')}</Label>
                   <select value={form.taxType} onChange={(e) => setForm({ ...form, taxType: e.target.value })}
                     className="w-full rounded-md border bg-card px-3 py-2 text-sm">
-                    <option value="PAYE">PAYE</option>
+                    <option value="PAYE">{tx('PAYE')}</option>
                     <option value="PENSION">{tx('Pension')}</option>
                     <option value="SOCIAL_SECURITY">{tx('Social security')}</option>
                     <option value="LOCAL">{tx('Local')}</option>
@@ -252,7 +252,7 @@ export function HrPayrollSettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">{tx('Brackets are managed through the API — the payroll engine applies the top-most active table of each type.')}</p>
               <Button onClick={submitTable} disabled={!form.code || !form.name || !form.effectiveFrom || createT.isPending || updateT.isPending}>
-                {editing ? 'Save changes' : 'Create tax table'}
+                {editing ? tx('Save changes') : tx('Create tax table')}
               </Button>
             </div>
           )}

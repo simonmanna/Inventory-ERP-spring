@@ -83,7 +83,11 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
-_None in the ported Nest contract._
+Pending owner approval:
+
+1. **Invoice-item unit snapshot (ADR-S003, V5).** `InvoiceItem` gains `uomId` + `uomFactor` (the product's
+   sales unit at billing); stock issue uses the snapshot. Order lines are unchanged. Quote/prepared-line
+   payloads gain `uomId` / `uomFactor`.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 

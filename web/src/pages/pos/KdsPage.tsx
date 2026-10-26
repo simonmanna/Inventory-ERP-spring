@@ -23,17 +23,17 @@ import { tx } from '@/lib/i18n/tx';
 
 type Layout = 'columns' | 'queue' | 'grid' | 'tv' | 'expo';
 const LAYOUTS: Array<{ id: Layout; label: string; icon: React.ComponentType<any> }> = [
-  { id: 'columns', label: 'Columns', icon: Columns3 },
-  { id: 'grid', label: 'Grid', icon: LayoutGrid },
-  { id: 'queue', label: 'Queue', icon: List },
+  { id: 'columns', label: tx('Columns'), icon: Columns3 },
+  { id: 'grid', label: tx('Grid'), icon: LayoutGrid },
+  { id: 'queue', label: tx('Queue'), icon: List },
   { id: 'tv', label: 'TV', icon: Tv },
-  { id: 'expo', label: 'Expo', icon: PackageCheck },
+  { id: 'expo', label: tx('Expo'), icon: PackageCheck },
 ];
 
 const COLUMNS: Array<{ id: string; title: string; status: KdsTicketFE['status'] }> = [
-  { id: 'new', title: 'New', status: 'new' },
-  { id: 'preparing', title: 'Preparing', status: 'preparing' },
-  { id: 'ready', title: 'Ready', status: 'ready' },
+  { id: 'new', title: tx('New'), status: 'new' },
+  { id: 'preparing', title: tx('Preparing'), status: 'preparing' },
+  { id: 'ready', title: tx('Ready'), status: 'ready' },
 ];
 
 const RECALL_REASONS = ['wrong-item', 'burnt', 'customer-change', 'missing-ingredient'];
@@ -65,8 +65,8 @@ function etaLabel(t: KdsTicketFE): string | null {
 }
 
 const PRIORITY_META: Record<KdsPriorityFE, { label: string; ring: string; badge: string }> = {
-  normal: { label: 'Normal', ring: '', badge: '' },
-  rush: { label: 'Rush', ring: 'ring-2 ring-orange-400', badge: 'bg-orange-500 text-white' },
+  normal: { label: tx('Normal'), ring: '', badge: '' },
+  rush: { label: tx('Rush'), ring: 'ring-2 ring-orange-400', badge: 'bg-orange-500 text-white' },
   vip: { label: 'VIP', ring: 'ring-2 ring-fuchsia-500', badge: 'bg-fuchsia-600 text-white' },
 };
 const nextPriority: Record<KdsPriorityFE, KdsPriorityFE> = { normal: 'rush', rush: 'vip', vip: 'normal' };
@@ -180,7 +180,7 @@ const TicketCard: React.FC<{
           </>
         )}
         {/* Priority cycle + cancel for live tickets. */}
-        <Button onClick={onCyclePriority} disabled={pending} variant="outline" className="px-2" title={`Priority: ${pmeta.label}`}>
+        <Button onClick={onCyclePriority} disabled={pending} variant="outline" className="px-2" title={tx('Priority: {{label}}', { label: pmeta.label })}>
           {ticket.priority === 'vip' ? <Star className="h-3.5 w-3.5 text-fuchsia-600" /> : <Flame className={`h-3.5 w-3.5 ${ticket.priority === 'rush' ? 'text-orange-500' : 'text-slate-400'}`} />}
         </Button>
         {(status === 'new' || status === 'preparing') && (
@@ -350,7 +350,7 @@ const KdsPage: React.FC = () => {
           <Button variant="outline" size="sm" onClick={() => navigate('/pos/terminal')}>
             <ArrowLeft className="h-4 w-4 mr-1" /> {tx('Back')}
           </Button>
-          <h1 className="text-2xl font-extrabold flex items-center gap-2"><ChefHat className="h-6 w-6" /> KDS</h1>
+          <h1 className="text-2xl font-extrabold flex items-center gap-2"><ChefHat className="h-6 w-6" /> {tx('KDS')}</h1>
           <span className="text-sm text-slate-500">{activeCount} {tx('active')}</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -435,7 +435,7 @@ const KdsPage: React.FC = () => {
   );
 };
 
-const EmptyState: React.FC<{ label?: string }> = ({ label = 'No active tickets.' }) => (
+const EmptyState: React.FC<{ label?: string }> = ({ label = tx('No active tickets.') }) => (
   <div className="flex-1 flex items-center justify-center text-slate-400 py-20">
     <div className="text-center">
       <ChefHat className="h-12 w-12 mx-auto mb-3 opacity-50" />

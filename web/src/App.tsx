@@ -18,6 +18,7 @@ import AccompanimentGroupsPage from '@/pages/menu/AccompanimentGroupsPage';
 import { SettingsPage } from '@/pages/settings';
 import { DevCompanySettingsPage } from '@/pages/settings/DevCompanySettingsPage';
 import { CompanySettingsPage } from '@/pages/settings/CompanySettingsPage';
+import { LicensePage } from '@/pages/settings/LicensePage';
 import { ReceiptSettingsPage } from '@/pages/pos/ReceiptSettingsPage';
 import { DevicesPage } from '@/pages/pos/DevicesPage';
 import { DeadLettersPage } from '@/pages/pos/DeadLettersPage';
@@ -322,6 +323,9 @@ export function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/developer" element={<DevCompanySettingsPage />} />
           <Route path="/settings/company" element={<CompanySettingsPage />} />
+          {/* Reachable by anyone who can read settings: when the licence has lapsed this is
+              the one page that leads out of read-only, so it must not be hard to find. */}
+          <Route path="/settings/license" element={<RequirePermission permission={PERMISSIONS.setting.read}><LicensePage /></RequirePermission>} />
           <Route path="/settings/receipt" element={<ReceiptSettingsPage />} />
           <Route path="/settings/backup" element={<BackupPage />} />
           <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />

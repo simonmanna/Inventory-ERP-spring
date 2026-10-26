@@ -135,7 +135,7 @@ export const TableSelectorDialog: React.FC<Props> = ({
                   {meta ? (
                     <span className={`w-2 h-2 rounded-full ${meta.dot}`} />
                   ) : null}
-                  {k === 'all' ? 'All' : meta?.label ?? k}
+                  {k === 'all' ? tx('All') : meta?.label ?? k}
                   <span
                     className={`text-[10px] font-bold rounded-full px-1.5 ${
                       active

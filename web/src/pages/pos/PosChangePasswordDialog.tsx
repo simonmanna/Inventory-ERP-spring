@@ -82,7 +82,7 @@ export function PosChangePasswordDialog({ open, onOpenChange }: Props) {
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>{tx('Cancel')}</Button>
           <Button onClick={handleSubmit} disabled={!canSubmit || changePassword.isPending}>
-            {changePassword.isPending ? 'Saving…' : 'Change Password'}
+            {changePassword.isPending ? tx('Saving…') : tx('Change Password')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,6 @@
 import { useAuthStore } from '@/stores/auth.store';
 import type { PosTableStatus, PosTableZoneConfig } from './types';
+import { tx } from '@/lib/i18n/tx';
 
 /**
  * Status palette. `card` is the full tile background + border; `pill` is the
@@ -11,7 +12,7 @@ export const STATUS_META: Record<
   { label: string; bg: string; border: string; card: string; dot: string; pillDot: string; text: string; pill: string }
 > = {
   available: {
-    label: 'Available',
+    label: tx('Available'),
     bg: 'bg-emerald-100',
     border: 'border-emerald-400',
     card: 'bg-emerald-100 border-emerald-500 border-l-[6px]',
@@ -21,7 +22,7 @@ export const STATUS_META: Record<
     pill: 'bg-emerald-600 text-white border-emerald-700 shadow-sm',
   },
   occupied: {
-    label: 'Occupied',
+    label: tx('Occupied'),
     bg: 'bg-orange-100',
     border: 'border-orange-400',
     card: 'bg-orange-100 border-orange-500 border-l-[6px]',
@@ -31,7 +32,7 @@ export const STATUS_META: Record<
     pill: 'bg-orange-500 text-white border-orange-600 shadow-sm',
   },
   reserved: {
-    label: 'Reserved',
+    label: tx('Reserved'),
     bg: 'bg-blue-50',
     border: 'border-blue-300',
     card: 'bg-blue-50 border-blue-300',
@@ -41,7 +42,7 @@ export const STATUS_META: Record<
     pill: 'bg-blue-100 text-blue-700 border-blue-200',
   },
   out_of_service: {
-    label: 'Out of Service',
+    label: tx('Out of Service'),
     bg: 'bg-slate-100',
     border: 'border-slate-300',
     card: 'bg-slate-100 border-slate-300',
@@ -105,17 +106,17 @@ export function compareZoneKeys(
 }
 
 export const SHAPE_LABEL: Record<string, string> = {
-  square: 'Square',
-  rectangle: 'Rectangle',
-  circle: 'Circle',
+  square: tx('Square'),
+  rectangle: tx('Rectangle'),
+  circle: tx('Circle'),
 };
 
 export const RESERVATION_STATUS_LABEL: Record<string, string> = {
-  pending: 'Pending',
-  seated: 'Seated',
-  completed: 'Completed',
-  cancelled: 'Cancelled',
-  no_show: 'No-show',
+  pending: tx('Pending'),
+  seated: tx('Seated'),
+  completed: tx('Completed'),
+  cancelled: tx('Cancelled'),
+  no_show: tx('No-show'),
 };
 
 export const RESERVATION_STATUS_COLOR: Record<string, string> = {

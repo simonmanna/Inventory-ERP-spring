@@ -58,9 +58,7 @@ export const ForceCloseCard: React.FC<{ session: CashSession; onDone: () => void
         <div className="text-sm text-amber-900">
           <p className="flex items-center gap-2 font-semibold"><ShieldAlert className="h-4 w-4" /> {tx('This register is open under another cashier')}</p>
           <p className="text-amber-800">
-            {tx('Open since')} {session.openedAt ? new Date(session.openedAt).toLocaleString() : '—'}. You can close it with the ordinary
-            count above — the shift records who closed it. Force-close is the blind-count route: you count without seeing the
-            expected figure and become the approver of any variance.
+            {tx('Open since')} {session.openedAt ? new Date(session.openedAt).toLocaleString() : '—'}{tx('. You can close it with the ordinary count above — the shift records who closed it. Force-close is the blind-count route: you count without seeing the expected figure and become the approver of any variance.')}
           </p>
         </div>
         {canForce && (
@@ -75,8 +73,7 @@ export const ForceCloseCard: React.FC<{ session: CashSession; onDone: () => void
           <DialogHeader>
             <DialogTitle>{tx('Force-close shift')}</DialogTitle>
             <DialogDescription>
-              Count the drawer without looking at the expected figure. You approve any variance, so you cannot be the cashier of this shift.
-              Wallet and bank balances must still be entered by the cashier's normal close; if they cannot be, close from the POS with "Could not check".
+              {tx('Count the drawer without looking at the expected figure. You approve any variance, so you cannot be the cashier of this shift. Wallet and bank balances must still be entered by the cashier\'s normal close; if they cannot be, close from the POS with "Could not check".')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -95,7 +92,7 @@ export const ForceCloseCard: React.FC<{ session: CashSession; onDone: () => void
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={forceClose.isPending}>{tx('Cancel')}</Button>
-            <Button onClick={submit} disabled={forceClose.isPending}>{forceClose.isPending ? 'Closing…' : 'Force close'}</Button>
+            <Button onClick={submit} disabled={forceClose.isPending}>{forceClose.isPending ? tx('Closing…') : tx('Force close')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -120,7 +117,7 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
 
   const submit = async () => {
     const amt = Number(amount);
-    if (!(amt > 0) || amt > inDrawer) { toast.error(`Enter an amount up to ${fmt(inDrawer)}`); return; }
+    if (!(amt > 0) || amt > inDrawer) { toast.error(tx('Enter an amount up to {{v1}}', { v1: fmt(inDrawer) })); return; }
     const bank = banks.find((b) => b.id === destinationAccountId);
     if (!bank) { toast.error(tx('Choose the bank account')); return; }
     try {
@@ -130,7 +127,7 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
       await refetch();
       onDone();
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Deposit failed'));
+      toast.error(apiErrorMessage(err, tx('Deposit failed')));
     }
   };
 
@@ -171,7 +168,7 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={bankDeposit.isPending}>{tx('Cancel')}</Button>
-            <Button onClick={submit} disabled={bankDeposit.isPending}>{bankDeposit.isPending ? 'Recording…' : 'Record deposit'}</Button>
+            <Button onClick={submit} disabled={bankDeposit.isPending}>{bankDeposit.isPending ? tx('Recording…') : tx('Record deposit')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

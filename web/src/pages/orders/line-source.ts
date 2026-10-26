@@ -1,4 +1,5 @@
 import type { OrderLineInput, OrderType, OrderLineSource } from '@/features/orders/types';
+import { tx } from '@/lib/i18n/tx';
 
 /** Resolved line-source metadata for the Orders pages. */
 export interface LineSourceDef {
@@ -7,27 +8,27 @@ export interface LineSourceDef {
 }
 
 export const LINE_SOURCE_LABELS: Record<OrderLineSource, string> = {
-  auto: 'Auto (follow POS mode)',
-  menu: 'Menu items',
-  products: 'Products',
-  both: 'Both (menu + products)',
+  auto: tx('Auto (follow POS mode)'),
+  menu: tx('Menu items'),
+  products: tx('Products'),
+  both: tx('Both (menu + products)'),
 };
 
 export const ORDER_TYPE_LABELS: Record<OrderType, string> = {
-  dine_in: 'Dine-in',
-  takeaway: 'Takeaway',
-  delivery: 'Delivery',
+  dine_in: tx('Dine-in'),
+  takeaway: tx('Takeaway'),
+  delivery: tx('Delivery'),
 };
 
 /** Server-resolved source ('menu' | 'products' | 'both'). */
 export function sourceDef(resolved: 'menu' | 'products' | 'both'): LineSourceDef {
   switch (resolved) {
     case 'products':
-      return { kind: 'products', label: 'Products' };
+      return { kind: 'products', label: tx('Products') };
     case 'both':
-      return { kind: 'both', label: 'Menu + Products' };
+      return { kind: 'both', label: tx('Menu + Products') };
     default:
-      return { kind: 'menu', label: 'Menu items' };
+      return { kind: 'menu', label: tx('Menu items') };
   }
 }
 

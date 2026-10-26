@@ -7,6 +7,7 @@
  *   node scripts/i18n-phrases.cjs --write    # add missing keys (value = "")
  *   node scripts/i18n-phrases.cjs --prune    # drop keys no longer in source
  *   node scripts/i18n-phrases.cjs --list ti  # print untranslated phrases
+ *   node scripts/i18n-phrases.cjs --check    # CI gate: fail on any gap (pnpm web:i18n)
  */
 const fs = require('fs');
 const path = require('path');
@@ -62,3 +63,37 @@ for (const lng of LOCALES) {
   }
 }
 if (write || prune) console.log('phrase maps updated');
+
+// --check: CI gate. Fails when a primary locale has an untranslated or stale
+// phrase, a translation introduces a {{var}} the source does not have, or a
+// keyed locale (locales/<lng>.json) is missing a key present in en.json.
+if (process.argv.includes('--check')) {
+  const problems = [];
+  const vars = (s) => s.match(/\{\{\w+\}\}/g) || [];
+  for (const lng of LOCALES) {
+    const map = JSON.parse(fs.readFileSync(path.join(PHRASE_DIR, lng + '.json'), 'utf8'));
+    for (const p of all) {
+      const v = map[p];
+      if (!v || !String(v).trim()) problems.push(`${lng}: untranslated phrase "${p}"`);
+      else {
+        const allowed = new Set(vars(p));
+        for (const x of vars(v)) if (!allowed.has(x)) problems.push(`${lng}: unknown placeholder ${x} in "${p}"`);
+      }
+    }
+    for (const k of Object.keys(map)) if (!phrases.has(k)) problems.push(`${lng}: stale phrase "${k}"`);
+  }
+  const LOCALE_DIR = path.join(SRC, 'lib', 'i18n', 'locales');
+  const flat = (o, pre = '') =>
+    Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' ? flat(v, pre + k + '.') : [pre + k]));
+  const enKeys = flat(JSON.parse(fs.readFileSync(path.join(LOCALE_DIR, 'en.json'), 'utf8')));
+  for (const lng of LOCALES) {
+    const keys = new Set(flat(JSON.parse(fs.readFileSync(path.join(LOCALE_DIR, lng + '.json'), 'utf8'))));
+    for (const k of enKeys) if (!keys.has(k)) problems.push(`${lng}: locales/${lng}.json missing key "${k}"`);
+  }
+  if (problems.length) {
+    problems.slice(0, 50).forEach((p) => console.error('  ' + p));
+    console.error(`i18n check failed: ${problems.length} problem(s). Run with --write, translate, then re-check.`);
+    process.exit(1);
+  }
+  console.log('i18n check passed');
+}

@@ -26,7 +26,7 @@ function relativeTime(iso: string): string {
 function conversationTitle(c: ConversationSummary): string {
   if (c.name) return c.name;
   if (c.contextType) return `${c.contextType} ${c.contextId ?? ''}`.trim();
-  return c.kind === 'direct' ? 'Direct message' : 'Conversation';
+  return c.kind === 'direct' ? tx('Direct message') : 'Conversation';
 }
 
 const KIND_ICON = { channel: Hash, group: Users, direct: UserIcon } as const;
@@ -112,7 +112,7 @@ export default function CommunicationInboxPage() {
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-xs text-muted-foreground">
-                    {c.lastMessage?.body ?? 'No messages'}
+                    {c.lastMessage?.body ?? tx('No messages')}
                   </span>
                   {c.lastMessage && (
                     <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -240,7 +240,7 @@ function NewConversationModal({ onClose, onCreated }: { onClose: () => void; onC
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={kind === 'channel' ? 'Channel name (e.g. Kitchen)' : 'Name (optional)'}
+          placeholder={kind === 'channel' ? tx('Channel name (e.g. Kitchen)') : tx('Name (optional)')}
           className="mb-3 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
         />
 
@@ -262,7 +262,7 @@ function NewConversationModal({ onClose, onCreated }: { onClose: () => void; onC
           disabled={create.isPending || (kind === 'channel' && !name.trim())}
           className="w-full rounded-lg bg-primary py-2 text-sm text-primary-foreground disabled:opacity-40"
         >
-          {create.isPending ? 'Creating…' : 'Create conversation'}
+          {create.isPending ? tx('Creating…') : tx('Create conversation')}
         </button>
       </div>
     </div>

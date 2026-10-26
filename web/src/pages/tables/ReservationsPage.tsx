@@ -148,7 +148,7 @@ export const ReservationsPage: React.FC = () => {
       toast.success(tx('Reservation created'));
       setCreateOpen(false);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Failed to create reservation');
+      toast.error(e?.response?.data?.message ?? tx('Failed to create reservation'));
     }
   }
 
@@ -170,7 +170,7 @@ export const ReservationsPage: React.FC = () => {
       toast.success(tx('Reservation updated'));
       setEditTarget(null);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Failed to update reservation');
+      toast.error(e?.response?.data?.message ?? tx('Failed to update reservation'));
     }
   }
 
@@ -179,7 +179,7 @@ export const ReservationsPage: React.FC = () => {
       await seat.mutateAsync({ id: r.id });
       toast.success(`${r.customerName} seated`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Seat failed');
+      toast.error(e?.response?.data?.message ?? tx('Seat failed'));
     }
   }
 
@@ -190,7 +190,7 @@ export const ReservationsPage: React.FC = () => {
       toast.success(tx('Reservation cancelled'));
       setCancelTarget(null);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Cancel failed');
+      toast.error(e?.response?.data?.message ?? tx('Cancel failed'));
     }
   }
 
@@ -199,7 +199,7 @@ export const ReservationsPage: React.FC = () => {
       await noShow.mutateAsync(r.id);
       toast.success(tx('Marked no-show'));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'No-show failed');
+      toast.error(e?.response?.data?.message ?? tx('No-show failed'));
     }
   }
 
@@ -293,7 +293,7 @@ export const ReservationsPage: React.FC = () => {
                         timeStyle: 'short',
                       })}{' '}
                       – {new Date(r.endAt).toLocaleTimeString([], { timeStyle: 'short' })}{' '}
-                      · {r.partySize} pax
+                      · {r.partySize} {tx('pax')}
                       {r.phone ? ` · ${r.phone}` : ''}
                     </div>
                     {t ? (
@@ -365,7 +365,7 @@ export const ReservationsPage: React.FC = () => {
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>
-              {editTarget ? `Edit reservation` : 'New reservation'}
+              {editTarget ? tx('Edit reservation') : tx('New reservation')}
             </DialogTitle>
             <DialogDescription>
               {tx('Tables automatically flip to RESERVED 60 minutes before the booking and free up on cancel / no-show.')}
@@ -442,7 +442,7 @@ export const ReservationsPage: React.FC = () => {
               onClick={editTarget ? submitEdit : submitCreate}
               disabled={create.isPending || update.isPending}
             >
-              {editTarget ? 'Save changes' : 'Create reservation'}
+              {editTarget ? tx('Save changes') : tx('Create reservation')}
             </Button>
           </DialogFooter>
         </DialogContent>

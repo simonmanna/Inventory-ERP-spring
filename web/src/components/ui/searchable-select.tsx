@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { tx } from '@/lib/i18n/tx';
 
 export interface SearchableSelectOption {
   value: string;
@@ -40,7 +41,7 @@ export function SearchableSelect({
   options,
   placeholder = 'Select…',
   searchPlaceholder = 'Search…',
-  emptyText = 'No matches found',
+  emptyText = tx('No matches found'),
   disabled,
   className,
   contentClassName,

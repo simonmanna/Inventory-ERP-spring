@@ -124,10 +124,10 @@ export const PaymentDialog: React.FC<Props> = ({
       methods: byKind.get(kind) ?? [],
     }));
     if (storeCreditBalance > 0) {
-      base.push({ key: 'store_credit', label: 'Store Credit', icon: KIND_ICON.store_credit, color: TENDER_KIND_COLOR.store_credit, methods: [] });
+      base.push({ key: 'store_credit', label: tx('Store Credit'), icon: KIND_ICON.store_credit, color: TENDER_KIND_COLOR.store_credit, methods: [] });
     }
     if (onCreditSale) {
-      base.push({ key: 'credit_settlement', label: 'Credit', icon: <Wallet className="h-4 w-4" />, color: '#0284c7', methods: [] });
+      base.push({ key: 'credit_settlement', label: tx('Credit'), icon: <Wallet className="h-4 w-4" />, color: '#0284c7', methods: [] });
     }
     return base;
   }, [byKind, storeCreditBalance, onCreditSale]);
@@ -169,12 +169,12 @@ export const PaymentDialog: React.FC<Props> = ({
     if (unconfigured) return `No ${TENDER_KIND_LABEL[activeKind]?.toLowerCase()} account is set up yet.`;
     if (needsMethod && !selectedMethod) {
       return activeKind === 'mobile_money'
-        ? 'Choose which wallet the customer paid into.'
+        ? tx('Choose which wallet the customer paid into.')
         : `Choose which ${TENDER_KIND_LABEL[activeKind]?.toLowerCase()} account this went to.`;
     }
-    if (remaining <= 0) return 'This bill is already fully covered.';
-    if (creditBlocked) return 'This customer has no store credit left.';
-    if (!tenderValid) return 'Enter the amount to charge.';
+    if (remaining <= 0) return tx('This bill is already fully covered.');
+    if (creditBlocked) return tx('This customer has no store credit left.');
+    if (!tenderValid) return tx('Enter the amount to charge.');
     return null;
   })();
 
@@ -182,7 +182,7 @@ export const PaymentDialog: React.FC<Props> = ({
   // enforces all of this too; this only saves the cashier a round-trip.
   const balanceAfter = (creditInfo?.outstanding ?? 0) + total;
   const creditBlockReason = useMemo(() => {
-    if (!creditEnabled) return 'Select a customer to charge this sale to.';
+    if (!creditEnabled) return tx('Select a customer to charge this sale to.');
     if (creditInfo?.creditHold) return 'This customer is on credit hold — new credit sales are blocked.';
     if (creditInfo?.available != null && creditInfo.available + 0.01 < total) {
       return `Over credit limit — only ${fmt(creditInfo.available)} of credit is available.`;
@@ -239,7 +239,7 @@ export const PaymentDialog: React.FC<Props> = ({
         overridePin: overridePin,
       });
     } catch (e: any) {
-      setError(e?.message || e?.response?.data?.message || 'Payment failed');
+      setError(e?.message || e?.response?.data?.message || tx('Payment failed'));
     } finally {
       setBusy(false);
     }
@@ -253,7 +253,7 @@ export const PaymentDialog: React.FC<Props> = ({
       setBusy(true); setError(null);
       await onCreditSale();
     } catch (e: any) {
-      setError(e?.message || e?.response?.data?.message || 'Credit settlement failed');
+      setError(e?.message || e?.response?.data?.message || tx('Credit settlement failed'));
     } finally {
       setBusy(false);
     }
@@ -337,7 +337,7 @@ export const PaymentDialog: React.FC<Props> = ({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">{tx('Credit limit')}</span>
-                      <span className="font-mono">{creditInfo && creditInfo.creditLimit > 0 ? fmt(creditInfo.creditLimit) : 'No limit'}</span>
+                      <span className="font-mono">{creditInfo && creditInfo.creditLimit > 0 ? fmt(creditInfo.creditLimit) : tx('No limit')}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">{tx('Already owing')}</span>
@@ -371,9 +371,7 @@ export const PaymentDialog: React.FC<Props> = ({
                   <AlertTriangle className="h-4 w-4" /> {tx('No')} {TENDER_KIND_LABEL[activeKind]?.toLowerCase()} {tx('account is set up')}
                 </div>
                 <p className="text-xs text-amber-700">
-                  A {TENDER_KIND_LABEL[activeKind]?.toLowerCase()} payment has to land in a named finance
-                  account. Ask finance to add one under Money &amp; Accounts, then connect it in Settings →
-                  Payment methods — the mode will appear here automatically.
+                  A {TENDER_KIND_LABEL[activeKind]?.toLowerCase()} {tx('payment has to land in a named finance account. Ask finance to add one under Money & Accounts, then connect it in Settings → Payment methods — the mode will appear here automatically.')}
                 </p>
                 <Link
                   to="/settings/payment-methods"
@@ -387,7 +385,7 @@ export const PaymentDialog: React.FC<Props> = ({
             {/* Provider step — only when a kind actually has a choice to make. */}
             {needsMethod && kindMethods.length > 1 ? (
               <div>
-                <Label>{activeKind === 'mobile_money' ? 'Mobile money provider' : 'Account'}</Label>
+                <Label>{activeKind === 'mobile_money' ? tx('Mobile money provider') : tx('Account')}</Label>
                 <div className="flex flex-wrap gap-2 mt-1">
                   {kindMethods.map((m) => {
                     const picked = selectedMethod?.id === m.id;
@@ -422,7 +420,7 @@ export const PaymentDialog: React.FC<Props> = ({
               </div>
             ) : null}
             <div>
-              <Label>{activeKind === 'cash' ? 'Cash tendered' : 'Amount to charge'}</Label>
+              <Label>{activeKind === 'cash' ? tx('Cash tendered') : tx('Amount to charge')}</Label>
               <Input
                 type="number"
                 value={tendered}
@@ -451,12 +449,12 @@ export const PaymentDialog: React.FC<Props> = ({
             {activeKind !== 'cash' && activeKind !== 'store_credit' && !unconfigured ? (
               <div>
                 <Label>
-                  {tx('Reference / transaction id')} {selectedMethod?.requiresReference ? '(recommended)' : '(optional)'}
+                  {tx('Reference / transaction id')} {selectedMethod?.requiresReference ? tx('(recommended)') : tx('(optional)')}
                 </Label>
                 <Input
                   value={reference}
                   onChange={(e) => setReference(e.target.value)}
-                  placeholder={selectedMethod?.provider ? `e.g. ${selectedMethod.provider.toUpperCase()}-12345` : 'e.g. MTN-12345'}
+                  placeholder={selectedMethod?.provider ? `e.g. ${selectedMethod.provider.toUpperCase()}-12345` : tx('e.g. MTN-12345')}
                   className="font-mono"
                 />
               </div>
@@ -530,7 +528,7 @@ export const PaymentDialog: React.FC<Props> = ({
               style={{ background: isCredit ? '#0284c7' : '#16a34a' }}
             >
               {busy
-                ? 'Processing…'
+                ? tx('Processing…')
                 : isCredit
                   ? <><Wallet className="h-4 w-4 mr-1" /> {tx('Charge')} {fmt(total)} {tx('to account')}</>
                   : <><Check className="h-4 w-4 mr-1" /> {tx('Settle')} {fmt(total)}</>}

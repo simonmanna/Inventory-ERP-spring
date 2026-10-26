@@ -443,6 +443,8 @@ public class PosInvoiceService {
                 data.put("taxAmount", p.taxAmount());
                 data.put("total", p.total());
                 data.put("lineNumber", p.lineNumber());
+                data.put("uomId", p.uomId());
+                data.put("uomFactor", p.uomFactor());
                 data.put("punchedById", src.get("punchedById") != null ? src.get("punchedById") : order.get("waiterId"));
                 data.put("punchedByName", src.get("punchedByName"));
                 Map<String, Object> item = db.insert(InvoiceItem.class, data);
@@ -1404,10 +1406,14 @@ public class PosInvoiceService {
             throw new IllegalStateException("No active warehouse configured — cannot deduct stock");
         }
         Map<Integer, String> invoiceItemByLine = new LinkedHashMap<>();
+        Map<Integer, Map<String, Object>> unitByLine = new LinkedHashMap<>();
         if (ctx.invoiceId() != null) {
-            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, \"lineNumber\" FROM \"InvoiceItem\" WHERE"
-                    + " \"invoiceId\" = ? AND \"organizationId\" = ?").params(ctx.invoiceId(), orgId))) {
+            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, \"lineNumber\", \"uomId\", \"uomFactor\" FROM"
+                    + " \"InvoiceItem\" WHERE \"invoiceId\" = ? AND \"organizationId\" = ?").params(ctx.invoiceId(), orgId))) {
                 invoiceItemByLine.put(PosSql.intOf(r.get("lineNumber")), (String) r.get("id"));
+                if (r.get("uomFactor") != null) {
+                    unitByLine.put(PosSql.intOf(r.get("lineNumber")), r);
+                }
             }
         }
         String reference = ctx.invoiceNumber();
@@ -1421,9 +1427,16 @@ public class PosInvoiceService {
             }
             String invoiceItemId = invoiceItemByLine.get(PosSql.intOf(it.get("lineNumber")));
             String lineKey = String.valueOf(it.get("id"));
+            // Issue in the unit frozen on the invoice item (ADR-S003), not the product's current sales unit.
+            Map<String, Object> unit = unitByLine.get(PosSql.intOf(it.get("lineNumber")));
+            Map<String, Object> line = unit == null ? it : new LinkedHashMap<>(it);
+            if (unit != null) {
+                line.put("uomId", unit.get("uomId"));
+                line.put("uomFactor", unit.get("uomFactor"));
+            }
             if (!posted.contains(lineKey)) {
                 try {
-                    Savepoints.run(jdbc, () -> issueLine(it, warehouse, ctx, ref, invoiceItemId,
+                    Savepoints.run(jdbc, () -> issueLine(line, warehouse, ctx, ref, invoiceItemId,
                             PosSql.map(snapshots.get((String) it.get("id")))));
                     posted.add(lineKey);
                 } catch (RuntimeException e) {
@@ -1509,7 +1522,9 @@ public class PosInvoiceService {
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))
                     && List.of("stockable", "consumable").contains(String.valueOf(product.get("productType")))) {
                 StockMove mv = StockMove.of((String) it.get("productId"), warehouse, dec(it.get("quantity")));
-                mv.uomId = (String) product.get("salesUomId");
+                // Sell-in-sales-unit, frozen on the invoice item (ADR-S003); pre-V5 items use the live sales unit.
+                mv.uomId = it.get("uomFactor") != null ? (String) it.get("uomId") : (String) product.get("salesUomId");
+                mv.uomFactor = it.get("uomFactor") != null ? dec(it.get("uomFactor")) : null;
                 mv.reference = ref;
                 mv.sourceType = "pos_invoice";
                 mv.sourceId = ctx.invoiceId();

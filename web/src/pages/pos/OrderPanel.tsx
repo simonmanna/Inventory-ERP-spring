@@ -109,9 +109,9 @@ const fmt = (n: number | string, withCurrency = true) =>
   `${withCurrency ? orgCur() + ' ' : ''}${Number(n || 0).toLocaleString()}`;
 
 const ORDER_TYPES: Array<{ key: 'dine-in' | 'takeaway' | 'delivery'; label: string }> = [
-  { key: 'dine-in', label: 'Dine In' },
-  { key: 'takeaway', label: 'Takeaway' },
-  { key: 'delivery', label: 'Delivery' },
+  { key: 'dine-in', label: tx('Dine In') },
+  { key: 'takeaway', label: tx('Takeaway') },
+  { key: 'delivery', label: tx('Delivery') },
 ];
 
 type NumMode = 'qty' | 'disc' | 'price';
@@ -318,7 +318,7 @@ export const OrderPanel: React.FC<Props> = ({
       <div className="pos-order-head">
         <div className="flex items-center gap-2 min-w-0">
           <div className="pos-ord-num shrink-0">
-            {empty ? "No items" : `${itemCount} item${itemCount === 1 ? "" : "s"}`}
+            {empty ? tx('No items') : `${itemCount} item${itemCount === 1 ? "" : "s"}`}
           </div>
         </div>
         {customerName ? (
@@ -351,10 +351,10 @@ export const OrderPanel: React.FC<Props> = ({
             <ShoppingCart className="h-7 w-7" />
           </div>
           <p className="font-semibold text-base text-slate-300">
-            {tableId ? "Empty order" : "No items yet"}
+            {tableId ? tx('Empty order') : tx('No items yet')}
           </p>
           <p className="text-xs text-slate-500">
-            {tableId ? "Pick items — they auto-save to this table" : "Pick a product to start the order"}
+            {tableId ? tx('Pick items — they auto-save to this table') : tx('Pick a product to start the order')}
           </p>
         </div>
       ) : (
@@ -378,11 +378,11 @@ export const OrderPanel: React.FC<Props> = ({
                 <div className="pos-oline-body">
                   <div className="pos-oline-name truncate">
                     {it.name}
-                    {isCombo ? <span className="pos-oline-combo">COMBO</span> : null}
+                    {isCombo ? <span className="pos-oline-combo">{tx('COMBO')}</span> : null}
                   </div>
                   <div className="pos-oline-sub">
                     @ {fmt(it.unitPrice, false)}
-                    {it.discountPercent > 0 ? ` · −${it.discountPercent}%` : it.discountType === 'fixed_amount' && (it.discountAmount ?? 0) > 0 ? ` · −${fmt(it.discountAmount!, false)} fixed` : ""}
+                    {it.discountPercent > 0 ? ` · −${it.discountPercent}%` : it.discountType === 'fixed_amount' && (it.discountAmount ?? 0) > 0 ? tx(' · −{{v1}} fixed', { v1: fmt(it.discountAmount!, false) }) : ""}
                   </div>
                   {it.variantName && <div className="pos-oline-meta truncate">{it.variantName}</div>}
                   {it.accompanimentNames && it.accompanimentNames.length > 0 && (
@@ -416,7 +416,7 @@ export const OrderPanel: React.FC<Props> = ({
           </div>
         ) : null}
         <div className="pos-totals-row big">
-          <span>TOTAL</span>
+          <span>{tx('TOTAL')}</span>
           <span className="pos-amt">{fmt(total)}</span>
         </div>
       </div>
@@ -427,7 +427,7 @@ export const OrderPanel: React.FC<Props> = ({
           <button type="button" className="pos-ctl-btn" onClick={onAddCustomer} title={tx('Customer')}>
             <User className="h-4 w-4" /><span>{tx('Customer')}</span>
           </button>
-          <button type="button" className="pos-ctl-btn" disabled={noSel || !canDiscount} onClick={() => selectedLine && onLineDiscount(selectedLine)} title={canDiscount ? "Line discount on selected item" : "Requires discount permission"}>
+          <button type="button" className="pos-ctl-btn" disabled={noSel || !canDiscount} onClick={() => selectedLine && onLineDiscount(selectedLine)} title={canDiscount ? tx('Line discount on selected item') : tx('Requires discount permission')}>
             <Tag className="h-4 w-4" /><span>{tx('Disc')}</span>
           </button>
           <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
@@ -464,7 +464,7 @@ export const OrderPanel: React.FC<Props> = ({
                     {onVoidOrder && (
                       <MoreCard icon={Ban} label={tx('Void')} tone="danger" title={tx('Void the whole order and free this table')} onClick={() => { setMoreOpen(false); onVoidOrder(); }} />
                     )}
-                    <MoreCard icon={Percent} label={tx('Discount %')} disabled={!canDiscount} title={canDiscount ? "Order discount" : "Requires discount permission"} onClick={() => { setMoreOpen(false); onAddDiscount(); }} />
+                    <MoreCard icon={Percent} label={tx('Discount %')} disabled={!canDiscount} title={canDiscount ? tx('Order discount') : tx('Requires discount permission')} onClick={() => { setMoreOpen(false); onAddDiscount(); }} />
                     {!hideCafeFeatures && onMoveItems && (
                       <MoreCard icon={ArrowLeftRight} label={tx('Move')} title={tx('Move items to another table')} onClick={() => { setMoreOpen(false); onMoveItems(); }} />
                     )}
@@ -500,7 +500,7 @@ export const OrderPanel: React.FC<Props> = ({
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('4')}>4</button>
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('5')}>5</button>
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('6')}>6</button>
-          <button type="button" className={"pos-numkey mode" + (mode === 'disc' ? ' active' : '')} disabled={noSel || !canDiscount} onClick={() => pickMode('disc')} title={canDiscount ? "Edit discount %" : "Requires discount permission"}>
+          <button type="button" className={"pos-numkey mode" + (mode === 'disc' ? ' active' : '')} disabled={noSel || !canDiscount} onClick={() => pickMode('disc')} title={canDiscount ? tx('Edit discount %') : tx('Requires discount permission')}>
             <span className="pos-numkey-lbl">%</span>
             <span className="pos-numkey-val">{modeValue('disc')}</span>
           </button>
@@ -508,7 +508,7 @@ export const OrderPanel: React.FC<Props> = ({
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('7')}>7</button>
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('8')}>8</button>
           <button type="button" className="pos-numkey" disabled={noSel} onClick={() => pressDigit('9')}>9</button>
-          <button type="button" className={"pos-numkey mode" + (mode === 'price' ? ' active' : '')} disabled={noSel || !canOverridePrice} onClick={() => pickMode('price')} title={canOverridePrice ? "Edit unit price" : "Requires price-override permission"}>
+          <button type="button" className={"pos-numkey mode" + (mode === 'price' ? ' active' : '')} disabled={noSel || !canOverridePrice} onClick={() => pickMode('price')} title={canOverridePrice ? tx('Edit unit price') : tx('Requires price-override permission')}>
             <span className="pos-numkey-lbl">{tx('Price')}</span>
             <span className="pos-numkey-val">{modeValue('price')}</span>
           </button>
@@ -526,7 +526,7 @@ export const OrderPanel: React.FC<Props> = ({
         <div className="flex items-center gap-2 px-3 py-2 text-[11px] font-semibold text-rose-700 bg-rose-50 border-t border-rose-200">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">
-            {zeroQtyLines.length === 1 ? '1 line has' : `${zeroQtyLines.length} lines have`} {tx('no quantity. Set a quantity or void')} {zeroQtyLines.length === 1 ? 'it' : 'them'} {tx('to continue.')}
+            {zeroQtyLines.length === 1 ? tx('1 line has') : tx('{{length}} lines have', { length: zeroQtyLines.length })} {tx('no quantity. Set a quantity or void')} {zeroQtyLines.length === 1 ? 'it' : 'them'} {tx('to continue.')}
           </span>
         </div>
       ) : null}
@@ -535,7 +535,7 @@ export const OrderPanel: React.FC<Props> = ({
       <div className="pos-order-actions">
         {!hideCafeFeatures && (
           <button type="button" className="pos-action-btn-pro bg-sky-600" onClick={onPrintKot} disabled={cannotTransact} title={blockedReason}>
-            <Printer className="pos-action-icon" /> KOT
+            <Printer className="pos-action-icon" /> {tx('KOT')}
           </button>
         )}
 
@@ -544,15 +544,15 @@ export const OrderPanel: React.FC<Props> = ({
           className="pos-action-btn-pro bg-purple"
           onClick={billAlreadyPrinted ? onPrintAdditionalBill : onPrintBill}
           disabled={cannotTransact}
-          title={blockedReason ?? (billAlreadyPrinted ? 'Print additional bill for new items' : 'Print bill (F8)')}
+          title={blockedReason ?? (billAlreadyPrinted ? tx('Print additional bill for new items') : tx('Print bill (F8)'))}
         >
-          <Receipt className="pos-action-icon" /> {billAlreadyPrinted ? 'Add Bill' : 'Bill'}{' '}
+          <Receipt className="pos-action-icon" /> {billAlreadyPrinted ? tx('Add Bill') : tx('Bill')}{' '}
           {!billAlreadyPrinted && <span className="pos-kbd">F8</span>}
         </button>
 
 
         {tableId && onSettleTab ? (
-          <button type="button" className="pos-action-btn-pro bg-emerald pos-pay" onClick={onSettleTab} disabled={cannotTransact} title={blockedReason ?? "Settle (pay) this table's order"}>
+          <button type="button" className="pos-action-btn-pro bg-emerald pos-pay" onClick={onSettleTab} disabled={cannotTransact} title={blockedReason ?? tx('Settle (pay) this table\'s order')}>
             <CreditCard className="pos-action-icon" /> {tx('Settle')}
           </button>
         ) : (

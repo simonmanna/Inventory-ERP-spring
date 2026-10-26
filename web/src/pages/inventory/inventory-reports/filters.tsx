@@ -20,18 +20,18 @@ const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export const DATE_PRESETS = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: 'this_week', label: 'This week' },
-  { value: 'last_7', label: 'Last 7 days' },
-  { value: 'this_month', label: 'This month' },
-  { value: 'last_month', label: 'Last month' },
-  { value: 'last_30', label: 'Last 30 days' },
-  { value: 'last_90', label: 'Last 90 days' },
-  { value: 'this_quarter', label: 'This quarter' },
-  { value: 'this_year', label: 'This year' },
-  { value: 'all', label: 'All time' },
-  { value: 'custom', label: 'Custom range' },
+  { value: 'today', label: tx('Today') },
+  { value: 'yesterday', label: tx('Yesterday') },
+  { value: 'this_week', label: tx('This week') },
+  { value: 'last_7', label: tx('Last 7 days') },
+  { value: 'this_month', label: tx('This month') },
+  { value: 'last_month', label: tx('Last month') },
+  { value: 'last_30', label: tx('Last 30 days') },
+  { value: 'last_90', label: tx('Last 90 days') },
+  { value: 'this_quarter', label: tx('This quarter') },
+  { value: 'this_year', label: tx('This year') },
+  { value: 'all', label: tx('All time') },
+  { value: 'custom', label: tx('Custom range') },
 ] as const;
 
 export function presetRange(preset: string): { start: string; end: string } {
@@ -220,7 +220,7 @@ function MoveTypePicker({ value, onChange }: { value: string[]; onChange: (v: st
       <PopoverTrigger asChild>
         <Button variant="outline" className="h-9 w-full justify-between font-normal">
           <span className={cn('truncate', !value.length && 'text-muted-foreground')}>
-            {value.length ? `${value.length} type(s)` : 'All movement types'}
+            {value.length ? `${value.length} type(s)` : tx('All movement types')}
           </span>
           <ChevronDown className="ml-2 h-4 w-4 opacity-50" />
         </Button>
@@ -272,21 +272,21 @@ export function FilterBar({ show, ctl, extra }: { show: FilterKey[]; ctl: Return
   }, [searchDraft]);
 
   const locationOpts = useMemo(
-    () => [{ value: '', label: 'All locations' }, ...(locations.data ?? []).map((l) => ({ value: l.id, code: l.code, label: l.name }))],
+    () => [{ value: '', label: tx('All locations') }, ...(locations.data ?? []).map((l) => ({ value: l.id, code: l.code, label: l.name }))],
     [locations.data],
   );
-  const categoryOpts = useMemo(() => [{ value: '', label: 'All categories' }, ...categoryOptions(categories.data ?? [])], [categories.data]);
+  const categoryOpts = useMemo(() => [{ value: '', label: tx('All categories') }, ...categoryOptions(categories.data ?? [])], [categories.data]);
   const productOpts = useMemo(
-    () => [{ value: '', label: 'All items' }, ...(products.data ?? []).map((p) => ({ value: p.id, code: p.code, label: p.name }))],
+    () => [{ value: '', label: tx('All items') }, ...(products.data ?? []).map((p) => ({ value: p.id, code: p.code, label: p.name }))],
     [products.data],
   );
 
   const chips: { label: string; clear: () => void }[] = [];
-  if (has('location') && f.locationId) chips.push({ label: `Location: ${locationOpts.find((o) => o.value === f.locationId)?.label ?? '…'}`, clear: () => set({ locationId: '' }) });
-  if (has('category') && f.categoryId) chips.push({ label: `Category: ${categoryOpts.find((o) => o.value === f.categoryId)?.label ?? '…'}`, clear: () => set({ categoryId: '' }) });
-  if (has('product') && f.productId) chips.push({ label: `Item: ${productOpts.find((o) => o.value === f.productId)?.label ?? '…'}`, clear: () => set({ productId: '' }) });
-  if (has('search') && f.search) chips.push({ label: `Search: "${f.search}"`, clear: () => set({ search: '' }) });
-  if (has('moveTypes') && f.moveTypes.length) chips.push({ label: `${f.moveTypes.length} movement type(s)`, clear: () => set({ moveTypes: [] }) });
+  if (has('location') && f.locationId) chips.push({ label: tx('Location: {{v1}}', { v1: locationOpts.find((o) => o.value === f.locationId)?.label ?? '…' }), clear: () => set({ locationId: '' }) });
+  if (has('category') && f.categoryId) chips.push({ label: tx('Category: {{v1}}', { v1: categoryOpts.find((o) => o.value === f.categoryId)?.label ?? '…' }), clear: () => set({ categoryId: '' }) });
+  if (has('product') && f.productId) chips.push({ label: tx('Item: {{v1}}', { v1: productOpts.find((o) => o.value === f.productId)?.label ?? '…' }), clear: () => set({ productId: '' }) });
+  if (has('search') && f.search) chips.push({ label: tx('Search: "{{search}}"', { search: f.search }), clear: () => set({ search: '' }) });
+  if (has('moveTypes') && f.moveTypes.length) chips.push({ label: tx('{{length}} movement type(s)', { length: f.moveTypes.length }), clear: () => set({ moveTypes: [] }) });
 
   return (
     <Card className="space-y-3 p-3">
@@ -316,17 +316,17 @@ export function FilterBar({ show, ctl, extra }: { show: FilterKey[]; ctl: Return
         )}
         {has('location') && (
           <Field label={tx('Location')}>
-            <SearchableSelect value={f.locationId} onValueChange={(v) => set({ locationId: v })} options={locationOpts} placeholder={tx('All locations')} searchPlaceholder="Search locations…" />
+            <SearchableSelect value={f.locationId} onValueChange={(v) => set({ locationId: v })} options={locationOpts} placeholder={tx('All locations')} searchPlaceholder={tx('Search locations…')} />
           </Field>
         )}
         {has('category') && (
           <Field label={tx('Category (incl. sub-categories)')}>
-            <SearchableSelect value={f.categoryId} onValueChange={(v) => set({ categoryId: v })} options={categoryOpts} placeholder={tx('All categories')} searchPlaceholder="Search categories…" />
+            <SearchableSelect value={f.categoryId} onValueChange={(v) => set({ categoryId: v })} options={categoryOpts} placeholder={tx('All categories')} searchPlaceholder={tx('Search categories…')} />
           </Field>
         )}
         {has('product') && (
           <Field label={tx('Item')}>
-            <SearchableSelect value={f.productId} onValueChange={(v) => set({ productId: v })} options={productOpts} placeholder={tx('All items')} searchPlaceholder="Search items…" />
+            <SearchableSelect value={f.productId} onValueChange={(v) => set({ productId: v })} options={productOpts} placeholder={tx('All items')} searchPlaceholder={tx('Search items…')} />
           </Field>
         )}
         {has('search') && (
@@ -373,7 +373,7 @@ export function FilterBar({ show, ctl, extra }: { show: FilterKey[]; ctl: Return
           {chips.map((c) => (
             <span key={c.label} className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs">
               <Filter className="h-3 w-3" />{c.label}
-              <button type="button" onClick={c.clear} aria-label={`Clear ${c.label}`} className="hover:text-destructive"><X className="h-3 w-3" /></button>
+              <button type="button" onClick={c.clear} aria-label={tx('Clear {{label}}', { label: c.label })} className="hover:text-destructive"><X className="h-3 w-3" /></button>
             </span>
           ))}
           <Button variant="ghost" size="sm" onClick={() => { setSearchDraft(''); reset(); }}>

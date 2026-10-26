@@ -106,7 +106,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       return res.data;
     },
     onSuccess: (data: any) => {
-      notify.success(`Stock in ${data.code} completed`);
+      notify.success(tx('Stock in {{code}} completed', { code: data.code }));
       setInOpen(false);
       setInLocId('');
       setInNotes('');
@@ -116,7 +116,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setInLines([{ productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Stock in failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock in failed')),
   });
 
   // — Direct Stock Out state
@@ -151,7 +151,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       return res.data;
     },
     onSuccess: (data: any) => {
-      notify.success(`Stock out ${data.code} completed`);
+      notify.success(tx('Stock out {{code}} completed', { code: data.code }));
       setOutOpen(false);
       setOutLocId('');
       setOutNotes('');
@@ -161,7 +161,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setOutLines([{ productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Stock out failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock out failed')),
   });
 
   const pickInProduct = (idx: number, productId: string) => {
@@ -241,7 +241,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 onValueChange={setInResponsibleId}
                 options={staffOptions}
                 placeholder={tx('Select staff…')}
-                searchPlaceholder="Search staff…"
+                searchPlaceholder={tx('Search staff…')}
                 emptyText={tx('No staff match')}
               />
             </div>
@@ -254,7 +254,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 onValueChange={setInApprovedId}
                 options={staffOptions}
                 placeholder={tx('Select staff…')}
-                searchPlaceholder="Search staff…"
+                searchPlaceholder={tx('Search staff…')}
                 emptyText={tx('No staff match')}
               />
               {inApprovedId && inApprovedId !== myId && (
@@ -300,7 +300,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         onValueChange={(v) => pickInProduct(idx, v)}
                         options={productOptions}
                         placeholder={tx('Select product…')}
-                        searchPlaceholder="Search products…"
+                        searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
                       />
                     </td>
@@ -356,7 +356,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setInOpen(false)}>{tx('Cancel')}</Button>
             <Button className="bg-[#3c8dbc] hover:bg-[#367fa9]" disabled={!inLocId || !inResponsibleId || (inApprovalNeeded && !inApprovedId) || (inApprovalNeeded && inApprovedId !== myId && !inApproverPin) || inFilledCount === 0 || directIn.isPending} onClick={() => directIn.mutate()}>
-              {directIn.isPending ? 'Processing…' : 'Complete Stock In'}
+              {directIn.isPending ? tx('Processing…') : tx('Complete Stock In')}
             </Button>
           </div>
         </div>
@@ -401,7 +401,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 onValueChange={setOutResponsibleId}
                 options={staffOptions}
                 placeholder={tx('Select staff…')}
-                searchPlaceholder="Search staff…"
+                searchPlaceholder={tx('Search staff…')}
                 emptyText={tx('No staff match')}
               />
             </div>
@@ -414,7 +414,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 onValueChange={setOutApprovedId}
                 options={staffOptions}
                 placeholder={tx('Select staff…')}
-                searchPlaceholder="Search staff…"
+                searchPlaceholder={tx('Search staff…')}
                 emptyText={tx('No staff match')}
               />
               {outApprovedId && outApprovedId !== myId && (
@@ -456,7 +456,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         onValueChange={(v) => pickOutProduct(idx, v)}
                         options={productOptions}
                         placeholder={tx('Select product…')}
-                        searchPlaceholder="Search products…"
+                        searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
                       />
                     </td>
@@ -479,7 +479,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                     </td>
                     <td className="px-2 py-2">
                       <Input
-                        placeholder={line.distStrategy === 'MANUAL' ? 'Required' : 'Auto-picked'}
+                        placeholder={line.distStrategy === 'MANUAL' ? tx('Required') : tx('Auto-picked')}
                         disabled={line.distStrategy !== 'MANUAL'}
                         value={line.batchNumber}
                         onChange={(e) => {
@@ -517,7 +517,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setOutOpen(false)}>{tx('Cancel')}</Button>
             <Button className="bg-rose-600 hover:bg-rose-700" disabled={!outLocId || !outResponsibleId || (outApprovalNeeded && !outApprovedId) || (outApprovalNeeded && outApprovedId !== myId && !outApproverPin) || outFilledCount === 0 || outMissingBatch > 0 || directOut.isPending} onClick={() => directOut.mutate()}>
-              {directOut.isPending ? 'Processing…' : 'Complete Stock Out'}
+              {directOut.isPending ? tx('Processing…') : tx('Complete Stock Out')}
             </Button>
           </div>
         </div>

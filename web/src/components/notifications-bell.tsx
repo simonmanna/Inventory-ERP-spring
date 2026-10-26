@@ -66,7 +66,7 @@ export function NotificationsBell() {
         variant="ghost"
         size="icon"
         onClick={() => setOpen((o) => !o)}
-        aria-label={`Notifications (${unread} unread)`}
+        aria-label={tx('Notifications ({{unread}} unread)', { unread })}
         className="relative"
       >
         <Bell className="h-4 w-4" />

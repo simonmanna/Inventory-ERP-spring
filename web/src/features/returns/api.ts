@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { api } from '@/lib/api';
 import { idempotentPost } from '@/lib/idempotent-request';
+import { tx } from '@/lib/i18n/tx';
 
 /** Café/restaurant = sale has menu-item lines; retail = product lines only. */
 export type ReturnChannel = 'retail' | 'restaurant';
@@ -143,11 +144,11 @@ export interface CreateReturnResult {
   amountReturned: Money;
 }
 
-export const CHANNEL_LABEL: Record<ReturnChannel, string> = { retail: 'Retail', restaurant: 'Café / Restaurant' };
+export const CHANNEL_LABEL: Record<ReturnChannel, string> = { retail: tx('Retail'), restaurant: tx('Café / Restaurant') };
 export const DISPOSITION_LABEL: Record<StockDisposition, string> = {
-  restock: 'Restocked',
-  waste: 'Wasted / consumed',
-  no_return: 'Not returned',
+  restock: tx('Restocked'),
+  waste: tx('Wasted / consumed'),
+  no_return: tx('Not returned'),
 };
 
 export function useReturns(params: ReturnsListParams) {

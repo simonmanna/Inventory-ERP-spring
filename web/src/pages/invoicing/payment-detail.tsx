@@ -57,7 +57,7 @@ export function PaymentDetailPage() {
       setVoidOpen(false);
       setVoidReason('');
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Void failed'));
+      toast.error(apiErrorMessage(err, tx('Void failed')));
     }
   };
 
@@ -66,9 +66,9 @@ export function PaymentDetailPage() {
   }
 
   const isOutbound = payment.direction === 'outbound';
-  const title = isOutbound ? 'Payment Voucher' : 'Payment Receipt';
-  const partyLabel = isOutbound ? 'Paid to' : 'Received from';
-  const amountLabel = isOutbound ? 'Amount paid' : 'Amount received';
+  const title = isOutbound ? tx('Payment Voucher') : tx('Payment Receipt');
+  const partyLabel = isOutbound ? tx('Paid to') : tx('Received from');
+  const amountLabel = isOutbound ? tx('Amount paid') : tx('Amount received');
   const backTo = isOutbound ? '/supplier-payments' : '/payments';
 
   return (
@@ -138,7 +138,7 @@ export function PaymentDetailPage() {
 
           {Number(payment.unallocatedAmount) > 0 && (
             <p className="text-sm text-muted-foreground">
-              {tx('Unapplied')} {isOutbound ? 'on account' : 'credit'}: {money(payment.unallocatedAmount)}
+              {tx('Unapplied')} {isOutbound ? tx('on account') : 'credit'}: {money(payment.unallocatedAmount)}
             </p>
           )}
         </CardContent>
@@ -156,8 +156,8 @@ export function PaymentDetailPage() {
             {payment.paymentMethod === 'cash' && (
               <p className="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
                 {myOpenShift
-                  ? `If the original shift is already closed, the cash correction is posted in your open shift${myOpenShift.cashRegister?.name ? ` on ${myOpenShift.cashRegister.name}` : ''}.`
-                  : 'If the original shift is already closed, open a shift on the same register first; the correction is posted there.'}
+                  ? tx('If the original shift is already closed, the cash correction is posted in your open shift{{v1}}.', { v1: myOpenShift.cashRegister?.name ? ` on ${myOpenShift.cashRegister.name}` : '' })
+                  : tx('If the original shift is already closed, open a shift on the same register first; the correction is posted there.')}
               </p>
             )}
             <div className="space-y-1">

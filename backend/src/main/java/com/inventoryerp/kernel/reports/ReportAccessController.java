@@ -1,6 +1,8 @@
 package com.inventoryerp.kernel.reports;
 
 import com.inventoryerp.kernel.security.AuthUser;
+import com.inventoryerp.kernel.licensing.LicenseFeatures;
+import com.inventoryerp.kernel.licensing.RequiresFeature;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import java.util.List;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** {@code /reports/access/*} (port of {@code report-access.controller.ts}). */
 @RestController
+// Report access control belongs to the advanced reporting add-on.
+@RequiresFeature(LicenseFeatures.ADVANCED_REPORTS)
 @RequestMapping("/reports/access")
 public class ReportAccessController {
 

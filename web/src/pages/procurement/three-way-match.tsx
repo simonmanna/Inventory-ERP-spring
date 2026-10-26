@@ -101,7 +101,7 @@ export function ThreeWayMatchPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left">
-                  <th className="px-3 py-2">PO</th>
+                  <th className="px-3 py-2">{tx('PO')}</th>
                   <th className="px-3 py-2 text-right">{tx('Ordered')}</th>
                   <th className="px-3 py-2 text-right">{tx('Received')}</th>
                   <th className="px-3 py-2 text-right">{tx('Billed')}</th>

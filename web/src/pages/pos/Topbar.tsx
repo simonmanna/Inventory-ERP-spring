@@ -122,7 +122,7 @@ export const Topbar: React.FC<Props> = ({
         type="button"
         className="pos-icon-btn"
         onClick={() => useSidebarStore.getState().toggle()}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        title={collapsed ? tx('Expand sidebar') : tx('Collapse sidebar')}
       >
         {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
       </button>
@@ -168,7 +168,7 @@ export const Topbar: React.FC<Props> = ({
           title={t('pos.tables')}
         >
           <LayoutGrid className="h-4 w-4" />
-          <span>{'Tables'}</span>
+          <span>{tx('Tables')}</span>
         </button>
         <span className="whitespace-nowrap font-semibold">{activeTableLabel}</span>
                   </>
@@ -194,7 +194,7 @@ export const Topbar: React.FC<Props> = ({
         type="button"
         className={`pos-nav-btn mr-2 ${shiftOpen ? 'pos-nav-btn--open' : 'pos-nav-btn--closed'}`}
         onClick={shiftOpen ? onCloseShift : onOpenShift}
-        title={shiftOpen ? 'Close current shift' : 'Open shift to start selling'}
+        title={shiftOpen ? tx('Close current shift') : tx('Open shift to start selling')}
       >
         {shiftOpen ? <PowerCircle className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
         {shiftOpen ? (
@@ -264,7 +264,7 @@ export const Topbar: React.FC<Props> = ({
           <div className="pos-staff-pill">
             <UserIcon className="h-3.5 w-3.5" />
             <span className="pos-staff-avatar">{initials(staffName)}</span>
-            <span>{staffName || 'Guest'}</span>
+            <span>{staffName || tx('Guest')}</span>
             {staffRole ? <span className="opacity-70">· {staffRole}</span> : null}
           </div>
           <UserSwitcher onUserChanged={onUserChanged} />
@@ -275,7 +275,7 @@ export const Topbar: React.FC<Props> = ({
         type="button"
         className="pos-icon-btn ml-2"
         onClick={onToggleFullscreen}
-        title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        title={fullscreen ? tx('Exit fullscreen') : tx('Fullscreen')}
       >
         {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
       </button>

@@ -64,11 +64,11 @@ export const CustomerProfileDialog: React.FC<Props> = ({ open, partnerId, partne
   const redeem = useMutation({
     mutationFn: async (body: { points: number }) => (await api.post('/pos/loyalty/redeem', { partnerId, ...body })).data,
     onSuccess: (r: any) => {
-      toast.success(`Redeemed ${r.redeemed} points → ${fmt(r.ugxValue)} off`);
+      toast.success(tx('Redeemed {{redeemed}} points → {{v2}} off', { redeemed: r.redeemed, v2: fmt(r.ugxValue) }));
       qc.invalidateQueries({ queryKey: ['pos-loyalty-balance', partnerId] });
       setRedeemPoints('');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Redemption failed'),
+    onError: (e: any) => toast.error(e?.response?.data?.message || tx('Redemption failed')),
   });
   const issueCredit = useMutation({
     // A-001: issuance is a manager-only, funded, capped operation. The cashier
@@ -77,12 +77,12 @@ export const CustomerProfileDialog: React.FC<Props> = ({ open, partnerId, partne
     mutationFn: async (body: { amount: number; source: string; fundingAccountId: string; notes?: string }) =>
       (await api.post('/pos/loyalty/credit/issue', { partnerId, ...body })).data,
     onSuccess: (r: any) => {
-      toast.success(`Issued ${fmt(body_credit_amount)} credit. New balance: ${fmt(r.balance)}`);
+      toast.success(tx('Issued {{v1}} credit. New balance: {{v2}}', { v1: fmt(body_credit_amount), v2: fmt(r.balance) }));
       qc.invalidateQueries({ queryKey: ['pos-credit', partnerId] });
       setCreditAmount('');
       setCreditFunding('');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Issuance failed'),
+    onError: (e: any) => toast.error(e?.response?.data?.message || tx('Issuance failed')),
   });
   const canIssueCredit = usePosAuthStore((s) => s.user?.permissions?.includes('pos:override') ?? false);
   const [creditFunding, setCreditFunding] = useState('');
@@ -93,11 +93,11 @@ export const CustomerProfileDialog: React.FC<Props> = ({ open, partnerId, partne
   const settleTab = useMutation({
     mutationFn: async (body: { amount: number }) => (await api.post('/pos/loyalty/tab/settle', { partnerId, ...body })).data,
     onSuccess: (r: any, vars: any) => {
-      toast.success(`Tab payment of ${fmt(vars.amount)} received. New balance: ${fmt(r.balance)}`);
+      toast.success(tx('Tab payment of {{v1}} received. New balance: {{v2}}', { v1: fmt(vars.amount), v2: fmt(r.balance) }));
       qc.invalidateQueries({ queryKey: ['pos-tab', partnerId] });
       setTabPayAmount('');
     },
-    onError: (e: any) => toast.error(e?.response?.data?.message || 'Payment failed'),
+    onError: (e: any) => toast.error(e?.response?.data?.message || tx('Payment failed')),
   });
 
   if (!partnerId) return null;
@@ -109,7 +109,7 @@ export const CustomerProfileDialog: React.FC<Props> = ({ open, partnerId, partne
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Star className="h-4 w-4 text-amber-500" />
-            {partnerName ?? 'Customer'}
+            {partnerName ?? tx('Customer')}
           </DialogTitle>
           <DialogDescription>{tx('Loyalty, store credit, and open tab.')}</DialogDescription>
         </DialogHeader>
@@ -146,7 +146,7 @@ export const CustomerProfileDialog: React.FC<Props> = ({ open, partnerId, partne
           <div className="space-y-3">
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 flex items-center justify-between">
               <span className="font-bold text-amber-900">{tx('Current balance')}</span>
-              <span className="text-2xl font-extrabold text-amber-900">{balance?.points ?? 0} pts</span>
+              <span className="text-2xl font-extrabold text-amber-900">{balance?.points ?? 0} {tx('pts')}</span>
             </div>
             {!balance?.programId ? (
               <Button onClick={() => ensureProgram.mutate()} className="w-full" disabled={ensureProgram.isPending}>

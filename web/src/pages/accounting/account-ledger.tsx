@@ -24,7 +24,7 @@ export function AccountLedgerPage() {
   const { data, isLoading } = useAccountLedger(id, { from: from || undefined, to: to || undefined });
 
   const account = id && accountsData?.data?.find((a) => a.id === id);
-  const title = account ? `${account.code} — ${account.name}` : 'Account Ledger';
+  const title = account ? `${account.code} — ${account.name}` : tx('Account Ledger');
   const isActiveFilter = from || to;
 
   const rows = data?.lines ?? [];

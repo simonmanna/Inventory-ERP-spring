@@ -17,12 +17,12 @@ import { DealFormDialog } from './deal-form';
 import { tx } from '@/lib/i18n/tx';
 
 const ACTIVITY_LABEL: Record<ActivityType, string> = {
-  call: 'Call',
-  email: 'Email',
-  meeting: 'Meeting',
-  note: 'Note',
-  task: 'Task',
-  deal_stage_change: 'Stage change',
+  call: tx('Call'),
+  email: tx('Email'),
+  meeting: tx('Meeting'),
+  note: tx('Note'),
+  task: tx('Task'),
+  deal_stage_change: tx('Stage change'),
 };
 
 /** CRM 360 tab shown on customer / partner detail pages: this partner's deals,
@@ -142,7 +142,7 @@ export function CrmPartnerTab({ partnerId }: { partnerId: string }) {
                     <p className="text-sm font-medium text-foreground">{a.title}</p>
                     <p className="text-[11px] text-muted-foreground">
                       {ACTIVITY_LABEL[a.type]} · {dateTime(a.occurredAt)}
-                      {a.dueAt ? ` · due ${date(a.dueAt)}` : ''}
+                      {a.dueAt ? tx(' · due {{v1}}', { v1: date(a.dueAt) }) : ''}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

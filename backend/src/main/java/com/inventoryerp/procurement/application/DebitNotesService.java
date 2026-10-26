@@ -1,5 +1,8 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
+import com.inventoryerp.core.application.UomConversionService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.num;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
@@ -54,9 +57,16 @@ public class DebitNotesService {
 
     /** {@code DebitNoteLineDto}. */
     public record LineInput(String productId, String description, BigDecimal quantity, BigDecimal unitPrice,
-            String taxId, String notes) {}
+            String taxId, String notes, String uomId) {
+
+        public LineInput(String productId, String description, BigDecimal quantity, BigDecimal unitPrice,
+                String taxId, String notes) {
+            this(productId, description, quantity, unitPrice, taxId, notes, null);
+        }
+    }
 
     private final JdbcClient jdbc;
+    private final UomConversionService units;
     private final SequenceService sequence;
     private final EventBus events;
     private final AuditService audit;
@@ -68,8 +78,9 @@ public class DebitNotesService {
 
     public DebitNotesService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, PostingService posting, AccountDeterminationService determination,
-            StockService stock, PlatformTransactionManager txm) {
+            StockService stock, PlatformTransactionManager txm, UomConversionService units) {
         this.jdbc = jdbc;
+        this.units = units;
         this.sequence = sequence;
         this.events = events;
         this.audit = audit;
@@ -99,6 +110,11 @@ public class DebitNotesService {
             subtotal += ln.quantity().doubleValue() * ln.unitPrice().doubleValue();
         }
         double sub = subtotal;
+        // Returned quantities are in the line unit (default: the product's purchase unit), frozen with its factor.
+        List<LineUnit> lineUnits = new ArrayList<>();
+        for (LineInput ln : input.lines()) {
+            lineUnits.add(units.resolveLineUnit(ln.productId(), ln.uomId(), UnitRole.PURCHASE));
+        }
         Map<String, Object> note = tx.execute(st -> {
             String id = UUID.randomUUID().toString();
             Instant issueDate = ProcurementSql.date(input.issueDate());
@@ -128,11 +144,14 @@ public class DebitNotesService {
             int idx = 0;
             for (LineInput ln : input.lines()) {
                 BigDecimal lineSub = num(ln.quantity().doubleValue() * ln.unitPrice().doubleValue());
+                LineUnit unit = lineUnits.get(idx);
                 lines.add(SqlRows.one(DebitNoteLine.class, jdbc.sql("INSERT INTO \"DebitNoteLine\" (id, \"organizationId\","
                                 + " \"debitNoteId\", \"productId\", description, quantity, \"unitPrice\", \"taxId\", subtotal,"
-                                + " total, \"lineNumber\", notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                                + " total, \"lineNumber\", notes, \"uomId\", \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                                + " ?, ?, ?, ?, ?) RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, ln.productId(), ln.description(), ln.quantity(),
-                                ln.unitPrice(), ln.taxId(), lineSub, lineSub, ++idx, ln.notes())));
+                                ln.unitPrice(), ln.taxId(), lineSub, lineSub, ++idx, ln.notes(), unit.uomId(),
+                                unit.factor())));
             }
             created.put("lines", lines);
             return created;
@@ -283,6 +302,8 @@ public class DebitNotesService {
                 totalAp = totalAp.add(price);
                 if (isStock && qty.doubleValue() > 0 && location != null) {
                     StockMove move = StockMove.of((String) ln.get("productId"), (String) location.get("id"), qty)
+                            .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
+                                    : Money.dec(ln.get("uomFactor")))
                             .moveType("return_to_supplier").skipGl().source("debit_note", id)
                             .reference((String) note.get("noteNumber"));
                     Issued issueRes = stock.issue(move);

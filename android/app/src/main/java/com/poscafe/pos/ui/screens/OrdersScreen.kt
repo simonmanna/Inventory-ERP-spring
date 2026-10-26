@@ -305,7 +305,7 @@ private fun SaleCard(
                 )
                 if (!standalone) SyncBadge(sale.syncStatus)
             }
-            sale.lastError?.takeIf { sale.syncStatus == "failed" }?.let {
+            sale.lastError?.takeIf { sale.syncStatus == "failed" || sale.syncStatus == "discarded" }?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
@@ -318,6 +318,7 @@ private fun SyncBadge(status: String) {
     when (status) {
         "pushed", "synced", "applied" -> StatusPill("Synced", accents.success, accents.successContainer)
         "failed" -> StatusPill("Rejected", MaterialTheme.colorScheme.onErrorContainer, MaterialTheme.colorScheme.errorContainer)
+        "discarded" -> StatusPill("Discarded", MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
         else -> StatusPill("Pending sync", accents.warning, accents.warningContainer)
     }
 }

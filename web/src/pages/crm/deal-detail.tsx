@@ -52,7 +52,7 @@ function StageStepper({ current, onChange }: { current: string; onChange: (s: an
             <button
               type="button"
               onClick={() => onChange(s)}
-              title={`Move to ${STAGE_META[s].label}`}
+              title={tx('Move to {{label}}', { label: STAGE_META[s].label })}
               className={cn(
                 'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition-colors',
                 isCurrent
@@ -121,7 +121,7 @@ function ActivityComposer({ dealId, partnerId }: { dealId: string; partnerId: st
             );
           })}
         </div>
-        <Input placeholder={type === 'task' ? 'Task title (e.g. Send proposal)' : `Short ${type} summary…`} value={title} onChange={(e) => setTitle(e.target.value)} />
+        <Input placeholder={type === 'task' ? tx('Task title (e.g. Send proposal)') : tx('Short {{type}} summary…', { type })} value={title} onChange={(e) => setTitle(e.target.value)} />
         <Textarea rows={2} placeholder={tx('Details (optional)')} value={body} onChange={(e) => setBody(e.target.value)} />
         {type === 'task' && (
           <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ export function DealDetailPage() {
     <div className="space-y-6 px-2 md:px-4 py-3 mx-auto">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <button onClick={() => navigate('/crm')} className="hover:text-foreground transition-colors">CRM</button>
+        <button onClick={() => navigate('/crm')} className="hover:text-foreground transition-colors">{tx('CRM')}</button>
         <ChevronRight className="h-3.5 w-3.5" />
         <button onClick={() => navigate('/crm/deals')} className="hover:text-foreground transition-colors">{tx('Deals')}</button>
         <ChevronRight className="h-3.5 w-3.5" />
@@ -200,7 +200,7 @@ export function DealDetailPage() {
                   className="text-xs bg-white/20 px-2 py-0.5 rounded hover:bg-white/30 transition-colors"
                   onClick={() => navigate(`/customers/${deal.partnerId}`)}
                 >
-                  {deal.partner?.name ?? 'Partner'}
+                  {deal.partner?.name ?? tx('Partner')}
                 </button>
                 <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${STAGE_META[deal.stage].chip}`}>
                   {deal.stage}
@@ -285,7 +285,7 @@ export function DealDetailPage() {
                         size="sm"
                         className="text-destructive hover:text-destructive"
                         onClick={() => {
-                          if (window.confirm(`Archive deal “${deal.name}”? It can be restored from the archived view.`)) {
+                          if (window.confirm(tx('Archive deal “{{name}}”? It can be restored from the archived view.', { name: deal.name }))) {
                             deleteDeal.mutate(deal.id);
                             navigate('/crm/deals');
                           }

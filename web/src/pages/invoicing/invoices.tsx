@@ -42,18 +42,18 @@ const paymentStatusTone: Record<string, Tone> = {
 };
 
 const paymentLabel: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  mobile_money: 'Mobile Money',
-  mixed: 'Mixed',
-  credit: 'Credit',
+  cash: tx('Cash'),
+  card: tx('Card'),
+  mobile_money: tx('Mobile Money'),
+  mixed: tx('Mixed'),
+  credit: tx('Credit'),
 };
 
 const settlementLabel: Record<string, string> = {
-  unsettled: 'Unsettled',
-  partially_settled: 'Partially Paid',
-  settled: 'Settled',
-  written_off: 'Written Off',
+  unsettled: tx('Unsettled'),
+  partially_settled: tx('Partially Paid'),
+  settled: tx('Settled'),
+  written_off: tx('Written Off'),
 };
 
 const settlementTone: Record<string, Tone> = {
@@ -91,7 +91,7 @@ export function InvoicesPage() {
     ...(list.search ? [{ key: 'q', label: `“${list.search}”`, onRemove: () => list.setSearchInput('') }] : []),
     ...(status ? [{ key: 'status', label: statusOptions[status] ?? status, onRemove: () => list.setFilter('status', '') }] : []),
     ...(paymentStatus ? [{ key: 'payment', label: paymentStatusOptions[paymentStatus] ?? paymentStatus, onRemove: () => list.setFilter('paymentStatus', '') }] : []),
-    ...(settlementStatus ? [{ key: 'settlement', label: `Settlement: ${settlementLabel[settlementStatus] ?? settlementStatus}`, onRemove: () => list.setFilter('settlementStatus', '') }] : []),
+    ...(settlementStatus ? [{ key: 'settlement', label: tx('Settlement: {{v1}}', { v1: settlementLabel[settlementStatus] ?? settlementStatus }), onRemove: () => list.setFilter('settlementStatus', '') }] : []),
     ...(dateFrom || dateTo ? [{ key: 'date', label: dateRangeLabel(dateFrom, dateTo), onRemove: () => list.setFilters({ dateFrom: '', dateTo: '' }) }] : []),
   ];
 
@@ -100,20 +100,20 @@ export function InvoicesPage() {
   const columns: Column<Invoice>[] = [
     {
       key: 'documentNumber',
-      header: 'Invoice #',
+      header: tx('Invoice #'),
       render: (inv) => (
         <Link to={`/invoices/${inv.id}`} className="font-medium text-primary hover:underline">
           {inv.documentNumber}
         </Link>
       ),
     },
-    { key: 'partner', header: 'Customer', render: (inv) => inv.partner?.name ?? <span className="text-muted-foreground">—</span> },
-    { key: 'paymentTerm', header: 'Terms', render: (inv) => <span className="text-sm text-muted-foreground">{inv.paymentTermName ?? '—'}</span> },
-    { key: 'issueDate', header: 'Date', render: (inv) => <span className="whitespace-nowrap text-muted-foreground">{date(inv.issueDate)}</span> },
-    { key: 'totalAmount', header: 'Total', className: 'text-right', render: (inv) => <span className="font-semibold tabular-nums">{money(inv.totalAmount)}</span> },
+    { key: 'partner', header: tx('Customer'), render: (inv) => inv.partner?.name ?? <span className="text-muted-foreground">—</span> },
+    { key: 'paymentTerm', header: tx('Terms'), render: (inv) => <span className="text-sm text-muted-foreground">{inv.paymentTermName ?? '—'}</span> },
+    { key: 'issueDate', header: tx('Date'), render: (inv) => <span className="whitespace-nowrap text-muted-foreground">{date(inv.issueDate)}</span> },
+    { key: 'totalAmount', header: tx('Total'), className: 'text-right', render: (inv) => <span className="font-semibold tabular-nums">{money(inv.totalAmount)}</span> },
     {
       key: 'amountResidual',
-      header: 'Due',
+      header: tx('Due'),
       className: 'text-right',
       render: (inv) =>
         Number(inv.amountResidual) > 0
@@ -122,7 +122,7 @@ export function InvoicesPage() {
     },
     {
       key: 'discount',
-      header: 'Discount',
+      header: tx('Discount'),
       className: 'text-right',
       render: (inv) => {
         if (!(Number(inv.discountTotal) > 0)) return <span className="text-muted-foreground/50">—</span>;
@@ -141,12 +141,12 @@ export function InvoicesPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (inv) => <StatusPill tone={statusTone[inv.status] ?? 'neutral'}>{statusOptions[inv.status] ?? statusLabel(inv.status)}</StatusPill>,
     },
     {
       key: 'paymentStatus',
-      header: 'Payment',
+      header: tx('Payment'),
       render: (inv) => (
         <div className="flex flex-col items-start gap-1">
           <StatusPill tone={paymentStatusTone[inv.paymentStatus] ?? 'neutral'} dot={false}>{statusLabel(inv.paymentStatus)}</StatusPill>
@@ -156,7 +156,7 @@ export function InvoicesPage() {
     },
     {
       key: 'settlementStatus',
-      header: 'Settlement',
+      header: tx('Settlement'),
       render: (inv) => (
         <StatusPill tone={settlementTone[inv.settlementStatus] ?? 'neutral'}>
           {settlementLabel[inv.settlementStatus] ?? inv.settlementStatus}
@@ -176,17 +176,17 @@ export function InvoicesPage() {
   ];
 
   const exportColumns: ExportColumn<Invoice>[] = [
-    { header: 'Invoice #', value: (i) => i.documentNumber },
-    { header: 'Customer', value: (i) => i.partner?.name ?? '' },
-    { header: 'Terms', value: (i) => i.paymentTermName ?? '' },
-    { header: 'Date', value: (i) => date(i.issueDate) },
-    { header: 'Total', value: (i) => money(i.totalAmount), align: 'right' },
-    { header: 'Due', value: (i) => money(i.amountResidual), align: 'right' },
-    { header: 'Discount', value: (i) => (Number(i.discountTotal) > 0 ? money(i.discountTotal) : ''), align: 'right' },
-    { header: 'Status', value: (i) => statusOptions[i.status] ?? i.status },
-    { header: 'Payment', value: (i) => statusLabel(i.paymentStatus) },
-    { header: 'Method', value: method },
-    { header: 'Settlement', value: (i) => settlementLabel[i.settlementStatus] ?? i.settlementStatus },
+    { header: tx('Invoice #'), value: (i) => i.documentNumber },
+    { header: tx('Customer'), value: (i) => i.partner?.name ?? '' },
+    { header: tx('Terms'), value: (i) => i.paymentTermName ?? '' },
+    { header: tx('Date'), value: (i) => date(i.issueDate) },
+    { header: tx('Total'), value: (i) => money(i.totalAmount), align: 'right' },
+    { header: tx('Due'), value: (i) => money(i.amountResidual), align: 'right' },
+    { header: tx('Discount'), value: (i) => (Number(i.discountTotal) > 0 ? money(i.discountTotal) : ''), align: 'right' },
+    { header: tx('Status'), value: (i) => statusOptions[i.status] ?? i.status },
+    { header: tx('Payment'), value: (i) => statusLabel(i.paymentStatus) },
+    { header: tx('Method'), value: method },
+    { header: tx('Settlement'), value: (i) => settlementLabel[i.settlementStatus] ?? i.settlementStatus },
   ];
 
   const fetchAll = () =>
@@ -230,9 +230,9 @@ export function InvoicesPage() {
 
       <ListToolbar chips={<FilterChips chips={chips} onClearAll={list.clearFilters} />}>
         <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder={tx('Search invoice #, reference or customer…')} />
-        <FilterSelect value={status} onChange={(v) => list.setFilter('status', v)} options={toOptions(statusOptions)} allLabel="All statuses" className="w-[140px]" />
-        <FilterSelect value={paymentStatus} onChange={(v) => list.setFilter('paymentStatus', v)} options={toOptions(paymentStatusOptions)} allLabel="All payments" className="w-[150px]" />
-        <FilterSelect value={settlementStatus} onChange={(v) => list.setFilter('settlementStatus', v)} options={toOptions(settlementLabel)} allLabel="All settlements" />
+        <FilterSelect value={status} onChange={(v) => list.setFilter('status', v)} options={toOptions(statusOptions)} allLabel={tx('All statuses')} className="w-[140px]" />
+        <FilterSelect value={paymentStatus} onChange={(v) => list.setFilter('paymentStatus', v)} options={toOptions(paymentStatusOptions)} allLabel={tx('All payments')} className="w-[150px]" />
+        <FilterSelect value={settlementStatus} onChange={(v) => list.setFilter('settlementStatus', v)} options={toOptions(settlementLabel)} allLabel={tx('All settlements')} />
         <DateRangeFilter from={dateFrom} to={dateTo} onChange={(f, t) => list.setFilters({ dateFrom: f, dateTo: t })} />
       </ListToolbar>
 
@@ -247,7 +247,7 @@ export function InvoicesPage() {
             onRowClick={(i) => navigate(`/invoices/${i.id}`)}
             cellClassName="py-2 px-4"
             headerRowClassName="h-10"
-            emptyMessage={chips.length ? 'No invoices match these filters.' : 'No invoices yet.'}
+            emptyMessage={chips.length ? tx('No invoices match these filters.') : tx('No invoices yet.')}
           />
         </div>
         {meta && (

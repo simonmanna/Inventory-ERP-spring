@@ -50,7 +50,7 @@ export const PinConfirmDialog: React.FC<Props> = ({
       await verify.mutateAsync(pin);
       await onVerified(reason.trim());
     } catch (e: any) {
-      setErr(e?.response?.data?.message || e?.message || 'Invalid PIN');
+      setErr(e?.response?.data?.message || e?.message || tx('Invalid PIN'));
     } finally {
       setBusy(false);
     }
@@ -64,10 +64,10 @@ export const PinConfirmDialog: React.FC<Props> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-amber-600" />
-            {title ?? 'Confirm your PIN'}
+            {title ?? tx('Confirm your PIN')}
           </DialogTitle>
           <DialogDescription>
-            {description ?? 'Enter a reason and your PIN to confirm this action.'}
+            {description ?? tx('Enter a reason and your PIN to confirm this action.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -75,13 +75,13 @@ export const PinConfirmDialog: React.FC<Props> = ({
           {requireReason ? (
             <div className="space-y-2">
               <Label className="flex items-center gap-1">
-                <MessageSquareWarning className="h-3 w-3" /> {reasonLabel ?? 'Reason'}
+                <MessageSquareWarning className="h-3 w-3" /> {reasonLabel ?? tx('Reason')}
               </Label>
               <textarea
                 autoFocus
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder={reasonPlaceholder ?? 'e.g. Customer changed their mind, wrong item ordered…'}
+                placeholder={reasonPlaceholder ?? tx('e.g. Customer changed their mind, wrong item ordered…')}
                 className="w-full px-3 py-2 border border-slate-200 rounded-md text-sm resize-none h-20"
               />
             </div>
@@ -111,7 +111,7 @@ export const PinConfirmDialog: React.FC<Props> = ({
             <X className="h-4 w-4 mr-1" /> {tx('Cancel')}
           </Button>
           <Button onClick={submit} disabled={blocked} style={{ background: '#f59e0b' }}>
-            {busy || verify.isPending ? 'Verifying…' : 'Confirm'}
+            {busy || verify.isPending ? tx('Verifying…') : tx('Confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

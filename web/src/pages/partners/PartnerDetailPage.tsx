@@ -432,7 +432,7 @@ function TabStatement({ partnerId }: { partnerId: string }) {
         <Card>
           <CardContent className="pt-6">
             <div className="text-sm text-muted-foreground">{tx('Credit Limit')}</div>
-            <div className="text-2xl font-bold">{data.creditLimit > 0 ? money(data.creditLimit) : 'No limit'}</div>
+            <div className="text-2xl font-bold">{data.creditLimit > 0 ? money(data.creditLimit) : tx('No limit')}</div>
           </CardContent>
         </Card>
         <Card>
@@ -689,7 +689,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
           <h1 className="text-2xl font-semibold text-destructive">{tx('Not Found')}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{tx('Partner not found or you don\'t have permission to view it.')}</p>
           <Button variant="outline" className="mt-4" onClick={() => navigate(partnerType === 'customer' ? '/customers' : '/suppliers')}>
-            <ArrowLeft className="mr-2 h-4 w-4" /> {tx('Back to')} {partnerType === 'customer' ? 'Customers' : 'Suppliers'}
+            <ArrowLeft className="mr-2 h-4 w-4" /> {tx('Back to')} {partnerType === 'customer' ? tx('Customers') : tx('Suppliers')}
           </Button>
         </div>
       </div>
@@ -703,20 +703,20 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
   const Icon = isCustomer ? Users : Building2;
 
   const tabs = [
-    { value: 'overview', label: 'Overview', icon: FileText },
-    { value: 'contacts', label: 'Contacts', icon: Users },
-    { value: 'addresses', label: 'Addresses', icon: MapPin },
-    { value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? 'Invoices' : 'Expenses/Purchases', icon: isCustomer ? DollarSign : Receipt },
-    { value: 'payments', label: 'Payments', icon: Activity },
+    { value: 'overview', label: tx('Overview'), icon: FileText },
+    { value: 'contacts', label: tx('Contacts'), icon: Users },
+    { value: 'addresses', label: tx('Addresses'), icon: MapPin },
+    { value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? tx('Invoices') : tx('Expenses/Purchases'), icon: isCustomer ? DollarSign : Receipt },
+    { value: 'payments', label: tx('Payments'), icon: Activity },
   ];
   if (canCrm) {
     tabs.push({ value: 'crm', label: 'CRM', icon: Handshake });
   }
   if (isCustomer) {
-    tabs.push({ value: 'statement', label: 'Statement', icon: BookOpen });
+    tabs.push({ value: 'statement', label: tx('Statement'), icon: BookOpen });
   } else {
-    tabs.push({ value: 'purchase-orders', label: 'Purchases', icon: ShoppingCart });
-    tabs.push({ value: 'ledger', label: 'Ledger', icon: BookOpen });
+    tabs.push({ value: 'purchase-orders', label: tx('Purchases'), icon: ShoppingCart });
+    tabs.push({ value: 'ledger', label: tx('Ledger'), icon: BookOpen });
   }
 
   return (

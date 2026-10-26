@@ -110,7 +110,7 @@ export function RepairContractsPage() {
       {showForm && (
         <Card>
           <CardHeader className="bg-muted/30 border-b rounded-t-lg">
-            <CardTitle className="text-sm">{editing ? `Edit ${editing.title}` : 'New contract'}</CardTitle>
+            <CardTitle className="text-sm">{editing ? tx('Edit {{title}}', { title: editing.title }) : tx('New contract')}</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-4">
             <Input placeholder={tx('Partner ID')} value={form.partnerId} onChange={(e) => set('partnerId', e.target.value)} />
@@ -187,7 +187,7 @@ export function RepairContractsPage() {
                         <p className="text-sm font-medium">{s.title}{s.assetRef ? ` · ${s.assetRef}` : ''}</p>
                         <p className="text-xs text-muted-foreground">
                           {tx('every')} {s.intervalDays} {tx('d · next')} {s.nextDueAt ? date(s.nextDueAt) : '—'}
-                          {s.lastRunAt ? ` · last ${date(s.lastRunAt)}` : ''}
+                          {s.lastRunAt ? tx(' · last {{v1}}', { v1: date(s.lastRunAt) }) : ''}
                         </p>
                       </div>
                     </div>

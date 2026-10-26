@@ -69,7 +69,7 @@ export function PosGlReconciliationPage() {
                   <CardTitle className="text-sm font-bold uppercase tracking-wider">{tx('Revenue')}</CardTitle>
                 </div>
                 <Badge variant={data.variance.revenueBalanced ? 'secondary' : 'destructive'} className="text-[10px]">
-                  {data.variance.revenueBalanced ? 'Balanced' : `Variance ${money(data.variance.revenue)}`}
+                  {data.variance.revenueBalanced ? tx('Balanced') : tx('Variance {{v1}}', { v1: money(data.variance.revenue) })}
                 </Badge>
               </div>
             </CardHeader>
@@ -113,7 +113,7 @@ export function PosGlReconciliationPage() {
                   <CardTitle className="text-sm font-bold uppercase tracking-wider">{tx('Tax')}</CardTitle>
                 </div>
                 <Badge variant={data.variance.taxBalanced ? 'secondary' : 'destructive'} className="text-[10px]">
-                  {data.variance.taxBalanced ? 'Balanced' : `Variance ${money(data.variance.tax)}`}
+                  {data.variance.taxBalanced ? tx('Balanced') : tx('Variance {{v1}}', { v1: money(data.variance.tax) })}
                 </Badge>
               </div>
             </CardHeader>
@@ -156,7 +156,7 @@ export function PosGlReconciliationPage() {
                 >
                   {data.inventory.unpostedJobs > 0
                     ? `${data.inventory.unpostedJobs} unposted`
-                    : 'Queue clear'}
+                    : tx('Queue clear')}
                 </Badge>
               </div>
             </CardHeader>
@@ -174,7 +174,7 @@ export function PosGlReconciliationPage() {
               <div className="text-[10px] text-muted-foreground">
                 {tx('Jobs:')}{' '}
                 {Object.entries(data.inventory.jobCounts).length === 0
-                  ? 'none in window'
+                  ? tx('none in window')
                   : Object.entries(data.inventory.jobCounts)
                       .map(([k, v]) => `${k}: ${v}`)
                       .join(' · ')}

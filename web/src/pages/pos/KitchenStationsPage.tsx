@@ -53,24 +53,24 @@ const KitchenStationsPage: React.FC = () => {
       }
       setShowForm(false);
     } catch (e: any) {
-      notify.error(e?.response?.data?.message ?? 'Save failed');
+      notify.error(e?.response?.data?.message ?? tx('Save failed'));
     }
   };
 
   const setDefault = async (s: KitchenStationFE) => {
-    try { await update.mutateAsync({ id: s.id, isDefault: true }); notify.success(`${s.name} is now the default station`); }
-    catch (e: any) { notify.error(e?.response?.data?.message ?? 'Failed'); }
+    try { await update.mutateAsync({ id: s.id, isDefault: true }); notify.success(tx('{{name}} is now the default station', { name: s.name })); }
+    catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Failed')); }
   };
 
   const toggleActive = async (s: KitchenStationFE) => {
     try { await update.mutateAsync({ id: s.id, isActive: !s.isActive }); }
-    catch (e: any) { notify.error(e?.response?.data?.message ?? 'Failed'); }
+    catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Failed')); }
   };
 
   const remove = async (s: KitchenStationFE) => {
-    if (!window.confirm(`Delete station "${s.name}"? Products routed here fall back to the default station.`)) return;
+    if (!window.confirm(tx('Delete station "{{name}}"? Products routed here fall back to the default station.', { name: s.name }))) return;
     try { await del.mutateAsync(s.id); notify.success(tx('Station deleted')); }
-    catch (e: any) { notify.error(e?.response?.data?.message ?? 'Delete failed'); }
+    catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Delete failed')); }
   };
 
   const move = async (idx: number, dir: -1 | 1) => {
@@ -98,7 +98,7 @@ const KitchenStationsPage: React.FC = () => {
       {showForm && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>{editing ? `Edit ${editing.name}` : 'New station'}</CardTitle>
+            <CardTitle>{editing ? tx('Edit {{name}}', { name: editing.name }) : tx('New station')}</CardTitle>
             <Button variant="ghost" size="sm" onClick={() => setShowForm(false)}><X className="h-4 w-4" /></Button>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -151,7 +151,7 @@ const KitchenStationsPage: React.FC = () => {
                   <Button variant="ghost" size="icon" onClick={() => move(idx, -1)} disabled={idx === 0}><ArrowUp className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" onClick={() => move(idx, 1)} disabled={idx === stations.length - 1}><ArrowDown className="h-4 w-4" /></Button>
                   {!s.isDefault && <Button variant="ghost" size="sm" onClick={() => setDefault(s)}>{tx('Set default')}</Button>}
-                  <Button variant="ghost" size="sm" onClick={() => toggleActive(s)}>{s.isActive ? 'Disable' : 'Enable'}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => toggleActive(s)}>{s.isActive ? tx('Disable') : tx('Enable')}</Button>
                   <Button variant="ghost" size="icon" onClick={() => openEdit(s)}><Pencil className="h-4 w-4" /></Button>
                   <Button variant="ghost" size="icon" onClick={() => remove(s)} disabled={s.isDefault}><Trash2 className="h-4 w-4 text-rose-600" /></Button>
                 </div>

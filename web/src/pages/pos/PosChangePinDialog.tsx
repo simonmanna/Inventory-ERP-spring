@@ -71,7 +71,7 @@ export function PosChangePinDialog({ open, onOpenChange }: Props) {
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>{tx('Cancel')}</Button>
           <Button onClick={handleSubmit} disabled={!canSubmit || changePin.isPending}>
-            {changePin.isPending ? 'Saving…' : 'Change PIN'}
+            {changePin.isPending ? tx('Saving…') : tx('Change PIN')}
           </Button>
         </DialogFooter>
       </DialogContent>

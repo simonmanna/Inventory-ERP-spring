@@ -9,6 +9,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { tx } from '@/lib/i18n/tx';
 
 export interface Column<T> {
   key: string;
@@ -50,7 +51,7 @@ export function DataTable<T>({
   columns,
   data,
   loading = false,
-  emptyMessage = 'No records found.',
+  emptyMessage = tx('No records found.'),
   getRowId,
   className = '',
   compact = false,

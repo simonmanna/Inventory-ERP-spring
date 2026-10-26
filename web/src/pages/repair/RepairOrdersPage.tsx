@@ -11,17 +11,17 @@ import { tx } from '@/lib/i18n/tx';
 const fmt = (n: number | string) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
 const STATUS_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'received', label: 'Received' },
-  { value: 'diagnosis', label: 'Diagnosis' },
-  { value: 'waiting_approval', label: 'Waiting approval' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'repairing', label: 'Repairing' },
-  { value: 'testing', label: 'Testing' },
-  { value: 'ready_pickup', label: 'Ready for pickup' },
-  { value: 'delivered', label: 'Delivered' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: '', label: tx('All') },
+  { value: 'received', label: tx('Received') },
+  { value: 'diagnosis', label: tx('Diagnosis') },
+  { value: 'waiting_approval', label: tx('Waiting approval') },
+  { value: 'approved', label: tx('Approved') },
+  { value: 'repairing', label: tx('Repairing') },
+  { value: 'testing', label: tx('Testing') },
+  { value: 'ready_pickup', label: tx('Ready for pickup') },
+  { value: 'delivered', label: tx('Delivered') },
+  { value: 'closed', label: tx('Closed') },
+  { value: 'cancelled', label: tx('Cancelled') },
 ];
 
 const STATUS_STYLES: Record<string, string> = {
@@ -84,8 +84,8 @@ export function RepairOrdersPage() {
                   <div>
                     <p className="text-sm font-medium">{o.repairNumber}</p>
                     <p className="text-xs text-muted-foreground">
-                      {o.itemType ?? 'Item'} {o.brand && o.model ? `· ${o.brand} ${o.model}` : o.brand ? `· ${o.brand}` : ''} · {o.partner?.name ?? 'Walk-in'}
-                      {o.serialNumber ? ` · SN ${o.serialNumber}` : ''}
+                      {o.itemType ?? tx('Item')} {o.brand && o.model ? `· ${o.brand} ${o.model}` : o.brand ? `· ${o.brand}` : ''} · {o.partner?.name ?? tx('Walk-in')}
+                      {o.serialNumber ? tx(' · SN {{serialNumber}}', { serialNumber: o.serialNumber }) : ''}
                     </p>
                   </div>
                 </div>

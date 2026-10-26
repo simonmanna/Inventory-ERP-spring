@@ -43,7 +43,8 @@ public class DebitNotesController {
             @NotNull(message = NUM) BigDecimal quantity,
             @NotNull(message = NUM) BigDecimal unitPrice,
             String taxId,
-            String notes) {}
+            String notes,
+            String uomId) {}
 
     /** {@code CreateDebitNoteDto}. */
     public record CreateDebitNoteRequest(
@@ -88,7 +89,7 @@ public class DebitNotesController {
         return svc.create(new CreateInput(dto.direction(), dto.partnerId(), dto.documentId(), dto.reason(),
                 dto.reasonNote(), dto.issueDate(), dto.currencyCode(), dto.exchangeRate(), dto.notes(), dto.locationId(),
                 dto.lines().stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(), l.unitPrice(),
-                        l.taxId(), l.notes())).toList()));
+                        l.taxId(), l.notes(), l.uomId())).toList()));
     }
 
     @PatchMapping("/{id}/post")

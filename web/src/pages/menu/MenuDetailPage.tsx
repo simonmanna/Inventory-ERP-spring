@@ -163,7 +163,7 @@ function TabModifiers({ bundle }: { bundle: NonNullable<ReturnType<typeof useMen
               <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{g.name}</CardTitle>
               <Badge variant="outline" className="text-xs capitalize">{g.groupType.toLowerCase().replace(/_/g, ' ')}</Badge>
             </div>
-            <div className="text-xs text-muted-foreground">{tx('Min')} {g.minSelect} &middot; Max {g.maxSelect}</div>
+            <div className="text-xs text-muted-foreground">{tx('Min')} {g.minSelect} {tx('· Max')} {g.maxSelect}</div>
           </CardHeader>
           <CardContent className="px-5 pb-4 pt-3">
             <Table>
@@ -207,7 +207,7 @@ function TabAccompaniments({ bundle }: { bundle: NonNullable<ReturnType<typeof u
           <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">
             <div>
               <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{g.name}</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">{g.isRequired ? 'Required' : 'Optional'} &middot; Choose {g.minSelect}-{g.maxSelect}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{g.isRequired ? tx('Required') : tx('Optional')} {tx('· Choose')} {g.minSelect}-{g.maxSelect}</p>
             </div>
           </CardHeader>
           <CardContent className="px-5 pb-4 pt-3">
@@ -249,11 +249,11 @@ export default function MenuDetailPage() {
   const accompCount = bundle?.accompanimentGroups?.length ?? 0;
 
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: Info, count: null },
-    { id: 'ingredients', label: 'Ingredients', icon: Package, count: ingredientCount },
-    { id: 'variants', label: 'Variants', icon: Layers, count: variantCount },
-    { id: 'modifiers', label: 'Modifiers', icon: SlidersHorizontal, count: modifierCount },
-    { id: 'accompaniments', label: 'Accompaniments', icon: UtensilsCrossed, count: accompCount },
+    { id: 'overview', label: tx('Overview'), icon: Info, count: null },
+    { id: 'ingredients', label: tx('Ingredients'), icon: Package, count: ingredientCount },
+    { id: 'variants', label: tx('Variants'), icon: Layers, count: variantCount },
+    { id: 'modifiers', label: tx('Modifiers'), icon: SlidersHorizontal, count: modifierCount },
+    { id: 'accompaniments', label: tx('Accompaniments'), icon: UtensilsCrossed, count: accompCount },
   ];
 
   if (isLoading) {
@@ -321,7 +321,7 @@ export default function MenuDetailPage() {
           <div className="flex items-center gap-6 mt-3 pt-3 border-t">
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{tx('Price:')}</span>
-              <span className="font-bold text-sm text-emerald-600">{priceMajor ? formatCurrency(priceMajor) : 'See variants'}</span>
+              <span className="font-bold text-sm text-emerald-600">{priceMajor ? formatCurrency(priceMajor) : tx('See variants')}</span>
             </div>
             <Separator orientation="vertical" className="h-4" />
             <div className="flex items-center gap-1.5">

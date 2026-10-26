@@ -103,11 +103,11 @@ interface ExpenseFormData {
 // expenses display their permanent `categoryName` snapshot.
 
 const CASH_PAY_METHODS = [
-  { value: "CASH", label: "Cash" },
-  { value: "BANK_TRANSFER", label: "Bank Transfer" },
-  { value: "MTN_MOBILE_MONEY", label: "MTN Mobile Money" },
-  { value: "AIRTEL_MONEY", label: "Airtel Money" },
-  { value: "CHEQUE", label: "Cheque" },
+  { value: "CASH", label: tx('Cash') },
+  { value: "BANK_TRANSFER", label: tx('Bank Transfer') },
+  { value: "MTN_MOBILE_MONEY", label: tx('MTN Mobile Money') },
+  { value: "AIRTEL_MONEY", label: tx('Airtel Money') },
+  { value: "CHEQUE", label: tx('Cheque') },
 ];
 
 const STATUS_CONFIG: Record<
@@ -115,42 +115,42 @@ const STATUS_CONFIG: Record<
   { label: string; bg: string; text: string; dot: string; border: string }
 > = {
   DRAFT: {
-    label: "Draft",
+    label: tx('Draft'),
     bg: "bg-slate-50",
     text: "text-slate-600",
     dot: "bg-slate-400",
     border: "border-slate-200",
   },
   APPROVED: {
-    label: "Approved",
+    label: tx('Approved'),
     bg: "bg-blue-50",
     text: "text-blue-700",
     dot: "bg-blue-400",
     border: "border-blue-200",
   },
   POSTED: {
-    label: "Posted",
+    label: tx('Posted'),
     bg: "bg-indigo-50",
     text: "text-indigo-700",
     dot: "bg-indigo-400",
     border: "border-indigo-200",
   },
   REJECTED: {
-    label: "Rejected",
+    label: tx('Rejected'),
     bg: "bg-red-50",
     text: "text-red-700",
     dot: "bg-red-400",
     border: "border-red-200",
   },
   CANCELLED: {
-    label: "Cancelled",
+    label: tx('Cancelled'),
     bg: "bg-slate-100",
     text: "text-slate-500",
     dot: "bg-slate-400",
     border: "border-slate-200",
   },
   VOID: {
-    label: "Void",
+    label: tx('Void'),
     bg: "bg-rose-50",
     text: "text-rose-700",
     dot: "bg-rose-500",
@@ -158,14 +158,14 @@ const STATUS_CONFIG: Record<
   },
   // Legacy values, in case old data is still around
   PENDING: {
-    label: "Pending",
+    label: tx('Pending'),
     bg: "bg-amber-50",
     text: "text-amber-700",
     dot: "bg-amber-400",
     border: "border-amber-200",
   },
   PAID: {
-    label: "Paid (legacy)",
+    label: tx('Paid (legacy)'),
     bg: "bg-emerald-50",
     text: "text-emerald-700",
     dot: "bg-emerald-400",
@@ -178,21 +178,21 @@ const PAYMENT_STATUS_CONFIG: Record<
   { label: string; bg: string; text: string; dot: string; border: string }
 > = {
   UNPAID: {
-    label: "Unpaid",
+    label: tx('Unpaid'),
     bg: "bg-amber-50",
     text: "text-amber-700",
     dot: "bg-amber-400",
     border: "border-amber-200",
   },
   PARTIALLY_PAID: {
-    label: "Partial",
+    label: tx('Partial'),
     bg: "bg-blue-50",
     text: "text-blue-700",
     dot: "bg-blue-400",
     border: "border-blue-200",
   },
   PAID: {
-    label: "Paid",
+    label: tx('Paid'),
     bg: "bg-emerald-50",
     text: "text-emerald-700",
     dot: "bg-emerald-400",
@@ -374,16 +374,16 @@ function ExpenseFormDialog({
   const isEdit = !!expense;
 
   const onSubmit = async (data: ExpenseFormData) => {
-    if (!data.title.trim()) return setError("Title is required");
+    if (!data.title.trim()) return setError(tx('Title is required'));
     if (!data.amount || +data.amount <= 0)
-      return setError("Enter a valid amount greater than 0");
+      return setError(tx('Enter a valid amount greater than 0'));
     if (!isEdit && !data.createdBy)
-      return setError("Select who is creating this expense");
+      return setError(tx('Select who is creating this expense'));
     if (isCash && !data.paymentMethod)
-      return setError("Select a payment method for cash expenses");
+      return setError(tx('Select a payment method for cash expenses'));
     if (isCash && !data.accountId)
-      return setError("Select an account to debit for cash expenses");
-    if (!data.categoryId) return setError("Select a category");
+      return setError(tx('Select an account to debit for cash expenses'));
+    if (!data.categoryId) return setError(tx('Select a category'));
 
     setSaving(true);
     setError("");
@@ -419,7 +419,7 @@ function ExpenseFormDialog({
       setError(
         Array.isArray(msg)
           ? msg.join(", ")
-          : msg || e.message || "Failed to save",
+          : msg || e.message || tx('Failed to save'),
       );
     } finally {
       setSaving(false);
@@ -434,7 +434,7 @@ function ExpenseFormDialog({
           <DialogHeader className="text-white">
             <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
               <Receipt className="h-5 w-5" />
-              {isEdit ? `Edit: ${expense?.title}` : "Add New Expense"}
+              {isEdit ? tx('Edit: {{title}}', { title: expense?.title }) : tx('Add New Expense')}
             </DialogTitle>
           </DialogHeader>
         </div>
@@ -512,7 +512,7 @@ function ExpenseFormDialog({
                               <SelectItem key={cat.id} value={cat.id}>
                                 {cat.icon ? `${cat.icon} ` : ""}
                                 {cat.name}
-                                {cat.ledgerAccountId ? "" : "  · (no GL)"}
+                                {cat.ledgerAccountId ? "" : tx('  · (no GL)')}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -596,7 +596,7 @@ function ExpenseFormDialog({
                           </FormLabel>
                           <div className="relative">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
-                              UGX
+                              {tx('UGX')}
                             </span>
                             <FormControl>
                               <Input
@@ -819,7 +819,7 @@ function ExpenseFormDialog({
             {/* Footer Bar */}
             <div className="bg-white px-6 py-4 flex justify-between items-center border-t">
               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                {isEdit ? `Editing: ${expense?.title}` : "New Expense Entry"}
+                {isEdit ? tx('Editing: {{title}}', { title: expense?.title }) : tx('New Expense Entry')}
               </span>
               <div className="flex gap-3">
                 <Button
@@ -840,10 +840,10 @@ function ExpenseFormDialog({
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : null}
                   {isEdit
-                    ? "UPDATE EXPENSE"
+                    ? tx('UPDATE EXPENSE')
                     : isCash
-                      ? "SAVE & PAY"
-                      : "CREATE EXPENSE"}
+                      ? tx('SAVE & PAY')
+                      : tx('CREATE EXPENSE')}
                 </Button>
               </div>
             </div>
@@ -910,9 +910,9 @@ function ExpenseAuditSection({ expenseId }: { expenseId: string }) {
                 <div className="min-w-0">
                   <p className="text-slate-700">
                     <span className="font-medium">
-                      {r.entityType === "Payment" ? "Payment" : "Expense"}
+                      {r.entityType === "Payment" ? tx('Payment') : tx('Expense')}
                     </span>{" "}
-                    {r.action.toLowerCase()} by{" "}
+                    {r.action.toLowerCase()} {tx('by')}{" "}
                     <span className="font-medium">
                       {r.userName ?? r.userId ?? "system"}
                     </span>
@@ -989,14 +989,14 @@ function ExpenseDetailDialog({
               <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {[
                   {
-                    label: "Expense Code",
+                    label: tx('Expense Code'),
                     value: expense.expenseCode,
                     mono: true,
                   },
-                  { label: "Date", value: fmtDate(expense.expenseDate) },
-                  { label: "Created By", value: staffName(expense.createdBy) },
+                  { label: tx('Date'), value: fmtDate(expense.expenseDate) },
+                  { label: tx('Created By'), value: staffName(expense.createdBy) },
                   {
-                    label: "Category",
+                    label: tx('Category'),
                     value: categoryDisplay(expense),
                   },
                 ].map(({ label, value, mono }) => (
@@ -1183,9 +1183,9 @@ function PayExpenseDialog({
   const selectedAccount = accounts.find((a) => a.id === form.accountId);
 
   const handlePay = async () => {
-    if (!form.paidBy) return setError("Select who is processing this payment");
-    if (!form.paymentMethod) return setError("Select a payment method");
-    if (!form.accountId) return setError("Select an account to debit");
+    if (!form.paidBy) return setError(tx('Select who is processing this payment'));
+    if (!form.paymentMethod) return setError(tx('Select a payment method'));
+    if (!form.accountId) return setError(tx('Select an account to debit'));
 
     setSaving(true);
     setError("");
@@ -1203,7 +1203,7 @@ function PayExpenseDialog({
       setError(
         Array.isArray(msg)
           ? msg.join(", ")
-          : msg || e.message || "Payment failed",
+          : msg || e.message || tx('Payment failed'),
       );
     } finally {
       setSaving(false);
@@ -1397,7 +1397,7 @@ function ApproveDialog({
   const [error, setError] = useState("");
 
   const handleApprove = async () => {
-    if (!approvedBy) return setError("Select who is approving this expense");
+    if (!approvedBy) return setError(tx('Select who is approving this expense'));
     setSaving(true);
     setError("");
     try {
@@ -1411,7 +1411,7 @@ function ApproveDialog({
       setError(
         Array.isArray(msg)
           ? msg.join(", ")
-          : msg || e.message || "Approval failed",
+          : msg || e.message || tx('Approval failed'),
       );
     } finally {
       setSaving(false);
@@ -1502,7 +1502,7 @@ function ApproveDialog({
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx('Approving…')}
                 </>
               ) : (
-                "Approve"
+                tx('Approve')
               )}
             </Button>
           </div>
@@ -1596,7 +1596,7 @@ function RejectDialog({
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> {tx('Rejecting…')}
                 </>
               ) : (
-                "Reject"
+                tx('Reject')
               )}
             </Button>
           </div>
@@ -1704,7 +1704,7 @@ export function ExpensesPage() {
   }, [reloadCategories]);
 
   const handleDelete = async (expense: Expense) => {
-    if (!confirm(`Delete "${expense.title}"? This cannot be undone.`)) return;
+    if (!confirm(tx('Delete "{{title}}"? This cannot be undone.', { title: expense.title }))) return;
     try {
       await expensesApi.delete(expense.id);
       load();
@@ -1875,7 +1875,7 @@ export function ExpensesPage() {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-2 bg-white rounded-xl border border-slate-200 shadow-sm">
             {[
               {
-                label: "Category",
+                label: tx('Category'),
                 value: categoryFilter,
                 onChange: (v: string) => {
                   setCategoryFilter(v);
@@ -1885,10 +1885,10 @@ export function ExpensesPage() {
                   value: c.id,
                   label: `${c.icon ? `${c.icon} ` : ""}${c.name}`,
                 })),
-                placeholder: "All Categories",
+                placeholder: tx('All Categories'),
               },
               {
-                label: "Status",
+                label: tx('Status'),
                 value: statusFilter,
                 onChange: (v: string) => {
                   setStatusFilter(v);
@@ -1898,20 +1898,20 @@ export function ExpensesPage() {
                   value: k,
                   label: v.label,
                 })),
-                placeholder: "All Status",
+                placeholder: tx('All Status'),
               },
               {
-                label: "Payment Type",
+                label: tx('Payment Type'),
                 value: paymentTypeFilter,
                 onChange: (v: string) => {
                   setPaymentTypeFilter(v);
                   setPage(1);
                 },
                 options: [
-                  { value: "CASH", label: "💵 Cash" },
-                  { value: "CREDIT", label: "💳 Credit" },
+                  { value: "CASH", label: tx('💵 Cash') },
+                  { value: "CREDIT", label: tx('💳 Credit') },
                 ],
-                placeholder: "All Types",
+                placeholder: tx('All Types'),
               },
             ].map(({ label, value, onChange, options, placeholder }) => (
               <div key={label}>
@@ -2139,8 +2139,8 @@ export function ExpensesPage() {
                                   <Banknote className="w-3.5 h-3.5" />{" "}
                                   {((exp as any).paymentStatus ?? "UNPAID") ===
                                   "PARTIALLY_PAID"
-                                    ? "Pay Bal."
-                                    : "Pay"}
+                                    ? tx('Pay Bal.')
+                                    : tx('Pay')}
                                 </button>
                               )}
                             {exp.status !== "VOID" &&
@@ -2184,7 +2184,7 @@ export function ExpensesPage() {
             <div className="flex items-center justify-between px-5 py-3 border-t border-slate-200 bg-slate-50/50">
               <p className="text-xs text-slate-500">
                 {tx('Showing')} {Math.min((page - 1) * limit + 1, total)}–
-                {Math.min(page * limit, total)} of {total}
+                {Math.min(page * limit, total)} {tx('of')} {total}
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -2195,7 +2195,7 @@ export function ExpensesPage() {
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <span className="text-xs font-medium text-slate-600 px-2">
-                  {tx('Page')} {page} of {totalPages}
+                  {tx('Page')} {page} {tx('of')} {totalPages}
                 </span>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}

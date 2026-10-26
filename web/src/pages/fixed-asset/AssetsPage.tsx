@@ -25,7 +25,7 @@ const STATUSES = ['active', 'under_maintenance', 'disposed', 'lost_stolen', 'in_
 const ACQ_METHODS = ['purchased', 'donated', 'leased', 'constructed', 'transferred_in', 'gifted'];
 
 const assetSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, tx('Name is required')),
   assetCode: z.string().optional().or(z.literal('')),
   barcode: z.string().optional().or(z.literal('')),
   description: z.string().optional().or(z.literal('')),
@@ -107,7 +107,7 @@ export function AssetsPage() {
         notify.success(tx('Asset created'));
       }
       setOpen(false);
-    } catch (err: any) { notify.error(err?.response?.data?.message ?? 'Error'); }
+    } catch (err: any) { notify.error(err?.response?.data?.message ?? tx('Error')); }
   };
 
   const statusBadge = (status: string) => {
@@ -116,13 +116,13 @@ export function AssetsPage() {
   };
 
   const columns: Column<Asset>[] = [
-    { key: 'assetCode', header: 'Code' },
-    { key: 'name', header: 'Name', render: (r) => <span className="font-medium">{r.name}</span> },
-    { key: 'category', header: 'Category', render: (r) => r.category?.name ?? '-' },
-    { key: 'location', header: 'Location' },
-    { key: 'status', header: 'Status', render: (r) => statusBadge(r.status) },
-    { key: 'currentValue', header: 'Value', render: (r) => formatCurrency(r.currentValue ?? '0') },
-    { key: 'serialNumber', header: 'Serial #' },
+    { key: 'assetCode', header: tx('Code') },
+    { key: 'name', header: tx('Name'), render: (r) => <span className="font-medium">{r.name}</span> },
+    { key: 'category', header: tx('Category'), render: (r) => r.category?.name ?? '-' },
+    { key: 'location', header: tx('Location') },
+    { key: 'status', header: tx('Status'), render: (r) => statusBadge(r.status) },
+    { key: 'currentValue', header: tx('Value'), render: (r) => formatCurrency(r.currentValue ?? '0') },
+    { key: 'serialNumber', header: tx('Serial #') },
     {
       key: 'actions', header: '', render: (r) => (
         <div className="flex gap-1">
@@ -148,7 +148,7 @@ export function AssetsPage() {
       <DataTable columns={columns} data={data?.data ?? []} loading={isLoading} />
       {data?.meta && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>{tx('Page')} {data.meta.page} of {data.meta.totalPages} ({data.meta.total} {tx('total)')}</span>
+          <span>{tx('Page')} {data.meta.page} {tx('of')} {data.meta.totalPages} ({data.meta.total} {tx('total)')}</span>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>{tx('Previous')}</Button>
             <Button size="sm" variant="outline" disabled={page >= (data.meta.totalPages ?? 1)} onClick={() => setPage(page + 1)}>{tx('Next')}</Button>
@@ -158,7 +158,7 @@ export function AssetsPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Create'} {tx('Asset')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit') : tx('Create')} {tx('Asset')}</DialogTitle></DialogHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div><Label>{tx('Asset Code')}</Label><Input {...form.register('assetCode')} placeholder={tx('Auto-generated')} /></div>
@@ -200,7 +200,7 @@ export function AssetsPage() {
               <div><Label>{tx('Useful Life (months)')}</Label><Input type="number" {...form.register('usefulLife')} /></div>
             </div>
             <div><Label>{tx('Notes')}</Label><Input {...form.register('notes')} /></div>
-            <DialogFooter><Button type="submit">{editing ? 'Update' : 'Create'}</Button></DialogFooter>
+            <DialogFooter><Button type="submit">{editing ? tx('Update') : tx('Create')}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -208,7 +208,7 @@ export function AssetsPage() {
       <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{tx('Delete Asset?')}</AlertDialogTitle><AlertDialogDescription>{tx('Soft-delete "')}{deleting?.name}" ({deleting?.assetCode})?</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>{tx('Cancel')}</AlertDialogCancel><AlertDialogAction onClick={async () => { try { await deleteAsset.mutateAsync(deleting!.id); notify.success(tx('Deleted')); setDeleting(null); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } }}>{tx('Delete')}</AlertDialogAction></AlertDialogFooter>
+          <AlertDialogFooter><AlertDialogCancel>{tx('Cancel')}</AlertDialogCancel><AlertDialogAction onClick={async () => { try { await deleteAsset.mutateAsync(deleting!.id); notify.success(tx('Deleted')); setDeleting(null); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } }}>{tx('Delete')}</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>

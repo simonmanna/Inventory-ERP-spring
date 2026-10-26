@@ -128,7 +128,7 @@ export function ProductsPage() {
   const columns: Column<Product>[] = [
     {
       key: 'name',
-      header: 'Product',
+      header: tx('Product'),
       sortKey: 'name',
       render: (p) => (
         <div className="flex min-w-[200px] items-center gap-3">
@@ -136,36 +136,36 @@ export function ProductsPage() {
           <div className="min-w-0">
             <div className="truncate font-medium">{p.name}</div>
             <div className="truncate text-xs text-muted-foreground">
-              {p.code}{p.sku ? ` · SKU ${p.sku}` : ''}
+              {p.code}{p.sku ? tx(' · SKU {{sku}}', { sku: p.sku }) : ''}
             </div>
           </div>
         </div>
       ),
     },
-    { key: 'category', header: 'Category', render: (p) => p.category?.name ?? <span className="text-muted-foreground">—</span> },
+    { key: 'category', header: tx('Category'), render: (p) => p.category?.name ?? <span className="text-muted-foreground">—</span> },
     {
       key: 'productType',
-      header: 'Type',
+      header: tx('Type'),
       sortKey: 'productType',
       render: (p) => <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium">{statusLabel(p.productType)}</span>,
     },
     {
       key: 'costPrice',
-      header: 'Cost',
+      header: tx('Cost'),
       className: 'text-right',
       sortKey: 'costPrice',
       render: (p) => <span className="tabular-nums text-muted-foreground">{p.costPrice != null ? money(p.costPrice, currency) : '—'}</span>,
     },
     {
       key: 'salesPrice',
-      header: 'Sales price',
+      header: tx('Sales price'),
       className: 'text-right',
       sortKey: 'salesPrice',
       render: (p) => <span className="font-semibold tabular-nums">{p.salesPrice != null ? money(p.salesPrice, currency) : '—'}</span>,
     },
     {
       key: 'margin',
-      header: 'Margin',
+      header: tx('Margin'),
       className: 'text-right',
       render: (p) => {
         const m = marginPct(p);
@@ -176,8 +176,8 @@ export function ProductsPage() {
     },
     {
       key: 'isActive',
-      header: 'Status',
-      render: (p) => <StatusPill tone={p.isActive ? 'success' : 'neutral'}>{p.isActive ? 'Active' : 'Inactive'}</StatusPill>,
+      header: tx('Status'),
+      render: (p) => <StatusPill tone={p.isActive ? 'success' : 'neutral'}>{p.isActive ? tx('Active') : tx('Inactive')}</StatusPill>,
     },
     {
       key: 'actions',
@@ -204,15 +204,15 @@ export function ProductsPage() {
   ];
 
   const exportColumns: ExportColumn<Product>[] = [
-    { header: 'Name', value: (p) => p.name },
-    { header: 'Code', value: (p) => p.code },
+    { header: tx('Name'), value: (p) => p.name },
+    { header: tx('Code'), value: (p) => p.code },
     { header: 'SKU', value: (p) => p.sku ?? '' },
-    { header: 'Category', value: (p) => p.category?.name ?? '' },
-    { header: 'Type', value: (p) => statusLabel(p.productType) },
-    { header: 'Cost', value: (p) => (p.costPrice != null ? money(p.costPrice, currency) : ''), align: 'right' },
-    { header: 'Sales price', value: (p) => (p.salesPrice != null ? money(p.salesPrice, currency) : ''), align: 'right' },
-    { header: 'Margin %', value: (p) => marginPct(p)?.toFixed(1) ?? '', align: 'right' },
-    { header: 'Status', value: (p) => (p.isActive ? 'Active' : 'Inactive') },
+    { header: tx('Category'), value: (p) => p.category?.name ?? '' },
+    { header: tx('Type'), value: (p) => statusLabel(p.productType) },
+    { header: tx('Cost'), value: (p) => (p.costPrice != null ? money(p.costPrice, currency) : ''), align: 'right' },
+    { header: tx('Sales price'), value: (p) => (p.salesPrice != null ? money(p.salesPrice, currency) : ''), align: 'right' },
+    { header: tx('Margin %'), value: (p) => marginPct(p)?.toFixed(1) ?? '', align: 'right' },
+    { header: tx('Status'), value: (p) => (p.isActive ? 'Active' : 'Inactive') },
   ];
 
   const fetchAll = () =>
@@ -254,7 +254,7 @@ export function ProductsPage() {
   };
 
   const saveCategory = async () => {
-    if (!catName.trim()) return setCatError('Category name is required');
+    if (!catName.trim()) return setCatError(tx('Category name is required'));
     setCatSaving(true);
     setCatError('');
     try {
@@ -270,7 +270,7 @@ export function ProductsPage() {
         await createCategory.mutateAsync(payload);
       }
       closeCategoryDialog();
-      notify.success(categoryDialog.category ? 'Category updated' : 'Category created');
+      notify.success(categoryDialog.category ? tx('Category updated') : tx('Category created'));
     } catch (e: any) {
       const msg = e.response?.data?.message;
       setCatError(Array.isArray(msg) ? msg.join(', ') : msg || e.message);
@@ -280,7 +280,7 @@ export function ProductsPage() {
   };
 
   const handleDeleteCategory = async (cat: ProductCategory) => {
-    if (!confirm(`Delete "${cat.name}"? This cannot be undone.`)) return;
+    if (!confirm(tx('Delete "{{name}}"? This cannot be undone.', { name: cat.name }))) return;
     try {
       await deleteCategory.mutateAsync(cat.id);
       notify.success(tx('Category deleted'));
@@ -308,10 +308,10 @@ export function ProductsPage() {
                   value={categoryFilter}
                   onChange={(v) => list.setFilter('categoryId', v)}
                   options={categories.map((c) => ({ value: c.id, label: c.name }))}
-                  allLabel="All categories"
+                  allLabel={tx('All categories')}
                   className="w-[180px]"
                 />
-                <FilterSelect value={typeFilter} onChange={(v) => list.setFilter('productType', v)} options={TYPE_OPTIONS} allLabel="All types" />
+                <FilterSelect value={typeFilter} onChange={(v) => list.setFilter('productType', v)} options={TYPE_OPTIONS} allLabel={tx('All types')} />
                 <div className="ml-auto flex items-center gap-2">
                   <ExportMenu
                     basename="products"
@@ -343,7 +343,7 @@ export function ProductsPage() {
                     onSortChange={list.setSort}
                     cellClassName="py-2 px-4"
                     headerRowClassName="h-10"
-                    emptyMessage={chips.length ? 'No products match these filters.' : 'No products yet.'}
+                    emptyMessage={chips.length ? tx('No products match these filters.') : tx('No products yet.')}
                   />
                 </div>
                 {meta && (
@@ -467,7 +467,7 @@ export function ProductsPage() {
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>
-                  {categoryDialog.category ? `Edit "${categoryDialog.category.name}"` : 'New Category'}
+                  {categoryDialog.category ? tx('Edit "{{name}}"', { name: categoryDialog.category.name }) : tx('New Category')}
                 </DialogTitle>
               </DialogHeader>
 
@@ -532,7 +532,7 @@ export function ProductsPage() {
                 </Button>
                 <Button onClick={saveCategory} disabled={catSaving}>
                   {catSaving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-                  {categoryDialog.category ? 'Save' : 'Create'}
+                  {categoryDialog.category ? tx('Save') : tx('Create')}
                 </Button>
               </DialogFooter>
             </DialogContent>

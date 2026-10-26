@@ -56,7 +56,7 @@ export const MenuGrid: React.FC<Props> = ({ products, locked, onPick }) => {
             type="button"
             className={'pos-menu-card-pro' + (locked ? ' locked' : '')}
             onClick={() => !locked && onPick(p)}
-            title={locked ? 'Open your shift first' : `${p.name} — ${fmt(price)}`}
+            title={locked ? tx('Open your shift first') : `${p.name} — ${fmt(price)}`}
             style={{ textDecoration: 'none', color: 'inherit' }}
           >
             <div className="pos-menu-media-pro" style={{ background: tileFor(String(p.id ?? p.name)), position: 'relative' }}>

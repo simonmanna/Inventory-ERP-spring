@@ -36,10 +36,10 @@ type OrderStatus = 'received' | 'accepted' | 'preparing' | 'ready' | 'served' | 
 const fmt = (n: number) => `${orgCur()} ${Number(n || 0).toLocaleString()}`;
 
 const STAGES: Array<{ key: OrderStatus; label: string; emoji: string }> = [
-  { key: 'received', label: 'Received', emoji: '✅' },
-  { key: 'preparing', label: 'Preparing', emoji: '👨‍🍳' },
-  { key: 'ready', label: 'Ready', emoji: '🛎️' },
-  { key: 'served', label: 'Served', emoji: '🎉' },
+  { key: 'received', label: tx('Received'), emoji: '✅' },
+  { key: 'preparing', label: tx('Preparing'), emoji: '👨‍🍳' },
+  { key: 'ready', label: tx('Ready'), emoji: '🛎️' },
+  { key: 'served', label: tx('Served'), emoji: '🎉' },
 ];
 
 export const DigitalMenuPage: React.FC = () => {
@@ -72,7 +72,7 @@ export const DigitalMenuPage: React.FC = () => {
         const data = (await res.json()) as CatalogResp;
         setCatalog(data);
       } catch (e: any) {
-        setCatalogError(e?.message || 'Failed to load menu');
+        setCatalogError(e?.message || tx('Failed to load menu'));
       }
     })();
   }, [token]);
@@ -141,7 +141,7 @@ export const DigitalMenuPage: React.FC = () => {
       setOrderStatus('received');
       setShowCart(false);
     } catch (e: any) {
-      setOrderError(e?.message || 'Failed to place order');
+      setOrderError(e?.message || tx('Failed to place order'));
     } finally {
       setSubmitting(false);
     }
@@ -182,7 +182,7 @@ export const DigitalMenuPage: React.FC = () => {
               <Check className="h-3 w-3" /> {tx('Order received')}
             </div>
             <h1 className="text-3xl font-extrabold mt-3">#{orderNumber}</h1>
-            <p className="text-sm text-slate-500 mt-1">at {catalog.orgName}{catalog.session.tableNumber ? ` · Table ${catalog.session.tableNumber}` : ''}</p>
+            <p className="text-sm text-slate-500 mt-1">{tx('at')} {catalog.orgName}{catalog.session.tableNumber ? tx(' · Table {{tableNumber}}', { tableNumber: catalog.session.tableNumber }) : ''}</p>
           </div>
 
           {/* Stage tracker */}
@@ -285,7 +285,7 @@ export const DigitalMenuPage: React.FC = () => {
                       onClick={() => setPaymentMethod(m)}
                       className={'py-2 rounded-lg text-xs font-bold ' + (paymentMethod === m ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700')}
                     >
-                      {m === 'mobile_money' ? '📱 MoMo' : m === 'card' ? '💳 Card' : '💵 Cash'}
+                      {m === 'mobile_money' ? tx('📱 MoMo') : m === 'card' ? tx('💳 Card') : tx('💵 Cash')}
                     </button>
                   ))}
                 </div>
@@ -316,7 +316,7 @@ export const DigitalMenuPage: React.FC = () => {
                 className="w-full py-3 rounded-xl bg-emerald-500 disabled:bg-slate-300 text-white font-bold"
               >
                 {submitting ? <Loader2 className="h-4 w-4 mr-1 inline animate-spin" /> : <Receipt className="h-4 w-4 mr-1 inline" />}
-                {submitting ? 'Placing order…' : `Place order · ${fmt(cartTotal)}`}
+                {submitting ? tx('Placing order…') : tx('Place order · {{v1}}', { v1: fmt(cartTotal) })}
               </button>
             </>
           )}

@@ -61,7 +61,7 @@ export function HrDepartmentsPage() {
                   <div>
                     <p className="text-sm font-medium">{d.code} · {d.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {d.manager ? `Manager: ${d.manager.firstName}${d.manager.lastName ? ' ' + d.manager.lastName : ''}` : 'No manager'}
+                      {d.manager ? tx('Manager: {{firstName}}{{v2}}', { firstName: d.manager.firstName, v2: d.manager.lastName ? ' ' + d.manager.lastName : '' }) : tx('No manager')}
                       {' · '}{d._count?.employees ?? 0} {tx('employees ·')} {d._count?.positions ?? 0} {tx('positions')}
                     </p>
                   </div>
@@ -69,7 +69,7 @@ export function HrDepartmentsPage() {
                 <div className="flex items-center gap-2">
                   {!d.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}
                   <button onClick={() => openEdit(d)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                  <button onClick={() => { if (confirm(`Delete department ${d.name}?`)) remove.mutate(d.id); }}
+                  <button onClick={() => { if (confirm(tx('Delete department {{name}}?', { name: d.name }))) remove.mutate(d.id); }}
                     className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                 </div>
               </div>
@@ -80,7 +80,7 @@ export function HrDepartmentsPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit department' : 'New department'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit department') : tx('New department')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -107,7 +107,7 @@ export function HrDepartmentsPage() {
               </select>
             </div>
             <Button onClick={submit} disabled={!form.code || !form.name || create.isPending || update.isPending}>
-              {editing ? 'Save changes' : 'Create department'}
+              {editing ? tx('Save changes') : tx('Create department')}
             </Button>
           </div>
         </DialogContent>

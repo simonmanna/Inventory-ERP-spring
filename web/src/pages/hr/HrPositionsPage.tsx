@@ -71,7 +71,7 @@ export function HrPositionsPage() {
                   <div>
                     <p className="text-sm font-medium">{p.code} · {p.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {p.department?.name ?? 'No department'} · {p._count?.employees ?? 0} {tx('employees')}
+                      {p.department?.name ?? tx('No department')} · {p._count?.employees ?? 0} {tx('employees')}
                     </p>
                   </div>
                 </div>
@@ -79,7 +79,7 @@ export function HrPositionsPage() {
                   <span className="text-sm font-medium">{fmt(p.defaultSalary)}</span>
                   {!p.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}
                   <button onClick={() => openEdit(p)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                  <button onClick={() => { if (confirm(`Delete position ${p.name}?`)) remove.mutate(p.id); }}
+                  <button onClick={() => { if (confirm(tx('Delete position {{name}}?', { name: p.name }))) remove.mutate(p.id); }}
                     className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                 </div>
               </div>
@@ -90,7 +90,7 @@ export function HrPositionsPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit position' : 'New position'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit position') : tx('New position')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -115,7 +115,7 @@ export function HrPositionsPage() {
               <Input type="number" value={form.defaultSalary ?? ''} onChange={(e) => setForm({ ...form, defaultSalary: e.target.value })} />
             </div>
             <Button onClick={submit} disabled={!form.code || !form.name || create.isPending || update.isPending}>
-              {editing ? 'Save changes' : 'Create position'}
+              {editing ? tx('Save changes') : tx('Create position')}
             </Button>
           </div>
         </DialogContent>

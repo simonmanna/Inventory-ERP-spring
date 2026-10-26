@@ -29,14 +29,14 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  general: 'General',
-  sales: 'Sales',
-  purchase: 'Purchase',
-  cash: 'Cash',
-  bank: 'Bank',
-  adjustment: 'Adjustment',
-  opening: 'Opening',
-  closing: 'Closing',
+  general: tx('General'),
+  sales: tx('Sales'),
+  purchase: tx('Purchase'),
+  cash: tx('Cash'),
+  bank: tx('Bank'),
+  adjustment: tx('Adjustment'),
+  opening: tx('Opening'),
+  closing: tx('Closing'),
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -92,8 +92,8 @@ export function JournalDetailPage() {
   }
 
   const tabs = [
-    { id: 'entries', label: 'Entries', icon: FileText, count: journal._count?.entries },
-    { id: 'config', label: 'Configuration', icon: Activity, count: null },
+    { id: 'entries', label: tx('Entries'), icon: FileText, count: journal._count?.entries },
+    { id: 'config', label: tx('Configuration'), icon: Activity, count: null },
   ];
 
   return (
@@ -122,12 +122,12 @@ export function JournalDetailPage() {
                   {TYPE_LABELS[journal.journalType] ?? journal.journalType}
                 </span>
                 <Badge variant={journal.isActive ? 'default' : 'secondary'} className="text-xs">
-                  {journal.isActive ? 'Active' : 'Inactive'}
+                  {journal.isActive ? tx('Active') : tx('Inactive')}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {journal._count?.entries ?? 0} {tx('journal entries')}
-                {journal.sequencePrefix ? ` · Prefix: ${journal.sequencePrefix}` : ''}
+                {journal.sequencePrefix ? tx(' · Prefix: {{sequencePrefix}}', { sequencePrefix: journal.sequencePrefix }) : ''}
               </p>
             </div>
           </div>

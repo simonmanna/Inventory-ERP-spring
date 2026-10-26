@@ -50,7 +50,7 @@ export const CancelOrderDialog: React.FC<Props> = ({
         overrideById, overridePin, stockDisposition,
         _idemKey: idemKeyRef.current,
       });
-      toast.success(`Refund recorded for ${invoiceNumber}`);
+      toast.success(tx('Refund recorded for {{invoiceNumber}}', { invoiceNumber }));
       onDone();
       onClose();
     } catch (e: any) {
@@ -61,7 +61,7 @@ export const CancelOrderDialog: React.FC<Props> = ({
         return;
       }
       if (e?.response?.data?.safeToRetry) idemKeyRef.current = crypto.randomUUID();
-      const msg = e?.response?.data?.message || 'Failed to cancel order';
+      const msg = e?.response?.data?.message || tx('Failed to cancel order');
       if (/manager override/i.test(msg)) {
         setTimeout(() => setShowOverride(true), 100);
         return;

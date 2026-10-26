@@ -135,7 +135,7 @@ export function RoleEditPage() {
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link to="/staff/roles" className="hover:text-foreground">
-          Roles &amp; Permissions
+          {tx('Roles & Permissions')}
         </Link>
         <span className="opacity-50">/</span>
         <span className="font-medium text-foreground">{role.name}</span>
@@ -160,8 +160,8 @@ export function RoleEditPage() {
               <h1 className="text-2xl font-semibold leading-tight">{tx('Edit Role')}</h1>
               <p className="text-sm text-muted-foreground">
                 {role.isSystem
-                  ? 'Seeded system role — rename, describe, and adjust permissions.'
-                  : 'Adjust this role’s name and the permissions it grants.'}
+                  ? tx('Seeded system role — rename, describe, and adjust permissions.')
+                  : tx('Adjust this role’s name and the permissions it grants.')}
               </p>
             </div>
           </div>
@@ -185,7 +185,7 @@ export function RoleEditPage() {
         </span>
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">
-          <span className="font-medium text-foreground">{selectedCount}</span> of {totalCount} {tx('permissions selected')}
+          <span className="font-medium text-foreground">{selectedCount}</span> {tx('of')} {totalCount} {tx('permissions selected')}
         </span>
         {role.isSystem && (
           <Badge variant="secondary" className="text-[10px]">
@@ -295,7 +295,7 @@ export function RoleEditPage() {
                             }}
                             role="checkbox"
                             aria-checked={allOn}
-                            aria-label={`Select all ${prettyResource(group.resource)}`}
+                            aria-label={tx('Select all {{v1}}', { v1: prettyResource(group.resource) })}
                           >
                             {allOn && <Check className="h-3 w-3" />}
                             {someOn && <Minus className="h-3 w-3" />}
@@ -314,7 +314,7 @@ export function RoleEditPage() {
                           }
                           className="text-xs text-muted-foreground hover:text-foreground"
                         >
-                          {isCollapsed ? 'Show' : 'Hide'}
+                          {isCollapsed ? tx('Show') : tx('Hide')}
                         </button>
                       </div>
 

@@ -94,7 +94,7 @@ export default function FiscalPositionsPage() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.code.trim()) {
-      setFormError('Name and code are required');
+      setFormError(tx('Name and code are required'));
       return;
     }
     const payload = {
@@ -124,13 +124,13 @@ export default function FiscalPositionsPage() {
   const columns: Column<FiscalPosition>[] = [
     {
       key: 'name',
-      header: 'Name',
+      header: tx('Name'),
       render: (p) => <div className="font-medium">{p.name}</div>,
     },
-    { key: 'code', header: 'Code', render: (p) => <span className="text-sm text-muted-foreground">{p.code}</span> },
+    { key: 'code', header: tx('Code'), render: (p) => <span className="text-sm text-muted-foreground">{p.code}</span> },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (p) =>
         p.isActive ? (
           <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">{tx('Active')}</Badge>
@@ -235,11 +235,11 @@ export default function FiscalPositionsPage() {
         <DialogContent>
           <form onSubmit={submit}>
             <DialogHeader>
-              <DialogTitle>{editing ? 'Edit Fiscal Position' : 'New Fiscal Position'}</DialogTitle>
+              <DialogTitle>{editing ? tx('Edit Fiscal Position') : tx('New Fiscal Position')}</DialogTitle>
               <DialogDescription>
                 {editing
-                  ? 'Update the position label used on sales invoices.'
-                  : 'Add a tax-treatment label selectable on sales invoices.'}
+                  ? tx('Update the position label used on sales invoices.')
+                  : tx('Add a tax-treatment label selectable on sales invoices.')}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -271,7 +271,7 @@ export default function FiscalPositionsPage() {
                 {tx('Cancel')}
               </Button>
               <Button type="submit" disabled={createPosition.isPending || updatePosition.isPending}>
-                {editing ? 'Save changes' : 'Create position'}
+                {editing ? tx('Save changes') : tx('Create position')}
               </Button>
             </DialogFooter>
           </form>

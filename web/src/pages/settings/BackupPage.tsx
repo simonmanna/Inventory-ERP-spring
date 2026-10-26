@@ -72,8 +72,8 @@ interface RestoreResult { success: boolean; message: string; error?: string; }
 // =============================================================================
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const FREQ_LABELS: Record<BackupFrequency, string> = { manual: 'Manual Only', every_hour: 'Every Hour', every_2_hours: 'Every 2 Hours', every_4_hours: 'Every 4 Hours', every_6_hours: 'Every 6 Hours', every_12_hours: 'Every 12 Hours', daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', custom_minutes: 'Every X Minutes', custom_hours: 'Every X Hours', cron: 'Cron Expression (Advanced)' };
-const KIND_LABELS: Partial<Record<BackupKind, string>> = { full: 'Database', files: 'Images', config: 'Config', incremental: 'WAL', restore_test: 'Restore test' };
+const FREQ_LABELS: Record<BackupFrequency, string> = { manual: tx('Manual Only'), every_hour: tx('Every Hour'), every_2_hours: tx('Every 2 Hours'), every_4_hours: tx('Every 4 Hours'), every_6_hours: tx('Every 6 Hours'), every_12_hours: tx('Every 12 Hours'), daily: tx('Daily'), weekly: tx('Weekly'), monthly: tx('Monthly'), custom_minutes: tx('Every X Minutes'), custom_hours: tx('Every X Hours'), cron: tx('Cron Expression (Advanced)') };
+const KIND_LABELS: Partial<Record<BackupKind, string>> = { full: tx('Database'), files: tx('Images'), config: tx('Config'), incremental: 'WAL', restore_test: tx('Restore test') };
 const CLOUD: DestinationType[] = ['onedrive', 'google_drive', 'dropbox', 's3', 'azure', 'ftp', 'sftp'];
 const MASK = '********';
 
@@ -96,14 +96,14 @@ function Hint({ children }: { children: React.ReactNode }) {
 /** Field labels per destination type — the backend reuses path/accessKey/secretKey/bucket/region. */
 function destFields(t: DestinationType): { path: string; pathHint?: string; bucket?: string; region?: boolean; access?: string; secret?: string } {
   switch (t) {
-    case 'local': return { path: 'Folder', pathHint: 'e.g. D:\\POS-BACKUPS. The first local folder is the main backup folder.' };
-    case 'external_drive': return { path: 'Folder on the drive', pathHint: 'e.g. E:\\POS-BACKUPS. Copies fail (and show here) while the drive is unplugged.' };
-    case 'network_folder': return { path: 'Network folder', pathHint: 'e.g. \\\\NAS\\backups\\pos. The API service account needs write access.' };
-    case 's3': return { path: 'Folder (prefix)', bucket: 'Bucket', region: true, access: 'Access key ID', secret: 'Secret access key', pathHint: 'Needs the AWS CLI on the server.' };
-    case 'azure': return { path: 'Folder (prefix)', bucket: 'Container', access: 'Storage account', secret: 'Account key', pathHint: 'Needs the Azure CLI on the server.' };
-    case 'google_drive': case 'dropbox': case 'onedrive': return { path: 'Folder', bucket: 'rclone remote name', pathHint: 'Needs rclone on the server, set up once with `rclone config`.' };
-    case 'sftp': return { path: 'host:/remote/folder', access: 'User', pathHint: 'Uses scp with an SSH key for the API service account (no passwords).' };
-    case 'ftp': return { path: 'host/folder', access: 'User', secret: 'Password', pathHint: 'Plain FTP sends the password unencrypted; prefer SFTP or a cloud destination.' };
+    case 'local': return { path: tx('Folder'), pathHint: 'e.g. D:\\POS-BACKUPS. The first local folder is the main backup folder.' };
+    case 'external_drive': return { path: tx('Folder on the drive'), pathHint: 'e.g. E:\\POS-BACKUPS. Copies fail (and show here) while the drive is unplugged.' };
+    case 'network_folder': return { path: tx('Network folder'), pathHint: 'e.g. \\\\NAS\\backups\\pos. The API service account needs write access.' };
+    case 's3': return { path: tx('Folder (prefix)'), bucket: 'Bucket', region: true, access: tx('Access key ID'), secret: tx('Secret access key'), pathHint: tx('Needs the AWS CLI on the server.') };
+    case 'azure': return { path: tx('Folder (prefix)'), bucket: 'Container', access: tx('Storage account'), secret: tx('Account key'), pathHint: tx('Needs the Azure CLI on the server.') };
+    case 'google_drive': case 'dropbox': case 'onedrive': return { path: tx('Folder'), bucket: 'rclone remote name', pathHint: 'Needs rclone on the server, set up once with `rclone config`.' };
+    case 'sftp': return { path: 'host:/remote/folder', access: tx('User'), pathHint: tx('Uses scp with an SSH key for the API service account (no passwords).') };
+    case 'ftp': return { path: 'host/folder', access: tx('User'), secret: tx('Password'), pathHint: tx('Plain FTP sends the password unencrypted; prefer SFTP or a cloud destination.') };
   }
 }
 
@@ -118,11 +118,11 @@ function useBackupRun(url: string, label: string, onDone: () => void) {
     onSuccess: (r: BackupRunResult) => {
       if (r.status === 'failed') notify.error(`${label} failed`, r.error);
       else if (r.status === 'skipped') notify.warning(`${label} skipped`, r.error);
-      else if (r.warnings?.length && r.kind !== 'restore_test') notify.warning(`${label} done, with warnings`, r.warnings.join('; '));
+      else if (r.warnings?.length && r.kind !== 'restore_test') notify.warning(tx('{{label}} done, with warnings', { label }), r.warnings.join('; '));
       else notify.success(`${label} done`, r.kind === 'restore_test' ? r.warnings?.[0] : undefined);
       onDone();
     },
-    onError: (e) => notify.error(`${label} failed`, apiMessage(e, 'Request failed')),
+    onError: (e) => notify.error(`${label} failed`, apiMessage(e, tx('Request failed'))),
   });
 }
 
@@ -229,16 +229,16 @@ export function BackupPage() {
     onError: (e) => notify.error(tx('Settings not saved'), apiMessage(e, 'Failed')),
   });
 
-  const runFull = useBackupRun('/admin/backups/full', 'Database backup', refresh);
+  const runFull = useBackupRun('/admin/backups/full', tx('Database backup'), refresh);
   const runInc = useBackupRun('/admin/backups/incremental', 'WAL switch', refresh);
-  const runFiles = useBackupRun('/admin/backups/files', 'Image backup', refresh);
-  const runConfig = useBackupRun('/admin/backups/config', 'Config backup', refresh);
-  const runTest = useBackupRun('/admin/backups/restore/test', 'Restore test', refresh);
+  const runFiles = useBackupRun('/admin/backups/files', tx('Image backup'), refresh);
+  const runConfig = useBackupRun('/admin/backups/config', tx('Config backup'), refresh);
+  const runTest = useBackupRun('/admin/backups/restore/test', tx('Restore test'), refresh);
 
   const verify = useMutation({
     mutationFn: async (backupFile: string) => (await api.post<RestoreResult>('/admin/backups/restore/verify', { backupFile }, { timeout: 0 })).data,
     onSuccess: (r) => (r.success ? notify.success(tx('Backup verified'), r.message) : notify.error(tx('Verification failed'), r.error ?? r.message)),
-    onError: (e) => notify.error(tx('Verification failed'), apiMessage(e, 'Request failed')),
+    onError: (e) => notify.error(tx('Verification failed'), apiMessage(e, tx('Request failed'))),
   });
 
   const addDest = (type: DestinationType = 'external_drive') => setDestinations([...destinations, { type, path: '', label: '', enabled: true }]);
@@ -289,7 +289,7 @@ export function BackupPage() {
         {/* TAB: Schedule */}
         {/* ===================================================================== */}
         <TabsContent value="schedule" className="space-y-4 mt-4">
-          <Section title={tx('Backup Frequency')} icon={Clock} desc="How often should backups run?">
+          <Section title={tx('Backup Frequency')} icon={Clock} desc={tx('How often should backups run?')}>
             <Select value={freq} onValueChange={(v: BackupFrequency) => setFreq(v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{Object.entries(FREQ_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
@@ -316,7 +316,7 @@ export function BackupPage() {
             {server && !server.schedulerEnabled && <p className="text-sm text-destructive">{tx('Automatic backups are switched off on this server (BACKUP_CRON_ENABLED=false).')}</p>}
           </Section>
 
-          <Section title={tx('Backup Type')} icon={Database} desc="What kind of backups to create">
+          <Section title={tx('Backup Type')} icon={Database} desc={tx('What kind of backups to create')}>
             <div className="space-y-1">
               <Checkbox label={tx('Full database backup (always on)')} checked disabled onChange={() => undefined} />
               <Checkbox label={tx('WAL segment switch (only with WAL archiving set up on PostgreSQL)')} checked={types.includes('incremental')} onChange={() => setTypes(toggleArr(types, 'incremental') as BackupType[])} />
@@ -324,7 +324,7 @@ export function BackupPage() {
             </div>
           </Section>
 
-          <Section title={tx('Run Now')} icon={Play} desc="Trigger a backup immediately">
+          <Section title={tx('Run Now')} icon={Play} desc={tx('Trigger a backup immediately')}>
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => runFull.mutate(undefined)} disabled={busy}>{runFull.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{tx('Database Backup')}</Button>
               <Button variant="outline" onClick={() => runFiles.mutate(undefined)} disabled={runFiles.isPending}>{runFiles.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{tx('Images')}</Button>
@@ -339,7 +339,7 @@ export function BackupPage() {
         {/* TAB: Content */}
         {/* ===================================================================== */}
         <TabsContent value="content" className="space-y-4 mt-4">
-          <Section title={tx('What is backed up')} icon={FolderOpen} desc="Each item is a separate backup run on the same schedule">
+          <Section title={tx('What is backed up')} icon={FolderOpen} desc={tx('Each item is a separate backup run on the same schedule')}>
             <Checkbox label={tx('Database: all sales, stock, accounts, settings, printers, receipts (always)')} checked disabled onChange={() => undefined} />
             <Checkbox label={tx('Uploaded images (product photos, documents)')} checked={!!(includes.uploadedImages || includes.productImages)} onChange={(v) => setIncludePair(['uploadedImages', 'productImages'], v)} />
             <Checkbox label={tx('Server configuration (.env): needed to rebuild the server')} checked={!!(includes.envFile || includes.configFiles)} onChange={(v) => setIncludePair(['envFile', 'configFiles'], v)} />
@@ -351,7 +351,7 @@ export function BackupPage() {
         {/* TAB: Storage */}
         {/* ===================================================================== */}
         <TabsContent value="storage" className="space-y-4 mt-4">
-          <Section title={tx('Backup Destinations')} icon={HardDrive} desc="The first local folder is the main backup folder; every other destination receives a verified copy">
+          <Section title={tx('Backup Destinations')} icon={HardDrive} desc={tx('The first local folder is the main backup folder; every other destination receives a verified copy')}>
             {destinations.map((d, i) => {
               const f = destFields(d.type);
               return (
@@ -373,8 +373,8 @@ export function BackupPage() {
                           <SelectItem value="dropbox">{tx('Dropbox (rclone)')}</SelectItem>
                           <SelectItem value="s3">{tx('Amazon S3')}</SelectItem>
                           <SelectItem value="azure">{tx('Azure Blob Storage')}</SelectItem>
-                          <SelectItem value="sftp">SFTP</SelectItem>
-                          <SelectItem value="ftp">FTP</SelectItem>
+                          <SelectItem value="sftp">{tx('SFTP')}</SelectItem>
+                          <SelectItem value="ftp">{tx('FTP')}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -405,7 +405,7 @@ export function BackupPage() {
             </div>
           </Section>
 
-          <Section title={tx('Internet Behaviour')} icon={Globe} desc="Applies to cloud destinations only; drives and network folders are always copied">
+          <Section title={tx('Internet Behaviour')} icon={Globe} desc={tx('Applies to cloud destinations only; drives and network folders are always copied')}>
             <Select value={internetMode} onValueChange={(v: InternetBehaviour) => setInternetMode(v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -417,7 +417,7 @@ export function BackupPage() {
             {internetMode === 'local_only' && destinations.some((d) => CLOUD.includes(d.type) && d.enabled !== false) && <p className="text-sm text-amber-600">{tx('Cloud destinations are configured but uploads are off.')}</p>}
           </Section>
 
-          <Section title={tx('Backup Naming')} icon={Tag} desc="How backup files are named">
+          <Section title={tx('Backup Naming')} icon={Tag} desc={tx('How backup files are named')}>
             <Input value={namingFmt} onChange={(e) => setNamingFmt(e.target.value)} />
             <Hint>{tx('Available tokens:')} <code>{'{TYPE}'}</code>, <code>{'{DATE}'}</code>, <code>{'{TIME}'}</code></Hint>
             <Hint>{tx('Example:')} {namingFmt.replace('{TYPE}', 'FULL').replace('{DATE}', '2026-07-20').replace('{TIME}', '020000')}{tx('.dump')}{server?.encryptionActive ? '.enc' : ''}</Hint>
@@ -428,7 +428,7 @@ export function BackupPage() {
         {/* TAB: Retention */}
         {/* ===================================================================== */}
         <TabsContent value="retention" className="space-y-4 mt-4">
-          <Section title={tx('Retention Policy')} icon={Trash2} desc="How long to keep backups (applied to every folder destination)">
+          <Section title={tx('Retention Policy')} icon={Trash2} desc={tx('How long to keep backups (applied to every folder destination)')}>
             <Select value={retentionMode} onValueChange={(v: RetentionMode) => setRetentionMode(v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -449,7 +449,7 @@ export function BackupPage() {
             <Hint>{tx('The 3 newest backups are always kept, so a run of failed nights never deletes the last good ones. The image folder is a mirror and is never pruned.')}</Hint>
           </Section>
 
-          <Section title={tx('Automatic Cleanup')} icon={Trash2} desc="Runs daily at 05:00">
+          <Section title={tx('Automatic Cleanup')} icon={Trash2} desc={tx('Runs daily at 05:00')}>
             <Checkbox label={tx('Delete backups outside the retention policy')} checked={autoCleanup} onChange={setAutoCleanup} />
           </Section>
         </TabsContent>
@@ -458,9 +458,9 @@ export function BackupPage() {
         {/* TAB: Security */}
         {/* ===================================================================== */}
         <TabsContent value="security" className="space-y-4 mt-4">
-          <Section title={tx('Encryption')} icon={Shield} desc="A backup is a full copy of every sale, customer and account">
+          <Section title={tx('Encryption')} icon={Shield} desc={tx('A backup is a full copy of every sale, customer and account')}>
             {server?.encryptionEnforcedByEnv ? (
-              <p className="text-sm">{tx('Encryption is')} <b>on</b>: the server&apos;s BACKUP_ENCRYPTION_PASSWORD is used for every backup.</p>
+              <p className="text-sm">{tx('Encryption is')} <b>{tx('on')}</b>{tx(': the server\'s BACKUP_ENCRYPTION_PASSWORD is used for every backup.')}</p>
             ) : (
               <>
                 <Select value={encryptType} onValueChange={(v: EncryptionType) => setEncryptType(v)}>
@@ -476,7 +476,7 @@ export function BackupPage() {
             <Hint>{tx('Write the password down and keep it away from the server and the backup drive. Without it no backup can be restored. Changing it only affects new backups.')}</Hint>
           </Section>
 
-          <Section title={tx('Compression')} icon={HardDrive} desc="Backup file compression level">
+          <Section title={tx('Compression')} icon={HardDrive} desc={tx('Backup file compression level')}>
             <Select value={String(compression)} onValueChange={(v) => setCompression(Number(v) as CompressionLevel)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -488,7 +488,7 @@ export function BackupPage() {
             </Select>
           </Section>
 
-          <Section title={tx('Verification')} icon={ShieldCheck} desc="Every backup is read back and checksummed; copies are re-checked after copying">
+          <Section title={tx('Verification')} icon={ShieldCheck} desc={tx('Every backup is read back and checksummed; copies are re-checked after copying')}>
             <Checkbox label={tx('Test-restore every scheduled backup into a temporary database (then delete it)')} checked={testRestore} onChange={setTestRestore} />
           </Section>
         </TabsContent>
@@ -497,7 +497,7 @@ export function BackupPage() {
         {/* TAB: Notifications */}
         {/* ===================================================================== */}
         <TabsContent value="notifications" className="space-y-4 mt-4">
-          <Section title={tx('Notifications')} icon={Bell} desc="Get notified about backup events">
+          <Section title={tx('Notifications')} icon={Bell} desc={tx('Get notified about backup events')}>
             <div><Label>{tx('Notify when')}</Label>{[['failed', 'A backup or copy fails'], ['completed', 'A backup completes'], ['skipped', 'A backup is skipped']].map(([k, l]) => <Checkbox key={k} label={l} checked={notifyOn.includes(k)} onChange={() => setNotifyOn(toggleArr(notifyOn, k))} />)}</div>
             <Separator />
             <div><Label>{tx('Via')}</Label>{[['desktop', 'Server log and this page'], ['email', 'Email (needs SMTP_HOST on the server)']].map(([k, l]) => <Checkbox key={k} label={l} checked={notifyChannels.includes(k)} onChange={() => setNotifyChannels(toggleArr(notifyChannels, k))} />)}</div>
@@ -510,7 +510,7 @@ export function BackupPage() {
         {/* TAB: Advanced */}
         {/* ===================================================================== */}
         <TabsContent value="advanced" className="space-y-4 mt-4">
-          <Section title={tx('Reliability')} icon={Settings2} desc="Applies to scheduled database backups">
+          <Section title={tx('Reliability')} icon={Settings2} desc={tx('Applies to scheduled database backups')}>
             <div className="grid grid-cols-3 gap-2">
               <div><Label>{tx('Retries')}</Label><Input type="number" min={0} value={advRetry} onChange={(e) => setAdvRetry(Number(e.target.value))} /></div>
               <div><Label>{tx('Retry delay (min)')}</Label><Input type="number" min={0} value={advRetryDelay} onChange={(e) => setAdvRetryDelay(Number(e.target.value))} /></div>
@@ -558,7 +558,7 @@ export function BackupPage() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {(['full', 'restore_test', 'files', 'config'] as BackupKind[]).map((kind) => {
                   const r = lastByKind?.[kind];
-                  return (<div key={kind} className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">{KIND_LABELS[kind]}</span>{r ? <Badge variant={r.status === 'success' ? (r.warnings?.length && kind !== 'restore_test' ? 'secondary' : 'default') : r.status === 'failed' ? 'destructive' : 'outline'}>{r.status}</Badge> : <Badge variant="outline">{tx('never')}</Badge>}</div>{r && <div className="mt-2 text-xs text-muted-foreground space-y-1"><div>{fmtTime(r.finishedAt)}</div><div className="flex justify-between"><span>{r.sizeBytes ? `Size: ${fmtSize(r.sizeBytes)}` : ''}</span><span>{fmtDuration(r.durationMs)}</span></div>{r.error && <div className="text-destructive break-words">{r.error}</div>}{r.copies?.map((c) => <div key={c.destination} className={c.ok ? '' : 'text-destructive'}>{c.ok ? '✓' : '✗'} {c.destination}</div>)}</div>}</div>);
+                  return (<div key={kind} className="rounded-lg border p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">{KIND_LABELS[kind]}</span>{r ? <Badge variant={r.status === 'success' ? (r.warnings?.length && kind !== 'restore_test' ? 'secondary' : 'default') : r.status === 'failed' ? 'destructive' : 'outline'}>{r.status}</Badge> : <Badge variant="outline">{tx('never')}</Badge>}</div>{r && <div className="mt-2 text-xs text-muted-foreground space-y-1"><div>{fmtTime(r.finishedAt)}</div><div className="flex justify-between"><span>{r.sizeBytes ? tx('Size: {{v1}}', { v1: fmtSize(r.sizeBytes) }) : ''}</span><span>{fmtDuration(r.durationMs)}</span></div>{r.error && <div className="text-destructive break-words">{r.error}</div>}{r.copies?.map((c) => <div key={c.destination} className={c.ok ? '' : 'text-destructive'}>{c.ok ? '✓' : '✗'} {c.destination}</div>)}</div>}</div>);
                 })}
               </div>
               {status.data?.recent && status.data.recent.length > 0 && (

@@ -73,7 +73,6 @@
     "repairMaintenance": "Repair & Maintenance",
     "workforce": "Human Resource",
     "purchasing": "Purchases",
-    "expenses": "Expenses",
     "cashFlow": "Cash Flow",
     "tasks": "Tasks",
     "taskManagement": "Task Management",
@@ -81,7 +80,12 @@
     "fixedAssets": "Fixed Assets",
     "manufacturing": "Manufacturing",
     "bakery": "Bakery",
-    "settings": "Settings"
+    "customers": "Customers",
+    "suppliers": "Suppliers",
+    "menus": "Menus",
+    "tables": "Tables",
+    "cashFlowAccounts": "Cash Flow & Accounts",
+    "production": "Production"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -136,10 +140,9 @@
     },
     "purchaseOrders": {
       "title": "Purchases",
-      "description": "Buy-side commitments to suppliers. Three-way matched against receipts & bills.",
+      "description": "Description",
       "newPO": "New PO",
       "supplier": "Supplier",
-      "description": "Description",
       "total": "Total",
       "received": "Received",
       "billed": "Billed",

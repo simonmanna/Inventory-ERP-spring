@@ -61,22 +61,22 @@ interface MovementTypeEntry {
 const ALL_MOVEMENT_TYPES = '__all__';
 
 const ACCOUNT_SOURCES = [
-  { value: 'account_mapping', label: 'Account Mapping key (org default)' },
-  { value: 'literal', label: 'Direct account selection' },
-  { value: 'category_field', label: 'Product Category field' },
-  { value: 'product_field', label: 'Product Override field' },
+  { value: 'account_mapping', label: tx('Account Mapping key (org default)') },
+  { value: 'literal', label: tx('Direct account selection') },
+  { value: 'category_field', label: tx('Product Category field') },
+  { value: 'product_field', label: tx('Product Override field') },
 ] as const;
 
 const ACCOUNT_MAPPING_KEYS = [
-  { value: 'stock_valuation', label: 'Stock Valuation (1400)' },
-  { value: 'cogs', label: 'Cost of Goods Sold (5100)' },
-  { value: 'grni_accrued', label: 'GRNI Accrued (2150)' },
-  { value: 'stock_adjustment_income', label: 'Adj. Income (4200)' },
-  { value: 'stock_adjustment_expense', label: 'Adj. Expense (5300)' },
-  { value: 'sales_revenue', label: 'Sales Revenue (4100)' },
-  { value: 'accounts_receivable', label: 'Accounts Receivable (1300)' },
-  { value: 'accounts_payable', label: 'Accounts Payable (2100)' },
-  { value: 'default_cash', label: 'Default Cash (1100)' },
+  { value: 'stock_valuation', label: tx('Stock Valuation (1400)') },
+  { value: 'cogs', label: tx('Cost of Goods Sold (5100)') },
+  { value: 'grni_accrued', label: tx('GRNI Accrued (2150)') },
+  { value: 'stock_adjustment_income', label: tx('Adj. Income (4200)') },
+  { value: 'stock_adjustment_expense', label: tx('Adj. Expense (5300)') },
+  { value: 'sales_revenue', label: tx('Sales Revenue (4100)') },
+  { value: 'accounts_receivable', label: tx('Accounts Receivable (1300)') },
+  { value: 'accounts_payable', label: tx('Accounts Payable (2100)') },
+  { value: 'default_cash', label: tx('Default Cash (1100)') },
 ] as const;
 
 export function InventoryPostingRulesPage() {
@@ -129,14 +129,14 @@ export function InventoryPostingRulesPage() {
     ]);
 
     if (rulesRes.status === 'fulfilled') setRules(rulesRes.value.data ?? []);
-    else notify.error(apiMessage(rulesRes.reason, 'Failed to load posting rules'));
+    else notify.error(apiMessage(rulesRes.reason, tx('Failed to load posting rules')));
 
     if (mtRes.status === 'fulfilled') setMovementTypes(mtRes.value.data ?? []);
-    else notify.error(apiMessage(mtRes.reason, 'Failed to load movement types'));
+    else notify.error(apiMessage(mtRes.reason, tx('Failed to load movement types')));
 
     if (acctsRes.status === 'fulfilled')
       setAccounts(acctsRes.value.data?.data ?? acctsRes.value.data ?? []);
-    else notify.error(apiMessage(acctsRes.reason, 'Failed to load accounts'));
+    else notify.error(apiMessage(acctsRes.reason, tx('Failed to load accounts')));
 
     setLoading(false);
   };
@@ -148,12 +148,12 @@ export function InventoryPostingRulesPage() {
       const created = res.data?.created ?? 0;
       notify.success(
         created > 0
-          ? `Restored ${created} default rule${created === 1 ? '' : 's'}`
-          : 'All default rules are already configured',
+          ? tx('Restored {{created}} default rule{{v2}}', { created, v2: created === 1 ? '' : 's' })
+          : tx('All default rules are already configured'),
       );
       await fetchData();
     } catch (err) {
-      notify.error(apiMessage(err, 'Restore failed'));
+      notify.error(apiMessage(err, tx('Restore failed')));
     } finally {
       setRestoring(false);
     }
@@ -183,7 +183,7 @@ export function InventoryPostingRulesPage() {
       setEditOpen(false);
       fetchData();
     } catch (err: any) {
-      notify.error(apiMessage(err, 'Update failed'));
+      notify.error(apiMessage(err, tx('Update failed')));
     }
   };
 
@@ -202,7 +202,7 @@ export function InventoryPostingRulesPage() {
       setCreateMt('');
       fetchData();
     } catch (err: any) {
-      notify.error(apiMessage(err, 'Create failed'));
+      notify.error(apiMessage(err, tx('Create failed')));
     }
   };
 
@@ -214,22 +214,22 @@ export function InventoryPostingRulesPage() {
       setDeleting(null);
       fetchData();
     } catch (err: any) {
-      notify.error(apiMessage(err, 'Delete failed'));
+      notify.error(apiMessage(err, tx('Delete failed')));
     }
   };
 
   const columns: Column<PostingRule>[] = [
     {
       key: 'movementType',
-      header: 'Movement Type',
+      header: tx('Movement Type'),
       render: (r) => (
         <span className="font-mono text-xs">{r.movementType}</span>
       ),
     },
-    { key: 'lineIndex', header: 'Line' },
+    { key: 'lineIndex', header: tx('Line') },
     {
       key: 'debitOrCredit',
-      header: 'Side',
+      header: tx('Side'),
       render: (r) => (
         <Badge variant={r.debitOrCredit === 'debit' ? 'default' : 'secondary'}>
           {r.debitOrCredit.toUpperCase()}
@@ -238,7 +238,7 @@ export function InventoryPostingRulesPage() {
     },
     {
       key: 'accountSource',
-      header: 'Source',
+      header: tx('Source'),
       render: (r) => {
         const label = ACCOUNT_SOURCES.find((s) => s.value === r.accountSource)?.label ?? r.accountSource;
         return <span className="text-xs">{label}</span>;
@@ -246,7 +246,7 @@ export function InventoryPostingRulesPage() {
     },
     {
       key: 'accountMappingKey',
-      header: 'Mapping / Account',
+      header: tx('Mapping / Account'),
       render: (r) => {
         if (r.accountSource === 'account_mapping')
           return <span className="font-mono text-xs">{r.accountMappingKey}</span>;
@@ -263,7 +263,7 @@ export function InventoryPostingRulesPage() {
     },
     {
       key: 'scope',
-      header: 'Scope',
+      header: tx('Scope'),
       render: (r) => {
         if (r.productId) return <Badge variant="outline">{tx('Product')}</Badge>;
         if (r.categoryId) return <Badge variant="outline">{tx('Category')}</Badge>;
@@ -272,7 +272,7 @@ export function InventoryPostingRulesPage() {
     },
     {
       key: 'isActive',
-      header: 'Active',
+      header: tx('Active'),
       render: (r) => (
         r.isActive
           ? <CheckCircle className="h-4 w-4 text-green-600" />
@@ -321,7 +321,7 @@ export function InventoryPostingRulesPage() {
           {canCreate && (
             <Button variant="outline" onClick={restoreDefaults} disabled={restoring}>
               <RotateCcw className="h-4 w-4 mr-1" />
-              {restoring ? 'Restoring...' : 'Restore Defaults'}
+              {restoring ? tx('Restoring...') : tx('Restore Defaults')}
             </Button>
           )}
           {canCreate && (
@@ -358,7 +358,7 @@ export function InventoryPostingRulesPage() {
           <li><strong>{tx('Product override')}</strong> {tx('— rule with productId set (configured per product)')}</li>
           <li><strong>{tx('Category default')}</strong> {tx('— rule with categoryId set (configured per category)')}</li>
           <li><strong>{tx('Movement type default')}</strong> {tx('— org-wide rule (no productId/categoryId)')}</li>
-          <li><strong>{tx('Account Mapping')}</strong> — fallback at Accounting &gt; Account Mapping</li>
+          <li><strong>{tx('Account Mapping')}</strong> {tx('— fallback at Accounting > Account Mapping')}</li>
         </ol>
       </div>
 

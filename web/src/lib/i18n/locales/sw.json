@@ -79,7 +79,13 @@
     "accounting": "Uhasibu",
     "fixedAssets": "Mali za Kudumu",
     "manufacturing": "Utengenezaji",
-    "bakery": "Mkate"
+    "bakery": "Mkate",
+    "customers": "Wateja",
+    "suppliers": "Wasambazaji",
+    "menus": "Menyu",
+    "tables": "Meza",
+    "cashFlowAccounts": "Mtiririko wa Fedha & Akaunti",
+    "production": "Uzalishaji"
   },
   "dashboard": {
     "title": "Dashibodi",

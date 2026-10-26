@@ -4,6 +4,7 @@ import { REPORT_CATALOG, type ReportDescriptor } from '@erp/shared';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
+import { tx } from '@/lib/i18n/tx';
 
 export interface RoleReportVisibility {
   id: string;
@@ -43,10 +44,10 @@ export function useSetRoleReportVisibility() {
       (await api.put<RoleReportVisibility>(`/reports/access/roles/${roleId}`, { reports })).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['reports', 'access'] });
-      notify.success('Report visibility saved');
+      notify.success(tx('Report visibility saved'));
     },
     onError: (e: any) =>
-      notify.error('Failed to save report visibility', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to save report visibility'), e?.response?.data?.message ?? e.message),
   });
 }
 

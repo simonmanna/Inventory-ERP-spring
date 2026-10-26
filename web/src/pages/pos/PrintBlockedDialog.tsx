@@ -45,7 +45,7 @@ export const PrintBlockedDialog: React.FC<Props> = ({ open, kind, names, onClose
       ) : null}
       <DialogFooter>
         <Button onClick={onClose} style={{ background: '#16a34a' }}>
-          <X className="h-4 w-4 mr-1" /> OK
+          <X className="h-4 w-4 mr-1" /> {tx('OK')}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -54,11 +54,11 @@ const CONFIG: Record<RegisterKind, {
   noun: string; valueLabel: string; tone: 'good' | 'bad' | 'warn'; color: string; locationLabel: string;
   reasonLabel: string; empty: string;
 }> = {
-  stock_in: { noun: 'Stock in', valueLabel: 'Value received', tone: 'good', color: '#10b981', locationLabel: 'Received into', reasonLabel: 'Movement', empty: 'No stock received in this period.' },
-  stock_out: { noun: 'Stock out', valueLabel: 'Value issued', tone: 'bad', color: '#6366f1', locationLabel: 'Issued from', reasonLabel: 'Movement', empty: 'No stock issued in this period.' },
-  damages: { noun: 'Damages', valueLabel: 'Value lost', tone: 'bad', color: '#ef4444', locationLabel: 'Location', reasonLabel: 'Damage reason', empty: 'No damages, waste or write-offs recorded in this period.' },
-  adjustments: { noun: 'Adjustments', valueLabel: 'Net adjustment value', tone: 'warn', color: '#f59e0b', locationLabel: 'Location', reasonLabel: 'Adjustment reason', empty: 'No stock adjustments in this period.' },
-  transfers: { noun: 'Transfers', valueLabel: 'Value transferred', tone: 'good', color: '#0ea5e9', locationLabel: 'Route', reasonLabel: 'Reason', empty: 'No stock transfers in this period.' },
+  stock_in: { noun: 'Stock in', valueLabel: tx('Value received'), tone: 'good', color: '#10b981', locationLabel: tx('Received into'), reasonLabel: tx('Movement'), empty: tx('No stock received in this period.') },
+  stock_out: { noun: 'Stock out', valueLabel: tx('Value issued'), tone: 'bad', color: '#6366f1', locationLabel: tx('Issued from'), reasonLabel: tx('Movement'), empty: tx('No stock issued in this period.') },
+  damages: { noun: 'Damages', valueLabel: tx('Value lost'), tone: 'bad', color: '#ef4444', locationLabel: tx('Location'), reasonLabel: tx('Damage reason'), empty: tx('No damages, waste or write-offs recorded in this period.') },
+  adjustments: { noun: 'Adjustments', valueLabel: tx('Net adjustment value'), tone: 'warn', color: '#f59e0b', locationLabel: tx('Location'), reasonLabel: tx('Adjustment reason'), empty: tx('No stock adjustments in this period.') },
+  transfers: { noun: 'Transfers', valueLabel: tx('Value transferred'), tone: 'good', color: '#0ea5e9', locationLabel: tx('Route'), reasonLabel: tx('Reason'), empty: tx('No stock transfers in this period.') },
 };
 
 const PALETTE = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#0ea5e9', '#a855f7', '#14b8a6', '#f97316', '#64748b', '#84cc16'];
@@ -153,13 +153,13 @@ function RankBars({ rows, empty, color }: { rows: Group[]; empty: string; color:
 }
 
 const BREAKDOWNS = [
-  { key: 'byProduct', label: 'Items' },
-  { key: 'byCategory', label: 'Categories' },
-  { key: 'byLocation', label: 'Locations' },
-  { key: 'bySource', label: 'Sources' },
-  { key: 'byReason', label: 'Reasons' },
-  { key: 'byType', label: 'Movement types' },
-  { key: 'byStaff', label: 'Staff' },
+  { key: 'byProduct', label: tx('Items') },
+  { key: 'byCategory', label: tx('Categories') },
+  { key: 'byLocation', label: tx('Locations') },
+  { key: 'bySource', label: tx('Sources') },
+  { key: 'byReason', label: tx('Reasons') },
+  { key: 'byType', label: tx('Movement types') },
+  { key: 'byStaff', label: tx('Staff') },
 ] as const;
 
 export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnType<typeof useReportFilters> }) {
@@ -219,15 +219,15 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
       render: (g) => <>{g.name ?? g.key}{g.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{g.code}</span>}</>,
       sort: (g) => g.name ?? g.key,
     },
-    { key: 'category', header: 'Category', render: (g) => g.category ?? '', sort: (g) => g.category ?? null, hidden: breakdown !== 'byProduct' },
-    { key: 'documents', header: 'Documents', align: 'right', render: (g) => g.documents, sort: (g) => g.documents },
-    { key: 'lines', header: 'Lines', align: 'right', render: (g) => g.lines, sort: (g) => g.lines },
-    { key: 'qty', header: isAdj ? 'Net Qty' : 'Qty', align: 'right', render: (g) => `${qty(g.qty)}${g.uom ? ` ${g.uom}` : ''}`, sort: (g) => g.qty },
-    { key: 'avgUnitCost', header: 'Avg Unit Cost', align: 'right', render: (g) => money(g.avgUnitCost), sort: (g) => g.avgUnitCost ?? 0, hidden: breakdown !== 'byProduct' },
-    ...(isAdj ? [{ key: 'netValue', header: 'Net Value', align: 'right' as const, render: (g: Group) => <span className={g.netValue < 0 ? 'text-destructive' : 'text-emerald-600'}>{money(g.netValue)}</span>, sort: (g: Group) => g.netValue }] : []),
-    { key: 'value', header: isAdj ? 'Gross Value' : 'Value', align: 'right', render: (g) => <span className="font-semibold">{money(g.value)}</span>, sort: (g) => g.value },
+    { key: 'category', header: tx('Category'), render: (g) => g.category ?? '', sort: (g) => g.category ?? null, hidden: breakdown !== 'byProduct' },
+    { key: 'documents', header: tx('Documents'), align: 'right', render: (g) => g.documents, sort: (g) => g.documents },
+    { key: 'lines', header: tx('Lines'), align: 'right', render: (g) => g.lines, sort: (g) => g.lines },
+    { key: 'qty', header: isAdj ? tx('Net Qty') : tx('Qty'), align: 'right', render: (g) => `${qty(g.qty)}${g.uom ? ` ${g.uom}` : ''}`, sort: (g) => g.qty },
+    { key: 'avgUnitCost', header: tx('Avg Unit Cost'), align: 'right', render: (g) => money(g.avgUnitCost), sort: (g) => g.avgUnitCost ?? 0, hidden: breakdown !== 'byProduct' },
+    ...(isAdj ? [{ key: 'netValue', header: tx('Net Value'), align: 'right' as const, render: (g: Group) => <span className={g.netValue < 0 ? 'text-destructive' : 'text-emerald-600'}>{money(g.netValue)}</span>, sort: (g: Group) => g.netValue }] : []),
+    { key: 'value', header: isAdj ? tx('Gross Value') : tx('Value'), align: 'right', render: (g) => <span className="font-semibold">{money(g.value)}</span>, sort: (g) => g.value },
     {
-      key: 'sharePct', header: 'Share', align: 'right', sort: (g) => g.sharePct,
+      key: 'sharePct', header: tx('Share'), align: 'right', sort: (g) => g.sharePct,
       render: (g) => (
         <div className="flex items-center justify-end gap-2">
           <div className="hidden h-1.5 w-16 overflow-hidden rounded bg-muted sm:block"><div className="h-full" style={{ width: `${g.sharePct}%`, background: cfg.color }} /></div>
@@ -238,25 +238,25 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
   ];
 
   const lineCols: Column<RegisterLine>[] = useMemo(() => [
-    { key: 'date', header: 'Date', render: (l) => <span className="whitespace-nowrap text-xs">{dateTime(l.date)}</span>, sort: (l) => l.date, csv: (l) => dateTime(l.date) },
-    { key: 'docRef', header: 'Reference', render: (l) => <span className="whitespace-nowrap font-mono text-xs">{l.docRef && l.docRef.length < 30 ? l.docRef : l.ledgerCode}</span>, sort: (l) => l.docRef ?? l.ledgerCode },
-    { key: 'ledgerCode', header: 'Ledger #', render: (l) => l.ledgerCode, sort: (l) => l.ledgerCode, hidden: true },
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (l) => <>{l.name}{l.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{l.code}</span>}</>, sort: (l) => l.name },
-    { key: 'category', header: 'Category', render: (l) => <span className="text-muted-foreground">{l.category}</span>, sort: (l) => l.category },
-    { key: 'location', header: isTrf ? 'From' : 'Location', render: (l) => l.location, sort: (l) => l.location },
-    ...(isTrf ? [{ key: 'toLocation', header: 'To', render: (l: RegisterLine) => l.toLocation ?? '—', sort: (l: RegisterLine) => l.toLocation }] : []),
-    { key: 'sourceLabel', header: 'Source', render: (l) => <span className="whitespace-nowrap text-xs">{l.sourceLabel}</span>, sort: (l) => l.sourceLabel },
+    { key: 'date', header: tx('Date'), render: (l) => <span className="whitespace-nowrap text-xs">{dateTime(l.date)}</span>, sort: (l) => l.date, csv: (l) => dateTime(l.date) },
+    { key: 'docRef', header: tx('Reference'), render: (l) => <span className="whitespace-nowrap font-mono text-xs">{l.docRef && l.docRef.length < 30 ? l.docRef : l.ledgerCode}</span>, sort: (l) => l.docRef ?? l.ledgerCode },
+    { key: 'ledgerCode', header: tx('Ledger #'), render: (l) => l.ledgerCode, sort: (l) => l.ledgerCode, hidden: true },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (l) => <>{l.name}{l.code && <span className="ml-1 font-mono text-xs text-muted-foreground">{l.code}</span>}</>, sort: (l) => l.name },
+    { key: 'category', header: tx('Category'), render: (l) => <span className="text-muted-foreground">{l.category}</span>, sort: (l) => l.category },
+    { key: 'location', header: isTrf ? tx('From') : tx('Location'), render: (l) => l.location, sort: (l) => l.location },
+    ...(isTrf ? [{ key: 'toLocation', header: tx('To'), render: (l: RegisterLine) => l.toLocation ?? '—', sort: (l: RegisterLine) => l.toLocation }] : []),
+    { key: 'sourceLabel', header: tx('Source'), render: (l) => <span className="whitespace-nowrap text-xs">{l.sourceLabel}</span>, sort: (l) => l.sourceLabel },
     { key: 'reason', header: cfg.reasonLabel, render: (l) => <span className="whitespace-nowrap text-xs">{l.reason}</span>, sort: (l) => l.reason },
     {
-      key: 'qty', header: 'Qty', align: 'right', sort: (l) => l.qty,
+      key: 'qty', header: tx('Qty'), align: 'right', sort: (l) => l.qty,
       render: (l) => <span className={cn(isAdj && (l.qty < 0 ? 'text-destructive' : 'text-emerald-600'))}>{isAdj && l.qty > 0 ? '+' : ''}{qty(l.qty)}{l.uom ? ` ${l.uom}` : ''}</span>,
     },
-    { key: 'unitCost', header: 'Unit Cost', align: 'right', render: (l) => money(l.unitCost), sort: (l) => l.unitCost },
-    { key: 'value', header: 'Value', align: 'right', render: (l) => <span className={cn('font-semibold', isAdj && l.value < 0 && 'text-destructive')}>{money(l.value)}</span>, sort: (l) => l.value },
-    { key: 'responsible', header: 'Responsible', render: (l) => l.responsible ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.responsible },
-    { key: 'approvedBy', header: 'Approved By', render: (l) => l.approvedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.approvedBy },
-    { key: 'performedBy', header: 'Recorded By', render: (l) => l.performedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.performedBy },
-    { key: 'notes', header: 'Notes', render: (l) => <span className="block max-w-[18rem] truncate text-xs text-muted-foreground" title={l.notes ?? ''}>{l.notes ?? ''}</span>, csv: (l) => l.notes },
+    { key: 'unitCost', header: tx('Unit Cost'), align: 'right', render: (l) => money(l.unitCost), sort: (l) => l.unitCost },
+    { key: 'value', header: tx('Value'), align: 'right', render: (l) => <span className={cn('font-semibold', isAdj && l.value < 0 && 'text-destructive')}>{money(l.value)}</span>, sort: (l) => l.value },
+    { key: 'responsible', header: tx('Responsible'), render: (l) => l.responsible ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.responsible },
+    { key: 'approvedBy', header: tx('Approved By'), render: (l) => l.approvedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.approvedBy },
+    { key: 'performedBy', header: tx('Recorded By'), render: (l) => l.performedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.performedBy },
+    { key: 'notes', header: tx('Notes'), render: (l) => <span className="block max-w-[18rem] truncate text-xs text-muted-foreground" title={l.notes ?? ''}>{l.notes ?? ''}</span>, csv: (l) => l.notes },
   ], [isAdj, isTrf, cfg.reasonLabel]);
 
   const trendData = d?.trend.points.map((p) => ({ ...p, label: d.trend.bucket === 'day' ? p.key.slice(5) : p.key })) ?? [];
@@ -279,16 +279,16 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
                 <>
                   <Kpi label={cfg.valueLabel} value={money(s.value)} tone={cfg.tone} hint={<Change pct={s.changePct.value} invert={kind === 'damages'} />} />
                   <Kpi label={tx('Quantity')} value={qty(s.qty)} hint={<Change pct={s.changePct.qty} invert={kind === 'damages'} />} />
-                  <Kpi label={tx('Daily average')} value={money(s.avgValuePerDay)} hint={`over ${d.range.days} day(s)`} />
+                  <Kpi label={tx('Daily average')} value={money(s.avgValuePerDay)} hint={tx('over {{days}} day(s)', { days: d.range.days })} />
                 </>
               )}
               <Kpi label={tx('Documents / lines')} value={`${s.documents} / ${s.lines}`} hint={<Change pct={s.changePct.lines} invert={kind === 'damages'} />} />
-              <Kpi label={tx('Items / locations')} value={`${s.items} / ${s.locations}`} hint={s.paretoItems ? `${s.paretoItems} item(s) = 80% of value` : undefined} />
+              <Kpi label={tx('Items / locations')} value={`${s.items} / ${s.locations}`} hint={s.paretoItems ? tx('{{paretoItems}} item(s) = 80% of value', { paretoItems: s.paretoItems }) : undefined} />
               <Kpi
                 label={tx('Control gaps')}
                 value={`${s.unassignedLines} / ${s.unapprovedLines}`}
                 tone={s.unassignedLines || s.unapprovedLines ? 'warn' : 'good'}
-                hint="No responsible / not approved"
+                hint={tx('No responsible / not approved')}
               />
             </KpiGrid>
 
@@ -299,7 +299,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
               {zeroCost && <span className="text-amber-600">{tx('⚠ All lines carry zero cost — value charts fall back to line counts. Check item cost prices.')}</span>}
             </div>
 
-            <ChartCard title={`${cfg.noun} trend`} subtitle={`${d.trend.bucket === 'day' ? 'Daily' : d.trend.bucket === 'week' ? 'Weekly' : 'Monthly'} value (bars) and line count (line)`}>
+            <ChartCard title={`${cfg.noun} trend`} subtitle={tx('{{v1}} value (bars) and line count (line)', { v1: d.trend.bucket === 'day' ? 'Daily' : d.trend.bucket === 'week' ? 'Weekly' : 'Monthly' })}>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={trendData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
@@ -324,10 +324,10 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
             </ChartCard>
 
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <ChartCard title={isTrf ? 'Top items moved' : `Top items — ${cfg.noun.toLowerCase()}`}>
+              <ChartCard title={isTrf ? tx('Top items moved') : tx('Top items — {{v1}}', { v1: cfg.noun.toLowerCase() })}>
                 <RankBars rows={d.byProduct} empty={cfg.empty} color={cfg.color} />
               </ChartCard>
-              <ChartCard title={kind === 'damages' || isAdj ? `By ${cfg.reasonLabel.toLowerCase()}` : 'By source'}>
+              <ChartCard title={kind === 'damages' || isAdj ? tx('By {{v1}}', { v1: cfg.reasonLabel.toLowerCase() }) : tx('By source')}>
                 <Donut data={kind === 'damages' || isAdj ? d.byReason : d.bySource} empty={cfg.empty} />
               </ChartCard>
               <ChartCard title={tx('By category')}>
@@ -336,7 +336,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
             </div>
 
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <ChartCard title={isTrf ? 'By route' : `By ${cfg.locationLabel.toLowerCase()}`}>
+              <ChartCard title={isTrf ? tx('By route') : tx('By {{v1}}', { v1: cfg.locationLabel.toLowerCase() })}>
                 <RankBars rows={d.byLocation} empty={cfg.empty} color={cfg.color} />
               </ChartCard>
               <ChartCard title={tx('By weekday')} subtitle={tx('Lines per day of week')}>
@@ -375,7 +375,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
                     onClick={() => setBreakdown(b.key)}
                     className={cn('rounded-full border px-3 py-1 text-xs', breakdown === b.key ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-muted')}
                   >
-                    {b.key === 'byLocation' && isTrf ? 'Routes' : b.label}
+                    {b.key === 'byLocation' && isTrf ? tx('Routes') : b.label}
                   </button>
                 ))}
               </div>

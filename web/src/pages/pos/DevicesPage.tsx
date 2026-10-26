@@ -86,7 +86,7 @@ export function DevicesPage() {
       setName('');
       qc.invalidateQueries({ queryKey: ['pos-devices'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Registration failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Registration failed')),
   });
 
   const revoke = useMutation({
@@ -96,7 +96,7 @@ export function DevicesPage() {
       setConfirmRevoke(null);
       qc.invalidateQueries({ queryKey: ['pos-devices'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Revoke failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Revoke failed')),
   });
 
   const copy = (text: string, label: string) => {
@@ -120,7 +120,7 @@ export function DevicesPage() {
         <Link to="/settings/devices/rejected">
           <Button variant={rejected && rejected.open > 0 ? 'destructive' : 'outline'} size="sm">
             <Inbox className="h-4 w-4" />
-            {rejected && rejected.open > 0 ? `${rejected.open} rejected` : 'Rejected sales'}
+            {rejected && rejected.open > 0 ? `${rejected.open} rejected` : tx('Rejected sales')}
           </Button>
         </Link>
       </div>

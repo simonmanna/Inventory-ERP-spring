@@ -20,10 +20,10 @@ import { useOpenSession, useReceivePayment } from '@/pages/pos/api';
 import { tx } from '@/lib/i18n/tx';
 
 const METHODS = [
-  { value: 'cash', label: 'Cash' },
-  { value: 'mobile_money', label: 'Mobile Money' },
-  { value: 'card', label: 'Card' },
-  { value: 'bank', label: 'Bank' },
+  { value: 'cash', label: tx('Cash') },
+  { value: 'mobile_money', label: tx('Mobile Money') },
+  { value: 'card', label: tx('Card') },
+  { value: 'bank', label: tx('Bank') },
 ] as const;
 
 type Method = (typeof METHODS)[number]['value'];
@@ -72,10 +72,10 @@ export function RecordCreditPaymentDialog({ target, onClose, onPaid }: Props) {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!Number.isFinite(amt) || amt <= 0) { setError('Enter an amount greater than zero.'); return; }
+    if (!Number.isFinite(amt) || amt <= 0) { setError(tx('Enter an amount greater than zero.')); return; }
     if (amt > residual + 0.01) { setError(`Amount exceeds the ${money(residual, currency)} still due.`); return; }
-    if (!openSession?.id) { setError('Select an open register before recording payment.'); return; }
-    if (method !== 'cash' && !accountId) { setError('Select the account that received the payment.'); return; }
+    if (!openSession?.id) { setError(tx('Select an open register before recording payment.')); return; }
+    if (method !== 'cash' && !accountId) { setError(tx('Select the account that received the payment.')); return; }
     setError(null);
     try {
       await receivePayment.mutateAsync({
@@ -87,13 +87,13 @@ export function RecordCreditPaymentDialog({ target, onClose, onPaid }: Props) {
       });
       toast.success(
         isPartial
-          ? `${money(amt, currency)} received — ${money(remainder, currency)} still owed on ${target.invoiceNumber}`
-          : `${target.invoiceNumber} settled in full`,
+          ? tx('{{v1}} received — {{v2}} still owed on {{invoiceNumber}}', { v1: money(amt, currency), v2: money(remainder, currency), invoiceNumber: target.invoiceNumber })
+          : tx('{{invoiceNumber}} settled in full', { invoiceNumber: target.invoiceNumber }),
       );
       onPaid?.(!isPartial);
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Payment failed');
+      setError(err?.response?.data?.message || err?.message || tx('Payment failed'));
     }
   };
 
@@ -103,7 +103,7 @@ export function RecordCreditPaymentDialog({ target, onClose, onPaid }: Props) {
         <DialogHeader>
           <DialogTitle>{tx('Record payment')}</DialogTitle>
           <DialogDescription>
-            {target.partnerName} {tx('owes')} {money(residual, currency)} on {target.invoiceNumber}.
+            {target.partnerName} {tx('owes')} {money(residual, currency)} {tx('on')} {target.invoiceNumber}.
           </DialogDescription>
         </DialogHeader>
 
@@ -188,7 +188,7 @@ export function RecordCreditPaymentDialog({ target, onClose, onPaid }: Props) {
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>{tx('Cancel')}</Button>
             <Button type="submit" disabled={receivePayment.isPending} className="bg-emerald-600 hover:bg-emerald-700">
-              {receivePayment.isPending ? 'Saving…' : `Receive ${money(Number.isFinite(amt) ? amt : 0, currency)}`}
+              {receivePayment.isPending ? tx('Saving…') : tx('Receive {{v1}}', { v1: money(Number.isFinite(amt) ? amt : 0, currency) })}
             </Button>
           </DialogFooter>
         </form>

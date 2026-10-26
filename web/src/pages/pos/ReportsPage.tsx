@@ -78,22 +78,22 @@ const TAB_FIELDS: Record<TabId, readonly ReportFilterField[]> = {
 };
 
 const TABS: Array<{ id: TabId; label: string }> = [
-  { id: 'sales', label: 'Sales Report' },
-  { id: 'items', label: 'Items Report' },
-  { id: 'item-sales', label: 'Item Sales' },
-  { id: 'items-by-group', label: 'Items by Group' },
-  { id: 'items-by-server', label: 'Item Sales by Server' },
-  { id: 'orders', label: 'Order Reports' },
-  { id: 'cashier', label: 'Cashier Reports' },
-  { id: 'cashier-summary', label: 'Cashier Shift Summary' },
-  { id: 'waiter', label: 'Waiter Report' },
-  { id: 'daily', label: 'Daily Sales' },
-  { id: 'weekly', label: 'Weekly Sales' },
-  { id: 'monthly', label: 'Monthly Sales' },
-  { id: 'hourly', label: 'Sales by hour' },
-  { id: 'top', label: 'Top items' },
-  { id: 'x', label: 'X-Report' },
-  { id: 'z', label: 'Z-Report' },
+  { id: 'sales', label: tx('Sales Report') },
+  { id: 'items', label: tx('Items Report') },
+  { id: 'item-sales', label: tx('Item Sales') },
+  { id: 'items-by-group', label: tx('Items by Group') },
+  { id: 'items-by-server', label: tx('Item Sales by Server') },
+  { id: 'orders', label: tx('Order Reports') },
+  { id: 'cashier', label: tx('Cashier Reports') },
+  { id: 'cashier-summary', label: tx('Cashier Shift Summary') },
+  { id: 'waiter', label: tx('Waiter Report') },
+  { id: 'daily', label: tx('Daily Sales') },
+  { id: 'weekly', label: tx('Weekly Sales') },
+  { id: 'monthly', label: tx('Monthly Sales') },
+  { id: 'hourly', label: tx('Sales by hour') },
+  { id: 'top', label: tx('Top items') },
+  { id: 'x', label: tx('X-Report') },
+  { id: 'z', label: tx('Z-Report') },
 ];
 
 const ReportsPage: React.FC = () => {
@@ -217,7 +217,7 @@ const ReportsPage: React.FC = () => {
 
           {(current as any)?.error && isDateTab ? (
             <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700 text-sm">
-              {((current as any).error?.response?.data?.message as string) || 'Could not load this report.'}
+              {((current as any).error?.response?.data?.message as string) || tx('Could not load this report.')}
             </div>
           ) : null}
 
@@ -292,7 +292,7 @@ const totalOf = <T,>(pick: (r: T) => string | number | null | undefined) =>
 const XReportView: React.FC<{ report: XReportType | null; loading: boolean; error: any; kind: 'X' | 'Z' }> = ({ report, loading, error, kind }) => {
   if (loading) return <div className="text-slate-500 p-4">{tx('Loading')} {kind}{tx('-report…')}</div>;
   if (error) {
-    const msg = error?.response?.data?.message || error?.message || 'Failed to load report';
+    const msg = error?.response?.data?.message || error?.message || tx('Failed to load report');
     return <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-rose-700">{msg}</div>;
   }
   if (!report || !report.cashSession) {
@@ -397,7 +397,7 @@ const HourlyView: React.FC<{
         <ReportCard
           title={tx('Peak hour')}
           value={peak && Number(peak.total) > 0 ? `${String(peak.hour).padStart(2, '0')}:00–${String(peak.hour + 1).padStart(2, '0')}:00` : '—'}
-          sub={peak && Number(peak.total) > 0 ? `${fmt(peak.total)} · ${peak.count} sale${peak.count === 1 ? '' : 's'}` : 'No sales in range'}
+          sub={peak && Number(peak.total) > 0 ? `${fmt(peak.total)} · ${peak.count} sale${peak.count === 1 ? '' : 's'}` : tx('No sales in range')}
         />
         <ReportCard title={tx('Avg per active hour')} value={fmt(visible.filter((b) => b.count > 0).length ? total / visible.filter((b) => b.count > 0).length : 0)} />
       </div>
@@ -422,7 +422,7 @@ const HourlyView: React.FC<{
       </div>
 
       <ReportTable<{ hour: number; count: number; total: string }>
-        title={heading('Hourly sales', range)}
+        title={heading(tx('Hourly sales'), range)}
         note={<><TrendingUp className="inline h-3.5 w-3.5 mr-1" />{tx('Gross sales incl. tax, bucketed by the hour the sale was rung up.')}</>}
         rows={visible}
         loading={loading}
@@ -433,7 +433,7 @@ const HourlyView: React.FC<{
         rowKey={(b) => String(b.hour)}
         columns={[
           {
-            key: 'hour', header: 'Hour', sort: (b) => b.hour,
+            key: 'hour', header: tx('Hour'), sort: (b) => b.hour,
             cell: (b) => <span className="font-mono">{String(b.hour).padStart(2, '0')}:00</span>,
             text: (b) => `${String(b.hour).padStart(2, '0')}:00`,
             footer: () => 'Total',
@@ -446,17 +446,17 @@ const HourlyView: React.FC<{
             ),
           },
           {
-            key: 'count', header: 'Sales', align: 'right', sort: (b) => b.count,
+            key: 'count', header: tx('Sales'), align: 'right', sort: (b) => b.count,
             cell: (b) => <span className="font-mono">{b.count}</span>, text: (b) => String(b.count),
             footer: (rows) => <span className="font-mono">{rows.reduce((s, b) => s + b.count, 0)}</span>,
           },
           {
-            key: 'total', header: 'Total', align: 'right', sort: (b) => Number(b.total),
+            key: 'total', header: tx('Total'), align: 'right', sort: (b) => Number(b.total),
             cell: (b) => moneyBold(b.total), text: (b) => num(b.total), pdf: (b) => fmt(b.total),
             footer: totalOf((b: { total: string }) => b.total),
           },
           {
-            key: 'share', header: '% of range', align: 'right', sort: (b) => Number(b.total),
+            key: 'share', header: tx('% of range'), align: 'right', sort: (b) => Number(b.total),
             cell: (b) => <span className="font-mono">{total > 0 ? `${((Number(b.total) / total) * 100).toFixed(1)}%` : '—'}</span>,
             text: (b) => (total > 0 ? `${((Number(b.total) / total) * 100).toFixed(1)}%` : '—'),
           },
@@ -479,7 +479,7 @@ const TopItemsView: React.FC<{
         <ReportCard title={tx('Period total')} value={fmt(total)} sub={`${items.length} item${items.length === 1 ? '' : 's'} ranked`} accent />
       </div>
       <ReportTable<typeof items[number]>
-        title={heading('Top items', range)}
+        title={heading(tx('Top items'), range)}
         note="Ranked by gross line total (incl. tax). Menu items and catalogue products are both counted."
         rows={items}
         loading={loading}
@@ -488,20 +488,20 @@ const TopItemsView: React.FC<{
         initialSortKey="total"
         rowKey={(it) => it.productId || it.name}
         columns={[
-          { key: 'name', header: 'Item', sort: (i) => i.name, cell: (i) => <span className="font-semibold">{i.name}</span>, text: (i) => i.name, footer: () => 'Total' },
+          { key: 'name', header: tx('Item'), sort: (i) => i.name, cell: (i) => <span className="font-semibold">{i.name}</span>, text: (i) => i.name, footer: () => 'Total' },
           { key: 'sku', header: 'SKU', sort: (i) => i.sku ?? '', cell: (i) => <span className="text-slate-500 font-mono text-sm">{i.sku ?? '—'}</span>, text: (i) => i.sku ?? '—' },
           {
-            key: 'qty', header: 'Qty', align: 'right', sort: (i) => i.quantity,
+            key: 'qty', header: tx('Qty'), align: 'right', sort: (i) => i.quantity,
             cell: (i) => <span className="font-mono">{i.quantity}</span>, text: (i) => String(i.quantity),
             footer: (rows) => <span className="font-mono">{rows.reduce((s, i) => s + Number(i.quantity), 0)}</span>,
           },
           {
-            key: 'total', header: 'Total', align: 'right', sort: (i) => Number(i.total),
+            key: 'total', header: tx('Total'), align: 'right', sort: (i) => Number(i.total),
             cell: (i) => moneyBold(i.total), text: (i) => num(i.total), pdf: (i) => fmt(i.total),
             footer: totalOf((i: { total: string }) => i.total),
           },
           {
-            key: 'share', header: '% of sales', align: 'right', sort: (i) => Number(i.total),
+            key: 'share', header: tx('% of sales'), align: 'right', sort: (i) => Number(i.total),
             cell: (i) => <span className="font-mono">{total > 0 ? `${((Number(i.total) / total) * 100).toFixed(1)}%` : '—'}</span>,
             text: (i) => (total > 0 ? `${((Number(i.total) / total) * 100).toFixed(1)}%` : '—'),
           },
@@ -520,25 +520,25 @@ const SalesReportView: React.FC<{ rows: SalesReportRow[]; loading: boolean; rang
   const net = sumMoney(rows, (r) => r.subtotal);
 
   const columns: Array<ReportColumn<SalesReportRow>> = [
-    { key: 'order', header: 'Order #', sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber, footer: () => `Total (${rows.length})` },
-    { key: 'invoice', header: 'Invoice #', sort: (r) => r.invoiceNumber, cell: (r) => <span className="font-mono text-sm">{r.invoiceNumber}</span>, text: (r) => r.invoiceNumber },
-    { key: 'date', header: 'Sale Date', sort: (r) => r.saleDate, cell: (r) => <span className="text-sm">{fmtDate(r.saleDate)}</span>, text: (r) => fmtDate(r.saleDate) },
-    { key: 'time', header: 'Time', sort: (r) => r.saleDate, cell: (r) => <span className="text-sm">{fmtTime(r.saleDate)}</span>, text: (r) => fmtTime(r.saleDate) },
-    { key: 'type', header: 'Type', sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
-    { key: 'tender', header: 'Tender', sort: (r) => r.paymentMethod ?? '', cell: (r) => <span className="text-sm">{humanise(r.paymentMethod)}</span>, text: (r) => humanise(r.paymentMethod) },
-    { key: 'subtotal', header: 'Subtotal', align: 'right', sort: (r) => Number(r.subtotal), cell: (r) => money(r.subtotal), text: (r) => num(r.subtotal), pdf: (r) => fmt(r.subtotal), footer: totalOf((r: SalesReportRow) => r.subtotal) },
-    { key: 'discount', header: 'Discount', align: 'right', sort: (r) => Number(r.discount), cell: (r) => money(r.discount), text: (r) => num(r.discount), pdf: (r) => fmt(r.discount), footer: totalOf((r: SalesReportRow) => r.discount) },
-    { key: 'tax', header: 'Tax', align: 'right', sort: (r) => Number(r.tax ?? 0), cell: (r) => money(r.tax ?? 0), text: (r) => num(r.tax ?? 0), pdf: (r) => fmt(r.tax ?? 0), footer: totalOf((r: SalesReportRow) => r.tax ?? 0) },
-    { key: 'total', header: 'Total', align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: SalesReportRow) => r.totalAmount) },
+    { key: 'order', header: tx('Order #'), sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber, footer: () => `Total (${rows.length})` },
+    { key: 'invoice', header: tx('Invoice #'), sort: (r) => r.invoiceNumber, cell: (r) => <span className="font-mono text-sm">{r.invoiceNumber}</span>, text: (r) => r.invoiceNumber },
+    { key: 'date', header: tx('Sale Date'), sort: (r) => r.saleDate, cell: (r) => <span className="text-sm">{fmtDate(r.saleDate)}</span>, text: (r) => fmtDate(r.saleDate) },
+    { key: 'time', header: tx('Time'), sort: (r) => r.saleDate, cell: (r) => <span className="text-sm">{fmtTime(r.saleDate)}</span>, text: (r) => fmtTime(r.saleDate) },
+    { key: 'type', header: tx('Type'), sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
+    { key: 'tender', header: tx('Tender'), sort: (r) => r.paymentMethod ?? '', cell: (r) => <span className="text-sm">{humanise(r.paymentMethod)}</span>, text: (r) => humanise(r.paymentMethod) },
+    { key: 'subtotal', header: tx('Subtotal'), align: 'right', sort: (r) => Number(r.subtotal), cell: (r) => money(r.subtotal), text: (r) => num(r.subtotal), pdf: (r) => fmt(r.subtotal), footer: totalOf((r: SalesReportRow) => r.subtotal) },
+    { key: 'discount', header: tx('Discount'), align: 'right', sort: (r) => Number(r.discount), cell: (r) => money(r.discount), text: (r) => num(r.discount), pdf: (r) => fmt(r.discount), footer: totalOf((r: SalesReportRow) => r.discount) },
+    { key: 'tax', header: tx('Tax'), align: 'right', sort: (r) => Number(r.tax ?? 0), cell: (r) => money(r.tax ?? 0), text: (r) => num(r.tax ?? 0), pdf: (r) => fmt(r.tax ?? 0), footer: totalOf((r: SalesReportRow) => r.tax ?? 0) },
+    { key: 'total', header: tx('Total'), align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: SalesReportRow) => r.totalAmount) },
     {
       // A fully-refunded sale still appears (it happened); this column is what
       // makes the gross figure reconcile against the bank on the same row.
-      key: 'refunded', header: 'Refunded', align: 'right', sort: (r) => Number(r.amountRefunded ?? 0),
+      key: 'refunded', header: tx('Refunded'), align: 'right', sort: (r) => Number(r.amountRefunded ?? 0),
       cell: (r) => (Number(r.amountRefunded ?? 0) > 0 ? <span className="font-mono text-rose-600">{fmt(r.amountRefunded)}</span> : <span className="text-slate-400">—</span>),
       text: (r) => num(r.amountRefunded ?? 0), pdf: (r) => fmt(r.amountRefunded ?? 0),
       footer: totalOf((r: SalesReportRow) => r.amountRefunded ?? 0),
     },
-    { key: 'waiter', header: 'Waiter', sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—' },
+    { key: 'waiter', header: tx('Waiter'), sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—' },
     {
       key: 'action', header: '', align: 'center',
       cell: (r) => (
@@ -558,7 +558,7 @@ const SalesReportView: React.FC<{ rows: SalesReportRow[]; loading: boolean; rang
         <ReportCard title={tx('Avg sale')} value={fmt(rows.length ? gross / rows.length : 0)} />
       </div>
       <ReportTable
-        title={heading('Sales Report', range)}
+        title={heading(tx('Sales Report'), range)}
         note="One row per POS invoice. Refunded sales stay listed with the amount returned shown separately."
         rows={rows} loading={loading} columns={columns}
         exportName={`sales-report-${suffix(range)}`}
@@ -582,7 +582,7 @@ const CashierReportView: React.FC<{ rows: CashierReportRow[]; loading: boolean; 
         <ReportCard title={tx('Received')} value={fmt(received)} sub={received < salesTotal ? `${fmt(salesTotal - received)} outstanding` : 'fully settled'} />
       </div>
       <ReportTable<CashierReportRow>
-        title={heading('Cashier Reports', range)}
+        title={heading(tx('Cashier Reports'), range)}
         note="Per-sale detail for the cashier who rang it up. 'Received' is the amount settled — a credit sale shows less than its total."
         rows={rows} loading={loading}
         exportName={`cashier-report-${suffix(range)}`}
@@ -590,17 +590,17 @@ const CashierReportView: React.FC<{ rows: CashierReportRow[]; loading: boolean; 
         initialSortKey="date"
         rowKey={(r, i) => `${r.invoiceNumber}-${i}`}
         columns={[
-          { key: 'cashier', header: 'Cashier', sort: (r) => r.cashierName ?? '', cell: (r) => <span className="text-sm">{r.cashierName ?? '—'}</span>, text: (r) => r.cashierName ?? '—', footer: () => `Total (${rows.length})` },
-          { key: 'order', header: 'Order', sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber },
-          { key: 'invoice', header: 'Invoice', sort: (r) => r.invoiceNumber, cell: (r) => <span className="font-mono text-sm">{r.invoiceNumber}</span>, text: (r) => r.invoiceNumber },
-          { key: 'date', header: 'Date', sort: (r) => r.saleDate ?? '', cell: (r) => <span className="text-sm">{fmtDate(r.saleDate)}</span>, text: (r) => fmtDate(r.saleDate) },
-          { key: 'time', header: 'Time', sort: (r) => r.saleDate ?? '', cell: (r) => <span className="text-sm">{r.saleDate ? fmtTime(r.saleDate) : (r.time ?? '—')}</span>, text: (r) => (r.saleDate ? fmtTime(r.saleDate) : (r.time ?? '—')) },
-          { key: 'type', header: 'Type', sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
-          { key: 'method', header: 'Payment Method', sort: (r) => r.paymentMethod ?? '', cell: (r) => <span className="text-sm">{humanise(r.paymentMethod)}</span>, text: (r) => humanise(r.paymentMethod) },
-          { key: 'sales', header: 'Sales Amount', align: 'right', sort: (r) => Number(r.salesAmount), cell: (r) => money(r.salesAmount), text: (r) => num(r.salesAmount), pdf: (r) => fmt(r.salesAmount), footer: totalOf((r: CashierReportRow) => r.salesAmount) },
-          { key: 'received', header: 'Received', align: 'right', sort: (r) => Number(r.received), cell: (r) => moneyBold(r.received), text: (r) => num(r.received), pdf: (r) => fmt(r.received), footer: totalOf((r: CashierReportRow) => r.received) },
+          { key: 'cashier', header: tx('Cashier'), sort: (r) => r.cashierName ?? '', cell: (r) => <span className="text-sm">{r.cashierName ?? '—'}</span>, text: (r) => r.cashierName ?? '—', footer: () => `Total (${rows.length})` },
+          { key: 'order', header: tx('Order'), sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber },
+          { key: 'invoice', header: tx('Invoice'), sort: (r) => r.invoiceNumber, cell: (r) => <span className="font-mono text-sm">{r.invoiceNumber}</span>, text: (r) => r.invoiceNumber },
+          { key: 'date', header: tx('Date'), sort: (r) => r.saleDate ?? '', cell: (r) => <span className="text-sm">{fmtDate(r.saleDate)}</span>, text: (r) => fmtDate(r.saleDate) },
+          { key: 'time', header: tx('Time'), sort: (r) => r.saleDate ?? '', cell: (r) => <span className="text-sm">{r.saleDate ? fmtTime(r.saleDate) : (r.time ?? '—')}</span>, text: (r) => (r.saleDate ? fmtTime(r.saleDate) : (r.time ?? '—')) },
+          { key: 'type', header: tx('Type'), sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
+          { key: 'method', header: tx('Payment Method'), sort: (r) => r.paymentMethod ?? '', cell: (r) => <span className="text-sm">{humanise(r.paymentMethod)}</span>, text: (r) => humanise(r.paymentMethod) },
+          { key: 'sales', header: tx('Sales Amount'), align: 'right', sort: (r) => Number(r.salesAmount), cell: (r) => money(r.salesAmount), text: (r) => num(r.salesAmount), pdf: (r) => fmt(r.salesAmount), footer: totalOf((r: CashierReportRow) => r.salesAmount) },
+          { key: 'received', header: tx('Received'), align: 'right', sort: (r) => Number(r.received), cell: (r) => moneyBold(r.received), text: (r) => num(r.received), pdf: (r) => fmt(r.received), footer: totalOf((r: CashierReportRow) => r.received) },
           {
-            key: 'refunded', header: 'Refunded', align: 'right', sort: (r) => Number(r.amountRefunded ?? 0),
+            key: 'refunded', header: tx('Refunded'), align: 'right', sort: (r) => Number(r.amountRefunded ?? 0),
             cell: (r) => (Number(r.amountRefunded ?? 0) > 0 ? <span className="font-mono text-rose-600">{fmt(r.amountRefunded)}</span> : <span className="text-slate-400">—</span>),
             text: (r) => num(r.amountRefunded ?? 0), pdf: (r) => fmt(r.amountRefunded ?? 0),
             footer: totalOf((r: CashierReportRow) => r.amountRefunded ?? 0),
@@ -634,7 +634,7 @@ const CashierShiftSummaryView: React.FC<{ rows: CashierShiftSummaryRow[]; loadin
         <ReportCard title={tx('Cash variance')} value={fmt(variance)} sub={`${short} short · ${over} over`} />
       </div>
       <ReportTable<CashierShiftSummaryRow>
-        title={heading('Cashier Shift Summary', range)}
+        title={heading(tx('Cashier Shift Summary'), range)}
         note="'Cash sales' is what hit the drawer; 'Total sales' is every tender rung up on the shift. Variance compares the counted cash against the expected drawer balance."
         rows={rows} loading={loading}
         exportName={`cashier-shift-summary-${suffix(range)}`}
@@ -642,16 +642,16 @@ const CashierShiftSummaryView: React.FC<{ rows: CashierShiftSummaryRow[]; loadin
         initialSortKey="opened"
         rowKey={(r, i) => r.sessionId ?? String(i)}
         columns={[
-          { key: 'shift', header: 'Shift', sort: (r) => r.openedAt ?? r.shift, cell: (r) => <span className="text-sm font-mono">{r.shift}</span>, text: (r) => r.shift, footer: () => `Total (${rows.length})` },
-          { key: 'opened', header: 'Opened', sort: (r) => r.openedAt ?? '', cell: (r) => <span className="text-sm">{r.openedAt ? `${fmtDate(r.openedAt)} ${fmtTime(r.openedAt)}` : '—'}</span>, text: (r) => (r.openedAt ? `${fmtDate(r.openedAt)} ${fmtTime(r.openedAt)}` : '—') },
-          { key: 'closed', header: 'Closed', sort: (r) => r.closedAt ?? '', cell: (r) => <span className="text-sm">{r.closedAt ? `${fmtDate(r.closedAt)} ${fmtTime(r.closedAt)}` : <span className="text-amber-600">{tx('open')}</span>}</span>, text: (r) => (r.closedAt ? `${fmtDate(r.closedAt)} ${fmtTime(r.closedAt)}` : 'open') },
-          { key: 'cashier', header: 'Cashier', sort: (r) => r.cashierName ?? '', cell: (r) => <span className="text-sm">{r.cashierName ?? '—'}</span>, text: (r) => r.cashierName ?? '—' },
-          { key: 'opening', header: 'Opening Cash', align: 'right', sort: (r) => Number(r.openingCash), cell: (r) => money(r.openingCash), text: (r) => num(r.openingCash), pdf: (r) => fmt(r.openingCash), footer: totalOf((r: CashierShiftSummaryRow) => r.openingCash) },
-          { key: 'cashSales', header: 'Cash Sales', align: 'right', sort: (r) => Number(r.cashSales ?? r.sales), cell: (r) => money(r.cashSales ?? r.sales), text: (r) => num(r.cashSales ?? r.sales), pdf: (r) => fmt(r.cashSales ?? r.sales), footer: totalOf((r: CashierShiftSummaryRow) => r.cashSales ?? r.sales) },
-          { key: 'totalSales', header: 'Total Sales', align: 'right', sort: (r) => Number(r.totalSales ?? 0), cell: (r) => moneyBold(r.totalSales ?? 0), text: (r) => num(r.totalSales ?? 0), pdf: (r) => fmt(r.totalSales ?? 0), footer: totalOf((r: CashierShiftSummaryRow) => r.totalSales ?? 0) },
-          { key: 'expected', header: 'Expected Cash', align: 'right', sort: (r) => Number(r.expectedCash), cell: (r) => money(r.expectedCash), text: (r) => num(r.expectedCash), pdf: (r) => fmt(r.expectedCash), footer: totalOf((r: CashierShiftSummaryRow) => r.expectedCash) },
+          { key: 'shift', header: tx('Shift'), sort: (r) => r.openedAt ?? r.shift, cell: (r) => <span className="text-sm font-mono">{r.shift}</span>, text: (r) => r.shift, footer: () => `Total (${rows.length})` },
+          { key: 'opened', header: tx('Opened'), sort: (r) => r.openedAt ?? '', cell: (r) => <span className="text-sm">{r.openedAt ? `${fmtDate(r.openedAt)} ${fmtTime(r.openedAt)}` : '—'}</span>, text: (r) => (r.openedAt ? `${fmtDate(r.openedAt)} ${fmtTime(r.openedAt)}` : '—') },
+          { key: 'closed', header: tx('Closed'), sort: (r) => r.closedAt ?? '', cell: (r) => <span className="text-sm">{r.closedAt ? `${fmtDate(r.closedAt)} ${fmtTime(r.closedAt)}` : <span className="text-amber-600">{tx('open')}</span>}</span>, text: (r) => (r.closedAt ? `${fmtDate(r.closedAt)} ${fmtTime(r.closedAt)}` : 'open') },
+          { key: 'cashier', header: tx('Cashier'), sort: (r) => r.cashierName ?? '', cell: (r) => <span className="text-sm">{r.cashierName ?? '—'}</span>, text: (r) => r.cashierName ?? '—' },
+          { key: 'opening', header: tx('Opening Cash'), align: 'right', sort: (r) => Number(r.openingCash), cell: (r) => money(r.openingCash), text: (r) => num(r.openingCash), pdf: (r) => fmt(r.openingCash), footer: totalOf((r: CashierShiftSummaryRow) => r.openingCash) },
+          { key: 'cashSales', header: tx('Cash Sales'), align: 'right', sort: (r) => Number(r.cashSales ?? r.sales), cell: (r) => money(r.cashSales ?? r.sales), text: (r) => num(r.cashSales ?? r.sales), pdf: (r) => fmt(r.cashSales ?? r.sales), footer: totalOf((r: CashierShiftSummaryRow) => r.cashSales ?? r.sales) },
+          { key: 'totalSales', header: tx('Total Sales'), align: 'right', sort: (r) => Number(r.totalSales ?? 0), cell: (r) => moneyBold(r.totalSales ?? 0), text: (r) => num(r.totalSales ?? 0), pdf: (r) => fmt(r.totalSales ?? 0), footer: totalOf((r: CashierShiftSummaryRow) => r.totalSales ?? 0) },
+          { key: 'expected', header: tx('Expected Cash'), align: 'right', sort: (r) => Number(r.expectedCash), cell: (r) => money(r.expectedCash), text: (r) => num(r.expectedCash), pdf: (r) => fmt(r.expectedCash), footer: totalOf((r: CashierShiftSummaryRow) => r.expectedCash) },
           {
-            key: 'actual', header: 'Actual Cash', align: 'right', sort: (r) => (r.actualCash == null ? null : Number(r.actualCash)),
+            key: 'actual', header: tx('Actual Cash'), align: 'right', sort: (r) => (r.actualCash == null ? null : Number(r.actualCash)),
             cell: (r) => (r.actualCash == null ? <span className="text-slate-400">{tx('not counted')}</span> : money(r.actualCash)),
             text: (r) => (r.actualCash == null ? '—' : num(r.actualCash)), pdf: (r) => (r.actualCash == null ? '—' : fmt(r.actualCash)),
             // Only counted shifts contribute — summing an uncounted shift as 0
@@ -659,7 +659,7 @@ const CashierShiftSummaryView: React.FC<{ rows: CashierShiftSummaryRow[]; loadin
             footer: totalOf((r: CashierShiftSummaryRow) => r.actualCash ?? 0),
           },
           {
-            key: 'difference', header: 'Difference', align: 'right', sort: (r) => (r.difference == null ? null : Number(r.difference)),
+            key: 'difference', header: tx('Difference'), align: 'right', sort: (r) => (r.difference == null ? null : Number(r.difference)),
             cell: (r) => diffCell(r.difference), text: (r) => (r.difference == null ? '—' : num(r.difference)), pdf: (r) => (r.difference == null ? '—' : fmt(r.difference)),
             footer: () => diffCell(String(variance)),
           },
@@ -675,7 +675,7 @@ const WaiterReportView: React.FC<{ rows: WaiterReportRow[]; loading: boolean; ra
   return (
     <div className="space-y-4">
       <ReportTable<WaiterReportRow>
-        title={heading('Waiter Report', range)}
+        title={heading(tx('Waiter Report'), range)}
         note="One row per sold line, attributed to the waiter on the invoice. Totals include tax and any line discount."
         rows={rows} loading={loading}
         exportName={`waiter-report-${suffix(range)}`}
@@ -683,20 +683,20 @@ const WaiterReportView: React.FC<{ rows: WaiterReportRow[]; loading: boolean; ra
         initialSortKey="date"
         rowKey={(r, i) => `${r.orderNumber}-${r.item}-${i}`}
         columns={[
-          { key: 'waiter', header: 'Waiter', sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—', footer: () => `Total (${rows.length})` },
-          { key: 'order', header: 'Order #', sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber },
-          { key: 'table', header: 'Table', sort: (r) => r.tableName ?? '', cell: (r) => <span className="text-sm">{r.tableName ?? '—'}</span>, text: (r) => r.tableName ?? '—' },
-          { key: 'item', header: 'Item', sort: (r) => r.item, cell: (r) => <span className="font-semibold">{r.item}</span>, text: (r) => r.item },
+          { key: 'waiter', header: tx('Waiter'), sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—', footer: () => `Total (${rows.length})` },
+          { key: 'order', header: tx('Order #'), sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber },
+          { key: 'table', header: tx('Table'), sort: (r) => r.tableName ?? '', cell: (r) => <span className="text-sm">{r.tableName ?? '—'}</span>, text: (r) => r.tableName ?? '—' },
+          { key: 'item', header: tx('Item'), sort: (r) => r.item, cell: (r) => <span className="font-semibold">{r.item}</span>, text: (r) => r.item },
           {
-            key: 'qty', header: 'Qty', align: 'right', sort: (r) => Number(r.quantity),
+            key: 'qty', header: tx('Qty'), align: 'right', sort: (r) => Number(r.quantity),
             cell: (r) => <span className="font-mono">{Number(r.quantity).toFixed(2)}</span>, text: (r) => num(r.quantity),
             footer: (rs) => <span className="font-mono">{sumMoney(rs, (r) => r.quantity).toFixed(2)}</span>,
           },
-          { key: 'unit', header: 'Unit Price', align: 'right', sort: (r) => Number(r.unitPrice), cell: (r) => money(r.unitPrice), text: (r) => num(r.unitPrice), pdf: (r) => fmt(r.unitPrice) },
-          { key: 'disc', header: 'Discount %', align: 'right', sort: (r) => Number(r.discountPercent), cell: (r) => <span className="font-mono">{Number(r.discountPercent).toFixed(2)}%</span>, text: (r) => `${Number(r.discountPercent).toFixed(2)}%` },
-          { key: 'total', header: 'Total', align: 'right', sort: (r) => Number(r.total), cell: (r) => moneyBold(r.total), text: (r) => num(r.total), pdf: (r) => fmt(r.total), footer: totalOf((r: WaiterReportRow) => r.total) },
-          { key: 'date', header: 'Date', sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtDate(r.date)}</span>, text: (r) => fmtDate(r.date) },
-          { key: 'time', header: 'Time', sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtTime(r.date)}</span>, text: (r) => fmtTime(r.date) },
+          { key: 'unit', header: tx('Unit Price'), align: 'right', sort: (r) => Number(r.unitPrice), cell: (r) => money(r.unitPrice), text: (r) => num(r.unitPrice), pdf: (r) => fmt(r.unitPrice) },
+          { key: 'disc', header: tx('Discount %'), align: 'right', sort: (r) => Number(r.discountPercent), cell: (r) => <span className="font-mono">{Number(r.discountPercent).toFixed(2)}%</span>, text: (r) => `${Number(r.discountPercent).toFixed(2)}%` },
+          { key: 'total', header: tx('Total'), align: 'right', sort: (r) => Number(r.total), cell: (r) => moneyBold(r.total), text: (r) => num(r.total), pdf: (r) => fmt(r.total), footer: totalOf((r: WaiterReportRow) => r.total) },
+          { key: 'date', header: tx('Date'), sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtDate(r.date)}</span>, text: (r) => fmtDate(r.date) },
+          { key: 'time', header: tx('Time'), sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtTime(r.date)}</span>, text: (r) => fmtTime(r.date) },
         ]}
       />
     </div>
@@ -714,7 +714,7 @@ const ItemSalesView: React.FC<{
   return (
     <div className="space-y-4">
       <ReportTable<ItemSalesReport['rows'][number]>
-        title={heading('Item Sales', range)}
+        title={heading(tx('Item Sales'), range)}
         note="One row per item across the whole range. Unit price is the effective average (total ÷ qty), so the three money columns always reconcile."
         rows={rows} loading={loading}
         exportName={`item-sales-${suffix(range)}`}
@@ -723,7 +723,7 @@ const ItemSalesView: React.FC<{
         rowKey={(r) => r.itemKey}
         columns={[
           {
-            key: 'item', header: 'Item', sort: (r) => r.item,
+            key: 'item', header: tx('Item'), sort: (r) => r.item,
             cell: (r) => (
               <div>
                 <span className="font-semibold">{r.item}</span>
@@ -735,16 +735,16 @@ const ItemSalesView: React.FC<{
             text: (r) => r.item,
             footer: () => `Total (${rows.length})`,
           },
-          { key: 'category', header: 'Category', sort: (r) => r.categoryName, cell: (r) => <span className="text-sm text-slate-500">{r.categoryName}</span>, text: (r) => r.categoryName },
+          { key: 'category', header: tx('Category'), sort: (r) => r.categoryName, cell: (r) => <span className="text-sm text-slate-500">{r.categoryName}</span>, text: (r) => r.categoryName },
           {
-            key: 'qty', header: 'Qty Sold', align: 'right', sort: (r) => Number(r.quantity),
+            key: 'qty', header: tx('Qty Sold'), align: 'right', sort: (r) => Number(r.quantity),
             cell: (r) => <span className="font-mono">{Number(r.quantity).toFixed(2)}</span>, text: (r) => num(r.quantity),
             footer: (rs) => <span className="font-mono">{sumMoney(rs, (r) => r.quantity).toFixed(2)}</span>,
           },
-          { key: 'unit', header: 'Unit Price', align: 'right', sort: (r) => Number(r.unitPrice), cell: (r) => money(r.unitPrice), text: (r) => num(r.unitPrice), pdf: (r) => fmt(r.unitPrice), footer: () => <span className="text-slate-400">—</span> },
-          { key: 'total', header: 'Total Price', align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: { totalAmount: string }) => r.totalAmount) },
+          { key: 'unit', header: tx('Unit Price'), align: 'right', sort: (r) => Number(r.unitPrice), cell: (r) => money(r.unitPrice), text: (r) => num(r.unitPrice), pdf: (r) => fmt(r.unitPrice), footer: () => <span className="text-slate-400">—</span> },
+          { key: 'total', header: tx('Total Price'), align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: { totalAmount: string }) => r.totalAmount) },
           {
-            key: 'share', header: '% of sales', align: 'right', sort: (r) => Number(r.totalAmount),
+            key: 'share', header: tx('% of sales'), align: 'right', sort: (r) => Number(r.totalAmount),
             cell: (r) => <span className="font-mono">{totalAmt > 0 ? `${((Number(r.totalAmount) / totalAmt) * 100).toFixed(1)}%` : '—'}</span>,
             text: (r) => (totalAmt > 0 ? `${((Number(r.totalAmount) / totalAmt) * 100).toFixed(1)}%` : '—'),
           },
@@ -764,7 +764,7 @@ const ItemsByGroupView: React.FC<{ rows: ItemsByGroupRow[]; loading: boolean; ra
         <ReportCard title={tx('Group revenue')} value={fmt(grandTotal)} sub={`${rows.length} group${rows.length === 1 ? '' : 's'}`} accent />
       </div>
       <ReportTable<ItemsByGroupRow>
-        title={heading('Items by Group', range)}
+        title={heading(tx('Items by Group'), range)}
         note="Sold lines rolled up by the item's category. Lines whose item has no category land in 'Uncategorised'."
         rows={rows} loading={loading}
         exportName={`items-by-group-${suffix(range)}`}
@@ -772,20 +772,20 @@ const ItemsByGroupView: React.FC<{ rows: ItemsByGroupRow[]; loading: boolean; ra
         initialSortKey="total"
         rowKey={(r, i) => r.groupId ?? `uncat-${i}`}
         columns={[
-          { key: 'group', header: 'Item Group', sort: (r) => r.groupName, cell: (r) => <span className="font-semibold">{r.groupName}</span>, text: (r) => r.groupName, footer: () => 'Total' },
+          { key: 'group', header: tx('Item Group'), sort: (r) => r.groupName, cell: (r) => <span className="font-semibold">{r.groupName}</span>, text: (r) => r.groupName, footer: () => 'Total' },
           {
-            key: 'lines', header: 'Lines', align: 'right', sort: (r) => r.itemCount,
+            key: 'lines', header: tx('Lines'), align: 'right', sort: (r) => r.itemCount,
             cell: (r) => <span className="font-mono">{r.itemCount}</span>, text: (r) => String(r.itemCount),
             footer: (rs) => <span className="font-mono">{rs.reduce((s, r) => s + r.itemCount, 0)}</span>,
           },
           {
-            key: 'qty', header: 'Total Quantity', align: 'right', sort: (r) => Number(r.totalQuantity),
+            key: 'qty', header: tx('Total Quantity'), align: 'right', sort: (r) => Number(r.totalQuantity),
             cell: (r) => <span className="font-mono">{Number(r.totalQuantity).toFixed(2)}</span>, text: (r) => num(r.totalQuantity),
             footer: (rs) => <span className="font-mono">{sumMoney(rs, (r) => r.totalQuantity).toFixed(2)}</span>,
           },
-          { key: 'total', header: 'Total Amount', align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: ItemsByGroupRow) => r.totalAmount) },
+          { key: 'total', header: tx('Total Amount'), align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: ItemsByGroupRow) => r.totalAmount) },
           {
-            key: 'share', header: '% of sales', align: 'right', sort: (r) => Number(r.totalAmount),
+            key: 'share', header: tx('% of sales'), align: 'right', sort: (r) => Number(r.totalAmount),
             cell: (r) => <span className="font-mono">{grandTotal > 0 ? `${((Number(r.totalAmount) / grandTotal) * 100).toFixed(1)}%` : '—'}</span>,
             text: (r) => (grandTotal > 0 ? `${((Number(r.totalAmount) / grandTotal) * 100).toFixed(1)}%` : '—'),
           },
@@ -817,7 +817,7 @@ const OrderReportView: React.FC<{ rows: OrderReportRow[]; loading: boolean; rang
         <ReportCard title={tx('Avg order')} value={fmt(rows.length ? total / rows.length : 0)} />
       </div>
       <ReportTable<OrderReportRow>
-        title={heading('Order Reports', range)}
+        title={heading(tx('Order Reports'), range)}
         note="Operational orders, including drafts that were never billed — so this total is expected to exceed the Sales Report. Cancelled orders are hidden unless you tick 'Include cancelled'."
         rows={rows} loading={loading}
         exportName={`order-report-${suffix(range)}`}
@@ -825,15 +825,15 @@ const OrderReportView: React.FC<{ rows: OrderReportRow[]; loading: boolean; rang
         initialSortKey="date"
         rowKey={(r, i) => `${r.orderNumber}-${i}`}
         columns={[
-          { key: 'order', header: 'Order No', sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber, footer: () => `Total (${rows.length})` },
-          { key: 'date', header: 'Date', sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtDate(r.date)}</span>, text: (r) => fmtDate(r.date) },
-          { key: 'time', header: 'Time', sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtTime(r.date)}</span>, text: (r) => fmtTime(r.date) },
-          { key: 'type', header: 'Type', sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
-          { key: 'table', header: 'Table', sort: (r) => r.tableName ?? '', cell: (r) => <span className="text-sm">{r.tableName ?? '—'}</span>, text: (r) => r.tableName ?? '—' },
-          { key: 'waiter', header: 'Waiter', sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—' },
-          { key: 'customer', header: 'Customer', sort: (r) => r.customerName ?? '', cell: (r) => <span className="text-sm">{r.customerName ?? '—'}</span>, text: (r) => r.customerName ?? '—' },
+          { key: 'order', header: tx('Order No'), sort: (r) => r.orderNumber, cell: (r) => <span className="font-mono text-sm">{r.orderNumber}</span>, text: (r) => r.orderNumber, footer: () => `Total (${rows.length})` },
+          { key: 'date', header: tx('Date'), sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtDate(r.date)}</span>, text: (r) => fmtDate(r.date) },
+          { key: 'time', header: tx('Time'), sort: (r) => r.date, cell: (r) => <span className="text-sm">{fmtTime(r.date)}</span>, text: (r) => fmtTime(r.date) },
+          { key: 'type', header: tx('Type'), sort: (r) => r.orderType ?? '', cell: (r) => <span className="text-sm">{humanise(r.orderType)}</span>, text: (r) => humanise(r.orderType) },
+          { key: 'table', header: tx('Table'), sort: (r) => r.tableName ?? '', cell: (r) => <span className="text-sm">{r.tableName ?? '—'}</span>, text: (r) => r.tableName ?? '—' },
+          { key: 'waiter', header: tx('Waiter'), sort: (r) => r.waiterName ?? '', cell: (r) => <span className="text-sm">{r.waiterName ?? '—'}</span>, text: (r) => r.waiterName ?? '—' },
+          { key: 'customer', header: tx('Customer'), sort: (r) => r.customerName ?? '', cell: (r) => <span className="text-sm">{r.customerName ?? '—'}</span>, text: (r) => r.customerName ?? '—' },
           {
-            key: 'status', header: 'Status', sort: (r) => r.status,
+            key: 'status', header: tx('Status'), sort: (r) => r.status,
             cell: (r) => (
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ORDER_STATUS_TONE[r.status] ?? 'bg-slate-100 text-slate-600'}`}>
                 {humanise(r.status)}
@@ -841,7 +841,7 @@ const OrderReportView: React.FC<{ rows: OrderReportRow[]; loading: boolean; rang
             ),
             text: (r) => humanise(r.status),
           },
-          { key: 'total', header: 'Total', align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: OrderReportRow) => r.totalAmount) },
+          { key: 'total', header: tx('Total'), align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: OrderReportRow) => r.totalAmount) },
         ]}
       />
     </div>
@@ -854,7 +854,7 @@ const ItemsReportView: React.FC<{ items: SoldItem[]; loading: boolean; range: Ra
   return (
     <div className="space-y-4">
       <ReportTable<SoldItem>
-        title={heading('Items Report', range)}
+        title={heading(tx('Items Report'), range)}
         note="Every sold line in the range. Total amount includes tax and the line discount. Served By is who punched the line; Order Waiter is who owns the order — on a busy floor they differ."
         rows={items} loading={loading}
         exportName={`items-report-${suffix(range)}`}
@@ -862,22 +862,22 @@ const ItemsReportView: React.FC<{ items: SoldItem[]; loading: boolean; range: Ra
         initialSortKey="date"
         rowKey={(it, i) => `${it.invoiceNumber}-${it.item}-${i}`}
         columns={[
-          { key: 'order', header: 'Order #', sort: (i) => i.orderNumber, cell: (i) => <span className="font-mono text-sm">{i.orderNumber}</span>, text: (i) => i.orderNumber, footer: () => `Total (${items.length})` },
-          { key: 'invoice', header: 'Invoice #', sort: (i) => i.invoiceNumber, cell: (i) => <span className="font-mono text-sm">{i.invoiceNumber}</span>, text: (i) => i.invoiceNumber },
-          { key: 'date', header: 'Sale Date', sort: (i) => i.saleDate, cell: (i) => <span className="text-sm">{fmtDate(i.saleDate)}</span>, text: (i) => fmtDate(i.saleDate) },
-          { key: 'time', header: 'Time', sort: (i) => i.saleDate, cell: (i) => <span className="text-sm">{fmtTime(i.saleDate)}</span>, text: (i) => fmtTime(i.saleDate) },
-          { key: 'item', header: 'Item', sort: (i) => i.item, cell: (i) => <span className="font-semibold">{i.item}</span>, text: (i) => i.item },
-          { key: 'category', header: 'Category', sort: (i) => i.categoryName ?? '', cell: (i) => <span className="text-sm text-slate-500">{i.categoryName ?? '—'}</span>, text: (i) => i.categoryName ?? '—' },
-          { key: 'unit', header: 'Unit Price', align: 'right', sort: (i) => Number(i.unitPrice), cell: (i) => money(i.unitPrice), text: (i) => num(i.unitPrice), pdf: (i) => fmt(i.unitPrice) },
-          { key: 'disc', header: 'Discount %', align: 'right', sort: (i) => Number(i.discountPercent), cell: (i) => <span className="font-mono">{Number(i.discountPercent).toFixed(2)}%</span>, text: (i) => `${Number(i.discountPercent).toFixed(2)}%` },
+          { key: 'order', header: tx('Order #'), sort: (i) => i.orderNumber, cell: (i) => <span className="font-mono text-sm">{i.orderNumber}</span>, text: (i) => i.orderNumber, footer: () => `Total (${items.length})` },
+          { key: 'invoice', header: tx('Invoice #'), sort: (i) => i.invoiceNumber, cell: (i) => <span className="font-mono text-sm">{i.invoiceNumber}</span>, text: (i) => i.invoiceNumber },
+          { key: 'date', header: tx('Sale Date'), sort: (i) => i.saleDate, cell: (i) => <span className="text-sm">{fmtDate(i.saleDate)}</span>, text: (i) => fmtDate(i.saleDate) },
+          { key: 'time', header: tx('Time'), sort: (i) => i.saleDate, cell: (i) => <span className="text-sm">{fmtTime(i.saleDate)}</span>, text: (i) => fmtTime(i.saleDate) },
+          { key: 'item', header: tx('Item'), sort: (i) => i.item, cell: (i) => <span className="font-semibold">{i.item}</span>, text: (i) => i.item },
+          { key: 'category', header: tx('Category'), sort: (i) => i.categoryName ?? '', cell: (i) => <span className="text-sm text-slate-500">{i.categoryName ?? '—'}</span>, text: (i) => i.categoryName ?? '—' },
+          { key: 'unit', header: tx('Unit Price'), align: 'right', sort: (i) => Number(i.unitPrice), cell: (i) => money(i.unitPrice), text: (i) => num(i.unitPrice), pdf: (i) => fmt(i.unitPrice) },
+          { key: 'disc', header: tx('Discount %'), align: 'right', sort: (i) => Number(i.discountPercent), cell: (i) => <span className="font-mono">{Number(i.discountPercent).toFixed(2)}%</span>, text: (i) => `${Number(i.discountPercent).toFixed(2)}%` },
           {
-            key: 'qty', header: 'Qty', align: 'right', sort: (i) => Number(i.quantity),
+            key: 'qty', header: tx('Qty'), align: 'right', sort: (i) => Number(i.quantity),
             cell: (i) => <span className="font-mono">{Number(i.quantity).toFixed(2)}</span>, text: (i) => num(i.quantity),
             footer: (rs) => <span className="font-mono">{sumMoney(rs, (i) => i.quantity).toFixed(2)}</span>,
           },
-          { key: 'total', header: 'Total Amount', align: 'right', sort: (i) => Number(i.totalAmount), cell: (i) => moneyBold(i.totalAmount), text: (i) => num(i.totalAmount), pdf: (i) => fmt(i.totalAmount), footer: totalOf((i: SoldItem) => i.totalAmount) },
-          { key: 'servedBy', header: 'Served By', sort: (i) => i.servedBy ?? '', cell: (i) => <span className="text-sm font-semibold">{i.servedBy ?? '—'}</span>, text: (i) => i.servedBy ?? '—' },
-          { key: 'waiter', header: 'Order Waiter', sort: (i) => i.waiterName ?? '', cell: (i) => <span className="text-sm text-slate-500">{i.waiterName ?? '—'}</span>, text: (i) => i.waiterName ?? '—' },
+          { key: 'total', header: tx('Total Amount'), align: 'right', sort: (i) => Number(i.totalAmount), cell: (i) => moneyBold(i.totalAmount), text: (i) => num(i.totalAmount), pdf: (i) => fmt(i.totalAmount), footer: totalOf((i: SoldItem) => i.totalAmount) },
+          { key: 'servedBy', header: tx('Served By'), sort: (i) => i.servedBy ?? '', cell: (i) => <span className="text-sm font-semibold">{i.servedBy ?? '—'}</span>, text: (i) => i.servedBy ?? '—' },
+          { key: 'waiter', header: tx('Order Waiter'), sort: (i) => i.waiterName ?? '', cell: (i) => <span className="text-sm text-slate-500">{i.waiterName ?? '—'}</span>, text: (i) => i.waiterName ?? '—' },
         ]}
       />
     </div>
@@ -905,9 +905,9 @@ const ItemsByServerView: React.FC<{
   const rows = report?.rows ?? [];
   const servers = report?.servers ?? [];
   const GROUPS: Array<{ key: 'day' | 'shift' | 'none'; label: string }> = [
-    { key: 'day', label: 'By day' },
-    { key: 'shift', label: 'By shift' },
-    { key: 'none', label: 'Whole range' },
+    { key: 'day', label: tx('By day') },
+    { key: 'shift', label: tx('By shift') },
+    { key: 'none', label: tx('Whole range') },
   ];
 
   return (
@@ -945,7 +945,7 @@ const ItemsByServerView: React.FC<{
       )}
 
       <ReportTable<ItemsByServerRow>
-        title={heading('Item Sales by Server', range)}
+        title={heading(tx('Item Sales by Server'), range)}
         note="Who punched each item, not who owns the order. Total includes tax and the line discount."
         rows={rows}
         loading={loading}
@@ -956,23 +956,23 @@ const ItemsByServerView: React.FC<{
         columns={[
           {
             key: 'period',
-            header: groupBy === 'shift' ? 'Shift' : groupBy === 'day' ? 'Day' : 'Range',
+            header: groupBy === 'shift' ? tx('Shift') : groupBy === 'day' ? tx('Day') : tx('Range'),
             sort: (r) => r.periodKey,
             cell: (r) => <span className="text-sm">{r.periodLabel}</span>,
             text: (r) => r.periodLabel,
             footer: () => `Total (${rows.length})`,
           },
-          { key: 'server', header: 'Served By', sort: (r) => r.serverName, cell: (r) => <span className="font-semibold">{r.serverName}</span>, text: (r) => r.serverName },
-          { key: 'item', header: 'Item', sort: (r) => r.item, cell: (r) => <span className="text-sm">{r.item}</span>, text: (r) => r.item },
-          { key: 'category', header: 'Category', sort: (r) => r.categoryName ?? '', cell: (r) => <span className="text-sm text-slate-500">{r.categoryName ?? '—'}</span>, text: (r) => r.categoryName ?? '—' },
+          { key: 'server', header: tx('Served By'), sort: (r) => r.serverName, cell: (r) => <span className="font-semibold">{r.serverName}</span>, text: (r) => r.serverName },
+          { key: 'item', header: tx('Item'), sort: (r) => r.item, cell: (r) => <span className="text-sm">{r.item}</span>, text: (r) => r.item },
+          { key: 'category', header: tx('Category'), sort: (r) => r.categoryName ?? '', cell: (r) => <span className="text-sm text-slate-500">{r.categoryName ?? '—'}</span>, text: (r) => r.categoryName ?? '—' },
           {
-            key: 'qty', header: 'Qty', align: 'right', sort: (r) => Number(r.quantity),
+            key: 'qty', header: tx('Qty'), align: 'right', sort: (r) => Number(r.quantity),
             cell: (r) => <span className="font-mono">{Number(r.quantity).toFixed(2)}</span>, text: (r) => num(r.quantity),
             footer: (rs) => <span className="font-mono">{sumMoney(rs, (r) => r.quantity).toFixed(2)}</span>,
           },
-          { key: 'discount', header: 'Discount', align: 'right', sort: (r) => Number(r.discountAmount), cell: (r) => money(r.discountAmount), text: (r) => num(r.discountAmount), pdf: (r) => fmt(r.discountAmount), footer: totalOf((r: ItemsByServerRow) => r.discountAmount) },
-          { key: 'total', header: 'Total', align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: ItemsByServerRow) => r.totalAmount) },
-          { key: 'orders', header: 'Orders', align: 'right', sort: (r) => r.orderCount, cell: (r) => <span className="font-mono">{r.orderCount}</span>, text: (r) => String(r.orderCount) },
+          { key: 'discount', header: tx('Discount'), align: 'right', sort: (r) => Number(r.discountAmount), cell: (r) => money(r.discountAmount), text: (r) => num(r.discountAmount), pdf: (r) => fmt(r.discountAmount), footer: totalOf((r: ItemsByServerRow) => r.discountAmount) },
+          { key: 'total', header: tx('Total'), align: 'right', sort: (r) => Number(r.totalAmount), cell: (r) => moneyBold(r.totalAmount), text: (r) => num(r.totalAmount), pdf: (r) => fmt(r.totalAmount), footer: totalOf((r: ItemsByServerRow) => r.totalAmount) },
+          { key: 'orders', header: tx('Orders'), align: 'right', sort: (r) => r.orderCount, cell: (r) => <span className="font-mono">{r.orderCount}</span>, text: (r) => String(r.orderCount) },
         ]}
       />
     </div>
@@ -1009,7 +1009,8 @@ const MethodBar: React.FC<{ byMethod: SalesSummaryReport['byMethod'] }> = ({ byM
 const SalesSummaryView: React.FC<{
   report: SalesSummaryReport | undefined; loading: boolean; periodLabel: 'Day' | 'Week' | 'Month'; range: Range;
 }> = ({ report, loading, periodLabel, range }) => {
-  if (loading) return <div className="text-slate-500 p-4">{tx('Loading')} {periodLabel.toLowerCase()} {tx('sales…')}</div>;
+  const periodText = { Day: tx('Day'), Week: tx('Week'), Month: tx('Month') }[periodLabel];
+  if (loading) return <div className="text-slate-500 p-4">{tx('Loading')} {periodText.toLowerCase()} {tx('sales…')}</div>;
   if (!report) {
     return (
       <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500">
@@ -1034,27 +1035,27 @@ const SalesSummaryView: React.FC<{
       </div>
 
       <ReportTable<SalesSummaryReport['periods'][number]>
-        title={`${periodLabel} breakdown — ${range.fromDate} → ${range.toDate}`}
+        title={tx('{{periodLabel}} breakdown — {{fromDate}} → {{toDate}}', { periodLabel: periodText, fromDate: range.fromDate, toDate: range.toDate })}
         note="Revenue is NET of tax. Periods with no sales are shown as explicit zeros so a quiet day cannot be mistaken for a missing one."
         rows={periods}
         exportName={`${periodLabel.toLowerCase()}-breakdown-${suffix(range)}`}
-        exportTitle={`${periodLabel} breakdown — ${range.fromDate} → ${range.toDate}`}
+        exportTitle={tx('{{periodLabel}} breakdown — {{fromDate}} → {{toDate}}', { periodLabel: periodText, fromDate: range.fromDate, toDate: range.toDate })}
         emptyMessage={tx('No sales in this period.')}
         initialSortKey="period" initialSortDir="asc"
         rowKey={(p) => p.periodKey}
         columns={[
           { key: 'period', header: periodLabel, sort: (p) => p.periodKey, cell: (p) => <span className="font-semibold">{p.periodKey}</span>, text: (p) => p.periodKey, footer: () => 'Total' },
           {
-            key: 'orders', header: 'Orders', align: 'right', sort: (p) => p.orders,
+            key: 'orders', header: tx('Orders'), align: 'right', sort: (p) => p.orders,
             cell: (p) => <span className="font-mono">{p.orders}</span>, text: (p) => String(p.orders),
             footer: (rs) => <span className="font-mono">{rs.reduce((s, p) => s + p.orders, 0)}</span>,
           },
-          { key: 'revenue', header: 'Revenue', align: 'right', sort: (p) => Number(p.revenue), cell: (p) => moneyBold(p.revenue), text: (p) => num(p.revenue), pdf: (p) => fmt(p.revenue), footer: totalOf((p: { revenue: string }) => p.revenue) },
-          { key: 'gross', header: 'Gross', align: 'right', sort: (p) => Number(p.grossSales), cell: (p) => money(p.grossSales), text: (p) => num(p.grossSales), pdf: (p) => fmt(p.grossSales), footer: totalOf((p: { grossSales: string }) => p.grossSales) },
-          { key: 'avg', header: 'Avg', align: 'right', sort: (p) => Number(p.avgOrderValue), cell: (p) => money(p.avgOrderValue), text: (p) => num(p.avgOrderValue), pdf: (p) => fmt(p.avgOrderValue) },
-          { key: 'discounts', header: 'Discounts', align: 'right', sort: (p) => Number(p.discounts), cell: (p) => money(p.discounts), text: (p) => num(p.discounts), pdf: (p) => fmt(p.discounts), footer: totalOf((p: { discounts: string }) => p.discounts) },
+          { key: 'revenue', header: tx('Revenue'), align: 'right', sort: (p) => Number(p.revenue), cell: (p) => moneyBold(p.revenue), text: (p) => num(p.revenue), pdf: (p) => fmt(p.revenue), footer: totalOf((p: { revenue: string }) => p.revenue) },
+          { key: 'gross', header: tx('Gross'), align: 'right', sort: (p) => Number(p.grossSales), cell: (p) => money(p.grossSales), text: (p) => num(p.grossSales), pdf: (p) => fmt(p.grossSales), footer: totalOf((p: { grossSales: string }) => p.grossSales) },
+          { key: 'avg', header: tx('Avg'), align: 'right', sort: (p) => Number(p.avgOrderValue), cell: (p) => money(p.avgOrderValue), text: (p) => num(p.avgOrderValue), pdf: (p) => fmt(p.avgOrderValue) },
+          { key: 'discounts', header: tx('Discounts'), align: 'right', sort: (p) => Number(p.discounts), cell: (p) => money(p.discounts), text: (p) => num(p.discounts), pdf: (p) => fmt(p.discounts), footer: totalOf((p: { discounts: string }) => p.discounts) },
           {
-            key: 'refunds', header: 'Refunds', align: 'right', sort: (p) => Number(p.refunds),
+            key: 'refunds', header: tx('Refunds'), align: 'right', sort: (p) => Number(p.refunds),
             cell: (p) => (Number(p.refunds) > 0 ? <span className="font-mono text-rose-600">{fmt(p.refunds)}</span> : <span className="text-slate-400">—</span>),
             text: (p) => num(p.refunds), pdf: (p) => fmt(p.refunds),
             footer: totalOf((p: { refunds: string }) => p.refunds),

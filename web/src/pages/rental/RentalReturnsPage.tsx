@@ -53,7 +53,7 @@ export function RentalReturnsPage() {
     }));
     run(
       () => inspectReturn.mutateAsync({ returnId, items }),
-      'Inspection recorded',
+      tx('Inspection recorded'),
     );
   };
 
@@ -93,7 +93,7 @@ export function RentalReturnsPage() {
                     <div key={l.id} className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3">
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{l.product?.name ?? l.productId.slice(0, 8)}</p>
-                        <p className="text-xs text-muted-foreground">qty {l.quantity} · {l.ratePeriod}</p>
+                        <p className="text-xs text-muted-foreground">{tx('qty')} {l.quantity} · {l.ratePeriod}</p>
                       </div>
                       <input
                         type="number"
@@ -149,7 +149,7 @@ export function RentalReturnsPage() {
                         };
                       }),
                     }),
-                    'Return created',
+                    tx('Return created'),
                   )}
                 >
                   {tx('Create return')}
@@ -194,7 +194,7 @@ export function RentalReturnsPage() {
                       <p className="font-medium">{l.quantityMissing > 0 ? `${l.quantityMissing} missing` : `${l.quantity} returned`}</p>
                       <p className="text-muted-foreground">
                         {l.isMissing ? 'MISSING' : l.damages.length > 0 ? `damaged ${fmt(l.damages.reduce((s, d) => s + Number(d.chargeAmount), 0))}` : l.conditionGrade ?? 'ok'}
-                        {l.lateDays > 0 ? ` · ${l.lateDays}d late` : ''}
+                        {l.lateDays > 0 ? tx(' · {{lateDays}}d late', { lateDays: l.lateDays }) : ''}
                       </p>
                     </div>
                   ))}

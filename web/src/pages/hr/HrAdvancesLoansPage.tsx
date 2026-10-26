@@ -113,7 +113,7 @@ export function HrAdvancesLoansPage() {
                       <div>
                         <p className="text-sm font-medium">{a.advanceCode} · {a.employee?.employeeCode} {a.employee?.firstName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {fmt(a.amount)} · {fmt(a.monthlyDeduction)}/mo × {a.installmentMonths} {tx('· balance')} {fmt(a.balance)}
+                          {fmt(a.amount)} · {fmt(a.monthlyDeduction)}{tx('/mo ×')} {a.installmentMonths} {tx('· balance')} {fmt(a.balance)}
                         </p>
                       </div>
                     </div>
@@ -156,7 +156,7 @@ export function HrAdvancesLoansPage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className={LOAN_STATUS[l.status] ?? ''}>{l.status}</Badge>
                       <button onClick={() => openEdit(l)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                      <button onClick={() => { if (confirm(`Delete loan ${l.loanCode}?`)) deleteL.mutate(l.id); }}
+                      <button onClick={() => { if (confirm(tx('Delete loan {{loanCode}}?', { loanCode: l.loanCode }))) deleteL.mutate(l.id); }}
                         className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                     </div>
                   </div>
@@ -171,7 +171,7 @@ export function HrAdvancesLoansPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {tab === 'advances' ? 'New salary advance' : editing ? 'Edit loan' : 'New loan'}
+              {tab === 'advances' ? tx('New salary advance') : editing ? tx('Edit loan') : tx('New loan')}
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
@@ -223,7 +223,7 @@ export function HrAdvancesLoansPage() {
               </>
             )}
             <Button onClick={submit} disabled={createA.isPending || createL.isPending || updateL.isPending}>
-              {tab === 'advances' ? 'Create advance' : editing ? 'Save changes' : 'Create loan'}
+              {tab === 'advances' ? tx('Create advance') : editing ? tx('Save changes') : tx('Create loan')}
             </Button>
           </div>
         </DialogContent>

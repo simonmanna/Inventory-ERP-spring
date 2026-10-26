@@ -22,9 +22,9 @@ import { tx } from '@/lib/i18n/tx';
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-    draft: { label: 'Draft', variant: 'secondary' },
-    posted: { label: 'Posted', variant: 'default' },
-    cancelled: { label: 'Cancelled', variant: 'destructive' },
+    draft: { label: tx('Draft'), variant: 'secondary' },
+    posted: { label: tx('Posted'), variant: 'default' },
+    cancelled: { label: tx('Cancelled'), variant: 'destructive' },
   };
   const s = map[status] ?? { label: status, variant: 'secondary' as const };
   return <Badge variant={s.variant}>{s.label}</Badge>;
@@ -63,12 +63,12 @@ export function ExpensesPage() {
   const totalPages = Math.ceil(total / limit);
 
   const handlePost = async (id: string) => {
-    if (!confirm('Post this bill? This will create journal entries and cannot be undone.')) return;
+    if (!confirm(tx('Post this bill? This will create journal entries and cannot be undone.'))) return;
     await postExpense.mutateAsync(id);
   };
 
   const handleVoid = async (id: string) => {
-    if (!confirm('Void this bill? This will reverse the journal entry and cannot be undone.')) return;
+    if (!confirm(tx('Void this bill? This will reverse the journal entry and cannot be undone.'))) return;
     await voidExpense.mutateAsync(id);
   };
 
@@ -179,7 +179,7 @@ export function ExpensesPage() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          {tx('Showing')} {(data?.data?.length ?? 0) === 0 ? 0 : (page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total}
+          {tx('Showing')} {(data?.data?.length ?? 0) === 0 ? 0 : (page - 1) * limit + 1}–{Math.min(page * limit, total)} {tx('of')} {total}
         </span>
         <div className="flex items-center gap-1">
           <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>

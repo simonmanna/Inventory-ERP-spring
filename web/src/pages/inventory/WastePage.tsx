@@ -66,15 +66,15 @@ interface DraftLine {
 
 // Must match WASTE_CATEGORIES in @erp/shared.
 const CATEGORIES = [
-  { value: 'breakage', label: 'Damaged / Breakage' },
-  { value: 'spoiled', label: 'Spoiled' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'burnt', label: 'Burnt / Kitchen Error' },
-  { value: 'contaminated', label: 'Contaminated' },
-  { value: 'overmixed', label: 'Production: Overmixed' },
-  { value: 'packaging_defect', label: 'Production: Packaging Defect' },
-  { value: 'qc_rejection', label: 'Production: QC Rejection' },
-  { value: 'other', label: 'Other' },
+  { value: 'breakage', label: tx('Damaged / Breakage') },
+  { value: 'spoiled', label: tx('Spoiled') },
+  { value: 'expired', label: tx('Expired') },
+  { value: 'burnt', label: tx('Burnt / Kitchen Error') },
+  { value: 'contaminated', label: tx('Contaminated') },
+  { value: 'overmixed', label: tx('Production: Overmixed') },
+  { value: 'packaging_defect', label: tx('Production: Packaging Defect') },
+  { value: 'qc_rejection', label: tx('Production: QC Rejection') },
+  { value: 'other', label: tx('Other') },
 ];
 const CATEGORY_LABELS = Object.fromEntries(CATEGORIES.map((c) => [c.value, c.label]));
 
@@ -163,7 +163,7 @@ export function WastePage() {
   const productOptions = useMemo(
     () => (stockLevels.data ?? []).map((s) => ({
       value: s.id, label: s.name, code: s.code,
-      hint: `On hand: ${fmtQty(s.totalQuantity)}${s.uom ? ` ${s.uom}` : ''}`,
+      hint: tx('On hand: {{v1}}{{v2}}', { v1: fmtQty(s.totalQuantity), v2: s.uom ? ` ${s.uom}` : '' }),
     })),
     [stockLevels.data],
   );
@@ -183,9 +183,9 @@ export function WastePage() {
       const list = (await api.get<WasteRow[]>('/inventory/waste')).data;
       const hit = list.find((r) => r.wasteCode === codeParam);
       if (cancelled) return;
-      if (hit) setViewingId(hit.id); else notify.error(`${codeParam} not found`);
+      if (hit) setViewingId(hit.id); else notify.error(tx('{{codeParam}} not found', { codeParam }));
       setSearchParams((p) => { p.delete('code'); return p; }, { replace: true });
-    })().catch((e) => notify.error(errMsg(e, 'Could not open record')));
+    })().catch((e) => notify.error(errMsg(e, tx('Could not open record'))));
     return () => { cancelled = true; };
   }, [codeParam, setSearchParams]);
 
@@ -223,38 +223,38 @@ export function WastePage() {
       try {
         return { doc: (await api.post<WasteRow>(`/inventory/waste/${doc.id}/approve`)).data, posted: true as const };
       } catch (e) {
-        return { doc, posted: false as const, postError: errMsg(e, 'Posting failed') };
+        return { doc, posted: false as const, postError: errMsg(e, tx('Posting failed')) };
       }
     },
     onSuccess: (r) => {
-      if (r.posted) notify.success(`${r.doc.wasteCode} posted — stock written off (${formatMoney(Number(r.doc.totalValue))})`);
-      else if ('postError' in r && r.postError) notify.error(`${r.doc.wasteCode} saved as pending: ${r.postError}`);
-      else notify.success(`${r.doc.wasteCode} saved as pending`);
+      if (r.posted) notify.success(tx('{{wasteCode}} posted — stock written off ({{v2}})', { wasteCode: r.doc.wasteCode, v2: formatMoney(Number(r.doc.totalValue)) }));
+      else if ('postError' in r && r.postError) notify.error(tx('{{wasteCode}} saved as pending: {{postError}}', { wasteCode: r.doc.wasteCode, postError: r.postError }));
+      else notify.success(tx('{{wasteCode}} saved as pending', { wasteCode: r.doc.wasteCode }));
       setShowForm(false);
       resetForm();
       invalidate();
     },
-    onError: (e: any) => notify.error(errMsg(e, 'Could not save record')),
+    onError: (e: any) => notify.error(errMsg(e, tx('Could not save record'))),
   });
 
   const approve = useMutation({
     mutationFn: async (id: string) => (await api.post<WasteRow>(`/inventory/waste/${id}/approve`)).data,
-    onSuccess: (d) => { notify.success(`${d.wasteCode} posted — stock written off`); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, 'Posting failed')),
+    onSuccess: (d) => { notify.success(tx('{{wasteCode}} posted — stock written off', { wasteCode: d.wasteCode })); invalidate(); },
+    onError: (e: any) => notify.error(errMsg(e, tx('Posting failed'))),
   });
 
   const [reversing, setReversing] = useState<{ id: string; code: string } | null>(null);
   const reverse = useMutation({
     mutationFn: async (v: { id: string; reason: string }) =>
       (await api.post<WasteRow>(`/inventory/waste/${v.id}/reverse`, { reason: v.reason })).data,
-    onSuccess: (d) => { notify.success(`${d.wasteCode} reversed — stock restored and write-off undone`); setReversing(null); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, 'Reversal failed')),
+    onSuccess: (d) => { notify.success(tx('{{wasteCode}} reversed — stock restored and write-off undone', { wasteCode: d.wasteCode })); setReversing(null); invalidate(); },
+    onError: (e: any) => notify.error(errMsg(e, tx('Reversal failed'))),
   });
 
   const cancel = useMutation({
     mutationFn: async (id: string) => (await api.post<WasteRow>(`/inventory/waste/${id}/cancel`)).data,
     onSuccess: (d) => { notify.success(`${d.wasteCode} cancelled`); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, 'Cancel failed')),
+    onError: (e: any) => notify.error(errMsg(e, tx('Cancel failed'))),
   });
 
   const updateLine = (key: number, patch: Partial<DraftLine>) =>
@@ -267,7 +267,7 @@ export function WastePage() {
   };
 
   const confirmCancel = (id: string, code: string) => {
-    if (window.confirm(`Cancel ${code}? Stock will not be affected.`)) cancel.mutate(id);
+    if (window.confirm(tx('Cancel {{code}}? Stock will not be affected.', { code }))) cancel.mutate(id);
   };
 
   const maxCategoryValue = Math.max(1, ...(summary.data?.byCategory.map((c) => c.value) ?? [1]));
@@ -276,7 +276,7 @@ export function WastePage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Damages &amp; Waste</h1>
+          <h1 className="text-2xl font-semibold">{tx('Damages & Waste')}</h1>
           <p className="text-sm text-muted-foreground">
             {tx('Register damaged, spoiled and expired stock. Posting removes it from inventory and books the loss to the ledger.')}
           </p>
@@ -291,10 +291,10 @@ export function WastePage() {
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { icon: PackageX, label: 'Posted loss', value: summary.data ? formatMoney(summary.data.totalValue) : null, tone: 'text-destructive' },
-          { icon: CheckCircle2, label: 'Posted records', value: summary.data ? String(summary.data.postedRecords) : null, tone: '' },
-          { icon: Clock, label: 'Pending approval', value: summary.data ? `${summary.data.pendingRecords} · ${formatMoney(summary.data.pendingValue)}` : null, tone: 'text-amber-600' },
-          { icon: CalendarX, label: 'Expiry write-offs', value: summary.data ? formatMoney(summary.data.expiryValue) : null, tone: '' },
+          { icon: PackageX, label: tx('Posted loss'), value: summary.data ? formatMoney(summary.data.totalValue) : null, tone: 'text-destructive' },
+          { icon: CheckCircle2, label: tx('Posted records'), value: summary.data ? String(summary.data.postedRecords) : null, tone: '' },
+          { icon: Clock, label: tx('Pending approval'), value: summary.data ? `${summary.data.pendingRecords} · ${formatMoney(summary.data.pendingValue)}` : null, tone: 'text-amber-600' },
+          { icon: CalendarX, label: tx('Expiry write-offs'), value: summary.data ? formatMoney(summary.data.expiryValue) : null, tone: '' },
         ].map((k) => (
           <Card key={k.label}>
             <CardContent className="flex items-center gap-3 p-4">
@@ -352,7 +352,7 @@ export function WastePage() {
         <>
           {records.isLoading && <Skeleton className="h-48 w-full" />}
           {records.isError && (
-            <Card><CardContent className="p-8 text-center text-destructive">{errMsg(records.error, 'Failed to load records')}</CardContent></Card>
+            <Card><CardContent className="p-8 text-center text-destructive">{errMsg(records.error, tx('Failed to load records'))}</CardContent></Card>
           )}
           {records.data && records.data.length === 0 && (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{tx('No damages or waste recorded for these filters.')}</CardContent></Card>
@@ -530,7 +530,7 @@ export function WastePage() {
                   onValueChange={setResponsibleId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -541,7 +541,7 @@ export function WastePage() {
                   onValueChange={setApprovedId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -559,7 +559,7 @@ export function WastePage() {
                   {tx('Select the location the stock is written off from.')}
                 </div>
               ) : stockLevels.isError ? (
-                <div className="rounded-md border p-6 text-center text-sm text-destructive">{errMsg(stockLevels.error, 'Failed to load stock levels')}</div>
+                <div className="rounded-md border p-6 text-center text-sm text-destructive">{errMsg(stockLevels.error, tx('Failed to load stock levels'))}</div>
               ) : (
                 <div className="overflow-x-auto rounded-md border">
                   <table className="w-full min-w-[720px] text-sm">
@@ -586,8 +586,8 @@ export function WastePage() {
                                 value={ln.productId}
                                 onValueChange={(v) => updateLine(ln.key, { productId: v })}
                                 options={productOptions}
-                                placeholder={stockLevels.isLoading ? 'Loading products…' : 'Select product…'}
-                                searchPlaceholder="Search products…"
+                                placeholder={stockLevels.isLoading ? tx('Loading products…') : tx('Select product…')}
+                                searchPlaceholder={tx('Search products…')}
                                 emptyText={tx('No products match')}
                                 disabled={stockLevels.isLoading}
                               />
@@ -605,7 +605,7 @@ export function WastePage() {
                               )}
                             </td>
                             <td className="px-2 py-1.5">
-                              <Input className="h-8" placeholder={level?.batchTracking ? 'Required' : 'Optional'}
+                              <Input className="h-8" placeholder={level?.batchTracking ? tx('Required') : tx('Optional')}
                                 disabled={!ln.productId} value={ln.batchNumber} onChange={(e) => updateLine(ln.key, { batchNumber: e.target.value })} />
                             </td>
                             <td className="px-2 py-2.5 text-center">
@@ -656,7 +656,7 @@ export function WastePage() {
             </Button>
             {canApprove && (
               <Button disabled={!canSubmit || create.isPending} onClick={() => create.mutate(true)}>
-                <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? 'Saving…' : 'Post Write-off'}
+                <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? tx('Saving…') : tx('Post Write-off')}
               </Button>
             )}
           </DialogFooter>
@@ -667,7 +667,7 @@ export function WastePage() {
       <Dialog open={!!viewingId} onOpenChange={(o) => { if (!o) setViewingId(null); }}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl max-h-[90vh] overflow-y-auto">
           {detail.isLoading && <Skeleton className="h-64 w-full" />}
-          {detail.isError && <p className="text-destructive">{errMsg(detail.error, 'Failed to load record')}</p>}
+          {detail.isError && <p className="text-destructive">{errMsg(detail.error, tx('Failed to load record'))}</p>}
           {detail.data && (() => {
             const d = detail.data;
             return (
@@ -679,7 +679,7 @@ export function WastePage() {
                   <div><span className="text-muted-foreground">{tx('Registered:')} </span>{dateTime(d.createdAt)}</div>
                   <div><span className="text-muted-foreground">{tx('Status:')} </span>{STATUS_LABELS[d.status] ?? d.status}</div>
                   {d.postedAt && <div><span className="text-muted-foreground">{tx('Posted:')} </span>{dateTime(d.postedAt)}</div>}
-                  <div><span className="text-muted-foreground">{isPending(d.status) ? 'Estimated value: ' : 'Value: '}</span><span className="font-semibold">{formatMoney(Number(d.totalValue))}</span></div>
+                  <div><span className="text-muted-foreground">{isPending(d.status) ? tx('Estimated value: ') : tx('Value: ')}</span><span className="font-semibold">{formatMoney(Number(d.totalValue))}</span></div>
                   {d.notes && <div className="sm:col-span-2"><span className="text-muted-foreground">{tx('Notes:')} </span>{d.notes}</div>}
                   {d.reversedAt && (
                     <div className="sm:col-span-2"><span className="text-muted-foreground">{tx('Reversed:')} </span>{dateTime(d.reversedAt)}{d.reversalReason ? ` — ${d.reversalReason}` : ''}</div>
@@ -752,7 +752,7 @@ export function WastePage() {
                         <XCircle className="mr-2 h-4 w-4" />{tx('Cancel Record')}
                       </Button>
                       <Button disabled={approve.isPending} onClick={() => approve.mutate(d.id)}>
-                        <CheckCircle2 className="mr-2 h-4 w-4" />{approve.isPending ? 'Posting…' : 'Approve & Post'}
+                        <CheckCircle2 className="mr-2 h-4 w-4" />{approve.isPending ? tx('Posting…') : tx('Approve & Post')}
                       </Button>
                     </>
                   )}
@@ -771,10 +771,10 @@ export function WastePage() {
       <ReasonDialog
         open={!!reversing}
         onOpenChange={(o) => { if (!o) setReversing(null); }}
-        title={`Reverse ${reversing?.code ?? ''}`}
+        title={tx('Reverse {{v1}}', { v1: reversing?.code ?? '' })}
         description={<p>{tx('Puts the written-off stock back at its original cost and posts the opposite journal entries today. The original record stays, marked reversed.')}</p>}
         confirmLabel={tx('Reverse write-off')}
-        pendingLabel="Reversing…"
+        pendingLabel={tx('Reversing…')}
         destructive
         pending={reverse.isPending}
         onConfirm={(reason) => reversing && reverse.mutate({ id: reversing.id, reason })}

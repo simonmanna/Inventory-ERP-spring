@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { onPosSessionRevoked, setPosToken } from './pos-session';
+import { tx } from '@/lib/i18n/tx';
 
 export interface PosAuthUser {
   userId: string;
@@ -52,7 +53,7 @@ export const usePosAuthStore = create<PosAuthState>()(
           set({ user, loading: false, error: null });
           return user;
         } catch (e: any) {
-          const msg = e?.response?.data?.message || 'Invalid PIN or user not found';
+          const msg = e?.response?.data?.message || tx('Invalid PIN or user not found');
           set({ loading: false, error: msg });
           throw new Error(msg);
         }

@@ -26,9 +26,9 @@ interface Props {
 }
 
 const KIND_LABEL: Record<Props['kind'], string> = {
-  discount: 'discount this sale',
-  void: 'void this sale',
-  manual_refund: 'issue a manual refund',
+  discount: tx('discount this sale'),
+  void: tx('void this sale'),
+  manual_refund: tx('issue a manual refund'),
 };
 
 export const OverrideDialog: React.FC<Props> = ({ open, kind, title, onClose, onVerified }) => {
@@ -48,8 +48,8 @@ export const OverrideDialog: React.FC<Props> = ({ open, kind, title, onClose, on
   const submit = async () => {
     setErr(null);
     if (usePassword) {
-      if (!email) { setErr('Manager email is required for password verification'); return; }
-      if (!password) { setErr('Password is required'); return; }
+      if (!email) { setErr(tx('Manager email is required for password verification')); return; }
+      if (!password) { setErr(tx('Password is required')); return; }
     } else if (!pin) {
       setErr('PIN is required');
       return;
@@ -63,7 +63,7 @@ export const OverrideDialog: React.FC<Props> = ({ open, kind, title, onClose, on
       });
       onVerified({ managerId: res.managerId, pin: usePassword ? `password:${password}` : pin });
     } catch (e: any) {
-      setErr(e?.response?.data?.message || 'Invalid credentials');
+      setErr(e?.response?.data?.message || tx('Invalid credentials'));
     }
   };
 
@@ -73,7 +73,7 @@ export const OverrideDialog: React.FC<Props> = ({ open, kind, title, onClose, on
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-amber-600" />
-            {title ?? `Manager override required`}
+            {title ?? tx('Manager override required')}
           </DialogTitle>
           <DialogDescription>
             {tx('To')} {KIND_LABEL[kind]}{tx(', please verify with a manager.')}
@@ -141,7 +141,7 @@ export const OverrideDialog: React.FC<Props> = ({ open, kind, title, onClose, on
             <X className="h-4 w-4 mr-1" /> {tx('Cancel')}
           </Button>
           <Button onClick={submit} disabled={verify.isPending} style={{ background: '#f59e0b' }}>
-            {verify.isPending ? 'Verifying…' : 'Verify'}
+            {verify.isPending ? tx('Verifying…') : tx('Verify')}
           </Button>
         </DialogFooter>
       </DialogContent>

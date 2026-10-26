@@ -13,9 +13,9 @@ import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
 const STATUS_BADGES: Record<string, { label: string; variant: string }> = {
-  open: { label: 'Open', variant: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  closed: { label: 'Closed', variant: 'bg-amber-100 text-amber-800 border-amber-200' },
-  locked: { label: 'Locked', variant: 'bg-gray-100 text-gray-700 border-gray-200' },
+  open: { label: tx('Open'), variant: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+  closed: { label: tx('Closed'), variant: 'bg-amber-100 text-amber-800 border-amber-200' },
+  locked: { label: tx('Locked'), variant: 'bg-gray-100 text-gray-700 border-gray-200' },
 };
 
 export function YearEndClosePage() {
@@ -178,7 +178,7 @@ export function YearEndClosePage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
               {tx('Previous')}
             </Button>
-            <span className="text-xs font-medium">{tx('Page')} {meta.page} of {meta.totalPages}</span>
+            <span className="text-xs font-medium">{tx('Page')} {meta.page} {tx('of')} {meta.totalPages}</span>
             <Button variant="outline" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>
               {tx('Next')}
             </Button>

@@ -91,3 +91,9 @@ export function useDeleteUomCategory() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['uom-categories'] }),
   });
 }
+
+/** Unit code lookup for line displays ("24 BOX"); empty string when unknown or no unit. */
+export function useUomCode(): (id?: string | null) => string {
+  const { data = [] } = useUoms();
+  return (id) => (id ? data.find((u) => u.id === id)?.code ?? '' : '');
+}

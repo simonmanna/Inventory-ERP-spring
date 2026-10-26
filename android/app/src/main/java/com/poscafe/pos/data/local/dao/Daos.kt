@@ -130,6 +130,7 @@ interface StaffDao {
 
     @Upsert suspend fun upsertAll(rows: List<StaffEntity>)
     @Query("DELETE FROM staff WHERE id = :id") suspend fun delete(id: String)
+    @Query("DELETE FROM staff") suspend fun deleteAll()
 }
 
 @Dao
@@ -198,13 +199,13 @@ interface SaleDao {
     suspend fun markSync(id: String, status: String, serverInvoiceId: String?, finalNumber: String?, error: String?)
 
     /** Local X-report style totals for the open session, straight from Room. */
-    @Query("SELECT COALESCE(SUM(total), 0) FROM local_sales WHERE cashSessionLocalId = :sessionLocalId")
+    @Query("SELECT COALESCE(SUM(total), 0) FROM local_sales WHERE cashSessionLocalId = :sessionLocalId AND syncStatus != 'discarded'")
     suspend fun sessionTotal(sessionLocalId: String): Double
 
-    @Query("SELECT COUNT(*) FROM local_sales WHERE cashSessionLocalId = :sessionLocalId")
+    @Query("SELECT COUNT(*) FROM local_sales WHERE cashSessionLocalId = :sessionLocalId AND syncStatus != 'discarded'")
     suspend fun sessionCount(sessionLocalId: String): Int
 
-    @Query("SELECT * FROM local_sales WHERE cashSessionLocalId = :sessionLocalId")
+    @Query("SELECT * FROM local_sales WHERE cashSessionLocalId = :sessionLocalId AND syncStatus != 'discarded'")
     suspend fun forSession(sessionLocalId: String): List<LocalSaleEntity>
 }
 
@@ -250,6 +251,9 @@ interface CashSessionDao {
 
     @Query("UPDATE local_cash_sessions SET syncStatus = :status, serverId = :serverId WHERE id = :id")
     suspend fun markSync(id: String, status: String, serverId: String?)
+
+    @Query("SELECT * FROM local_cash_sessions WHERE serverId IS NOT NULL")
+    suspend fun withServerIds(): List<LocalCashSessionEntity>
 
     @Insert suspend fun insertMovement(movement: LocalCashMovementEntity)
 
@@ -462,6 +466,9 @@ interface OpQueueDao {
     @Query("SELECT COUNT(*) FROM op_queue WHERE status = 'queued'")
     suspend fun queuedNow(): Int
 
+    @Query("SELECT * FROM op_queue WHERE status IN ('queued', 'failed')")
+    suspend fun unpushed(): List<OpQueueEntity>
+
     @Query("SELECT COUNT(*) FROM op_queue WHERE status = 'failed'")
     suspend fun failedNow(): Int
 
@@ -471,11 +478,26 @@ interface OpQueueDao {
     @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE opId = :opId")
     suspend fun retry(opId: String)
 
+    /** Rejected ops keep the first definitive status; later 409 "needs recovery" answers don't erase it. */
+    @Query("UPDATE op_queue SET status = 'failed', attempts = attempts + 1, lastError = :error, rejectedStatus = COALESCE(rejectedStatus, :definitiveStatus) WHERE opId = :opId")
+    suspend fun markFailed(opId: String, error: String?, definitiveStatus: Int?)
+
+    /** Requeue under a fresh idempotency key; the old key stays locked on the server. */
+    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL, wireOpId = :wireOpId, rejectedStatus = NULL WHERE opId = :opId AND status = 'failed'")
+    suspend fun requeueWithNewKey(opId: String, wireOpId: String)
+
+    @Query("SELECT * FROM op_queue WHERE status = 'failed'")
+    suspend fun failedNowList(): List<OpQueueEntity>
+
     @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE status = 'failed'")
     suspend fun retryAllFailed()
 
-    @Query("SELECT * FROM op_queue WHERE type = :type AND status != 'pushed' AND occurredAt < :before")
+    @Query("SELECT * FROM op_queue WHERE type = :type AND status IN ('queued', 'failed') AND occurredAt < :before")
     suspend fun unpushedOfTypeBefore(type: String, before: Long): List<OpQueueEntity>
+
+    /** A rejected op a manager chose not to resend; kept (status 'discarded') as a local audit trail. */
+    @Query("UPDATE op_queue SET status = 'discarded', lastError = :note WHERE opId = :opId AND status = 'failed'")
+    suspend fun discard(opId: String, note: String): Int
 
     @Query("UPDATE op_queue SET payloadJson = :payloadJson WHERE opId = :opId")
     suspend fun updatePayload(opId: String, payloadJson: String)

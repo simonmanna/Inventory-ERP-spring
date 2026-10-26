@@ -45,13 +45,13 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 function getSourceLink(sourceType: string, sourceId: string): { path: string; label: string } | null {
   switch (sourceType) {
-    case 'invoice': return { path: `/invoices/${sourceId}`, label: 'Invoice' };
-    case 'payment': return { path: `/payments/${sourceId}`, label: 'Payment' };
-    case 'receipt': return { path: `/pos/receipts/${sourceId}`, label: 'POS Receipt' };
-    case 'stock_transfer': return { path: `/inventory/transfers`, label: 'Stock Transfer' };
-    case 'stock_adjustment': return { path: `/inventory/adjustments`, label: 'Stock Adjustment' };
-    case 'waste': return { path: `/inventory/waste?code=${encodeURIComponent(sourceId)}`, label: 'Damages & Waste' };
-    case 'journal_entry_draft': return { path: `/journal-entries/${sourceId}`, label: 'Draft Journal Entry' };
+    case 'invoice': return { path: `/invoices/${sourceId}`, label: tx('Invoice') };
+    case 'payment': return { path: `/payments/${sourceId}`, label: tx('Payment') };
+    case 'receipt': return { path: `/pos/receipts/${sourceId}`, label: tx('POS Receipt') };
+    case 'stock_transfer': return { path: `/inventory/transfers`, label: tx('Stock Transfer') };
+    case 'stock_adjustment': return { path: `/inventory/adjustments`, label: tx('Stock Adjustment') };
+    case 'waste': return { path: `/inventory/waste?code=${encodeURIComponent(sourceId)}`, label: tx('Damages & Waste') };
+    case 'journal_entry_draft': return { path: `/journal-entries/${sourceId}`, label: tx('Draft Journal Entry') };
     default: return null;
   }
 }
@@ -135,7 +135,7 @@ export function JournalEntryDetailPage() {
             {entry.status === 'posted' && has(PERMISSIONS.journalEntry.reverse) && (
               <Button variant="outline" size="sm" className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5" onClick={() => setReverseConfirm(true)} disabled={reverse.isPending}>
                 <RotateCcw className="h-4 w-4" />
-                {reverse.isPending ? 'Reversing…' : 'Reverse'}
+                {reverse.isPending ? tx('Reversing…') : tx('Reverse')}
               </Button>
             )}
           </div>
@@ -179,7 +179,7 @@ export function JournalEntryDetailPage() {
                 <span className="text-sm font-semibold">{entry.lines.length} {tx('lines')}</span>
                 <Separator orientation="vertical" className="h-4" />
                 <span className={`text-sm font-semibold ${balanced ? 'text-emerald-600' : 'text-destructive'}`}>
-                  {balanced ? 'Balanced ✓' : 'Unbalanced'}
+                  {balanced ? tx('Balanced ✓') : tx('Unbalanced')}
                 </span>
               </div>
             </CardContent>
@@ -228,7 +228,7 @@ export function JournalEntryDetailPage() {
           <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">
             <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Account Lines')}</CardTitle>
             <p className="text-[10px] font-medium text-muted-foreground">
-              {tx('Dr')} {money(totalDebit)} / Cr {money(totalCredit)} {balanced ? '✓' : '✗'}
+              {tx('Dr')} {money(totalDebit)} {tx('/ Cr')} {money(totalCredit)} {balanced ? '✓' : '✗'}
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -280,7 +280,7 @@ export function JournalEntryDetailPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setReverseConfirm(false)}>{tx('Cancel')}</Button>
             <Button variant="destructive" onClick={onReverse} disabled={reverse.isPending}>
-              {reverse.isPending ? 'Reversing…' : 'Confirm Reversal'}
+              {reverse.isPending ? tx('Reversing…') : tx('Confirm Reversal')}
             </Button>
           </DialogFooter>
         </DialogContent>

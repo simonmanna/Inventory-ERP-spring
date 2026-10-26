@@ -93,7 +93,7 @@ export function ExpenseDetailPage() {
           </div>
           <p className="text-sm text-muted-foreground">
             {bill.partner?.name} · {date(bill.issueDate)}
-            {bill.dueDate ? ` · due ${date(bill.dueDate)}` : ''}
+            {bill.dueDate ? tx(' · due {{v1}}', { v1: date(bill.dueDate) }) : ''}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
@@ -185,7 +185,7 @@ export function ExpenseDetailPage() {
             </div>
             <DialogFooter>
               <Button type="submit" disabled={paySupplier.isPending}>
-                {paySupplier.isPending ? 'Saving...' : 'Save payment'}
+                {paySupplier.isPending ? tx('Saving...') : tx('Save payment')}
               </Button>
             </DialogFooter>
           </form>

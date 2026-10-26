@@ -8,10 +8,15 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { UnitSelect } from '@/components/unit-select';
+import { defaultUnitId, type UnitAwareProduct } from '@/features/products/units';
 
 interface Warehouse { id: string; code: string; name: string; type: string }
-interface Product { id: string; name: string; code: string }
-interface POLine { id: string; productId: string | null; description: string; quantity: number; receivedQuantity: number; unitPrice: number }
+interface Product extends UnitAwareProduct { id: string; name: string; code: string }
+interface POLine {
+  id: string; productId: string | null; description: string; quantity: number; receivedQuantity: number;
+  unitPrice: number; unitOfMeasureId?: string | null;
+}
 interface PO { id: string; orderNumber: string; lines: POLine[] }
 
 interface Line {
@@ -22,6 +27,8 @@ interface Line {
   unitCost?: number;
   batchNumber?: string;
   expiryDate?: string;
+  /** Unit of quantity/cost (ADR-S003). PO-backed lines always use the PO line's unit. */
+  uomId?: string;
 }
 
 export function GoodsReceiptCreatePage() {
@@ -58,6 +65,7 @@ export function GoodsReceiptCreatePage() {
           purchaseOrderLineId: ln.id,
           productId: ln.productId ?? undefined,
           description: ln.description,
+          uomId: ln.unitOfMeasureId ?? undefined,
           quantity: Math.max(0, Number(ln.quantity) - Number(ln.receivedQuantity)),
           unitCost: Number(ln.unitPrice) || 0,
         })).filter((l) => l.quantity > 0),
@@ -79,11 +87,11 @@ export function GoodsReceiptCreatePage() {
     onSuccess: async (data: any) => {
       // Immediately post it (commits the stock-in).
       await api.patch(`/procurement/goods-receipts/${data.id}/post`);
-      notify.success(`GRN ${data.receiptNumber} posted`);
+      notify.success(tx('GRN {{receiptNumber}} posted', { receiptNumber: data.receiptNumber }));
       qc.invalidateQueries({ queryKey: ['goods-receipts'] });
       navigate('/procurement/goods-receipts');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   return (
@@ -151,6 +159,7 @@ export function GoodsReceiptCreatePage() {
                       ...next[idx],
                       productId: e.target.value,
                       description: product?.name ?? next[idx].description,
+                      uomId: defaultUnitId(product, 'purchase'),
                     };
                     setLines(next);
                   }}
@@ -162,7 +171,7 @@ export function GoodsReceiptCreatePage() {
                   ))}
                 </select>
               </div>
-              <div className="md:col-span-3">
+              <div className="md:col-span-2">
                 <Input
                   placeholder={tx('Description')}
                   value={ln.description}
@@ -180,6 +189,19 @@ export function GoodsReceiptCreatePage() {
                   onChange={(e) => {
                     const next = [...lines];
                     next[idx] = { ...next[idx], quantity: Number(e.target.value) };
+                    setLines(next);
+                  }}
+                />
+              </div>
+              <div className="md:col-span-1">
+                <UnitSelect
+                  product={products.data?.find((p) => p.id === ln.productId)}
+                  role="purchase"
+                  value={ln.uomId}
+                  disabled={!!ln.purchaseOrderLineId}
+                  onChange={(uomId) => {
+                    const next = [...lines];
+                    next[idx] = { ...next[idx], uomId };
                     setLines(next);
                   }}
                 />

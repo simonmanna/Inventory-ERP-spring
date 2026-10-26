@@ -16,14 +16,15 @@ import { usePartner } from '@/features/partners/api';
 import { useOpenSession, useReceivePayment } from '@/pages/pos/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { tx } from '@/lib/i18n/tx';
+import { useUomCode } from '@/features/uom/api';
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  mobile_money: 'Mobile Money',
-  mixed: 'Mixed',
-  credit: 'Credit (house account)',
+  cash: tx('Cash'),
+  card: tx('Card'),
+  mobile_money: tx('Mobile Money'),
+  mixed: tx('Mixed'),
+  credit: tx('Credit (house account)'),
 };
 
 const selectClass = 'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
@@ -68,6 +69,7 @@ function rateLabel(rate: string | number | undefined | null): string {
 }
 
 export function InvoiceDetailPage() {
+  const uomCode = useUomCode();
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: inv, isLoading } = useInvoice(id);
@@ -224,7 +226,7 @@ export function InvoiceDetailPage() {
   const submitPayment = async (e: FormEvent) => {
     e.preventDefault();
     const amt = Number(amount);
-    if (!Number.isFinite(amt) || amt <= 0) { setPayError('Enter an amount greater than zero.'); return; }
+    if (!Number.isFinite(amt) || amt <= 0) { setPayError(tx('Enter an amount greater than zero.')); return; }
     if (amt > residual + 0.01) { setPayError(`Amount exceeds the ${money(residual, currency)} still due.`); return; }
     setPayError(null);
     try {
@@ -250,7 +252,7 @@ export function InvoiceDetailPage() {
       }
       setPayOpen(false);
     } catch (err: any) {
-      setPayError(err?.response?.data?.message || err?.message || 'Payment failed');
+      setPayError(err?.response?.data?.message || err?.message || tx('Payment failed'));
     }
   };
 
@@ -294,7 +296,7 @@ export function InvoiceDetailPage() {
           {stateSwitch}
           {isOpenCredit ? (
             <Badge className="bg-amber-100 text-amber-800 border-amber-200 whitespace-nowrap">
-              {tx('On account —')} {money(residual, currency)} due
+              {tx('On account —')} {money(residual, currency)} {tx('due')}
             </Badge>
           ) : null}
         </div>
@@ -306,7 +308,7 @@ export function InvoiceDetailPage() {
               onClick={() => postInvoice.mutate(inv.id)}
               disabled={postInvoice.isPending}
             >
-              {postInvoice.isPending ? 'Posting...' : 'Confirm'}
+              {postInvoice.isPending ? tx('Posting...') : tx('Confirm')}
             </Button>
           )}
           {canModify && has(PERMISSIONS.invoice.cancel) && (
@@ -422,7 +424,7 @@ export function InvoiceDetailPage() {
                                     colSpan={7}
                                     className={`${isSection ? 'py-1.5 text-[13px] font-bold uppercase tracking-wide text-sky-900 border-b border-sky-100' : 'py-1 text-[13px] italic text-slate-500'}`}
                                   >
-                                    {isSection ? '▬ ' : ''}{l.description || (isSection ? 'Section' : 'Note')}
+                                    {isSection ? '▬ ' : ''}{l.description || (isSection ? tx('Section') : tx('Note'))}
                                   </TableCell>
                                 </TableRow>
                               );
@@ -447,7 +449,9 @@ export function InvoiceDetailPage() {
                                     </span>
                                   ) : '-'}
                                 </TableCell>
-                                <TableCell className="text-right text-sm text-sky-800">{money(l.quantity)}</TableCell>
+                                <TableCell className="text-right text-sm text-sky-800">
+                                  {money(l.quantity)} <span className="text-xs text-sky-500">{uomCode(l.uomId)}</span>
+                                </TableCell>
                                 <TableCell className="text-right text-sm text-sky-800">{money(l.unitPrice)}</TableCell>
                                 <TableCell className="text-right text-sm text-sky-700">
                                   {l.tax && Number(l.taxAmount) > 0 ? `${l.tax.name} ${rateLabel(l.tax.rate)}`.trim() : '-'}
@@ -476,7 +480,7 @@ export function InvoiceDetailPage() {
                         )}
                         {inv.discountTotal && Number(inv.discountTotal) > 0 && (
                           <SummaryRow
-                            label={`Discount ${inv.discountType === 'fixed_amount' ? '(fixed)' : inv.discountType === 'percentage' ? `(${inv.discountValue ? Number(inv.discountValue).toFixed(1) : 'pct'}%)` : ''}`}
+                            label={tx('Discount {{v1}}', { v1: inv.discountType === 'fixed_amount' ? '(fixed)' : inv.discountType === 'percentage' ? `(${inv.discountValue ? Number(inv.discountValue).toFixed(1) : 'pct'}%)` : '' })}
                             value={`-${money(inv.discountTotal)}`}
                           />
                         )}
@@ -534,7 +538,7 @@ export function InvoiceDetailPage() {
                     </TableRow>
                   ))}
                   <TableRow className="bg-sky-50/60">
-                    <TableCell colSpan={3} className="text-right text-xs font-bold text-sky-700 uppercase tracking-wider">{tx('Totals')} {balanced ? '· Balanced' : '· NOT Balanced'}</TableCell>
+                    <TableCell colSpan={3} className="text-right text-xs font-bold text-sky-700 uppercase tracking-wider">{tx('Totals')} {balanced ? tx('· Balanced') : tx('· NOT Balanced')}</TableCell>
                     <TableCell className="text-right font-bold text-sm text-emerald-700">{money(journalTotalDebit)}</TableCell>
                     <TableCell className="text-right font-bold text-sm text-sky-900">{money(journalTotalCredit)}</TableCell>
                   </TableRow>
@@ -681,7 +685,7 @@ export function InvoiceDetailPage() {
                   disabled={createPayment.isPending || receivePosPayment.isPending}
                   className="bg-sky-600 hover:bg-sky-700 text-white"
                 >
-                  {createPayment.isPending || receivePosPayment.isPending ? 'Saving...' : 'Save Payment'}
+                  {createPayment.isPending || receivePosPayment.isPending ? tx('Saving...') : tx('Save Payment')}
                 </Button>
               </DialogFooter>
             </form>
@@ -705,7 +709,7 @@ export function InvoiceDetailPage() {
               disabled={cancelInvoice.isPending}
               onClick={() => cancelInvoice.mutate(inv.id, { onSuccess: () => setCancelOpen(false) })}
             >
-              {cancelInvoice.isPending ? 'Cancelling...' : 'Cancel Invoice'}
+              {cancelInvoice.isPending ? tx('Cancelling...') : tx('Cancel Invoice')}
             </Button>
           </DialogFooter>
         </DialogContent>

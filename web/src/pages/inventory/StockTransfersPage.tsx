@@ -47,8 +47,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  in_transit: 'in transit',
-  partially_received: 'partially received',
+  in_transit: tx('in transit'),
+  partially_received: tx('partially received'),
 };
 
 const num = (v: unknown) => Number(v ?? 0);
@@ -208,7 +208,7 @@ export function StockTransfersPage() {
                     <td className="px-3 py-2">
                       {fromLoc?.code ?? '—'} → {toLoc?.code ?? '—'}
                     </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{tr.mode === 'transit' ? 'Transit' : 'Immediate'}</td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{tr.mode === 'transit' ? tx('Transit') : tx('Immediate')}</td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums">{tr.items?.length ?? 0}</td>
                     <td className="px-3 py-2">
                       <span className={`inline-flex px-2.5 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${STATUS_COLORS[tr.status] ?? 'bg-gray-100 text-gray-700'}`}>
@@ -220,16 +220,16 @@ export function StockTransfersPage() {
                       <div className="flex flex-wrap justify-end gap-1">
                       {tr.status === 'pending' && canApprove && (
                         <Button size="sm" variant="outline" onClick={() => approveTransfer.mutate(tr.id)} disabled={approveTransfer.isPending}>
-                          {approveTransfer.isPending ? '…' : 'Approve'}
+                          {approveTransfer.isPending ? '…' : tx('Approve')}
                         </Button>
                       )}
                       {tr.status === 'approved' && tr.mode === 'transit' && canMove && (
                         <Button size="sm" variant="outline" onClick={() => dispatchTransfer.mutate(tr.id)} disabled={dispatchTransfer.isPending}>
-                          <Truck className="mr-1 h-3.5 w-3.5" />{dispatchTransfer.isPending ? 'Dispatching…' : 'Dispatch'}
+                          <Truck className="mr-1 h-3.5 w-3.5" />{dispatchTransfer.isPending ? tx('Dispatching…') : tx('Dispatch')}
                         </Button>
                       )}
                       {(tr.status === 'pending' || (tr.status === 'approved' && tr.mode === 'transit')) && canApprove && (
-                        <Button size="sm" variant="ghost" aria-label={`Cancel ${tr.transferCode}`} onClick={() => cancelTransfer.mutate(tr.id)} disabled={cancelTransfer.isPending}>
+                        <Button size="sm" variant="ghost" aria-label={tx('Cancel {{transferCode}}', { transferCode: tr.transferCode })} onClick={() => cancelTransfer.mutate(tr.id)} disabled={cancelTransfer.isPending}>
                           <X className="mr-1 h-3.5 w-3.5" />{tx('Cancel')}
                         </Button>
                       )}
@@ -267,8 +267,8 @@ export function StockTransfersPage() {
               <legend className="text-sm font-medium">{tx('Transfer type')}</legend>
               <div className="mt-1 grid gap-2 sm:grid-cols-2">
                 {([
-                  ['immediate', 'Immediate', 'Same premises. Stock moves the moment it is approved.'],
-                  ['transit', 'Branch (in transit)', 'Approve, dispatch, then the destination receives — with damage and shortage recorded.'],
+                  ['immediate', tx('Immediate'), tx('Same premises. Stock moves the moment it is approved.')],
+                  ['transit', tx('Branch (in transit)'), tx('Approve, dispatch, then the destination receives — with damage and shortage recorded.')],
                 ] as const).map(([value, label, hint]) => (
                   <label key={value} className={`flex cursor-pointer gap-2 rounded-md border p-2 text-sm ${mode === value ? 'border-primary bg-primary/5' : ''}`}>
                     <input type="radio" name="transfer-mode" value={value} checked={mode === value} onChange={() => setMode(value)} className="mt-1" />
@@ -309,7 +309,7 @@ export function StockTransfersPage() {
                   onValueChange={setResponsibleId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -320,7 +320,7 @@ export function StockTransfersPage() {
                   onValueChange={setApprovedId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -380,8 +380,8 @@ export function StockTransfersPage() {
                           }}>
                             <SelectTrigger className="h-7 w-24"><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="FEFO">FEFO</SelectItem>
-                              <SelectItem value="FIFO">FIFO</SelectItem>
+                              <SelectItem value="FEFO">{tx('FEFO')}</SelectItem>
+                              <SelectItem value="FIFO">{tx('FIFO')}</SelectItem>
                               <SelectItem value="MANUAL">{tx('Manual')}</SelectItem>
                             </SelectContent>
                           </Select>
@@ -406,7 +406,7 @@ export function StockTransfersPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>{tx('Cancel')}</Button>
             <Button onClick={handleSubmit} disabled={!canSubmit}>
-              <Save className="mr-2 h-4 w-4" />{createTransfer.isPending ? 'Creating…' : 'Create Transfer'}
+              <Save className="mr-2 h-4 w-4" />{createTransfer.isPending ? tx('Creating…') : tx('Create Transfer')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -415,10 +415,10 @@ export function StockTransfersPage() {
       <ReasonDialog
         open={!!reversing}
         onOpenChange={(o) => { if (!o) setReversing(null); }}
-        title={`Reverse ${reversing?.code ?? ''}`}
+        title={tx('Reverse {{v1}}', { v1: reversing?.code ?? '' })}
         description={<p>{tx('Moves the transferred quantities back to the source location today. It fails if the destination no longer holds them.')}</p>}
         confirmLabel={tx('Reverse transfer')}
-        pendingLabel="Reversing…"
+        pendingLabel={tx('Reversing…')}
         destructive
         pending={reverseTransfer.isPending}
         onConfirm={(reason) => reversing && reverseTransfer.mutate({ id: reversing.id, reason }, { onSuccess: () => setReversing(null) })}
@@ -427,10 +427,10 @@ export function StockTransfersPage() {
       <ReasonDialog
         open={!!recalling}
         onOpenChange={(o) => { if (!o) setRecalling(null); }}
-        title={`Recall ${recalling?.code ?? ''}`}
+        title={tx('Recall {{v1}}', { v1: recalling?.code ?? '' })}
         description={<p>{tx('Returns everything still in transit to the source location. Quantities already received, damaged or short are not affected.')}</p>}
         confirmLabel={tx('Recall to source')}
-        pendingLabel="Recalling…"
+        pendingLabel={tx('Recalling…')}
         destructive
         pending={recallTransfer.isPending}
         onConfirm={(reason) => recalling && recallTransfer.mutate({ id: recalling.id, reason }, { onSuccess: () => setRecalling(null) })}
@@ -440,7 +440,7 @@ export function StockTransfersPage() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{tx('Receive')} {receiving?.code}</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Split what is still in transit into what arrived in good condition, what arrived damaged (written off as waste) and what never arrived (written off as a loss). Anything left blank stays in transit for a later receipt.
+            {tx('Split what is still in transit into what arrived in good condition, what arrived damaged (written off as waste) and what never arrived (written off as a loss). Anything left blank stays in transit for a later receipt.')}
           </p>
           <div className="rounded-md border overflow-x-auto">
             <table className="w-full min-w-[520px] text-sm">
@@ -469,7 +469,7 @@ export function StockTransfersPage() {
                         <td key={field} className="px-2 py-1">
                           <Input
                             type="number" min="0" step="any" inputMode="decimal"
-                            aria-label={`${field} quantity for ${r.productName}`}
+                            aria-label={tx('{{field}} quantity for {{productName}}', { field, productName: r.productName })}
                             aria-invalid={over}
                             className="h-8 w-24 ml-auto text-right"
                             value={r[field]}
@@ -500,7 +500,7 @@ export function StockTransfersPage() {
                 { onSuccess: () => setReceiving(null) },
               )}
             >
-              <PackageCheck className="mr-2 h-4 w-4" />{receiveTransfer.isPending ? 'Posting…' : 'Post receipt'}
+              <PackageCheck className="mr-2 h-4 w-4" />{receiveTransfer.isPending ? tx('Posting…') : tx('Post receipt')}
             </Button>
           </DialogFooter>
         </DialogContent>

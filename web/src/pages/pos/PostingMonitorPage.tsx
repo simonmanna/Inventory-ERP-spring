@@ -100,7 +100,7 @@ export function PostingMonitorPage() {
       setNote('');
       qc.invalidateQueries({ queryKey: ['posting-monitor'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const retry = useMutation({
@@ -109,7 +109,7 @@ export function PostingMonitorPage() {
       notify.success(tx('Re-queued'));
       qc.invalidateQueries({ queryKey: ['posting-monitor'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const counts = countsQ.data;
@@ -132,7 +132,7 @@ export function PostingMonitorPage() {
             {tx('Exceptions')}{openEx > 0 ? ` (${openEx})` : ''}
           </Button>
           <Button variant={tab === 'jobs' ? 'default' : 'outline'} size="sm" onClick={() => setTab('jobs')}>
-            {tx('Jobs')}{failedJobs > 0 ? ` (${failedJobs} failed)` : ''}
+            {tx('Jobs')}{failedJobs > 0 ? tx(' ({{failedJobs}} failed)', { failedJobs }) : ''}
           </Button>
         </div>
       </div>
@@ -146,7 +146,7 @@ export function PostingMonitorPage() {
           {exQ.isLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : (exQ.data ?? []).length === 0 ? (
-            <EmptyState label={tx('No inventory exceptions')} hint="Every sale's stock deducted cleanly." />
+            <EmptyState label={tx('No inventory exceptions')} hint={tx('Every sale\'s stock deducted cleanly.')} />
           ) : (
             <div className="space-y-3">
               {(exQ.data ?? []).map((ex) => (
@@ -160,7 +160,7 @@ export function PostingMonitorPage() {
                         <span className="text-muted-foreground">× {Number(ex.quantity)}</span>
                       </CardTitle>
                       <span className="text-xs text-muted-foreground">
-                        {ex.invoiceNumber ?? 'no invoice'} · {new Date(ex.createdAt).toLocaleString()}
+                        {ex.invoiceNumber ?? tx('no invoice')} · {new Date(ex.createdAt).toLocaleString()}
                       </span>
                     </div>
                     <CardDescription className="text-rose-400">{ex.reason}</CardDescription>
@@ -205,7 +205,7 @@ export function PostingMonitorPage() {
           {jobsQ.isLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : (jobsQ.data ?? []).length === 0 ? (
-            <EmptyState label={tx('No jobs')} hint="Nothing pending or failed in the inventory-posting queue." />
+            <EmptyState label={tx('No jobs')} hint={tx('Nothing pending or failed in the inventory-posting queue.')} />
           ) : (
             <div className="space-y-3">
               {(jobsQ.data ?? []).map((job) => (
@@ -238,12 +238,12 @@ export function PostingMonitorPage() {
       <Dialog open={!!resolving} onOpenChange={(open) => !open && setResolving(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{resolving?.action === 'resolved' ? 'Mark as corrected' : 'Discard this exception'}</DialogTitle>
+            <DialogTitle>{resolving?.action === 'resolved' ? tx('Mark as corrected') : tx('Discard this exception')}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {resolving?.action === 'resolved'
-              ? 'Use this once the stock drift has been corrected — e.g. a manual stock adjustment or count was posted.'
-              : 'Use this only if the line must never deduct — a test, a duplicate, or an untracked item.'}
+              ? tx('Use this once the stock drift has been corrected — e.g. a manual stock adjustment or count was posted.')
+              : tx('Use this only if the line must never deduct — a test, a duplicate, or an untracked item.')}
           </p>
           <div className="grid gap-1.5">
             <Label htmlFor="ex-note">{tx('What happened? (recorded in the audit log)')}</Label>
@@ -251,7 +251,7 @@ export function PostingMonitorPage() {
               id="ex-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder={resolving?.action === 'resolved' ? 'Posted stock adjustment ADJ-2026-000045' : 'Untracked promo item'}
+              placeholder={resolving?.action === 'resolved' ? tx('Posted stock adjustment ADJ-2026-000045') : tx('Untracked promo item')}
             />
           </div>
           <div className="flex justify-end gap-2">

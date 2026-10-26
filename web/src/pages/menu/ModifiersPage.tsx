@@ -150,7 +150,7 @@ export default function ModifiersPage() {
       });
       toast.success(tx('Settings saved'));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to save');
+      toast.error(e?.response?.data?.message || tx('Failed to save'));
     }
   };
 
@@ -163,7 +163,7 @@ export default function ModifiersPage() {
         await assignToMenuItem.mutateAsync({ menuItemId, modifierGroupId: selectedGroupId });
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to update assignment');
+      toast.error(e?.response?.data?.message || tx('Failed to update assignment'));
     }
   };
 
@@ -175,7 +175,7 @@ export default function ModifiersPage() {
       setDeleteTarget(null);
       if (selectedGroupId === deleteTarget.id) setSelectedGroupId(null);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to delete');
+      toast.error(e?.response?.data?.message || tx('Failed to delete'));
       setDeleteTarget(null);
     }
   };
@@ -192,7 +192,7 @@ export default function ModifiersPage() {
       });
       toast.success(tx('Option added'));
       setAddOpen(false); setAName(''); setAKitchen(''); setAPrice(''); setADefault(false);
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to add option'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to add option')); }
   };
 
   const saveEditOption = async (modifierId: string) => {
@@ -207,14 +207,14 @@ export default function ModifiersPage() {
       });
       setEditOptId(null);
       toast.success(tx('Option updated'));
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to update'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to update')); }
   };
 
   const removeOption = async (id: string) => {
     try {
       await deleteModifier.mutateAsync(id);
       toast.success(tx('Option removed'));
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to delete'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to delete')); }
   };
 
   const submitNewGroup = async () => {
@@ -230,12 +230,12 @@ export default function ModifiersPage() {
         groupType: gGroupType,
         minSelect, maxSelect,
       });
-      toast.success(`"${gName.trim()}" created`);
+      toast.success(tx('"{{v1}}" created', { v1: gName.trim() }));
       setShowNewGroup(false);
       setGName(''); setGCategory(''); setGDesc(''); setGColor('');
       setGType('single'); setGRequired(false); setGMax(2); setGGroupType('ADD_ON');
       if (created?.id) setSelectedGroupId(created.id);
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to create'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to create')); }
   };
   const createGroupFn = useCreateModifierGroup();
 
@@ -246,7 +246,7 @@ export default function ModifiersPage() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Menu Modifiers &amp; Add-ons</h1>
+          <h1 className="text-xl font-bold text-slate-800">{tx('Menu Modifiers & Add-ons')}</h1>
           <p className="text-sm text-slate-500">{total} {tx('group')}{total !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -308,7 +308,7 @@ export default function ModifiersPage() {
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ml-auto ${
                         g.groupType === 'ADD_ON' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700'
                       }`}>
-                        {g.groupType === 'ADD_ON' ? 'Add-on' : 'Modifier'}
+                        {g.groupType === 'ADD_ON' ? tx('Add-on') : tx('Modifier')}
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5 flex gap-2">
@@ -329,7 +329,7 @@ export default function ModifiersPage() {
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <span>{tx('Page')} {page} of {totalPages}</span>
+              <span>{tx('Page')} {page} {tx('of')} {totalPages}</span>
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
@@ -432,7 +432,7 @@ export default function ModifiersPage() {
                     <Label className="text-xs font-medium text-slate-600">{tx('Maximum selections')}</Label>
                     <Input type="number" value={sMax} onChange={(e) => setSMax(Number(e.target.value))} min={1} className="h-9 text-sm mt-0.5" />
                     <p className="text-[10px] text-slate-400 mt-0.5">
-                      {sMax === 1 ? 'Single choice (radio)' : `Customer may choose up to ${sMax} options`}
+                      {sMax === 1 ? tx('Single choice (radio)') : tx('Customer may choose up to {{sMax}} options', { sMax })}
                     </p>
                   </div>
                 </div>
@@ -559,13 +559,13 @@ export default function ModifiersPage() {
                     />
                   </div>
                   <span className="text-xs text-slate-500">
-                    {assignedCount} of {groupMenuItems.length} {tx('items assigned')}
+                    {assignedCount} {tx('of')} {groupMenuItems.length} {tx('items assigned')}
                   </span>
                 </div>
                 <div className="max-h-[260px] overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
                   {filteredMenuItems.length === 0 ? (
                     <div className="p-4 text-center text-xs text-slate-400">
-                      {miSearch ? 'No menu items match your search' : 'No menu items found'}
+                      {miSearch ? tx('No menu items match your search') : tx('No menu items found')}
                     </div>
                   ) : (
                     filteredMenuItems.map((mi) => (

@@ -40,17 +40,17 @@ interface LedgerEntry {
 interface LedgerMeta { page: number; pageSize: number; total: number; totalPages: number }
 
 const MOVE_TYPE_LABELS: Record<string, string> = {
-  receipt: 'Receipt',
-  issue: 'Issue',
-  adjustment_in: 'Adj In',
-  adjustment_out: 'Adj Out',
-  transfer_in: 'Transfer In',
-  transfer_out: 'Transfer Out',
-  opening_balance: 'Opening Bal',
-  waste: 'Waste',
-  return_in: 'Return In',
-  return_to_supplier: 'Rtn to Supplier',
-  expiry_write_off: 'Expiry Write-Off',
+  receipt: tx('Receipt'),
+  issue: tx('Issue'),
+  adjustment_in: tx('Adj In'),
+  adjustment_out: tx('Adj Out'),
+  transfer_in: tx('Transfer In'),
+  transfer_out: tx('Transfer Out'),
+  opening_balance: tx('Opening Bal'),
+  waste: tx('Waste'),
+  return_in: tx('Return In'),
+  return_to_supplier: tx('Rtn to Supplier'),
+  expiry_write_off: tx('Expiry Write-Off'),
 };
 
 function MoveBadge({ type }: { type: string }) {
@@ -227,7 +227,7 @@ export function StockLedgerPage() {
             <span>{ledger.data.meta.total} {tx('entry(ies)')}</span>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{tx('Previous')}</Button>
-              <span>{tx('Page')} {ledger.data.meta.page} of {ledger.data.meta.totalPages}</span>
+              <span>{tx('Page')} {ledger.data.meta.page} {tx('of')} {ledger.data.meta.totalPages}</span>
               <Button size="sm" variant="outline" disabled={page >= ledger.data.meta.totalPages} onClick={() => setPage((p) => p + 1)}>{tx('Next')}</Button>
             </div>
           </div>

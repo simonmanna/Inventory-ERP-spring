@@ -45,10 +45,10 @@ function monthStart(ym: string): string {
 }
 
 const ORDER_TYPES = [
-  { value: '', label: 'All Types' },
-  { value: 'dine_in', label: 'Dine In' },
-  { value: 'takeaway', label: 'Takeaway' },
-  { value: 'delivery', label: 'Delivery' },
+  { value: '', label: tx('All Types') },
+  { value: 'dine_in', label: tx('Dine In') },
+  { value: 'takeaway', label: tx('Takeaway') },
+  { value: 'delivery', label: tx('Delivery') },
 ];
 
 const OrderTypeSelect: React.FC<{
@@ -74,13 +74,13 @@ const QuickPresets: React.FC<{
   toDate: string; setToDate: (d: string) => void;
 }> = ({ fromDate, setFromDate, toDate, setToDate }) => {
   const presets = [
-    { label: 'Today', get: () => { const t = todayIso(); return { f: t, t }; } },
-    { label: 'Yesterday', get: () => { const d = new Date(); d.setDate(d.getDate() - 1); const s = d.toISOString().slice(0, 10); return { f: s, t: s }; } },
-    { label: 'This Week', get: () => { const s = weekStartFromDay(todayIso()); return { f: s, t: todayIso() }; } },
-    { label: 'This Month', get: () => { const s = monthStart(todayIso().slice(0, 7)); return { f: s, t: todayIso() }; } },
-    { label: 'Last 7 Days', get: () => { const d = new Date(); d.setDate(d.getDate() - 6); return { f: d.toISOString().slice(0, 10), t: todayIso() }; } },
-    { label: 'Last 30 Days', get: () => { const d = new Date(); d.setDate(d.getDate() - 29); return { f: d.toISOString().slice(0, 10), t: todayIso() }; } },
-    { label: 'This Year', get: () => { const y = todayIso().slice(0, 4); return { f: `${y}-01-01`, t: todayIso() }; } },
+    { label: tx('Today'), get: () => { const t = todayIso(); return { f: t, t }; } },
+    { label: tx('Yesterday'), get: () => { const d = new Date(); d.setDate(d.getDate() - 1); const s = d.toISOString().slice(0, 10); return { f: s, t: s }; } },
+    { label: tx('This Week'), get: () => { const s = weekStartFromDay(todayIso()); return { f: s, t: todayIso() }; } },
+    { label: tx('This Month'), get: () => { const s = monthStart(todayIso().slice(0, 7)); return { f: s, t: todayIso() }; } },
+    { label: tx('Last 7 Days'), get: () => { const d = new Date(); d.setDate(d.getDate() - 6); return { f: d.toISOString().slice(0, 10), t: todayIso() }; } },
+    { label: tx('Last 30 Days'), get: () => { const d = new Date(); d.setDate(d.getDate() - 29); return { f: d.toISOString().slice(0, 10), t: todayIso() }; } },
+    { label: tx('This Year'), get: () => { const y = todayIso().slice(0, 4); return { f: `${y}-01-01`, t: todayIso() }; } },
   ];
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -164,11 +164,11 @@ const SalesReportTab: React.FC<{
               <Button variant="outline" size="sm" onClick={() => {
                 const d = rows.map((r: SalesReportRow) => [r.orderNumber, r.invoiceNumber, new Date(r.saleDate).toLocaleDateString(), r.time || new Date(r.saleDate).toLocaleTimeString(), String(Number(r.subtotal).toFixed(2)), String(Number(r.discount).toFixed(2)), String(Number(r.totalAmount).toFixed(2)), r.waiterName ?? '—']);
                 exportCSV(`sales-report-${fromDate}-${toDate}.csv`, hdr, d);
-              }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+              }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
               <Button variant="outline" size="sm" onClick={() => {
                 const d = rows.map((r: SalesReportRow) => [r.orderNumber, r.invoiceNumber, new Date(r.saleDate).toLocaleDateString(), r.time || new Date(r.saleDate).toLocaleTimeString(), fmt(r.subtotal), fmt(r.discount), fmt(r.totalAmount), r.waiterName ?? '—']);
                 exportPDF(`sales-report-${fromDate}-${toDate}.pdf`, `Sales Report — ${fromDate} → ${toDate}`, hdr, d);
-              }}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+              }}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
             </div>
           )}
         </div>
@@ -245,11 +245,11 @@ const ItemsReportTab: React.FC<{
               <Button variant="outline" size="sm" onClick={() => {
                 const d = items.map((it: SoldItem) => [it.orderNumber, it.invoiceNumber, new Date(it.saleDate).toLocaleDateString(), it.time || new Date(it.saleDate).toLocaleTimeString(), it.item, it.categoryName ?? '—', String(Number(it.unitPrice).toFixed(2)), it.discountPercent, String(Number(it.quantity).toFixed(2)), String(Number(it.totalAmount).toFixed(2)), it.waiterName ?? '—']);
                 exportCSV(`items-report-${fromDate}-${toDate}.csv`, hdr, d);
-              }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+              }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
               <Button variant="outline" size="sm" onClick={() => {
                 const d = items.map((it: SoldItem) => [it.orderNumber, it.invoiceNumber, new Date(it.saleDate).toLocaleDateString(), it.time || new Date(it.saleDate).toLocaleTimeString(), it.item, it.categoryName ?? '—', fmt(it.unitPrice), `${it.discountPercent}%`, String(Number(it.quantity).toFixed(2)), fmt(it.totalAmount), it.waiterName ?? '—']);
                 exportPDF(`items-report-${fromDate}-${toDate}.pdf`, `Item Sales Report — ${fromDate} → ${toDate}`, hdr, d);
-              }}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+              }}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
             </div>
           )}
         </div>
@@ -334,7 +334,7 @@ const ExpensesReportTab: React.FC<{
               const hdr = ['Code', 'Date', 'Title', 'Category', 'Amount', 'Status', 'Created By', 'Paid At', 'Notes'];
               const data = rows.map((r: any) => [r.expenseCode, r.expenseDate?.slice(0, 10) ?? '', r.title, r.categoryName ?? r.category?.name ?? '—', String(r.amount), r.status, r.createdBy?.staff ? `${r.createdBy.staff.firstName} ${r.createdBy.staff.lastName}` : '—', r.paidAt ? r.paidAt.slice(0, 10) : '', r.notes ?? '']);
               exportCSV(`expenses-report-${fromDate}-${toDate}.csv`, hdr, data);
-            }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+            }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
           )}
         </div>
         {isLoading ? <p className="text-sm text-slate-500">{tx('Loading…')}</p> : null}
@@ -390,8 +390,8 @@ const PurchasesReportTab: React.FC<{
       <QuickPresets fromDate={fromDate} setFromDate={setFromDate} toDate={toDate} setToDate={setToDate} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard title={tx('PO Subtotal')} value={fmt(totals.subtotal)} sub={`${totalCount} orders`} icon={ShoppingCart} />
-        <StatCard title={tx('Tax')} value={fmt(totals.tax)} sub="Total tax" icon={Receipt} />
-        <StatCard title={tx('Grand Total')} value={fmt(totals.total)} sub="Total purchase value" icon={DollarSign} accent />
+        <StatCard title={tx('Tax')} value={fmt(totals.tax)} sub={tx('Total tax')} icon={Receipt} />
+        <StatCard title={tx('Grand Total')} value={fmt(totals.total)} sub={tx('Total purchase value')} icon={DollarSign} accent />
       </div>
       <div className="pos-report-card">
         <div className="flex items-center justify-between mb-2">
@@ -401,11 +401,11 @@ const PurchasesReportTab: React.FC<{
               <Button variant="outline" size="sm" onClick={() => {
                 const d = rows.map((r: any) => [r.orderNumber, r.orderDate?.slice(0, 10) ?? '—', r.partner?.name ?? '—', r.status, r.paymentType ?? '—', r.paymentStatus ?? '—', String(Number(r.subtotal).toFixed(2)), String(Number(r.taxAmount).toFixed(2)), String(Number(r.totalAmount).toFixed(2))]);
                 exportCSV(`purchases-report-${fromDate}-${toDate}.csv`, hdr, d);
-              }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+              }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
               <Button variant="outline" size="sm" onClick={() => {
                 const d = rows.map((r: any) => [r.orderNumber, r.orderDate?.slice(0, 10) ?? '—', r.partner?.name ?? '—', r.status, r.paymentType ?? '—', r.paymentStatus ?? '—', fmt(r.subtotal), fmt(r.taxAmount), fmt(r.totalAmount)]);
                 exportPDF(`purchases-report-${fromDate}-${toDate}.pdf`, `Purchases Report — ${fromDate} → ${toDate}`, hdr, d);
-              }}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+              }}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
             </div>
           )}
         </div>
@@ -452,12 +452,12 @@ const CashFlowSummaryTab: React.FC<{
 }> = ({ fromDate, setFromDate, toDate, setToDate }) => {
   const { data: cf, isLoading } = useCashFlowSummary(fromDate, toDate);
   const sections = [
-    { label: 'Opening Cash', value: cf?.openingCash, color: 'text-slate-700' },
-    { label: 'Operating', value: cf?.operating, color: 'text-blue-600' },
-    { label: 'Investing', value: cf?.investing, color: 'text-amber-600' },
-    { label: 'Financing', value: cf?.financing, color: 'text-violet-600' },
-    { label: 'Net Cash Flow', value: cf?.netCashFlow, color: 'text-indigo-600', accent: true },
-    { label: 'Closing Cash', value: cf?.closingCash, color: 'text-emerald-600', accent: true },
+    { label: tx('Opening Cash'), value: cf?.openingCash, color: 'text-slate-700' },
+    { label: tx('Operating'), value: cf?.operating, color: 'text-blue-600' },
+    { label: tx('Investing'), value: cf?.investing, color: 'text-amber-600' },
+    { label: tx('Financing'), value: cf?.financing, color: 'text-violet-600' },
+    { label: tx('Net Cash Flow'), value: cf?.netCashFlow, color: 'text-indigo-600', accent: true },
+    { label: tx('Closing Cash'), value: cf?.closingCash, color: 'text-emerald-600', accent: true },
   ];
 
   return (
@@ -485,12 +485,12 @@ const CashFlowSummaryTab: React.FC<{
                   const hdr = ['Metric', 'Amount'];
                   const data = sections.map((s) => [s.label, String(Number(s.value || 0).toFixed(2))]);
                   exportCSV(`cash-flow-summary-${fromDate}-${toDate}.csv`, hdr, data);
-                }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+                }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
                 <Button variant="outline" size="sm" onClick={() => {
                   const hdr = ['Metric', 'Amount'];
                   const data = sections.map((s) => [s.label, fmt(s.value)]);
                   exportPDF(`cash-flow-summary-${fromDate}-${toDate}.pdf`, `Cash Flow Summary — ${fromDate} → ${toDate}`, hdr, data);
-                }}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+                }}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -507,7 +507,7 @@ const CashFlowSummaryTab: React.FC<{
               </table>
             </div>
             <p className="text-sm text-slate-400 mt-2">
-              {tx('Source: Accounting GL · reconciled =')} {cf.reconciled ? 'Yes' : 'No'}
+              {tx('Source: Accounting GL · reconciled =')} {cf.reconciled ? tx('Yes') : tx('No')}
             </p>
           </div>
         </>
@@ -555,16 +555,16 @@ const CashFlowDetailedTab: React.FC<{
             <Button variant="outline" size="sm" onClick={() => {
               const data = visibleRows.map((r: any) => [r.direction, r.paymentNumber, r.paymentDate, r.partnerName, r.paymentMethod, String(Number(r.amount).toFixed(2)), r.reference ?? '']);
               exportCSV(`cash-flow-${direction}-${fromDate}-${toDate}.csv`, hdr, data);
-            }}><Download className="h-3.5 w-3.5 mr-1" /> CSV</Button>
+            }}><Download className="h-3.5 w-3.5 mr-1" /> {tx('CSV')}</Button>
             <Button variant="outline" size="sm" onClick={() => {
               const data = visibleRows.map((r: any) => [r.direction, r.paymentNumber, r.paymentDate, r.partnerName, r.paymentMethod, fmt(r.amount), r.reference ?? '']);
               exportPDF(`cash-flow-${direction}-${fromDate}-${toDate}.pdf`, `Cash Flow ${direction === 'inbound' ? 'Inbound' : 'Outbound'} — ${fromDate} → ${toDate}`, hdr, data);
-            }}><FileText className="h-3.5 w-3.5 mr-1" /> PDF</Button>
+            }}><FileText className="h-3.5 w-3.5 mr-1" /> {tx('PDF')}</Button>
           </div>
         )}
       </div>
       <div className="pos-report-card">
-        <h3>{direction === 'inbound' ? 'Inbound Payments' : 'Outbound Payments'} — {fromDate} → {toDate}</h3>
+        <h3>{direction === 'inbound' ? tx('Inbound Payments') : tx('Outbound Payments')} — {fromDate} → {toDate}</h3>
         {isLoading ? <p className="text-sm text-slate-500">{tx('Loading…')}</p> : null}
         {visibleRows.length === 0 && !isLoading ? <p className="text-sm text-slate-500">{tx('No payments in this date range.')}</p> : (
           <div className="overflow-x-auto">
@@ -584,7 +584,7 @@ const CashFlowDetailedTab: React.FC<{
                 </tr>
               ))}</tbody>
               <tfoot><tr className="border-t-2 border-slate-300 font-bold text-slate-800">
-                <td className="py-2 pr-3" colSpan={4}>{direction === 'inbound' ? 'Total Inbound' : 'Total Outbound'} ({visibleRows.length} {tx('payments)')}</td>
+                <td className="py-2 pr-3" colSpan={4}>{direction === 'inbound' ? tx('Total Inbound') : tx('Total Outbound')} ({visibleRows.length} {tx('payments)')}</td>
                 <td className={'py-2 pr-3 text-right font-mono ' + (direction === 'inbound' ? 'text-emerald-600' : 'text-rose-600')}>{fmt(direction === 'inbound' ? grandInbound : grandOutbound)}</td>
                 <td className="py-2 pr-3" />
               </tr></tfoot>
@@ -602,12 +602,12 @@ type ReportTab = 'sales' | 'items' | 'expenses' | 'purchases' | 'cf-summary' | '
 
 /** Tab order, with the catalog id each one is configured under. */
 const CENTER_TABS: Array<{ id: ReportTab; label: string }> = [
-  { id: 'sales', label: 'Sales Report' },
-  { id: 'items', label: 'Item Sales' },
-  { id: 'expenses', label: 'Expenses' },
-  { id: 'purchases', label: 'Purchases' },
-  { id: 'cf-summary', label: 'Cash Flow Summary' },
-  { id: 'cf-detailed', label: 'Cash Flow Detailed' },
+  { id: 'sales', label: tx('Sales Report') },
+  { id: 'items', label: tx('Item Sales') },
+  { id: 'expenses', label: tx('Expenses') },
+  { id: 'purchases', label: tx('Purchases') },
+  { id: 'cf-summary', label: tx('Cash Flow Summary') },
+  { id: 'cf-detailed', label: tx('Cash Flow Detailed') },
 ];
 
 const ReportCenterPage: React.FC = () => {

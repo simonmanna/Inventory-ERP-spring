@@ -11,6 +11,7 @@ import { usePosAuthStore } from './pos-auth.store';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { CartLine, DiscountType } from './types';
+import { tx } from '@/lib/i18n/tx';
 
 export type OrderType = 'dine-in' | 'takeaway' | 'delivery';
 
@@ -125,7 +126,7 @@ export const useCartStore = create<CartState>()(
   persist(
     (persistedSet, get) => {
       const set: typeof persistedSet = (update: any) => {
-        if (get().operationPending) { toast.error('Payment pending. Retry the original payment before editing or leaving this cart.'); return; }
+        if (get().operationPending) { toast.error(tx('Payment pending. Retry the original payment before editing or leaving this cart.')); return; }
         persistedSet(update);
       };
       return ({

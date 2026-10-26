@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
+import { tx } from '@/lib/i18n/tx';
 
 export interface PaymentAccount { id: string; name: string; code: string; accountType: string }
 export function accountsForMethod(accounts: PaymentAccount[], method: string) {
@@ -48,7 +49,7 @@ export function usePosPaymentMethods() {
 export const TENDER_KIND_ORDER: PosPaymentMethod['kind'][] = ['cash', 'mobile_money', 'card', 'bank'];
 
 export const TENDER_KIND_LABEL: Record<string, string> = {
-  cash: 'Cash', mobile_money: 'Mobile Money', card: 'Card', bank: 'Bank', store_credit: 'Store Credit',
+  cash: tx('Cash'), mobile_money: tx('Mobile Money'), card: tx('Card'), bank: tx('Bank'), store_credit: tx('Store Credit'),
 };
 
 export const TENDER_KIND_COLOR: Record<string, string> = {

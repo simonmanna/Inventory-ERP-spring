@@ -64,7 +64,7 @@ export function RentalCatalogPage() {
               <span className="mb-1 block text-xs font-medium text-muted-foreground">{tx('Period')}</span>
               <select value={period} onChange={(e) => setPeriod(e.target.value)} className="w-full rounded-md border bg-card px-3 py-2 text-sm">
                 <option value="hour">{tx('hour')}</option>
-                <option value="day">day</option>
+                <option value="day">{tx('day')}</option>
                 <option value="week">{tx('week')}</option>
                 <option value="month">{tx('month')}</option>
               </select>
@@ -83,7 +83,7 @@ export function RentalCatalogPage() {
               disabled={!productId || !price}
               onClick={() => run(
                 () => upsertRate.mutateAsync({ productId, period, minUnits, price: Number(price) }),
-                'Rate saved',
+                tx('Rate saved'),
               )}
             >
               {tx('Save')}
@@ -116,7 +116,7 @@ export function RentalCatalogPage() {
               disabled={!pkgProductId || !pkgCode}
               onClick={() => run(
                 () => createPackage.mutateAsync({ productId: pkgProductId, code: pkgCode, name: pkgName || pkgCode }),
-                'Package created',
+                tx('Package created'),
               )}
             >
               {tx('Create')}
@@ -136,7 +136,7 @@ export function RentalCatalogPage() {
               <div key={r.id} className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm font-medium">{r.productId.slice(0, 8)}… · {r.period}</p>
-                  <p className="text-xs text-muted-foreground">min {r.minUnits} {tx('unit(s) ·')} {r.maxUnits ? `max ${r.maxUnits}` : 'unlimited'}</p>
+                  <p className="text-xs text-muted-foreground">{tx('min')} {r.minUnits} {tx('unit(s) ·')} {r.maxUnits ? `max ${r.maxUnits}` : 'unlimited'}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{fmt(r.price)}</span>

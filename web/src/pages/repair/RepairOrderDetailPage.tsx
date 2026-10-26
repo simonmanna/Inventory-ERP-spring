@@ -70,12 +70,12 @@ export function RepairOrderDetailPage() {
               <Badge variant="outline">{order.orderType.replace(/_/g, ' ')} · {order.priority}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              {order.itemType ?? 'Item'}{order.brand ? ` · ${order.brand} ${order.model ?? ''}` : ''}
-              {order.serialNumber ? ` · SN ${order.serialNumber}` : ''}
-              {order.imei ? ` · IMEI ${order.imei}` : ''}
-              {order.plateNumber ? ` · Plate ${order.plateNumber}` : ''}
-              {order.vin ? ` · VIN ${order.vin}` : ''}
-              {' · '}{order.partner?.name ?? 'Walk-in'}
+              {order.itemType ?? tx('Item')}{order.brand ? ` · ${order.brand} ${order.model ?? ''}` : ''}
+              {order.serialNumber ? tx(' · SN {{serialNumber}}', { serialNumber: order.serialNumber }) : ''}
+              {order.imei ? tx(' · IMEI {{imei}}', { imei: order.imei }) : ''}
+              {order.plateNumber ? tx(' · Plate {{plateNumber}}', { plateNumber: order.plateNumber }) : ''}
+              {order.vin ? tx(' · VIN {{vin}}', { vin: order.vin }) : ''}
+              {' · '}{order.partner?.name ?? tx('Walk-in')}
             </p>
           </div>
         </div>
@@ -83,22 +83,22 @@ export function RepairOrderDetailPage() {
           {active && (
             <>
               {order.status === 'received' && (
-                <Button size="sm" onClick={() => exec('Moved to diagnosis', () => transition.mutateAsync({ id: order.id, dto: { status: 'diagnosis' } }))}>
+                <Button size="sm" onClick={() => exec(tx('Moved to diagnosis'), () => transition.mutateAsync({ id: order.id, dto: { status: 'diagnosis' } }))}>
                   <ArrowRight className="h-4 w-4" /> {tx('Start diagnosis')}
                 </Button>
               )}
               {order.status === 'approved' && (
-                <Button size="sm" onClick={() => exec('Started repair', () => transition.mutateAsync({ id: order.id, dto: { status: 'repairing' } }))}>
+                <Button size="sm" onClick={() => exec(tx('Started repair'), () => transition.mutateAsync({ id: order.id, dto: { status: 'repairing' } }))}>
                   <Wrench className="h-4 w-4" /> {tx('Start repair')}
                 </Button>
               )}
               {order.status === 'repairing' && (
-                <Button size="sm" onClick={() => exec('Moved to testing', () => transition.mutateAsync({ id: order.id, dto: { status: 'testing' } }))}>
+                <Button size="sm" onClick={() => exec(tx('Moved to testing'), () => transition.mutateAsync({ id: order.id, dto: { status: 'testing' } }))}>
                   <ClipboardList className="h-4 w-4" /> {tx('Send to testing')}
                 </Button>
               )}
               {order.status === 'testing' && (
-                <Button size="sm" onClick={() => exec('Ready for pickup', () => transition.mutateAsync({ id: order.id, dto: { status: 'ready_pickup' } }))}>
+                <Button size="sm" onClick={() => exec(tx('Ready for pickup'), () => transition.mutateAsync({ id: order.id, dto: { status: 'ready_pickup' } }))}>
                   <CheckCircle2 className="h-4 w-4" /> {tx('Mark ready')}
                 </Button>
               )}
@@ -178,10 +178,10 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
   const setLine = (i: number, k: string, v: string) =>
     setQuotationLines((lines) => lines.map((l, idx) => (idx === i ? { ...l, [k]: v } : l)));
 
-  const submitItem = () => exec('Item added', () => addItem.mutateAsync({ id: order.id, dto: itemForm }));
-  const submitTech = () => exec('Technician assigned', () => assign.mutateAsync({ id: order.id, dto: techForm }));
+  const submitItem = () => exec(tx('Item added'), () => addItem.mutateAsync({ id: order.id, dto: itemForm }));
+  const submitTech = () => exec(tx('Technician assigned'), () => assign.mutateAsync({ id: order.id, dto: techForm }));
   const submitDiagnosis = () =>
-    exec('Diagnosis saved', () =>
+    exec(tx('Diagnosis saved'), () =>
       createDiagnosis.mutateAsync({
         id: order.id,
         dto: {
@@ -192,7 +192,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
         },
       }));
   const submitQuotation = () =>
-    exec('Quotation created', () =>
+    exec(tx('Quotation created'), () =>
       createQuotation.mutateAsync({
         id: order.id,
         dto: {
@@ -206,7 +206,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
         },
       }));
   const submitJob = () =>
-    exec('Job created', () =>
+    exec(tx('Job created'), () =>
       createJob.mutateAsync({
         id: order.id,
         dto: {
@@ -217,12 +217,12 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
         },
       }));
   const submitPart = () =>
-    exec('Part reserved', () =>
+    exec(tx('Part reserved'), () =>
       reservePart.mutateAsync({
         id: order.id,
         dto: { ...partForm, quantity: Number(partForm.quantity) || 1, unitCost: partForm.unitCost ? Number(partForm.unitCost) : undefined },
       }));
-  const submitAttach = () => exec('Attachment added', () => addAttachment.mutateAsync({ id: order.id, dto: attachForm }));
+  const submitAttach = () => exec(tx('Attachment added'), () => addAttachment.mutateAsync({ id: order.id, dto: attachForm }));
 
   return (
     <Tabs defaultValue="overview">
@@ -258,7 +258,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('Item type')}</dt><dd className="text-right">{order.itemType ?? '—'}</dd>
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('Brand / model')}</dt><dd className="text-right">{order.brand ? `${order.brand} ${order.model ?? ''}` : '—'}</dd>
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('Serial')}</dt><dd className="text-right">{order.serialNumber ?? '—'}</dd>
-              <dt className="text-xs uppercase tracking-wide text-muted-foreground">IMEI</dt><dd className="text-right">{order.imei ?? '—'}</dd>
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('IMEI')}</dt><dd className="text-right">{order.imei ?? '—'}</dd>
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('Asset tag')}</dt><dd className="text-right">{order.assetTag ?? '—'}</dd>
               <dt className="text-xs uppercase tracking-wide text-muted-foreground">{tx('Plate / VIN')}</dt><dd className="text-right">{order.plateNumber ?? order.vin ?? '—'}</dd>
             </CardContent>
@@ -266,7 +266,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
           <Card>
             <CardHeader className="bg-muted/30 border-b rounded-t-lg"><CardTitle className="text-sm">{tx('Problem & totals')}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 text-sm">
-              <p className="text-muted-foreground">{order.problemDescription ?? 'No problem description.'}</p>
+              <p className="text-muted-foreground">{order.problemDescription ?? tx('No problem description.')}</p>
               <div className="space-y-1 border-t pt-2">
                 <div className="flex justify-between"><span className="text-muted-foreground">{tx('Labour')}</span><span>{fmt(order.labourTotal)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{tx('Parts')}</span><span>{fmt(order.partsTotal)}</span></div>
@@ -306,12 +306,12 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
               {items.map((it: any) => (
                 <div key={it.id} className="flex items-center justify-between px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium">{it.itemType ?? 'Item'} {it.brand ? `· ${it.brand} ${it.model ?? ''}` : ''}</p>
+                    <p className="text-sm font-medium">{it.itemType ?? tx('Item')} {it.brand ? `· ${it.brand} ${it.model ?? ''}` : ''}</p>
                     <p className="text-xs text-muted-foreground">
-                      {it.serialNumber ? `SN ${it.serialNumber} · ` : ''}{it.imei ? `IMEI ${it.imei} · ` : ''}{it.problemDescription ?? ''}
+                      {it.serialNumber ? tx('SN {{serialNumber}} · ', { serialNumber: it.serialNumber }) : ''}{it.imei ? tx('IMEI {{imei}} · ', { imei: it.imei }) : ''}{it.problemDescription ?? ''}
                     </p>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => exec('Item removed', () => removeItem.mutateAsync(it.id))}>
+                  <Button size="sm" variant="ghost" onClick={() => exec(tx('Item removed'), () => removeItem.mutateAsync(it.id))}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -335,7 +335,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
       {/* ── Diagnosis ────────────────────────────────────────────── */}
       <TabsContent value="diagnosis" className="space-y-4">
         <Card>
-          <CardHeader className="bg-muted/30 border-b rounded-t-lg"><CardTitle className="text-sm">{tx('Diagnosis')} {diagnosis ? `· updated ${date(diagnosis.updatedAt)}` : ''}</CardTitle></CardHeader>
+          <CardHeader className="bg-muted/30 border-b rounded-t-lg"><CardTitle className="text-sm">{tx('Diagnosis')} {diagnosis ? tx('· updated {{v1}}', { v1: date(diagnosis.updatedAt) }) : ''}</CardTitle></CardHeader>
           <CardContent className="space-y-3 p-4">
             {diagnosis ? (
               <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
@@ -372,7 +372,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
       {/* ── Quotation ────────────────────────────────────────────── */}
       <TabsContent value="quotation" className="space-y-4">
         <Card>
-          <CardHeader className="bg-muted/30 border-b rounded-t-lg"><CardTitle className="text-sm">{tx('Quotation')} {quotation ? `· ${quotation.quotationNumber} rev ${quotation.revision}` : ''}</CardTitle></CardHeader>
+          <CardHeader className="bg-muted/30 border-b rounded-t-lg"><CardTitle className="text-sm">{tx('Quotation')} {quotation ? tx('· {{quotationNumber}} rev {{revision}}', { quotationNumber: quotation.quotationNumber, revision: quotation.revision }) : ''}</CardTitle></CardHeader>
           <CardContent className="p-0">
             {quotation ? (
               <>
@@ -383,10 +383,10 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
                   <div className="flex gap-2">
                     {quotation.status === 'pending' && (
                       <>
-                        <Button size="sm" onClick={() => exec('Quotation approved', () => approveQuotation.mutateAsync({ id: quotation.id }))}>
+                        <Button size="sm" onClick={() => exec(tx('Quotation approved'), () => approveQuotation.mutateAsync({ id: quotation.id }))}>
                           <BadgeCheck className="h-4 w-4" /> {tx('Approve')}
                         </Button>
-                        <Button size="sm" variant="destructive" onClick={() => exec('Quotation rejected', () => rejectQuotation.mutateAsync({ id: quotation.id }))}>
+                        <Button size="sm" variant="destructive" onClick={() => exec(tx('Quotation rejected'), () => rejectQuotation.mutateAsync({ id: quotation.id }))}>
                           <X className="h-4 w-4" /> {tx('Reject')}
                         </Button>
                       </>
@@ -431,7 +431,7 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
                 </select>
                 <input
                   className="col-span-5 rounded-md border bg-card px-3 py-2 text-sm"
-                  placeholder={l.kind === 'labour' ? 'Description (or labour type)' : 'Description (or product name)'}
+                  placeholder={l.kind === 'labour' ? tx('Description (or labour type)') : tx('Description (or product name)')}
                   value={l.description}
                   onChange={(e) => setLine(i, 'description', e.target.value)}
                 />
@@ -478,22 +478,22 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
               {jobs.map((j: any) => (
                 <div key={j.id} className="flex items-center justify-between px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium">{j.jobNumber} · {j.technician?.name ?? 'Unassigned'}</p>
+                    <p className="text-sm font-medium">{j.jobNumber} · {j.technician?.name ?? tx('Unassigned')}</p>
                     <p className="text-xs text-muted-foreground">
                       {j.status.replace(/_/g, ' ')}{j.priority ? ` · ${j.priority}` : ''}
-                      {j.deadline ? ` · due ${date(j.deadline)}` : ''}
-                      {j.actualHours != null ? ` · ${j.actualHours} h` : j.estimatedHours != null ? ` · est ${j.estimatedHours} h` : ''}
+                      {j.deadline ? tx(' · due {{v1}}', { v1: date(j.deadline) }) : ''}
+                      {j.actualHours != null ? ` · ${j.actualHours} h` : j.estimatedHours != null ? tx(' · est {{estimatedHours}} h', { estimatedHours: j.estimatedHours }) : ''}
                     </p>
                   </div>
                   <div className="flex gap-2">
                     {j.status === 'pending' && (
-                      <Button size="sm" variant="outline" onClick={() => exec('Job started', () => startJob.mutateAsync(j.id))}>{tx('Start')}</Button>
+                      <Button size="sm" variant="outline" onClick={() => exec(tx('Job started'), () => startJob.mutateAsync(j.id))}>{tx('Start')}</Button>
                     )}
                     {j.status === 'in_progress' && (
-                      <Button size="sm" variant="outline" onClick={() => exec('Job to testing', () => testJob.mutateAsync(j.id))}>{tx('To testing')}</Button>
+                      <Button size="sm" variant="outline" onClick={() => exec(tx('Job to testing'), () => testJob.mutateAsync(j.id))}>{tx('To testing')}</Button>
                     )}
                     {j.status === 'testing' && (
-                      <Button size="sm" onClick={() => exec('Job completed', () => completeJob.mutateAsync({ id: j.id }))}>
+                      <Button size="sm" onClick={() => exec(tx('Job completed'), () => completeJob.mutateAsync({ id: j.id }))}>
                         <CheckCircle2 className="h-4 w-4" /> {tx('Complete')}
                       </Button>
                     )}
@@ -544,12 +544,12 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
                   </div>
                   <div className="flex items-center gap-2">
                     {p.status === 'reserved' && (
-                      <Button size="sm" variant="outline" onClick={() => exec('Part issued', () => issuePart.mutateAsync({ id: p.id }))}>
+                      <Button size="sm" variant="outline" onClick={() => exec(tx('Part issued'), () => issuePart.mutateAsync({ id: p.id }))}>
                         <Package className="h-4 w-4" /> {tx('Issue')}
                       </Button>
                     )}
                     <Badge variant="outline">{p.status}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => exec('Part removed', () => deletePart.mutateAsync(p.id))}>
+                    <Button size="sm" variant="ghost" onClick={() => exec(tx('Part removed'), () => deletePart.mutateAsync(p.id))}>
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
@@ -584,9 +584,9 @@ function OrderTabs({ order, exec, running }: { order: any; exec: (l: string, fn:
                 <div key={a.id} className="flex items-center justify-between px-4 py-3">
                   <div>
                     <p className="text-sm font-medium capitalize">{a.kind.replace(/_/g, ' ')}{a.caption ? ` · ${a.caption}` : ''}</p>
-                    <p className="text-xs text-muted-foreground">{a.fileId ?? 'No file linked'}</p>
+                    <p className="text-xs text-muted-foreground">{a.fileId ?? tx('No file linked')}</p>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => exec('Attachment removed', () => removeAttachment.mutateAsync(a.id))}>
+                  <Button size="sm" variant="ghost" onClick={() => exec(tx('Attachment removed'), () => removeAttachment.mutateAsync(a.id))}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>

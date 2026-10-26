@@ -73,6 +73,9 @@ export interface InvoiceLine {
   subtotal: string;
   taxAmount: string;
   total: string;
+  /** Unit the line was entered in and the base units per 1 of it, frozen at entry (ADR-S003). */
+  uomId?: string | null;
+  uomFactor?: string | null;
 }
 
 export interface InvoiceAllocation {
@@ -98,6 +101,8 @@ export interface InvoiceLineInput {
   quantity: number;
   unitPrice?: number;
   discountPercent?: number;
+  /** Product unit for this line; the server defaults to the product's sales (bills: purchase) unit. */
+  uomId?: string;
 }
 
 export interface CreateInvoiceInput {

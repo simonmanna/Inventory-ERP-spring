@@ -84,7 +84,7 @@ export function ProfitAndLossPage() {
             ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">COGS</span>
+                  <span className="text-xs text-muted-foreground">{tx('COGS')}</span>
                   <span className="text-lg font-bold text-red-500">{data ? money(data.cogs) : '—'}</span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -122,7 +122,7 @@ export function ProfitAndLossPage() {
                   <span className={`text-xl font-bold ${profitColor}`}>{data ? money(data.operatingProfit) : '—'}</span>
                 </div>
                 <div className="text-[10px] text-muted-foreground italic pt-1">
-                  {data ? (data.source === 'snapshot' ? `Snapshotted ${data.asOf ? new Date(data.asOf).toLocaleDateString() : ''}` : 'Live computation') : ''}
+                  {data ? (data.source === 'snapshot' ? tx('Snapshotted {{v1}}', { v1: data.asOf ? new Date(data.asOf).toLocaleDateString() : '' }) : tx('Live computation')) : ''}
                 </div>
               </div>
             )}

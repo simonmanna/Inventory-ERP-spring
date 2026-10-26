@@ -27,6 +27,8 @@ import {
 } from '@/features/accounting/api';
 import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
+import { UnitSelect } from '@/components/unit-select';
+import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-sky-200 bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400';
@@ -58,11 +60,11 @@ export function dueDateForTerm(term: PaymentTerm | undefined, issueDate: string)
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  mobile_money: 'Mobile Money',
-  mixed: 'Mixed',
-  credit: 'Credit (house account)',
+  cash: tx('Cash'),
+  card: tx('Card'),
+  mobile_money: tx('Mobile Money'),
+  mixed: tx('Mixed'),
+  credit: tx('Credit (house account)'),
 };
 
 const INCOTERM_OPTIONS = ['EXW', 'FCA', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP', 'FAS', 'FOB', 'CFR', 'CIF'];
@@ -110,6 +112,8 @@ interface LineForm {
   quantity: number;
   unitPrice?: number;
   discountPercent?: number;
+  /** Product unit (ADR-S003): Pack, Box, … defaults to the product's sales unit. */
+  uomId?: string;
 }
 interface FormValues {
   partnerId: string;
@@ -229,6 +233,7 @@ export function InvoiceCreatePage() {
           quantity: Number.isFinite(l.quantity) ? Number(l.quantity) : 1,
           unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
           discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
+          uomId: l.uomId || undefined,
         })),
     };
     const t = setTimeout(async () => {
@@ -240,7 +245,7 @@ export function InvoiceCreatePage() {
           setPreviewError(null);
         }
       } catch (e: any) {
-        if (!cancelled) setPreviewError(e?.response?.data?.message ?? e?.message ?? 'Could not compute the entry');
+        if (!cancelled) setPreviewError(e?.response?.data?.message ?? e?.message ?? tx('Could not compute the entry'));
       } finally {
         if (!cancelled) setPreviewPending(false);
       }
@@ -271,8 +276,16 @@ export function InvoiceCreatePage() {
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
+      setValue(`lines.${index}.uomId`, defaultUnitId(p, 'sales'));
       if (p.salesPrice != null) setValue(`lines.${index}.unitPrice`, Number(p.salesPrice));
     }
+  };
+
+  const onUnitChange = (index: number, uomId: string) => {
+    setValue(`lines.${index}.uomId`, uomId);
+    const p = productList.find((x) => x.id === getValues(`lines.${index}.productId`));
+    const price = priceForUnit(p, uomId, 'sales');
+    if (price !== null) setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
   };
 
   const onSubmit = handleSubmit(async (values, event) => {
@@ -303,6 +316,7 @@ export function InvoiceCreatePage() {
         quantity: Number.isFinite(l.quantity) ? Number(l.quantity) : 1,
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
+        uomId: l.productId ? l.uomId || undefined : undefined,
       })),
     };
 
@@ -353,7 +367,7 @@ export function InvoiceCreatePage() {
             className="bg-white text-sky-700 hover:bg-sky-50 font-semibold shadow-sm"
             disabled={busy}
           >
-            Save &amp; Post
+            {tx('Save & Post')}
           </Button>
         </div>
       </div>
@@ -473,10 +487,10 @@ export function InvoiceCreatePage() {
                       return (
                         <div key={field.id} className="grid grid-cols-12 items-center gap-2">
                           <div className="col-span-11">
-                            <Label className="text-xs">{rowType === 'section' ? 'Section title' : 'Note'}</Label>
+                            <Label className="text-xs">{rowType === 'section' ? tx('Section title') : tx('Note')}</Label>
                             <Input
                               className={rowType === 'section' ? 'font-bold uppercase tracking-wide' : 'italic text-slate-600'}
-                              placeholder={rowType === 'section' ? 'e.g. Services' : 'e.g. Courtesy discount approved by manager'}
+                              placeholder={rowType === 'section' ? tx('e.g. Services') : tx('e.g. Courtesy discount approved by manager')}
                               {...register(`lines.${index}.description`)}
                             />
                           </div>
@@ -505,13 +519,23 @@ export function InvoiceCreatePage() {
                             ))}
                           </select>
                         </div>
-                        <div className="col-span-3">
+                        <div className="col-span-2">
                           <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Description')}</Label>
                           <Input {...register(`lines.${index}.description`)} />
                         </div>
                         <div className="col-span-1">
                           <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Qty')}</Label>
                           <Input type="number" step="any" className="border-sky-200 focus-visible:ring-sky-400" {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+                        </div>
+                        <div className="col-span-1 pb-1.5">
+                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Unit')}</Label>
+                          <UnitSelect
+                            className={selectClass}
+                            product={productList.find((p) => p.id === watch(`lines.${index}.productId`))}
+                            role="sales"
+                            value={watch(`lines.${index}.uomId`)}
+                            onChange={(uomId) => onUnitChange(index, uomId)}
+                          />
                         </div>
                         <div className="col-span-2">
                           <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Unit price')}</Label>
@@ -610,7 +634,7 @@ export function InvoiceCreatePage() {
                 <div className="py-1.5">
                   <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Salesperson')}</dt>
                   <dd className="mt-1 text-sm text-sky-900">
-                    {salespersonList.length === 0 ? '—' : 'Set above in the header.'}
+                    {salespersonList.length === 0 ? '—' : tx('Set above in the header.')}
                   </dd>
                 </div>
               </dl>
@@ -665,9 +689,7 @@ export function InvoiceCreatePage() {
         {activeTab === 'journal' && (
           <div className="p-5 space-y-4">
             <div className="rounded-md border border-sky-200 bg-sky-50/60 px-4 py-3 text-xs text-sky-800">
-              {tx('When this invoice is')} <strong>{tx('posted')}</strong>{tx(', a journal entry is created automatically: it debits the customer receivable and credits the income and tax accounts of each product line. The entry lands in the')} <strong>{tx('Invoicing Journal')}</strong> chosen under Other Info, or
-              in the business&apos;s default sales journal (Company Settings → Sales Journals). The
-              numbers below are a live preview — the final entry is computed at post time.
+              {tx('When this invoice is')} <strong>{tx('posted')}</strong>{tx(', a journal entry is created automatically: it debits the customer receivable and credits the income and tax accounts of each product line. The entry lands in the')} <strong>{tx('Invoicing Journal')}</strong> {tx('chosen under Other Info, or in the business\'s default sales journal (Company Settings → Sales Journals). The numbers below are a live preview — the final entry is computed at post time.')}
             </div>
 
             {!partnerId || !(lines ?? []).some((l) => l.productId) ? (
@@ -705,7 +727,7 @@ export function InvoiceCreatePage() {
                           : 'border-red-200 bg-red-50 text-red-700'
                       }
                     >
-                      {preview.balanced ? 'Balanced' : 'Unbalanced'}
+                      {preview.balanced ? tx('Balanced') : tx('Unbalanced')}
                     </Badge>
                     {previewPending && (
                       <span className="flex items-center gap-1 text-xs text-muted-foreground">

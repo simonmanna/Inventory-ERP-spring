@@ -101,7 +101,7 @@ export const TransferItemsDialog: React.FC<Props> = ({
                   <div className="flex items-center gap-1 text-[11px] text-slate-500 mt-1">
                     <Users className="w-3 h-3" /> {t.seats}
                     <span className={`ml-auto text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${statusPill(t)}`}>
-                      {t.status === 'occupied' ? 'Occ' : t.status === 'reserved' ? 'Resv' : 'Free'}
+                      {t.status === 'occupied' ? tx('Occ') : t.status === 'reserved' ? tx('Resv') : tx('Free')}
                     </span>
                   </div>
                 </button>
@@ -119,7 +119,7 @@ export const TransferItemsDialog: React.FC<Props> = ({
             disabled={!targetId || busy}
             className="bg-pink-600 hover:bg-pink-700 text-white"
           >
-            <ArrowRightLeft className="h-4 w-4 mr-1" /> {busy ? 'Transferring…' : 'Confirm Transfer'}
+            <ArrowRightLeft className="h-4 w-4 mr-1" /> {busy ? tx('Transferring…') : tx('Confirm Transfer')}
           </Button>
         </DialogFooter>
       </DialogContent>

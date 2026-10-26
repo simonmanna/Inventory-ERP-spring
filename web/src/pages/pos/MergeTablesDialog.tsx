@@ -76,13 +76,13 @@ export const MergeTablesDialog: React.FC<Props> = ({
         <DialogHeader className="bg-gradient-to-r from-indigo-500 to-indigo-700 text-white p-4">
           <DialogTitle className="text-white text-base font-bold flex items-center gap-2">
             <MergeIcon className="h-4 w-4" />
-            {tx('Merge Tables into')} {targetLabel ?? 'this table'}
+            {tx('Merge Tables into')} {targetLabel ?? tx('this table')}
           </DialogTitle>
         </DialogHeader>
 
         <div className="p-4 space-y-3">
           <p className="text-xs text-slate-500">
-            {tx('Pick the tables to join. Their open items move onto')} {targetLabel ?? 'this table'} {tx('and the picked tables are freed.')}
+            {tx('Pick the tables to join. Their open items move onto')} {targetLabel ?? tx('this table')} {tx('and the picked tables are freed.')}
           </p>
           <Input
             value={search}
@@ -145,8 +145,8 @@ export const MergeTablesDialog: React.FC<Props> = ({
         <DialogFooter className="border-t border-slate-200 p-3 bg-slate-50 gap-2">
           <div className="mr-auto text-xs text-slate-500">
             {sel.length === 0
-              ? 'Nothing selected'
-              : `${sel.length} table${sel.length === 1 ? '' : 's'} · +${movingSeats} seats · ${fmtMoney(movingTotal)}`}
+              ? tx('Nothing selected')
+              : tx('{{length}} table{{v2}} · +{{movingSeats}} seats · {{v4}}', { length: sel.length, v2: sel.length === 1 ? '' : 's', movingSeats, v4: fmtMoney(movingTotal) })}
           </div>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             <X className="h-4 w-4 mr-1" /> {tx('Cancel')}
@@ -156,7 +156,7 @@ export const MergeTablesDialog: React.FC<Props> = ({
             disabled={sel.length === 0 || busy || !targetId}
             className="bg-indigo-600 hover:bg-indigo-700 text-white"
           >
-            <MergeIcon className="h-4 w-4 mr-1" /> {busy ? 'Merging…' : 'Merge Tables'}
+            <MergeIcon className="h-4 w-4 mr-1" /> {busy ? tx('Merging…') : tx('Merge Tables')}
           </Button>
         </DialogFooter>
       </DialogContent>

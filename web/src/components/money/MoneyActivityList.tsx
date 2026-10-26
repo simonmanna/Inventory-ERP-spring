@@ -14,23 +14,23 @@ export function sourceHref(a: Pick<MoneyActivity, 'sourceType' | 'sourceId' | 'r
     case 'pos_invoice':
     case 'pos_invoice_extra':
     case 'pos_refund':
-      return id ? { href: `/pos/receipts/${id}`, label: 'Open receipt' } : null;
+      return id ? { href: `/pos/receipts/${id}`, label: tx('Open receipt') } : null;
     case 'payment':
-      return id ? { href: `/payments/${id}`, label: 'Open receipt' } : null;
+      return id ? { href: `/payments/${id}`, label: tx('Open receipt') } : null;
     case 'invoice':
     case 'sales_invoice':
-      return id ? { href: `/invoices/${id}`, label: 'Open invoice' } : null;
+      return id ? { href: `/invoices/${id}`, label: tx('Open invoice') } : null;
     case 'credit_note':
-      return id ? { href: `/credit-notes/${id}`, label: 'Open credit note' } : null;
+      return id ? { href: `/credit-notes/${id}`, label: tx('Open credit note') } : null;
     case 'purchase_payment':
     case 'vendor_bill':
-      return { href: '/supplier-payments', label: 'Supplier payments' };
+      return { href: '/supplier-payments', label: tx('Supplier payments') };
     case 'expense_payment':
-      return { href: '/expenses', label: 'Expenses' };
+      return { href: '/expenses', label: tx('Expenses') };
     case 'tender_settlement':
-      return { href: '/accounts/cash-accounts/settlements', label: 'Settlements' };
+      return { href: '/accounts/cash-accounts/settlements', label: tx('Settlements') };
     default:
-      if (a.register) return { href: '/pos/cash-registers?tab=history', label: 'Register history' };
+      if (a.register) return { href: '/pos/cash-registers?tab=history', label: tx('Register history') };
       return null;
   }
 }
@@ -70,8 +70,8 @@ function legSummary(a: MoneyActivity) {
     );
   }
   const legs = ins.length ? ins : outs;
-  if (legs.length === 1) return <span>{ins.length ? 'Into' : 'From'} {legs[0].accountName}</span>;
-  return <span>{ins.length ? 'Into' : 'From'} {legs.length} {tx('accounts')}</span>;
+  if (legs.length === 1) return <span>{ins.length ? tx('Into') : tx('From')} {legs[0].accountName}</span>;
+  return <span>{ins.length ? tx('Into') : tx('From')} {legs.length} {tx('accounts')}</span>;
 }
 
 /** What an activity moved, and where to trace it. Shared by the table row and the phone card. */
@@ -113,7 +113,7 @@ function ActivityDetails({ a }: { a: MoneyActivity }) {
   );
 }
 
-export function MoneyActivityList({ rows, emptyText = 'No money activity for these filters.' }: { rows: MoneyActivity[]; emptyText?: string }) {
+export function MoneyActivityList({ rows, emptyText = tx('No money activity for these filters.') }: { rows: MoneyActivity[]; emptyText?: string }) {
   const timeZone = useOrgTimezone();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -192,7 +192,7 @@ export function MoneyActivityList({ rows, emptyText = 'No money activity for the
                         type="button"
                         onClick={() => toggle(a.id)}
                         aria-expanded={isOpen}
-                        aria-label={isOpen ? 'Hide details' : 'Show details'}
+                        aria-label={isOpen ? tx('Hide details') : tx('Show details')}
                         className="inline-flex h-11 w-11 items-center justify-center rounded-md hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {isOpen ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />}

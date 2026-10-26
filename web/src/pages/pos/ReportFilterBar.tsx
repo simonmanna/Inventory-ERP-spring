@@ -95,13 +95,13 @@ const ReportFilterBar: React.FC<Props> = ({ state, onChange, fields, options, it
   const set = (patch: Partial<ReportFilterState>) => onChange({ ...state, ...patch });
 
   const presets = [
-    { label: 'Today', get: () => ({ f: todayIso(), t: todayIso() }) },
-    { label: 'Yesterday', get: () => { const d = new Date(); d.setDate(d.getDate() - 1); const s = isoLocal(d); return { f: s, t: s }; } },
-    { label: 'This Week', get: () => ({ f: weekStartFromDay(todayIso()), t: todayIso() }) },
-    { label: 'Last 7 Days', get: () => { const d = new Date(); d.setDate(d.getDate() - 6); return { f: isoLocal(d), t: todayIso() }; } },
-    { label: 'This Month', get: () => ({ f: monthStart(todayIso().slice(0, 7)), t: todayIso() }) },
-    { label: 'Last 30 Days', get: () => { const d = new Date(); d.setDate(d.getDate() - 29); return { f: isoLocal(d), t: todayIso() }; } },
-    { label: 'This Year', get: () => ({ f: todayIso().slice(0, 4) + '-01-01', t: todayIso() }) },
+    { label: tx('Today'), get: () => ({ f: todayIso(), t: todayIso() }) },
+    { label: tx('Yesterday'), get: () => { const d = new Date(); d.setDate(d.getDate() - 1); const s = isoLocal(d); return { f: s, t: s }; } },
+    { label: tx('This Week'), get: () => ({ f: weekStartFromDay(todayIso()), t: todayIso() }) },
+    { label: tx('Last 7 Days'), get: () => { const d = new Date(); d.setDate(d.getDate() - 6); return { f: isoLocal(d), t: todayIso() }; } },
+    { label: tx('This Month'), get: () => ({ f: monthStart(todayIso().slice(0, 7)), t: todayIso() }) },
+    { label: tx('Last 30 Days'), get: () => { const d = new Date(); d.setDate(d.getDate() - 29); return { f: isoLocal(d), t: todayIso() }; } },
+    { label: tx('This Year'), get: () => ({ f: todayIso().slice(0, 4) + '-01-01', t: todayIso() }) },
   ];
 
   // Which non-date filters are actually narrowing the current view. Rendered as
@@ -112,15 +112,15 @@ const ReportFilterBar: React.FC<Props> = ({ state, onChange, fields, options, it
   if (state.waiterId && (has('waiter') || has('cashier'))) {
     chips.push({ key: 'waiterId', label: `${has('cashier') ? 'Cashier' : 'Waiter'}: ${nameOf(options?.waiters, state.waiterId)}`, clear: { waiterId: undefined } });
   }
-  if (state.categoryId && has('category')) chips.push({ key: 'categoryId', label: `Category: ${nameOf(options?.categories, state.categoryId)}`, clear: { categoryId: undefined } });
-  if (state.paymentMethod && has('payment')) chips.push({ key: 'paymentMethod', label: `Tender: ${humanise(state.paymentMethod)}`, clear: { paymentMethod: undefined } });
-  if (state.orderType && has('orderType')) chips.push({ key: 'orderType', label: `Type: ${humanise(state.orderType)}`, clear: { orderType: undefined } });
-  if (state.status && (has('orderStatus') || has('sessionStatus'))) chips.push({ key: 'status', label: `Status: ${humanise(state.status)}`, clear: { status: undefined } });
-  if (state.registerId && has('register')) chips.push({ key: 'registerId', label: `Register: ${nameOf(options?.registers, state.registerId)}`, clear: { registerId: undefined } });
-  if (state.search && has('search')) chips.push({ key: 'search', label: `Search: ${state.search}`, clear: { search: undefined } });
-  if (state.itemSearch && has('itemSearch')) chips.push({ key: 'itemSearch', label: `Item: ${state.itemSearch}`, clear: { itemSearch: undefined } });
-  if (state.itemKey && has('item')) chips.push({ key: 'itemKey', label: 'Item selected', clear: { itemKey: undefined } });
-  if (state.includeCancelled && has('includeCancelled')) chips.push({ key: 'includeCancelled', label: 'Incl. cancelled', clear: { includeCancelled: false } });
+  if (state.categoryId && has('category')) chips.push({ key: 'categoryId', label: tx('Category: {{v1}}', { v1: nameOf(options?.categories, state.categoryId) }), clear: { categoryId: undefined } });
+  if (state.paymentMethod && has('payment')) chips.push({ key: 'paymentMethod', label: tx('Tender: {{v1}}', { v1: humanise(state.paymentMethod) }), clear: { paymentMethod: undefined } });
+  if (state.orderType && has('orderType')) chips.push({ key: 'orderType', label: tx('Type: {{v1}}', { v1: humanise(state.orderType) }), clear: { orderType: undefined } });
+  if (state.status && (has('orderStatus') || has('sessionStatus'))) chips.push({ key: 'status', label: tx('Status: {{v1}}', { v1: humanise(state.status) }), clear: { status: undefined } });
+  if (state.registerId && has('register')) chips.push({ key: 'registerId', label: tx('Register: {{v1}}', { v1: nameOf(options?.registers, state.registerId) }), clear: { registerId: undefined } });
+  if (state.search && has('search')) chips.push({ key: 'search', label: tx('Search: {{search}}', { search: state.search }), clear: { search: undefined } });
+  if (state.itemSearch && has('itemSearch')) chips.push({ key: 'itemSearch', label: tx('Item: {{itemSearch}}', { itemSearch: state.itemSearch }), clear: { itemSearch: undefined } });
+  if (state.itemKey && has('item')) chips.push({ key: 'itemKey', label: tx('Item selected'), clear: { itemKey: undefined } });
+  if (state.includeCancelled && has('includeCancelled')) chips.push({ key: 'includeCancelled', label: tx('Incl. cancelled'), clear: { includeCancelled: false } });
 
   const clearAll = () =>
     onChange({ fromDate: state.fromDate, toDate: state.toDate });
@@ -141,7 +141,7 @@ const ReportFilterBar: React.FC<Props> = ({ state, onChange, fields, options, it
 
         {(has('waiter') || has('cashier')) && (
           <div className="min-w-[170px]">
-            <Label>{has('cashier') ? 'Cashier' : 'Waiter'}</Label>
+            <Label>{has('cashier') ? tx('Cashier') : tx('Waiter')}</Label>
             <select className={SELECT_CLASS} value={state.waiterId ?? ''} onChange={(e) => set({ waiterId: e.target.value || undefined })}>
               <option value="">{tx('All')} {has('cashier') ? 'cashiers' : 'waiters'}</option>
               {(options?.waiters ?? []).map((w) => (
@@ -183,7 +183,7 @@ const ReportFilterBar: React.FC<Props> = ({ state, onChange, fields, options, it
               {(options?.paymentMethods ?? []).map((m) => (
                 // Tenders with no sales in the range stay selectable but are
                 // marked, so "no card sales today" is a visible answer.
-                <option key={m.id} value={m.id}>{humanise(m.id)}{m.seen ? '' : ' (none)'}</option>
+                <option key={m.id} value={m.id}>{humanise(m.id)}{m.seen ? '' : tx(' (none)')}</option>
               ))}
             </select>
           </div>
@@ -321,8 +321,8 @@ const ReportFilterBar: React.FC<Props> = ({ state, onChange, fields, options, it
           ) : null}
           {typeof resultCount === 'number' ? (
             <span className="ml-auto text-slate-500">
-              {resultCount} row{resultCount === 1 ? '' : 's'}
-              {chips.length > 0 ? ' (filtered)' : ''}
+              {resultCount} {tx('row')}{resultCount === 1 ? '' : 's'}
+              {chips.length > 0 ? tx(' (filtered)') : ''}
             </span>
           ) : null}
         </div>

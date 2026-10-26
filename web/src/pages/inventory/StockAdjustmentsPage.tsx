@@ -47,13 +47,13 @@ interface DraftLine {
 
 // Must match STOCK_ADJUSTMENT_REASONS in @erp/shared (API rejects anything else).
 const ADJUSTMENT_REASONS = [
-  { value: 'cycle_count', label: 'Cycle Count' },
-  { value: 'damaged', label: 'Damaged' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'theft', label: 'Theft / Loss' },
-  { value: 'found', label: 'Found / Surplus' },
-  { value: 'initial_count', label: 'Initial Stock Count' },
-  { value: 'other', label: 'Other' },
+  { value: 'cycle_count', label: tx('Cycle Count') },
+  { value: 'damaged', label: tx('Damaged') },
+  { value: 'expired', label: tx('Expired') },
+  { value: 'theft', label: tx('Theft / Loss') },
+  { value: 'found', label: tx('Found / Surplus') },
+  { value: 'initial_count', label: tx('Initial Stock Count') },
+  { value: 'other', label: tx('Other') },
 ];
 const REASON_LABELS = Object.fromEntries(ADJUSTMENT_REASONS.map((r) => [r.value, r.label]));
 
@@ -119,7 +119,7 @@ export function StockAdjustmentsPage() {
       value: s.id,
       label: s.name,
       code: s.code,
-      hint: `On hand: ${fmtQty(s.totalQuantity)}${s.uom ? ` ${s.uom}` : ''}`,
+      hint: tx('On hand: {{v1}}{{v2}}', { v1: fmtQty(s.totalQuantity), v2: s.uom ? ` ${s.uom}` : '' }),
     })),
     [stockLevels.data],
   );
@@ -166,18 +166,18 @@ export function StockAdjustmentsPage() {
         return { doc: approved.data, posted: true as const };
       } catch (e) {
         // Document exists; it just could not post yet (approval policy / permission).
-        return { doc, posted: false as const, postError: errMsg(e, 'Posting failed') };
+        return { doc, posted: false as const, postError: errMsg(e, tx('Posting failed')) };
       }
     },
     onSuccess: (r) => {
-      if (r.posted) notify.success(`${r.doc.adjCode} posted — stock updated`);
-      else if ('postError' in r && r.postError) notify.error(`${r.doc.adjCode} saved as pending: ${r.postError}`);
-      else notify.success(`${r.doc.adjCode} saved as pending`);
+      if (r.posted) notify.success(tx('{{adjCode}} posted — stock updated', { adjCode: r.doc.adjCode }));
+      else if ('postError' in r && r.postError) notify.error(tx('{{adjCode}} saved as pending: {{postError}}', { adjCode: r.doc.adjCode, postError: r.postError }));
+      else notify.success(tx('{{adjCode}} saved as pending', { adjCode: r.doc.adjCode }));
       setShowForm(false);
       resetForm();
       invalidateStock();
     },
-    onError: (e: any) => notify.error(errMsg(e, 'Could not save adjustment')),
+    onError: (e: any) => notify.error(errMsg(e, tx('Could not save adjustment'))),
   });
 
   const approve = useMutation({
@@ -186,28 +186,28 @@ export function StockAdjustmentsPage() {
         `/inventory/adjustments/${v.id}/approve`,
         v.forceReason ? { force: true, forceReason: v.forceReason } : {},
       )).data,
-    onSuccess: (d) => { notify.success(`${d.adjCode} posted — stock updated`); setViewing(null); setDrift(null); invalidateStock(); },
+    onSuccess: (d) => { notify.success(tx('{{adjCode}} posted — stock updated', { adjCode: d.adjCode })); setViewing(null); setDrift(null); invalidateStock(); },
     onError: (e: any, v) => {
       if (isStockDriftError(e)) {
         const row = adjustments.data?.find((a) => a.id === v.id);
         setDrift({ id: v.id, code: row?.adjCode ?? '', lines: e.response.data.drifted ?? [] });
         return;
       }
-      notify.error(errMsg(e, 'Posting failed'));
+      notify.error(errMsg(e, tx('Posting failed')));
     },
   });
 
   const reverse = useMutation({
     mutationFn: async (v: { id: string; reason: string }) =>
       (await api.post<AdjustmentRow>(`/inventory/adjustments/${v.id}/reverse`, { reason: v.reason })).data,
-    onSuccess: (d) => { notify.success(`${d.adjCode} reversed — stock and journals restored`); setReversing(null); setViewing(null); invalidateStock(); },
-    onError: (e: any) => notify.error(errMsg(e, 'Reversal failed')),
+    onSuccess: (d) => { notify.success(tx('{{adjCode}} reversed — stock and journals restored', { adjCode: d.adjCode })); setReversing(null); setViewing(null); invalidateStock(); },
+    onError: (e: any) => notify.error(errMsg(e, tx('Reversal failed'))),
   });
 
   const cancel = useMutation({
     mutationFn: async (id: string) => (await api.post<AdjustmentRow>(`/inventory/adjustments/${id}/cancel`)).data,
     onSuccess: (d) => { notify.success(`${d.adjCode} cancelled`); setViewing(null); qc.invalidateQueries({ queryKey: ['stock-adjustments'] }); },
-    onError: (e: any) => notify.error(errMsg(e, 'Cancel failed')),
+    onError: (e: any) => notify.error(errMsg(e, tx('Cancel failed'))),
   });
 
   const updateLine = (key: number, patch: Partial<DraftLine>) =>
@@ -247,7 +247,7 @@ export function StockAdjustmentsPage() {
 
       {adjustments.isLoading && <Skeleton className="h-48 w-full" />}
       {adjustments.isError && (
-        <Card><CardContent className="p-8 text-center text-destructive">{errMsg(adjustments.error, 'Failed to load adjustments')}</CardContent></Card>
+        <Card><CardContent className="p-8 text-center text-destructive">{errMsg(adjustments.error, tx('Failed to load adjustments'))}</CardContent></Card>
       )}
       {adjustments.data && adjustments.data.length === 0 && (
         <Card><CardContent className="p-8 text-center text-muted-foreground">{tx('No adjustments yet. Click "New Adjustment" to create one.')}</CardContent></Card>
@@ -300,7 +300,7 @@ export function StockAdjustmentsPage() {
                             </Button>
                             <Button size="icon" variant="ghost" className="h-7 w-7" title={tx('Cancel')}
                               disabled={cancel.isPending}
-                              onClick={() => { if (window.confirm(`Cancel ${adj.adjCode}?`)) cancel.mutate(adj.id); }}>
+                              onClick={() => { if (window.confirm(tx('Cancel {{adjCode}}?', { adjCode: adj.adjCode }))) cancel.mutate(adj.id); }}>
                               <XCircle className="h-4 w-4 text-destructive" />
                             </Button>
                           </>
@@ -359,7 +359,7 @@ export function StockAdjustmentsPage() {
                   onValueChange={setResponsibleId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -370,7 +370,7 @@ export function StockAdjustmentsPage() {
                   onValueChange={setApprovedId}
                   options={staffOptions}
                   placeholder={tx('Select staff…')}
-                  searchPlaceholder="Search staff…"
+                  searchPlaceholder={tx('Search staff…')}
                   emptyText={tx('No staff match')}
                 />
               </div>
@@ -396,7 +396,7 @@ export function StockAdjustmentsPage() {
                 </div>
               ) : stockLevels.isError ? (
                 <div className="rounded-md border p-6 text-center text-sm text-destructive">
-                  {errMsg(stockLevels.error, 'Failed to load stock levels')}
+                  {errMsg(stockLevels.error, tx('Failed to load stock levels'))}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-md border">
@@ -425,8 +425,8 @@ export function StockAdjustmentsPage() {
                                 value={ln.productId}
                                 onValueChange={(v) => pickProduct(ln.key, v)}
                                 options={productOptions}
-                                placeholder={stockLevels.isLoading ? 'Loading products…' : 'Select product…'}
-                                searchPlaceholder="Search products…"
+                                placeholder={stockLevels.isLoading ? tx('Loading products…') : tx('Select product…')}
+                                searchPlaceholder={tx('Search products…')}
                                 emptyText={tx('No products match')}
                                 disabled={stockLevels.isLoading}
                               />
@@ -478,7 +478,7 @@ export function StockAdjustmentsPage() {
               <Save className="mr-2 h-4 w-4" />{tx('Save as Pending')}
             </Button>
             <Button disabled={!canSubmit || create.isPending} onClick={() => create.mutate(true)}>
-              <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? 'Saving…' : 'Post Adjustment'}
+              <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? tx('Saving…') : tx('Post Adjustment')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -537,11 +537,11 @@ export function StockAdjustmentsPage() {
                 {isPending(viewing.status) && (
                   <>
                     <Button variant="outline" disabled={cancel.isPending}
-                      onClick={() => { if (window.confirm(`Cancel ${viewing.adjCode}?`)) cancel.mutate(viewing.id); }}>
+                      onClick={() => { if (window.confirm(tx('Cancel {{adjCode}}?', { adjCode: viewing.adjCode }))) cancel.mutate(viewing.id); }}>
                       <XCircle className="mr-2 h-4 w-4" />{tx('Cancel Adjustment')}
                     </Button>
                     <Button disabled={approve.isPending} onClick={() => approve.mutate({ id: viewing.id })}>
-                      <CheckCircle2 className="mr-2 h-4 w-4" />{approve.isPending ? 'Posting…' : 'Approve & Post'}
+                      <CheckCircle2 className="mr-2 h-4 w-4" />{approve.isPending ? tx('Posting…') : tx('Approve & Post')}
                     </Button>
                   </>
                 )}
@@ -559,7 +559,7 @@ export function StockAdjustmentsPage() {
       <ReasonDialog
         open={!!drift}
         onOpenChange={(o) => { if (!o) setDrift(null); }}
-        title={`Stock moved since ${drift?.code ?? 'this adjustment'} was created`}
+        title={tx('Stock moved since {{v1}} was created', { v1: drift?.code ?? 'this adjustment' })}
         description={
           <>
             <p>{tx('Sales or receipts changed these quantities after the count was entered. Posting now sets them to the counted figures and books the difference as variance.')}</p>
@@ -573,7 +573,7 @@ export function StockAdjustmentsPage() {
           </>
         }
         confirmLabel={tx('Post anyway')}
-        pendingLabel="Posting…"
+        pendingLabel={tx('Posting…')}
         pending={approve.isPending}
         placeholder={tx('e.g. Recounted the shelf after the sales — counted figures are correct')}
         onConfirm={(reason) => drift && approve.mutate({ id: drift.id, forceReason: reason })}
@@ -582,10 +582,10 @@ export function StockAdjustmentsPage() {
       <ReasonDialog
         open={!!reversing}
         onOpenChange={(o) => { if (!o) setReversing(null); }}
-        title={`Reverse ${reversing?.adjCode ?? ''}`}
+        title={tx('Reverse {{v1}}', { v1: reversing?.adjCode ?? '' })}
         description={<p>{tx('Posts the opposite stock movement and journal entries today. The original stays on record, marked reversed.')}</p>}
         confirmLabel={tx('Reverse adjustment')}
-        pendingLabel="Reversing…"
+        pendingLabel={tx('Reversing…')}
         destructive
         pending={reverse.isPending}
         onConfirm={(reason) => reversing && reverse.mutate({ id: reversing.id, reason })}

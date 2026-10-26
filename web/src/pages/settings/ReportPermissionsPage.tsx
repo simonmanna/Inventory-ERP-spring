@@ -189,7 +189,7 @@ export function ReportPermissionsPage() {
                       disabled={selectable.length === 0}
                       onClick={() => setGroup(reports, !allOn)}
                     >
-                      {allOn ? 'Clear all' : 'Select all'}
+                      {allOn ? tx('Clear all') : tx('Select all')}
                     </button>
                   </div>
                   <div className="grid gap-x-6 gap-y-1 py-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -202,7 +202,7 @@ export function ReportPermissionsPage() {
                             'flex items-start gap-2 rounded px-1 py-1 text-sm ' +
                             (permitted ? 'cursor-pointer hover:bg-muted' : 'opacity-50')
                           }
-                          title={permitted ? report.description ?? report.route : `Role lacks ${report.permission}`}
+                          title={permitted ? report.description ?? report.route : tx('Role lacks {{permission}}', { permission: report.permission })}
                         >
                           <input
                             type="checkbox"

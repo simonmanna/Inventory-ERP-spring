@@ -32,7 +32,7 @@ export function RecurringPage() {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['recurring'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   return (

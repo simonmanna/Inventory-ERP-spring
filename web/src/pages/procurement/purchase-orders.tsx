@@ -32,21 +32,21 @@ interface PurchaseOrder {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  active: 'Active',
-  partially_received: 'Partially received',
-  received: 'Received',
-  cancelled: 'Cancelled',
+  active: tx('Active'),
+  partially_received: tx('Partially received'),
+  received: tx('Received'),
+  cancelled: tx('Cancelled'),
 };
 
 const PAYMENT_TYPE_LABELS: Record<string, string> = {
-  cash: 'Cash',
-  credit: 'Credit',
+  cash: tx('Cash'),
+  credit: tx('Credit'),
 };
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  not_paid: 'Unpaid',
-  paid: 'Paid',
-  partial: 'Partial',
+  not_paid: tx('Unpaid'),
+  paid: tx('Paid'),
+  partial: tx('Partial'),
 };
 
 const STATUS_FILTERS = ['all', 'active', 'partially_received', 'received', 'cancelled'] as const;
@@ -84,13 +84,13 @@ export function PurchaseOrdersPage() {
       notify.success(tx('Purchase cancelled'));
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const columns: Column<PurchaseOrder>[] = [
     {
       key: 'orderNumber',
-      header: 'Order #',
+      header: tx('Order #'),
       render: (po) => (
         <Link to={`/procurement/purchase-orders/${po.id}`} className="font-medium text-primary hover:underline">
           {po.orderNumber}
@@ -99,19 +99,19 @@ export function PurchaseOrdersPage() {
     },
     {
       key: 'orderDate',
-      header: 'Date',
+      header: tx('Date'),
       render: (po) => <span className="text-sm text-muted-foreground">{date(po.orderDate)}</span>,
     },
     {
       key: 'paymentType',
-      header: 'Type',
+      header: tx('Type'),
       render: (po) => (
         <span className="text-xs text-muted-foreground">{PAYMENT_TYPE_LABELS[po.paymentType] ?? po.paymentType}</span>
       ),
     },
     {
       key: 'totalAmount',
-      header: 'Total',
+      header: tx('Total'),
       className: 'text-right',
       render: (po) => (
         <span className="font-medium">{money(po.totalAmount, po.currencyCode ?? org?.currencyCode)}</span>
@@ -119,7 +119,7 @@ export function PurchaseOrdersPage() {
     },
     {
       key: 'paymentStatus',
-      header: 'Payment',
+      header: tx('Payment'),
       render: (po) =>
         po.paymentType === 'credit' ? (
           <Badge variant="outline" className="text-xs">
@@ -131,7 +131,7 @@ export function PurchaseOrdersPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (po) => (
         <Badge
           variant={
@@ -144,7 +144,7 @@ export function PurchaseOrdersPage() {
     },
     {
       key: 'actions',
-      header: 'Actions',
+      header: tx('Actions'),
       className: 'text-right',
       render: (po) => (
         <div className="flex justify-end gap-1">
@@ -184,7 +184,7 @@ export function PurchaseOrdersPage() {
               variant="ghost"
               onClick={(e) => {
                 e.stopPropagation();
-                if (confirm('Cancel this purchase?')) cancelMut.mutate(po.id);
+                if (confirm(tx('Cancel this purchase?'))) cancelMut.mutate(po.id);
               }}
             >
               <X className="h-3 w-3 text-destructive" />
@@ -264,7 +264,7 @@ export function PurchaseOrdersPage() {
                 setPage(1);
               }}
             >
-              {s === 'all' ? 'All' : STATUS_LABELS[s] ?? s}
+              {s === 'all' ? tx('All') : STATUS_LABELS[s] ?? s}
             </Button>
           ))}
         </div>
@@ -294,7 +294,7 @@ export function PurchaseOrdersPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"

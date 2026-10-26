@@ -117,7 +117,7 @@ export function StaffPage() {
   const columns: Column<UserSummary>[] = [
     {
       key: 'name',
-      header: 'Name',
+      header: tx('Name'),
       render: (u) => (
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -136,7 +136,7 @@ export function StaffPage() {
     },
     {
       key: 'roles',
-      header: 'Roles',
+      header: tx('Roles'),
       render: (u) => (
         <div className="flex flex-wrap gap-1">
           {u.roles.length === 0 && <span className="text-xs text-muted-foreground">{tx('No roles')}</span>}
@@ -150,7 +150,7 @@ export function StaffPage() {
     },
     {
       key: 'employee',
-      header: 'Employee',
+      header: tx('Employee'),
       // The Staff screen and the HR employee list used to be two unrelated
       // lists of the same people. This column is the join made visible: it says
       // which workforce record a login belongs to, or that it belongs to none.
@@ -172,7 +172,7 @@ export function StaffPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (u) => {
         const locked = u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
         if (!u.isActive) return <Badge variant="secondary">{tx('Disabled')}</Badge>;
@@ -188,7 +188,7 @@ export function StaffPage() {
     },
     {
       key: 'pin',
-      header: 'POS PIN',
+      header: tx('POS PIN'),
       render: (u) =>
         u.hasPin ? (
           <Badge variant="outline" className="text-[10px]">
@@ -212,7 +212,7 @@ export function StaffPage() {
     },
     {
       key: 'lastLogin',
-      header: 'Last login',
+      header: tx('Last login'),
       render: (u) =>
         u.lastLoginAt ? (
           <span className="text-xs">{new Date(u.lastLoginAt).toLocaleString()}</span>
@@ -244,8 +244,8 @@ export function StaffPage() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setPinTarget(u)}
-                aria-label={u.hasPin ? 'Reset POS PIN' : 'Set POS PIN'}
-                title={u.hasPin ? 'Reset POS PIN' : 'Set POS PIN'}
+                aria-label={u.hasPin ? tx('Reset POS PIN') : tx('Set POS PIN')}
+                title={u.hasPin ? tx('Reset POS PIN') : tx('Set POS PIN')}
               >
                 <Hash className="h-4 w-4" />
               </Button>
@@ -277,7 +277,7 @@ export function StaffPage() {
               disabled={!canDelete || u.id === meId}
               onClick={() => setDeleting(u)}
               aria-label={tx('Delete user')}
-              title={u.id === meId ? 'You cannot delete your own account' : 'Delete user'}
+              title={u.id === meId ? tx('You cannot delete your own account') : tx('Delete user')}
             >
               <Trash2 className="h-4 w-4 text-destructive" />
             </Button>
@@ -321,9 +321,9 @@ export function StaffPage() {
         <div className="flex gap-1" role="group" aria-label={tx('Filter by HR link')}>
           {(
             [
-              ['all', 'All'],
-              ['linked', 'Linked to HR'],
-              ['unlinked', 'Not linked'],
+              ['all', tx('All')],
+              ['linked', tx('Linked to HR')],
+              ['unlinked', tx('Not linked')],
             ] as [LinkFilter, string][]
           ).map(([value, label]) => (
             <Button
@@ -344,7 +344,7 @@ export function StaffPage() {
         loading={users.isLoading}
         getRowId={(u) => u.id}
         emptyMessage={
-          search ? 'No users match your search.' : 'No users yet — invite your first staff member.'
+          search ? tx('No users match your search.') : tx('No users yet — invite your first staff member.')
         }
       />
 
@@ -356,7 +356,7 @@ export function StaffPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"
@@ -388,7 +388,7 @@ export function StaffPage() {
             <DialogTitle>{tx('Delete user?')}</DialogTitle>
             <DialogDescription>
               {deleting
-                ? `${deleting.firstName} (${deleting.email}) will be deactivated. Their sessions will be revoked.`
+                ? tx('{{firstName}} ({{email}}) will be deactivated. Their sessions will be revoked.', { firstName: deleting.firstName, email: deleting.email })
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -397,7 +397,7 @@ export function StaffPage() {
               {tx('Cancel')}
             </Button>
             <Button variant="destructive" disabled={deleteUser.isPending} onClick={confirmDelete}>
-              {deleteUser.isPending ? 'Deleting…' : 'Delete user'}
+              {deleteUser.isPending ? tx('Deleting…') : tx('Delete user')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -409,7 +409,7 @@ export function StaffPage() {
             <DialogTitle>{tx('Reset password')}</DialogTitle>
             <DialogDescription>
               {resetTarget
-                ? `Set a new password for ${resetTarget.firstName} (${resetTarget.email}). All active sessions will be revoked.`
+                ? tx('Set a new password for {{firstName}} ({{email}}). All active sessions will be revoked.', { firstName: resetTarget.firstName, email: resetTarget.email })
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -432,7 +432,7 @@ export function StaffPage() {
               disabled={resetPassword.length < 10 || resetUser.isPending}
               onClick={confirmReset}
             >
-              {resetUser.isPending ? 'Resetting…' : 'Reset password'}
+              {resetUser.isPending ? tx('Resetting…') : tx('Reset password')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -16,18 +16,18 @@ import type { Receipt } from '@/pages/pos/types';
 import { tx } from '@/lib/i18n/tx';
 
 const methodLabel: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  mobile_money: 'Mobile Money',
-  mixed: 'Mixed',
-  credit: 'Credit',
+  cash: tx('Cash'),
+  card: tx('Card'),
+  mobile_money: tx('Mobile Money'),
+  mixed: tx('Mixed'),
+  credit: tx('Credit'),
 };
 
 const settlementLabel: Record<string, string> = {
-  unsettled: 'Unsettled',
-  partially_settled: 'Partially Paid',
-  settled: 'Settled',
-  written_off: 'Written Off',
+  unsettled: tx('Unsettled'),
+  partially_settled: tx('Partially Paid'),
+  settled: tx('Settled'),
+  written_off: tx('Written Off'),
 };
 
 const settlementTone: Record<string, Tone> = {
@@ -70,21 +70,21 @@ export function ReceiptsPage() {
   const columns: Column<Receipt>[] = [
     {
       key: 'invoiceNumber',
-      header: 'Receipt #',
+      header: tx('Receipt #'),
       render: (r) => <span className="font-medium text-primary">{r.documentNumber}</span>,
     },
-    { key: 'partner', header: 'Customer', render: (r) => r.partner?.name ?? <span className="text-muted-foreground">{tx('Walk-in')}</span> },
-    { key: 'issueDate', header: 'Date', render: (r) => <span className="whitespace-nowrap text-muted-foreground">{date(r.issueDate)}</span> },
-    { key: 'itemCount', header: 'Items', className: 'text-right', render: (r) => <span className="tabular-nums text-muted-foreground">{r.itemCount}</span> },
+    { key: 'partner', header: tx('Customer'), render: (r) => r.partner?.name ?? <span className="text-muted-foreground">{tx('Walk-in')}</span> },
+    { key: 'issueDate', header: tx('Date'), render: (r) => <span className="whitespace-nowrap text-muted-foreground">{date(r.issueDate)}</span> },
+    { key: 'itemCount', header: tx('Items'), className: 'text-right', render: (r) => <span className="tabular-nums text-muted-foreground">{r.itemCount}</span> },
     {
       key: 'paymentMode',
-      header: 'Method',
+      header: tx('Method'),
       render: (r) => <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium">{method(r)}</span>,
     },
-    { key: 'totalAmount', header: 'Total', className: 'text-right', render: (r) => <span className="font-semibold tabular-nums">{money(r.totalAmount, currency)}</span> },
+    { key: 'totalAmount', header: tx('Total'), className: 'text-right', render: (r) => <span className="font-semibold tabular-nums">{money(r.totalAmount, currency)}</span> },
     {
       key: 'settlementStatus',
-      header: 'Settlement',
+      header: tx('Settlement'),
       render: (r) => (
         <StatusPill tone={settlementTone[r.settlementStatus] ?? 'neutral'}>
           {settlementLabel[r.settlementStatus] ?? r.settlementStatus}
@@ -104,13 +104,13 @@ export function ReceiptsPage() {
   ];
 
   const exportColumns: ExportColumn<Receipt>[] = [
-    { header: 'Receipt #', value: (r) => r.documentNumber },
-    { header: 'Customer', value: (r) => r.partner?.name ?? '' },
-    { header: 'Date', value: (r) => date(r.issueDate) },
-    { header: 'Items', value: (r) => r.itemCount, align: 'right' },
-    { header: 'Method', value: method },
-    { header: 'Total', value: (r) => money(r.totalAmount, currency), align: 'right' },
-    { header: 'Settlement', value: (r) => settlementLabel[r.settlementStatus] ?? r.settlementStatus },
+    { header: tx('Receipt #'), value: (r) => r.documentNumber },
+    { header: tx('Customer'), value: (r) => r.partner?.name ?? '' },
+    { header: tx('Date'), value: (r) => date(r.issueDate) },
+    { header: tx('Items'), value: (r) => r.itemCount, align: 'right' },
+    { header: tx('Method'), value: method },
+    { header: tx('Total'), value: (r) => money(r.totalAmount, currency), align: 'right' },
+    { header: tx('Settlement'), value: (r) => settlementLabel[r.settlementStatus] ?? r.settlementStatus },
   ];
 
   const fetchAll = () =>
@@ -141,8 +141,8 @@ export function ReceiptsPage() {
 
       <ListToolbar chips={<FilterChips chips={chips} onClearAll={list.clearFilters} />}>
         <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder={tx('Search receipt # or customer…')} />
-        <FilterSelect value={paymentMode} onChange={(v) => list.setFilter('paymentMode', v)} options={toOptions(methodLabel)} allLabel="All methods" />
-        <FilterSelect value={settlementStatus} onChange={(v) => list.setFilter('settlementStatus', v)} options={toOptions(settlementLabel)} allLabel="All settlements" />
+        <FilterSelect value={paymentMode} onChange={(v) => list.setFilter('paymentMode', v)} options={toOptions(methodLabel)} allLabel={tx('All methods')} />
+        <FilterSelect value={settlementStatus} onChange={(v) => list.setFilter('settlementStatus', v)} options={toOptions(settlementLabel)} allLabel={tx('All settlements')} />
         <DateRangeFilter from={dateFrom} to={dateTo} onChange={(f, t) => list.setFilters({ dateFrom: f, dateTo: t })} />
       </ListToolbar>
 
@@ -157,7 +157,7 @@ export function ReceiptsPage() {
             onRowClick={(r) => navigate(`/pos/receipts/${r.id}`)}
             cellClassName="py-2.5 px-4"
             headerRowClassName="h-10"
-            emptyMessage={chips.length ? 'No receipts match these filters.' : 'No receipts yet.'}
+            emptyMessage={chips.length ? tx('No receipts match these filters.') : tx('No receipts yet.')}
           />
         </div>
         {meta && (

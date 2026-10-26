@@ -73,7 +73,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.poscafe.pos.ui.components.SyncBanner
 import kotlinx.coroutines.launch
 
-private enum class HomeTab(
+internal enum class HomeTab(
     val label: String,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
@@ -86,8 +86,8 @@ private enum class HomeTab(
 
 /**
  * Post-login shell: bottom tabs (phone) / rail (tablet) for the four
- * service-speed surfaces, plus a side drawer for back-office management —
- * products, customers, suppliers, stock, reports, staff, settings.
+ * service-speed surfaces, plus a side drawer laid out like the web sidebar
+ * ([HomeSidebar]) for everything else.
  */
 @Composable
 fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) -> Unit) {
@@ -114,10 +114,16 @@ fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            DrawerContent(
+            HomeSidebar(
                 businessName = terminalVm.config.businessName,
                 cashierName = terminalVm.cashier?.displayName ?: "",
                 standalone = standalone,
+                isRetail = isRetail,
+                currentTab = tab,
+                onTab = { t ->
+                    scope.launch { drawerState.close() }
+                    tab = t
+                },
                 onNavigate = navigateFromDrawer,
             )
         },
@@ -174,107 +180,6 @@ fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) 
 }
 
 @Composable
-private fun DrawerContent(
-    businessName: String,
-    cashierName: String,
-    standalone: Boolean,
-    onNavigate: (String) -> Unit,
-) {
-    ModalDrawerSheet(
-        drawerContainerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-            // Brand header
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Storefront, null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.size(12.dp))
-                Column {
-                    Text(businessName, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        if (standalone) "Standalone · $cashierName" else cashierName,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(8.dp))
-
-            DrawerSection("Catalog")
-            DrawerItem("Menu items", Icons.Outlined.RestaurantMenu) { onNavigate("menu-manager") }
-            DrawerItem("Retail products", Icons.Outlined.Storefront) { onNavigate("products") }
-            DrawerItem("Add-ons & modifiers", Icons.Outlined.Tune) { onNavigate("modifier-groups") }
-            DrawerItem("Accompaniments", Icons.Outlined.RamenDining) { onNavigate("accompaniment-groups") }
-            DrawerItem("Taxes", Icons.Outlined.Percent) { onNavigate("taxes") }
-            DrawerItem("Tables", Icons.Outlined.TableRestaurant) { onNavigate("tables-manager") }
-            DrawerItem("Stock levels & inventory", Icons.Outlined.Inventory2) { onNavigate("stock") }
-            DrawerItem("Physical count", Icons.Outlined.Inventory2) { onNavigate("inventory-count") }
-
-            DrawerSection("Cash")
-            DrawerItem("Cash registers", Icons.Outlined.PointOfSale) { onNavigate("registers") }
-            DrawerItem("Shift history (Z-reports)", Icons.Outlined.ReceiptLong) { onNavigate("shift-history") }
-
-            DrawerSection("Finance")
-            DrawerItem("Purchases", Icons.Outlined.ShoppingCart) { onNavigate("purchases") }
-            DrawerItem("Expenses", Icons.Outlined.Payments) { onNavigate("expenses") }
-
-            DrawerSection("Team")
-            DrawerItem("Messages", Icons.AutoMirrored.Outlined.Chat) { onNavigate("messaging") }
-
-            DrawerSection("People")
-            DrawerItem("Customers", Icons.Outlined.People) { onNavigate("customers") }
-            DrawerItem("Suppliers", Icons.Outlined.LocalShipping) { onNavigate("suppliers") }
-            DrawerItem("Staff & PINs", Icons.Outlined.Badge) { onNavigate("staff") }
-
-            DrawerSection("Insights")
-            DrawerItem("Reports", Icons.AutoMirrored.Outlined.TrendingUp) { onNavigate("reports") }
-
-            DrawerSection("Device")
-            DrawerItem("Business settings", Icons.Outlined.Settings) { onNavigate("business") }
-            if (!standalone) {
-                DrawerItem("Sync", Icons.Outlined.CloudSync) { onNavigate("sync") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DrawerSection(label: String) {
-    Text(
-        label.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 24.dp, top = 14.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun DrawerItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    NavigationDrawerItem(
-        label = { Text(label, style = MaterialTheme.typography.bodyLarge) },
-        icon = { Icon(icon, null) },
-        selected = false,
-        onClick = onClick,
-        colors = NavigationDrawerItemDefaults.colors(
-            unselectedContainerColor = MaterialTheme.colorScheme.surface,
-        ),
-        modifier = Modifier.padding(horizontal = 12.dp),
-    )
-}
-
-@Composable
 private fun TabContent(
     tab: HomeTab,
     terminalVm: TerminalViewModel,
@@ -287,6 +192,9 @@ private fun TabContent(
     Column(modifier) {
         // Offline / syncing / rejected strip — server-connected tills only.
         if (!terminalVm.config.standalone) SyncBanner(onOpenSync = onOpenSync)
+        // Above everything, on every tab: whether this till may still take money is not something
+        // a cashier should have to go looking for.
+        LicenseBanner(terminalVm.config)
         Crossfade(targetState = tab, animationSpec = tween(200), label = "homeTab", modifier = Modifier.weight(1f)) { t ->
             Column(Modifier.fillMaxSize()) {
                 when (t) {

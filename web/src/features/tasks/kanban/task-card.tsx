@@ -196,10 +196,10 @@ export function TaskCard({ task, onClick, onQuickStatus, busy }: TaskCardProps) 
                 e.stopPropagation();
                 onQuickStatus(task.id, next);
               }}
-              title={`Move to ${next.replace('_', ' ').toLowerCase()}`}
+              title={tx('Move to {{v1}}', { v1: next.replace('_', ' ').toLowerCase() })}
             >
               {next === 'COMPLETED' ? <CircleCheck className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
-              {next === 'COMPLETED' ? 'Mark complete' : `Move to ${next.replace('_', ' ').toLowerCase()}`}
+              {next === 'COMPLETED' ? tx('Mark complete') : tx('Move to {{v1}}', { v1: next.replace('_', ' ').toLowerCase() })}
             </Button>
           </div>
         )}

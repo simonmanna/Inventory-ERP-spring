@@ -70,7 +70,7 @@ export function DeadLettersPage() {
       setNote('');
       qc.invalidateQueries({ queryKey: ['sync-dead-letters'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const rows = q.data ?? [];
@@ -126,11 +126,11 @@ export function DeadLettersPage() {
                     </CardTitle>
                     <span className="text-xs text-muted-foreground">
                       {dl.deviceName} {tx('· seq')} {dl.deviceSeq} ·{' '}
-                      {dl.occurredAt ? new Date(dl.occurredAt).toLocaleString() : 'no timestamp'}
+                      {dl.occurredAt ? new Date(dl.occurredAt).toLocaleString() : tx('no timestamp')}
                     </span>
                   </div>
                   <CardDescription className="text-rose-400">
-                    {dl.httpStatus ? `HTTP ${dl.httpStatus} — ` : ''}{dl.error}
+                    {dl.httpStatus ? tx('HTTP {{httpStatus}} — ', { httpStatus: dl.httpStatus }) : ''}{dl.error}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -167,13 +167,13 @@ export function DeadLettersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {resolving?.action === 'resolved' ? 'Mark as handled' : 'Discard this operation'}
+              {resolving?.action === 'resolved' ? tx('Mark as handled') : tx('Discard this operation')}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             {resolving?.action === 'resolved'
-              ? 'Use this once the sale has been re-entered manually, or you confirmed it was already recorded.'
-              : 'Use this only if the operation must never post — a duplicate, a test, or a cancelled sale.'}
+              ? tx('Use this once the sale has been re-entered manually, or you confirmed it was already recorded.')
+              : tx('Use this only if the operation must never post — a duplicate, a test, or a cancelled sale.')}
           </p>
           <div className="grid gap-1.5">
             <Label htmlFor="dl-note">{tx('What happened? (recorded in the audit log)')}</Label>
@@ -181,7 +181,7 @@ export function DeadLettersPage() {
               id="dl-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder={resolving?.action === 'resolved' ? 'Re-rang as INV-2026-000123' : 'Duplicate of INV-2026-000123'}
+              placeholder={resolving?.action === 'resolved' ? tx('Re-rang as INV-2026-000123') : tx('Duplicate of INV-2026-000123')}
             />
           </div>
           <div className="flex justify-end gap-2">

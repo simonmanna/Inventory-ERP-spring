@@ -58,7 +58,15 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None._
+Pending owner approval:
+
+1. **Line units (ADR-S003, V5).** Invoice, vendor-bill and credit-note lines accept `uomId` and snapshot
+   `uomId` + `uomFactor` (default: the sales unit; bills: the purchase unit). Posting an invoice issues
+   `quantity x uomFactor` base units (Nest issued `quantity` base units); bills receive with the line
+   snapshot; credit-note restock uses it too. Bill-to-receipt matching compares base units when both lines
+   carry a snapshot (`billedQuantity` is stamped in receipt-line units). An omitted `unitPrice` on a
+   non-default unit defaults to its `ProductUom` price or the scaled default price. New 400:
+   `Unit <code> is not enabled for sales on product <name>`.
 
 Same as Nest, kept on purpose:
 

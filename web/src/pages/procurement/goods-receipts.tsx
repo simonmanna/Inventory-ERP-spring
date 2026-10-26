@@ -23,10 +23,10 @@ interface GRN {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  posted: 'Posted',
-  cancelled: 'Cancelled',
-  reversed: 'Reversed',
+  draft: tx('Draft'),
+  posted: tx('Posted'),
+  cancelled: tx('Cancelled'),
+  reversed: tx('Reversed'),
 };
 
 const STATUS_FILTERS = ['all', 'draft', 'posted', 'cancelled', 'reversed'] as const;
@@ -53,7 +53,7 @@ export function GoodsReceiptsPage() {
   const columns: Column<GRN>[] = [
     {
       key: 'receiptNumber',
-      header: 'Receipt #',
+      header: tx('Receipt #'),
       render: (g) => (
         <Link to={`/procurement/goods-receipts/${g.id}`} className="font-medium text-primary hover:underline">
           {g.receiptNumber}
@@ -62,7 +62,7 @@ export function GoodsReceiptsPage() {
     },
     {
       key: 'receivedAt',
-      header: 'Date',
+      header: tx('Date'),
       render: (g) => <span className="text-sm text-muted-foreground">{date(g.receivedAt)}</span>,
     },
     {
@@ -77,7 +77,7 @@ export function GoodsReceiptsPage() {
     },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (g) => (
         <Badge
           variant={g.status === 'posted' ? 'default' : g.status === 'cancelled' ? 'destructive' : 'secondary'}
@@ -88,12 +88,12 @@ export function GoodsReceiptsPage() {
     },
     {
       key: 'lines',
-      header: 'Items',
+      header: tx('Items'),
       render: (g) => <span className="text-sm text-muted-foreground">{g.lines?.length ?? 0}</span>,
     },
     {
       key: 'notes',
-      header: 'Notes',
+      header: tx('Notes'),
       className: 'max-w-[200px]',
       render: (g) => (
         <span className="text-sm text-muted-foreground truncate block">{g.notes ?? '—'}</span>
@@ -151,7 +151,7 @@ export function GoodsReceiptsPage() {
                 setPage(1);
               }}
             >
-              {s === 'all' ? 'All' : STATUS_LABELS[s] ?? s}
+              {s === 'all' ? tx('All') : STATUS_LABELS[s] ?? s}
             </Button>
           ))}
         </div>
@@ -173,7 +173,7 @@ export function GoodsReceiptsPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"

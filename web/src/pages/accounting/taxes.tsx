@@ -40,17 +40,17 @@ const TAX_TYPE_OPTIONS = ['vat', 'gst', 'sales_tax', 'withholding'] as const;
 const TAX_TYPE_LABELS: Record<string, string> = {
   vat: 'VAT',
   gst: 'GST',
-  sales_tax: 'Sales Tax',
-  withholding: 'Withholding',
+  sales_tax: tx('Sales Tax'),
+  withholding: tx('Withholding'),
 };
 
 const VAT_CATEGORY_OPTIONS = ['standard', 'zero_rated', 'exempt', 'out_of_scope'] as const;
 
 const VAT_CATEGORY_LABELS: Record<string, string> = {
-  standard: 'Standard',
-  zero_rated: 'Zero Rated',
-  exempt: 'Exempt',
-  out_of_scope: 'Out of Scope',
+  standard: tx('Standard'),
+  zero_rated: tx('Zero Rated'),
+  exempt: tx('Exempt'),
+  out_of_scope: tx('Out of Scope'),
 };
 
 /* ── Default form state ──────────────────────────────────── */
@@ -148,7 +148,7 @@ export default function TaxesPage() {
     setFormError('');
 
     if (!form.name.trim()) {
-      setFormError('Tax name is required.');
+      setFormError(tx('Tax name is required.'));
       return;
     }
     if (!form.rate || isNaN(Number(form.rate)) || Number(form.rate) < 0) {
@@ -203,23 +203,23 @@ export default function TaxesPage() {
   /* ── Columns ────────────────────────────────────────────── */
 
   const columns: Column<Tax>[] = [
-    { key: 'name', header: 'Name' },
-    { key: 'code', header: 'Code' },
+    { key: 'name', header: tx('Name') },
+    { key: 'code', header: tx('Code') },
     {
       key: 'rate',
-      header: 'Rate',
+      header: tx('Rate'),
       render: (t) => <span className="font-mono">{Number(t.rate).toFixed(2)}%</span>,
     },
     {
       key: 'type',
-      header: 'Type',
+      header: tx('Type'),
       render: (t) => (
         <Badge variant="secondary">{TAX_TYPE_LABELS[t.type] ?? t.type.replace(/_/g, ' ')}</Badge>
       ),
     },
     {
       key: 'vatCategory',
-      header: 'VAT Category',
+      header: tx('VAT Category'),
       render: (t) => (
         <span className="text-sm capitalize text-muted-foreground">
           {VAT_CATEGORY_LABELS[t.vatCategory] ?? t.vatCategory.replace(/_/g, ' ')}
@@ -228,7 +228,7 @@ export default function TaxesPage() {
     },
     {
       key: 'isActive',
-      header: 'Status',
+      header: tx('Status'),
       render: (t) =>
         t.isActive ? (
           <Badge className="bg-green-100 text-green-700 hover:bg-green-100">{tx('Active')}</Badge>
@@ -306,7 +306,7 @@ export default function TaxesPage() {
         loading={isLoading}
         getRowId={(t) => t.id}
         emptyMessage={
-          search ? 'No taxes match your search.' : 'No taxes found. Create one to get started.'
+          search ? tx('No taxes match your search.') : tx('No taxes found. Create one to get started.')
         }
       />
 
@@ -314,7 +314,7 @@ export default function TaxesPage() {
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between bg-white rounded-lg border px-4 py-3">
           <span className="text-xs text-slate-500 font-medium">
-            {meta.total} tax{meta.total !== 1 ? 'es' : ''}
+            {meta.total} {tx('tax')}{meta.total !== 1 ? 'es' : ''}
           </span>
           <div className="flex items-center gap-2">
             <Button
@@ -357,11 +357,11 @@ export default function TaxesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingTax ? 'Edit Tax' : 'Create Tax'}</DialogTitle>
+            <DialogTitle>{editingTax ? tx('Edit Tax') : tx('Create Tax')}</DialogTitle>
             <DialogDescription>
               {editingTax
-                ? 'Update the tax rate configuration.'
-                : 'Add a new tax rate to use on invoices and transactions.'}
+                ? tx('Update the tax rate configuration.')
+                : tx('Add a new tax rate to use on invoices and transactions.')}
             </DialogDescription>
           </DialogHeader>
 
@@ -509,9 +509,9 @@ export default function TaxesPage() {
                   <Loader2 className="h-4 w-4 animate-spin mr-2" /> {tx('Saving…')}
                 </>
               ) : editingTax ? (
-                'Save changes'
+                tx('Save changes')
               ) : (
-                'Create tax'
+                tx('Create tax')
               )}
             </Button>
           </DialogFooter>
@@ -542,7 +542,7 @@ export default function TaxesPage() {
               disabled={deleteTax.isPending}
               onClick={confirmDelete}
             >
-              {deleteTax.isPending ? 'Deleting…' : 'Delete'}
+              {deleteTax.isPending ? tx('Deleting…') : tx('Delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

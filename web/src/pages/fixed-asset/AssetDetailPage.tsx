@@ -115,7 +115,7 @@ function AcquisitionTab({ assetId }: { assetId: string }) {
   const acq = data;
   return (
     <div>
-      <div className="flex justify-between mb-4"><h3 className="text-lg font-semibold">{tx('Acquisition Details')}</h3><Button size="sm" onClick={() => { form.reset({ vendor: acq?.vendor ?? '', taxes: acq?.taxes ?? '', freight: acq?.freight ?? '', installationCost: acq?.installationCost ?? '', otherCosts: acq?.otherCosts ?? '', capitalizedCost: acq?.capitalizedCost ?? '', acquisitionDate: acq?.acquisitionDate?.split('T')[0] ?? '', notes: acq?.notes ?? '' }); setOpen(true); }}><Plus className="mr-2 h-4 w-4" />{acq ? 'Edit' : 'Add'}</Button></div>
+      <div className="flex justify-between mb-4"><h3 className="text-lg font-semibold">{tx('Acquisition Details')}</h3><Button size="sm" onClick={() => { form.reset({ vendor: acq?.vendor ?? '', taxes: acq?.taxes ?? '', freight: acq?.freight ?? '', installationCost: acq?.installationCost ?? '', otherCosts: acq?.otherCosts ?? '', capitalizedCost: acq?.capitalizedCost ?? '', acquisitionDate: acq?.acquisitionDate?.split('T')[0] ?? '', notes: acq?.notes ?? '' }); setOpen(true); }}><Plus className="mr-2 h-4 w-4" />{acq ? tx('Edit') : tx('Add')}</Button></div>
       {acq ? (
         <Card><CardContent className="pt-6">
           <dl className="grid grid-cols-2 gap-2 text-sm">
@@ -133,7 +133,7 @@ function AcquisitionTab({ assetId }: { assetId: string }) {
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Acquisition Details')}</DialogTitle></DialogHeader>
           <form onSubmit={form.handleSubmit(async (v) => {
-            try { await upsert.mutateAsync({ assetId, data: { ...v, taxes: v.taxes ? Number(v.taxes) : undefined, freight: v.freight ? Number(v.freight) : undefined, installationCost: v.installationCost ? Number(v.installationCost) : undefined, otherCosts: v.otherCosts ? Number(v.otherCosts) : undefined, capitalizedCost: v.capitalizedCost ? Number(v.capitalizedCost) : undefined, acquisitionDate: v.acquisitionDate || undefined } }); notify.success(tx('Saved')); setOpen(false); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); }
+            try { await upsert.mutateAsync({ assetId, data: { ...v, taxes: v.taxes ? Number(v.taxes) : undefined, freight: v.freight ? Number(v.freight) : undefined, installationCost: v.installationCost ? Number(v.installationCost) : undefined, otherCosts: v.otherCosts ? Number(v.otherCosts) : undefined, capitalizedCost: v.capitalizedCost ? Number(v.capitalizedCost) : undefined, acquisitionDate: v.acquisitionDate || undefined } }); notify.success(tx('Saved')); setOpen(false); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); }
           })} className="space-y-3">
             <div className="grid grid-cols-2 gap-3"><div><Label>{tx('Vendor')}</Label><Input {...form.register('vendor')} /></div><div><Label>{tx('Date')}</Label><Input type="date" {...form.register('acquisitionDate')} /></div></div>
             <div className="grid grid-cols-2 gap-3"><div><Label>{tx('Taxes')}</Label><Input type="number" step="0.01" {...form.register('taxes')} /></div><div><Label>{tx('Freight')}</Label><Input type="number" step="0.01" {...form.register('freight')} /></div></div>
@@ -159,14 +159,14 @@ function AssignmentsTab({ assetId }: { assetId: string }) {
       <div className="flex justify-between mb-4"><h3 className="text-lg font-semibold">{tx('Assignments')}</h3><Button size="sm" onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" />{tx('Assign')}</Button></div>
       {data?.length ? data.map((a: any) => (
         <Card key={a.id} className="mb-2"><CardContent className="pt-4 flex justify-between">
-          <div><p className="font-medium">{a.assignedToName ?? a.assignedToId ?? 'Unknown'}</p><p className="text-sm text-muted-foreground">{a.assignedToType?.replace(/_/g, ' ') ?? ''} · {new Date(a.assignedDate).toLocaleDateString()}{a.returnedDate ? ` → ${new Date(a.returnedDate).toLocaleDateString()}` : ' (Active)'}</p></div>
+          <div><p className="font-medium">{a.assignedToName ?? a.assignedToId ?? tx('Unknown')}</p><p className="text-sm text-muted-foreground">{a.assignedToType?.replace(/_/g, ' ') ?? ''} · {new Date(a.assignedDate).toLocaleDateString()}{a.returnedDate ? ` → ${new Date(a.returnedDate).toLocaleDateString()}` : tx(' (Active)')}</p></div>
           {a.conditionBefore && <Badge variant="outline">{a.conditionBefore}</Badge>}
         </CardContent></Card>
       )) : <p className="text-muted-foreground">{tx('No assignments.')}</p>}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Assign Asset')}</DialogTitle></DialogHeader>
-          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, assignedDate: v.assignedDate || undefined } }); notify.success(tx('Assigned')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } })} className="space-y-3">
+          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, assignedDate: v.assignedDate || undefined } }); notify.success(tx('Assigned')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } })} className="space-y-3">
             <div><Label>{tx('Assign To (ID)')}</Label><Input {...form.register('assignedToId')} /></div>
             <div><Label>{tx('Type')}</Label><Select value={form.watch('assignedToType')} onValueChange={(v) => form.setValue('assignedToType', v)}><SelectTrigger><SelectValue placeholder={tx('Type')} /></SelectTrigger><SelectContent>{['employee', 'teacher', 'student', 'department', 'branch', 'room', 'vehicle', 'clinic', 'store'].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>{tx('Name')}</Label><Input {...form.register('assignedToName')} /></div>
@@ -198,7 +198,7 @@ function TransfersTab({ assetId, canCreate }: { assetId: string; canCreate: bool
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Transfer Asset')}</DialogTitle></DialogHeader>
-          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: v }); notify.success(tx('Transferred')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } })} className="space-y-3">
+          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: v }); notify.success(tx('Transferred')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } })} className="space-y-3">
             <div><Label>{tx('To Location')}</Label><Input {...form.register('toLocation')} /></div>
             <div><Label>{tx('Reason')}</Label><Input {...form.register('reason')} /></div>
             <div><Label>{tx('Notes')}</Label><Input {...form.register('notes')} /></div>
@@ -253,7 +253,7 @@ function MaintenanceTab({ assetId, canCreate }: { assetId: string; canCreate: bo
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Schedule Maintenance')}</DialogTitle></DialogHeader>
-          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, cost: v.cost ? Number(v.cost) : undefined, scheduledDate: v.scheduledDate || undefined } }); notify.success(tx('Scheduled')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } })} className="space-y-3">
+          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, cost: v.cost ? Number(v.cost) : undefined, scheduledDate: v.scheduledDate || undefined } }); notify.success(tx('Scheduled')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } })} className="space-y-3">
             <div><Label>{tx('Title *')}</Label><Input {...form.register('title')} /></div>
             <div><Label>{tx('Type')}</Label><Select value={form.watch('maintenanceType')} onValueChange={(v) => form.setValue('maintenanceType', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['preventive', 'corrective', 'emergency', 'scheduled', 'calibration'].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>{tx('Date')}</Label><Input type="date" {...form.register('scheduledDate')} /></div>
@@ -278,14 +278,14 @@ function WarrantyTab({ assetId, canCreate }: { assetId: string; canCreate: boole
       <div className="flex justify-between mb-4"><h3 className="text-lg font-semibold">{tx('Warranties')}</h3>{canCreate && <Button size="sm" onClick={() => setOpen(true)}><Plus className="mr-2 h-4 w-4" />{tx('Add Warranty')}</Button>}</div>
       {data?.length ? data.map((w: any) => (
         <Card key={w.id} className="mb-2"><CardContent className="pt-4">
-          <div className="flex justify-between"><p className="font-medium">{w.vendor ?? 'Warranty'}</p><span className="text-sm text-muted-foreground">{new Date(w.warrantyStart).toLocaleDateString()} - {new Date(w.warrantyEnd).toLocaleDateString()}</span></div>
+          <div className="flex justify-between"><p className="font-medium">{w.vendor ?? tx('Warranty')}</p><span className="text-sm text-muted-foreground">{new Date(w.warrantyStart).toLocaleDateString()} - {new Date(w.warrantyEnd).toLocaleDateString()}</span></div>
           {w.coverage && <p className="text-sm text-muted-foreground">{w.coverage}</p>}
         </CardContent></Card>
       )) : <p className="text-muted-foreground">{tx('No warranties.')}</p>}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Add Warranty')}</DialogTitle></DialogHeader>
-          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: v }); notify.success(tx('Saved')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } })} className="space-y-3">
+          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: v }); notify.success(tx('Saved')); setOpen(false); form.reset(); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } })} className="space-y-3">
             <div className="grid grid-cols-2 gap-3"><div><Label>{tx('Start *')}</Label><Input type="date" {...form.register('warrantyStart')} /></div><div><Label>{tx('End *')}</Label><Input type="date" {...form.register('warrantyEnd')} /></div></div>
             <div><Label>{tx('Vendor')}</Label><Input {...form.register('vendor')} /></div>
             <div><Label>{tx('Coverage')}</Label><Input {...form.register('coverage')} /></div>
@@ -307,7 +307,7 @@ function DisposalTab({ assetId, assetName, canDispose }: { assetId: string; asse
   if (data) return (
     <Card><CardContent className="pt-6">
       <p className="text-lg font-semibold text-red-600">{tx('Disposed (')}{data.disposalMethod?.replace(/_/g, ' ')})</p>
-      <p className="text-sm text-muted-foreground">{new Date(data.disposalDate).toLocaleDateString()}{data.disposalValue ? ` · Value: ${formatCurrency(data.disposalValue)}` : ''}{data.gainLoss ? ` · Gain/Loss: ${formatCurrency(data.gainLoss)}` : ''}</p>
+      <p className="text-sm text-muted-foreground">{new Date(data.disposalDate).toLocaleDateString()}{data.disposalValue ? tx(' · Value: {{v1}}', { v1: formatCurrency(data.disposalValue) }) : ''}{data.gainLoss ? tx(' · Gain/Loss: {{v1}}', { v1: formatCurrency(data.gainLoss) }) : ''}</p>
       {data.reason && <p className="text-sm mt-2">{data.reason}</p>}
     </CardContent></Card>
   );
@@ -318,7 +318,7 @@ function DisposalTab({ assetId, assetName, canDispose }: { assetId: string; asse
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{tx('Dispose "')}{assetName}"</DialogTitle></DialogHeader>
-          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, disposalValue: v.disposalValue ? Number(v.disposalValue) : undefined } }); notify.success(tx('Disposed')); setOpen(false); } catch (e: any) { notify.error(e?.response?.data?.message ?? 'Error'); } })} className="space-y-3">
+          <form onSubmit={form.handleSubmit(async (v) => { try { await create.mutateAsync({ assetId, data: { ...v, disposalValue: v.disposalValue ? Number(v.disposalValue) : undefined } }); notify.success(tx('Disposed')); setOpen(false); } catch (e: any) { notify.error(e?.response?.data?.message ?? tx('Error')); } })} className="space-y-3">
             <div><Label>{tx('Method')}</Label><Select value={form.watch('disposalMethod')} onValueChange={(v) => form.setValue('disposalMethod', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['sold', 'scrapped', 'donated', 'lost', 'stolen', 'destroyed'].map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>{tx('Date')}</Label><Input type="date" {...form.register('disposalDate')} /></div>
             <div><Label>{tx('Disposal Value')}</Label><Input type="number" step="0.01" {...form.register('disposalValue')} /></div>

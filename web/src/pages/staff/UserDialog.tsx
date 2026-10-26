@@ -19,16 +19,16 @@ import type { UserSummary } from '@/features/staff/types';
 import { tx } from '@/lib/i18n/tx';
 
 const createSchema = z.object({
-  email: z.string().email('Invalid email'),
-  password: z.string().min(10, 'At least 10 characters'),
-  firstName: z.string().min(1, 'Required').max(64),
+  email: z.string().email(tx('Invalid email')),
+  password: z.string().min(10, tx('At least 10 characters')),
+  firstName: z.string().min(1, tx('Required')).max(64),
   lastName: z.string().max(64).optional(),
   isActive: z.boolean(),
   roleIds: z.array(z.string()),
 });
 const updateSchema = z.object({
-  email: z.string().email('Invalid email'),
-  firstName: z.string().min(1, 'Required').max(64),
+  email: z.string().email(tx('Invalid email')),
+  firstName: z.string().min(1, tx('Required')).max(64),
   lastName: z.string().max(64).optional(),
   isActive: z.boolean(),
   roleIds: z.array(z.string()),
@@ -108,11 +108,11 @@ export function UserDialog({ open, onOpenChange, user }: UserDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit User' : 'New User'}</DialogTitle>
+          <DialogTitle>{isEdit ? tx('Edit User') : tx('New User')}</DialogTitle>
           <DialogDescription>
             {isEdit
-              ? 'Update name, email, status, or role assignments. Use "Reset password" from the list to issue a new password.'
-              : 'Create a staff account. The user will log in with the email and the initial password.'}
+              ? tx('Update name, email, status, or role assignments. Use "Reset password" from the list to issue a new password.')
+              : tx('Create a staff account. The user will log in with the email and the initial password.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -217,7 +217,7 @@ export function UserDialog({ open, onOpenChange, user }: UserDialogProps) {
               {tx('Cancel')}
             </Button>
             <Button type="submit" disabled={isPending}>
-              {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create user'}
+              {isPending ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create user')}
             </Button>
           </DialogFooter>
         </form>

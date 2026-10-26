@@ -104,7 +104,7 @@ export const LineDiscountDialog: React.FC<Props> = ({ open, line, onClose, onApp
         </div>
 
         <div>
-          <Label>{mode === 'percentage' ? 'Percent off (%)' : `Amount off (${orgCur()})`}</Label>
+          <Label>{mode === 'percentage' ? tx('Percent off (%)') : tx('Amount off ({{v1}})', { v1: orgCur() })}</Label>
           <Input
             type="number"
             value={value}
@@ -162,7 +162,7 @@ export const LineDiscountDialog: React.FC<Props> = ({ open, line, onClose, onApp
           <Button variant="ghost" onClick={onClose}>{tx('Cancel')}</Button>
           <Button
             onClick={() => {
-              if (!valid) { setErr(mode === 'percentage' ? 'Enter a percent between 0 and 100' : 'Enter a valid amount'); return; }
+              if (!valid) { setErr(mode === 'percentage' ? tx('Enter a percent between 0 and 100') : tx('Enter a valid amount')); return; }
               if (!reason.trim()) { setErr('A discount reason is required'); return; }
               onApply(line.lineId, num, mode, reason.trim());
               onClose();

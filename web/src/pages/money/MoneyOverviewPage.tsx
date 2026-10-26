@@ -32,7 +32,7 @@ function HowMoneyFlows({ bankName }: { bankName: string }) {
   const rows = new Map<string, { labels: string[]; to: string; then: string; connected: boolean }>();
   for (const m of active) {
     if (m.kind === 'cash') {
-      const r = rows.get('cash') ?? { labels: [], to: 'Drawer of the register taking the sale', then: `Counted at shift close, then banked to ${bankName}`, connected: true };
+      const r = rows.get('cash') ?? { labels: [], to: tx('Drawer of the register taking the sale'), then: `Counted at shift close, then banked to ${bankName}`, connected: true };
       r.labels.push(m.label);
       rows.set('cash', r);
       continue;
@@ -40,14 +40,14 @@ function HowMoneyFlows({ bankName }: { bankName: string }) {
     const key = m.accountId ?? `unmapped:${m.id}`;
     const r = rows.get(key) ?? {
       labels: [],
-      to: m.accountName ?? 'Not connected to an account',
-      then: m.kind === 'bank' ? 'Already in the bank' : `Settled to ${bankName} (fees recorded)`,
+      to: m.accountName ?? tx('Not connected to an account'),
+      then: m.kind === 'bank' ? tx('Already in the bank') : `Settled to ${bankName} (fees recorded)`,
       connected: !!m.accountId,
     };
     r.labels.push(m.label);
     rows.set(key, r);
   }
-  if (!rows.has('cash')) rows.set('cash', { labels: ['Cash'], to: 'Drawer of the register taking the sale', then: `Counted at shift close, then banked to ${bankName}`, connected: true });
+  if (!rows.has('cash')) rows.set('cash', { labels: ['Cash'], to: tx('Drawer of the register taking the sale'), then: `Counted at shift close, then banked to ${bankName}`, connected: true });
 
   return (
     <section className="rounded-xl border bg-card">
@@ -123,7 +123,7 @@ export function MoneyOverviewPage() {
       {isLoading ? (
         <div className="flex h-48 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
       ) : isError || !data ? (
-        <LoadError message="The overview could not be loaded." onRetry={() => refetch()} retrying={isFetching} />
+        <LoadError message={tx('The overview could not be loaded.')} onRetry={() => refetch()} retrying={isFetching} />
       ) : (
         <>
           {/* Where is the money now? */}
@@ -138,7 +138,7 @@ export function MoneyOverviewPage() {
                     <MoneyAmount value={data.totalAvailableBookBalance} currency={currency} />
                   </p>
                   <p className="mt-1 max-w-xl text-xs text-muted-foreground">
-                    What the books record across your cash, bank and mobile-money accounts — not all of it is ready to spend. Drawer cash is expected until counted at shift close, and card or mobile-money takings wait for the provider to settle.
+                    {tx('What the books record across your cash, bank and mobile-money accounts — not all of it is ready to spend. Drawer cash is expected until counted at shift close, and card or mobile-money takings wait for the provider to settle.')}
                     {branchCount > 1 ? <> {tx('Covers')} <strong className="font-medium text-foreground">{tx('all branches')}</strong>.</> : null}
                   </p>
                 </div>
@@ -164,7 +164,7 @@ export function MoneyOverviewPage() {
                   key={t.key}
                   label={t.label}
                   value={<MoneyAmount value={t.balance} currency={currency} />}
-                  hint={t.key === 'drawers' ? 'Expected, not yet counted' : `${t.accountCount} account${t.accountCount === 1 ? '' : 's'}`}
+                  hint={t.key === 'drawers' ? tx('Expected, not yet counted') : `${t.accountCount} account${t.accountCount === 1 ? '' : 's'}`}
                   onClick={() => navigate(t.key === 'drawers' ? '/pos/cash-registers' : `/accounts/cash-accounts/accounts?type=${t.key}`)}
                 >
                   <AccountTypeIcon type={t.key} className="mt-1 h-7 w-7" />
@@ -174,7 +174,7 @@ export function MoneyOverviewPage() {
                 <StatCard
                   label={tx('Cash awaiting banking')}
                   value={<MoneyAmount value={data.cashAwaitingBanking} currency={currency} />}
-                  hint="In drawers of closed shifts (part of Register drawers)"
+                  hint={tx('In drawers of closed shifts (part of Register drawers)')}
                   icon={Banknote}
                   onClick={() => navigate('/pos/cash-registers?tab=history')}
                 />
@@ -224,7 +224,7 @@ export function MoneyOverviewPage() {
                     <li key={r.sessionId} className="flex items-center justify-between gap-3 p-3 text-sm">
                       <div>
                         <p className="font-medium text-foreground">{r.registerName}</p>
-                        <p className="text-xs text-muted-foreground">{tx('Open ·')} {r.cashierName ?? 'Unknown cashier'} {tx('· since')} {new Date(r.openedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p className="text-xs text-muted-foreground">{tx('Open ·')} {r.cashierName ?? tx('Unknown cashier')} {tx('· since')} {new Date(r.openedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
                       </div>
                       <div className="text-right">
                         <MoneyAmount value={r.expectedCash} currency={currency} className="font-semibold" />
@@ -245,8 +245,8 @@ export function MoneyOverviewPage() {
               <div className="grid grid-cols-2 gap-3">
                 <StatCard label={tx('Money in')} value={<MoneyAmount value={data.today.externalIn} currency={currency} className="text-emerald-700 dark:text-emerald-400" />} hint={<>{tx('POS:')} <MoneyAmount value={data.today.posReceipts} currency={currency} /></>} onClick={() => navigate('/accounts/cash-accounts/activity?period=today&direction=in')} />
                 <StatCard label={tx('Money out')} value={<MoneyAmount value={data.today.externalOut} currency={currency} className="text-rose-700 dark:text-rose-400" />} onClick={() => navigate('/accounts/cash-accounts/activity?period=today&direction=out')} />
-                <StatCard label={tx('Moved between accounts')} value={<MoneyAmount value={data.today.internalMoved} currency={currency} />} hint="Does not change total money" onClick={() => navigate('/accounts/cash-accounts/activity?period=today&direction=internal')} />
-                <StatCard label={tx('Activities')} value={data.today.activityCount} hint={`Day and times in ${data.timezone}`} />
+                <StatCard label={tx('Moved between accounts')} value={<MoneyAmount value={data.today.internalMoved} currency={currency} />} hint={tx('Does not change total money')} onClick={() => navigate('/accounts/cash-accounts/activity?period=today&direction=internal')} />
+                <StatCard label={tx('Activities')} value={data.today.activityCount} hint={tx('Day and times in {{timezone}}', { timezone: data.timezone })} />
               </div>
             </section>
           </div>

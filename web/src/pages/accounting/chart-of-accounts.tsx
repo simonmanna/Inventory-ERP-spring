@@ -22,19 +22,19 @@ import { tx } from '@/lib/i18n/tx';
  * account-type-to-section map, which drifted from the server's.
  */
 const SECTION_LABELS: Record<string, string> = {
-  current_assets: 'Current Assets',
-  non_current_assets: 'Non-current Assets',
-  current_liabilities: 'Current Liabilities',
-  long_term_liabilities: 'Long-term Liabilities',
-  equity: 'Equity',
-  revenue: 'Revenue',
-  contra_revenue: 'Sales Discounts & Returns',
-  cogs: 'Cost of Sales',
-  operating_expense: 'Operating Expenses',
-  other_income: 'Other Income',
-  other_expense: 'Other Expenses',
-  off_balance: 'Off Balance Sheet',
-  uncategorized: 'Uncategorized',
+  current_assets: tx('Current Assets'),
+  non_current_assets: tx('Non-current Assets'),
+  current_liabilities: tx('Current Liabilities'),
+  long_term_liabilities: tx('Long-term Liabilities'),
+  equity: tx('Equity'),
+  revenue: tx('Revenue'),
+  contra_revenue: tx('Sales Discounts & Returns'),
+  cogs: tx('Cost of Sales'),
+  operating_expense: tx('Operating Expenses'),
+  other_income: tx('Other Income'),
+  other_expense: tx('Other Expenses'),
+  off_balance: tx('Off Balance Sheet'),
+  uncategorized: tx('Uncategorized'),
 };
 
 const SECTION_ORDER = [
@@ -253,7 +253,7 @@ export function ChartOfAccountsPage() {
                       <button
                         onClick={() => toggleExpand(a.id)}
                         className="flex-shrink-0 p-0.5 hover:bg-muted/30 rounded"
-                        aria-label={effectiveExpanded.has(a.id) ? 'Collapse' : 'Expand'}
+                        aria-label={effectiveExpanded.has(a.id) ? tx('Collapse') : tx('Expand')}
                       >
                         {effectiveExpanded.has(a.id)
                           ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
@@ -293,7 +293,7 @@ export function ChartOfAccountsPage() {
                   {/* Category */}
                   <div className="col-span-2 px-3 py-2 text-center">
                     <Badge variant="secondary" className="text-[10px] font-normal">
-                      {a.categoryName ?? 'Uncategorized'}
+                      {a.categoryName ?? tx('Uncategorized')}
                     </Badge>
                   </div>
 

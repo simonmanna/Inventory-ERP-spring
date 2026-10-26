@@ -12,6 +12,7 @@ import {
 import {
   LOCALE_LABELS,
   LOCALE_NAMES,
+  PICKER_LOCALES,
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from '@/lib/i18n/i18n';
@@ -40,12 +41,15 @@ export function LanguageSwitcher({ className }: { className?: string }) {
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuLabel>{t('language.label')}</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {SUPPORTED_LOCALES.map((lng) => (
+        {PICKER_LOCALES.map((lng) => (
           <DropdownMenuItem
             key={lng}
             className="cursor-pointer justify-between"
             onClick={() => {
-              void i18n.changeLanguage(lng);
+              if (lng === current) return;
+              // Reload so module-level label tables (sidebar, columns, status maps)
+              // re-evaluate tx() in the new language; the choice is cached in localStorage.
+              void i18n.changeLanguage(lng).then(() => window.location.reload());
             }}
           >
             <span>{LOCALE_NAMES[lng]}</span>

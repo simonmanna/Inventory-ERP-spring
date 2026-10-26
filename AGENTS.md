@@ -62,6 +62,9 @@ backend/                       Spring Boot app (Gradle). Package root com.invent
   .../<module>/application/    services (use cases, @Transactional), policies, calculators   <- you write
   .../<module>/web/            @RestController + request/response records + mappers         <- you write
   src/main/resources/db/migration/   V1 baseline (never edit), V2 reference rows, V3 platform, V4+ yours
+license-server/                Central licence authority (Spring Boot, own DB). NOT part of a
+                               customer's stack: the only place a signing private key exists.
+                               ADR-S002 + docs/spec/licensing.md
 web/                           React 18 + Vite client (copied unchanged from POS-CAFE)
 android/                       Kotlin offline-first POS (from POS-CAFE apps/android), syncs via /sync/pull|push
 packages/shared/               TS contract constants: permissions, events, enums, pagination (source of truth)
@@ -69,7 +72,7 @@ tools/prisma2jpa/              schema.prisma -> JPA entities/enums/repositories
 tools/contracts2java/          packages/shared -> Permissions.java, DomainEvents.java
 tools/extract-routes/          Nest controllers -> docs/spec/routes.json + docs/spec/generated/*.md
 contract-tests/                parity harness: same requests to Nest and Spring, JSON diff
-infra/docker/                  Dockerfile.api, Dockerfile.web, nginx.conf
+infra/docker/                  Dockerfile.api, Dockerfile.web, Dockerfile.license, nginx.conf
 reference/                     READ-ONLY NestJS source of truth
 ```
 
@@ -83,6 +86,8 @@ hr, manufacturing, rental, repair, orders, communication`. The Nest `school` mod
 ```bash
 docker compose up -d db                      # Postgres 16 on localhost:5434 (erp/erp)
 cd backend && ./gradlew build                # compile + all tests (needs Docker for Testcontainers)
+cd license-server && ./gradlew build         # the licence authority: compile + all tests
+docker compose --profile license up -d --build   # authority on http://localhost:3100 (our infra only)
 cd backend && ./gradlew bootRun              # API on http://localhost:3001/api/v1
 cd backend && ./gradlew test --tests '*Pos*' # subset
 pnpm install && pnpm web:dev                 # web on http://localhost:5173, proxies /api/v1 -> :3001

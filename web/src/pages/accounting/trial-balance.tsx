@@ -24,7 +24,7 @@ export function TrialBalancePage() {
         </div>
         {data && (
           <Badge variant={data.balanced ? 'default' : 'destructive'}>
-            {data.balanced ? 'Balanced' : 'Out of balance'}
+            {data.balanced ? tx('Balanced') : tx('Out of balance')}
           </Badge>
         )}
       </div>

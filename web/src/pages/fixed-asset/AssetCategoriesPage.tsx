@@ -19,15 +19,15 @@ import type { AssetCategory } from '@/features/fixed-asset/types';
 import { tx } from '@/lib/i18n/tx';
 
 const DEPR_METHODS = [
-  { value: 'straight_line', label: 'Straight Line' },
-  { value: 'declining_balance', label: 'Declining Balance' },
-  { value: 'double_declining', label: 'Double Declining' },
-  { value: 'units_of_production', label: 'Units of Production' },
-  { value: 'manual', label: 'Manual' },
+  { value: 'straight_line', label: tx('Straight Line') },
+  { value: 'declining_balance', label: tx('Declining Balance') },
+  { value: 'double_declining', label: tx('Double Declining') },
+  { value: 'units_of_production', label: tx('Units of Production') },
+  { value: 'manual', label: tx('Manual') },
 ];
 
 const schema = z.object({
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, tx('Name is required')),
   description: z.string().optional().or(z.literal('')),
   parentId: z.string().optional().or(z.literal('')),
   depreciationMethod: z.string().min(1),
@@ -85,19 +85,19 @@ export function AssetCategoriesPage() {
         notify.success(tx('Category created'));
       }
       setOpen(false);
-    } catch (err: any) { notify.error(err?.response?.data?.message ?? 'Error'); }
+    } catch (err: any) { notify.error(err?.response?.data?.message ?? tx('Error')); }
   };
 
   const confirmDelete = async () => {
     if (!deleting) return;
-    try { await deleteCat.mutateAsync(deleting.id); notify.success(tx('Category deleted')); setDeleting(null); } catch (err: any) { notify.error(err?.response?.data?.message ?? 'Error'); }
+    try { await deleteCat.mutateAsync(deleting.id); notify.success(tx('Category deleted')); setDeleting(null); } catch (err: any) { notify.error(err?.response?.data?.message ?? tx('Error')); }
   };
 
   const columns: Column<AssetCategory>[] = [
-    { key: 'name', header: 'Name' },
-    { key: 'depreciationMethod', header: 'Depreciation Method', render: (r) => <Badge variant="outline">{r.depreciationMethod?.replace(/_/g, ' ')}</Badge> },
-    { key: 'defaultUsefulLife', header: 'Useful Life (mo)', render: (r) => `${r.defaultUsefulLife ?? 60} mo` },
-    { key: '_count', header: 'Assets', render: (r) => r._count?.assets ?? 0 },
+    { key: 'name', header: tx('Name') },
+    { key: 'depreciationMethod', header: tx('Depreciation Method'), render: (r) => <Badge variant="outline">{r.depreciationMethod?.replace(/_/g, ' ')}</Badge> },
+    { key: 'defaultUsefulLife', header: tx('Useful Life (mo)'), render: (r) => `${r.defaultUsefulLife ?? 60} mo` },
+    { key: '_count', header: tx('Assets'), render: (r) => r._count?.assets ?? 0 },
     {
       key: 'actions', header: '', render: (r) => (
         <div className="flex gap-1">
@@ -118,7 +118,7 @@ export function AssetCategoriesPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Create'} {tx('Asset Category')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit') : tx('Create')} {tx('Asset Category')}</DialogTitle></DialogHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div><Label>{tx('Name')}</Label><Input {...form.register('name')} /></div>
             <div><Label>{tx('Description')}</Label><Input {...form.register('description')} /></div>
@@ -143,7 +143,7 @@ export function AssetCategoriesPage() {
             </div>
             <div><Label>{tx('Default Useful Life (months)')}</Label><Input type="number" {...form.register('defaultUsefulLife')} /></div>
             <div><Label>{tx('Default Residual Value')}</Label><Input type="number" step="0.01" {...form.register('defaultResidualValue')} /></div>
-            <DialogFooter><Button type="submit">{editing ? 'Update' : 'Create'}</Button></DialogFooter>
+            <DialogFooter><Button type="submit">{editing ? tx('Update') : tx('Create')}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

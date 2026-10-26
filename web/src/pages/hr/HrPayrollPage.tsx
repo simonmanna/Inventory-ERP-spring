@@ -74,7 +74,7 @@ export function HrPayrollPage() {
                     <p className="text-sm font-medium">{r.runNumber} · {r.period?.periodCode}</p>
                     <p className="text-xs text-muted-foreground">
                       {tx('Net')} {fmt(r.totalNet)} · {r._count?.items ?? 0} {tx('employees')}
-                      {r.glPosted ? ' · GL posted' : ''}
+                      {r.glPosted ? tx(' · GL posted') : ''}
                     </p>
                   </div>
                 </button>
@@ -82,7 +82,7 @@ export function HrPayrollPage() {
                   {r.status === 'DRAFT' && <Button size="sm" variant="outline" onClick={() => calculate.mutate(r.id)}>{tx('Calculate')}</Button>}
                   {r.status === 'CALCULATED' && <Button size="sm" onClick={() => approve.mutate(r.id)}>{tx('Approve & post')}</Button>}
                   {r.status === 'APPROVED' && (
-                    <Button size="sm" variant="outline" onClick={() => { if (confirm('Reverse this run and void its GL entry?')) reverse.mutate({ id: r.id }); }}>{tx('Reverse')}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { if (confirm(tx('Reverse this run and void its GL entry?'))) reverse.mutate({ id: r.id }); }}>{tx('Reverse')}</Button>
                   )}
                   <Badge variant="outline" className={RUN_STATUS[r.status] ?? ''}>{r.status.replace(/_/g, ' ')}</Badge>
                 </div>
@@ -143,8 +143,8 @@ export function HrPayrollPage() {
                     <p className="text-sm font-semibold">{fmt(it.netPay)}</p>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {tx('Base')} {fmt(it.baseSalary)}{it.overtimeHours > 0 ? ` · OT ${it.overtimeHours}h` : ''}{it.absenceDays > 0 ? ` · absent ${it.absenceDays}d` : ''}
-                    {' · '}tax {fmt(it.taxAmount)}{it.pensionAmount > 0 ? ` · pension ${fmt(it.pensionAmount)}` : ''}{it.socialSecurityAmount > 0 ? ` · SSF ${fmt(it.socialSecurityAmount)}` : ''}
+                    {tx('Base')} {fmt(it.baseSalary)}{it.overtimeHours > 0 ? tx(' · OT {{overtimeHours}}h', { overtimeHours: it.overtimeHours }) : ''}{it.absenceDays > 0 ? tx(' · absent {{absenceDays}}d', { absenceDays: it.absenceDays }) : ''}
+                    {' · '}{tx('tax')} {fmt(it.taxAmount)}{it.pensionAmount > 0 ? tx(' · pension {{v1}}', { v1: fmt(it.pensionAmount) }) : ''}{it.socialSecurityAmount > 0 ? tx(' · SSF {{v1}}', { v1: fmt(it.socialSecurityAmount) }) : ''}
                   </p>
                 </div>
               ))}

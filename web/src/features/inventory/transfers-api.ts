@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
+import { tx } from '@/lib/i18n/tx';
 
 export interface StockTransferItem {
   id: string;
@@ -61,10 +62,10 @@ export function useCreateTransfer() {
       return res.data;
     },
     onSuccess: () => {
-      notify.success('Transfer created');
+      notify.success(tx('Transfer created'));
       qc.invalidateQueries({ queryKey: ['inventory-transfers'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed to create transfer'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to create transfer')),
   });
 }
 
@@ -76,13 +77,13 @@ export function useApproveTransfer() {
       return res.data;
     },
     onSuccess: (d: StockTransfer) => {
-      notify.success(d?.mode === 'transit' ? 'Transfer approved — dispatch it when the goods leave' : 'Transfer approved');
+      notify.success(d?.mode === 'transit' ? tx('Transfer approved — dispatch it when the goods leave') : tx('Transfer approved'));
       qc.invalidateQueries({ queryKey: ['inventory-transfers'] });
       qc.invalidateQueries({ queryKey: ['inventory-product-stock-levels'] });
       qc.invalidateQueries({ queryKey: ['inventory-stats'] });
       qc.invalidateQueries({ queryKey: ['inventory-ledger'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed to approve transfer'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to approve transfer')),
   });
 }
 
@@ -92,12 +93,12 @@ export function useReverseTransfer() {
     mutationFn: async (v: { id: string; reason: string }) =>
       (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/reverse`, { reason: v.reason })).data,
     onSuccess: (d) => {
-      notify.success(`${d.transferCode} reversed — stock moved back`);
+      notify.success(tx('{{transferCode}} reversed — stock moved back', { transferCode: d.transferCode }));
       for (const key of ['inventory-transfers', 'inventory-product-stock-levels', 'inventory-stats', 'inventory-ledger']) {
         qc.invalidateQueries({ queryKey: [key] });
       }
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed to reverse transfer'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to reverse transfer')),
   });
 }
 
@@ -141,7 +142,7 @@ export function useDispatchTransfer() {
   return useTransferAction(
     async (id: string) => (await api.post<StockTransfer>(`/inventory/transfers/${id}/dispatch`)).data,
     (d) => `${d.transferCode} dispatched — stock is now in transit`,
-    'Failed to dispatch transfer',
+    tx('Failed to dispatch transfer'),
   );
 }
 
@@ -150,7 +151,7 @@ export function useReceiveTransfer() {
     async (v: { id: string; lines: ReceiveTransferLine[]; notes?: string }) =>
       (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/receive`, { lines: v.lines, notes: v.notes })).data,
     (d) => (d.status === 'completed' ? `${d.transferCode} fully received` : `${d.transferCode} partially received`),
-    'Failed to receive transfer',
+    tx('Failed to receive transfer'),
   );
 }
 
@@ -159,7 +160,7 @@ export function useRecallTransfer() {
     async (v: { id: string; reason: string }) =>
       (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/recall`, { reason: v.reason })).data,
     (d) => `${d.transferCode} recalled — in-transit stock returned to source`,
-    'Failed to recall transfer',
+    tx('Failed to recall transfer'),
   );
 }
 
@@ -167,6 +168,6 @@ export function useCancelTransfer() {
   return useTransferAction(
     async (id: string) => (await api.post<StockTransfer>(`/inventory/transfers/${id}/cancel`)).data,
     (d) => `${d.transferCode} cancelled`,
-    'Failed to cancel transfer',
+    tx('Failed to cancel transfer'),
   );
 }

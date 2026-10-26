@@ -11,6 +11,6 @@ export function SessionReconciliation({ sessionId }: { sessionId?: string }) {
     <p>{data.unsettledOrders} {tx('open orders ·')} {data.pendingPayments} {tx('pending payments ·')} {data.pendingPostings} {tx('pending stock postings')}</p>
     {(data.issues ?? []).map((issue: string) => <p key={issue} className="text-red-700">{issue}</p>)}
     <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr className="text-left"><th>{tx('Account')}</th><th>{tx('Received')}</th><th>{tx('Refunded')}</th><th>{tx('Net collection')}</th></tr></thead><tbody>{(data.accounts ?? []).map((a: any) => <tr key={a.accountId}><td>{a.name}</td><td>{Number(a.receipts).toLocaleString()}</td><td>{Number(a.refunds).toLocaleString()}</td><td>{Number(a.net).toLocaleString()}</td></tr>)}</tbody></table></div>
-    <p className="text-xs text-slate-500">House-account credit stays in receivables. Bank and wallet settlement is recorded under Money &amp; Accounts → Settlements.</p>
+    <p className="text-xs text-slate-500">{tx('House-account credit stays in receivables. Bank and wallet settlement is recorded under Money & Accounts → Settlements.')}</p>
   </div>;
 }

@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 
@@ -179,7 +180,7 @@ public class VendorBillService {
             throw ApiException.badRequest("Only draft bills can be edited");
         }
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
-        Totals totals = builder.prepareLines(dto.lines());
+        Totals totals = builder.prepareLines(dto.lines(), UnitRole.PURCHASE);
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"currencyId\" = ?,"
                         + " reference = ?, notes = ?, subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?,"
                         + " \"totalAmount\" = ?, \"amountResidual\" = ?, \"updatedAt\" = " + NOW

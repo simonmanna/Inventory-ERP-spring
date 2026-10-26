@@ -36,9 +36,9 @@ export function ExportMenu<T>({
       const { rows, truncated } = await fetchAll();
       if (!rows.length) return notify.info(tx('Nothing to export'));
       write(rows);
-      if (truncated) notify.warning(`Export capped at ${rows.length.toLocaleString()} rows`, 'Narrow the filters to export the rest.');
+      if (truncated) notify.warning(tx('Export capped at {{v1}} rows', { v1: rows.length.toLocaleString() }), tx('Narrow the filters to export the rest.'));
     } catch (e) {
-      notify.error(tx('Export failed'), apiMessage(e, 'Could not load the rows to export.'));
+      notify.error(tx('Export failed'), apiMessage(e, tx('Could not load the rows to export.')));
     } finally {
       setBusy(false);
     }
@@ -62,7 +62,7 @@ export function ExportMenu<T>({
           <FileSpreadsheet className="mr-2 h-4 w-4 text-emerald-600" /> {tx('CSV (Excel)')}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => run('pdf', 'all')}>
-          <FileText className="mr-2 h-4 w-4 text-rose-600" /> PDF
+          <FileText className="mr-2 h-4 w-4 text-rose-600" /> {tx('PDF')}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-xs text-muted-foreground">
@@ -72,7 +72,7 @@ export function ExportMenu<T>({
           <FileSpreadsheet className="mr-2 h-4 w-4 text-emerald-600" /> {tx('CSV (Excel)')}
         </DropdownMenuItem>
         <DropdownMenuItem disabled={!pageRows.length} onClick={() => run('pdf', 'page')}>
-          <FileText className="mr-2 h-4 w-4 text-rose-600" /> PDF
+          <FileText className="mr-2 h-4 w-4 text-rose-600" /> {tx('PDF')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

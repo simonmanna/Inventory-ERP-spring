@@ -1,5 +1,6 @@
 package com.poscafe.pos.ui.screens
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -17,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -28,9 +30,11 @@ import com.poscafe.pos.data.local.dao.RegisterDao
 import com.poscafe.pos.data.local.entity.CashRegisterEntity
 import com.poscafe.pos.data.repo.AuthRepository
 import com.poscafe.pos.data.repo.CashSessionRepository
+import com.poscafe.pos.data.repo.SyncRepository
 import com.poscafe.pos.sync.SyncWorker
 import com.poscafe.pos.ui.components.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -42,8 +46,14 @@ class MoreViewModel @Inject constructor(
     private val registerDao: RegisterDao,
     opQueue: OpQueueDao,
     private val auth: AuthRepository,
+    private val sync: SyncRepository,
+    @ApplicationContext private val context: Context,
     val config: DeviceConfig,
 ) : ViewModel() {
+    companion object {
+        const val DEVICE_PERMISSION = "organization:update"
+    }
+
     val session = sessions.openSession().stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val queued = opQueue.queuedCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val failed = opQueue.failedCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -118,6 +128,47 @@ class MoreViewModel @Inject constructor(
         }
     }
 
+    var serverError by mutableStateOf<String?>(null); private set
+    var serverBusy by mutableStateOf(false); private set
+
+    /** Device settings need a manager PIN holding the permission the back office uses to register devices. */
+    private suspend fun requireDeviceManager(pin: String): Boolean {
+        val ok = auth.verifyPinFor(pin, DEVICE_PERMISSION).isSuccess
+        if (!ok) serverError = "Manager PIN with $DEVICE_PERMISSION required"
+        return ok
+    }
+
+    fun changeServer(url: String, pin: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            serverBusy = true; serverError = null
+            try {
+                if (!requireDeviceManager(pin)) return@launch
+                serverError = sync.changeServer(url)
+                if (serverError == null) {
+                    SyncWorker.syncNow(context)
+                    onDone()
+                }
+            } finally {
+                serverBusy = false
+            }
+        }
+    }
+
+    fun reenroll(pin: String) {
+        viewModelScope.launch {
+            serverBusy = true; serverError = null
+            try {
+                if (requireDeviceManager(pin)) sync.startReenroll()
+            } finally {
+                serverBusy = false
+            }
+        }
+    }
+
+    fun clearServerError() {
+        serverError = null
+    }
+
     fun savePrinter(host: String?) {
         config.printerHost = host?.trim()?.takeIf { it.isNotBlank() }
     }
@@ -153,6 +204,7 @@ fun MoreScreen(
     var showClose by remember { mutableStateOf(false) }
     var showMovement by remember { mutableStateOf<String?>(null) } // "pay_in" | "pay_out"
     var showChangePin by remember { mutableStateOf(false) }
+    var showServer by remember { mutableStateOf(false) }
 
     LaunchedEffect(session?.id) { vm.refreshXReport() }
 
@@ -271,6 +323,14 @@ fun MoreScreen(
                 KVRow("Device ID", vm.config.deviceId?.take(12)?.plus("…") ?: "—")
                 Spacer(Modifier.height(4.dp))
                 SecondaryButton("Change PIN", { showChangePin = true }, Modifier.fillMaxWidth(), height = 44.dp)
+                if (!vm.config.standalone) {
+                    SecondaryButton(
+                        "Server address…",
+                        { vm.clearServerError(); showServer = true },
+                        Modifier.fillMaxWidth(),
+                        height = 44.dp,
+                    )
+                }
             }
         }
 
@@ -307,6 +367,17 @@ fun MoreScreen(
         )
     }
 
+    if (showServer) {
+        ServerDialog(
+            current = vm.config.serverUrl?.removeSuffix("/") ?: "",
+            busy = vm.serverBusy,
+            error = vm.serverError,
+            onSave = { url, pin -> vm.changeServer(url, pin) { showServer = false } },
+            onReenroll = { pin -> vm.reenroll(pin) },
+            onDismiss = { showServer = false },
+        )
+    }
+
     if (showChangePin) {
         ChangePinDialog(
             onSave = { current, newPin -> vm.changePin(current, newPin) },
@@ -314,6 +385,60 @@ fun MoreScreen(
             vm = vm,
         )
     }
+}
+
+/**
+ * Change the server address (checked against the server before saving) or
+ * start a re-enrolment. Both need a manager PIN: the device token goes to
+ * whatever address is entered here.
+ */
+@Composable
+private fun ServerDialog(
+    current: String,
+    busy: Boolean,
+    error: String?,
+    onSave: (url: String, pin: String) -> Unit,
+    onReenroll: (pin: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember { mutableStateOf(current) }
+    var pin by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Server address") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("API URL, e.g. http://192.168.1.10:8080/api/v1") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { v -> pin = v.filter { it.isDigit() }.take(8) },
+                    label = { Text("Manager PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                TextButton(onClick = { onReenroll(pin) }, enabled = !busy && pin.length >= 4) {
+                    Text("Re-enroll this device…")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(url, pin) }, enabled = !busy && url.isNotBlank() && pin.length >= 4) {
+                Text("Test & save")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } },
+    )
 }
 
 @Composable

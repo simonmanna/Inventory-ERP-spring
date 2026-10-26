@@ -61,7 +61,7 @@ export function HrHolidaysPage() {
                 <div className="flex items-center gap-2">
                   {h.isRecurring && <Badge variant="outline" className="bg-cyan-100 text-cyan-800">{tx('Recurring yearly')}</Badge>}
                   <button onClick={() => openEdit(h)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                  <button onClick={() => { if (confirm(`Delete holiday ${h.name}?`)) remove.mutate(h.id); }}
+                  <button onClick={() => { if (confirm(tx('Delete holiday {{name}}?', { name: h.name }))) remove.mutate(h.id); }}
                     className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                 </div>
               </div>
@@ -72,7 +72,7 @@ export function HrHolidaysPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit holiday' : 'New holiday'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit holiday') : tx('New holiday')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <div>
               <Label>{tx('Name *')}</Label>
@@ -87,7 +87,7 @@ export function HrHolidaysPage() {
               {tx('Repeats every year')}
             </label>
             <Button onClick={submit} disabled={!form.name || !form.date || create.isPending || update.isPending}>
-              {editing ? 'Save changes' : 'Create holiday'}
+              {editing ? tx('Save changes') : tx('Create holiday')}
             </Button>
           </div>
         </DialogContent>

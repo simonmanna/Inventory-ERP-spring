@@ -97,7 +97,7 @@ export function ManufacturingResourcesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setWcOpen(false)}>{tx('Cancel')}</Button>
-            <Button onClick={() => run(() => createWc.mutateAsync({ code: wcCode, name: wcName }), 'Work centre created.', () => { setWcOpen(false); setWcCode(''); setWcName(''); })}>{tx('Create')}</Button>
+            <Button onClick={() => run(() => createWc.mutateAsync({ code: wcCode, name: wcName }), tx('Work centre created.'), () => { setWcOpen(false); setWcCode(''); setWcName(''); })}>{tx('Create')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -126,7 +126,7 @@ export function ManufacturingResourcesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setResOpen(false)}>{tx('Cancel')}</Button>
-            <Button onClick={() => run(() => createRes.mutateAsync({ name: resName, kind: resKind, workCenterId: resWc || undefined, costPerHour: Number(resCost) || 0, capacityMinsPerDay: resCap ? Number(resCap) : undefined }), 'Resource created.', () => { setResOpen(false); setResName(''); setResCost('0'); setResCap(''); setResWc(''); })}>{tx('Create')}</Button>
+            <Button onClick={() => run(() => createRes.mutateAsync({ name: resName, kind: resKind, workCenterId: resWc || undefined, costPerHour: Number(resCost) || 0, capacityMinsPerDay: resCap ? Number(resCap) : undefined }), tx('Resource created.'), () => { setResOpen(false); setResName(''); setResCost('0'); setResCap(''); setResWc(''); })}>{tx('Create')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

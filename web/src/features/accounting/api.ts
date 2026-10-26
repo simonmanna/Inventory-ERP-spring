@@ -3,6 +3,7 @@ import type { PaginatedResult } from '@erp/shared';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
+import { tx } from '@/lib/i18n/tx';
 
 /** Accounting behavior of an account. Modules resolve accounts by `key`. */
 export interface AccountCategory {
@@ -124,10 +125,10 @@ export function useCreateAccountCategory() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['account-categories'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      notify.success('Account category created');
+      notify.success(tx('Account category created'));
     },
     onError: (e: any) =>
-      notify.error('Failed to create category', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to create category'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -139,10 +140,10 @@ export function useUpdateAccountCategory() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['account-categories'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      notify.success('Account category updated');
+      notify.success(tx('Account category updated'));
     },
     onError: (e: any) =>
-      notify.error('Failed to update category', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to update category'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -152,10 +153,10 @@ export function useDeleteAccountCategory() {
     mutationFn: async (id: string) => (await api.delete(`/account-categories/${id}`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['account-categories'] });
-      notify.success('Account category deleted');
+      notify.success(tx('Account category deleted'));
     },
     onError: (e: any) =>
-      notify.error('Failed to delete category', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to delete category'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -194,10 +195,10 @@ export function useCreateAccount() {
     }) => (await api.post<Account>('/accounts', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      notify.success('Account created');
+      notify.success(tx('Account created'));
     },
     onError: (e: any) =>
-      notify.error('Failed to create account', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to create account'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -224,10 +225,10 @@ export function useUpdateAccount() {
     }) => (await api.patch<Account>(`/accounts/${id}`, input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] });
-      notify.success('Account updated');
+      notify.success(tx('Account updated'));
     },
     onError: (e: any) =>
-      notify.error('Failed to update account', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to update account'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -596,8 +597,8 @@ export function useCreateFiscalPeriod() {
   return useMutation({
     mutationFn: async (input: { name: string; startDate: string; endDate: string }) =>
       (await api.post<FiscalPeriod>('/fiscal-periods', input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success('Period created'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period created')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -605,8 +606,8 @@ export function useClosePeriod() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/close`)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success('Period closed'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period closed')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -614,8 +615,8 @@ export function useReopenPeriod() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/reopen`)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success('Period reopened'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period reopened')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -623,8 +624,8 @@ export function useLockPeriod() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/lock`)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success('Period locked'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period locked')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -656,8 +657,8 @@ export function useCreateTax() {
   return useMutation({
     mutationFn: async (input: Partial<Tax>) =>
       (await api.post<Tax>('/taxes', input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success('Tax created'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax created')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -666,8 +667,8 @@ export function useUpdateTax() {
   return useMutation({
     mutationFn: async ({ id, ...input }: { id: string } & Partial<Tax>) =>
       (await api.patch(`/taxes/${id}`, input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success('Tax updated'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax updated')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -675,8 +676,8 @@ export function useDeleteTax() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => api.delete(`/taxes/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success('Tax deleted'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax deleted')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -703,8 +704,8 @@ export function useCreateCostCenter() {
   return useMutation({
     mutationFn: async (input: { code: string; name: string; type?: string }) =>
       (await api.post<CostCenter>('/cost-centers', input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success('Cost center created'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success(tx('Cost center created')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -713,8 +714,8 @@ export function useUpdateCostCenter() {
   return useMutation({
     mutationFn: async ({ id, ...input }: { id: string; code?: string; name?: string; type?: string; isActive?: boolean }) =>
       (await api.patch(`/cost-centers/${id}`, input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success('Updated'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success(tx('Updated')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -722,8 +723,8 @@ export function useDeleteCostCenter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => api.delete(`/cost-centers/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success('Deleted'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cost-centers'] }); notify.success(tx('Deleted')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -765,8 +766,8 @@ export function useCreateCurrencyRate() {
   return useMutation({
     mutationFn: async (input: { fromCode: string; toCode: string; rate: number; asOf?: string }) =>
       (await api.post<CurrencyRate>('/currencies/rates', input)).data,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['currency-rates'] }); notify.success('Rate added'); },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['currency-rates'] }); notify.success(tx('Rate added')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -928,9 +929,9 @@ export function useCreateJournal() {
     }) => (await api.post<Journal>('/journals', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['journals'] });
-      notify.success('Journal created');
+      notify.success(tx('Journal created'));
     },
-    onError: (e: any) => notify.error('Failed to create journal', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed to create journal'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -950,9 +951,9 @@ export function useUpdateJournal() {
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: ['journals'] });
       qc.invalidateQueries({ queryKey: ['journal', vars.id] });
-      notify.success('Journal updated');
+      notify.success(tx('Journal updated'));
     },
-    onError: (e: any) => notify.error('Failed to update journal', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed to update journal'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -962,9 +963,9 @@ export function useDeleteJournal() {
     mutationFn: async (id: string) => (await api.delete(`/journals/${id}`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['journals'] });
-      notify.success('Journal deleted');
+      notify.success(tx('Journal deleted'));
     },
-    onError: (e: any) => notify.error('Failed to delete journal', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed to delete journal'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1374,9 +1375,9 @@ export interface PaymentTermInput {
 
 /** Method display labels + due-date hints shared by the page and pickers. */
 export const PAYMENT_METHOD_LABELS: Record<PaymentTermMethod, string> = {
-  immediate: 'Immediate Payment',
-  net_days: 'Days after invoice date',
-  end_of_following_month: 'End of following month',
+  immediate: tx('Immediate Payment'),
+  net_days: tx('Days after invoice date'),
+  end_of_following_month: tx('End of following month'),
 };
 
 export function usePaymentTerms() {
@@ -1400,9 +1401,9 @@ export function useCreatePaymentTerm() {
     mutationFn: async (input: PaymentTermInput) => (await api.post<PaymentTerm>('/payment-terms', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payment-terms'] });
-      notify.success('Payment term created');
+      notify.success(tx('Payment term created'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1413,9 +1414,9 @@ export function useUpdatePaymentTerm() {
       (await api.patch<PaymentTerm>(`/payment-terms/${id}`, input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payment-terms'] });
-      notify.success('Payment term updated');
+      notify.success(tx('Payment term updated'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1426,9 +1427,9 @@ export function useArchivePaymentTerm() {
     mutationFn: async (id: string) => (await api.delete(`/payment-terms/${id}`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payment-terms'] });
-      notify.success('Payment term archived');
+      notify.success(tx('Payment term archived'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1438,9 +1439,9 @@ export function useRestorePaymentTerm() {
     mutationFn: async (id: string) => (await api.patch(`/payment-terms/${id}/restore`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['payment-terms'] });
-      notify.success('Payment term restored');
+      notify.success(tx('Payment term restored'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1487,9 +1488,9 @@ export function useCreateFiscalPosition() {
       (await api.post<FiscalPosition>('/fiscal-positions', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fiscal-positions'] });
-      notify.success('Fiscal position created');
+      notify.success(tx('Fiscal position created'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1500,9 +1501,9 @@ export function useUpdateFiscalPosition() {
       (await api.patch<FiscalPosition>(`/fiscal-positions/${id}`, input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fiscal-positions'] });
-      notify.success('Fiscal position updated');
+      notify.success(tx('Fiscal position updated'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1513,9 +1514,9 @@ export function useArchiveFiscalPosition() {
     mutationFn: async (id: string) => (await api.delete(`/fiscal-positions/${id}`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fiscal-positions'] });
-      notify.success('Fiscal position archived');
+      notify.success(tx('Fiscal position archived'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -1525,9 +1526,9 @@ export function useRestoreFiscalPosition() {
     mutationFn: async (id: string) => (await api.patch(`/fiscal-positions/${id}/restore`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fiscal-positions'] });
-      notify.success('Fiscal position restored');
+      notify.success(tx('Fiscal position restored'));
     },
-    onError: (e: any) => notify.error('Failed', e?.response?.data?.message ?? e.message),
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }
 

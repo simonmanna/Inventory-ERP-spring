@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth.store';
+import { tx } from '@/lib/i18n/tx';
 
 /**
  * Org base currency, set in Settings → Company. Never guesses a currency: when
@@ -56,10 +57,10 @@ export function relativeTime(value?: string | Date | null): string {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  not_paid: 'Not paid',
-  partial: 'Partial',
-  paid: 'Paid',
-  overpaid: 'Overpaid',
+  not_paid: tx('Not paid'),
+  partial: tx('Partial'),
+  paid: tx('Paid'),
+  overpaid: tx('Overpaid'),
 };
 
 export function statusLabel(value?: string | null): string {

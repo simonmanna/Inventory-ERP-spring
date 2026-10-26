@@ -99,7 +99,7 @@ export function RentalReportsPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-medium">{fmt(u.lineTotal ?? u.unitRate ?? 0)}</p>
-                  <p className="text-xs text-muted-foreground">due {u.dueAt ? date(u.dueAt) : '—'}</p>
+                  <p className="text-xs text-muted-foreground">{tx('due')} {u.dueAt ? date(u.dueAt) : '—'}</p>
                 </div>
               </div>
             ))}

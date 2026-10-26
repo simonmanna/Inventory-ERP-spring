@@ -11,14 +11,14 @@ import { tx } from '@/lib/i18n/tx';
 const fmt = (n: number | string) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
 const STATUS_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'draft', label: 'Draft' },
-  { value: 'pending_approval', label: 'Pending approval' },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'checked_out', label: 'Checked out' },
-  { value: 'overdue', label: 'Overdue' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: '', label: tx('All') },
+  { value: 'draft', label: tx('Draft') },
+  { value: 'pending_approval', label: tx('Pending approval') },
+  { value: 'confirmed', label: tx('Confirmed') },
+  { value: 'checked_out', label: tx('Checked out') },
+  { value: 'overdue', label: tx('Overdue') },
+  { value: 'closed', label: tx('Closed') },
+  { value: 'cancelled', label: tx('Cancelled') },
 ];
 
 const STATUS_STYLES: Record<string, string> = {

@@ -117,7 +117,7 @@ export const MoveItemsDialog: React.FC<Props> = ({
         <DialogHeader className="bg-gradient-to-r from-pink-500 to-pink-700 text-white p-4">
           <DialogTitle className="text-white text-base font-bold flex items-center gap-2">
             <ArrowRightLeft className="h-4 w-4" />
-            {step === 1 ? 'Move Items — Select Items' : 'Move to Table'}
+            {step === 1 ? tx('Move Items — Select Items') : tx('Move to Table')}
           </DialogTitle>
         </DialogHeader>
 
@@ -136,7 +136,7 @@ export const MoveItemsDialog: React.FC<Props> = ({
                       className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 w-full text-left px-1 py-1 rounded"
                     >
                       {allChecked ? <CheckSquare className="h-4 w-4 text-pink-600" /> : <Square className="h-4 w-4" />}
-                      {allChecked ? 'Deselect all' : 'Select all'}
+                      {allChecked ? tx('Deselect all') : tx('Select all')}
                     </button>
                   )}
 
@@ -161,7 +161,7 @@ export const MoveItemsDialog: React.FC<Props> = ({
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-slate-800 truncate">{line.name}</div>
                           {line.note && <div className="text-[11px] text-slate-400 truncate">{line.note}</div>}
-                          <div className="text-xs text-slate-500">{orgCur()} {Number(line.unitPrice).toLocaleString()} ea</div>
+                          <div className="text-xs text-slate-500">{orgCur()} {Number(line.unitPrice).toLocaleString()} {tx('ea')}</div>
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
@@ -191,7 +191,7 @@ export const MoveItemsDialog: React.FC<Props> = ({
                         </div>
 
                         {checked && (
-                          <div className="text-[10px] text-slate-400 w-10 text-right shrink-0">of {max}</div>
+                          <div className="text-[10px] text-slate-400 w-10 text-right shrink-0">{tx('of')} {max}</div>
                         )}
                       </div>
                     );
@@ -265,7 +265,7 @@ export const MoveItemsDialog: React.FC<Props> = ({
                 disabled={!targetId || busy}
                 className="bg-pink-600 hover:bg-pink-700 text-white"
               >
-                <ArrowRightLeft className="h-4 w-4 mr-1" /> {busy ? 'Moving…' : 'Move Items'}
+                <ArrowRightLeft className="h-4 w-4 mr-1" /> {busy ? tx('Moving…') : tx('Move Items')}
               </Button>
             </DialogFooter>
           </>

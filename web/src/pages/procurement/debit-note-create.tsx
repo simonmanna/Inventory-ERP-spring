@@ -8,12 +8,18 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { UnitSelect } from '@/components/unit-select';
+import { defaultUnitId, unitPrice, type UnitAwareProduct } from '@/features/products/units';
 
 interface Partner { id: string; name: string; code: string }
-interface Product { id: string; name: string; code: string; salesPrice?: number; costPrice?: number; taxId?: string }
+interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
 interface Location { id: string; name: string; code: string; type?: string }
 
-interface Line { productId?: string; description: string; quantity: number; unitPrice: number; taxId?: string }
+interface Line {
+  productId?: string; description: string; quantity: number; unitPrice: number; taxId?: string;
+  /** Unit the returned quantity is in (ADR-S003); defaults to the product's purchase unit. */
+  uomId?: string;
+}
 
 export function DebitNoteCreatePage() {
   const navigate = useNavigate();
@@ -53,11 +59,11 @@ export function DebitNoteCreatePage() {
         lines: lines.filter((l) => l.description && l.quantity > 0),
       })).data,
     onSuccess: (data: any) => {
-      notify.success(`Debit note ${data.noteNumber} created`);
+      notify.success(tx('Debit note {{noteNumber}} created', { noteNumber: data.noteNumber }));
       qc.invalidateQueries({ queryKey: ['debit-notes'] });
       navigate('/procurement/debit-notes');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
@@ -74,7 +80,15 @@ export function DebitNoteCreatePage() {
       quantity: next[idx].quantity || 1,
       unitPrice: Number(product.salesPrice ?? product.costPrice ?? 0),
       taxId: product.taxId,
+      uomId: defaultUnitId(product, 'purchase'),
     };
+    setLines(next);
+  };
+  const pickUnit = (idx: number, uomId: string) => {
+    const product = products.data?.find((p) => p.id === lines[idx].productId);
+    const price = unitPrice(product, uomId, 'purchase');
+    const next = [...lines];
+    next[idx] = { ...next[idx], uomId, unitPrice: price ?? next[idx].unitPrice };
     setLines(next);
   };
 
@@ -176,7 +190,7 @@ export function DebitNoteCreatePage() {
                     ))}
                   </select>
                 </div>
-                <div className="md:col-span-4">
+                <div className="md:col-span-3">
                   <Input
                     placeholder={tx('Description')}
                     value={ln.description}
@@ -196,6 +210,14 @@ export function DebitNoteCreatePage() {
                       next[idx] = { ...next[idx], quantity: Number(e.target.value) };
                       setLines(next);
                     }}
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <UnitSelect
+                    product={products.data?.find((p) => p.id === ln.productId)}
+                    role="purchase"
+                    value={ln.uomId}
+                    onChange={(uomId) => pickUnit(idx, uomId)}
                   />
                 </div>
                 <div className="md:col-span-2">

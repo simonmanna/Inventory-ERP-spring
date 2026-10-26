@@ -12,6 +12,7 @@
  * Persisted to localStorage; index.html applies it before first paint.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { tx } from '@/lib/i18n/tx';
 
 export type SidebarThemeKey = 'luxurySky' | 'lightCharcoal';
 
@@ -52,7 +53,7 @@ export const SIDEBAR_THEMES: Record<SidebarThemeKey, SidebarTheme> = {
   luxurySky: {
     key: 'luxurySky',
     dataTheme: 'sky',
-    label: 'Luxury Sky',
+    label: tx('Luxury Sky'),
     swatch: 'linear-gradient(135deg, #7dd3fc 0%, #0284c7 55%, #0b2545 100%)',
     sidebar: 'linear-gradient(180deg, #0b2545 0%, #0c3a66 52%, #0d5689 100%)',
     sidebarBorder: 'rgba(186, 230, 253, 0.12)',
@@ -71,7 +72,7 @@ export const SIDEBAR_THEMES: Record<SidebarThemeKey, SidebarTheme> = {
   lightCharcoal: {
     key: 'lightCharcoal',
     dataTheme: 'charcoal',
-    label: 'Light Charcoal',
+    label: tx('Light Charcoal'),
     swatch: 'linear-gradient(135deg, #b9b7b1 0%, #4a4d52 55%, #1f2023 100%)',
     sidebar: 'linear-gradient(180deg, #3a3d42 0%, #303236 52%, #26282b 100%)',
     sidebarBorder: 'rgba(255, 255, 255, 0.08)',

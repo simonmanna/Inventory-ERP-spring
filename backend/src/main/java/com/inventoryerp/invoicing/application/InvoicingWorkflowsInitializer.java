@@ -116,6 +116,7 @@ public class InvoicingWorkflowsInitializer {
                     throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
                 }
                 StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
+                        .uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                         .date(instant(doc.get("issueDate"))).source("sales_invoice", id)
                         .notes("Auto-issue for invoice " + doc.get("documentNumber"));
                 stock.issue(m);
@@ -226,7 +227,8 @@ public class InvoicingWorkflowsInitializer {
                 postableTotal = postableTotal.add(d(line.get("total")));
                 continue;
             }
-            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"), qty);
+            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"), qty,
+                    line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
             matchByLine.put((String) line.get("id"), match);
             if (match.accruedQuantity().signum() > 0) {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
@@ -302,7 +304,8 @@ public class InvoicingWorkflowsInitializer {
             BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
                     Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
             StockMove m = StockMove.of((String) line.get("productId"), location, toReceive).unitCost(unitCost)
-                    .uom((String) product.get("purchaseUomId"))
+                    .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),
+                            line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                     .notes("Auto-receive for bill " + full.get("documentNumber"));
             stock.receiveFromBill(m, id, instant(full.get("issueDate")));
         }

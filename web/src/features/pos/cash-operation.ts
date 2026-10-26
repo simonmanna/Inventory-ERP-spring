@@ -1,5 +1,6 @@
 import { api } from '@/lib/api';
 import { operationIdentity } from './offline-queue';
+import { tx } from '@/lib/i18n/tx';
 
 export function pendingCashOperations(): Array<{ slot: string; endpoint: string; key: string; payload: any }> {
   try {
@@ -11,7 +12,7 @@ export function pendingCashOperations(): Array<{ slot: string; endpoint: string;
 
 export async function recoverCashOperation(slot: string) {
   const operation = pendingCashOperations().find(item => item.slot === slot);
-  if (!operation) throw new Error('No pending operation for this operator');
+  if (!operation) throw new Error(tx('No pending operation for this operator'));
   try {
     const result = await api.post(operation.endpoint, operation.payload, { headers: { 'Idempotency-Key': operation.key } });
     localStorage.removeItem(slot);

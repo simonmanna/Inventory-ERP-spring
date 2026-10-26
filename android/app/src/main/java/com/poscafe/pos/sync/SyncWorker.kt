@@ -13,6 +13,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.repo.DeviceRevokedException
 import com.poscafe.pos.data.repo.SyncRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -24,7 +25,8 @@ import java.util.concurrent.TimeUnit
  *   - periodic (15 min, network-required),
  *   - one-shot on connectivity regain / app foreground,
  *   - manual from the sync screen.
- * WorkManager guarantees at most one run at a time via unique work names.
+ * Periodic and one-shot runs have separate unique names and may overlap;
+ * SyncRepository serialises them with a mutex.
  */
 @HiltWorker
 class SyncWorker @AssistedInject constructor(
@@ -41,6 +43,10 @@ class SyncWorker @AssistedInject constructor(
             sync.pushAll()
             sync.pull()
             status.lastError.value = null
+            Result.success()
+        } catch (e: DeviceRevokedException) {
+            // Already wiped back to setup; nothing left to retry.
+            status.lastError.value = e.message
             Result.success()
         } catch (e: Exception) {
             Log.w("SyncWorker", "sync failed, will retry", e)

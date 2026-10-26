@@ -14,7 +14,7 @@ const PAGE_SIZE = 8;
 
 type TypeFilter = 'all' | 'dine_in' | 'takeaway' | 'delivery';
 
-const TYPE_LABEL: Record<string, string> = { dine_in: 'Dine In', takeaway: 'Takeaway', delivery: 'Delivery' };
+const TYPE_LABEL: Record<string, string> = { dine_in: tx('Dine In'), takeaway: tx('Takeaway'), delivery: tx('Delivery') };
 const TYPE_STYLE: Record<string, string> = {
   dine_in: 'bg-sky-100 text-sky-700',
   takeaway: 'bg-amber-100 text-amber-700',
@@ -28,8 +28,8 @@ const TYPE_STYLE: Record<string, string> = {
  */
 const statusPill = (status: string) =>
   status === 'completed' || status === 'served'
-    ? { label: 'Payment', cls: 'bg-indigo-500 text-white' }
-    : { label: 'Ongoing', cls: 'bg-sky-500 text-white' };
+    ? { label: tx('Payment'), cls: 'bg-indigo-500 text-white' }
+    : { label: tx('Ongoing'), cls: 'bg-sky-500 text-white' };
 
 const fmtWhen = (iso: string) => {
   const d = new Date(iso);
@@ -68,22 +68,22 @@ export const OrdersListPanel: React.FC<Props> = ({ open, activeOrderId, onOpenOr
 
   const onDelete = async (e: React.MouseEvent, row: OpenOrderRow) => {
     e.stopPropagation();
-    if (!window.confirm(`Delete order ${row.orderNumber}? This cannot be undone.`)) return;
+    if (!window.confirm(tx('Delete order {{orderNumber}}? This cannot be undone.', { orderNumber: row.orderNumber }))) return;
     try {
       await cancel.mutateAsync({ orderId: row.id, reason: 'Deleted from Orders panel' });
-      toast.success(`Order ${row.orderNumber} deleted`);
+      toast.success(tx('Order {{orderNumber}} deleted', { orderNumber: row.orderNumber }));
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Could not delete order');
+      toast.error(err?.response?.data?.message || tx('Could not delete order'));
     }
   };
 
   if (!open) return null;
 
   const FILTERS: Array<{ key: TypeFilter; label: string }> = [
-    { key: 'all', label: 'Active' },
-    { key: 'dine_in', label: 'Dine In' },
-    { key: 'takeaway', label: 'Takeaway' },
-    { key: 'delivery', label: 'Delivery' },
+    { key: 'all', label: tx('Active') },
+    { key: 'dine_in', label: tx('Dine In') },
+    { key: 'takeaway', label: tx('Takeaway') },
+    { key: 'delivery', label: tx('Delivery') },
   ];
 
   return (

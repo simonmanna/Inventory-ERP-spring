@@ -74,27 +74,27 @@ export function JournalEntriesPage() {
   const columns: Column<JournalEntryRow>[] = [
     {
       key: 'entryNumber',
-      header: 'Entry #',
+      header: tx('Entry #'),
       render: (e) => (
         <Link to={`/journal-entries/${e.id}`} className="font-medium text-primary hover:underline">
           {e.entryNumber}
         </Link>
       ),
     },
-    { key: 'postingDate', header: 'Date', render: (e) => date(e.postingDate) },
-    { key: 'journal', header: 'Journal', render: (e) => (
+    { key: 'postingDate', header: tx('Date'), render: (e) => date(e.postingDate) },
+    { key: 'journal', header: tx('Journal'), render: (e) => (
       <span className="inline-flex items-center gap-1">
         <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0">{e.journal?.code ?? '-'}</Badge>
         <span className="text-xs text-muted-foreground">{e.journal?.name ?? ''}</span>
       </span>
     )},
-    { key: 'description', header: 'Description', render: (e) => (
+    { key: 'description', header: tx('Description'), render: (e) => (
       <span className="text-sm max-w-[200px] truncate block">{e.description ?? '-'}</span>
     )},
-    { key: 'lines', header: 'Lines', render: (e) => e._count?.lines ?? '-' },
+    { key: 'lines', header: tx('Lines'), render: (e) => e._count?.lines ?? '-' },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (e) => <Badge variant={statusVariant[e.status] ?? 'secondary'} className="text-xs font-semibold">{e.status.toUpperCase()}</Badge>,
     },
   ];
@@ -188,13 +188,13 @@ export function JournalEntriesPage() {
 
       {meta && entries.length > 0 && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>{entries.length} of {meta.total} {tx('entries')}</span>
+          <span>{entries.length} {tx('of')} {meta.total} {tx('entries')}</span>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
               {tx('Previous')}
             </Button>
             <span className="text-xs font-medium">
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"

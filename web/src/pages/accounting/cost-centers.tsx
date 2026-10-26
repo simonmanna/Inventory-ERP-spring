@@ -50,19 +50,19 @@ import { tx } from '@/lib/i18n/tx';
 type TabValue = 'all' | 'cost' | 'profit';
 
 const TAB_OPTIONS: { value: TabValue; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'cost', label: 'Cost Centers' },
-  { value: 'profit', label: 'Profit Centers' },
+  { value: 'all', label: tx('All') },
+  { value: 'cost', label: tx('Cost Centers') },
+  { value: 'profit', label: tx('Profit Centers') },
 ];
 
 const TYPE_LABELS: Record<string, string> = {
-  cost: 'Cost',
-  profit: 'Profit',
+  cost: tx('Cost'),
+  profit: tx('Profit'),
 };
 
 const formSchema = z.object({
-  code: z.string().min(1, 'Code is required'),
-  name: z.string().min(1, 'Name is required'),
+  code: z.string().min(1, tx('Code is required')),
+  name: z.string().min(1, tx('Name is required')),
   type: z.enum(['cost', 'profit'], { required_error: 'Type is required' }),
 });
 
@@ -135,16 +135,16 @@ function CostCentersPage() {
   const columns: Column<CostCenter>[] = [
     {
       key: 'code',
-      header: 'Code',
+      header: tx('Code'),
       render: (c) => <span className="font-mono text-sm font-medium">{c.code}</span>,
     },
     {
       key: 'name',
-      header: 'Name',
+      header: tx('Name'),
     },
     {
       key: 'type',
-      header: 'Type',
+      header: tx('Type'),
       render: (c) => (
         <Badge variant={c.type === 'profit' ? 'default' : 'secondary'}>
           {TYPE_LABELS[c.type] ?? c.type}
@@ -153,7 +153,7 @@ function CostCentersPage() {
     },
     {
       key: 'isActive',
-      header: 'Status',
+      header: tx('Status'),
       render: (c) => (
         c.isActive
           ? <Badge variant="default" className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">{tx('Active')}</Badge>
@@ -232,11 +232,11 @@ function CostCentersPage() {
             <span className="font-medium text-gray-800">
               {(page - 1) * meta.pageSize + 1}
             </span>{' '}
-            to{' '}
+            {tx('to')}{' '}
             <span className="font-medium text-gray-800">
               {Math.min(page * meta.pageSize, meta.total)}
             </span>{' '}
-            of{' '}
+            {tx('of')}{' '}
             <span className="font-medium text-gray-800">{meta.total}</span> {tx('centers')}
           </div>
           <div className="flex items-center gap-2">
@@ -250,7 +250,7 @@ function CostCentersPage() {
               {tx('Previous')}
             </Button>
             <span className="text-sm text-gray-600">
-              {tx('Page')} {page} of {meta.totalPages}
+              {tx('Page')} {page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"
@@ -269,11 +269,11 @@ function CostCentersPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{isEdit ? 'Edit Center' : 'Create Center'}</DialogTitle>
+            <DialogTitle>{isEdit ? tx('Edit Center') : tx('Create Center')}</DialogTitle>
             <DialogDescription>
               {isEdit
-                ? 'Update the code, name, or type of this cost/profit center.'
-                : 'Add a new cost or profit center to track performance.'}
+                ? tx('Update the code, name, or type of this cost/profit center.')
+                : tx('Add a new cost or profit center to track performance.')}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -314,7 +314,7 @@ function CostCentersPage() {
                 {tx('Cancel')}
               </Button>
               <Button type="submit" disabled={isPending}>
-                {isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create center'}
+                {isPending ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create center')}
               </Button>
             </DialogFooter>
           </form>
@@ -338,7 +338,7 @@ function CostCentersPage() {
               disabled={deleteCenter.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteCenter.isPending ? 'Deleting…' : 'Delete'}
+              {deleteCenter.isPending ? tx('Deleting…') : tx('Delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

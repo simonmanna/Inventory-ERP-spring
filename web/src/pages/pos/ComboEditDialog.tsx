@@ -121,11 +121,11 @@ export function ComboEditDialog({ open, combo, onOpenChange, onSubmit }: Props) 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 gap-0">
         <div className="bg-[#7c3aed] text-white px-6 py-4">
-          <h2 className="text-base font-semibold">{isEdit ? 'Edit Combo' : 'New Combo'}</h2>
+          <h2 className="text-base font-semibold">{isEdit ? tx('Edit Combo') : tx('New Combo')}</h2>
           <p className="text-white/75 text-xs mt-0.5">
             {isEdit
-              ? 'Modify the combo details and its component items below.'
-              : 'A fixed-price bundle. The combo price is charged as one line and expanded into its components at checkout.'}
+              ? tx('Modify the combo details and its component items below.')
+              : tx('A fixed-price bundle. The combo price is charged as one line and expanded into its components at checkout.')}
           </p>
         </div>
         <form
@@ -250,7 +250,7 @@ export function ComboEditDialog({ open, combo, onOpenChange, onSubmit }: Props) 
               {tx('Cancel')}
             </Button>
             <Button type="submit" disabled={submitting || !valid} style={{ background: '#7c3aed' }} className="text-white">
-              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create combo'}
+              {submitting ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create combo')}
             </Button>
           </DialogFooter>
         </form>

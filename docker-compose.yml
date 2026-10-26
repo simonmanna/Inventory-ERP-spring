@@ -1,6 +1,10 @@
 # Local / single-site stack: Postgres 16 + Spring API + nginx-served React web.
 #   docker compose up -d db            # database only (for ./gradlew bootRun + pnpm web:dev)
 #   docker compose up -d --build       # full stack on http://localhost:8080
+#
+# The licence authority is a separate product, not part of a customer's stack: it is in the
+# `license` profile so it never starts by accident on a shop's machine.
+#   docker compose --profile license up -d --build   # authority on http://localhost:3100
 services:
   db:
     image: postgres:16-alpine
@@ -59,7 +63,66 @@ services:
     ports:
       - "8080:80"
 
+  # ---- the licence authority (profile: license) ----
+  #
+  # Runs on OUR infrastructure, never a customer's: it is the only place the signing private key
+  # exists. Its own database, so a customer's backup or restore can never touch it.
+  license-db:
+    image: postgres:16-alpine
+    container_name: ierp-license-db
+    profiles: ["license"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LICENSE_DB_USER:-license}
+      POSTGRES_PASSWORD: ${LICENSE_DB_PASSWORD:-license}
+      POSTGRES_DB: ${LICENSE_DB_NAME:-license}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - licensedata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LICENSE_DB_USER:-license} -d ${LICENSE_DB_NAME:-license}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  license-api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.license
+    container_name: ierp-license-api
+    profiles: ["license"]
+    restart: unless-stopped
+    depends_on:
+      license-db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: 3100
+      JDBC_DATABASE_URL: jdbc:postgresql://license-db:5432/${LICENSE_DB_NAME:-license}
+      DB_USER: ${LICENSE_DB_USER:-license}
+      DB_PASSWORD: ${LICENSE_DB_PASSWORD:-license}
+      SPRING_PROFILES_ACTIVE: ${LICENSE_PROFILES_ACTIVE:-prod}
+      # Both are mandatory under the prod profile: StartupChecks refuses to start without them and
+      # says which is missing. Not declared with compose's `:?` syntax, because that is evaluated
+      # for the whole file and would break `docker compose up db` for every ordinary deployment.
+      LICENSE_SIGNING_PASSPHRASE: ${LICENSE_SIGNING_PASSPHRASE:-}
+      LICENSE_ADMIN_JWT_SECRET: ${LICENSE_ADMIN_JWT_SECRET:-}
+      # Used once, to create the first owner. Remove from .env afterwards.
+      LICENSE_ADMIN_EMAIL: ${LICENSE_ADMIN_EMAIL:-}
+      LICENSE_ADMIN_PASSWORD: ${LICENSE_ADMIN_PASSWORD:-}
+      LICENSE_REMINDER_FROM: ${LICENSE_REMINDER_FROM:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    ports:
+      - "127.0.0.1:3100:3100"
+
 volumes:
   pgdata:
   uploads:
   backups:
+  licensedata:

@@ -74,12 +74,12 @@ export const ReceiptPreviewDialog: React.FC<Props> = ({ open, invoiceId, invoice
     try {
       const r = await api.post<{ ok: boolean; backend: string; message?: string }>(`/pos/receipts/${invoiceId}/print`);
       if (r.data.ok) {
-        toast.success(r.data.backend === 'escpos' ? 'Receipt sent to printer' : r.data.message ?? 'Receipt logged (no printer)');
+        toast.success(r.data.backend === 'escpos' ? tx('Receipt sent to printer') : r.data.message ?? tx('Receipt logged (no printer)'));
       } else {
-        toast.warning(r.data.message ?? 'Printer error');
+        toast.warning(r.data.message ?? tx('Printer error'));
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Print failed');
+      toast.error(e?.response?.data?.message || tx('Print failed'));
     } finally { setBusy(null); }
   };
 
@@ -106,9 +106,9 @@ export const ReceiptPreviewDialog: React.FC<Props> = ({ open, invoiceId, invoice
     setBusy('print');
     try {
       const r = await api.post<{ ok: boolean; backend: string }>(`/pos/receipts/${invoiceId}/reprint`);
-      toast.success(`Re-printed via ${r.data.backend}`);
+      toast.success(tx('Re-printed via {{backend}}', { backend: r.data.backend }));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Reprint failed');
+      toast.error(e?.response?.data?.message || tx('Reprint failed'));
     } finally { setBusy(null); }
   };
 
@@ -160,7 +160,7 @@ export const ReceiptPreviewDialog: React.FC<Props> = ({ open, invoiceId, invoice
               </Button>
             )}
             <Button variant="outline" onClick={onDownload} disabled={!pdfUrl && !receiptHtml}>
-              <Download className="h-4 w-4 mr-1" /> {receiptHtml ? 'Download HTML' : 'Download PDF'}
+              <Download className="h-4 w-4 mr-1" /> {receiptHtml ? tx('Download HTML') : tx('Download PDF')}
             </Button>
             {canReprint && (
               <Button variant="outline" onClick={onReprint} disabled={busy !== null}>
@@ -168,7 +168,7 @@ export const ReceiptPreviewDialog: React.FC<Props> = ({ open, invoiceId, invoice
               </Button>
             )}
             <Button onClick={onPrint} disabled={busy !== null} title={tx('Send to thermal printer')} style={{ background: '#16a34a' }}>
-              <Printer className="h-4 w-4 mr-1" /> {busy === 'print' ? 'Sending…' : 'Print'}
+              <Printer className="h-4 w-4 mr-1" /> {busy === 'print' ? tx('Sending…') : tx('Print')}
             </Button>
           </div>
         </DialogFooter>

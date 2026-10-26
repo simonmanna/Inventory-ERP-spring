@@ -87,7 +87,7 @@ export function CurrencyPage() {
                 <div className="flex justify-end gap-2 pt-2">
                   <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>{tx('Cancel')}</Button>
                   <Button size="sm" onClick={handleAddRate} disabled={!rate || createRate.isPending}>
-                    {createRate.isPending ? 'Adding...' : 'Add Rate'}
+                    {createRate.isPending ? tx('Adding...') : tx('Add Rate')}
                   </Button>
                 </div>
               </div>

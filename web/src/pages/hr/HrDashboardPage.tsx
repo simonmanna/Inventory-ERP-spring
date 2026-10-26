@@ -19,12 +19,12 @@ export function HrDashboardPage() {
   const { data, isLoading } = useHrDashboard();
 
   const cards = [
-    { label: 'Total headcount', value: data?.headcount ?? 0, icon: Users },
-    { label: 'Active employees', value: data?.activeCount ?? 0, icon: Building2 },
-    { label: 'Present today', value: data?.today?.present ?? 0, icon: CalendarCheck },
-    { label: 'Late today', value: data?.today?.late ?? 0, icon: Clock },
-    { label: 'Pending leave', value: data?.pendingLeave ?? 0, icon: CalendarX2 },
-    { label: 'Open periods', value: data?.openPeriods ?? 0, icon: Wallet },
+    { label: tx('Total headcount'), value: data?.headcount ?? 0, icon: Users },
+    { label: tx('Active employees'), value: data?.activeCount ?? 0, icon: Building2 },
+    { label: tx('Present today'), value: data?.today?.present ?? 0, icon: CalendarCheck },
+    { label: tx('Late today'), value: data?.today?.late ?? 0, icon: Clock },
+    { label: tx('Pending leave'), value: data?.pendingLeave ?? 0, icon: CalendarX2 },
+    { label: tx('Open periods'), value: data?.openPeriods ?? 0, icon: Wallet },
   ];
 
   return (

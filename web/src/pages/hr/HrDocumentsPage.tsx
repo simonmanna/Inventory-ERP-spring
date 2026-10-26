@@ -97,7 +97,7 @@ export function HrDocumentsPage() {
                       <span className="text-amber-800"> — {d.title}</span>
                     </span>
                     <span>
-                      {left !== null && left < 0 ? `expired ${-left}d ago` : `${left}d left`}
+                      {left !== null && left < 0 ? tx('expired {{v1}}d ago', { v1: -left }) : tx('{{left}}d left', { left })}
                     </span>
                   </li>
                 );
@@ -172,7 +172,7 @@ export function HrDocumentsPage() {
                               await remove.mutateAsync(d.id);
                               notify.success(tx('Document removed'));
                             } catch (err) {
-                              notify.error(apiErrorMessage(err, 'Could not remove the document'));
+                              notify.error(apiErrorMessage(err, tx('Could not remove the document')));
                             }
                           }}
                         >
@@ -222,8 +222,7 @@ function AddDocumentDialog({
         <DialogHeader>
           <DialogTitle>{tx('Add a document')}</DialogTitle>
           <DialogDescription>
-            Records the paperwork and its expiry. Upload the file itself from the employee&apos;s
-            file area — this is the HR metadata.
+            {tx('Records the paperwork and its expiry. Upload the file itself from the employee\'s file area — this is the HR metadata.')}
           </DialogDescription>
         </DialogHeader>
 
@@ -314,7 +313,7 @@ function AddDocumentDialog({
                 notify.success(tx('Document added'));
                 onOpenChange(false);
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not add the document'));
+                notify.error(apiErrorMessage(err, tx('Could not add the document')));
               }
             }}
           >

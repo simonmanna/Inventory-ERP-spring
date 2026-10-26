@@ -44,19 +44,19 @@ export function WebhooksPage() {
   const create = useMutation({
     mutationFn: async () => (await api.post('/webhooks/endpoints', { url, events: events.split(',').map((s) => s.trim()).filter(Boolean) })).data,
     onSuccess: (data: any) => {
-      notify.success(tx('Endpoint created'), `Signing secret: ${data.signingSecret?.slice(0, 16)}…`);
+      notify.success(tx('Endpoint created'), tx('Signing secret: {{v1}}…', { v1: data.signingSecret?.slice(0, 16) }));
       setOpen(false);
       setUrl('');
       setEvents('');
       qc.invalidateQueries({ queryKey: ['webhooks'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const rotate = useMutation({
     mutationFn: async (id: string) => (await api.post(`/webhooks/endpoints/${id}/rotate`)).data,
     onSuccess: (data: any) => {
-      notify.success(tx('Secret rotated'), `New secret: ${data.signingSecret?.slice(0, 16)}…`);
+      notify.success(tx('Secret rotated'), tx('New secret: {{v1}}…', { v1: data.signingSecret?.slice(0, 16) }));
       qc.invalidateQueries({ queryKey: ['webhooks'] });
     },
   });
@@ -99,7 +99,7 @@ export function WebhooksPage() {
                     <code className="truncate text-xs">{ep.url}</code>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    {ep.events.length === 0 ? 'all events' : `${ep.events.length} event(s)`} {tx('· created')} {new Date(ep.createdAt).toLocaleDateString()}
+                    {ep.events.length === 0 ? tx('all events') : `${ep.events.length} event(s)`} {tx('· created')} {new Date(ep.createdAt).toLocaleDateString()}
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -157,7 +157,7 @@ export function WebhooksPage() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <label className="text-sm font-medium">URL</label>
+              <label className="text-sm font-medium">{tx('URL')}</label>
               <input
                 type="url"
                 value={url}

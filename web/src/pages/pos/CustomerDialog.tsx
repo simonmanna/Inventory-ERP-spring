@@ -32,13 +32,13 @@ export const CustomerDialog: React.FC<Props> = ({ open, onClose, onPick }) => {
   }, [open]);
 
   const createAndAttach = async () => {
-    if (!name.trim()) { setErr('Name is required'); return; }
+    if (!name.trim()) { setErr(tx('Name is required')); return; }
     try {
       setBusy(true); setErr(null);
       const c = await create.mutateAsync({ name: name.trim(), phone: phone || undefined, email: email || undefined });
       onPick(c); onClose();
     } catch (e: any) {
-      setErr(e?.response?.data?.message || 'Create failed');
+      setErr(e?.response?.data?.message || tx('Create failed'));
     } finally { setBusy(false); }
   };
 

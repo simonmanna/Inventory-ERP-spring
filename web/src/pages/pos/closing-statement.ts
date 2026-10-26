@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth.store';
+import { tx } from '@/lib/i18n/tx';
 
 /**
  * Cash Register Closing Statement Summary — previewed after a shift close.
@@ -53,18 +54,18 @@ export function buildClosingStatementText(p: ClosingStatementInput): string {
   out.push(two('Opened', when(p.openedAt)));
   out.push(two('Closed', when(p.closedAt)));
   out.push('-'.repeat(W));
-  out.push(two('Opening Float', cur(p.openingFloat)));
+  out.push(two(tx('Opening Float'), cur(p.openingFloat)));
   out.push('-'.repeat(W));
   out.push(two('TOTAL SALES', cur(totals.salesTotal ?? 0)));
   if (totals.saleCount != null) out.push(two('Transactions', String(totals.saleCount)));
   if (Number(totals.refundedTotal ?? 0) > 0) {
     out.push(two('Refunds', '-' + cur(totals.refundedTotal)));
-    out.push(two('Net Sales', cur(totals.netSalesAfterRefunds ?? totals.salesTotal ?? 0)));
+    out.push(two(tx('Net Sales'), cur(totals.netSalesAfterRefunds ?? totals.salesTotal ?? 0)));
   }
   out.push('-'.repeat(W));
   out.push(center('SALES BY PAYMENT MODE'));
   const modes = (p.byMethod ?? []).filter((m) => Number(m.total || 0) !== 0);
-  if (!modes.length) out.push(center('No sales recorded'));
+  if (!modes.length) out.push(center(tx('No sales recorded')));
   for (const m of modes) {
     out.push(two(methodLabel(m.method).slice(0, 30), cur(m.total)));
     if (m.count) out.push(`   ${m.count} transaction${m.count === 1 ? '' : 's'}`);
@@ -72,13 +73,13 @@ export function buildClosingStatementText(p: ClosingStatementInput): string {
   if (Number(totals.payInsTotal ?? 0) > 0) out.push(two('Pay-ins (owner cash-in)', cur(totals.payInsTotal)));
   if (Number(totals.payOutsTotal ?? 0) > 0) out.push(two('Pay-outs (withdrawals)', cur(totals.payOutsTotal)));
   out.push('-'.repeat(W));
-  out.push(two('Cash Expected', cur(p.expected)));
-  out.push(two('Cash Counted', cur(p.counted)));
+  out.push(two(tx('Cash Expected'), cur(p.expected)));
+  out.push(two(tx('Cash Counted'), cur(p.counted)));
   const diff = Number(p.difference ?? 0);
   out.push(two('Difference', (diff > 0 ? '+' : '') + cur(diff)));
   out.push('-'.repeat(W));
   out.push(two('Printed', when(new Date().toISOString())));
-  out.push(center('Thank you!'));
+  out.push(center(tx('Thank you!')));
   out.push('='.repeat(W));
   return out.join('\n');
 }

@@ -221,6 +221,12 @@ procurement section (P4) with the procurement tables it reads.
 - [x] PATCH /api/v1/uoms/:id — UomController.update
 - [x] POST /api/v1/uoms/convert — UomController.convert
 
+### core — post-parity additions (per-product units, ADR-S003)
+
+No new routes. `POST/PATCH /products` accept `units[]`; purchase / sales / return lines accept a unit and
+freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" in `spec/core.md`,
+`spec/procurement.md`, `spec/invoicing.md`, `spec/pos.md`. Tests: `ProductUnitsIT`.
+
 ## accounting
 
 - [x] GET /api/v1/account-categories — AccountCategoryController.list

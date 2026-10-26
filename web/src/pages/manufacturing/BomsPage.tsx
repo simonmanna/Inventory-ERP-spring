@@ -84,7 +84,7 @@ export function BomsPage() {
   const activate = async (bom: Bom) => {
     try {
       await activateBom.mutateAsync(bom.id);
-      notify.success(`BOM ${bom.code} activated.`);
+      notify.success(tx('BOM {{code}} activated.', { code: bom.code }));
     } catch (e: any) {
       notify.error(tx('Could not activate BOM'), e?.response?.data?.message ?? e?.message);
     }

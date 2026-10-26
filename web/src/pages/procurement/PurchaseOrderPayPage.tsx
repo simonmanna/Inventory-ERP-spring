@@ -42,7 +42,7 @@ export function PurchaseOrderPayPage() {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate(`/procurement/purchase-orders/${id}`);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;
@@ -132,7 +132,7 @@ export function PurchaseOrderPayPage() {
           disabled={payMut.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
-          {payMut.isPending ? 'Recording…' : `Pay ${amount ? formatMoney(Number(amount)) : formatMoney(remaining)}`}
+          {payMut.isPending ? tx('Recording…') : tx('Pay {{v1}}', { v1: amount ? formatMoney(Number(amount)) : formatMoney(remaining) })}
         </Button>
       </div>
     </div>

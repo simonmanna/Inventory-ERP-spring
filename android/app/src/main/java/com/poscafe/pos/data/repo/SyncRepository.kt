@@ -1,12 +1,18 @@
 package com.poscafe.pos.data.repo
 
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.ServerUrlPolicy
 import com.poscafe.pos.data.local.PosDatabase
 import com.poscafe.pos.data.local.entity.*
 import com.poscafe.pos.data.remote.PushOp
 import com.poscafe.pos.data.remote.PushRequest
 import com.poscafe.pos.data.remote.SyncApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import retrofit2.HttpException
 import java.time.Instant
 import java.util.UUID
 import javax.inject.Inject
@@ -31,6 +37,46 @@ class SyncRepository @Inject constructor(
     private val config: DeviceConfig,
 ) {
     /**
+     * Serialises every push/pull. The periodic and one-shot workers have
+     * different unique names, and screens (setup, messaging) call in directly,
+     * so without this two runs could push the same batch and race on the
+     * local status updates.
+     */
+    private val lock = Mutex()
+
+    /**
+     * Runs [block] under [lock]. A 401 from the device-token routes on a
+     * device that has synced before means the token was revoked in the back
+     * office: see [onRevoked].
+     */
+    private suspend fun <T> guarded(block: suspend () -> T): T = lock.withLock {
+        try {
+            block()
+        } catch (e: HttpException) {
+            if (e.code() == 401 && config.isEnrolled && db.syncStateDao().get()?.lastPullAt != null) {
+                onRevoked()
+                throw DeviceRevokedException()
+            }
+            throw e
+        }
+    }
+
+    /**
+     * Revocation wipe. Staff rows (PIN hashes) always go, so nobody can sign
+     * in again; enrollment is forgotten so the app falls back to setup. The
+     * rest of the database is cleared only when nothing is left to sync —
+     * unsynced sales stay encrypted on the device and drain once a manager
+     * re-enrolls it, because money is never silently dropped.
+     */
+    private suspend fun onRevoked() {
+        db.staffDao().deleteAll()
+        val unsynced = db.opQueueDao().queuedNow() + db.opQueueDao().failedNow()
+        if (unsynced == 0) withContext(Dispatchers.IO) { db.clearAllTables() }
+        config.clearEnrollment()
+        config.markRevoked(true)
+    }
+
+    /**
      * One-time repair for devices upgraded from builds that stored menu
      * basePrice ÷100 (see [CartEngine.rescaleLegacyMenuItemPayload]):
      *  1. queued menuItem.upsert ops from the old build carry a ×100 price —
@@ -49,11 +95,97 @@ class SyncRepository @Inject constructor(
         config.legacyMenuQueueRescaled = true
     }
 
-    suspend fun pull() {
+    suspend fun pull() = guarded { pullLocked() }
+
+    /**
+     * Point the device at a new server address (new router IP, moved to
+     * HTTPS, ...). The address is saved only if that server accepts this
+     * device's token; a 401 here is reported, not treated as revocation, so
+     * a typo can never wipe the till.
+     * @return null on success, otherwise why the address was not saved.
+     */
+    suspend fun changeServer(url: String): String? = lock.withLock {
+        val normalized = url.trim().removeSuffix("/") + "/"
+        ServerUrlPolicy.problem(normalized)?.let { return@withLock it }
+        val previous = config.serverUrl
+        config.serverUrl = normalized
+        try {
+            api.pull(cursor = null, scopes = "settings")
+            null
+        } catch (e: Exception) {
+            config.serverUrl = previous
+            if (e is HttpException && e.code() == 401) {
+                "That server does not recognise this device. Re-enroll it with a new device id and token."
+            } else {
+                "Could not reach the server: ${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    /**
+     * Manager-initiated re-enrolment: forget the token but keep every local
+     * row, so unsynced sales push once the new enrolment's first sync runs.
+     */
+    suspend fun startReenroll() = lock.withLock {
+        config.clearEnrollment()
+        config.requestSetup()
+    }
+
+    /**
+     * Requeues rejected ops ([opId] null = all). The server locks an op's
+     * idempotency key after any failure, so resending with the same key only
+     * ever gets 409 "needs recovery". When the first rejection was definitive
+     * (4xx — the server says nothing was committed and a new key is safe) the
+     * op goes out under a fresh key; anything else keeps its key, as the
+     * server requires for possibly-committed work.
+     */
+    suspend fun retryRejected(opId: String? = null) = lock.withLock {
+        val dao = db.opQueueDao()
+        for (op in dao.failedNowList()) {
+            if (opId != null && op.opId != opId) continue
+            if (op.rejectedStatus != null) dao.requeueWithNewKey(op.opId, UUID.randomUUID().toString())
+            else dao.retry(op.opId)
+        }
+    }
+
+    /**
+     * A manager gives up on a rejected op (e.g. its idempotency key is burned
+     * server-side, so no retry can ever succeed). The server keeps its own
+     * dead-letter row; locally the op and its sale/refund/expense row become
+     * 'discarded', drop out of shift totals and stop blocking shift close.
+     * Returns false when the op was not (or no longer) rejected.
+     */
+    suspend fun discardRejected(opId: String, approverName: String): Boolean = lock.withLock {
+        val dao = db.opQueueDao()
+        val op = dao.unpushed().firstOrNull { it.opId == opId && it.status == "failed" } ?: return@withLock false
+        val note = "Discarded by $approverName — ${op.lastError ?: "rejected"}"
+        if (dao.discard(opId, note) == 0) return@withLock false
+        db.saleDao().markSync(opId, "discarded", null, null, note)
+        db.refundDao().markSync(opId, "discarded", null, note)
+        db.messageDao().markState(opId, "failed", note)
+        db.expenseDao().markSync(opId, "discarded", note)
+        db.purchaseDao().markSync(opId, "discarded")
+        true
+    }
+
+    /**
+     * Called by setup before the first pull of a new enrolment. The cursor
+     * belongs to whatever server the device talked to before; sent to a new
+     * server it would ask only for changes since an unrelated point in time
+     * and leave the catalog half-loaded. Dropping it makes the first pull a
+     * full snapshot, which also prunes the previous server's catalog and staff.
+     */
+    suspend fun resetForEnrollment() = lock.withLock {
+        val state = db.syncStateDao().get() ?: return@withLock
+        db.syncStateDao().put(state.copy(cursor = null))
+    }
+
+    private suspend fun pullLocked() {
         ensureCatalogUnits()
         val fullResync = config.catalogUnitsVersion < CATALOG_UNITS_VERSION
         val state = db.syncStateDao().get()
-        val res = api.pull(cursor = if (fullResync) null else state?.cursor)
+        val cursor = if (fullResync) null else state?.cursor
+        val res = api.pull(cursor = cursor)
 
         res.data["menuCategories"]?.let { applyCategories(it) }
         res.data["taxes"]?.let { applyTaxes(it) }
@@ -77,6 +209,8 @@ class SyncRepository @Inject constructor(
         res.data["stockLocations"]?.let { applyStockLocations(it) }
         res.data["stockLevels"]?.let { applyStockLevels(it) }
         res.data["suppliers"]?.let { applySuppliers(it) }
+        // Without a cursor the server sent everything it has, so anything else is stale.
+        if (cursor == null) pruneToSnapshot(res.data)
 
         db.syncStateDao().put(
             SyncStateEntity(
@@ -86,6 +220,17 @@ class SyncRepository @Inject constructor(
             ),
         )
         if (fullResync) config.catalogUnitsVersion = CATALOG_UNITS_VERSION
+        // The installation's licence, as the server sees it right now. A pull from an older server
+        // carries none, in which case the last known answer stands rather than being reset.
+        res.license?.let { licence ->
+            config.applyLicense(
+                mode = licence.mode,
+                writable = licence.writable,
+                message = licence.message,
+                daysRemaining = licence.daysRemaining,
+                graceUntil = licence.graceUntil,
+            )
+        }
     }
 
     /**
@@ -95,30 +240,32 @@ class SyncRepository @Inject constructor(
      * makes no progress (server returned fewer results than sent).
      * @return ops rejected across all batches.
      */
-    suspend fun pushAll(): Int {
+    suspend fun pushAll(): Int = guarded {
         var rejected = 0
         var remaining = db.opQueueDao().queuedNow()
         while (remaining > 0) {
-            rejected += push()
+            rejected += pushLocked()
             val after = db.opQueueDao().queuedNow()
             if (after >= remaining) break
             remaining = after
         }
-        return rejected
+        rejected
     }
 
     /** @return number of ops that remain queued or failed after this push. */
-    suspend fun push(): Int {
+    suspend fun push(): Int = guarded { pushLocked() }
+
+    private suspend fun pushLocked(): Int {
         ensureCatalogUnits()
         val deviceId = config.deviceId ?: error("Device not enrolled")
-        val ops = db.opQueueDao().nextBatch()
+        val ops = resolveSyncedSessions(db.opQueueDao().nextBatch())
         if (ops.isEmpty()) return 0
 
         val request = PushRequest(
             deviceId = deviceId,
             ops = ops.map { op ->
                 PushOp(
-                    opId = op.opId,
+                    opId = op.wireOpId ?: op.opId,
                     deviceSeq = op.deviceSeq,
                     type = op.type,
                     actorUserId = op.actorUserId,
@@ -131,8 +278,11 @@ class SyncRepository @Inject constructor(
         // the opIds, enforced server-side.
         val response = api.push(batchId = UUID.randomUUID().toString(), body = request)
 
+        // Results name ops by the key that went over the wire.
+        val localIds = ops.associate { (it.wireOpId ?: it.opId) to it.opId }
         var unresolved = 0
-        for (result in response.results) {
+        for (wireResult in response.results) {
+            val result = wireResult.copy(opId = localIds[wireResult.opId] ?: wireResult.opId)
             when (result.status) {
                 "applied", "replayed" -> {
                     db.opQueueDao().mark(result.opId, "pushed", null)
@@ -140,7 +290,10 @@ class SyncRepository @Inject constructor(
                 }
                 else -> {
                     unresolved += 1
-                    db.opQueueDao().mark(result.opId, "failed", result.error)
+                    db.opQueueDao().markFailed(
+                        result.opId, result.error,
+                        result.httpStatus.takeIf { it in DEFINITIVE_REJECTIONS },
+                    )
                     // The opId belongs to exactly one of these tables; the other
                     // updates are harmless no-ops (WHERE id = opId matches none).
                     db.saleDao().markSync(result.opId, "failed", null, null, result.error)
@@ -163,6 +316,62 @@ class SyncRepository @Inject constructor(
             ),
         )
         return unresolved
+    }
+
+    /**
+     * After a full pull, delete catalog rows and staff the server no longer
+     * has: rows from a server the device was enrolled with before (staff whose
+     * PINs must stop working, menu items that would be sold but rejected), or
+     * rows deleted while the device was away. Anything referenced by an
+     * unpushed op was created on this device and is kept until it syncs.
+     */
+    private suspend fun pruneToSnapshot(data: Map<String, List<JsonObject>>) = withContext(Dispatchers.IO) {
+        val pending = db.opQueueDao().unpushed()
+            .mapNotNull { op -> runCatching { Json.parseToJsonElement(op.payloadJson) as? JsonObject }.getOrNull() }
+            .flatMap { p -> listOfNotNull(p.str("id"), p.str("clientId"), p.str("menuItemId"), p.str("productId")) }
+            .toSet()
+        val w = db.openHelper.writableDatabase
+        for ((scope, table) in SNAPSHOT_SCOPES) {
+            val rows = data[scope] ?: continue
+            val keep = rows.filterNot { it.deleted() }.mapNotNull { it.str("id") }.toSet() + pending
+            val stale = buildList {
+                w.query("SELECT id FROM `$table`").use { c -> while (c.moveToNext()) c.getString(0).takeIf { it !in keep }?.let(::add) }
+            }
+            stale.chunked(500).forEach { ids ->
+                w.execSQL("DELETE FROM `$table` WHERE id IN (${ids.joinToString(",") { "?" }})", ids.toTypedArray())
+            }
+        }
+    }
+
+    /**
+     * Sales and cash ops name their shift by its local id. The server maps a
+     * local id to its own only within the batch that opened the shift, so an
+     * op pushed in a later batch (the usual case: the shift syncs at open, the
+     * sales after) must carry the server id or it is rejected with "The
+     * original register session is not open". Rewrite those references once
+     * the shift has synced, and save the rewrite so a re-push sends the same
+     * payload (the server's per-op idempotency compares payload hashes).
+     */
+    private suspend fun resolveSyncedSessions(ops: List<OpQueueEntity>): List<OpQueueEntity> {
+        val serverIds = db.cashSessionDao().withServerIds().associate { it.id to it.serverId!! }
+        if (serverIds.isEmpty()) return ops
+        return ops.map { op ->
+            // Already sent once: the server keyed its record of that attempt to the exact payload,
+            // so a changed body would be refused as an idempotency conflict. Leave it as sent.
+            if (op.attempts > 0) return@map op
+            val payload = runCatching { Json.parseToJsonElement(op.payloadJson) as? JsonObject }.getOrNull()
+                ?: return@map op
+            val rewritten = JsonObject(
+                payload.mapValues { (key, value) ->
+                    val ref = (value as? JsonPrimitive)?.contentOrNull
+                    if (key in SESSION_REF_KEYS && ref != null && ref in serverIds) JsonPrimitive(serverIds[ref]) else value
+                },
+            )
+            if (rewritten == payload) return@map op
+            val json = rewritten.toString()
+            db.opQueueDao().updatePayload(op.opId, json)
+            op.copy(payloadJson = json)
+        }
     }
 
     private suspend fun applyMapping(opId: String, mapping: Map<String, String>?, finalNumbers: Map<String, String>?) {
@@ -418,7 +627,13 @@ class SyncRepository @Inject constructor(
         val dao = db.staffDao()
         for (row in rows) {
             val id = row.str("id") ?: continue
-            if (row.deleted()) { dao.delete(id); continue }
+            if (row.deleted()) { dao.delete(id); config.clearPinFailures(id); continue }
+            val pinHash = row.str("pinHash")
+            // A new hash means the PIN was reset in the back office: that is
+            // what unlocks a locked-out account. Merely syncing must not — the
+            // till syncs on every launch and sale, so a restart would wipe the
+            // backoff.
+            if (dao.byId(id)?.pinHash != pinHash) config.clearPinFailures(id)
             val permissions = (row["roles"] as? JsonArray)
                 ?.filterIsInstance<JsonObject>()
                 ?.flatMap { r -> (r["permissions"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList() }
@@ -431,7 +646,7 @@ class SyncRepository @Inject constructor(
                         firstName = row.str("firstName") ?: "",
                         lastName = row.str("lastName"),
                         email = row.str("email") ?: "",
-                        pinHash = row.str("pinHash"),
+                        pinHash = pinHash,
                         permissions = permissions.joinToString(","),
                         isActive = row.bool("isActive") ?: true,
                     ),
@@ -801,5 +1016,30 @@ class SyncRepository @Inject constructor(
     companion object {
         /** Bump to force one full catalog re-pull after a local price-units fix. */
         const val CATALOG_UNITS_VERSION = 1
+
+        /**
+         * Rejections where the server committed nothing (bad input, business
+         * rule, missing reference, dependency). Not 409 (may be "needs recovery"
+         * for possibly-committed work), 401 (revocation) or 429/5xx (transient).
+         */
+        private val DEFINITIVE_REJECTIONS = setOf(400, 403, 404, 422, 424)
+
+        /** Payload keys that reference a cash session by id (see [resolveSyncedSessions]). */
+        private val SESSION_REF_KEYS = setOf("cashSessionId", "sessionId")
+
+        /** Pull scopes that are complete when pulled without a cursor → their local table. */
+        private val SNAPSHOT_SCOPES = mapOf(
+            "staff" to "staff",
+            "menuCategories" to "menu_categories",
+            "menuItems" to "menu_items",
+            "taxes" to "taxes",
+            "posTables" to "pos_tables",
+            "cashRegisters" to "cash_registers",
+            "products" to "products",
+            "productCategories" to "product_categories",
+        )
     }
 }
+
+/** The server no longer accepts this device's token; the device has been wiped back to setup. */
+class DeviceRevokedException : IllegalStateException("This device was revoked in the back office")

@@ -1,0 +1,70 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ['android-v*.*.*']
+    paths: ['android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', '.github/workflows/android.yml']
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Unit tests + lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # versionCode = commit count
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests (cart parity, sync, auth)
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+      - name: Lint (new issues fail; existing ones are in lint-baseline.xml)
+        run: ./gradlew :app:lintDebug --no-daemon
+
+  release:
+    name: Signed release APK
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/android-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Decode keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.POS_KEYSTORE_B64 }}
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/pos-release.jks"
+      - name: Build signed APK
+        env:
+          POS_KEYSTORE_FILE: ${{ runner.temp }}/pos-release.jks
+          POS_KEYSTORE_PASSWORD: ${{ secrets.POS_KEYSTORE_PASSWORD }}
+          POS_KEY_ALIAS: ${{ secrets.POS_KEY_ALIAS }}
+          POS_KEY_PASSWORD: ${{ secrets.POS_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon -Ppos.versionName="${GITHUB_REF_NAME#android-v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pos-release-${{ github.ref_name }}
+          path: android/app/build/outputs/apk/release/*.apk

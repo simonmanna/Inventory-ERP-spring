@@ -319,9 +319,9 @@ const RetailTerminal: React.FC = () => {
 
   /** Flush the current order's latest lines to the server before switching away. */
   const flushCurrentOrder = useCallback(async () => {
-    if (useCartStore.getState().operationPending) throw new Error('Resolve the pending payment before switching orders');
-    if (saveOrderItems.isPending) throw new Error('Wait for the order save to finish');
-    if (pendingOrderCreate.current) throw new Error('Wait for the new order to finish saving');
+    if (useCartStore.getState().operationPending) throw new Error(tx('Resolve the pending payment before switching orders'));
+    if (saveOrderItems.isPending) throw new Error(tx('Wait for the order save to finish'));
+    if (pendingOrderCreate.current) throw new Error(tx('Wait for the new order to finish saving'));
     const st = useCartStore.getState();
     if (st.lines.length && !st.orderId) throw new Error('This cart has not been saved. Keep it open until the server is available.');
     const sig = orderSig(st.lines);
@@ -356,7 +356,7 @@ const RetailTerminal: React.FC = () => {
       orderSaveSig.current = orderSig(cartLines);
       setShowOrders(false);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not open order');
+      toast.error(e?.response?.data?.message || tx('Could not open order'));
     }
   }, [flushCurrentOrder, resumeOrderMut, clearCart, setOrderId, setTabVersion]);
 
@@ -409,7 +409,7 @@ const RetailTerminal: React.FC = () => {
         addLine({ productId: product.id, sku: product.sku ?? undefined, name: product.name, quantity: 1, unitPrice: Number(product.salesPrice || 0) });
         setSearch('');
       } else {
-        toast.error(`No product matches "${code.slice(0, 24)}"`);
+        toast.error(tx('No product matches "{{v1}}"', { v1: code.slice(0, 24) }));
         setSearch('');
       }
     } catch { /* no match on server either */ }
@@ -431,12 +431,12 @@ const RetailTerminal: React.FC = () => {
     // dropped from the cart. The reason is still demanded and shown back, so
     // the cashier states it before the line goes.
     removeLine(line.lineId);
-    toast.success(`Item deleted — ${reason}`);
+    toast.success(tx('Item deleted — {{reason}}', { reason }));
   };
   const onLineDiscount = (line: CartLine) => setLineForDiscount(line);
   const onLineDiscountApply = (lineId: string, amount: number, type?: DiscountType, reason?: string) => {
     setDiscount(lineId, amount, type, reason);
-    toast.success(type === 'fixed_amount' ? `Line discount ${fmt(amount)} applied` : `Line discount ${amount}% applied`);
+    toast.success(type === 'fixed_amount' ? tx('Line discount {{v1}} applied', { v1: fmt(amount) }) : tx('Line discount {{amount}}% applied', { amount }));
   };
   const onLineNote = (line: CartLine) => {
     const next = window.prompt(`Note for "${line.name}"`, line.note ?? '');
@@ -476,12 +476,12 @@ const RetailTerminal: React.FC = () => {
         setTransactionDiscount(amount, type);
         useCartStore.setState({ overrideById: result.managerId, overridePin: result.pin });
         if (amount > 0) setShowDiscountReason(true);
-        toast.success(type === 'fixed_amount' ? `${fmt(amount)} discount applied with override` : `${amount}% discount applied with override`);
+        toast.success(type === 'fixed_amount' ? tx('{{v1}} discount applied with override', { v1: fmt(amount) }) : tx('{{amount}}% discount applied with override', { amount }));
       });
     } else {
       setTransactionDiscount(amount, type);
       if (amount > 0) setShowDiscountReason(true);
-      toast.success(type === 'fixed_amount' ? `${fmt(amount)} discount applied` : `${amount}% discount applied`);
+      toast.success(type === 'fixed_amount' ? tx('{{v1}} discount applied', { v1: fmt(amount) }) : tx('{{amount}}% discount applied', { amount }));
     }
   };
 
@@ -491,8 +491,8 @@ const RetailTerminal: React.FC = () => {
     // sale is queued and the server re-prices it on replay (same rule as the
     // cafe terminal). Demanding it offline left the till unable to take money.
     if (!serverUnreachable() && (!saleQuote.data || saleQuote.isFetching || saleQuote.isError)) { toast.error(tx('Wait for the server price quote before charging')); return; }
-    if (useCartStore.getState().operationPending) throw new Error('Resolve the pending payment before switching orders');
-    if (saveOrderItems.isPending) throw new Error('Wait for the order save to finish');
+    if (useCartStore.getState().operationPending) throw new Error(tx('Resolve the pending payment before switching orders'));
+    if (saveOrderItems.isPending) throw new Error(tx('Wait for the order save to finish'));
     if (pendingOrderCreate.current) { toast.info(tx('Saving the new order; try again shortly')); return; }
     if (!cartReadyToCommit(lines)) return;
     setShowPayment(true);
@@ -544,7 +544,7 @@ const RetailTerminal: React.FC = () => {
         });
         toast.success(isCredit
           ? settledToast()
-          : `Order ${res.invoiceNumber} settled — change ${fmt(res.change ?? 0)}`);
+          : tx('Order {{invoiceNumber}} settled — change {{v2}}', { invoiceNumber: res.invoiceNumber, v2: fmt(res.change ?? 0) }));
         setLastCompleted({
           lines: cartToReceiptLines(lines),
           total, invoiceNumber: res.invoiceNumber, invoiceId: res.invoiceId,
@@ -557,7 +557,7 @@ const RetailTerminal: React.FC = () => {
         setShowPayment(false);
         refetchSession();
       } catch (e: any) {
-        const msg = e?.response?.data?.message || e?.message || 'Settle failed';
+        const msg = e?.response?.data?.message || e?.message || tx('Settle failed');
         if (/manager override/i.test(msg) && !input.overrideById) {
           const result = await requestOverride('discount');
           if (result) { await onSettle({ ...input, overrideById: result.managerId, overridePin: result.pin }); return; }
@@ -604,7 +604,7 @@ const RetailTerminal: React.FC = () => {
       const res = await checkout.mutateAsync({ ...payload, _idemKey: idemKey } as any);
       toast.success(isCredit
         ? settledToast()
-        : `Sale ${res.invoiceNumber} settled — change ${fmt(res.change)}`);
+        : tx('Sale {{invoiceNumber}} settled — change {{v2}}', { invoiceNumber: res.invoiceNumber, v2: fmt(res.change) }));
       setLastCompleted({
         lines: cartToReceiptLines(lines),
         total, invoiceNumber: res.invoiceNumber, invoiceId: res.invoiceId,
@@ -618,7 +618,7 @@ const RetailTerminal: React.FC = () => {
       setShowPayment(false);
       refetchSession();
     } catch (e: any) {
-      const msg = e?.response?.data?.message || e?.message || 'Checkout failed';
+      const msg = e?.response?.data?.message || e?.message || tx('Checkout failed');
       if (/manager override/i.test(msg) && !input.overrideById) {
         const result = await requestOverride('discount');
         if (result) { await onSettle({ ...input, overrideById: result.managerId, overridePin: result.pin }); return; }
@@ -755,7 +755,7 @@ const RetailTerminal: React.FC = () => {
         {!locked && (
           <OrderPanel
             customerName={customer?.name}
-            orderTypeLabel="Takeaway"
+            orderTypeLabel={tx('Takeaway')}
             orderType="takeaway"
             onChangeOrderType={onChangeOrderType}
             onInc={onInc}
@@ -786,7 +786,7 @@ const RetailTerminal: React.FC = () => {
       <ShiftCloseDialog open={showCloseShift} session={session ?? null} onClose={() => setShowCloseShift(false)}
         onClosed={() => { refetchSession(); setTimeout(() => navigate('/pos/reports'), 600); }} />
       <CustomerDialog open={showCustomer} onClose={() => setShowCustomer(false)}
-        onPick={(c) => { setCustomer(c); toast.success(`Customer: ${c.name}`); }} />
+        onPick={(c) => { setCustomer(c); toast.success(tx('Customer: {{name}}', { name: c.name })); }} />
       <DiscountDialog key={'discount-' + showDiscount} open={showDiscount} initialPercent={transactionDiscountPercent}
         thresholdPercent={discountTier1} thresholdAmount={discountTier1Amount} subtotal={selectSubtotal(useCartStore.getState())}
         onClose={() => setShowDiscount(false)} onApply={onApplyOrderDiscount} onApplyEx={onApplyOrderDiscountEx} />
@@ -807,14 +807,14 @@ const RetailTerminal: React.FC = () => {
         onVerified={onOverrideVerified} />
       <PinConfirmDialog open={showPinConfirm} title={tx('Delete item')}
         description={pendingRemoveLine
-          ? `Give a reason and your PIN to take "${pendingRemoveLine.name}" off this order.`
-          : 'Give a reason and your PIN to take this item off the order.'}
-        reasonLabel="Reason for deleting"
+          ? tx('Give a reason and your PIN to take "{{name}}" off this order.', { name: pendingRemoveLine.name })
+          : tx('Give a reason and your PIN to take this item off the order.')}
+        reasonLabel={tx('Reason for deleting')}
         onClose={() => { setShowPinConfirm(false); setPendingRemoveLine(null); }} onVerified={onPinVerified} />
       <VoidItemDialog open={!!voidLine} line={voidLine} onClose={() => setVoidLine(null)}
         onConfirm={(lineId, reason) => {
           removeLine(lineId);
-          toast.success(`Item voided — ${reason}`);
+          toast.success(tx('Item voided — {{reason}}', { reason }));
         }} />
       <CancelOrderDialog open={showCancelOrder} invoiceId={cancelInvoice?.id ?? null} invoiceNumber={cancelInvoice?.number ?? null}
         onClose={() => { setShowCancelOrder(false); setCancelInvoice(null); }} onDone={() => { clearCart(); setCustomer(null); }} />
@@ -831,7 +831,7 @@ const RetailTerminal: React.FC = () => {
           onClose={() => setLastCompleted(null)} />
       ) : lastCompleted ? (
         <ReceiptPreview open onClose={() => setLastCompleted(null)} type="bill"
-          title={`Receipt ${lastCompleted.invoiceNumber ?? ''}`}
+          title={tx('Receipt {{v1}}', { v1: lastCompleted.invoiceNumber ?? '' })}
           subtitle={tx('Offline — sync pending')}
           lines={lastCompleted.lines} total={lastCompleted.total}
           discountPercent={lastCompleted.discountPercent} discountAmount={lastCompleted.discountAmount}
@@ -841,11 +841,11 @@ const RetailTerminal: React.FC = () => {
       {canReprint && lastCompleted?.invoiceId && (
         <>
           <button type="button" className="fixed bottom-4 right-4 z-50 bg-sky-700 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-semibold hover:bg-sky-800"
-            onClick={() => setShowReprint({ invoiceId: lastCompleted.invoiceId!, title: 'Receipt' })}>
+            onClick={() => setShowReprint({ invoiceId: lastCompleted.invoiceId!, title: tx('Receipt') })}>
             {tx('Reprint')}
           </button>
           <ReprintDialog open={!!showReprint} title={showReprint?.title ?? ''} onClose={() => setShowReprint(null)}
-            onConfirm={(reason) => { if (!showReprint) return; reprintReceipt.mutateAsync({ invoiceId: showReprint.invoiceId, reason }); toast.success(`Reprint queued: ${reason}`); }} />
+            onConfirm={(reason) => { if (!showReprint) return; reprintReceipt.mutateAsync({ invoiceId: showReprint.invoiceId, reason }); toast.success(tx('Reprint queued: {{reason}}', { reason })); }} />
         </>
       )}
     </div>

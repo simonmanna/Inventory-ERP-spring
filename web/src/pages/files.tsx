@@ -47,7 +47,7 @@ export function FilesPage() {
       qc.invalidateQueries({ queryKey: ['files'] });
       list.refetch();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
   const remove = useMutation({
     mutationFn: async (id: string) => await api.delete(`/files/${id}`),
@@ -107,7 +107,7 @@ export function FilesPage() {
             disabled={!ownerId || upload.isPending}
           >
             <Upload className="mr-2 h-4 w-4" />
-            {upload.isPending ? 'Uploading…' : 'Choose file'}
+            {upload.isPending ? tx('Uploading…') : tx('Choose file')}
           </Button>
         </CardContent>
       </Card>
@@ -116,7 +116,7 @@ export function FilesPage() {
         <CardHeader>
           <CardTitle>{tx('Stored files')}</CardTitle>
           <Button size="sm" variant="outline" onClick={() => list.refetch()}>
-            {list.isFetching ? 'Loading…' : 'List files'}
+            {list.isFetching ? tx('Loading…') : tx('List files')}
           </Button>
         </CardHeader>
         <CardContent>

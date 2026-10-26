@@ -60,17 +60,17 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Draft',
-  PENDING: 'Pending',
-  ASSIGNED: 'Assigned',
-  IN_PROGRESS: 'In Progress',
-  WAITING: 'Waiting',
-  REVIEW: 'Review',
-  VERIFIED: 'Verified',
-  COMPLETED: 'Completed',
-  CANCELLED: 'Cancelled',
-  SKIPPED: 'Skipped',
-  OVERDUE: 'Overdue',
+  DRAFT: tx('Draft'),
+  PENDING: tx('Pending'),
+  ASSIGNED: tx('Assigned'),
+  IN_PROGRESS: tx('In Progress'),
+  WAITING: tx('Waiting'),
+  REVIEW: tx('Review'),
+  VERIFIED: tx('Verified'),
+  COMPLETED: tx('Completed'),
+  CANCELLED: tx('Cancelled'),
+  SKIPPED: tx('Skipped'),
+  OVERDUE: tx('Overdue'),
 };
 
 const PRIORITY_LIST = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'OPTIONAL'];
@@ -401,7 +401,7 @@ export function TaskDrawer({ taskId, open, onClose }: TaskDrawerProps) {
                     <div className="flex gap-2">
                       <Button size="sm" onClick={doVerify} disabled={verifyTask.isPending}>
                         <ShieldCheck className="h-3.5 w-3.5 mr-1" />
-                        {verifyTask.isPending ? 'Verifying…' : 'Confirm verification'}
+                        {verifyTask.isPending ? tx('Verifying…') : tx('Confirm verification')}
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => setShowVerify(false)}>{tx('Cancel')}</Button>
                     </div>

@@ -1,6 +1,7 @@
 package com.inventoryerp.kernel.web;
 
 import com.inventoryerp.kernel.idempotency.IdempotencyInterceptor;
+import com.inventoryerp.kernel.licensing.LicenseEnforcementInterceptor;
 import com.inventoryerp.kernel.security.AccessGuardInterceptor;
 import com.inventoryerp.kernel.security.AuthUser;
 import com.inventoryerp.kernel.security.RateLimitInterceptor;
@@ -16,20 +17,26 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * MVC wiring in Nest order: guards (auth → permissions → module), throttler, then the idempotency
- * interceptor. {@link AuthUser} handler parameters receive the request identity ({@code @CurrentUser}).
+ * MVC wiring in Nest order: guards (auth → permissions → module), throttler, the licence gate, then
+ * the idempotency interceptor. {@link AuthUser} handler parameters receive the request identity
+ * ({@code @CurrentUser}).
+ *
+ * <p>The licence gate sits after the guards so that 401 and 403 still win over 402, and before
+ * idempotency so a refused write never gets recorded as an outcome to replay.
  */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
     private final AccessGuardInterceptor accessGuard;
     private final RateLimitInterceptor rateLimit;
+    private final LicenseEnforcementInterceptor license;
     private final IdempotencyInterceptor idempotency;
 
     public WebConfig(AccessGuardInterceptor accessGuard, RateLimitInterceptor rateLimit,
-            IdempotencyInterceptor idempotency) {
+            LicenseEnforcementInterceptor license, IdempotencyInterceptor idempotency) {
         this.accessGuard = accessGuard;
         this.rateLimit = rateLimit;
+        this.license = license;
         this.idempotency = idempotency;
     }
 
@@ -37,7 +44,8 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(accessGuard).order(0);
         registry.addInterceptor(rateLimit).order(1);
-        registry.addInterceptor(idempotency).order(2);
+        registry.addInterceptor(license).order(2);
+        registry.addInterceptor(idempotency).order(3);
     }
 
     @Override

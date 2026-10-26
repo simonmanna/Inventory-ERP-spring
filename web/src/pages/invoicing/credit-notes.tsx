@@ -31,19 +31,19 @@ export function CreditNotesPage() {
   const columns: Column<Invoice>[] = [
     {
       key: 'documentNumber',
-      header: 'Credit note #',
+      header: tx('Credit note #'),
       render: (cn) => (
         <Link to={`/credit-notes/${cn.id}`} className="font-medium text-primary hover:underline">
           {cn.documentNumber}
         </Link>
       ),
     },
-    { key: 'partner', header: 'Customer', render: (cn) => cn.partner?.name ?? '-' },
-    { key: 'issueDate', header: 'Date', render: (cn) => date(cn.issueDate) },
-    { key: 'totalAmount', header: 'Total', className: 'text-right', render: (cn) => money(cn.totalAmount) },
+    { key: 'partner', header: tx('Customer'), render: (cn) => cn.partner?.name ?? '-' },
+    { key: 'issueDate', header: tx('Date'), render: (cn) => date(cn.issueDate) },
+    { key: 'totalAmount', header: tx('Total'), className: 'text-right', render: (cn) => money(cn.totalAmount) },
     {
       key: 'status',
-      header: 'Status',
+      header: tx('Status'),
       render: (cn) => <Badge variant={statusVariant[cn.status] ?? 'secondary'}>{cn.status}</Badge>,
     },
   ];
@@ -84,7 +84,7 @@ export function CreditNotesPage() {
               {tx('Previous')}
             </Button>
             <span>
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"

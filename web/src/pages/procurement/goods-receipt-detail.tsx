@@ -64,10 +64,10 @@ interface GRNDetail {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  posted: 'Posted',
-  cancelled: 'Cancelled',
-  reversed: 'Reversed',
+  draft: tx('Draft'),
+  posted: tx('Posted'),
+  cancelled: tx('Cancelled'),
+  reversed: tx('Reversed'),
 };
 
 const BADGE_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive'> = {
@@ -104,14 +104,14 @@ export default function GoodsReceiptDetailPage() {
   const post = useMutation({
     mutationFn: async () => await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/post`),
     onSuccess: () => { notify.success(tx('Goods receipt posted — stock received')); refresh(); },
-    onError: (e: any) => notify.error(errText(e, 'Posting failed')),
+    onError: (e: any) => notify.error(errText(e, tx('Posting failed'))),
   });
 
   const reverse = useMutation({
     mutationFn: async (reason: string) =>
       await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/reverse`, { reason }),
     onSuccess: () => { notify.success(tx('Goods receipt reversed — stock returned and journals reversed')); setReversing(false); refresh(); },
-    onError: (e: any) => notify.error(errText(e, 'Reversal failed')),
+    onError: (e: any) => notify.error(errText(e, tx('Reversal failed'))),
   });
 
   if (isLoading) {
@@ -191,7 +191,7 @@ export default function GoodsReceiptDetailPage() {
         <div className="ml-auto flex gap-2">
           {grn.status === 'draft' && has('goods_receipt:post') && (
             <Button size="sm" disabled={post.isPending} onClick={() => post.mutate()}>
-              <CheckCircle2 className="mr-1.5 h-4 w-4" />{post.isPending ? 'Posting…' : 'Post receipt'}
+              <CheckCircle2 className="mr-1.5 h-4 w-4" />{post.isPending ? tx('Posting…') : tx('Post receipt')}
             </Button>
           )}
           {grn.status === 'posted' && has('goods_receipt:cancel') && (
@@ -350,7 +350,7 @@ export default function GoodsReceiptDetailPage() {
       <ReasonDialog
         open={reversing}
         onOpenChange={setReversing}
-        title={`Reverse ${grn.receiptNumber}`}
+        title={tx('Reverse {{receiptNumber}}', { receiptNumber: grn.receiptNumber })}
         description={
           <>
             <p>{tx('Returns the received quantities out of stock, reverses the receipt\'s journal entries (inventory, GRNI and any supplier payable) today, and rolls the purchase order back.')}</p>
@@ -358,7 +358,7 @@ export default function GoodsReceiptDetailPage() {
           </>
         }
         confirmLabel={tx('Reverse receipt')}
-        pendingLabel="Reversing…"
+        pendingLabel={tx('Reversing…')}
         destructive
         pending={reverse.isPending}
         onConfirm={(reason) => reverse.mutate(reason)}

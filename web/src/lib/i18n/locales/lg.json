@@ -79,7 +79,13 @@
     "accounting": "Okubala ssente",
     "fixedAssets": "Ebintu ebinywevu",
     "manufacturing": "Okukola ebintu",
-    "bakery": "Ekifo ky'okufumba emigaati"
+    "bakery": "Ekifo ky'okufumba emigaati",
+    "customers": "Abaguzi",
+    "suppliers": "Abagabi",
+    "menus": "Menyu",
+    "tables": "Emmeeza",
+    "cashFlowAccounts": "Okutambula kw'Ensimbi & Akawunta",
+    "production": "Okukola"
   },
   "dashboard": {
     "title": "Olubaawo lw'ebikwata",

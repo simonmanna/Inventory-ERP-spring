@@ -83,13 +83,13 @@ export const HandoverDialog: React.FC<Props> = ({ open, session, currentUserId, 
 
   const submit = async () => {
     setErr(null);
-    if (!hasCount) { setErr('Counted cash must be a non-negative number'); return; }
-    if (!incomingUserId) { setErr('Select the incoming cashier'); return; }
-    if (incomingUserId === currentUserId) { setErr('Incoming cashier must be different from the current one'); return; }
-    if (!incomingPin) { setErr("Enter the incoming cashier's PIN"); return; }
-    if (!approvedById) { setErr('Select the approving manager'); return; }
-    if (!managerPin) { setErr("Enter the manager's PIN"); return; }
-    if (approvedById === session.userId || approvedById === incomingUserId) { setErr('The approving manager must be neither the outgoing nor the incoming cashier'); return; }
+    if (!hasCount) { setErr(tx('Counted cash must be a non-negative number')); return; }
+    if (!incomingUserId) { setErr(tx('Select the incoming cashier')); return; }
+    if (incomingUserId === currentUserId) { setErr(tx('Incoming cashier must be different from the current one')); return; }
+    if (!incomingPin) { setErr(tx('Enter the incoming cashier\'s PIN')); return; }
+    if (!approvedById) { setErr(tx('Select the approving manager')); return; }
+    if (!managerPin) { setErr(tx('Enter the manager\'s PIN')); return; }
+    if (approvedById === session.userId || approvedById === incomingUserId) { setErr(tx('The approving manager must be neither the outgoing nor the incoming cashier')); return; }
     if (needsReason && !varianceReason.trim()) { setErr('A variance reason is required when the drawer is off'); return; }
     const closingAccounts: Record<string, number> = {};
     const uncountedAccounts: Record<string, string> = {};
@@ -123,7 +123,7 @@ export const HandoverDialog: React.FC<Props> = ({ open, session, currentUserId, 
       onDone();
       onClose();
     } catch (e: any) {
-      setErr(apiErrorMessage(e, 'Handover failed'));
+      setErr(apiErrorMessage(e, tx('Handover failed')));
     }
   };
 
@@ -178,7 +178,7 @@ export const HandoverDialog: React.FC<Props> = ({ open, session, currentUserId, 
             {variance === 0 ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
             {tx('Variance:')} {variance >= 0 ? '+' : ''}{fmt(variance)}
             <span className="ml-auto font-normal text-xs opacity-75">
-              {variance === 0 ? 'Balanced' : variance > 0 ? 'Over' : 'Short'}
+              {variance === 0 ? tx('Balanced') : variance > 0 ? tx('Over') : tx('Short')}
             </span>
           </div>
         ) : null}
@@ -266,7 +266,7 @@ export const HandoverDialog: React.FC<Props> = ({ open, session, currentUserId, 
         <DialogFooter className="shrink-0 border-t border-slate-200 pt-4">
           <Button variant="ghost" onClick={onClose}>{tx('Cancel')}</Button>
           <Button onClick={submit} disabled={handover.isPending} style={{ background: '#4f46e5' }}>
-            {handover.isPending ? 'Handing over…' : 'Hand over register'}
+            {handover.isPending ? tx('Handing over…') : tx('Hand over register')}
           </Button>
         </DialogFooter>
       </DialogContent>

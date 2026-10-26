@@ -85,8 +85,8 @@ export function HrShiftsPage() {
                   <div>
                     <p className="text-sm font-medium">{s.code} · {s.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {s.startTime}–{s.endTime}{s.breakStart ? ` · break ${s.breakStart}–${s.breakEnd}` : ''}
-                      {' · '}{s.graceMinutes}{tx('min grace')}{s.maxOvertimeMinutes ? ` · ${s.maxOvertimeMinutes}min max OT` : ''}
+                      {s.startTime}–{s.endTime}{s.breakStart ? tx(' · break {{breakStart}}–{{breakEnd}}', { breakStart: s.breakStart, breakEnd: s.breakEnd }) : ''}
+                      {' · '}{s.graceMinutes}{tx('min grace')}{s.maxOvertimeMinutes ? tx(' · {{maxOvertimeMinutes}}min max OT', { maxOvertimeMinutes: s.maxOvertimeMinutes }) : ''}
                       {' · '}{s._count?.assignments ?? 0} {tx('assignments')}
                     </p>
                   </div>
@@ -95,7 +95,7 @@ export function HrShiftsPage() {
                   <Badge variant="outline" className={SHIFT_TYPE_STYLE[s.shiftType] ?? ''}>{s.shiftType.replace(/_/g, ' ')}</Badge>
                   {!s.isActive && <Badge variant="outline" className="bg-muted text-muted-foreground">{tx('Inactive')}</Badge>}
                   <button onClick={() => openEdit(s)} className="rounded-md border px-2 py-1 text-xs hover:bg-muted/60">{tx('Edit')}</button>
-                  <button onClick={() => { if (confirm(`Delete shift ${s.name}?`)) remove.mutate(s.id); }}
+                  <button onClick={() => { if (confirm(tx('Delete shift {{name}}?', { name: s.name }))) remove.mutate(s.id); }}
                     className="rounded-md border px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">{tx('Delete')}</button>
                 </div>
               </div>
@@ -106,7 +106,7 @@ export function HrShiftsPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit shift' : 'New shift'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? tx('Edit shift') : tx('New shift')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -156,7 +156,7 @@ export function HrShiftsPage() {
               </div>
             </div>
             <Button onClick={submit} disabled={!form.code || !form.name || !form.startTime || !form.endTime || create.isPending || update.isPending}>
-              {editing ? 'Save changes' : 'Create shift'}
+              {editing ? tx('Save changes') : tx('Create shift')}
             </Button>
           </div>
         </DialogContent>

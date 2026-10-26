@@ -48,7 +48,7 @@ export function DataTablePagination({
     <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-4 py-2.5 text-sm">
       <div className="flex items-center gap-3 text-muted-foreground">
         <span>
-          {tx('Showing')} <span className="font-medium text-foreground">{first.toLocaleString()}–{last.toLocaleString()}</span> of{' '}
+          {tx('Showing')} <span className="font-medium text-foreground">{first.toLocaleString()}–{last.toLocaleString()}</span> {tx('of')}{' '}
           <span className="font-medium text-foreground">{total.toLocaleString()}</span> {noun}{total === 1 ? '' : 's'}
         </span>
         {onPageSizeChange && (

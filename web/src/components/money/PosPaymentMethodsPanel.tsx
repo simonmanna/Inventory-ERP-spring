@@ -31,7 +31,7 @@ const KINDS = ['cash', 'mobile_money', 'card', 'bank'] as const;
 type Kind = typeof KINDS[number];
 
 const KIND_LABEL: Record<string, string> = {
-  cash: 'Cash', mobile_money: 'Mobile Money', card: 'Card', bank: 'Bank', store_credit: 'Store Credit',
+  cash: tx('Cash'), mobile_money: tx('Mobile Money'), card: tx('Card'), bank: tx('Bank'), store_credit: tx('Store Credit'),
 };
 const KIND_ICON: Record<string, LucideIcon> = {
   cash: Banknote, mobile_money: Smartphone, card: CreditCard, bank: Landmark, store_credit: Gift,
@@ -105,10 +105,10 @@ export function PosPaymentMethodsPanel() {
     try {
       if (editing) await update.mutateAsync({ id: editing.id, ...body });
       else await create.mutateAsync(body);
-      toast.success(editing ? 'Payment method updated' : 'Payment method added');
+      toast.success(editing ? tx('Payment method updated') : tx('Payment method added'));
       setDialogOpen(false);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Could not save the payment method');
+      toast.error(e?.response?.data?.message ?? tx('Could not save the payment method'));
     } finally {
       setSaving(false);
     }
@@ -119,10 +119,10 @@ export function PosPaymentMethodsPanel() {
     if (!m || remove.isPending) return;
     try {
       await remove.mutateAsync(m.id);
-      toast.success(`${m.label} removed from the terminal`);
+      toast.success(tx('{{label}} removed from the terminal', { label: m.label }));
       setRetiring(null);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Could not remove the payment method');
+      toast.error(e?.response?.data?.message ?? tx('Could not remove the payment method'));
     }
   };
 
@@ -150,7 +150,7 @@ export function PosPaymentMethodsPanel() {
           <Loader2 className="h-4 w-4 animate-spin" /> {tx('Loading…')}
         </div>
       ) : isError ? (
-        <LoadError message="Payment methods could not be loaded." onRetry={() => refetch()} retrying={isFetching} />
+        <LoadError message={tx('Payment methods could not be loaded.')} onRetry={() => refetch()} retrying={isFetching} />
       ) : (
         <ul className="divide-y rounded-xl border bg-card">
           {methods.map((m) => {
@@ -167,30 +167,30 @@ export function PosPaymentMethodsPanel() {
                   <ArrowRight className="h-4 w-4 text-muted-foreground" aria-label={tx('goes to')} />
                   <span className={connected ? 'text-foreground' : 'font-medium text-destructive'}>
                     {m.kind === 'cash'
-                      ? 'Drawer of the register taking the sale'
+                      ? tx('Drawer of the register taking the sale')
                       : m.kind === 'store_credit'
-                        ? 'Customer store credit'
-                        : m.accountName ? <>{m.accountName} <span className="text-muted-foreground">· {m.accountCode}</span></> : 'Not connected to an account'}
+                        ? tx('Customer store credit')
+                        : m.accountName ? <>{m.accountName} <span className="text-muted-foreground">· {m.accountCode}</span></> : tx('Not connected to an account')}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${connected ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'}`}>
-                    {connected ? 'Connected' : 'Not connected'}
+                    {connected ? tx('Connected') : tx('Not connected')}
                   </span>
                   <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
-                    {m.isActive ? 'Shown at till' : 'Hidden at till'}
+                    {m.isActive ? tx('Shown at till') : tx('Hidden at till')}
                   </span>
                   {m.requiresReference ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px]">{tx('Asks for reference')}</span> : null}
                   {m.trackInShift ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px]">{tx('Counted at shift close')}</span> : null}
                   {canUpdate || canDelete ? (
                     <span className="ml-auto flex gap-2 md:ml-0">
                       {canUpdate ? (
-                        <Button variant="outline" className="min-h-[44px]" onClick={() => openEdit(m)} aria-label={`Edit ${m.label}`}>
+                        <Button variant="outline" className="min-h-[44px]" onClick={() => openEdit(m)} aria-label={tx('Edit {{label}}', { label: m.label })}>
                           <Pencil className="mr-1 h-3.5 w-3.5" aria-hidden /> {tx('Edit')}
                         </Button>
                       ) : null}
                       {canDelete ? (
-                        <Button variant="ghost" className="min-h-[44px] min-w-[44px]" aria-label={`Remove ${m.label}`} onClick={() => setRetiring(m)}>
+                        <Button variant="ghost" className="min-h-[44px] min-w-[44px]" aria-label={tx('Remove {{label}}', { label: m.label })} onClick={() => setRetiring(m)}>
                           <Trash2 className="h-4 w-4 text-destructive" aria-hidden />
                         </Button>
                       ) : null}
@@ -202,7 +202,7 @@ export function PosPaymentMethodsPanel() {
           })}
           {!methods.length ? (
             <li className="p-4 text-sm text-muted-foreground">
-              {tx('Nothing configured yet — the terminal is falling back to whatever cash, wallet and bank accounts exist.')}{canCreate ? ' Add methods here to control the tiles the cashier sees.' : ''}
+              {tx('Nothing configured yet — the terminal is falling back to whatever cash, wallet and bank accounts exist.')}{canCreate ? tx(' Add methods here to control the tiles the cashier sees.') : ''}
             </li>
           ) : null}
         </ul>
@@ -213,7 +213,7 @@ export function PosPaymentMethodsPanel() {
           <AlertDialogHeader>
             <AlertDialogTitle>{tx('Remove')} {retiring?.label} {tx('from the terminal?')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {tx('Cashiers will no longer see the')} {retiring?.label} {tx('tile in the Charge dialog. Payments already taken with it stay in the books and in')} {retiring?.accountName ?? 'their account'}{tx('. To pause it without removing it, edit the method and turn off “Show in the terminal” instead.')}
+              {tx('Cashiers will no longer see the')} {retiring?.label} {tx('tile in the Charge dialog. Payments already taken with it stay in the books and in')} {retiring?.accountName ?? tx('their account')}{tx('. To pause it without removing it, edit the method and turn off “Show in the terminal” instead.')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -229,7 +229,7 @@ export function PosPaymentMethodsPanel() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>{editing ? `Edit ${editing.label}` : 'Add payment method'}</DialogTitle>
+            <DialogTitle>{editing ? tx('Edit {{label}}', { label: editing.label }) : tx('Add payment method')}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-3">
@@ -300,8 +300,8 @@ export function PosPaymentMethodsPanel() {
                 </select>
                 {!eligibleAccounts.length ? (
                   <p className="mt-1 text-[11px] text-amber-700">
-                    {tx('No')} {KIND_LABEL[form.kind].toLowerCase()} account exists yet. Add one under Money &amp; Accounts → Accounts first.
-                    {form.kind === 'card' ? ' A card method must use the account mapped as card_clearing.' : ''}
+                    {tx('No')} {KIND_LABEL[form.kind].toLowerCase()} {tx('account exists yet. Add one under Money & Accounts → Accounts first.')}
+                    {form.kind === 'card' ? tx(' A card method must use the account mapped as card_clearing.') : ''}
                   </p>
                 ) : null}
               </div>
@@ -341,7 +341,7 @@ export function PosPaymentMethodsPanel() {
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>{tx('Cancel')}</Button>
             <Button onClick={save} disabled={saving}>
               {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              {editing ? 'Save changes' : 'Add method'}
+              {editing ? tx('Save changes') : tx('Add method')}
             </Button>
           </DialogFooter>
         </DialogContent>

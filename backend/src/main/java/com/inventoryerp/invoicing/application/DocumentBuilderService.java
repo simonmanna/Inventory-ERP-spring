@@ -1,5 +1,9 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.shared.web.ApiException;
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
+import com.inventoryerp.core.application.UomConversionService;
 import static com.inventoryerp.kernel.common.Money.ZERO;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
@@ -36,12 +40,27 @@ public class DocumentBuilderService {
     public record LineInput(String productId, String menuItemId, String variantId, String variantName,
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
-            String lineType, Boolean taxInclusive) {
+            String lineType, Boolean taxInclusive, String uomId) {
+
+        /** Line in the role's default unit (ADR-S003: {@code uomId} picks another unit of the product). */
+        public LineInput(String productId, String menuItemId, String variantId, String variantName, String accountId,
+                String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+                String discountType, BigDecimal discountAmount, String discountReason, String discountSource,
+                String taxId, String lineType, Boolean taxInclusive) {
+            this(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice,
+                    discountPercent, discountType, discountAmount, discountReason, discountSource, taxId, lineType,
+                    taxInclusive, null);
+        }
 
         public static LineInput of(String productId, String accountId, String description, BigDecimal quantity,
                 BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType) {
+            return of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType, null);
+        }
+
+        public static LineInput of(String productId, String accountId, String description, BigDecimal quantity,
+                BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType, String uomId) {
             return new LineInput(productId, null, null, null, accountId, description, quantity, unitPrice,
-                    discountPercent, null, null, null, null, taxId, lineType, null);
+                    discountPercent, null, null, null, null, taxId, lineType, null, uomId);
         }
     }
 
@@ -58,7 +77,7 @@ public class DocumentBuilderService {
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
             String lineType, BigDecimal subtotal, BigDecimal taxAmount, BigDecimal total, int lineNumber,
-            boolean taxInclusive) {
+            boolean taxInclusive, String uomId, BigDecimal uomFactor) {
 
         /** Shape consumed by {@link #groupForPosting}. */
         public Map<String, Object> asRow() {
@@ -72,6 +91,8 @@ public class DocumentBuilderService {
             m.put("total", total);
             m.put("quantity", quantity);
             m.put("description", description);
+            m.put("uomId", uomId);
+            m.put("uomFactor", uomFactor);
             return m;
         }
     }
@@ -89,10 +110,12 @@ public class DocumentBuilderService {
     private final SequenceService sequence;
     private final TaxCalculationService tax;
     private final AccountDeterminationService determination;
+    private final UomConversionService units;
 
     public DocumentBuilderService(JdbcClient jdbc, DmsTypeResolver dmsTypes, SequenceService sequence,
-            TaxCalculationService tax, AccountDeterminationService determination) {
+            TaxCalculationService tax, AccountDeterminationService determination, UomConversionService units) {
         this.jdbc = jdbc;
+        this.units = units;
         this.dmsTypes = dmsTypes;
         this.sequence = sequence;
         this.tax = tax;
@@ -118,8 +141,29 @@ public class DocumentBuilderService {
                 .query(Integer.class).optional().orElse(null), "currency.decimalPlaces", code);
     }
 
-    /** Server-side line math: price, discount, tax engine, totals. */
+    /** Server-side line math for a sales-side document (lines default to the product's sales unit). */
     public Totals prepareLines(List<LineInput> lines) {
+        return prepareLines(lines, UnitRole.SALES);
+    }
+
+    /**
+     * Line unit for a document line (ADR-S003). An explicit {@code uomId} is validated strictly. The implicit default
+     * unit never blocks a document: if it cannot be resolved the line keeps no snapshot and stock posting falls back
+     * to the live conversion, exactly as before V5.
+     */
+    private LineUnit lineUnit(String productId, String uomId, UnitRole role) {
+        if (uomId != null && !uomId.isBlank()) {
+            return units.resolveLineUnit(productId, uomId, role);
+        }
+        try {
+            return units.resolveLineUnit(productId, null, role);
+        } catch (ApiException e) {
+            return new LineUnit(null, null);
+        }
+    }
+
+    /** Server-side line math: price, discount, tax engine, totals; {@code role} picks each line's default unit. */
+    public Totals prepareLines(List<LineInput> lines, UnitRole role) {
         List<PreparedLine> prepared = new ArrayList<>();
         BigDecimal discountTotal = ZERO;
         Integer taxScale = currencyScale();
@@ -136,8 +180,14 @@ public class DocumentBuilderService {
                         + " \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(productId, productOrg)),
                         "Product", productOrg, productId);
             }
+            LineUnit unit = meta || product == null ? new LineUnit(null, null) : lineUnit(l.productId(), l.uomId(), role);
+            BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
+                    ? (BigDecimal) product.get("salesPrice") : null;
+            if (!meta && l.unitPrice() == null && product != null && unit.factor() != null) {
+                defaultPrice = units.defaultUnitPrice(l.productId(), unit, role, defaultPrice);
+            }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
-                    : product != null && product.get("salesPrice") != null ? (BigDecimal) product.get("salesPrice") : ZERO;
+                    : defaultPrice != null ? defaultPrice : ZERO;
             BigDecimal quantity = meta ? ZERO : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
             BigDecimal gross = quantity.multiply(unitPrice);
             String discType = l.discountType() != null ? l.discountType() : "percentage";
@@ -167,7 +217,7 @@ public class DocumentBuilderService {
             prepared.add(new PreparedLine(l.productId(), l.menuItemId(), l.variantId(), l.variantName(), l.accountId(),
                     description, quantity, unitPrice, effectivePct, discType, effectiveDiscount, l.discountReason(),
                     l.discountSource() != null ? l.discountSource() : "manual", taxId, lineType, result.net(),
-                    result.taxTotal(), result.gross(), i, taxInclusive));
+                    result.taxTotal(), result.gross(), i, taxInclusive, unit.uomId(), unit.factor()));
         }
         BigDecimal subtotal = Money.sum(prepared.stream().map(PreparedLine::subtotal).toList());
         BigDecimal taxAmount = Money.sum(prepared.stream().map(PreparedLine::taxAmount).toList());
@@ -176,7 +226,7 @@ public class DocumentBuilderService {
 
     /** Create a draft document (numbered per type and issue year) with its lines; returns it with lines + partner. */
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
-        Totals totals = prepareLines(lines);
+        Totals totals = prepareLines(lines, "vendor_bill".equals(documentType) ? UnitRole.PURCHASE : UnitRole.SALES);
         int year = EntityPatch.toInstant(h.issueDate()).atOffset(ZoneOffset.UTC).getYear();
         String key;
         String prefix;
@@ -226,12 +276,13 @@ public class DocumentBuilderService {
         for (PreparedLine p : prepared) {
             jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", \"productId\", \"menuItemId\","
                             + " \"accountId\", description, quantity, \"unitPrice\", \"discountPercent\", \"taxId\", subtotal,"
-                            + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\") VALUES (?, ?, ?, ?, ?, ?, ?,"
-                            + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\", \"uomId\", \"uomFactor\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .params(UUID.randomUUID().toString(), org(), documentId, p.productId(),
                             withExtras ? p.menuItemId() : null, p.accountId(), p.description(), p.quantity(),
                             p.unitPrice(), p.discountPercent(), p.taxId(), p.subtotal(), p.taxAmount(), p.total(),
-                            p.lineNumber(), withExtras ? p.lineType() : "product", withExtras && p.taxInclusive())
+                            p.lineNumber(), withExtras ? p.lineType() : "product", withExtras && p.taxInclusive(),
+                            p.uomId(), p.uomFactor())
                     .update();
         }
     }

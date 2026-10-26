@@ -45,9 +45,9 @@ export function ManufacturingPlanningPage() {
         </div>
         {canPlan && (
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => run(() => mrp.mutateAsync({ path: 'scan-min-stock' }), 'Scanned min-stock.')}><PackagePlus className="mr-2 h-4 w-4" /> {tx('Scan min-stock')}</Button>
+            <Button variant="outline" onClick={() => run(() => mrp.mutateAsync({ path: 'scan-min-stock' }), tx('Scanned min-stock.'))}><PackagePlus className="mr-2 h-4 w-4" /> {tx('Scan min-stock')}</Button>
             <Button variant="outline" onClick={() => run(() => mrp.mutateAsync({ path: 'run' }), 'MRP run — purchase request drafted for shortfalls.')}><Wand2 className="mr-2 h-4 w-4" /> {tx('Run MRP')}</Button>
-            <Button onClick={() => run(() => createPlan.mutateAsync({ fromOpenRequests: true, name: `Plan ${new Date().toLocaleDateString()}` }), 'Plan created from open requests.')}><Sparkles className="mr-2 h-4 w-4" /> {tx('Plan from requests')}</Button>
+            <Button onClick={() => run(() => createPlan.mutateAsync({ fromOpenRequests: true, name: `Plan ${new Date().toLocaleDateString()}` }), tx('Plan created from open requests.'))}><Sparkles className="mr-2 h-4 w-4" /> {tx('Plan from requests')}</Button>
           </div>
         )}
       </div>

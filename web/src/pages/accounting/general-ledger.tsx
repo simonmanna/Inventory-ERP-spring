@@ -92,7 +92,7 @@ export function GeneralLedgerPage() {
         )}
         <div className="flex-1 text-right text-xs text-muted-foreground">
           {meta && (
-            <span>{filteredRows.length} of {meta.total} {tx('line')}{meta.total !== 1 ? 's' : ''}</span>
+            <span>{filteredRows.length} {tx('of')} {meta.total} {tx('line')}{meta.total !== 1 ? 's' : ''}</span>
           )}
         </div>
       </div>
@@ -105,7 +105,7 @@ export function GeneralLedgerPage() {
           </CardTitle>
           {!isLoading && meta && (
             <p className="text-[10px] font-medium text-muted-foreground">
-              {tx('Page')} {page} of {meta.totalPages}
+              {tx('Page')} {page} {tx('of')} {meta.totalPages}
             </p>
           )}
         </CardHeader>
@@ -194,7 +194,7 @@ export function GeneralLedgerPage() {
               {tx('Previous')}
             </Button>
             <span className="text-xs font-medium">
-              {tx('Page')} {meta.page} of {meta.totalPages}
+              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
             </span>
             <Button variant="outline" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>
               {tx('Next')}

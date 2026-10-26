@@ -147,10 +147,10 @@ export const TablesPage: React.FC = () => {
       await Promise.all(
         changed.map((x) => api.patch(`/pos/tables/${x.table.id}`, { sortOrder: x.sortOrder })),
       );
-      toast.success(`T${movedId === table.id ? table.number : byId.get(movedId)?.number} moved ${dir === 'up' ? 'toward the front' : 'toward the back'}`);
+      toast.success(tx('T{{v1}} moved {{v2}}', { v1: movedId === table.id ? table.number : byId.get(movedId)?.number, v2: dir === 'up' ? 'toward the front' : 'toward the back' }));
       refetch();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Failed to reorder table');
+      toast.error(e?.response?.data?.message ?? tx('Failed to reorder table'));
     }
   }
 
@@ -217,10 +217,10 @@ export const TablesPage: React.FC = () => {
       };
       try {
         await create.mutateAsync(body);
-        toast.success(`Created T${number}`);
+        toast.success(tx('Created T{{number}}', { number }));
         setCreateOpen(false);
       } catch (e: any) {
-        toast.error(e?.response?.data?.message ?? 'Failed to create table');
+        toast.error(e?.response?.data?.message ?? tx('Failed to create table'));
       }
     }
 
@@ -244,10 +244,10 @@ export const TablesPage: React.FC = () => {
         };
         try {
           await update.mutateAsync({ id: editTarget.id, body });
-          toast.success(`Updated T${number}`);
+          toast.success(tx('Updated T{{number}}', { number }));
           setEditTarget(null);
         } catch (e: any) {
-          const msg = e?.response?.data?.message ?? e?.message ?? 'Failed to update table';
+          const msg = e?.response?.data?.message ?? e?.message ?? tx('Failed to update table');
           toast.error(msg);
           console.error('Update table error:', e?.response?.data ?? e);
         }
@@ -257,10 +257,10 @@ export const TablesPage: React.FC = () => {
     if (!archiveTarget) return;
     try {
       await archive.mutateAsync(archiveTarget.id);
-      toast.success(`T${archiveTarget.number} archived`);
+      toast.success(tx('T{{number}} archived', { number: archiveTarget.number }));
       setArchiveTarget(null);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Failed to archive table');
+      toast.error(e?.response?.data?.message ?? tx('Failed to archive table'));
     }
   }
 
@@ -270,7 +270,7 @@ export const TablesPage: React.FC = () => {
       await setStatus.mutateAsync({ id: table.id, status: next, reason: 'manual-toggle' });
       toast.success(`T${table.number} → ${STATUS_META[next].label}`);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Failed to change status');
+      toast.error(e?.response?.data?.message ?? tx('Failed to change status'));
     }
   }
 
@@ -342,7 +342,7 @@ export const TablesPage: React.FC = () => {
                     : 'bg-white text-muted-foreground border border-border hover:border-primary hover:text-primary'
                 }`}
               >
-                {k === 'all' ? 'All' : STATUS_META[k as PosTableStatus].label}
+                {k === 'all' ? tx('All') : STATUS_META[k as PosTableStatus].label}
                 {k !== 'all' && stats
                   ? ` · ${stats[k as keyof typeof stats] ?? 0}`
                   : null}
@@ -411,10 +411,10 @@ export const TablesPage: React.FC = () => {
             <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-50" />
             <p className="font-bold">
               {tables.length === 0
-                ? 'No tables yet — create your first one!'
+                ? tx('No tables yet — create your first one!')
                 : search
-                  ? `No tables matching "${search}"`
-                  : `No ${filter === 'all' ? '' : filter} tables`}
+                  ? tx('No tables matching "{{search}}"', { search })
+                  : tx('No {{v1}} tables', { v1: filter === 'all' ? '' : filter })}
             </p>
             {tables.length === 0 ? (
               <Button onClick={openCreate} className="mt-4" size="sm">
@@ -521,7 +521,7 @@ export const TablesPage: React.FC = () => {
                       onClick={() => toggleOutOfService(table)}
                     >
                       <PowerOff className="w-3 h-3 mr-1" />
-                      {table.status === 'out_of_service' ? 'Reactivate' : 'OOS'}
+                      {table.status === 'out_of_service' ? tx('Reactivate') : 'OOS'}
                     </Button>
                     <Button
                       variant="ghost"
@@ -586,7 +586,7 @@ export const TablesPage: React.FC = () => {
       >
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>{editTarget ? `Edit T${editTarget.number}` : 'Create table'}</DialogTitle>
+            <DialogTitle>{editTarget ? tx('Edit T{{number}}', { number: editTarget.number }) : tx('Create table')}</DialogTitle>
             <DialogDescription>
               {tx('Geometry, layout, and operational metadata. The Floor Plan editor will read these fields in the next iteration.')}
             </DialogDescription>
@@ -688,7 +688,7 @@ export const TablesPage: React.FC = () => {
               onClick={editTarget ? submitEdit : submitCreate}
               disabled={create.isPending || update.isPending}
             >
-              {editTarget ? 'Save changes' : 'Create table'}
+              {editTarget ? tx('Save changes') : tx('Create table')}
             </Button>
           </DialogFooter>
         </DialogContent>

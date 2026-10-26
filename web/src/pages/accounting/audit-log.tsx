@@ -73,7 +73,7 @@ export function AuditLogPage() {
           </CardTitle>
           {meta && (
             <p className="text-[10px] font-medium text-muted-foreground">
-              {tx('Page')} {page} of {meta.totalPages}
+              {tx('Page')} {page} {tx('of')} {meta.totalPages}
             </p>
           )}
         </CardHeader>
@@ -86,7 +86,7 @@ export function AuditLogPage() {
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Entity')}</TableHead>
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Entity ID')}</TableHead>
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Actor')}</TableHead>
-                <TableHead className="text-[10px] font-bold text-muted-foreground uppercase hidden md:table-cell">IP</TableHead>
+                <TableHead className="text-[10px] font-bold text-muted-foreground uppercase hidden md:table-cell">{tx('IP')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -103,7 +103,7 @@ export function AuditLogPage() {
                   <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                     <History className="h-8 w-8 mx-auto mb-2 opacity-30" />
                     <p className="font-medium text-sm">{tx('No audit events found')}</p>
-                    <p className="text-xs">{entityFilter ? 'Try a different entity filter.' : 'No activity recorded yet.'}</p>
+                    <p className="text-xs">{entityFilter ? tx('Try a different entity filter.') : tx('No activity recorded yet.')}</p>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -142,7 +142,7 @@ export function AuditLogPage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
               {tx('Previous')}
             </Button>
-            <span className="text-xs font-medium">{tx('Page')} {meta.page} of {meta.totalPages}</span>
+            <span className="text-xs font-medium">{tx('Page')} {meta.page} {tx('of')} {meta.totalPages}</span>
             <Button variant="outline" size="sm" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>
               {tx('Next')}
             </Button>

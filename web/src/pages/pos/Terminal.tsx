@@ -645,14 +645,14 @@ const TerminalPage: React.FC = () => {
     const serverSig = orderSig(serverLines);
     if (scope.tableId) tabSyncSig.current = serverSig; else orderSaveSig.current = serverSig;
     toast.info(localOnly.length
-      ? 'This order changed elsewhere — both versions were merged. Check it before charging.'
-      : 'This order changed elsewhere — reloaded the current version.');
+      ? tx('This order changed elsewhere — both versions were merged. Check it before charging.')
+      : tx('This order changed elsewhere — reloaded the current version.'));
     return true;
   }, [adoptServerLines]);
 
   /* Flush the current order (table OR tableless) before switching away. */
   const flushCurrentOrder = useCallback(async (opts: { requireServer?: boolean } = {}) => {
-    if (useCartStore.getState().operationPending) throw new Error('Resolve the pending payment before changing orders');
+    if (useCartStore.getState().operationPending) throw new Error(tx('Resolve the pending payment before changing orders'));
     /* No connection: there is nothing to flush. The cart lives on this device
      * (persisted) and is pushed the moment the API answers again, so refusing
      * every button here is what made the terminal unusable without a server —
@@ -664,8 +664,8 @@ const TerminalPage: React.FC = () => {
       if (opts.requireServer) throw new Error('No connection to the server — this action needs it. The order is safe on this device.');
       return;
     }
-    if (saveInFlight.current || saveTab.isPending || saveOrderItems.isPending) throw new Error('Wait for the current order save to finish');
-    if (pendingOrderCreate.current) throw new Error('Wait for the new order to finish saving');
+    if (saveInFlight.current || saveTab.isPending || saveOrderItems.isPending) throw new Error(tx('Wait for the current order save to finish'));
+    if (pendingOrderCreate.current) throw new Error(tx('Wait for the new order to finish saving'));
     const st = useCartStore.getState();
     if (st.lines.length && !st.orderId && !st.tableId) throw new Error('This cart has not been saved. Keep it open until the server is available.');
     const sig = orderSig(st.lines);
@@ -718,7 +718,7 @@ const TerminalPage: React.FC = () => {
         tabSyncSig.current = orderSig(serverLines);
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not load the table. Your current cart is preserved.');
+      toast.error(e?.response?.data?.message || tx('Could not load the table. Your current cart is preserved.'));
       throw e;
     } finally {
       setPendingTableLoad((cur) => (cur === id ? null : cur));
@@ -745,7 +745,7 @@ const TerminalPage: React.FC = () => {
       // snapshot so the card only ever adds genuinely unsaved lines.
       tableCartsRef.current.delete(t.id);
       setSelectedTableId(t.id); setTableView('ordering'); enterFullscreen();
-    } catch (e: any) { toast.error(e?.response?.data?.message || e?.message || 'Could not switch tables; current cart preserved'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || e?.message || tx('Could not switch tables; current cart preserved')); }
     finally { setPendingTableLoad(null); }
   }, [flushCurrentOrder, enterFullscreen]);
 
@@ -886,7 +886,7 @@ const TerminalPage: React.FC = () => {
         rearm = true;
       } catch (e: any) {
         if (e?.response?.status !== 409) {
-          toast.error(e?.response?.data?.message || 'Order save failed; your cart is preserved');
+          toast.error(e?.response?.data?.message || tx('Order save failed; your cart is preserved'));
         } else if ((conflictStreak.current += 1) > 3) {
           toast.error(tx('This order keeps changing on another device. Reopen the table before charging.'));
         } else {
@@ -991,7 +991,7 @@ const TerminalPage: React.FC = () => {
         if (e?.response?.status !== 409) {
           // This used to be swallowed: the order silently stopped saving and the
           // cashier found out at the till.
-          toast.error(e?.response?.data?.message || 'Order save failed; your cart is preserved');
+          toast.error(e?.response?.data?.message || tx('Order save failed; your cart is preserved'));
         } else if ((conflictStreak.current += 1) > 3) {
           toast.error(tx('This order keeps changing on another device. Reopen it from the Orders panel before charging.'));
         } else {
@@ -1048,7 +1048,7 @@ const TerminalPage: React.FC = () => {
       setTableView('ordering');
       enterFullscreen();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Could not open order');
+      toast.error(e?.response?.data?.message || tx('Could not open order'));
     }
   }, [flushCurrentOrder, resumeOrderMut, clearCart, setOrderType, setOrderId, tables, handleTableClick, enterFullscreen]);
 
@@ -1066,8 +1066,8 @@ const TerminalPage: React.FC = () => {
     };
   }, []);
 
-  const ORDER_TYPE_LABELS: Record<string, string> = { 'dine-in': 'Dine In', takeaway: 'Takeaway', delivery: 'Delivery' };
-  const orderTypeLabel = orderTypeFromStore ? ORDER_TYPE_LABELS[orderTypeFromStore] ?? 'Dine In' : 'Dine In';
+  const ORDER_TYPE_LABELS: Record<string, string> = { 'dine-in': tx('Dine In'), takeaway: tx('Takeaway'), delivery: tx('Delivery') };
+  const orderTypeLabel = orderTypeFromStore ? ORDER_TYPE_LABELS[orderTypeFromStore] ?? tx('Dine In') : tx('Dine In');
   const activeTableLabel = selectedTable ? `T${selectedTable.number}${selectedTable.name ? ` ${selectedTable.name}` : ''}` : null;
   const [showTableSelector, setShowTableSelector] = useState(false);
 
@@ -1158,7 +1158,7 @@ const TerminalPage: React.FC = () => {
       if (seq !== scanSeq.current) return; // superseded by a newer scan
       const rows = Array.isArray(res.data) ? res.data : [res.data];
       const hit = rows.find((r: any) => r && r.id);
-      if (!hit) { toast.error(`No item matches "${code.slice(0, 24)}"`); setSearch(''); return; }
+      if (!hit) { toast.error(tx('No item matches "{{v1}}"', { v1: code.slice(0, 24) })); setSearch(''); return; }
       onPickProduct({
         id: hit.id,
         name: hit.name,
@@ -1201,7 +1201,7 @@ const TerminalPage: React.FC = () => {
     const st = useCartStore.getState();
     const serverItemId = st.serverLineIds[lineId];
     const targetOrderId = st.orderId;
-    const done = kind === 'void' ? 'Voided successfully' : 'Deleted successfully';
+    const done = kind === 'void' ? tx('Voided successfully') : tx('Deleted successfully');
     if (!serverItemId || !targetOrderId) {
       removeLine(lineId);
       toast.success(done);
@@ -1251,7 +1251,7 @@ const TerminalPage: React.FC = () => {
       else orderSaveSig.current = orderSig(serverLines);
       toast.success(done);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e?.message || 'Could not void the item');
+      toast.error(e?.response?.data?.message || e?.message || tx('Could not void the item'));
     }
   }, [removeLine, voidItemMut, requestOverride, adoptServerLines, tableId]);
 
@@ -1269,7 +1269,7 @@ const TerminalPage: React.FC = () => {
   const onLineDiscountApply = (lineId: string, amount: number, type?: DiscountType, reason?: string) => {
     setDiscount(lineId, amount, type, reason);
     if (amount > 0) {
-      toast.success(type === 'fixed_amount' ? `Line discount ${fmt(amount)} applied` : `Line discount ${amount}% applied`);
+      toast.success(type === 'fixed_amount' ? tx('Line discount {{v1}} applied', { v1: fmt(amount) }) : tx('Line discount {{amount}}% applied', { amount }));
     } else {
       toast.success(tx('Line discount cleared'));
     }
@@ -1305,7 +1305,7 @@ const TerminalPage: React.FC = () => {
         setTransactionDiscount(amount, type);
         useCartStore.setState({ overrideById: result.managerId, overridePin: result.pin });
         if (amount > 0) setShowDiscountReason(true);
-        toast.success(`${label} applied with override`);
+        toast.success(tx('{{label}} applied with override', { label }));
       });
     } else {
       setTransactionDiscount(amount, type);
@@ -1332,12 +1332,12 @@ const TerminalPage: React.FC = () => {
     if (!cartReadyToCommit(lines)) return;
     try {
       if (splitActive) {
-        if (orderSig(useCartStore.getState().lines) !== tabSyncSig.current) throw new Error('Unsaved changes must be resolved before reopening the split.');
+        if (orderSig(useCartStore.getState().lines) !== tabSyncSig.current) throw new Error(tx('Unsaved changes must be resolved before reopening the split.'));
         setShowSplit(true); return;
       }
       await flushCurrentOrder();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e?.message || 'Could not save the order before settling');
+      toast.error(e?.response?.data?.message || e?.message || tx('Could not save the order before settling'));
       return;
     }
     setIsTabSettle(true);
@@ -1373,13 +1373,13 @@ const TerminalPage: React.FC = () => {
       const res = await transferItemsMut.mutateAsync({ sourceId: tableId, targetId, items });
       const moved = ((res as any)?.movedSummary ?? []).reduce((s: number, i: any) => s + Number(i.quantity), 0);
       const dest = tables.find((t) => t.id === targetId);
-      toast.success(`Moved ${moved} item(s) to T${dest?.number ?? ''}`);
+      toast.success(tx('Moved {{moved}} item(s) to T{{v2}}', { moved, v2: dest?.number ?? '' }));
       setShowMoveItems(false);
       setPendingTableLoad(tableId);
       tabSyncSig.current = '__loading__';
       await loadTableOrder(tableId);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Move failed');
+      toast.error(e?.response?.data?.message || tx('Move failed'));
     } finally {
       setTransferBusy(false);
     }
@@ -1409,12 +1409,12 @@ const TerminalPage: React.FC = () => {
       setPendingTableLoad(tableId);
       tabSyncSig.current = '__loading__';
       await loadTableOrder(tableId);
-      toast.success(`Merged ${mergedLabels.join(', ')} into ${activeTableLabel ?? 'this table'}`);
+      toast.success(tx('Merged {{v1}} into {{v2}}', { v1: mergedLabels.join(', '), v2: activeTableLabel ?? 'this table' }));
     } catch (e: any) {
       // A partial run is still a real result — some tables may already have been
       // folded in — so re-read the tab before surfacing the failure.
       if (tableId) { try { await loadTableOrder(tableId); } catch { /* the message below is what matters */ } }
-      toast.error(e?.response?.data?.message || e?.message || 'Merge failed');
+      toast.error(e?.response?.data?.message || e?.message || tx('Merge failed'));
     } finally {
       setMergeBusy(false);
     }
@@ -1468,9 +1468,9 @@ const TerminalPage: React.FC = () => {
           await send();
         }
       }
-      finish(freedLabel ? `Order voided — ${freedLabel} is free` : 'Order voided');
+      finish(freedLabel ? `Order voided — ${freedLabel} is free` : tx('Order voided'));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e?.message || 'Could not void the order');
+      toast.error(e?.response?.data?.message || e?.message || tx('Could not void the order'));
     }
   }, [selectedTable, activeTableLabel, tableId, cancelOrderMut, requestOverride, clearCart, setCustomer]);
 
@@ -1580,7 +1580,7 @@ const TerminalPage: React.FC = () => {
      * owes what instead. */
     const settledToast = (invoiceNumber?: string) => {
       if (isCredit) return `Charged ${fmt(total)} to ${customer?.name ?? 'account'} — due later`;
-      return invoiceNumber ? `Order ${invoiceNumber} settled` : 'Order settled';
+      return invoiceNumber ? `Order ${invoiceNumber} settled` : tx('Order settled');
     };
     /* Compute effective transaction discount percent (handles fixed-amount). */
     const effectiveTxPct = transactionDiscountType === 'fixed_amount' && transactionDiscountAmount > 0
@@ -1627,7 +1627,7 @@ const TerminalPage: React.FC = () => {
         });
         toast.success(isCredit
           ? settledToast()
-          : `Order settled — change ${fmt((res as any).change ?? 0)}`);
+          : tx('Order settled — change {{v1}}', { v1: fmt((res as any).change ?? 0) }));
         // Pop the settlement receipt so the cashier can print it.
         setLastCompleted({
           lines: cartToReceiptLines(lines),
@@ -1643,7 +1643,7 @@ const TerminalPage: React.FC = () => {
         });
         finishSettle();
       } catch (e: any) {
-        const msg = e?.response?.data?.message || e?.message || 'Settle failed';
+        const msg = e?.response?.data?.message || e?.message || tx('Settle failed');
         if (await recoverFromPricingRejection(msg, input, onSettle)) return;
         notifySettleFailure(e);
         if (!e?.response) { finishUnreachableSale(finishSettle, { total, discountPercent: effectiveTxPct }); return; }
@@ -1679,7 +1679,7 @@ const TerminalPage: React.FC = () => {
         });
         toast.success(isCredit
           ? settledToast(res.invoiceNumber)
-          : `Order ${res.invoiceNumber} settled — change ${fmt(res.change ?? 0)}`);
+          : tx('Order {{invoiceNumber}} settled — change {{v2}}', { invoiceNumber: res.invoiceNumber, v2: fmt(res.change ?? 0) }));
         setLastCompleted({
           lines: cartToReceiptLines(lines),
           total, invoiceNumber: res.invoiceNumber, invoiceId: res.invoiceId,
@@ -1693,7 +1693,7 @@ const TerminalPage: React.FC = () => {
         setShowPayment(false);
         refetchSession();
       } catch (e: any) {
-        const msg = e?.response?.data?.message || e?.message || 'Settle failed';
+        const msg = e?.response?.data?.message || e?.message || tx('Settle failed');
         if (await recoverFromPricingRejection(msg, input, onSettle)) return;
         notifySettleFailure(e);
         if (!e?.response) {
@@ -1756,7 +1756,7 @@ const TerminalPage: React.FC = () => {
       const res = await checkout.mutateAsync({ ...payload, _idemKey: idemKey });
       toast.success(isCredit
         ? settledToast(res.invoiceNumber)
-        : `Sale ${res.invoiceNumber} settled — change ${fmt(res.change)}`);
+        : tx('Sale {{invoiceNumber}} settled — change {{v2}}', { invoiceNumber: res.invoiceNumber, v2: fmt(res.change) }));
 
       setLastCompleted({
         lines: cartToReceiptLines(lines),
@@ -1773,7 +1773,7 @@ const TerminalPage: React.FC = () => {
       setShowPayment(false);
       refetchSession();
     } catch (e: any) {
-      const msg = e?.response?.data?.message || e?.message || 'Checkout failed';
+      const msg = e?.response?.data?.message || e?.message || tx('Checkout failed');
       if (await recoverFromPricingRejection(msg, input, onSettle)) return;
       notifySettleFailure(e);
       if (!e?.response) {
@@ -1835,7 +1835,7 @@ const TerminalPage: React.FC = () => {
       } catch { /* non-fatal — print failure shouldn't block preview */ }
       setShowBillPreview(true);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to save order');
+      toast.error(e?.response?.data?.message || tx('Failed to save order'));
     }
   };
 
@@ -1873,7 +1873,7 @@ const TerminalPage: React.FC = () => {
       setAdditionalBillGrandTotal(grandTotal);
       setShowAdditionalBillPreview(true);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to prepare additional bill');
+      toast.error(e?.response?.data?.message || tx('Failed to prepare additional bill'));
     }
   };
 
@@ -1891,13 +1891,13 @@ const TerminalPage: React.FC = () => {
     try {
       const st = (await api.get(`/pos/tabs/${tableId}/split`)).data as any;
       if (st?.splitActive) {
-        if (orderSig(useCartStore.getState().lines) !== tabSyncSig.current) throw new Error('Unsaved changes must be resolved before reopening the split.');
+        if (orderSig(useCartStore.getState().lines) !== tabSyncSig.current) throw new Error(tx('Unsaved changes must be resolved before reopening the split.'));
       } else {
         await flushCurrentOrder({ requireServer: true });
       }
       setShowSplit(true);
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || e?.message || 'Could not save the latest order before splitting. Your cart is preserved.');
+      toast.error(e?.response?.data?.message || e?.message || tx('Could not save the latest order before splitting. Your cart is preserved.'));
     }
   };
 
@@ -2106,7 +2106,7 @@ const TerminalPage: React.FC = () => {
                         const combinedTotal = backendTotal + local;
                         const combinedCount = openOrders.length + (hasLocal ? 1 : 0);
                         const meta = statusMeta(t.status);
-                        const statusLabel = t.status === 'occupied' ? 'Occupied' : t.status === 'out_of_service' ? 'Out of service' : t.status === 'reserved' ? 'Reserved' : 'Available';
+                        const statusLabel = t.status === 'occupied' ? 'Occupied' : t.status === 'out_of_service' ? tx('Out of service') : t.status === 'reserved' ? 'Reserved' : 'Available';
                         return (
                           <button
                             key={t.id}
@@ -2265,7 +2265,7 @@ const TerminalPage: React.FC = () => {
                 // under the order lock; the preview just shows what went out.
                 const result: any = await printKot.mutateAsync({ invoiceId: saved.id });
                 if (result?.printedCount === 0) { toast.info(tx('No new items to print on the KOT')); return; }
-                if (result?.ok === false && result?.message) toast.error(`KOT printer: ${result.message}`);
+                if (result?.ok === false && result?.message) toast.error(tx('KOT printer: {{message}}', { message: result.message }));
                 // Put anything not yet on the KDS board there too; its own paper
                 // step finds nothing left to print.
                 try { await fireKitchen.mutateAsync({ tableId }); } catch { /* the KDS never blocks a KOT */ }
@@ -2273,7 +2273,7 @@ const TerminalPage: React.FC = () => {
                 setKotCopy(Number(result?.kotNumber ?? (Number(saved?.kotPrintCount ?? 0) + 1)) || 1);
                 setShowKotPreview(true);
               } catch (e: any) {
-                toast.error(e?.response?.data?.message || e?.message || 'Failed to prepare KOT');
+                toast.error(e?.response?.data?.message || e?.message || tx('Failed to prepare KOT'));
               }
             }}
             onVoidItem={canVoidItem ? (line) => setVoidLine(line) : undefined}
@@ -2309,7 +2309,7 @@ const TerminalPage: React.FC = () => {
       <CustomerDialog
         open={showCustomer}
         onClose={() => setShowCustomer(false)}
-        onPick={(c) => { setCustomer(c); toast.success(`Customer: ${c.name}`); }}
+        onPick={(c) => { setCustomer(c); toast.success(tx('Customer: {{name}}', { name: c.name })); }}
       />
       <DiscountDialog
         key={'discount-' + showDiscount}
@@ -2363,9 +2363,9 @@ const TerminalPage: React.FC = () => {
         open={showPinConfirm}
         title={tx('Delete item')}
         description={pendingRemoveLine
-          ? `Give a reason and your PIN to take "${pendingRemoveLine.name}" off this order.`
-          : 'Give a reason and your PIN to take this item off the order.'}
-        reasonLabel="Reason for deleting"
+          ? tx('Give a reason and your PIN to take "{{name}}" off this order.', { name: pendingRemoveLine.name })
+          : tx('Give a reason and your PIN to take this item off the order.')}
+        reasonLabel={tx('Reason for deleting')}
         onClose={() => { setShowPinConfirm(false); setPendingRemoveLine(null); }}
         onVerified={onPinVerified}
       />
@@ -2385,9 +2385,9 @@ const TerminalPage: React.FC = () => {
         open={showVoidOrder}
         title={tx('Void this order')}
         description={activeTableLabel
-          ? `Give a reason and your PIN to void every item on ${activeTableLabel}. The table is freed.`
-          : 'Give a reason and your PIN to void this whole order.'}
-        reasonLabel="Reason for voiding the order"
+          ? tx('Give a reason and your PIN to void every item on {{activeTableLabel}}. The table is freed.', { activeTableLabel })
+          : tx('Give a reason and your PIN to void this whole order.')}
+        reasonLabel={tx('Reason for voiding the order')}
         onClose={() => setShowVoidOrder(false)}
         onVerified={async (reason) => { setShowVoidOrder(false); await doVoidOrder(reason); }}
       />
@@ -2470,8 +2470,8 @@ const TerminalPage: React.FC = () => {
         open={showKotPreview}
         onClose={() => setShowKotPreview(false)}
         type="kot"
-        title={kotCopy > 1 ? `Additional KOT #${kotCopy}` : 'Kitchen Order Ticket'}
-        subtitle={kotCopy > 1 ? 'ADDITIONAL KOT — NEW ITEMS ONLY' : 'KITCHEN ORDER TICKET'}
+        title={kotCopy > 1 ? tx('Additional KOT #{{kotCopy}}', { kotCopy }) : tx('Kitchen Order Ticket')}
+        subtitle={kotCopy > 1 ? tx('ADDITIONAL KOT — NEW ITEMS ONLY') : tx('KITCHEN ORDER TICKET')}
         lines={cartToReceiptLines(kotLines)}
         total={kotLines.reduce((s, l) => s + l.unitPrice * l.quantity * (1 - l.discountPercent / 100), 0)}
         orderTypeLabel={orderTypeLabel ?? undefined}
@@ -2483,7 +2483,7 @@ const TerminalPage: React.FC = () => {
         open={showAdditionalBillPreview}
         onClose={() => setShowAdditionalBillPreview(false)}
         type="bill"
-        title={`Additional Bill #${additionalBillCopy}`}
+        title={tx('Additional Bill #{{additionalBillCopy}}', { additionalBillCopy })}
         subtitle={tx('ADDITIONAL BILL')}
         lines={cartToReceiptLines(additionalBillLines)}
         total={additionalBillLines.reduce((s, l) => s + l.unitPrice * l.quantity * (1 - l.discountPercent / 100), 0)}
@@ -2523,7 +2523,7 @@ const TerminalPage: React.FC = () => {
           open
           onClose={() => setLastCompleted(null)}
           type="bill"
-          title={`Receipt ${lastCompleted.invoiceNumber ?? ''}`}
+          title={tx('Receipt {{v1}}', { v1: lastCompleted.invoiceNumber ?? '' })}
           subtitle={tx('Offline — sync pending')}
           lines={lastCompleted.lines}
           total={lastCompleted.total}
@@ -2540,7 +2540,7 @@ const TerminalPage: React.FC = () => {
             <button
               type="button"
               className="fixed bottom-4 right-4 z-50 bg-sky-700 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-semibold hover:bg-sky-800"
-              onClick={() => setShowReprint({ invoiceId: lastCompleted.invoiceId!, title: 'Receipt' })}
+              onClick={() => setShowReprint({ invoiceId: lastCompleted.invoiceId!, title: tx('Receipt') })}
             >
               <Printer className="inline h-4 w-4 mr-1" /> {tx('Reprint')}
             </button>
@@ -2552,7 +2552,7 @@ const TerminalPage: React.FC = () => {
             onConfirm={(reason) => {
               if (!showReprint) return;
               reprintReceipt.mutateAsync({ invoiceId: showReprint.invoiceId, reason });
-              toast.success(`Reprint queued: ${reason}`);
+              toast.success(tx('Reprint queued: {{reason}}', { reason }));
             }}
           />
         </>
@@ -2616,10 +2616,10 @@ interface TableDetailViewProps {
 
 const TableDetailView: React.FC<TableDetailViewProps> = ({ table, onBack, onStartOrder, onContinueDraft, hasLocalCart }) => {
   const statusBadge: Record<string, { label: string; cls: string }> = {
-    available: { label: 'Available', cls: 'bg-emerald-100 text-emerald-700' },
-    occupied: { label: 'Occupied', cls: 'bg-amber-100 text-amber-700' },
-    reserved: { label: 'Reserved', cls: 'bg-sky-100 text-sky-700' },
-    out_of_service: { label: 'Out of Service', cls: 'bg-slate-100 text-slate-600' },
+    available: { label: tx('Available'), cls: 'bg-emerald-100 text-emerald-700' },
+    occupied: { label: tx('Occupied'), cls: 'bg-amber-100 text-amber-700' },
+    reserved: { label: tx('Reserved'), cls: 'bg-sky-100 text-sky-700' },
+    out_of_service: { label: tx('Out of Service'), cls: 'bg-slate-100 text-slate-600' },
   };
   const badge = statusBadge[table.status] ?? { label: table.status, cls: 'bg-slate-100 text-slate-600' };
   const openOrders = (table.orders ?? []).filter((o) => !o.closedAt);
@@ -2699,7 +2699,7 @@ const TableDetailView: React.FC<TableDetailViewProps> = ({ table, onBack, onStar
                       {o.order?.orderNumber ?? `#${o.id.slice(0, 6)}`}
                     </span>
                     <span className="text-[10px] font-semibold text-slate-400">
-                      {o.openedAt ? `${Math.max(1, Math.floor((Date.now() - new Date(o.openedAt).getTime()) / 60000))}m ago` : 'New'}
+                      {o.openedAt ? tx('{{v1}}m ago', { v1: Math.max(1, Math.floor((Date.now() - new Date(o.openedAt).getTime()) / 60000)) }) : tx('New')}
                     </span>
                   </div>
                   {o.waiterName && (

@@ -50,7 +50,7 @@ export default function CommunicationRulesPage() {
       try {
         condition = JSON.parse(rule.condition);
       } catch {
-        alert('Condition must be valid JSON');
+        alert(tx('Condition must be valid JSON'));
         return;
       }
     }

@@ -331,11 +331,11 @@ const CashInOutButton: React.FC<{
         reason: reason.trim(),
         counterpartAccountId, approverEmail: approverEmail || undefined, managerPin: managerPin || undefined,
       });
-      toast.success(direction === 'pay_in' ? 'Cash in recorded' : 'Cash out recorded');
+      toast.success(direction === 'pay_in' ? tx('Cash in recorded') : tx('Cash out recorded'));
       close();
       onDone();
     } catch (e: any) {
-      toast.error(apiErrorMessage(e, 'Failed to record movement'));
+      toast.error(apiErrorMessage(e, tx('Failed to record movement')));
     }
   };
 
@@ -349,7 +349,7 @@ const CashInOutButton: React.FC<{
         onClick={() => setOpen(true)}
       >
         {isIn ? <Plus className="h-4 w-4 mr-1" /> : <Minus className="h-4 w-4 mr-1" />}
-        {isIn ? 'Cash In' : 'Cash Out'}
+        {isIn ? tx('Cash In') : tx('Cash Out')}
       </Button>
 
       {open && (
@@ -358,7 +358,7 @@ const CashInOutButton: React.FC<{
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 {isIn ? <Plus className="h-4 w-4 text-emerald-600" /> : <Minus className="h-4 w-4 text-amber-600" />}
-                {isIn ? 'Cash In' : 'Cash Out'}
+                {isIn ? tx('Cash In') : tx('Cash Out')}
               </h2>
               <button onClick={close}><X className="h-5 w-5 text-slate-400" /></button>
             </div>
@@ -370,7 +370,7 @@ const CashInOutButton: React.FC<{
 
             <div>
               <Label>{tx('Reason')}</Label>
-              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isIn ? 'e.g. Added change money' : 'e.g. Purchased milk'} />
+              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isIn ? tx('e.g. Added change money') : tx('e.g. Purchased milk')} />
             </div>
 
             <label className="block text-sm">{tx('Expense / safe / counterpart account')}<select className="block border rounded p-2 w-full" value={counterpartAccountId} onChange={(e) => setCounterpartAccountId(e.target.value)}><option value="">{tx('Choose account')}</option>{(accountPage?.data ?? []).filter((a) => a.isActive && !a.isGroup).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></label>
@@ -378,7 +378,7 @@ const CashInOutButton: React.FC<{
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={close}>{tx('Cancel')}</Button>
               <Button onClick={handleSubmit} disabled={record.isPending} style={{ background: isIn ? '#16a34a' : '#d97706' }}>
-                {record.isPending ? 'Recording…' : isIn ? 'Record Cash In' : 'Record Cash Out'}
+                {record.isPending ? tx('Recording…') : isIn ? tx('Record Cash In') : tx('Record Cash Out')}
               </Button>
             </div>
           </div>
@@ -408,9 +408,9 @@ const typeLabel = (type: string) => {
   switch (type) {
     case 'sale': return 'Sale';
     case 'refund': return 'Refund';
-    case 'supplier_payment': return 'Supplier payment';
-    case 'pay_in': return 'Cash In';
-    case 'pay_out': return 'Cash Out';
+    case 'supplier_payment': return tx('Supplier payment');
+    case 'pay_in': return tx('Cash In');
+    case 'pay_out': return tx('Cash Out');
     case 'adjustment': return 'Adjustment';
     default: return type;
   }
@@ -526,7 +526,7 @@ const RegisterSessionList: React.FC<{ registerId: string }> = ({ registerId }) =
       await updateVariance.mutateAsync({ sessionId, reason: note.trim(), status: 'approved' });
       toast.success(tx('Variance approved'));
     } catch (e: any) {
-      toast.error(apiErrorMessage(e, 'Failed to update variance'));
+      toast.error(apiErrorMessage(e, tx('Failed to update variance')));
     }
   };
 
@@ -537,7 +537,7 @@ const RegisterSessionList: React.FC<{ registerId: string }> = ({ registerId }) =
       await updateVariance.mutateAsync({ sessionId, reason: note.trim(), status: 'rejected' });
       toast.success(tx('Variance rejected'));
     } catch (e: any) {
-      toast.error(apiErrorMessage(e, 'Failed to update variance'));
+      toast.error(apiErrorMessage(e, tx('Failed to update variance')));
     }
   };
 
@@ -620,7 +620,7 @@ const RegisterSessionList: React.FC<{ registerId: string }> = ({ registerId }) =
       {data.totalPages > 1 && (
         <div className="flex justify-center gap-2 mt-3">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{tx('Previous')}</Button>
-          <span className="text-sm text-slate-500 self-center">{tx('Page')} {page} of {data.totalPages}</span>
+          <span className="text-sm text-slate-500 self-center">{tx('Page')} {page} {tx('of')} {data.totalPages}</span>
           <Button variant="outline" size="sm" disabled={page >= data.totalPages} onClick={() => setPage(p => p + 1)}>{tx('Next')}</Button>
         </div>
       )}
@@ -646,7 +646,7 @@ const SessionHistoryView: React.FC<{ registerId: string }> = ({ registerId }) =>
       await updateVariance.mutateAsync({ sessionId, reason: note.trim(), status: 'approved' });
       toast.success(tx('Variance approved'));
     } catch (e: any) {
-      toast.error(apiErrorMessage(e, 'Failed to update variance'));
+      toast.error(apiErrorMessage(e, tx('Failed to update variance')));
     }
   };
 
@@ -657,7 +657,7 @@ const SessionHistoryView: React.FC<{ registerId: string }> = ({ registerId }) =>
       await updateVariance.mutateAsync({ sessionId, reason: note.trim(), status: 'rejected' });
       toast.success(tx('Variance rejected'));
     } catch (e: any) {
-      toast.error(apiErrorMessage(e, 'Failed to update variance'));
+      toast.error(apiErrorMessage(e, tx('Failed to update variance')));
     }
   };
 
@@ -743,7 +743,7 @@ const SessionHistoryView: React.FC<{ registerId: string }> = ({ registerId }) =>
             {data.totalPages > 1 && (
               <div className="flex justify-center gap-2 mt-3">
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{tx('Previous')}</Button>
-                <span className="text-sm text-slate-500 self-center">{tx('Page')} {page} of {data.totalPages}</span>
+                <span className="text-sm text-slate-500 self-center">{tx('Page')} {page} {tx('of')} {data.totalPages}</span>
                 <Button variant="outline" size="sm" disabled={page >= data.totalPages} onClick={() => setPage(p => p + 1)}>{tx('Next')}</Button>
               </div>
             )}

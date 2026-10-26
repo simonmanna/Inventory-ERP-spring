@@ -101,7 +101,7 @@ export function JournalEditPage() {
       }
       navigate('/journals');
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Save failed');
+      notify.error(err?.response?.data?.message ?? tx('Save failed'));
     } finally {
       setSaving(false);
     }
@@ -114,7 +114,7 @@ export function JournalEditPage() {
       notify.success(tx('Journal deleted'));
       navigate('/journals');
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Delete failed');
+      notify.error(err?.response?.data?.message ?? tx('Delete failed'));
     } finally {
       setDeleteConfirm(false);
     }
@@ -130,10 +130,10 @@ export function JournalEditPage() {
     );
   }
 
-  const title = isNew ? 'New Journal' : journalDetail?.name ?? 'Edit Journal';
+  const title = isNew ? tx('New Journal') : journalDetail?.name ?? tx('Edit Journal');
   const subtitle = isNew
-    ? 'Create a new book of original entry'
-    : 'Configure journal settings';
+    ? tx('Create a new book of original entry')
+    : tx('Configure journal settings');
 
   const accountSelectOptions = activeAccounts.map((a) => (
     <SelectItem key={a.id} value={a.id}>
@@ -148,7 +148,7 @@ export function JournalEditPage() {
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
           <button onClick={() => navigate('/journals')} className="hover:text-primary transition-colors font-medium">{tx('Journals')}</button>
           <ChevronRight className="h-3 w-3" />
-          <span className="font-semibold">{isNew ? 'New Journal' : journalDetail?.name}</span>
+          <span className="font-semibold">{isNew ? tx('New Journal') : journalDetail?.name}</span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -162,7 +162,7 @@ export function JournalEditPage() {
                 <h1 className="text-xl font-bold">{title}</h1>
                 {!isNew && (
                   <Badge variant={isActive ? 'default' : 'secondary'} className="text-xs">
-                    {isActive ? 'Active' : 'Inactive'}
+                    {isActive ? tx('Active') : tx('Inactive')}
                   </Badge>
                 )}
                 {!isNew && journalDetail?.code && (
@@ -184,7 +184,7 @@ export function JournalEditPage() {
             </Button>
             <Button size="sm" onClick={handleSubmit} disabled={saving}>
               <Save className="h-4 w-4 mr-1.5" />
-              {saving ? 'Saving…' : 'Save Journal'}
+              {saving ? tx('Saving…') : tx('Save Journal')}
             </Button>
           </div>
         </div>
@@ -272,7 +272,7 @@ export function JournalEditPage() {
           {/* Sequencing */}
           <Card>
             <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
-              <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Sequence &amp; Status</CardTitle>
+              <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Sequence & Status')}</CardTitle>
             </CardHeader>
             <CardContent className="px-5 py-4 space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -300,7 +300,7 @@ export function JournalEditPage() {
             <Button type="button" variant="outline" onClick={() => navigate('/journals')}>{tx('Cancel')}</Button>
             <Button onClick={handleSubmit} disabled={saving}>
               <Save className="h-4 w-4 mr-1.5" />
-              {saving ? 'Saving…' : 'Save Journal'}
+              {saving ? tx('Saving…') : tx('Save Journal')}
             </Button>
           </div>
         </div>

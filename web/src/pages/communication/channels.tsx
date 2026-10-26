@@ -55,7 +55,7 @@ export default function CommunicationChannelsPage() {
       try {
         config = JSON.parse(form.config);
       } catch {
-        alert('Config must be valid JSON');
+        alert(tx('Config must be valid JSON'));
         return;
       }
     }

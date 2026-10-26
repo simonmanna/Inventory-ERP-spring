@@ -57,14 +57,14 @@ export default function AccompanimentGroupsPage() {
   }, [hasEdits]);
 
   const removeGroup = async (id: string, name: string) => {
-    if (!window.confirm(`Delete group "${name}" and all options?`)) return;
+    if (!window.confirm(tx('Delete group "{{name}}" and all options?', { name }))) return;
     try { await deleteGroup.mutateAsync(id); toast.success(tx('Group deleted')); }
-    catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to delete'); }
+    catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to delete')); }
   };
   const removeOption = async (id: string, name?: string) => {
-    if (name && !window.confirm(`Delete option "${name}"?`)) return;
+    if (name && !window.confirm(tx('Delete option "{{name}}"?', { name }))) return;
     try { await deleteOption.mutateAsync(id); toast.success(tx('Option removed')); }
-    catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to remove'); }
+    catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to remove')); }
   };
   const renameGroup = async (id: string, current: string) => {
     setRenameGroupValue(current);
@@ -76,8 +76,8 @@ export default function AccompanimentGroupsPage() {
     setRenameOptionTarget({ id, name: current });
   };
   const toggleActive = async (id: string, current: boolean) => {
-    try { await updateGroup.mutateAsync({ groupId: id, isActive: !current }); toast.success(current ? 'Disabled' : 'Enabled'); }
-    catch (e: any) { toast.error(e?.response?.data?.message || 'Failed'); }
+    try { await updateGroup.mutateAsync({ groupId: id, isActive: !current }); toast.success(current ? tx('Disabled') : tx('Enabled')); }
+    catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed')); }
   };
 
   const handleCreate = async () => {
@@ -89,7 +89,7 @@ export default function AccompanimentGroupsPage() {
       setNewName('');
       setNewRequired(false);
       setNewMax(1);
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed')); }
   };
 
   const handleAddOption = async (groupId: string) => {
@@ -101,7 +101,7 @@ export default function AccompanimentGroupsPage() {
       setOptName('');
       setOptPrice('');
       setOptDefault(false);
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed')); }
   };
 
   if (isLoading) return (
@@ -142,16 +142,16 @@ export default function AccompanimentGroupsPage() {
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-800">{g.name}</span>
                   <span className={'px-2 py-0.5 rounded-full text-[11px] font-semibold ' + (g.isRequired ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600')}>
-                    {g.isRequired ? 'Required' : 'Optional'}
+                    {g.isRequired ? tx('Required') : tx('Optional')}
                   </span>
                   <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[11px] font-semibold">
-                    {g.maxSelect === 1 ? 'Pick one' : `Up to ${g.maxSelect}`}
+                    {g.maxSelect === 1 ? tx('Pick one') : tx('Up to {{maxSelect}}', { maxSelect: g.maxSelect })}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => renameGroup(g.id, g.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100" title={tx('Rename')} aria-label={`Rename ${g.name}`}><Pencil className="h-4 w-4" aria-hidden="true" /></button>
-                  <button onClick={() => toggleActive(g.id, g.isActive)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-amber-600 rounded-lg hover:bg-slate-100" title={g.isActive ? 'Disable' : 'Enable'} aria-label={`${g.isActive ? 'Disable' : 'Enable'} ${g.name}`}><X className="h-4 w-4" aria-hidden="true" /></button>
-                  <button onClick={() => removeGroup(g.id, g.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100" title={tx('Delete')} aria-label={`Delete ${g.name}`}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
+                  <button onClick={() => renameGroup(g.id, g.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100" title={tx('Rename')} aria-label={tx('Rename {{name}}', { name: g.name })}><Pencil className="h-4 w-4" aria-hidden="true" /></button>
+                  <button onClick={() => toggleActive(g.id, g.isActive)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-amber-600 rounded-lg hover:bg-slate-100" title={g.isActive ? tx('Disable') : tx('Enable')} aria-label={`${g.isActive ? 'Disable' : 'Enable'} ${g.name}`}><X className="h-4 w-4" aria-hidden="true" /></button>
+                  <button onClick={() => removeGroup(g.id, g.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100" title={tx('Delete')} aria-label={tx('Delete {{name}}', { name: g.name })}><Trash2 className="h-4 w-4" aria-hidden="true" /></button>
                 </div>
               </div>
 
@@ -163,10 +163,10 @@ export default function AccompanimentGroupsPage() {
                     {o.isDefault ? <Star className="h-4 w-4 text-amber-500" /> : null}
                     {o.name}
                     <span className="font-mono text-slate-500">{o.priceImpact === 0 ? '' : (o.priceImpact > 0 ? '+' : '') + fmt(o.priceImpact)}</span>
-                    <button onClick={() => renameOption(o.id, o.name, o.priceImpact)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600 rounded transition-colors" title={tx('Edit')} aria-label={`Edit ${o.name}`}>
+                    <button onClick={() => renameOption(o.id, o.name, o.priceImpact)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600 rounded transition-colors" title={tx('Edit')} aria-label={tx('Edit {{name}}', { name: o.name })}>
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
-                    <button onClick={() => removeOption(o.id, o.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600 rounded transition-colors" title={tx('Remove')} aria-label={`Remove ${o.name}`}>
+                    <button onClick={() => removeOption(o.id, o.name)} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600 rounded transition-colors" title={tx('Remove')} aria-label={tx('Remove {{name}}', { name: o.name })}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </span>
@@ -217,7 +217,7 @@ export default function AccompanimentGroupsPage() {
                   if (e.key === 'Enter' && renameGroupValue.trim() && renameGroupTarget) {
                     updateGroup.mutateAsync({ groupId: renameGroupTarget.id, name: renameGroupValue.trim() })
                       .then(() => { toast.success(tx('Renamed')); setRenameGroupTarget(null); })
-                      .catch((e: any) => toast.error(e?.response?.data?.message || 'Failed'));
+                      .catch((e: any) => toast.error(e?.response?.data?.message || tx('Failed')));
                   }
                 }} />
             </div>
@@ -228,7 +228,7 @@ export default function AccompanimentGroupsPage() {
               if (!renameGroupValue.trim() || !renameGroupTarget) return;
               updateGroup.mutateAsync({ groupId: renameGroupTarget.id, name: renameGroupValue.trim() })
                 .then(() => { toast.success(tx('Renamed')); setRenameGroupTarget(null); })
-                .catch((e: any) => toast.error(e?.response?.data?.message || 'Failed'));
+                .catch((e: any) => toast.error(e?.response?.data?.message || tx('Failed')));
             }} disabled={!renameGroupValue.trim() || updateGroup.isPending} className="bg-indigo-600 hover:bg-indigo-700 text-white">{tx('Save')}</Button>
           </DialogFooter>
         </DialogContent>
@@ -246,7 +246,7 @@ export default function AccompanimentGroupsPage() {
                   if (e.key === 'Enter' && renameOptionValue.trim() && renameOptionTarget) {
                     updateOption.mutateAsync({ optionId: renameOptionTarget.id, name: renameOptionValue.trim(), priceImpact: Number(renameOptionPrice) || 0 })
                       .then(() => { toast.success(tx('Updated')); setRenameOptionTarget(null); })
-                      .catch((e: any) => toast.error(e?.response?.data?.message || 'Failed'));
+                      .catch((e: any) => toast.error(e?.response?.data?.message || tx('Failed')));
                   }
                 }} />
             </div>
@@ -261,7 +261,7 @@ export default function AccompanimentGroupsPage() {
               if (!renameOptionValue.trim() || !renameOptionTarget) return;
               updateOption.mutateAsync({ optionId: renameOptionTarget.id, name: renameOptionValue.trim(), priceImpact: Number(renameOptionPrice) || 0 })
                 .then(() => { toast.success(tx('Updated')); setRenameOptionTarget(null); })
-                .catch((e: any) => toast.error(e?.response?.data?.message || 'Failed'));
+                .catch((e: any) => toast.error(e?.response?.data?.message || tx('Failed')));
             }} disabled={!renameOptionValue.trim() || updateOption.isPending} className="bg-indigo-600 hover:bg-indigo-700 text-white">{tx('Save')}</Button>
           </DialogFooter>
         </DialogContent>

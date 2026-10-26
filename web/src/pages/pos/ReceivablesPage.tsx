@@ -53,7 +53,7 @@ export function ReceivablesPage() {
   const columns: Column<OpenCreditInvoice>[] = [
     {
       key: 'partnerName',
-      header: 'Customer',
+      header: tx('Customer'),
       render: (r) => (
         <button
           className="font-medium text-primary hover:underline"
@@ -65,7 +65,7 @@ export function ReceivablesPage() {
     },
     {
       key: 'invoiceNumber',
-      header: 'Invoice',
+      header: tx('Invoice'),
       render: (r) => (
         <button
           className="font-mono text-xs text-primary hover:underline"
@@ -75,17 +75,17 @@ export function ReceivablesPage() {
         </button>
       ),
     },
-    { key: 'issueDate', header: 'Date', render: (r) => date(r.issueDate) },
+    { key: 'issueDate', header: tx('Date'), render: (r) => date(r.issueDate) },
     {
       key: 'daysOutstanding',
-      header: 'Age',
+      header: tx('Age'),
       className: 'text-center',
       render: (r) => <span className={`text-xs ${ageClass(r.daysOutstanding)}`}>{r.daysOutstanding}d</span>,
     },
-    { key: 'totalAmount', header: 'Total', className: 'text-right', render: (r) => money(r.totalAmount, currency) },
+    { key: 'totalAmount', header: tx('Total'), className: 'text-right', render: (r) => money(r.totalAmount, currency) },
     {
       key: 'amountPaid',
-      header: 'Paid',
+      header: tx('Paid'),
       className: 'text-right',
       render: (r) => (
         <span className={r.amountPaid > 0 ? 'text-emerald-600' : 'text-muted-foreground'}>
@@ -95,7 +95,7 @@ export function ReceivablesPage() {
     },
     {
       key: 'amountResidual',
-      header: 'Outstanding',
+      header: tx('Outstanding'),
       className: 'text-right',
       render: (r) => <span className="font-semibold">{money(r.amountResidual, currency)}</span>,
     },
@@ -174,7 +174,7 @@ export function ReceivablesPage() {
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
               {tx('Previous')}
             </Button>
-            <span>{tx('Page')} {data.page} of {totalPages}</span>
+            <span>{tx('Page')} {data.page} {tx('of')} {totalPages}</span>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
               {tx('Next')}
             </Button>

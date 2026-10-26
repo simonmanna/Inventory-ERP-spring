@@ -79,7 +79,7 @@ export function InventoryValuationPage() {
           {data && (
             <span className="text-[10px] text-muted-foreground">
               {tx('As of')} {format(new Date(data.asOf), 'MMM d, yyyy')} ·{' '}
-              {data.basis === 'ledger' ? 'rebuilt from the stock ledger' : 'remaining value by costing method (AVCO average, FIFO/batch lots, serial costs, standard cost)'}
+              {data.basis === 'ledger' ? tx('rebuilt from the stock ledger') : tx('remaining value by costing method (AVCO average, FIFO/batch lots, serial costs, standard cost)')}
             </span>
           )}
         </CardHeader>
@@ -88,7 +88,7 @@ export function InventoryValuationPage() {
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Product')}</TableHead>
-                <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">SKU</TableHead>
+                <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('SKU')}</TableHead>
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Category')}</TableHead>
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase text-right">{tx('Unit Cost')}</TableHead>
                 <TableHead className="text-[10px] font-bold text-muted-foreground uppercase text-right">{tx('On Hand')}</TableHead>

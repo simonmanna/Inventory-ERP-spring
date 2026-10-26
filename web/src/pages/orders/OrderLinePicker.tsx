@@ -115,7 +115,7 @@ export function OrderLinePicker({
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={activeTab === 'menu' ? 'Search menu items…' : 'Search products…'}
+              placeholder={activeTab === 'menu' ? tx('Search menu items…') : tx('Search products…')}
               className="pl-8"
             />
           </div>
@@ -128,7 +128,7 @@ export function OrderLinePicker({
             </div>
           ) : source.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              {tx('No')} {activeTab === 'menu' ? 'menu items' : 'products'} {tx('found')}{search ? ` for “${search}”` : ''}.
+              {tx('No')} {activeTab === 'menu' ? tx('menu items') : 'products'} {tx('found')}{search ? tx(' for “{{search}}”', { search }) : ''}.
             </div>
           ) : (
             <ul className="divide-y">

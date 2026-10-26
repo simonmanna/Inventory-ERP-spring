@@ -68,7 +68,7 @@ export function RolesPage() {
   const columns: Column<Role>[] = [
     {
       key: 'name',
-      header: 'Role',
+      header: tx('Role'),
       render: (r) => (
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -86,7 +86,7 @@ export function RolesPage() {
     },
     {
       key: 'permissions',
-      header: 'Permissions',
+      header: tx('Permissions'),
       render: (r) => (
         <Badge variant="outline" className="font-mono">
           {r.permissions.length} {tx('keys')}
@@ -95,7 +95,7 @@ export function RolesPage() {
     },
     {
       key: 'users',
-      header: 'Users',
+      header: tx('Users'),
       render: (r) => r._count?.users ?? '—',
     },
     {
@@ -133,7 +133,7 @@ export function RolesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Roles &amp; Permissions</h1>
+          <h1 className="text-2xl font-semibold">{tx('Roles & Permissions')}</h1>
           <p className="text-sm text-muted-foreground">
             {tx('Manage who can do what. System roles are seeded with defaults but can be edited or deleted.')}
           </p>
@@ -165,7 +165,7 @@ export function RolesPage() {
         data={filtered}
         loading={roles.isLoading}
         getRowId={(r) => r.id}
-        emptyMessage={search ? 'No roles match your search.' : 'No roles yet — create one to get started.'}
+        emptyMessage={search ? tx('No roles match your search.') : tx('No roles yet — create one to get started.')}
       />
 
       <RoleDialog open={dialogOpen} onOpenChange={setDialogOpen} role={editing} />
@@ -176,7 +176,7 @@ export function RolesPage() {
             <DialogTitle>{tx('Delete role?')}</DialogTitle>
             <DialogDescription>
               {deleting
-                ? `"${deleting.name}" will be removed. Users with this role will lose its permissions on their next request.`
+                ? tx('"{{name}}" will be removed. Users with this role will lose its permissions on their next request.', { name: deleting.name })
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -185,7 +185,7 @@ export function RolesPage() {
               {tx('Cancel')}
             </Button>
             <Button variant="destructive" disabled={deleteRole.isPending} onClick={confirmDelete}>
-              {deleteRole.isPending ? 'Deleting…' : 'Delete role'}
+              {deleteRole.isPending ? tx('Deleting…') : tx('Delete role')}
             </Button>
           </DialogFooter>
         </DialogContent>

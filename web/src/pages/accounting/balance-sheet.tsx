@@ -104,7 +104,7 @@ function SectionPanel({
 
             {subtotal && (
               <div className="flex justify-between pt-3 mt-2 border-t-2 border-slate-200 font-semibold text-sm">
-                <span>{subtotalLabel || 'Subtotal'}</span>
+                <span>{subtotalLabel || tx('Subtotal')}</span>
                 <span className="font-mono">{fmtMoney(subtotal)}</span>
               </div>
             )}
@@ -113,14 +113,14 @@ function SectionPanel({
 
         {total && !isGrandTotal && (
           <div className="flex justify-between pt-3 mt-3 border-t-2 border-slate-300 font-bold text-sm">
-            <span>{totalLabel || 'Total'}</span>
+            <span>{totalLabel || tx('Total')}</span>
             <span className="font-mono">{fmtMoney(total)}</span>
           </div>
         )}
 
         {isGrandTotal && total && (
           <div className="flex justify-between pt-3 mt-3 border-t-2 border-slate-800 bg-slate-50 px-3 py-3 -mx-4 -mb-4 rounded-b-xl">
-            <span className="font-bold">{totalLabel || 'Total'}</span>
+            <span className="font-bold">{totalLabel || tx('Total')}</span>
             <span className="font-mono font-bold text-base">{fmtMoney(total)}</span>
           </div>
         )}
@@ -162,14 +162,14 @@ export function BalanceSheetPage() {
               className="gap-1.5 px-3 py-1"
             >
               <Scale className="h-3.5 w-3.5" />
-              {data.balanced ? 'Balanced' : 'Out of balance'}
+              {data.balanced ? tx('Balanced') : tx('Out of balance')}
             </Badge>
             <Badge
               variant="outline"
               className="gap-1.5 px-3 py-1 text-slate-500"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              {data.source === 'snapshot' ? 'Snapshot' : 'Live'}
+              {data.source === 'snapshot' ? tx('Snapshot') : tx('Live')}
             </Badge>
           </div>
         )}
@@ -207,7 +207,7 @@ export function BalanceSheetPage() {
               rebuildMutation.isPending && 'animate-spin',
             )}
           />
-          {rebuildMutation.isPending ? 'Rebuilding…' : 'Rebuild Snapshots'}
+          {rebuildMutation.isPending ? tx('Rebuilding…') : tx('Rebuild Snapshots')}
         </Button>
       </div>
 
@@ -227,7 +227,7 @@ export function BalanceSheetPage() {
             loading={isLoading}
             rows={currentAssets?.rows ?? []}
             subtotal={currentAssets?.subtotal}
-            subtotalLabel="Total current assets"
+            subtotalLabel={tx('Total current assets')}
           />
 
           <SectionPanel
@@ -237,7 +237,7 @@ export function BalanceSheetPage() {
             loading={isLoading}
             rows={nonCurrentAssets?.rows ?? []}
             total={data?.totals.assets}
-            totalLabel="Total assets"
+            totalLabel={tx('Total assets')}
             isGrandTotal
           />
         </div>
@@ -251,7 +251,7 @@ export function BalanceSheetPage() {
             loading={isLoading}
             rows={currentLiabilities?.rows ?? []}
             subtotal={currentLiabilities?.subtotal}
-            subtotalLabel="Total current liabilities"
+            subtotalLabel={tx('Total current liabilities')}
           />
 
           <SectionPanel
@@ -261,7 +261,7 @@ export function BalanceSheetPage() {
             loading={isLoading}
             rows={longTermLiabilities?.rows ?? []}
             total={data?.totals.liabilities}
-            totalLabel="Total liabilities"
+            totalLabel={tx('Total liabilities')}
           />
 
           <div className="flex items-center gap-2 text-slate-400">
@@ -277,7 +277,7 @@ export function BalanceSheetPage() {
             loading={isLoading}
             rows={equity?.rows ?? []}
             total={data?.totals.liabilitiesAndEquity}
-            totalLabel="Total liabilities & stockholders' equity"
+            totalLabel={tx('Total liabilities & stockholders\' equity')}
             isGrandTotal
           />
         </div>
@@ -285,8 +285,8 @@ export function BalanceSheetPage() {
 
       {data && (
         <p className="text-xs text-slate-400">
-          {tx('As of')} {new Date(data.asOf).toLocaleDateString()} &middot; Source:{' '}
-          {data.source === 'snapshot' ? 'Rebuilt snapshot' : 'Live aggregation'}
+          {tx('As of')} {new Date(data.asOf).toLocaleDateString()} {tx('· Source:')}{' '}
+          {data.source === 'snapshot' ? tx('Rebuilt snapshot') : tx('Live aggregation')}
         </p>
       )}
     </div>

@@ -86,13 +86,13 @@ function datePresets(): Array<{ label: string; from: string; to: string }> {
   const today = new Date();
   const lastMonth = subMonths(today, 1);
   return [
-    { label: 'Today', from: ymd(today), to: ymd(today) },
-    { label: 'Yesterday', from: ymd(subDays(today, 1)), to: ymd(subDays(today, 1)) },
-    { label: 'Last 7 days', from: ymd(subDays(today, 6)), to: ymd(today) },
-    { label: 'Last 30 days', from: ymd(subDays(today, 29)), to: ymd(today) },
-    { label: 'This month', from: ymd(startOfMonth(today)), to: ymd(today) },
-    { label: 'Last month', from: ymd(startOfMonth(lastMonth)), to: ymd(endOfMonth(lastMonth)) },
-    { label: 'This year', from: ymd(startOfYear(today)), to: ymd(today) },
+    { label: tx('Today'), from: ymd(today), to: ymd(today) },
+    { label: tx('Yesterday'), from: ymd(subDays(today, 1)), to: ymd(subDays(today, 1)) },
+    { label: tx('Last 7 days'), from: ymd(subDays(today, 6)), to: ymd(today) },
+    { label: tx('Last 30 days'), from: ymd(subDays(today, 29)), to: ymd(today) },
+    { label: tx('This month'), from: ymd(startOfMonth(today)), to: ymd(today) },
+    { label: tx('Last month'), from: ymd(startOfMonth(lastMonth)), to: ymd(endOfMonth(lastMonth)) },
+    { label: tx('This year'), from: ymd(startOfYear(today)), to: ymd(today) },
   ];
 }
 
@@ -154,7 +154,7 @@ export function FilterChips({ chips, onClearAll }: { chips: ActiveChip[]; onClea
           {c.label}
           <button
             type="button"
-            aria-label={`Remove ${c.label}`}
+            aria-label={tx('Remove {{label}}', { label: c.label })}
             onClick={c.onRemove}
             className="rounded-full p-0.5 hover:bg-primary/20"
           >

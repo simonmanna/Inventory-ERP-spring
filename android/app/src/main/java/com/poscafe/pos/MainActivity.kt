@@ -11,11 +11,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.repo.AuthRepository
 import com.poscafe.pos.sync.SyncWorker
 import com.poscafe.pos.ui.screens.HomeScreen
 import com.poscafe.pos.ui.screens.PinLoginScreen
@@ -29,6 +33,7 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var config: DeviceConfig
+    @Inject lateinit var auth: AuthRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +46,15 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val nav = rememberNavController()
                     val start = if (config.isReady) "pin" else "setup"
+                    // Revoked mid-shift (detected by a sync run) or re-enroll chosen: sign out and go to setup.
+                    val revoked by config.revoked.collectAsState()
+                    val setupRequested by config.setupRequested.collectAsState()
+                    LaunchedEffect(revoked, setupRequested) {
+                        if ((revoked || setupRequested) && nav.currentDestination?.route != "setup") {
+                            auth.logout()
+                            nav.navigate("setup") { popUpTo(0) { inclusive = true } }
+                        }
+                    }
                     NavHost(
                         navController = nav,
                         startDestination = start,

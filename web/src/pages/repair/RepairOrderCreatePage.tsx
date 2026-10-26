@@ -8,18 +8,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { tx } from '@/lib/i18n/tx';
 
 const TYPES = [
-  { value: 'repair', label: 'Repair' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'preventive', label: 'Preventive' },
-  { value: 'contract', label: 'Contract (SLA)' },
-  { value: 'field_service', label: 'Field service' },
+  { value: 'repair', label: tx('Repair') },
+  { value: 'maintenance', label: tx('Maintenance') },
+  { value: 'preventive', label: tx('Preventive') },
+  { value: 'contract', label: tx('Contract (SLA)') },
+  { value: 'field_service', label: tx('Field service') },
 ];
 
 const PRIORITIES = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'urgent', label: 'Urgent' },
+  { value: 'low', label: tx('Low') },
+  { value: 'medium', label: tx('Medium') },
+  { value: 'high', label: tx('High') },
+  { value: 'urgent', label: tx('Urgent') },
 ];
 
 export function RepairOrderCreatePage() {
@@ -112,7 +112,7 @@ export function RepairOrderCreatePage() {
             <Input value={form.serialNumber} onChange={(e) => set('serialNumber', e.target.value)} />
           </div>
           <div>
-            <Label>IMEI</Label>
+            <Label>{tx('IMEI')}</Label>
             <Input value={form.imei} onChange={(e) => set('imei', e.target.value)} />
           </div>
           <div>
@@ -124,7 +124,7 @@ export function RepairOrderCreatePage() {
             <Input value={form.plateNumber} onChange={(e) => set('plateNumber', e.target.value)} />
           </div>
           <div>
-            <Label>VIN</Label>
+            <Label>{tx('VIN')}</Label>
             <Input value={form.vin} onChange={(e) => set('vin', e.target.value)} />
           </div>
           <div className="sm:col-span-3">

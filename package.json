@@ -10,6 +10,7 @@
     "web:dev": "pnpm shared:build && pnpm --filter @erp/web dev",
     "web:build": "pnpm shared:build && pnpm --filter @erp/web build",
     "web:typecheck": "pnpm shared:build && pnpm --filter @erp/web typecheck",
+    "web:i18n": "pnpm --filter @erp/web i18n:check",
     "specs:extract": "node tools/extract-routes/extract.mjs",
     "entities:generate": "node tools/prisma2jpa/generate.mjs"
   },

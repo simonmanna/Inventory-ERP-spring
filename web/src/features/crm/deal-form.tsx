@@ -116,7 +116,7 @@ export function DealFormDialog({ open, onOpenChange, deal, presetPartnerId, onSa
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{deal ? `Edit deal — ${deal.name}` : 'New Deal'}</DialogTitle>
+          <DialogTitle>{deal ? tx('Edit deal — {{name}}', { name: deal.name }) : tx('New Deal')}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -158,7 +158,7 @@ export function DealFormDialog({ open, onOpenChange, deal, presetPartnerId, onSa
                 className="mt-1.5 w-full justify-start font-normal"
                 onClick={() => setPartnerId('')}
               >
-                {partnerRows.find((p) => p.id === partnerId)?.name ?? 'Selected partner'} ✕
+                {partnerRows.find((p) => p.id === partnerId)?.name ?? tx('Selected partner')} ✕
               </Button>
             ) : null}
 
@@ -170,7 +170,7 @@ export function DealFormDialog({ open, onOpenChange, deal, presetPartnerId, onSa
                   </div>
                 ) : partnerRows.length === 0 ? (
                   <div className="p-4 text-center text-sm text-muted-foreground">
-                    {tx('No customers found')}{search ? ` for “${search}”` : ''}{tx('. Use the + button to create one inline.')}
+                    {tx('No customers found')}{search ? tx(' for “{{search}}”', { search }) : ''}{tx('. Use the + button to create one inline.')}
                   </div>
                 ) : (
                   partnerRows.map((p) => (
@@ -236,7 +236,7 @@ export function DealFormDialog({ open, onOpenChange, deal, presetPartnerId, onSa
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>{tx('Cancel')}</Button>
           <Button onClick={submit} disabled={submitting}>
             {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {deal ? 'Save changes' : 'Create deal'}
+            {deal ? tx('Save changes') : tx('Create deal')}
           </Button>
         </div>
       </DialogContent>

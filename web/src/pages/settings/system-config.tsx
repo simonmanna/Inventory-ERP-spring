@@ -68,7 +68,7 @@ function SettingRow({
               checked={!!value}
               onChange={(e) => onChange(e.target.checked)}
             />
-            {value ? 'Enabled' : 'Disabled'}
+            {value ? tx('Enabled') : tx('Disabled')}
           </label>
         ) : s.type === 'enum' ? (
           <Select value={value == null ? '' : String(value)} onValueChange={onChange}>
@@ -134,7 +134,7 @@ export function GroupCard({
       notify.success(`${title} saved`);
       qc.invalidateQueries({ queryKey: ['settings-effective', group] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   const setVal = (key: string, v: unknown) => {
@@ -203,9 +203,9 @@ function ConnectionModeCard() {
   const save = async () => {
     try {
       await update.mutateAsync({ connectionMode: mode });
-      notify.success(`System set to ${mode}`);
+      notify.success(tx('System set to {{mode}}', { mode }));
     } catch (e: any) {
-      notify.error(e?.response?.data?.message ?? 'Failed to save connection mode');
+      notify.error(e?.response?.data?.message ?? tx('Failed to save connection mode'));
     }
   };
 

@@ -188,6 +188,8 @@ public class CreditNoteService {
                             && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                         try {
                             Savepoints.run(jdbc, () -> stock.receiveReturn(StockMove.of(productId, warehouse, qty)
+                                    .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
+                                            : Money.dec(ln.get("uomFactor")))
                                     .reference((String) cn.get("documentNumber")).source("credit_note", id)
                                     .date(issueDate)));
                         } catch (RuntimeException e) {

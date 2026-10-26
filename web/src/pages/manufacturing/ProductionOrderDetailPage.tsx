@@ -63,7 +63,7 @@ export function ProductionOrderDetailPage() {
       notify.error(tx('Enter the actual quantity produced.'));
       return;
     }
-    await act(complete, { qtyProduced: Number(qtyProduced), scrapQty: scrapQty ? Number(scrapQty) : undefined }, 'Order completed — finished goods received.');
+    await act(complete, { qtyProduced: Number(qtyProduced), scrapQty: scrapQty ? Number(scrapQty) : undefined }, tx('Order completed — finished goods received.'));
     setCompleteOpen(false);
     setQtyProduced('');
     setScrapQty('');
@@ -71,7 +71,7 @@ export function ProductionOrderDetailPage() {
 
   const doQc = async () => {
     if (!(Number(passedQty) >= 0)) return;
-    await act(qcAction, { passedQty: Number(passedQty), failedQty: failedQty ? Number(failedQty) : undefined, wasteCategory: 'qc_rejection' }, 'QC recorded.');
+    await act(qcAction, { passedQty: Number(passedQty), failedQty: failedQty ? Number(failedQty) : undefined, wasteCategory: 'qc_rejection' }, tx('QC recorded.'));
     setQcOpen(false);
     setPassedQty('');
     setFailedQty('');
@@ -96,12 +96,12 @@ export function ProductionOrderDetailPage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {canConfirm && <Button variant="outline" onClick={() => act(confirm, undefined, 'Order confirmed.')}><ClipboardCheck className="mr-2 h-4 w-4" /> {tx('Confirm')}</Button>}
-        {canStart && <Button onClick={() => act(start, undefined, 'Started — materials consumed into WIP.')}><Play className="mr-2 h-4 w-4" /> {tx('Start')}</Button>}
+        {canConfirm && <Button variant="outline" onClick={() => act(confirm, undefined, tx('Order confirmed.'))}><ClipboardCheck className="mr-2 h-4 w-4" /> {tx('Confirm')}</Button>}
+        {canStart && <Button onClick={() => act(start, undefined, tx('Started — materials consumed into WIP.'))}><Play className="mr-2 h-4 w-4" /> {tx('Start')}</Button>}
         {canComplete && <Button onClick={() => setCompleteOpen(true)}><PackageCheck className="mr-2 h-4 w-4" /> {tx('Complete')}</Button>}
         {canQc && <Button onClick={() => setQcOpen(true)}><ShieldCheck className="mr-2 h-4 w-4" /> {tx('Record QC')}</Button>}
-        {canReverse && <Button variant="outline" onClick={() => act(reverse, { reason: 'reversed from UI' }, 'Order reversed.')}><Undo2 className="mr-2 h-4 w-4" /> {tx('Reverse')}</Button>}
-        {canCancel && <Button variant="destructive" onClick={() => act(cancel, { reason: 'cancelled from UI' }, 'Order cancelled.')}><XCircle className="mr-2 h-4 w-4" /> {tx('Cancel')}</Button>}
+        {canReverse && <Button variant="outline" onClick={() => act(reverse, { reason: 'reversed from UI' }, tx('Order reversed.'))}><Undo2 className="mr-2 h-4 w-4" /> {tx('Reverse')}</Button>}
+        {canCancel && <Button variant="destructive" onClick={() => act(cancel, { reason: 'cancelled from UI' }, tx('Order cancelled.'))}><XCircle className="mr-2 h-4 w-4" /> {tx('Cancel')}</Button>}
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

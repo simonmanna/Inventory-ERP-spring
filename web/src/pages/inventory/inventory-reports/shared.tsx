@@ -20,21 +20,21 @@ export const qty = (v: number | string | null | undefined) => {
 export const money = (v: number | string | null | undefined) => formatMoney(Number(v ?? 0));
 
 export const MOVE_TYPES: { value: string; label: string; group: string }[] = [
-  { value: 'receipt', label: 'Receipt', group: 'Received' },
-  { value: 'return_in', label: 'Customer return', group: 'Received' },
-  { value: 'production_output', label: 'Production output', group: 'Received' },
-  { value: 'opening_balance', label: 'Opening balance', group: 'Received' },
-  { value: 'issue', label: 'Issue / sale', group: 'Consumed' },
-  { value: 'production_consume', label: 'Production consume', group: 'Consumed' },
-  { value: 'adjustment_in', label: 'Adjustment in', group: 'Adjusted' },
-  { value: 'adjustment_out', label: 'Adjustment out', group: 'Adjusted' },
-  { value: 'transfer_in', label: 'Transfer in', group: 'Transferred' },
-  { value: 'transfer_out', label: 'Transfer out', group: 'Transferred' },
-  { value: 'waste', label: 'Waste', group: 'Lost' },
-  { value: 'expiry_write_off', label: 'Expiry write-off', group: 'Lost' },
-  { value: 'internal_use', label: 'Internal use', group: 'Lost' },
-  { value: 'promo_sample', label: 'Promo / sample', group: 'Lost' },
-  { value: 'return_to_supplier', label: 'Return to supplier', group: 'Returned' },
+  { value: 'receipt', label: tx('Receipt'), group: 'Received' },
+  { value: 'return_in', label: tx('Customer return'), group: 'Received' },
+  { value: 'production_output', label: tx('Production output'), group: 'Received' },
+  { value: 'opening_balance', label: tx('Opening balance'), group: 'Received' },
+  { value: 'issue', label: tx('Issue / sale'), group: 'Consumed' },
+  { value: 'production_consume', label: tx('Production consume'), group: 'Consumed' },
+  { value: 'adjustment_in', label: tx('Adjustment in'), group: 'Adjusted' },
+  { value: 'adjustment_out', label: tx('Adjustment out'), group: 'Adjusted' },
+  { value: 'transfer_in', label: tx('Transfer in'), group: 'Transferred' },
+  { value: 'transfer_out', label: tx('Transfer out'), group: 'Transferred' },
+  { value: 'waste', label: tx('Waste'), group: 'Lost' },
+  { value: 'expiry_write_off', label: tx('Expiry write-off'), group: 'Lost' },
+  { value: 'internal_use', label: tx('Internal use'), group: 'Lost' },
+  { value: 'promo_sample', label: tx('Promo / sample'), group: 'Lost' },
+  { value: 'return_to_supplier', label: tx('Return to supplier'), group: 'Returned' },
 ];
 export const moveTypeLabel = (t: string) => MOVE_TYPES.find((m) => m.value === t)?.label ?? t;
 
@@ -98,7 +98,7 @@ interface DataTableProps<T> {
 const PAGE_SIZES = [25, 50, 100, 0];
 
 export function DataTable<T>({
-  rows, columns, rowKey, defaultSort, exportName, emptyText = 'No data for the selected filters.',
+  rows, columns, rowKey, defaultSort, exportName, emptyText = tx('No data for the selected filters.'),
   toolbar, rowClassName, onRowClick,
 }: DataTableProps<T>) {
   const cols = columns.filter((c) => !c.hidden);
@@ -233,13 +233,13 @@ export function DataTable<T>({
               value={pageSize}
               onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
             >
-              {PAGE_SIZES.map((s) => <option key={s} value={s}>{s || 'All'}</option>)}
+              {PAGE_SIZES.map((s) => <option key={s} value={s}>{s || tx('All')}</option>)}
             </select>
           </label>
           {pageSize > 0 && (
             <div className="flex items-center gap-2">
               <Button size="sm" variant="outline" disabled={current <= 1} onClick={() => setPage(current - 1)}>{tx('Previous')}</Button>
-              <span>{tx('Page')} {current} of {totalPages}</span>
+              <span>{tx('Page')} {current} {tx('of')} {totalPages}</span>
               <Button size="sm" variant="outline" disabled={current >= totalPages} onClick={() => setPage(current + 1)}>{tx('Next')}</Button>
             </div>
           )}
@@ -255,10 +255,10 @@ export function ReportState({ query, children }: { query: { isLoading: boolean; 
   }
   if (query.isError) {
     const e = query.error as { response?: { status?: number; data?: { message?: string | string[] } }; message?: string };
-    const msg = e?.response?.data?.message ?? e?.message ?? 'Unknown error';
+    const msg = e?.response?.data?.message ?? e?.message ?? tx('Unknown error');
     return (
       <Card className="p-6 text-sm text-destructive">
-        {tx('Failed to load the report')}{e?.response?.status ? ` (HTTP ${e.response.status})` : ''}: {Array.isArray(msg) ? msg.join(', ') : msg}
+        {tx('Failed to load the report')}{e?.response?.status ? tx(' (HTTP {{status}})', { status: e.response.status }) : ''}: {Array.isArray(msg) ? msg.join(', ') : msg}
       </Card>
     );
   }

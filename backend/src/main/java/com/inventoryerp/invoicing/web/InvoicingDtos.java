@@ -28,10 +28,12 @@ public final class InvoicingDtos {
             @DecimalMin(value = "0", message = "Discount percent cannot be negative")
             @DecimalMax(value = "100", message = "Discount percent cannot exceed 100") BigDecimal discountPercent,
             String taxId,
-            @OneOf({"product", "section", "note"}) String lineType) {
+            @OneOf({"product", "section", "note"}) String lineType,
+            String uomId) {
 
         LineInput toInput() {
-            return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType);
+            return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType,
+                    uomId);
         }
     }
 

@@ -75,7 +75,7 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
       setTargetId('');
       onClose();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Merge failed');
+      toast.error(e?.response?.data?.message ?? tx('Merge failed'));
     }
   }
 
@@ -85,7 +85,7 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
       await unmerge.mutateAsync(t.id);
       toast.success(tx('Unmerged'));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Unmerge failed');
+      toast.error(e?.response?.data?.message ?? tx('Unmerge failed'));
     }
   }
 
@@ -97,7 +97,7 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
       setTargetId('');
       onClose();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Transfer failed');
+      toast.error(e?.response?.data?.message ?? tx('Transfer failed'));
     }
   }
 
@@ -134,7 +134,7 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
       setSplitOpen(false);
       onClose();
     } catch (e: any) {
-      toast.error(e?.response?.data?.message ?? 'Split failed');
+      toast.error(e?.response?.data?.message ?? tx('Split failed'));
     }
   }
 
@@ -179,8 +179,8 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
                         #{o.order?.orderNumber ?? (o.orderId ? o.orderId.slice(0, 6) : '—')}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {o.customerName ?? 'Walk-in'}
-                        {o.guestCount ? ` · ${o.guestCount} guests` : ''}
+                        {o.customerName ?? tx('Walk-in')}
+                        {o.guestCount ? tx(' · {{guestCount}} guests', { guestCount: o.guestCount }) : ''}
                         {' · '}
                         {tx('opened')} {minutesBetween(o.openedAt, null)}{tx('m ago')}
                       </div>
@@ -212,7 +212,7 @@ export const TableDetailDialog: React.FC<Props> = ({ table, onClose, onEdit }) =
                   className="text-xs text-slate-700 flex items-center justify-between border border-slate-100 rounded px-3 py-2 bg-blue-50/40"
                 >
                   <div>
-                    <span className="font-extrabold">{r.customerName}</span> · {r.partySize} pax
+                    <span className="font-extrabold">{r.customerName}</span> · {r.partySize} {tx('pax')}
                   </div>
                   <div className="text-slate-500">
                     {new Date(r.startAt).toLocaleString([], {

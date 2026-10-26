@@ -65,9 +65,9 @@ const PAPER_MAX_H = 660;
 type Step = 'check' | 'count' | 'confirm' | 'done';
 
 const STEPS: { key: Step; label: string }[] = [
-  { key: 'check', label: 'Check' },
-  { key: 'count', label: 'Count' },
-  { key: 'confirm', label: 'Confirm' },
+  { key: 'check', label: tx('Check') },
+  { key: 'count', label: tx('Count') },
+  { key: 'confirm', label: tx('Confirm') },
 ];
 
 interface Props {
@@ -105,11 +105,11 @@ const Notice: React.FC<{ tone: Tone; title: string; children?: React.ReactNode }
 
 const opLabel = (op: QueuedSale | FailedSale): string => {
   const ep: string = op.endpoint ?? '/pos/checkout';
-  if (/checkout$/.test(ep)) return 'Sale payment';
-  if (/settle$/.test(ep)) return 'Table settlement';
+  if (/checkout$/.test(ep)) return tx('Sale payment');
+  if (/settle$/.test(ep)) return tx('Table settlement');
   if (/refund$/.test(ep)) return 'Refund';
-  if (/items$/.test(ep)) return 'Kitchen round';
-  if (/payments$/.test(ep)) return 'Credit collection';
+  if (/items$/.test(ep)) return tx('Kitchen round');
+  if (/payments$/.test(ep)) return tx('Credit collection');
   if (/write-off$/.test(ep)) return 'Write-off';
   return ep.replace(/^\/+|\/+$/g, '') || 'Operation';
 };
@@ -150,8 +150,8 @@ const DeviceOpRow: React.FC<{
       </div>
       {failed ? (
         <p className="mt-0.5 text-[12px] text-rose-700 break-words">
-          {(op as FailedSale).httpStatus ? `HTTP ${(op as FailedSale).httpStatus} — ` : ''}
-          {(op as FailedSale).rejection?.message || (op as FailedSale).lastError || 'Rejected by the server'}
+          {(op as FailedSale).httpStatus ? tx('HTTP {{httpStatus}} — ', { httpStatus: (op as FailedSale).httpStatus }) : ''}
+          {(op as FailedSale).rejection?.message || (op as FailedSale).lastError || tx('Rejected by the server')}
         </p>
       ) : op.lastError ? (
         <p className="mt-0.5 text-[12px] text-slate-600 break-words">{op.lastError}</p>
@@ -235,7 +235,7 @@ export function decodeError(body: unknown): Decoded {
     code?: string; message?: string | string[]; openOrderCount?: number;
     accounts?: Array<{ name?: string; expected?: string; observed?: string; difference?: string }>;
   };
-  const msg = (Array.isArray(data.message) ? data.message.join('; ') : data.message) || 'Something went wrong while closing the shift';
+  const msg = (Array.isArray(data.message) ? data.message.join('; ') : data.message) || tx('Something went wrong while closing the shift');
   // Structured codes first; the regexes below remain for older servers.
   switch (data.code) {
     case 'PROVIDER_BALANCE_VARIANCE': {
@@ -245,7 +245,7 @@ export function decodeError(body: unknown): Decoded {
       });
       return {
         tone: 'warn',
-        title: 'A wallet or bank balance does not match',
+        title: tx('A wallet or bank balance does not match'),
         detail: `${lines.length ? lines.join('. ') + '. ' : ''}Re-check the figure, or write why it differs and ask a manager to approve below.`,
         goTo: 'confirm',
         focusReason: true,
@@ -255,21 +255,21 @@ export function decodeError(body: unknown): Decoded {
     case 'OPEN_ORDERS':
       return {
         tone: 'warn',
-        title: 'There are still open orders',
+        title: tx('There are still open orders'),
         detail: `${data.openOrderCount ?? 'Some'} open order(s) must be settled or voided before the shift can close. The list below shows them.`,
         goTo: 'check',
       };
     case 'RECONCILIATION_ISSUES':
       return {
         tone: 'warn',
-        title: 'There is still open work on this shift',
+        title: tx('There is still open work on this shift'),
         detail: 'The list below shows what is left. Clear it, tap Check again, then come back.',
         goTo: 'check',
       };
     case 'CASH_VARIANCE_REASON_REQUIRED':
       return {
         tone: 'warn',
-        title: 'The drawer does not balance',
+        title: tx('The drawer does not balance'),
         detail: 'That is fine — it happens. Write one line about why, and we can finish closing.',
         goTo: 'confirm',
         focusReason: true,
@@ -277,18 +277,18 @@ export function decodeError(body: unknown): Decoded {
     case 'MANAGER_APPROVAL_REQUIRED':
       return {
         tone: 'warn',
-        title: 'This needs a manager',
+        title: tx('This needs a manager'),
         detail: 'Ask a manager to enter their email and PIN below, then close the shift again.',
         goTo: 'confirm',
         revealManager: true,
       };
     case 'TENDER_NOT_COUNTED':
-      return { tone: 'error', title: 'Check every wallet and bank account', detail: msg, goTo: 'confirm' };
+      return { tone: 'error', title: tx('Check every wallet and bank account'), detail: msg, goTo: 'confirm' };
   }
   if (/variance reason/i.test(msg)) {
     return {
       tone: 'warn',
-      title: 'The drawer does not balance',
+      title: tx('The drawer does not balance'),
       detail: 'That is fine — it happens. Write one line about why, and we can finish closing.',
       goTo: 'confirm',
       focusReason: true,
@@ -297,7 +297,7 @@ export function decodeError(body: unknown): Decoded {
   if (/manager approval|approver|manager pin|approve/i.test(msg)) {
     return {
       tone: 'warn',
-      title: 'This difference is large enough to need a manager',
+      title: tx('This difference is large enough to need a manager'),
       detail: 'Ask a manager to enter their email and PIN below, then close the shift again.',
       goTo: 'confirm',
       revealManager: true,
@@ -306,7 +306,7 @@ export function decodeError(body: unknown): Decoded {
   if (/unsettled order|pending payment|posting difference|Resolve unsettled/i.test(msg)) {
     return {
       tone: 'warn',
-      title: 'There is still open work on this shift',
+      title: tx('There is still open work on this shift'),
       detail: 'The list below shows what is left. Clear it, tap Check again, then come back.',
       goTo: 'check',
     };
@@ -314,7 +314,7 @@ export function decodeError(body: unknown): Decoded {
   if (/pending device operation|pending or rejected payments/i.test(msg)) {
     return {
       tone: 'warn',
-      title: 'This device still has payments waiting to sync',
+      title: tx('This device still has payments waiting to sync'),
       detail: 'The list below shows each one. Sync it, or retry/discard it if the server rejected it, then close the shift.',
       goTo: 'check',
     };
@@ -322,7 +322,7 @@ export function decodeError(body: unknown): Decoded {
   if (/previous drawer operation/i.test(msg)) {
     return {
       tone: 'warn',
-      title: 'An earlier drawer action never got a reply',
+      title: tx('An earlier drawer action never got a reply'),
       detail: 'Retry that one first with its original amount — the pending-operation notice at the top right has it.',
       goTo: 'check',
     };
@@ -330,14 +330,14 @@ export function decodeError(body: unknown): Decoded {
   if (/no open cash session/i.test(msg)) {
     return {
       tone: 'error',
-      title: 'This register is not open any more',
+      title: tx('This register is not open any more'),
       detail: 'Someone may have closed it already. Refresh the page to see where it stands.',
     };
   }
   if (/negative/i.test(msg)) {
     return {
       tone: 'error',
-      title: 'The counted amount cannot be negative',
+      title: tx('The counted amount cannot be negative'),
       detail: 'Enter the cash actually in the drawer — use 0 if the drawer is empty.',
       goTo: 'count',
     };
@@ -345,11 +345,11 @@ export function decodeError(body: unknown): Decoded {
   if (/network|timeout|Network Error/i.test(msg)) {
     return {
       tone: 'error',
-      title: 'Could not reach the server',
+      title: tx('Could not reach the server'),
       detail: 'Your count has not been lost. Check the connection and try closing again.',
     };
   }
-  return { tone: 'error', title: 'The shift could not be closed', detail: msg };
+  return { tone: 'error', title: tx('The shift could not be closed'), detail: msg };
 }
 
 /* ------------------------------------------------------------------ dialog */
@@ -558,12 +558,12 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
       );
       if (r.data.ok) {
         setPrinted(true);
-        toast.success(r.data.backend === 'console' ? r.data.message ?? 'Logged (no printer)' : 'Closing summary sent to printer');
+        toast.success(r.data.backend === 'console' ? r.data.message ?? tx('Logged (no printer)') : tx('Closing summary sent to printer'));
       } else {
-        toast.warning(r.data.message ?? 'Printer error');
+        toast.warning(r.data.message ?? tx('Printer error'));
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Print failed');
+      toast.error(e?.response?.data?.message || tx('Print failed'));
     } finally {
       setPrinting(false);
     }
@@ -606,7 +606,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
     if (!countedValid) {
       setProblem({
         tone: 'error',
-        title: 'We still need the counted amount',
+        title: tx('We still need the counted amount'),
         detail: 'Enter the cash in the drawer, or switch to counting note by note.',
         goTo: 'count',
       });
@@ -624,7 +624,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
     if (unchecked.length) {
       setProblem({
         tone: 'error',
-        title: 'Check every wallet and bank account',
+        title: tx('Check every wallet and bank account'),
         detail: `Enter what the provider shows for ${unchecked.map((r) => r.label).join(', ')}, or mark it "not counted" and say why.`,
         goTo: 'confirm',
       });
@@ -637,7 +637,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
       setShowManager(true);
       setProblem({
         tone: 'error',
-        title: 'A manager must approve uncounted accounts',
+        title: tx('A manager must approve uncounted accounts'),
         detail: 'Ask a manager to enter their email and PIN below.',
         goTo: 'confirm',
       });
@@ -715,7 +715,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
         <DialogHeader className="border-b border-slate-100 px-6 pb-4 pt-6">
           <DialogTitle className="flex items-center gap-2">
             <PowerOff className="h-4 w-4 text-rose-600" />
-            {step === 'done' ? 'Shift closed' : 'Close shift'}
+            {step === 'done' ? tx('Shift closed') : tx('Close shift')}
           </DialogTitle>
           <DialogDescription>
             {step === 'check' && 'First, a quick look for anything still open on this shift.'}
@@ -819,11 +819,9 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
               {/* Device-local payments bound to this shift — informational
                   only: they sync under any sign-in and never block closing. */}
               {deviceOps.length ? (
-                <Notice tone="warn" title={`${deviceOps.length} payment${deviceOps.length === 1 ? '' : 's'} on this device still need${deviceOps.length === 1 ? 's' : ''} syncing`}>
+                <Notice tone="warn" title={tx('{{length}} payment{{v2}} on this device still need{{v3}} syncing', { length: deviceOps.length, v2: deviceOps.length === 1 ? '' : 's', v3: deviceOps.length === 1 ? 's' : '' })}>
                   <p>
-                    These were taken at the till but not confirmed by the server. They sync under any sign-in —
-                    a payment the server already recorded clears itself. This does not stop you closing the shift;
-                    anything still queued keeps syncing after the shift is sealed.
+                    {tx('These were taken at the till but not confirmed by the server. They sync under any sign-in — a payment the server already recorded clears itself. This does not stop you closing the shift; anything still queued keeps syncing after the shift is sealed.')}
                   </p>
                   <ul className="mt-2 space-y-2">
                     {deviceOps.map((op) => (
@@ -852,7 +850,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                   <p>{tx('Every order is settled and the books agree with the drawer. You can count now.')}</p>
                 </Notice>
               ) : (
-                <Notice tone="warn" title={`${problemCount} thing${problemCount === 1 ? '' : 's'} to sort out first`}>
+                <Notice tone="warn" title={tx('{{problemCount}} thing{{v2}} to sort out first', { problemCount, v2: problemCount === 1 ? '' : 's' })}>
                   <ul className="space-y-2">
                     {blockers.map((b) => (
                       <li key={b.text}>
@@ -864,7 +862,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                             {b.items.slice(0, b.count ? 50 : 4).map((item) => (
                               <li key={item}>{item}</li>
                             ))}
-                            {!b.count && b.items.length > 4 ? <li>and {b.items.length - 4} {tx('more like this')}</li> : null}
+                            {!b.count && b.items.length > 4 ? <li>{tx('and')} {b.items.length - 4} {tx('more like this')}</li> : null}
                           </ul>
                         ) : null}
                       </li>
@@ -874,7 +872,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
               )}
 
               {recon?.pendingPostings ? (
-                <Notice tone="info" title={`${recon.pendingPostings} stock deduction${recon.pendingPostings === 1 ? '' : 's'} still posting`}>
+                <Notice tone="info" title={tx('{{pendingPostings}} stock deduction{{v2}} still posting', { pendingPostings: recon.pendingPostings, v2: recon.pendingPostings === 1 ? '' : 's' })}>
                   <p>
                     {tx('This does not stop you closing — your sales and money are final. Stock catches up on its own; anything that cannot post shows on the Posting Monitor for a manager.')}
                   </p>
@@ -888,7 +886,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                 disabled={checking}
               >
                 {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {checking ? 'Checking…' : 'Check again'}
+                {checking ? tx('Checking…') : tx('Check again')}
               </button>
             </>
           ) : null}
@@ -917,7 +915,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                   className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-900"
                   onClick={() => setByDenom((v) => !v)}
                 >
-                  <Calculator className="h-3 w-3" /> {byDenom ? 'Type one total instead' : 'Count note by note'}
+                  <Calculator className="h-3 w-3" /> {byDenom ? tx('Type one total instead') : tx('Count note by note')}
                 </button>
               </div>
 
@@ -950,7 +948,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                     <span className="text-sm font-semibold">
                       {tx('Counted total')}
                       <span className="ml-2 text-xs font-normal opacity-70">
-                        {denomPieces} {tx('note')}{denomPieces === 1 ? '' : 's'}/coin{denomPieces === 1 ? '' : 's'}
+                        {denomPieces} {tx('note')}{denomPieces === 1 ? '' : 's'}{tx('/coin')}{denomPieces === 1 ? '' : 's'}
                       </span>
                     </span>
                     <span className="font-mono text-lg font-extrabold tabular-nums">{fmt(denomTotal)}</span>
@@ -991,7 +989,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{tx('You counted')}</p>
                   <p className="text-xs text-slate-500">
-                    {byDenom ? `${denomPieces} notes/coins` : 'Entered as one total'}
+                    {byDenom ? `${denomPieces} notes/coins` : tx('Entered as one total')}
                   </p>
                 </div>
                 <span className="font-mono text-2xl font-extrabold tabular-nums">{fmt(countedNum)}</span>
@@ -1022,7 +1020,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                         <tr key={row.accountId} className="border-t border-slate-100">
                           <td
                             className="whitespace-nowrap px-3 py-1 font-semibold text-slate-700"
-                            title={row.openingKnown ? undefined : 'No opening balance recorded'}
+                            title={row.openingKnown ? undefined : tx('No opening balance recorded')}
                           >
                             {row.accountName || row.label}
                           </td>
@@ -1032,7 +1030,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                           {showClosingAmounts ? (
                             <td
                               className="px-2 py-1 text-right font-mono tabular-nums font-bold text-slate-900"
-                              title={`Opening ${plain(row.opening)} + received ${plain(row.received)} − refunds ${plain(row.refunds)}${row.otherMovements ? ` ${row.otherMovements > 0 ? '+' : '−'} settlements/transfers ${plain(Math.abs(row.otherMovements))}` : ''}`}
+                              title={tx('Opening {{v1}} + received {{v2}} − refunds {{v3}}{{v4}}', { v1: plain(row.opening), v2: plain(row.received), v3: plain(row.refunds), v4: row.otherMovements ? ` ${row.otherMovements > 0 ? '+' : '−'} settlements/transfers ${plain(Math.abs(row.otherMovements))}` : '' })}
                             >
                               {plain(row.expected)}
                             </td>
@@ -1041,7 +1039,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                             {row.accountId in uncounted ? (
                               <div className="flex items-center justify-end gap-2">
                                 <input
-                                  aria-label={`Why ${row.label} was not counted`}
+                                  aria-label={tx('Why {{label}} was not counted', { label: row.label })}
                                   className="w-36 rounded border border-amber-300 bg-amber-50 p-1 text-xs"
                                   placeholder={tx('Why not counted?')}
                                   value={uncounted[row.accountId]}
@@ -1058,7 +1056,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                             ) : (
                               <div className="flex items-center justify-end gap-2">
                                 <input
-                                  aria-label={`Closing balance ${row.label}`}
+                                  aria-label={tx('Closing balance {{label}}', { label: row.label })}
                                   type="number"
                                   min="0"
                                   step="any"
@@ -1100,9 +1098,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                     </tbody>
                   </table>
                   <p className="px-3 py-1 text-[11px] text-slate-500">
-                    Enter what each provider shows. If you cannot check an account, choose "Could not check",
-                    give the reason and get a manager to approve. Money still sitting with a provider is swept
-                    to the bank separately, under Money &amp; Accounts → Settlements.
+                    {tx('Enter what each provider shows. If you cannot check an account, choose "Could not check", give the reason and get a manager to approve. Money still sitting with a provider is swept to the bank separately, under Money & Accounts → Settlements.')}
                   </p>
                 </div>
               ) : null}
@@ -1136,8 +1132,8 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
               <div>
                 <Label className="text-sm font-bold">
                   {autoAdjustCash && cashVariance != null && Math.abs(cashVariance) > 0.005
-                    ? 'Anything else worth noting?'
-                    : 'If the drawer or a wallet doesn\u2019t balance, why?'}{' '}
+                    ? tx('Anything else worth noting?')
+                    : tx('If the drawer or a wallet doesn’t balance, why?')}{' '}
                   <span className="font-normal text-slate-400">{tx('(only needed if it does not balance)')}</span>
                 </Label>
                 <Textarea
@@ -1145,7 +1141,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                   rows={2}
                   value={varianceReason}
                   onChange={(e) => setVarianceReason(e.target.value)}
-                  placeholder={`e.g. ${orgCur()} 5,000 short — gave wrong change on table 4`}
+                  placeholder={tx('e.g. {{v1}} 5,000 short — gave wrong change on table 4', { v1: orgCur() })}
                   className="mt-1 resize-none"
                 />
               </div>
@@ -1157,7 +1153,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                 <Input
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder={`e.g. Took ${orgCur()} 20,000 for the bread run`}
+                  placeholder={tx('e.g. Took {{v1}} 20,000 for the bread run', { v1: orgCur() })}
                   className="mt-1"
                 />
               </div>
@@ -1171,7 +1167,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                   <ShieldCheck className="h-4 w-4 text-slate-400" />
                   {tx('Manager sign-off')}
                   <span className="ml-auto text-xs font-normal text-slate-400">
-                    {showManager ? 'Hide' : 'For a big difference or an unchecked account'}
+                    {showManager ? tx('Hide') : tx('For a big difference or an unchecked account')}
                   </span>
                 </button>
                 {showManager ? (
@@ -1214,7 +1210,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                 }
               >
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-                  {variance === 0 ? 'The drawer balanced' : variance > 0 ? 'Drawer was over' : 'Drawer was short'}
+                  {variance === 0 ? tx('The drawer balanced') : variance > 0 ? tx('Drawer was over') : tx('Drawer was short')}
                 </p>
                 <p
                   className={
@@ -1267,7 +1263,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                         style={{ background: '#16a34a' }}
                       >
                         <Printer className="mr-1 h-4 w-4" />
-                        {printing ? 'Sending…' : printed ? 'Print again' : 'Print summary'}
+                        {printing ? tx('Sending…') : printed ? tx('Print again') : tx('Print summary')}
                       </Button>
                     </div>
                   </div>
@@ -1318,7 +1314,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                 {closeShift.isPending ? (
                   <><Loader2 className="mr-1 h-4 w-4 animate-spin" /> {tx('Closing…')}</>
                 ) : (
-                  'Close shift'
+                  tx('Close shift')
                 )}
               </Button>
             </>
@@ -1333,7 +1329,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                   <Printer className="mr-1 h-4 w-4" /> {tx('Closing summary')}
                 </Button>
               ) : null}
-              <Button onClick={finish}>{printed ? 'Done' : 'Done — skip printing'}</Button>
+              <Button onClick={finish}>{printed ? tx('Done') : tx('Done — skip printing')}</Button>
             </>
           ) : null}
         </DialogFooter>

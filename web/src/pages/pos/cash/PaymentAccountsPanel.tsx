@@ -31,11 +31,11 @@ const num = (v: unknown) => {
 const money = (v: unknown) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 const TYPE_META: Record<string, { label: string; icon: string; dot: string }> = {
-  cash: { label: 'Cash', icon: '💵', dot: 'bg-emerald-500' },
-  petty_cash: { label: 'Petty Cash', icon: '🪙', dot: 'bg-purple-500' },
-  bank: { label: 'Bank', icon: '🏦', dot: 'bg-blue-500' },
-  mobile_money: { label: 'Mobile Money', icon: '📱', dot: 'bg-orange-500' },
-  current_asset: { label: 'Card Clearing', icon: '💳', dot: 'bg-sky-500' },
+  cash: { label: tx('Cash'), icon: '💵', dot: 'bg-emerald-500' },
+  petty_cash: { label: tx('Petty Cash'), icon: '🪙', dot: 'bg-purple-500' },
+  bank: { label: tx('Bank'), icon: '🏦', dot: 'bg-blue-500' },
+  mobile_money: { label: tx('Mobile Money'), icon: '📱', dot: 'bg-orange-500' },
+  current_asset: { label: tx('Card Clearing'), icon: '💳', dot: 'bg-sky-500' },
 };
 const meta = (t: string) => TYPE_META[t] ?? { label: t, icon: '📄', dot: 'bg-slate-400' };
 
@@ -162,7 +162,7 @@ export const PaymentAccountsPanel: React.FC<Props> = ({ session, registerId }) =
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
         <div>
           <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700">
-            Payment accounts &amp; shift balances
+            {tx('Payment accounts & shift balances')}
           </h3>
           <p className="text-xs text-slate-500">
             {tx('Every account from Accounting → Cash Accounts. A ✓ means the POS can receive into it when a receipt is registered at the selling screen.')}
@@ -170,7 +170,7 @@ export const PaymentAccountsPanel: React.FC<Props> = ({ session, registerId }) =
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
-            {posCount} of {rows.length} {tx('accepted in POS')}
+            {posCount} {tx('of')} {rows.length} {tx('accepted in POS')}
           </span>
           <Link
             to="/settings/payment-methods"

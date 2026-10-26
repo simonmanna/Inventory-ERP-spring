@@ -48,7 +48,7 @@ export function JournalsPage() {
       notify.success(tx('Journal deleted'));
       setDeleting(null);
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Delete failed');
+      notify.error(err?.response?.data?.message ?? tx('Delete failed'));
       setDeleting(null);
     }
   };
@@ -56,13 +56,13 @@ export function JournalsPage() {
   const columns: Column<Journal>[] = [
     {
       key: 'code',
-      header: 'Code',
+      header: tx('Code'),
       render: (j) => <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono text-primary font-semibold">{j.code}</code>,
     },
-    { key: 'name', header: 'Name', render: (j) => <span className="font-semibold text-sm">{j.name}</span> },
+    { key: 'name', header: tx('Name'), render: (j) => <span className="font-semibold text-sm">{j.name}</span> },
     {
       key: 'journalType',
-      header: 'Type',
+      header: tx('Type'),
       render: (j) => (
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-semibold ${TYPE_COLORS[j.journalType] ?? 'bg-gray-50 text-gray-700'}`}>
           {j.journalType.replace(/_/g, ' ')}
@@ -71,7 +71,7 @@ export function JournalsPage() {
     },
     {
       key: 'entries',
-      header: 'Entries',
+      header: tx('Entries'),
       className: 'text-right',
       render: (j) => (
         <span className="font-semibold text-sm">{j._count?.entries ?? 0}</span>
@@ -79,7 +79,7 @@ export function JournalsPage() {
     },
     {
       key: 'isActive',
-      header: 'Status',
+      header: tx('Status'),
       render: (j) => (
         j.isActive
           ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">{tx('Active')}</Badge>

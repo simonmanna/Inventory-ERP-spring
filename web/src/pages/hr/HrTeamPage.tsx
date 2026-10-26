@@ -56,7 +56,7 @@ export function HrTeamPage() {
     const mutation = kind === 'approve' ? approve : reject;
     try {
       await mutation.mutateAsync({ id });
-      notify.success(kind === 'approve' ? 'Leave approved' : 'Leave rejected');
+      notify.success(kind === 'approve' ? tx('Leave approved') : tx('Leave rejected'));
     } catch (err) {
       notify.error(apiErrorMessage(err, `Could not ${kind} the request`));
     }
@@ -154,7 +154,7 @@ export function HrTeamPage() {
                           {m.firstName} {m.lastName ?? ''}
                         </Link>
                         <span className="block text-xs text-muted-foreground">
-                          {m.position?.name ?? 'No position'}
+                          {m.position?.name ?? tx('No position')}
                           {m.department?.name ? ` · ${m.department.name}` : ''}
                         </span>
                       </div>

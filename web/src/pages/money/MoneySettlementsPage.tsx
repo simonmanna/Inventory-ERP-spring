@@ -83,7 +83,7 @@ function SettleDialog({
             <div className="space-y-1.5">
               <Label htmlFor="settle-dest">{tx('Bank that received the money')}</Label>
               <select id="settle-dest" required className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm" value={destinationId} onChange={(e) => setDestinationId(e.target.value)}>
-                <option value="">{destinations.length ? 'Choose bank account' : 'No bank account — add one under Accounts'}</option>
+                <option value="">{destinations.length ? tx('Choose bank account') : tx('No bank account — add one under Accounts')}</option>
                 {destinations.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.code}</option>)}
               </select>
             </div>
@@ -92,7 +92,7 @@ function SettleDialog({
                 <Label htmlFor="settle-amount">{tx('Amount settled')}{currency ? ` (${currency})` : ''}</Label>
                 <Input id="settle-amount" type="number" inputMode="decimal" min="0.01" step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
                 <p className={overBalance ? 'text-xs font-medium text-destructive' : 'text-xs text-muted-foreground'}>
-                  {overBalance ? 'More than the provider account holds: ' : 'Balance on provider account: '}{fmt(source.balance)}
+                  {overBalance ? tx('More than the provider account holds: ') : tx('Balance on provider account: ')}{fmt(source.balance)}
                 </p>
               </div>
               <div className="space-y-1.5">
@@ -177,7 +177,7 @@ export function MoneySettlementsPage() {
       {isLoading ? (
         <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
       ) : isError || !data ? (
-        <LoadError message="Settlement accounts could not be loaded." onRetry={() => refetch()} />
+        <LoadError message={tx('Settlement accounts could not be loaded.')} onRetry={() => refetch()} />
       ) : data.sources.length === 0 ? (
         <EmptyState icon={Landmark} title={tx('No card or mobile-money account to settle')}>
           {tx('Connect card or mobile-money payment methods to their receiving accounts in')} <Link to="/settings/payment-methods" className="font-medium text-primary hover:underline">{tx('Settings → Payment methods')}</Link>.
@@ -201,12 +201,12 @@ export function MoneySettlementsPage() {
                 <dt className="text-muted-foreground">{tx('POS receipts since last settlement')}</dt>
                 <dd className="text-right"><MoneyAmount value={s.posReceiptsSinceLastSettlement} currency={currency} /></dd>
                 <dt className="text-muted-foreground">{tx('Last settlement')}</dt>
-                <dd className="text-right">{s.lastSettledAt ? new Date(s.lastSettledAt).toLocaleDateString(undefined, { timeZone, dateStyle: 'medium' }) : 'None recorded'}</dd>
+                <dd className="text-right">{s.lastSettledAt ? new Date(s.lastSettledAt).toLocaleDateString(undefined, { timeZone, dateStyle: 'medium' }) : tx('None recorded')}</dd>
               </dl>
               <div className="mt-auto flex flex-wrap gap-2">
                 <Button className="min-h-[44px] flex-1" disabled={Number(s.balance) <= 0} onClick={() => setSettling(s)}>{tx('Settle to bank')}</Button>
                 <Button variant="outline" className="min-h-[44px]" onClick={() => { const n = new URLSearchParams(params); if (sourceFilter === s.accountId) n.delete('source'); else n.set('source', s.accountId); setParams(n, { replace: true }); setPage(1); }}>
-                  {sourceFilter === s.accountId ? 'All history' : 'History'}
+                  {sourceFilter === s.accountId ? tx('All history') : tx('History')}
                 </Button>
               </div>
             </article>
@@ -221,7 +221,7 @@ export function MoneySettlementsPage() {
         {history.isLoading ? (
           <div className="flex h-24 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
         ) : history.isError ? (
-          <LoadError message="Settlement history could not be loaded." onRetry={() => history.refetch()} retrying={history.isFetching} />
+          <LoadError message={tx('Settlement history could not be loaded.')} onRetry={() => history.refetch()} retrying={history.isFetching} />
         ) : !history.data?.data.length ? (
           <p className="rounded-xl border bg-card p-6 text-center text-sm text-muted-foreground">{tx('No settlements recorded yet.')}</p>
         ) : (

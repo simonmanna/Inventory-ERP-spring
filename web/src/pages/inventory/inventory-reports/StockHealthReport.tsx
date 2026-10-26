@@ -31,9 +31,9 @@ interface HealthReport {
 }
 
 const STATUS_BADGE: Record<HealthRow['status'], { label: string; variant: 'default' | 'secondary' | 'destructive' }> = {
-  active: { label: 'Active', variant: 'secondary' },
-  slow: { label: 'Slow-moving', variant: 'default' },
-  dead: { label: 'Dead stock', variant: 'destructive' },
+  active: { label: tx('Active'), variant: 'secondary' },
+  slow: { label: tx('Slow-moving'), variant: 'default' },
+  dead: { label: tx('Dead stock'), variant: 'destructive' },
 };
 
 /** Aging, turnover, days of cover and slow / dead stock per item and location. */
@@ -52,20 +52,20 @@ export function StockHealthReport({ ctl }: { ctl: Ctl }) {
   const s = report.data?.summary;
 
   const columns: Column<HealthRow>[] = [
-    { key: 'name', header: 'Item', className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name },
-    { key: 'location', header: 'Location', render: (r) => r.location, sort: (r) => r.location },
-    { key: 'status', header: 'Status', render: (r) => <Badge variant={STATUS_BADGE[r.status].variant}>{STATUS_BADGE[r.status].label}</Badge>, sort: (r) => r.status },
-    { key: 'onHand', header: 'On Hand', align: 'right', render: (r) => qty(r.onHand), sort: (r) => r.onHand },
-    { key: 'value', header: 'Value', align: 'right', render: (r) => money(r.value), sort: (r) => r.value, footer: money(rows.reduce((t, r) => t + r.value, 0)) },
+    { key: 'name', header: tx('Item'), className: 'whitespace-nowrap font-medium', render: (r) => <>{r.name}{r.uom && <span className="text-xs text-muted-foreground"> · {r.uom}</span>}</>, sort: (r) => r.name },
+    { key: 'location', header: tx('Location'), render: (r) => r.location, sort: (r) => r.location },
+    { key: 'status', header: tx('Status'), render: (r) => <Badge variant={STATUS_BADGE[r.status].variant}>{STATUS_BADGE[r.status].label}</Badge>, sort: (r) => r.status },
+    { key: 'onHand', header: tx('On Hand'), align: 'right', render: (r) => qty(r.onHand), sort: (r) => r.onHand },
+    { key: 'value', header: tx('Value'), align: 'right', render: (r) => money(r.value), sort: (r) => r.value, footer: money(rows.reduce((t, r) => t + r.value, 0)) },
     { key: 'd0_30', header: '0–30d', align: 'right', render: (r) => qty(r.aging.d0_30), sort: (r) => r.aging.d0_30 },
     { key: 'd31_60', header: '31–60d', align: 'right', render: (r) => qty(r.aging.d31_60), sort: (r) => r.aging.d31_60 },
     { key: 'd61_90', header: '61–90d', align: 'right', render: (r) => qty(r.aging.d61_90), sort: (r) => r.aging.d61_90 },
     { key: 'd91_180', header: '91–180d', align: 'right', render: (r) => qty(r.aging.d91_180), sort: (r) => r.aging.d91_180 },
     { key: 'd180_plus', header: '180d+', align: 'right', render: (r) => <span className={r.aging.d180_plus > 0 ? 'font-semibold text-amber-600' : ''}>{qty(r.aging.d180_plus)}</span>, sort: (r) => r.aging.d180_plus },
-    { key: 'lastConsumedAt', header: 'Last Used', render: (r) => (r.lastConsumedAt ? date(r.lastConsumedAt) : <span className="text-muted-foreground">{tx('Never')}</span>), sort: (r) => r.lastConsumedAt },
-    { key: 'consumedQty', header: 'Used (period)', align: 'right', render: (r) => qty(r.consumedQty), sort: (r) => r.consumedQty },
-    { key: 'turnover', header: 'Turnover', align: 'right', render: (r) => (r.turnover == null ? '—' : `${r.turnover}×`), sort: (r) => r.turnover },
-    { key: 'daysOfCover', header: 'Days of Cover', align: 'right', render: (r) => (r.daysOfCover == null ? '—' : r.daysOfCover), sort: (r) => r.daysOfCover },
+    { key: 'lastConsumedAt', header: tx('Last Used'), render: (r) => (r.lastConsumedAt ? date(r.lastConsumedAt) : <span className="text-muted-foreground">{tx('Never')}</span>), sort: (r) => r.lastConsumedAt },
+    { key: 'consumedQty', header: tx('Used (period)'), align: 'right', render: (r) => qty(r.consumedQty), sort: (r) => r.consumedQty },
+    { key: 'turnover', header: tx('Turnover'), align: 'right', render: (r) => (r.turnover == null ? '—' : `${r.turnover}×`), sort: (r) => r.turnover },
+    { key: 'daysOfCover', header: tx('Days of Cover'), align: 'right', render: (r) => (r.daysOfCover == null ? '—' : r.daysOfCover), sort: (r) => r.daysOfCover },
   ];
 
   const numberField = (label: string, value: string, onChange: (v: string) => void, id: string) => (
@@ -102,10 +102,10 @@ export function StockHealthReport({ ctl }: { ctl: Ctl }) {
       <ReportState query={report}>
         {s && (
           <KpiGrid>
-            <Kpi label={tx('Stock value')} value={money(s.totalValue)} hint={`${s.quants} item-locations on hand`} />
-            <Kpi label={tx('Slow-moving')} value={money(s.slowValue)} hint={`${s.slowCount} lines · no use in ${s.slowDays}+ days`} tone={s.slowCount ? 'warn' : 'good'} />
-            <Kpi label={tx('Dead stock')} value={money(s.deadValue)} hint={`${s.deadCount} lines · no use in ${s.deadDays}+ days`} tone={s.deadCount ? 'bad' : 'good'} />
-            <Kpi label={tx('Turnover period')} value={`${s.start} → ${s.end}`} hint="Used quantity ÷ average on hand" />
+            <Kpi label={tx('Stock value')} value={money(s.totalValue)} hint={tx('{{quants}} item-locations on hand', { quants: s.quants })} />
+            <Kpi label={tx('Slow-moving')} value={money(s.slowValue)} hint={tx('{{slowCount}} lines · no use in {{slowDays}}+ days', { slowCount: s.slowCount, slowDays: s.slowDays })} tone={s.slowCount ? 'warn' : 'good'} />
+            <Kpi label={tx('Dead stock')} value={money(s.deadValue)} hint={tx('{{deadCount}} lines · no use in {{deadDays}}+ days', { deadCount: s.deadCount, deadDays: s.deadDays })} tone={s.deadCount ? 'bad' : 'good'} />
+            <Kpi label={tx('Turnover period')} value={`${s.start} → ${s.end}`} hint={tx('Used quantity ÷ average on hand')} />
           </KpiGrid>
         )}
         {s?.truncated && <p role="status" className="text-sm text-amber-600">{tx('Showing the first 5,000 item-locations — narrow the location or category.')}</p>}

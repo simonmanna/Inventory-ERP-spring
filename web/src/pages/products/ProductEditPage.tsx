@@ -35,23 +35,23 @@ import { tx } from '@/lib/i18n/tx';
 const PRODUCT_TYPES = ['stockable', 'consumable', 'service', 'fee', 'subscription', 'asset'] as const;
 
 const MEASUREMENT_METHODS = [
-  { value: 'count', label: 'Count units' },
-  { value: 'manual_volume', label: 'Manual remaining volume' },
-  { value: 'digital_weight', label: 'Digital weight scale (bar alcohol)' },
+  { value: 'count', label: tx('Count units') },
+  { value: 'manual_volume', label: tx('Manual remaining volume') },
+  { value: 'digital_weight', label: tx('Digital weight scale (bar alcohol)') },
 ] as const;
 
 const COSTING_METHODS = [
-  { value: 'AVCO', label: 'Average Cost (AVCO)' },
-  { value: 'FIFO', label: 'First-In, First-Out (FIFO)' },
-  { value: 'STANDARD', label: 'Standard Cost' },
-  { value: 'SPECIFIC', label: 'Specific Identification' },
+  { value: 'AVCO', label: tx('Average Cost (AVCO)') },
+  { value: 'FIFO', label: tx('First-In, First-Out (FIFO)') },
+  { value: 'STANDARD', label: tx('Standard Cost') },
+  { value: 'SPECIFIC', label: tx('Specific Identification') },
 ] as const;
 
 const PICKING_STRATEGIES = [
-  { value: 'FEFO', label: 'FEFO — nearest expiry first' },
-  { value: 'FIFO', label: 'FIFO — oldest receipt first' },
-  { value: 'MANUAL', label: 'Manual batch selection' },
-  { value: 'SERIAL', label: 'Serial selection' },
+  { value: 'FEFO', label: tx('FEFO — nearest expiry first') },
+  { value: 'FIFO', label: tx('FIFO — oldest receipt first') },
+  { value: 'MANUAL', label: tx('Manual batch selection') },
+  { value: 'SERIAL', label: tx('Serial selection') },
 ] as const;
 
 const INVENTORY_DEFAULTS = {
@@ -76,9 +76,9 @@ const UOM_DEFAULTS = {
 } as const;
 
 const schema = z.object({
-  code: z.string().min(1, 'Code is required'),
+  code: z.string().min(1, tx('Code is required')),
   sku: z.string().optional().or(z.literal('')),
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, tx('Name is required')),
   productType: z.string().min(1),
   costingMethod: z.string(),
   categoryId: z.string().optional().or(z.literal('')),
@@ -143,14 +143,14 @@ interface AccDef {
 }
 
 const ACCOUNT_OVERRIDE_FIELDS: AccDef[] = [
-  { fieldName: 'incomeAccountOverrideId', label: 'Income (Revenue)',  categoryField: 'incomeAccountId',  mappingKey: 'sales_revenue',           mappingLabel: 'Sales Revenue' },
-  { fieldName: 'expenseAccountOverrideId', label: 'Expense (COGS)',   categoryField: 'expenseAccountId', mappingKey: 'cogs',                   mappingLabel: 'Cost of Goods Sold' },
-  { fieldName: 'inventoryAccountOverrideId', label: 'Inventory (Stock)', categoryField: 'inventoryAccountId', mappingKey: 'stock_valuation',     mappingLabel: 'Stock Valuation' },
-  { fieldName: 'cogsAccountOverrideId', label: 'COGS (separate)',    categoryField: 'cogsAccountId',     mappingKey: 'cogs',                   mappingLabel: 'Cost of Goods Sold' },
-  { fieldName: 'shrinkageAccountOverrideId', label: 'Adj Loss / Shrinkage', categoryField: 'shrinkageAccountId', mappingKey: 'stock_adjustment_expense', mappingLabel: 'Stock Adj Loss' },
-  { fieldName: 'varianceGainAccountOverrideId', label: 'Adj Gain / Variance', categoryField: 'varianceGainAccountId', mappingKey: 'stock_adjustment_income',  mappingLabel: 'Stock Adj Gain' },
-  { fieldName: 'damageAccountOverrideId', label: 'Damage Write-Off', categoryField: 'damageAccountId',   mappingKey: 'stock_adjustment_expense', mappingLabel: 'Stock Adj Loss' },
-  { fieldName: 'expiryAccountOverrideId', label: 'Expiry Write-Off', categoryField: 'expiryAccountId',   mappingKey: 'stock_adjustment_expense', mappingLabel: 'Stock Adj Loss' },
+  { fieldName: 'incomeAccountOverrideId', label: tx('Income (Revenue)'),  categoryField: 'incomeAccountId',  mappingKey: 'sales_revenue',           mappingLabel: tx('Sales Revenue') },
+  { fieldName: 'expenseAccountOverrideId', label: tx('Expense (COGS)'),   categoryField: 'expenseAccountId', mappingKey: 'cogs',                   mappingLabel: tx('Cost of Goods Sold') },
+  { fieldName: 'inventoryAccountOverrideId', label: tx('Inventory (Stock)'), categoryField: 'inventoryAccountId', mappingKey: 'stock_valuation',     mappingLabel: tx('Stock Valuation') },
+  { fieldName: 'cogsAccountOverrideId', label: tx('COGS (separate)'),    categoryField: 'cogsAccountId',     mappingKey: 'cogs',                   mappingLabel: tx('Cost of Goods Sold') },
+  { fieldName: 'shrinkageAccountOverrideId', label: tx('Adj Loss / Shrinkage'), categoryField: 'shrinkageAccountId', mappingKey: 'stock_adjustment_expense', mappingLabel: tx('Stock Adj Loss') },
+  { fieldName: 'varianceGainAccountOverrideId', label: tx('Adj Gain / Variance'), categoryField: 'varianceGainAccountId', mappingKey: 'stock_adjustment_income',  mappingLabel: tx('Stock Adj Gain') },
+  { fieldName: 'damageAccountOverrideId', label: tx('Damage Write-Off'), categoryField: 'damageAccountId',   mappingKey: 'stock_adjustment_expense', mappingLabel: tx('Stock Adj Loss') },
+  { fieldName: 'expiryAccountOverrideId', label: tx('Expiry Write-Off'), categoryField: 'expiryAccountId',   mappingKey: 'stock_adjustment_expense', mappingLabel: tx('Stock Adj Loss') },
 ];
 
 // ── Tab definitions matching InventoryDetailPage style ──
@@ -162,12 +162,12 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { id: 'general', label: 'General', icon: Package },
-  { id: 'pricing-uom', label: 'Pricing & UOM', icon: DollarSign },
-  { id: 'inventory', label: 'Inventory', icon: PackageOpen },
-  { id: 'beverage', label: 'Beverage', icon: FlaskConical },
-  { id: 'packaging', label: 'Packaging', icon: Boxes },
-  { id: 'accounting', label: 'Accounting', icon: BookOpen },
+  { id: 'general', label: tx('General'), icon: Package },
+  { id: 'pricing-uom', label: tx('Pricing & UOM'), icon: DollarSign },
+  { id: 'inventory', label: tx('Inventory'), icon: PackageOpen },
+  { id: 'beverage', label: tx('Beverage'), icon: FlaskConical },
+  { id: 'packaging', label: tx('Packaging'), icon: Boxes },
+  { id: 'accounting', label: tx('Accounting'), icon: BookOpen },
 ];
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,13 @@ export function ProductEditPage() {
   const [packagingRows, setPackagingRows] = useState<{ name: string; quantity: string; barcode: string }[]>([]);
   const updatePack = (i: number, field: 'name' | 'quantity' | 'barcode', val: string) =>
     setPackagingRows((rows) => rows.map((r, j) => (j === i ? { ...r, [field]: val } : r)));
+  type UnitRow = {
+    uomId: string; factor: string; isPurchase: boolean; isSales: boolean;
+    salePrice: string; purchasePrice: string; isActive: boolean;
+  };
+  const [unitRows, setUnitRows] = useState<UnitRow[]>([]);
+  const updateUnit = <K extends keyof UnitRow>(i: number, field: K, val: UnitRow[K]) =>
+    setUnitRows((rows) => rows.map((r, j) => (j === i ? { ...r, [field]: val } : r)));
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -314,6 +321,15 @@ export function ProductEditPage() {
     setPackagingRows(
       (p.packagings ?? []).map((pk) => ({ name: pk.name, quantity: String(pk.quantity), barcode: pk.barcode ?? '' })),
     );
+    setUnitRows((p.units ?? []).map((u) => ({
+      uomId: u.uomId,
+      factor: String(Number(u.factor)),
+      isPurchase: u.isPurchase,
+      isSales: u.isSales,
+      salePrice: toStr(u.salePrice),
+      purchasePrice: toStr(u.purchasePrice),
+      isActive: u.isActive,
+    })));
     const raw = p.image ?? '';
     const uuid = raw.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i)?.[1] ?? '';
     if (raw.startsWith('http') || raw.startsWith('/api/v1/files/')) {
@@ -347,7 +363,7 @@ export function ProductEditPage() {
       const previewUrl = (data as any).downloadUrl ?? (data as any).url ?? '';
       setPreviewSrc(resolveAssetUrl(previewUrl) ?? '');
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Image upload failed');
+      toast.error(err?.response?.data?.message ?? tx('Image upload failed'));
     } finally {
       setUploadingImg(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -368,7 +384,19 @@ export function ProductEditPage() {
         salesUomId: values.salesUomId || undefined,
         recipeUomId: values.recipeUomId || undefined,
         productionUomId: values.productionUomId || undefined,
-        uomConversion: numOrUndef(values.uomConversion),
+        // Superseded by `units` (ADR-S003); the server keeps it only for older clients.
+        uomConversion: undefined,
+        units: unitRows
+          .filter((r) => r.uomId)
+          .map((r) => ({
+            uomId: r.uomId,
+            factor: Number(r.factor),
+            isPurchase: r.isPurchase,
+            isSales: r.isSales,
+            salePrice: numOrUndef(r.salePrice),
+            purchasePrice: numOrUndef(r.purchasePrice),
+            isActive: r.isActive,
+          })),
         reorderQty: numOrUndef(values.reorderQty),
         station: values.station || undefined,
         allowFractionalSale: values.allowFractionalSale,
@@ -406,7 +434,7 @@ export function ProductEditPage() {
       }
       navigate('/products');
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Save failed');
+      notify.error(err?.response?.data?.message ?? tx('Save failed'));
     } finally {
       setSaving(false);
     }
@@ -422,10 +450,10 @@ export function ProductEditPage() {
     );
   }
 
-  const title = isNew ? 'New Product' : existingProduct?.name ?? 'Edit Product';
+  const title = isNew ? tx('New Product') : existingProduct?.name ?? tx('Edit Product');
   const subtitle = isNew
-    ? 'Fill in the details to create a new product.'
-    : existingProduct?.category?.name ?? 'Update product details below.';
+    ? tx('Fill in the details to create a new product.')
+    : existingProduct?.category?.name ?? tx('Update product details below.');
 
   return (
     <div className="flex flex-col h-full">
@@ -434,7 +462,7 @@ export function ProductEditPage() {
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
           <button onClick={() => navigate('/products')} className="hover:text-primary transition-colors font-medium">{tx('Products')}</button>
           <ChevronRight className="h-3 w-3" />
-          <span className="font-semibold">{isNew ? 'New Product' : existingProduct?.name}</span>
+          <span className="font-semibold">{isNew ? tx('New Product') : existingProduct?.name}</span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -450,7 +478,7 @@ export function ProductEditPage() {
                   <>
                     <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono text-muted-foreground font-semibold">{existingProduct.code}</code>
                     <Badge variant={existingProduct.isActive ? 'default' : 'secondary'} className="text-xs">
-                      {existingProduct.isActive ? 'Active' : 'Inactive'}
+                      {existingProduct.isActive ? tx('Active') : tx('Inactive')}
                     </Badge>
                   </>
                 )}
@@ -465,7 +493,7 @@ export function ProductEditPage() {
             </Button>
             <Button size="sm" onClick={onSubmit} disabled={saving}>
               <Save className="h-4 w-4 mr-1.5" />
-              {saving ? 'Saving…' : 'Save Product'}
+              {saving ? tx('Saving…') : tx('Save Product')}
             </Button>
           </div>
         </div>
@@ -511,7 +539,7 @@ export function ProductEditPage() {
                       )}
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium">SKU</Label>
+                      <Label className="text-sm font-medium">{tx('SKU')}</Label>
                       <Input placeholder={tx('SKU-001')} {...form.register('sku')} />
                     </div>
                   </div>
@@ -572,7 +600,7 @@ export function ProductEditPage() {
                     <Label className="text-sm font-medium">{tx('Image')}</Label>
                     <div className="flex items-center gap-3">
                       <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                        {uploadingImg ? 'Uploading…' : 'Choose Image'}
+                        {uploadingImg ? tx('Uploading…') : tx('Choose Image')}
                       </Button>
                       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                       {previewSrc && (
@@ -670,12 +698,10 @@ export function ProductEditPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-sm font-medium">{tx('UOM Conversion')}</Label>
-                      <Input type="number" step="0.01" min={1} placeholder="1" {...form.register('uomConversion')} />
-                      <p className="text-[10px] text-muted-foreground">{tx('Stock units per 1 purchase unit')}</p>
-                    </div>
                   </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {tx('Stock is always counted in the stock unit. It cannot be changed once stock has moved.')}
+                  </p>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium">{tx('Reorder Qty')}</Label>
@@ -690,6 +716,99 @@ export function ProductEditPage() {
                       <Input type="number" min={0} step="0.01" placeholder="0" {...form.register('maxSaleQty')} />
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">
+                  <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Pack Sizes & Extra Units')}</CardTitle>
+                  <Button
+                    type="button" size="sm" variant="outline"
+                    disabled={!form.watch('uomId')}
+                    onClick={() => setUnitRows([...unitRows, {
+                      uomId: '', factor: '', isPurchase: true, isSales: true, salePrice: '', purchasePrice: '', isActive: true,
+                    }])}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" /> {tx('Add unit')}
+                  </Button>
+                </CardHeader>
+                <CardContent className="px-5 py-4 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    {tx('Units this product is bought or sold in, with how many stock units each holds (e.g. 1 Box = 24 pieces). Sizes are per product. Changing a size later does not change documents already created.')}
+                  </p>
+                  {!form.watch('uomId') && (
+                    <p className="text-sm text-muted-foreground">{tx('Pick a stock unit first.')}</p>
+                  )}
+                  {form.watch('uomId') && unitRows.length === 0 && (
+                    <p className="text-sm text-muted-foreground">{tx('No extra units. Everything is bought and sold in the stock unit.')}</p>
+                  )}
+                  {unitRows.length > 0 && (
+                    <div className="hidden md:grid grid-cols-[1fr_110px_60px_60px_110px_110px_auto] gap-2 text-[11px] font-medium text-muted-foreground">
+                      <span>{tx('Unit')}</span>
+                      <span>{tx('Stock units in 1')}</span>
+                      <span>{tx('Buy')}</span>
+                      <span>{tx('Sell')}</span>
+                      <span>{tx('Sale price')}</span>
+                      <span>{tx('Purchase price')}</span>
+                      <span />
+                    </div>
+                  )}
+                  {unitRows.map((row, i) => {
+                    const baseCode = units.find((u: any) => u.id === form.watch('uomId'))?.code ?? '';
+                    const salesPrice = Number(form.watch('salesPrice') || 0);
+                    const factor = Number(row.factor || 0);
+                    return (
+                      <div key={i} className="grid grid-cols-2 md:grid-cols-[1fr_110px_60px_60px_110px_110px_auto] gap-2 items-center">
+                        <select
+                          aria-label={tx('Unit')}
+                          className="w-full rounded-md border bg-background px-2 py-2 text-sm"
+                          value={row.uomId}
+                          onChange={(e) => updateUnit(i, 'uomId', e.target.value)}
+                        >
+                          <option value="">{tx('Select unit')}</option>
+                          {units
+                            .filter((u: any) => u.id !== form.watch('uomId'))
+                            .map((u: any) => (
+                              <option key={u.id} value={u.id}>{u.code} — {u.name}</option>
+                            ))}
+                        </select>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number" step="any" min={0} placeholder="24"
+                            aria-label={tx('Stock units in 1')}
+                            value={row.factor}
+                            onChange={(e) => updateUnit(i, 'factor', e.target.value)}
+                          />
+                          <span className="text-xs text-muted-foreground">{baseCode}</span>
+                        </div>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input type="checkbox" checked={row.isPurchase} onChange={(e) => updateUnit(i, 'isPurchase', e.target.checked)} />
+                          <span className="md:hidden">{tx('Buy')}</span>
+                        </label>
+                        <label className="flex items-center gap-1 text-xs">
+                          <input type="checkbox" checked={row.isSales} onChange={(e) => updateUnit(i, 'isSales', e.target.checked)} />
+                          <span className="md:hidden">{tx('Sell')}</span>
+                        </label>
+                        <Input
+                          type="number" step="0.01" min={0}
+                          aria-label={tx('Sale price')}
+                          placeholder={salesPrice && factor ? String(Number((salesPrice * factor).toFixed(2))) : tx('Auto')}
+                          value={row.salePrice}
+                          onChange={(e) => updateUnit(i, 'salePrice', e.target.value)}
+                        />
+                        <Input
+                          type="number" step="0.01" min={0}
+                          aria-label={tx('Purchase price')}
+                          placeholder={tx('Auto')}
+                          value={row.purchasePrice}
+                          onChange={(e) => updateUnit(i, 'purchasePrice', e.target.value)}
+                        />
+                        <Button type="button" size="icon" variant="ghost" aria-label={tx('Remove unit')} onClick={() => setUnitRows(unitRows.filter((_, j) => j !== i))}>
+                          <Trash2 className="h-4 w-4 text-destructive/70" />
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -798,7 +917,7 @@ export function ProductEditPage() {
             <TabsContent value="packaging" className="mt-0 outline-none space-y-6">
               <Card>
                 <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">
-                  <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Packaging &amp; Barcodes</CardTitle>
+                  <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Packaging & Barcodes')}</CardTitle>
                   <Button type="button" size="sm" variant="outline" onClick={() => setPackagingRows([...packagingRows, { name: '', quantity: '', barcode: '' }])}>
                     <Plus className="h-3.5 w-3.5 mr-1" /> {tx('Add pack')}
                   </Button>
@@ -843,7 +962,7 @@ export function ProductEditPage() {
             <Button type="button" variant="outline" onClick={() => navigate('/products')}>{tx('Cancel')}</Button>
             <Button type="submit" disabled={saving}>
               <Save className="h-4 w-4 mr-1.5" />
-              {saving ? 'Saving…' : 'Save Product'}
+              {saving ? tx('Saving…') : tx('Save Product')}
             </Button>
           </div>
         </div>

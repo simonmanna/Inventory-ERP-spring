@@ -52,7 +52,7 @@ export function CreditNoteDetailPage() {
           </div>
           <p className="text-sm text-muted-foreground">
             {cn.partner?.name} · {date(cn.issueDate)}
-            {cn.reversedDocumentId ? ' · applied to an invoice' : ''}
+            {cn.reversedDocumentId ? tx(' · applied to an invoice') : ''}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

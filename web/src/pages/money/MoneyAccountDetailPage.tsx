@@ -33,7 +33,7 @@ export function MoneyAccountDetailPage() {
     return (
       <div className="mx-auto max-w-3xl space-y-3 p-4 md:p-6">
         <Link to="/accounts/cash-accounts/accounts" className="inline-flex min-h-[44px] items-center gap-1 text-sm text-primary hover:underline"><ArrowLeft className="h-4 w-4" aria-hidden /> {tx('All accounts')}</Link>
-        <LoadError message="This account could not be loaded. Check your connection and try again." onRetry={() => refetchAccounts()} retrying={fetchingAccounts} />
+        <LoadError message={tx('This account could not be loaded. Check your connection and try again.')} onRetry={() => refetchAccounts()} retrying={fetchingAccounts} />
       </div>
     );
   }
@@ -84,7 +84,7 @@ export function MoneyAccountDetailPage() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <div className="col-span-2 sm:col-span-1">
-        <StatCard tone="primary" label={`Book balance${currency ? ` (${currency})` : ''}`} value={<MoneyAmount value={account.balance} currency={currency} className={cn(Number(account.balance) < 0 && 'text-destructive')} />} hint={account.lastActivityAt ? `Last activity ${new Date(account.lastActivityAt).toLocaleString(undefined, { timeZone, dateStyle: 'medium', timeStyle: 'short' })}` : 'No activity yet'} />
+        <StatCard tone="primary" label={tx('Book balance{{v1}}', { v1: currency ? ` (${currency})` : '' })} value={<MoneyAmount value={account.balance} currency={currency} className={cn(Number(account.balance) < 0 && 'text-destructive')} />} hint={account.lastActivityAt ? tx('Last activity {{v1}}', { v1: new Date(account.lastActivityAt).toLocaleString(undefined, { timeZone, dateStyle: 'medium', timeStyle: 'short' }) }) : tx('No activity yet')} />
         </div>
         <StatCard label={tx('In today')} value={<MoneyAmount value={account.todayIn ?? 0} currency={currency} className="text-emerald-700 dark:text-emerald-400" />} />
         <StatCard label={tx('Out today')} value={<MoneyAmount value={account.todayOut ?? 0} currency={currency} className="text-rose-700 dark:text-rose-400" />} />
@@ -115,7 +115,7 @@ export function MoneyAccountDetailPage() {
             className={cn('min-h-[44px] shrink-0 border-b-2 px-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               view === v ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
           >
-            {v === 'activity' ? 'Activity' : 'Ledger & running balance'}
+            {v === 'activity' ? tx('Activity') : tx('Ledger & running balance')}
           </button>
         ))}
       </div>
@@ -124,7 +124,7 @@ export function MoneyAccountDetailPage() {
         activity.isLoading ? (
           <div className="flex h-32 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
         ) : activity.isError ? (
-          <LoadError message="Activity for this account could not be loaded." onRetry={() => activity.refetch()} retrying={activity.isFetching} />
+          <LoadError message={tx('Activity for this account could not be loaded.')} onRetry={() => activity.refetch()} retrying={activity.isFetching} />
         ) : (
           <>
             <MoneyActivityList rows={activity.data?.data ?? []} emptyText={tx('No activity on this account yet.')} />
@@ -134,7 +134,7 @@ export function MoneyAccountDetailPage() {
           </>
         )
       ) : ledger.isError ? (
-        <LoadError message="The ledger for this account could not be loaded." onRetry={() => ledger.refetch()} retrying={ledger.isFetching} />
+        <LoadError message={tx('The ledger for this account could not be loaded.')} onRetry={() => ledger.refetch()} retrying={ledger.isFetching} />
       ) : ledger.isLoading || !ledger.data ? (
         <div className="flex h-32 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
       ) : ledger.data.data.length === 0 ? (

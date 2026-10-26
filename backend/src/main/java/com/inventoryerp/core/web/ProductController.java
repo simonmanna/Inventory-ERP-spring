@@ -40,6 +40,17 @@ public class ProductController {
             String barcode,
             Boolean isActive) {}
 
+    /** One extra product unit (ADR-S003): {@code factor} base units per 1 of {@code uomId}. */
+    public record ProductUnitRequest(
+            @NotBlank(message = "should not be empty") String uomId,
+            @NotNull(message = "must be a number conforming to the specified constraints")
+            @DecimalMin(value = "0", inclusive = false, message = "must be greater than 0") BigDecimal factor,
+            Boolean isPurchase,
+            Boolean isSales,
+            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal salePrice,
+            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal purchasePrice,
+            Boolean isActive) {}
+
     /** {@code CreateProductDto}. */
     public record CreateProductRequest(
             @NotBlank(message = "should not be empty") String code,
@@ -60,6 +71,7 @@ public class ProductController {
             BigDecimal minSaleQty,
             BigDecimal maxSaleQty,
             List<@Valid PackagingRequest> packagings,
+            List<@Valid ProductUnitRequest> units,
             String taxId,
             BigDecimal salesPrice,
             BigDecimal costPrice,
@@ -101,6 +113,7 @@ public class ProductController {
             BigDecimal minSaleQty,
             BigDecimal maxSaleQty,
             List<@Valid PackagingRequest> packagings,
+            List<@Valid ProductUnitRequest> units,
             String taxId,
             BigDecimal salesPrice,
             BigDecimal costPrice,
@@ -160,13 +173,13 @@ public class ProductController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.PRODUCT__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreateProductRequest dto) {
-        return products.create(dto, packagings(dto.packagings()));
+        return products.create(dto, packagings(dto.packagings()), units(dto.units()));
     }
 
     @PatchMapping("/{id}")
     @RequirePermissions(Permissions.PRODUCT__UPDATE)
     public Map<String, Object> update(@PathVariable String id, @Valid @RequestBody UpdateProductRequest dto) {
-        return products.update(id, dto, packagings(dto.packagings()));
+        return products.update(id, dto, packagings(dto.packagings()), units(dto.units()));
     }
 
     @DeleteMapping("/{id}")
@@ -180,6 +193,13 @@ public class ProductController {
     @RequirePermissions(Permissions.PRODUCT__UPDATE)
     public Map<String, Object> restore(@PathVariable String id) {
         return products.restore(id);
+    }
+
+    private static List<ProductService.Unit> units(List<ProductUnitRequest> rows) {
+        return rows == null ? null : rows.stream()
+                .map(r -> new ProductService.Unit(r.uomId(), r.factor(), r.isPurchase(), r.isSales(), r.salePrice(),
+                        r.purchasePrice(), r.isActive()))
+                .toList();
     }
 
     private static List<ProductService.Packaging> packagings(List<PackagingRequest> rows) {

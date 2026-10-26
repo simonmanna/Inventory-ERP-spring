@@ -1,0 +1,111 @@
+spring:
+  application:
+    name: license-server
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${JDBC_DATABASE_URL:jdbc:postgresql://localhost:5435/license}
+    username: ${DB_USER:license}
+    password: ${DB_PASSWORD:license}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      pool-name: license-pool
+  jpa:
+    open-in-view: false
+    hibernate:
+      # The schema belongs to Flyway. Never anything but validate (ADR-S002 / AGENTS.md §8).
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+      hibernate.jdbc.batch_size: 50
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+
+server:
+  port: ${PORT:3100}
+  shutdown: graceful
+  forward-headers-strategy: native
+  error:
+    whitelabel:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  api-docs:
+    path: /api/v1/openapi.json
+  swagger-ui:
+    path: /api/v1/docs
+
+logging:
+  level:
+    root: INFO
+    com.inventoryerp.license: ${LOG_LEVEL:INFO}
+
+app:
+  # Base path mirrors the ERP so one reverse proxy configuration serves both.
+  api-prefix: /api/v1
+  issuer: inventoryerp-license
+  # Passphrase that wraps every signing private key at rest. REQUIRED in production; the app
+  # refuses to start in the prod profile without it.
+  signing-passphrase: ${LICENSE_SIGNING_PASSPHRASE:}
+  admin:
+    # Bootstrap owner created on first boot when no admin exists. Leave the password blank in
+    # production and set it once via the printed one-time setup token.
+    bootstrap-email: ${LICENSE_ADMIN_EMAIL:}
+    bootstrap-password: ${LICENSE_ADMIN_PASSWORD:}
+    access-token-ttl: PT30M
+    refresh-token-ttl: P14D
+    jwt-secret: ${LICENSE_ADMIN_JWT_SECRET:}
+    max-failed-logins: 5
+    lockout: PT15M
+  activation:
+    # Requests per minute per IP on the unauthenticated client routes.
+    rate-limit-per-minute: 10
+    # Sliding renewal: a heartbeat hands back a token valid for this long past its own expiry cap.
+    refresh-after: PT6H
+  retention:
+    heartbeat-days: 90
+  reminders:
+    enabled: ${LICENSE_REMINDERS_ENABLED:true}
+    # Days before expiry on which a renewal reminder goes out.
+    days-before: 30,14,7,3,1
+    from: ${LICENSE_REMINDER_FROM:billing@example.com}
+    # Installs silent for more than this multiple of their heartbeat interval are flagged.
+    silent-multiplier: 3
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  jpa:
+    properties:
+      hibernate.generate_statistics: false
+
+server:
+  tomcat:
+    max-threads: 200
+
+logging:
+  level:
+    root: WARN
+    com.inventoryerp.license: INFO

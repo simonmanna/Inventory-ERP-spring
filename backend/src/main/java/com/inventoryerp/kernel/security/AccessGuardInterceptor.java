@@ -108,8 +108,13 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
         return property != null && env.getProperty(property, Boolean.class, false);
     }
 
-    /** Nest {@code reflector.getAllAndOverride([handler, class])}: method annotation wins. */
-    static <A extends Annotation> A find(HandlerMethod method, Class<A> type) {
+    /**
+     * Nest {@code reflector.getAllAndOverride([handler, class])}: method annotation wins.
+     *
+     * <p>Public because the licence gate ({@code kernel.licensing}) resolves its own annotations the
+     * same way, and the two must agree on which one wins.
+     */
+    public static <A extends Annotation> A find(HandlerMethod method, Class<A> type) {
         A onMethod = AnnotatedElementUtils.findMergedAnnotation(method.getMethod(), type);
         return onMethod != null ? onMethod : AnnotatedElementUtils.findMergedAnnotation(method.getBeanType(), type);
     }

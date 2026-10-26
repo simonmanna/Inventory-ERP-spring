@@ -16,12 +16,15 @@ import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { formatMoney, date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useUomCode } from '@/features/uom/api';
 
 interface POLine {
   id: string; productId: string | null; description: string;
   quantity: number; unitPrice: number; receivedQuantity: number;
   lineNumber: number; taxRate: number;
   subtotal: number; notes: string | null;
+  /** Unit ordered in (ADR-S003); quantities and price are per this unit. */
+  unitOfMeasureId?: string | null;
 }
 
 interface PO {
@@ -43,15 +46,16 @@ const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  active: 'Active', partially_received: 'Partially Received',
-  received: 'Received', cancelled: 'Cancelled',
+  active: tx('Active'), partially_received: tx('Partially Received'),
+  received: tx('Received'), cancelled: tx('Cancelled'),
 };
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  not_paid: 'Unpaid', paid: 'Paid', partial: 'Partial',
+  not_paid: tx('Unpaid'), paid: tx('Paid'), partial: tx('Partial'),
 };
 
 export function PurchaseOrderDetailPage() {
+  const uomCode = useUomCode();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -73,7 +77,7 @@ export function PurchaseOrderDetailPage() {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       setShowCancel(false);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Failed'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;
@@ -162,7 +166,7 @@ export function PurchaseOrderDetailPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">
-            {data.paymentType === 'credit' ? 'Paid' : 'Payment'}
+            {data.paymentType === 'credit' ? tx('Paid') : tx('Payment')}
           </CardTitle></CardHeader>
           <CardContent className="pt-0">
             {data.paymentType === 'cash' ? (
@@ -204,7 +208,9 @@ export function PurchaseOrderDetailPage() {
                         <div className="font-medium">{ln.description}</div>
                         {ln.notes && <div className="text-xs text-muted-foreground">{ln.notes}</div>}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono">{Number(ln.quantity)}</td>
+                      <td className="px-3 py-2 text-right font-mono">
+                        {Number(ln.quantity)} <span className="text-xs text-muted-foreground">{uomCode(ln.unitOfMeasureId)}</span>
+                      </td>
                       <td className="px-3 py-2 text-right font-mono">{Number(ln.receivedQuantity)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatMoney(ln.unitPrice)}</td>
                       <td className="px-3 py-2 text-right font-mono">{formatMoney(ln.subtotal)}</td>
@@ -253,7 +259,7 @@ export function PurchaseOrderDetailPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{tx('Payment')}</span>
-                <span>{data.paymentType === 'cash' ? 'Cash (auto-paid)' : 'Credit'}</span>
+                <span>{data.paymentType === 'cash' ? tx('Cash (auto-paid)') : tx('Credit')}</span>
               </div>
               {data.paymentType === 'credit' && (
                 <div className="flex justify-between">

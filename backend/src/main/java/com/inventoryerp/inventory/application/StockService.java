@@ -147,7 +147,8 @@ public class StockService {
     /** Receipt from a vendor bill. */
     @Transactional
     public Received receiveFromBill(StockMove dto, String billId, Instant billDate) {
-        StockMove m = StockMove.of(dto.productId, dto.locationId, dto.quantity).unitCost(dto.unitCost).uom(dto.uomId)
+        StockMove m = StockMove.of(dto.productId, dto.locationId, dto.quantity).unitCost(dto.unitCost)
+                .uom(dto.uomId, dto.uomFactor)
                 .batch(dto.batchNumber).expiry(dto.expiryDate).notes(dto.notes).serials(dto.serialNumbers);
         return receiveCore(m, GlReceiptContext.grni("vendor_bill", billId, billDate));
     }
@@ -161,7 +162,9 @@ public class StockService {
         Instant date = dto.date != null ? dto.date : Instant.now();
         assertStockPeriodOpen(date);
         Map<String, Object> product = lookups.product(dto.productId);
-        BigDecimal baseQty = dto.uomId != null && product != null && product.get("uomId") != null
+        BigDecimal baseQty = product != null && dto.uomFactor != null
+                ? uomConversion.applyFactor(dto.quantity, dto.uomFactor, str(product, "uomId"), true)
+                : dto.uomId != null && product != null && product.get("uomId") != null
                 && !dto.uomId.equals(product.get("uomId"))
                 ? uomConversion.toBase(dto.quantity, dto.uomId, dto.productId, str(product, "uomId"), true)
                 : dto.quantity;
@@ -238,7 +241,7 @@ public class StockService {
         if ("FIFO".equals(costing) && !batchTracking) {
             throw ApiException.badRequest("FIFO costing requires batchTracking=true on the product");
         }
-        BigDecimal[] base = toBaseQtyCost(product, dto.uomId, dto.quantity,
+        BigDecimal[] base = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity,
                 dto.unitCost != null ? dto.unitCost : Money.ZERO);
         BigDecimal qty = base[0];
         BigDecimal unitCost = base[1];
@@ -381,7 +384,7 @@ public class StockService {
             throw ApiException.notFound("Location not found");
         }
         String productName = str(product, "name");
-        BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.quantity, Money.ZERO)[0];
+        BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }
@@ -981,10 +984,21 @@ public class StockService {
         }
     }
 
-    /** Purchase-unit quantity/cost → base unit, total value preserved. */
-    private BigDecimal[] toBaseQtyCost(Map<String, Object> product, String sourceUomId, BigDecimal quantity,
-            BigDecimal unitCost) {
+    /**
+     * Line-unit quantity/cost to base unit, total value preserved. A snapshot factor (ADR-S003) wins over the
+     * product's current unit setup so a document always posts the conversion it was written with.
+     */
+    private BigDecimal[] toBaseQtyCost(Map<String, Object> product, String sourceUomId, BigDecimal snapshotFactor,
+            BigDecimal quantity, BigDecimal unitCost) {
         String baseUom = str(product, "uomId");
+        if (snapshotFactor != null && snapshotFactor.signum() > 0 && quantity.signum() > 0) {
+            if (snapshotFactor.compareTo(BigDecimal.ONE) == 0) {
+                return new BigDecimal[] {quantity, unitCost};
+            }
+            BigDecimal baseQty = uomConversion.applyFactor(quantity, snapshotFactor, baseUom, true);
+            BigDecimal factor = Money.div(baseQty, quantity);
+            return new BigDecimal[] {baseQty, factor.signum() > 0 ? Money.div(unitCost, factor) : unitCost};
+        }
         if (sourceUomId == null || baseUom == null || sourceUomId.equals(baseUom) || quantity.signum() <= 0) {
             return new BigDecimal[] {quantity, unitCost};
         }

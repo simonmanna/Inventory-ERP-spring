@@ -68,12 +68,10 @@ export function HrSelfServicePage() {
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>
               {me?.message ??
-                'Your login is not linked to an employee record, so there is nothing to show here yet.'}
+                tx('Your login is not linked to an employee record, so there is nothing to show here yet.')}
             </p>
             <p>
-              Ask HR to link your account from the employee&apos;s Access tab. Nothing about how you
-              sign in or what you can do changes when they do — linking only tells the system which
-              employee you are.
+              {tx('Ask HR to link your account from the employee\'s Access tab. Nothing about how you sign in or what you can do changes when they do — linking only tells the system which employee you are.')}
             </p>
           </CardContent>
         </Card>
@@ -90,7 +88,7 @@ export function HrSelfServicePage() {
         <div>
           <h1 className="text-xl font-semibold">{fullName}</h1>
           <p className="text-sm text-muted-foreground">
-            {e.position?.name ?? 'No position'}
+            {e.position?.name ?? tx('No position')}
             {e.department?.name ? ` · ${e.department.name}` : ''}
             {e.branch?.name ? ` · ${e.branch.name}` : ''} · {e.employeeCode}
           </p>
@@ -172,9 +170,9 @@ function ClockButtons() {
   const run = async (eventType: 'CHECK_IN' | 'CHECK_OUT') => {
     try {
       await clock.mutateAsync({ eventType });
-      notify.success(eventType === 'CHECK_IN' ? 'Clocked in' : 'Clocked out');
+      notify.success(eventType === 'CHECK_IN' ? tx('Clocked in') : tx('Clocked out'));
     } catch (err) {
-      notify.error(apiErrorMessage(err, 'Could not record that clock event'));
+      notify.error(apiErrorMessage(err, tx('Could not record that clock event')));
     }
   };
   return (
@@ -289,7 +287,7 @@ function MyLeave() {
                           await cancel.mutateAsync(r.id);
                           notify.success(tx('Leave cancelled'));
                         } catch (err) {
-                          notify.error(apiErrorMessage(err, 'Could not cancel that request'));
+                          notify.error(apiErrorMessage(err, tx('Could not cancel that request')));
                         }
                       }}
                     >
@@ -371,7 +369,7 @@ function MyLeave() {
                   setOpen(false);
                   setForm({ leaveTypeId: '', startDate: '', endDate: '', reason: '' });
                 } catch (err) {
-                  notify.error(apiErrorMessage(err, 'Could not submit the request'));
+                  notify.error(apiErrorMessage(err, tx('Could not submit the request')));
                 }
               }}
             >
@@ -426,7 +424,7 @@ function MyTraining() {
                 <div>
                   <div>{t.program?.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {t.program?.provider ?? 'Internal'} {tx('· enrolled')} {date(t.enrolledAt)}
+                    {t.program?.provider ?? tx('Internal')} {tx('· enrolled')} {date(t.enrolledAt)}
                   </div>
                 </div>
                 <Badge className="bg-muted text-muted-foreground">{t.status}</Badge>

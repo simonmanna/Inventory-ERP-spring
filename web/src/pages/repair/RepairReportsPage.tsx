@@ -92,7 +92,7 @@ export function RepairReportsPage() {
                   <div className="h-full rounded bg-emerald-500" style={{ width: `${(t.pending + t.in_progress + t.testing) / maxLoad * 100}%` }} />
                 </div>
                 <span className="w-28 text-right text-muted-foreground">
-                  {t.in_progress} {tx('active ·')} {t.pending} {tx('pending')}{t.testing ? ` · ${t.testing} testing` : ''}
+                  {t.in_progress} {tx('active ·')} {t.pending} {tx('pending')}{t.testing ? tx(' · {{testing}} testing', { testing: t.testing }) : ''}
                 </span>
               </div>
             ))}

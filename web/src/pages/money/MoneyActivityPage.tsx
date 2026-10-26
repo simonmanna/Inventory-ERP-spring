@@ -14,19 +14,19 @@ import { tx } from '@/lib/i18n/tx';
 
 /** Period presets, counted in the organisation's calendar (not the browser's, not UTC). */
 const DATE_PRESETS: { key: string; label: string; range: (today: string) => { from?: string; to?: string } }[] = [
-  { key: 'today', label: 'Today', range: (t) => ({ from: t, to: t }) },
-  { key: '7d', label: 'Last 7 days', range: (t) => ({ from: addDays(t, -6), to: t }) },
-  { key: '30d', label: 'Last 30 days', range: (t) => ({ from: addDays(t, -29), to: t }) },
-  { key: 'month', label: 'This month', range: (t) => ({ from: `${t.slice(0, 8)}01`, to: t }) },
-  { key: 'all', label: 'All time', range: () => ({}) },
+  { key: 'today', label: tx('Today'), range: (t) => ({ from: t, to: t }) },
+  { key: '7d', label: tx('Last 7 days'), range: (t) => ({ from: addDays(t, -6), to: t }) },
+  { key: '30d', label: tx('Last 30 days'), range: (t) => ({ from: addDays(t, -29), to: t }) },
+  { key: 'month', label: tx('This month'), range: (t) => ({ from: `${t.slice(0, 8)}01`, to: t }) },
+  { key: 'all', label: tx('All time'), range: () => ({}) },
 ];
 
 const DIRECTIONS: { key: MoneyDirection | 'all'; label: string }[] = [
-  { key: 'all', label: 'Everything' },
-  { key: 'in', label: 'Money in' },
-  { key: 'out', label: 'Money out' },
-  { key: 'internal', label: 'Between accounts' },
-  { key: 'adjustment', label: 'Adjustments' },
+  { key: 'all', label: tx('Everything') },
+  { key: 'in', label: tx('Money in') },
+  { key: 'out', label: tx('Money out') },
+  { key: 'internal', label: tx('Between accounts') },
+  { key: 'adjustment', label: tx('Adjustments') },
 ];
 
 const chip = (active: boolean) => cn(
@@ -82,7 +82,7 @@ export function MoneyActivityPage() {
   const branchName = branches.find((b) => b.id === branchId)?.name;
   const periodLabel = preset === 'custom'
     ? `${range.from ?? '…'} – ${range.to ?? '…'}`
-    : DATE_PRESETS.find((p) => p.key === preset)?.label ?? 'Last 30 days';
+    : DATE_PRESETS.find((p) => p.key === preset)?.label ?? tx('Last 30 days');
   // Filters tucked behind "Filters" on small screens; count shows what is applied there.
   const hiddenFilterCount = categories.length + (direction !== 'all' ? 1 : 0) + (preset !== '30d' ? 1 : 0);
   const hasFilters = hiddenFilterCount > 0 || !!accountId || !!branchId || !!search;
@@ -193,7 +193,7 @@ export function MoneyActivityPage() {
             <StatCard label={tx('Money in')} value={<MoneyAmount value={totals.externalIn} currency={currency} className="text-emerald-700 dark:text-emerald-400" />} />
             <StatCard label={tx('Money out')} value={<MoneyAmount value={totals.externalOut} currency={currency} className="text-rose-700 dark:text-rose-400" />} />
             <div className="col-span-2 lg:col-span-1">
-              <StatCard label={tx('Moved between accounts')} value={<MoneyAmount value={totals.internalMoved} currency={currency} />} hint="Transfers do not change total money." />
+              <StatCard label={tx('Moved between accounts')} value={<MoneyAmount value={totals.internalMoved} currency={currency} />} hint={tx('Transfers do not change total money.')} />
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -208,7 +208,7 @@ export function MoneyActivityPage() {
       {isLoading ? (
         <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div>
       ) : isError ? (
-        <LoadError message="Money activity could not be loaded. Check your connection and try again." onRetry={() => refetch()} retrying={isFetching} />
+        <LoadError message={tx('Money activity could not be loaded. Check your connection and try again.')} onRetry={() => refetch()} retrying={isFetching} />
       ) : (
         <div className={cn('transition-opacity', isFetching && 'opacity-60')} aria-busy={isFetching}>
           <MoneyActivityList rows={data?.data ?? []} />

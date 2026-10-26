@@ -62,10 +62,10 @@ import { tx } from '@/lib/i18n/tx';
 const PAGE_SIZE = 50;
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
-  cash: 'Cash',
-  bank: 'Bank',
-  mobile_money: 'Mobile Money',
-  petty_cash: 'Petty Cash',
+  cash: tx('Cash'),
+  bank: tx('Bank'),
+  mobile_money: tx('Mobile Money'),
+  petty_cash: tx('Petty Cash'),
 };
 
 /** Named ranges — the ones a café manager actually asks for. */
@@ -99,27 +99,27 @@ function presetRange(key: string): { from: string; to: string } {
 }
 
 const PRESETS: { key: string; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'yesterday', label: 'Yesterday' },
-  { key: 'last7', label: 'Last 7 days' },
-  { key: 'last30', label: 'Last 30 days' },
-  { key: 'this_month', label: 'This month' },
-  { key: 'last_month', label: 'Last month' },
-  { key: 'this_quarter', label: 'This quarter' },
-  { key: 'this_year', label: 'This year' },
+  { key: 'today', label: tx('Today') },
+  { key: 'yesterday', label: tx('Yesterday') },
+  { key: 'last7', label: tx('Last 7 days') },
+  { key: 'last30', label: tx('Last 30 days') },
+  { key: 'this_month', label: tx('This month') },
+  { key: 'last_month', label: tx('Last month') },
+  { key: 'this_quarter', label: tx('This quarter') },
+  { key: 'this_year', label: tx('This year') },
 ];
 
 /** One column definition drives the screen table, the CSV and the PDF. */
 const COLUMNS: { header: string; cell: (r: CashMovementRow) => string }[] = [
-  { header: 'Date', cell: (r) => fmtDate(r.date) },
-  { header: 'Entry #', cell: (r) => r.entryNumber },
-  { header: 'Account', cell: (r) => `${r.accountCode} — ${r.accountName}` },
-  { header: 'Type', cell: (r) => ACCOUNT_TYPE_LABELS[r.accountType ?? ''] ?? r.accountType ?? '' },
-  { header: 'Category', cell: (r) => r.categoryLabel },
-  { header: 'Description', cell: (r) => r.description ?? '' },
-  { header: 'Counterparty', cell: (r) => r.counterparties.map((c) => c.name).join('; ') },
-  { header: 'Cash In', cell: (r) => (Number(r.inflow) ? Number(r.inflow).toFixed(2) : '') },
-  { header: 'Cash Out', cell: (r) => (Number(r.outflow) ? Number(r.outflow).toFixed(2) : '') },
+  { header: tx('Date'), cell: (r) => fmtDate(r.date) },
+  { header: tx('Entry #'), cell: (r) => r.entryNumber },
+  { header: tx('Account'), cell: (r) => `${r.accountCode} — ${r.accountName}` },
+  { header: tx('Type'), cell: (r) => ACCOUNT_TYPE_LABELS[r.accountType ?? ''] ?? r.accountType ?? '' },
+  { header: tx('Category'), cell: (r) => r.categoryLabel },
+  { header: tx('Description'), cell: (r) => r.description ?? '' },
+  { header: tx('Counterparty'), cell: (r) => r.counterparties.map((c) => c.name).join('; ') },
+  { header: tx('Cash In'), cell: (r) => (Number(r.inflow) ? Number(r.inflow).toFixed(2) : '') },
+  { header: tx('Cash Out'), cell: (r) => (Number(r.outflow) ? Number(r.outflow).toFixed(2) : '') },
 ];
 
 export function CashFlowReportPage() {
@@ -223,7 +223,7 @@ export function CashFlowReportPage() {
               )
             }
           >
-            <Download className="h-3.5 w-3.5" /> CSV
+            <Download className="h-3.5 w-3.5" /> {tx('CSV')}
           </Button>
           <Button
             variant="outline"
@@ -239,7 +239,7 @@ export function CashFlowReportPage() {
               )
             }
           >
-            <FileText className="h-3.5 w-3.5" /> PDF
+            <FileText className="h-3.5 w-3.5" /> {tx('PDF')}
           </Button>
         </div>
       </div>
@@ -291,9 +291,9 @@ export function CashFlowReportPage() {
               <Button variant="outline" className="h-9 w-full justify-between text-xs font-normal">
                 <span className="truncate">
                   {accountIds.length === 0
-                    ? 'All accounts'
+                    ? tx('All accounts')
                     : accountIds.length === 1
-                      ? accountOptions.find((a) => a.id === accountIds[0])?.name ?? '1 selected'
+                      ? accountOptions.find((a) => a.id === accountIds[0])?.name ?? tx('1 selected')
                       : `${accountIds.length} accounts`}
                 </span>
                 <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
@@ -327,7 +327,7 @@ export function CashFlowReportPage() {
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="h-9 w-full justify-between text-xs font-normal">
                 <span className="truncate">
-                  {accountTypes.length === 0 ? 'All types' : `${accountTypes.length} selected`}
+                  {accountTypes.length === 0 ? tx('All types') : `${accountTypes.length} selected`}
                 </span>
                 <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
               </Button>
@@ -356,9 +356,9 @@ export function CashFlowReportPage() {
               <Button variant="outline" className="h-9 w-full justify-between text-xs font-normal">
                 <span className="truncate">
                   {categories.length === 0
-                    ? 'All movements'
+                    ? tx('All movements')
                     : categories.length === 1
-                      ? categoryOptions.find((c) => c.key === categories[0])?.label ?? '1 selected'
+                      ? categoryOptions.find((c) => c.key === categories[0])?.label ?? tx('1 selected')
                       : `${categories.length} selected`}
                 </span>
                 <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
@@ -388,7 +388,7 @@ export function CashFlowReportPage() {
           <Select value={direction} onValueChange={(v) => { setDirection(v as typeof direction); setPage(1); }}>
             <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">In &amp; Out</SelectItem>
+              <SelectItem value="all">{tx('In & Out')}</SelectItem>
               <SelectItem value="in">{tx('Cash In only')}</SelectItem>
               <SelectItem value="out">{tx('Cash Out only')}</SelectItem>
             </SelectContent>
@@ -588,7 +588,7 @@ export function CashFlowReportPage() {
 
           <div className="flex items-center justify-between pt-3">
             <p className="text-xs text-muted-foreground">
-              {tx('Page')} {data?.page ?? 1} of {data?.totalPages ?? 1} {tx('· showing')} {rows.length} of {data?.total ?? 0}
+              {tx('Page')} {data?.page ?? 1} {tx('of')} {data?.totalPages ?? 1} {tx('· showing')} {rows.length} {tx('of')} {data?.total ?? 0}
             </p>
             <div className="flex items-center gap-1">
               <Button
@@ -634,7 +634,7 @@ export function CashFlowReportPage() {
         <TabsContent value="categories">
           <RollupCard
             title={tx('Cash movement by what drove it')}
-            firstHeader="Movement Type"
+            firstHeader={tx('Movement Type')}
             rows={(data?.byCategory ?? []).map((c) => ({
               key: c.category,
               primary: c.label,

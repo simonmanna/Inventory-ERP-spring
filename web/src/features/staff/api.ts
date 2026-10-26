@@ -12,6 +12,7 @@ import type {
   UserList,
   UserSummary,
 } from './types';
+import { tx } from '@/lib/i18n/tx';
 
 // ============================================================================
 // Permission catalog
@@ -51,10 +52,10 @@ export function useCreateRole() {
       (await api.post<Role>('/roles', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'roles'] });
-      notify.success('Role created');
+      notify.success(tx('Role created'));
     },
     onError: (e: any) =>
-      notify.error('Failed to create role', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to create role'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -65,10 +66,10 @@ export function useUpdateRole() {
       (await api.patch<Role>(`/roles/${id}`, input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'roles'] });
-      notify.success('Role updated');
+      notify.success(tx('Role updated'));
     },
     onError: (e: any) =>
-      notify.error('Failed to update role', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to update role'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -78,10 +79,10 @@ export function useDeleteRole() {
     mutationFn: async (id: string) => api.delete(`/roles/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'roles'] });
-      notify.success('Role deleted');
+      notify.success(tx('Role deleted'));
     },
     onError: (e: any) =>
-      notify.error('Failed to delete role', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to delete role'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -119,10 +120,10 @@ export function useCreateUser() {
       (await api.post<UserSummary>('/users', input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'users'] });
-      notify.success('User created');
+      notify.success(tx('User created'));
     },
     onError: (e: any) =>
-      notify.error('Failed to create user', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to create user'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -133,10 +134,10 @@ export function useUpdateUser() {
       (await api.patch<UserSummary>(`/users/${id}`, input)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'users'] });
-      notify.success('User updated');
+      notify.success(tx('User updated'));
     },
     onError: (e: any) =>
-      notify.error('Failed to update user', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to update user'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -146,10 +147,10 @@ export function useDeleteUser() {
     mutationFn: async (id: string) => api.delete(`/users/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'users'] });
-      notify.success('User deleted');
+      notify.success(tx('User deleted'));
     },
     onError: (e: any) =>
-      notify.error('Failed to delete user', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to delete user'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -160,10 +161,10 @@ export function useResetUserPassword() {
       api.post(`/users/${id}/reset-password`, input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'users'] });
-      notify.success('Password reset — all sessions revoked');
+      notify.success(tx('Password reset — all sessions revoked'));
     },
     onError: (e: any) =>
-      notify.error('Failed to reset password', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to reset password'), e?.response?.data?.message ?? e.message),
   });
 }
 
@@ -197,9 +198,9 @@ export function useUnlockUser() {
     mutationFn: async (id: string) => (await api.post<UserSummary>(`/users/${id}/unlock`)).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['staff', 'users'] });
-      notify.success('Account unlocked');
+      notify.success(tx('Account unlocked'));
     },
     onError: (e: any) =>
-      notify.error('Failed to unlock account', e?.response?.data?.message ?? e.message),
+      notify.error(tx('Failed to unlock account'), e?.response?.data?.message ?? e.message),
   });
 }

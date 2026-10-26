@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "Licence signing keys pinned into this release. This is the root of trust for offline licence",
+    "verification: a key listed here cannot be changed without replacing the binary.",
+    "",
+    "Fill it from the licence authority before cutting a release:",
+    "  curl -H 'Authorization: Bearer <owner token>' \\",
+    "       https://<licence-server>/api/v1/admin/keys/pinned -o backend/src/main/resources/license-keys.json",
+    "",
+    "While it is empty the install trusts no keys of its own and must learn them from",
+    "app.license.server-url before it can verify a licence. An air-gapped deployment therefore needs",
+    "this file filled in; a connected one will fetch and then cache the set on first contact."
+  ],
+  "keys": []
+}

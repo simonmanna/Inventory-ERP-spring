@@ -24,11 +24,11 @@ const inputClass = 'h-9 text-sm';
 
 /** Display labels for the payment method (mirrors InvoicePaymentMode). */
 export const PAYMENT_MODE_LABELS: Record<string, string> = {
-  cash: 'Cash',
-  card: 'Card',
-  mobile_money: 'Mobile Money',
-  mixed: 'Mixed',
-  credit: 'Credit (house account)',
+  cash: tx('Cash'),
+  card: tx('Card'),
+  mobile_money: tx('Mobile Money'),
+  mixed: tx('Mixed'),
+  credit: tx('Credit (house account)'),
 };
 
 interface DraftLine extends OrderLineInput {

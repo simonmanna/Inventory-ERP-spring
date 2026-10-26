@@ -114,7 +114,7 @@ export function HrTrainingPage() {
                                 });
                                 notify.success(tx('Enrolment updated'));
                               } catch (err) {
-                                notify.error(apiErrorMessage(err, 'Could not update the enrolment'));
+                                notify.error(apiErrorMessage(err, tx('Could not update the enrolment')));
                               }
                             }}
                           >
@@ -169,7 +169,7 @@ export function HrTrainingPage() {
                                 : 'bg-muted text-muted-foreground'
                             }
                           >
-                            {p.isActive ? 'Active' : 'Inactive'}
+                            {p.isActive ? tx('Active') : tx('Inactive')}
                           </Badge>
                         </td>
                       </tr>
@@ -267,7 +267,7 @@ function ProgramDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
                 notify.success(tx('Program created'));
                 onOpenChange(false);
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not create the program'));
+                notify.error(apiErrorMessage(err, tx('Could not create the program')));
               }
             }}
           >
@@ -361,7 +361,7 @@ function EnrolDialog({
                 setProgramId('');
                 setTrainer('');
               } catch (err) {
-                notify.error(apiErrorMessage(err, 'Could not enrol the employee'));
+                notify.error(apiErrorMessage(err, tx('Could not enrol the employee')));
               }
             }}
           >

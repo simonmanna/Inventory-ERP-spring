@@ -28,13 +28,13 @@ const ANY = '__any__';
 
 /** Keys come straight from `ACCOUNT_CLASSIFICATIONS` in @erp/shared. */
 const CLASSIFICATION_LABEL: Record<string, string> = {
-  asset: 'Assets',
-  liability: 'Liabilities',
-  equity: 'Equity',
-  revenue: 'Revenue',
-  expense: 'Expenses',
-  off_balance: 'Off Balance Sheet',
-  unclassified: 'Unclassified',
+  asset: tx('Assets'),
+  liability: tx('Liabilities'),
+  equity: tx('Equity'),
+  revenue: tx('Revenue'),
+  expense: tx('Expenses'),
+  off_balance: tx('Off Balance Sheet'),
+  unclassified: tx('Unclassified'),
 };
 
 const CLASSIFICATIONS = ACCOUNT_CLASSIFICATIONS.map((value) => ({
@@ -174,11 +174,11 @@ export function DetailedAccountingReportPage() {
         <div className="flex items-center gap-2">
           {data && (
             <Badge variant={data.balanced ? 'default' : data.filtered ? 'secondary' : 'destructive'}>
-              {data.balanced ? 'Balanced' : data.filtered ? 'Filtered subset' : 'Out of balance'}
+              {data.balanced ? tx('Balanced') : data.filtered ? tx('Filtered subset') : tx('Out of balance')}
             </Badge>
           )}
           <Button variant="outline" onClick={downloadCSV} disabled={!data}>
-            <Download className="h-4 w-4 mr-1" /> CSV
+            <Download className="h-4 w-4 mr-1" /> {tx('CSV')}
           </Button>
         </div>
       </div>
@@ -267,10 +267,10 @@ export function DetailedAccountingReportPage() {
       {data && (
         <div className="grid gap-3 sm:grid-cols-4">
           {[
-            { label: 'Opening', value: data.totals.opening },
-            { label: 'Period Debit', value: data.totals.debit },
-            { label: 'Period Credit', value: data.totals.credit },
-            { label: 'Closing', value: data.totals.closing },
+            { label: tx('Opening'), value: data.totals.opening },
+            { label: tx('Period Debit'), value: data.totals.debit },
+            { label: tx('Period Credit'), value: data.totals.credit },
+            { label: tx('Closing'), value: data.totals.closing },
           ].map((tile) => (
             <div key={tile.label} className="rounded-lg border bg-card p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">{tile.label}</p>

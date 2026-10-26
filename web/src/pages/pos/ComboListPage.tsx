@@ -62,13 +62,13 @@ export function ComboListPage() {
     try {
       if (dialog.combo) {
         await updateCombo.mutateAsync({ id: dialog.combo.id, ...input });
-        toast.success(`Combo "${input.name}" updated`);
+        toast.success(tx('Combo "{{name}}" updated', { name: input.name }));
       } else {
         await createCombo.mutateAsync(input);
-        toast.success(`Combo "${input.name}" created`);
+        toast.success(tx('Combo "{{name}}" created', { name: input.name }));
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to save combo');
+      toast.error(e?.response?.data?.message || tx('Failed to save combo'));
       throw e; // keep the dialog open on error
     }
   };
@@ -77,9 +77,9 @@ export function ComboListPage() {
     if (!deleteTarget) return;
     try {
       await deleteCombo.mutateAsync(deleteTarget.id);
-      toast.success(`Combo "${deleteTarget.name}" removed`);
+      toast.success(tx('Combo "{{name}}" removed', { name: deleteTarget.name }));
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Failed to delete combo');
+      toast.error(e?.response?.data?.message || tx('Failed to delete combo'));
     } finally {
       setDeleteTarget(null);
     }
@@ -116,7 +116,7 @@ export function ComboListPage() {
       ) : filtered.length === 0 ? (
         <div className="grid place-items-center py-16 text-center">
           <div className="text-4xl mb-2">🍱</div>
-          <p className="font-medium text-slate-700">{term ? 'No combos match your search' : 'No combos yet'}</p>
+          <p className="font-medium text-slate-700">{term ? tx('No combos match your search') : tx('No combos yet')}</p>
           {canCreate && !term && (
             <p className="text-sm text-slate-500 mt-1">{tx('Create your first bundle with “New Combo”.')}</p>
           )}

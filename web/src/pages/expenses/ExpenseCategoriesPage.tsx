@@ -53,7 +53,7 @@ function CategoryDialog({
   const [error, setError] = useState("");
 
   const save = async () => {
-    if (!name.trim()) return setError("Category name is required");
+    if (!name.trim()) return setError(tx('Category name is required'));
     setSaving(true);
     setError("");
     try {
@@ -85,7 +85,7 @@ function CategoryDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Edit "${category?.name}"` : "New Expense Category"}
+            {isEdit ? tx('Edit "{{name}}"', { name: category?.name }) : tx('New Expense Category')}
           </DialogTitle>
         </DialogHeader>
 
@@ -163,7 +163,7 @@ function CategoryDialog({
           </Button>
           <Button onClick={save} disabled={saving}>
             {saving && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-            {isEdit ? "Save" : "Create"}
+            {isEdit ? tx('Save') : tx('Create')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -196,7 +196,7 @@ export default function ExpenseCategoriesPage() {
   }, [load]);
 
   const remove = async (cat: ExpenseCategory) => {
-    if (!confirm(`Delete "${cat.name}"? This cannot be undone.`)) return;
+    if (!confirm(tx('Delete "{{name}}"? This cannot be undone.', { name: cat.name }))) return;
     try {
       await expenseCategoriesApi.delete(cat.id);
       load();
@@ -284,7 +284,7 @@ export default function ExpenseCategoriesPage() {
                           : "bg-slate-100 text-slate-500"
                       }`}
                     >
-                      {c.isActive ? "Active" : "Disabled"}
+                      {c.isActive ? tx('Active') : tx('Disabled')}
                     </button>
                   </td>
                   <td className="px-4 py-2.5 text-right whitespace-nowrap">

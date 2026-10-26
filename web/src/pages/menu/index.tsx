@@ -108,7 +108,7 @@ export function MenuPage() {
   const handleRestore = async (c: MenuCategory) => {
     try {
       await restoreCategory.mutateAsync(c.id);
-      notify.success(`Category "${c.name}" restored`);
+      notify.success(tx('Category "{{name}}" restored', { name: c.name }));
     } catch {
       notify.error(tx('Could not restore category'));
     }
@@ -118,7 +118,7 @@ export function MenuPage() {
     if (!canEditMenu) return;
     try {
       await toggleAvailability.mutateAsync({ id: it.id, isAvailable: !it.isAvailable });
-      notify.success(it.isAvailable ? `"${it.name}" marked unavailable (86)` : `"${it.name}" is back on the menu`);
+      notify.success(it.isAvailable ? tx('"{{name}}" marked unavailable (86)', { name: it.name }) : tx('"{{name}}" is back on the menu', { name: it.name }));
     } catch {
       notify.error(tx('Could not update availability'));
     }
@@ -135,7 +135,7 @@ export function MenuPage() {
     );
   }
 
-  const selectedCatName = liveCats.find((c) => c.id === selectedCat)?.name ?? 'All items';
+  const selectedCatName = liveCats.find((c) => c.id === selectedCat)?.name ?? tx('All items');
 
   return (
     <div className="space-y-4">
@@ -343,7 +343,7 @@ export function MenuPage() {
             <div className="min-w-0">
               <h3 className="truncate text-sm font-semibold">{selectedCatName}</h3>
               <p className="text-xs text-muted-foreground">
-                {meta?.total ?? 0} {tx('item')}{(meta?.total ?? 0) !== 1 ? 's' : ''}{debounced ? ' (filtered)' : ''}
+                {meta?.total ?? 0} {tx('item')}{(meta?.total ?? 0) !== 1 ? 's' : ''}{debounced ? tx(' (filtered)') : ''}
               </p>
             </div>
             <div className="relative w-full sm:w-64">
@@ -368,9 +368,9 @@ export function MenuPage() {
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                 <Coffee className="h-7 w-7 text-muted-foreground" />
               </div>
-              <h3 className="text-base font-semibold">{tx('No menu items')}{selectedCat ? ' in this category' : ''}</h3>
+              <h3 className="text-base font-semibold">{tx('No menu items')}{selectedCat ? tx(' in this category') : ''}</h3>
               <p className="max-w-sm text-sm text-muted-foreground">
-                {search ? 'Try adjusting your search terms.' : 'Add one to make it available on the POS terminal.'}
+                {search ? tx('Try adjusting your search terms.') : tx('Add one to make it available on the POS terminal.')}
               </p>
               {!search && canCreateMenu && (
                 <Button className="mt-2" size="sm" onClick={() => setItemDialog({ open: true })}>
@@ -415,7 +415,7 @@ export function MenuPage() {
           {meta && meta.totalPages > 1 && (
             <div className="flex items-center justify-between border-t px-3 py-2">
               <span className="text-xs text-muted-foreground">
-                {tx('Page')} {meta.page} of {meta.totalPages} · {meta.total} {tx('total')}
+                {tx('Page')} {meta.page} {tx('of')} {meta.totalPages} · {meta.total} {tx('total')}
               </span>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
@@ -441,13 +441,13 @@ export function MenuPage() {
                 { id: catDialog.category.id, data: input },
                 {
                   onSuccess: () => { notify.success(tx('Category updated successfully')); resolve(); },
-                  onError: (e: any) => { notify.error(e?.message ?? 'Could not update category'); reject(e); },
+                  onError: (e: any) => { notify.error(e?.message ?? tx('Could not update category')); reject(e); },
                 },
               );
             } else {
               createCategory.mutate(input, {
-                onSuccess: () => { notify.success(`Category "${input.name}" created successfully`); resolve(); },
-                onError: (e: any) => { notify.error(e?.message ?? 'Could not create category'); reject(e); },
+                onSuccess: () => { notify.success(tx('Category "{{name}}" created successfully', { name: input.name })); resolve(); },
+                onError: (e: any) => { notify.error(e?.message ?? tx('Could not create category')); reject(e); },
               });
             }
           })
@@ -461,8 +461,8 @@ export function MenuPage() {
         onOpenChange={(o) => setItemDialog((s) => ({ ...s, open: o }))}
         onSubmit={(input) =>
           new Promise<void>((resolve, reject) => {
-            const onSuccess = () => { notify.success(itemDialog.item ? 'Item updated successfully' : 'Item created successfully'); resolve(); };
-            const onError = (e: any) => { notify.error(e?.response?.data?.message ?? e?.message ?? 'Could not save item'); reject(e); };
+            const onSuccess = () => { notify.success(itemDialog.item ? tx('Item updated successfully') : tx('Item created successfully')); resolve(); };
+            const onError = (e: any) => { notify.error(e?.response?.data?.message ?? e?.message ?? tx('Could not save item')); reject(e); };
             if (itemDialog.item) {
               updateItem.mutate(
                 { id: itemDialog.item.id, patch: { ...input, expectedUpdatedAt: itemDialog.item.updatedAt } },
@@ -485,7 +485,7 @@ export function MenuPage() {
               </div>
               <div>
                 <AlertDialogTitle>
-                  {deleteTarget?.type === 'category' ? 'Delete category' : 'Disable menu item'}
+                  {deleteTarget?.type === 'category' ? tx('Delete category') : tx('Disable menu item')}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {tx('This action can be undone from the Recently deleted bin.')}
@@ -504,7 +504,7 @@ export function MenuPage() {
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleteTarget?.type === 'category' ? 'Delete category' : 'Disable item'}
+              {deleteTarget?.type === 'category' ? tx('Delete category') : tx('Disable item')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -577,7 +577,7 @@ function ItemRow({
           type="button"
           disabled={!canEdit || toggling}
           onClick={onToggle}
-          title={canEdit ? (item.isAvailable ? 'Mark unavailable (86)' : 'Mark available') : undefined}
+          title={canEdit ? (item.isAvailable ? tx('Mark unavailable (86)') : tx('Mark available')) : undefined}
           className={
             'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-colors ' +
             (item.isAvailable
@@ -587,7 +587,7 @@ function ItemRow({
           }
         >
           <span className={`h-1.5 w-1.5 rounded-full ${item.isAvailable ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} />
-          {item.isAvailable ? 'Available' : '86'}
+          {item.isAvailable ? tx('Available') : '86'}
         </button>
       </td>
 

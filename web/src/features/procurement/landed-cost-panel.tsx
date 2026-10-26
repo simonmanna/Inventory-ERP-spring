@@ -61,26 +61,26 @@ export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel 
         charges: charges.filter((c) => Number(c.amount) > 0).map((c) => ({ kind: c.kind, description: c.description.trim() || undefined, amount: Number(c.amount) })),
       }),
     onSuccess: (lc) => {
-      notify.success(`${lc.code} saved as draft — post it to apply the cost`);
+      notify.success(tx('{{code}} saved as draft — post it to apply the cost', { code: lc.code }));
       setOpen(false);
       setCharges([{ kind: 'freight', description: '', amount: '' }]);
       setNotes('');
       refresh();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not save landed cost'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not save landed cost')),
   });
   const post = useMutation({
     mutationFn: async (id: string) => await idempotentPost<LandedCost>(`/procurement/landed-costs/${id}/post`),
     onSuccess: (lc) => {
-      notify.success(`${lc.code} posted — ${money(Number(lc.capitalizedAmount))} capitalised, ${money(Number(lc.expensedAmount))} to COGS`);
+      notify.success(tx('{{code}} posted — {{v2}} capitalised, {{v3}} to COGS', { code: lc.code, v2: money(Number(lc.capitalizedAmount)), v3: money(Number(lc.expensedAmount)) }));
       refresh();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not post landed cost'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not post landed cost')),
   });
   const cancel = useMutation({
     mutationFn: async (id: string) => await idempotentPost<LandedCost>(`/procurement/landed-costs/${id}/cancel`),
     onSuccess: () => { notify.success(tx('Landed cost cancelled')); refresh(); },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? 'Could not cancel landed cost'),
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not cancel landed cost')),
   });
 
   const total = charges.reduce((s, c) => s + (Number(c.amount) > 0 ? Number(c.amount) : 0), 0);
@@ -133,7 +133,7 @@ export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel 
                       </Button>
                     )}
                     {lc.status === 'draft' && canCancel && (
-                      <Button size="sm" variant="ghost" aria-label={`Cancel ${lc.code}`} disabled={cancel.isPending} onClick={() => cancel.mutate(lc.id)}>
+                      <Button size="sm" variant="ghost" aria-label={tx('Cancel {{code}}', { code: lc.code })} disabled={cancel.isPending} onClick={() => cancel.mutate(lc.id)}>
                         <X className="h-3.5 w-3.5" />
                       </Button>
                     )}
@@ -194,7 +194,7 @@ export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel 
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tx('Cancel')}</Button>
             <Button disabled={!creditAccountId || total <= 0 || create.isPending} onClick={() => create.mutate()}>
-              {create.isPending ? 'Saving…' : 'Save draft'}
+              {create.isPending ? tx('Saving…') : tx('Save draft')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -76,8 +76,8 @@ import { tx } from '@/lib/i18n/tx';
 
 const schema = z.object({
   code: z.string().optional(),
-  name: z.string().min(1, 'Name is required'),
-  email: z.string().email('Invalid email').optional().or(z.literal('')).transform(v => v || undefined),
+  name: z.string().min(1, tx('Name is required')),
+  email: z.string().email(tx('Invalid email')).optional().or(z.literal('')).transform(v => v || undefined),
   isCustomer: z.boolean().optional(),
   isSupplier: z.boolean().optional(),
   isEmployee: z.boolean().optional(),
@@ -87,37 +87,37 @@ type FormValues = z.infer<typeof schema>;
 export type PartnerTypeFilter = 'customer' | 'supplier';
 
 const ALL_PARTNER_TYPES = [
-  { key: 'isCustomer' as const, label: 'Customer', icon: Users, description: 'Buy products or services' },
-  { key: 'isSupplier' as const, label: 'Supplier', icon: Building2, description: 'Provide products or services' },
-  { key: 'isEmployee' as const, label: 'Employee', icon: Briefcase, description: 'Staff member' },
+  { key: 'isCustomer' as const, label: tx('Customer'), icon: Users, description: tx('Buy products or services') },
+  { key: 'isSupplier' as const, label: tx('Supplier'), icon: Building2, description: tx('Provide products or services') },
+  { key: 'isEmployee' as const, label: tx('Employee'), icon: Briefcase, description: tx('Staff member') },
 ];
 
 const TYPE_CFG: Record<PartnerTypeFilter, { key: 'isCustomer' | 'isSupplier'; label: string; labelPlural: string; icon: typeof Users; badgeCls: string; placeholder: string }> = {
   customer: {
     key: 'isCustomer',
-    label: 'Customer',
+    label: tx('Customer'),
     labelPlural: 'Customers',
     icon: Users,
     badgeCls: 'bg-blue-100 text-blue-800 hover:bg-blue-200 border-none',
-    placeholder: 'Search customers by name, code, or email...',
+    placeholder: tx('Search customers by name, code, or email...'),
   },
   supplier: {
     key: 'isSupplier',
-    label: 'Supplier',
+    label: tx('Supplier'),
     labelPlural: 'Suppliers',
     icon: Building2,
     badgeCls: 'bg-purple-100 text-purple-800 hover:bg-purple-200 border-none',
-    placeholder: 'Search suppliers by name, code, or email...',
+    placeholder: tx('Search suppliers by name, code, or email...'),
   },
 };
 
 const MEMBERSHIP_OPTIONS = ['bronze', 'silver', 'gold'] as const;
 const GENDER_OPTIONS = [
-  { value: '', label: 'Prefer not to say' },
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-  { value: 'other', label: 'Other' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
+  { value: '', label: tx('Prefer not to say') },
+  { value: 'male', label: tx('Male') },
+  { value: 'female', label: tx('Female') },
+  { value: 'other', label: tx('Other') },
+  { value: 'prefer_not_to_say', label: tx('Prefer not to say') },
 ];
 
 export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter }) {
@@ -305,7 +305,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       setOpen(false);
       resetForm(null);
     } catch (error) {
-      notify.error(error instanceof Error ? error.message : 'An unexpected error occurred');
+      notify.error(error instanceof Error ? error.message : tx('An unexpected error occurred'));
     }
   });
 
@@ -316,7 +316,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       notify.success(tx('Partner deleted successfully'));
       setDeleting(null);
     } catch (error) {
-      notify.error(error instanceof Error ? error.message : 'Could not delete partner');
+      notify.error(error instanceof Error ? error.message : tx('Could not delete partner'));
     }
   }, [deleting, deletePartner]);
 
@@ -324,19 +324,19 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
   const isCustomer = form.watch('isCustomer');
 
   const title = cfg ? cfg.labelPlural : 'Partners';
-  const subtitle = cfg ? `Manage ${cfg.labelPlural.toLowerCase()}` : 'Manage customers, suppliers, and employees';
+  const subtitle = cfg ? `Manage ${cfg.labelPlural.toLowerCase()}` : tx('Manage customers, suppliers, and employees');
   const buttonLabel = editing
     ? `Edit ${partnerType ? cfg!.label : 'Partner'}`
     : partnerType
       ? `New ${cfg!.label}`
-      : 'New Partner';
+      : tx('New Partner');
   const searchPlaceholder = cfg ? cfg.placeholder : 'Search partners by name, code, or email...';
 
   const columns: Column<Partner>[] = useMemo(() => {
     const cols: Column<Partner>[] = [
       {
         key: 'code',
-        header: 'Code',
+        header: tx('Code'),
         render: (p) => (
           <div className="flex items-center gap-2">
             <Code2 className="h-4 w-4 text-gray-400" />
@@ -346,7 +346,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       },
       {
         key: 'name',
-        header: 'Name',
+        header: tx('Name'),
         render: (p) => (
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-full bg-[#0066aa]/10 flex items-center justify-center">
@@ -358,7 +358,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       },
       {
         key: 'type',
-        header: 'Type',
+        header: tx('Type'),
         render: (p) => {
           if (partnerType === 'customer') {
             return <Badge className={TYPE_CFG.customer.badgeCls}>{tx('Customer')}</Badge>;
@@ -379,7 +379,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       },
       {
         key: 'email',
-        header: 'Email',
+        header: tx('Email'),
         render: (p) =>
           p.email ? (
             <div className="flex items-center gap-2 text-gray-600">
@@ -392,13 +392,13 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       },
       {
         key: 'status',
-        header: 'Status',
+        header: tx('Status'),
         render: (p) => (
           <Badge
             variant={p.status === 'active' ? 'default' : 'secondary'}
             className={p.status === 'active' ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border-none' : ''}
           >
-            {p.status === 'active' ? 'Active' : 'Inactive'}
+            {p.status === 'active' ? tx('Active') : tx('Inactive')}
           </Badge>
         ),
       },
@@ -406,14 +406,14 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
 
     cols.push({
       key: 'actions',
-      header: 'Actions',
+      header: tx('Actions'),
       render: (p: Partner) => (
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           <Button
             size="sm"
             variant="ghost"
             onClick={() => navigate(p.isCustomer ? `/customers/${p.id}` : `/suppliers/${p.id}`)}
-            aria-label={`View ${p.name}`}
+            aria-label={tx('View {{name}}', { name: p.name })}
             title={tx('View')}
             className="h-8 w-8 p-0 hover:bg-gray-50 hover:text-gray-600"
           >
@@ -424,7 +424,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
               size="sm"
               variant="ghost"
               onClick={() => openEdit(p)}
-              aria-label={`Edit ${p.name}`}
+              aria-label={tx('Edit {{name}}', { name: p.name })}
               title={tx('Edit')}
               className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600"
             >
@@ -436,7 +436,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
               size="sm"
               variant="ghost"
               onClick={() => setDeleting(p)}
-              aria-label={`Delete ${p.name}`}
+              aria-label={tx('Delete {{name}}', { name: p.name })}
               title={tx('Delete')}
               className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600"
             >
@@ -463,10 +463,10 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
     );
   }
 
-  const typeSelectionTitle = partnerType ? `${cfg!.label} Type` : 'Partner Type';
-  const typeCreateSubtitle = editing ? 'Update partner information' : partnerType
+  const typeSelectionTitle = partnerType ? `${cfg!.label} Type` : tx('Partner Type');
+  const typeCreateSubtitle = editing ? tx('Update partner information') : partnerType
     ? `Create a new ${cfg!.label.toLowerCase()}`
-    : 'Create a new customer, supplier, or employee';
+    : tx('Create a new customer, supplier, or employee');
   const dialogTitle = editing ? `Edit ${partnerType ? cfg!.label : 'Partner'}` : buttonLabel;
   const dialogBtnLabel = `${editing ? 'Update' : 'Create'} ${partnerType ? cfg!.label : 'Partner'}`;
   const HeaderIcon = partnerType ? cfg!.icon : Building2;
@@ -546,8 +546,8 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
       {meta && (
         <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
           <div className="text-sm text-gray-600">
-            {tx('Showing')} <span className="font-medium text-gray-800">{(page - 1) * pageSize + 1}</span> to{' '}
-            <span className="font-medium text-gray-800">{Math.min(page * pageSize, meta.total)}</span> of{' '}
+            {tx('Showing')} <span className="font-medium text-gray-800">{(page - 1) * pageSize + 1}</span> {tx('to')}{' '}
+            <span className="font-medium text-gray-800">{Math.min(page * pageSize, meta.total)}</span> {tx('of')}{' '}
             <span className="font-medium text-gray-800">{meta.total}</span> {cfg ? cfg.label.toLowerCase() + 's' : 'partners'}
           </div>
           <div className="flex items-center gap-2">
@@ -561,7 +561,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
               {tx('Previous')}
             </Button>
             <span className="text-sm text-gray-600">
-              {tx('Page')} {page} of {meta.totalPages}
+              {tx('Page')} {page} {tx('of')} {meta.totalPages}
             </span>
             <Button
               variant="outline"
@@ -588,7 +588,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
                   <DialogTitle className="text-xl font-semibold leading-tight">{dialogTitle}</DialogTitle>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant="secondary" className="bg-white/20 text-white hover:bg-white/30 border-none">
-                      {editing ? 'Update' : 'Create'}
+                      {editing ? tx('Update') : tx('Create')}
                     </Badge>
                     <span className="text-sm text-white/80">{typeCreateSubtitle}</span>
                   </div>
@@ -816,7 +816,7 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
                           </div>
                           {locked && (
                             <span className="text-[10px] font-medium text-[#0066aa] uppercase tracking-wider">
-                              {partnerType ? (partnerType === 'customer' ? 'Customer' : 'Supplier') : ''}
+                              {partnerType ? (partnerType === 'customer' ? tx('Customer') : tx('Supplier')) : ''}
                             </span>
                           )}
                         </div>

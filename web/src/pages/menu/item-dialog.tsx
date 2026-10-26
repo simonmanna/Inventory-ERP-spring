@@ -223,7 +223,7 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
       const previewUrl = (data as any).downloadUrl ?? (data as any).url ?? '';
       setPreviewSrc(resolveAssetUrl(previewUrl) ?? '');
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? 'Image upload failed');
+      toast.error(err?.response?.data?.message ?? tx('Image upload failed'));
     } finally {
       setUploadingImg(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -234,9 +234,9 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 gap-0">
         <div className="bg-[#3b82f6] text-white px-6 py-4">
-          <h2 className="text-base font-semibold">{isEdit ? 'Edit Menu Item' : 'Add New Menu Item'}</h2>
+          <h2 className="text-base font-semibold">{isEdit ? tx('Edit Menu Item') : tx('Add New Menu Item')}</h2>
           <p className="text-white/75 text-xs mt-0.5">
-            {isEdit ? 'Modify the item details and ingredients below.' : 'Fill in the details to add a new item to the menu.'}
+            {isEdit ? tx('Modify the item details and ingredients below.') : tx('Fill in the details to add a new item to the menu.')}
           </p>
         </div>
         <form
@@ -321,8 +321,8 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
               </Select>
               <p className="text-xs text-slate-500 mt-1">
                 {stationCode
-                  ? `Ordering this item sends it straight to the ${stationLabel} screen on the Kitchen Display.`
-                  : 'Leave empty to route by the recipe’s products (or the default station). Pick a station to send this item to the Kitchen Display as soon as it is ordered.'}
+                  ? tx('Ordering this item sends it straight to the {{stationLabel}} screen on the Kitchen Display.', { stationLabel })
+                  : tx('Leave empty to route by the recipe’s products (or the default station). Pick a station to send this item to the Kitchen Display as soon as it is ordered.')}
               </p>
             </div>
             <div className="md:col-span-2">
@@ -346,7 +346,7 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
                   <div className="flex items-center gap-2">
                     <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                     <Button type="button" size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploadingImg}>
-                      {uploadingImg ? 'Uploading…' : 'Upload image'}
+                      {uploadingImg ? tx('Uploading…') : tx('Upload image')}
                     </Button>
                     {previewSrc && (
                       <Button type="button" size="sm" variant="ghost" onClick={() => { setPreviewSrc(''); imageFileIdRef.current = ''; }}>
@@ -371,12 +371,12 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
               />
               <div>
                 <Label htmlFor="mi-avail" className="cursor-pointer text-sm font-semibold text-slate-700">
-                  {isAvailable ? 'Active on the POS menu' : 'Unavailable on the POS menu'}
+                  {isAvailable ? tx('Active on the POS menu') : tx('Unavailable on the POS menu')}
                 </Label>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isAvailable
-                    ? 'Customers can see and order this item from the POS terminal.'
-                    : 'This item is hidden from the POS terminal. Uncheck to re-activate.'}
+                    ? tx('Customers can see and order this item from the POS terminal.')
+                    : tx('This item is hidden from the POS terminal. Uncheck to re-activate.')}
                 </p>
               </div>
             </div>
@@ -421,7 +421,7 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
 
             {ingredients.length === 0 && (
               <p className={isInventoryTracked ? 'text-sm text-rose-600' : 'text-sm text-muted-foreground'} role={isInventoryTracked ? 'alert' : undefined}>
-                {isInventoryTracked ? 'Add at least one ingredient before publishing this inventory-tracked item.' : 'No ingredients required while inventory tracking is off.'}
+                {isInventoryTracked ? tx('Add at least one ingredient before publishing this inventory-tracked item.') : tx('No ingredients required while inventory tracking is off.')}
               </p>
             )}
 
@@ -512,7 +512,7 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
                         await createVariant.mutateAsync({ menuItemId: item!.id, name: variantName.trim(), price: Number(variantPrice) });
                         toast.success(tx('Variant added'));
                         setShowNewVariant(false);
-                      } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to add variant'); }
+                      } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to add variant')); }
                     }}
                     disabled={createVariant.isPending}>
                     <Check className="h-4 w-4 mr-1" /> {tx('Add')}
@@ -548,13 +548,13 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
                           try {
                             if (on) {
                               await unassignAccGroup.mutateAsync({ menuItemId: item!.id, groupId: g.id });
-                              toast.success(`Removed "${g.name}"`);
+                              toast.success(tx('Removed "{{name}}"', { name: g.name }));
                             } else {
                               await assignAccGroup.mutateAsync({ menuItemId: item!.id, accompanimentGroupId: g.id });
-                              toast.success(`Added "${g.name}"`);
+                              toast.success(tx('Added "{{name}}"', { name: g.name }));
                             }
                           } catch (e: any) {
-                            toast.error(e?.response?.data?.message || 'Failed');
+                            toast.error(e?.response?.data?.message || tx('Failed'));
                           }
                         }}
                         className={
@@ -580,7 +580,7 @@ export function ItemDialog({ open, item, categories, onOpenChange, onSubmit }: P
               {tx('Cancel')}
             </Button>
             <Button type="submit" disabled={submitting || !valid} className="rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] text-white">
-              {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create item'}
+              {submitting ? tx('Saving…') : isEdit ? tx('Save changes') : tx('Create item')}
             </Button>
           </DialogFooter>
         </form>
@@ -608,7 +608,7 @@ function VariantRow({
       await onUpdate.mutateAsync({ menuItemId, variantId: variant.id, name: name.trim(), price: Number(price) || 0 });
       setEditing(false);
       toast.success(tx('Variant updated'));
-    } catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to update'); }
+    } catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to update')); }
   };
 
   if (editing) {
@@ -632,14 +632,14 @@ function VariantRow({
     <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white">
       <span className="flex-1 font-medium text-sm text-slate-800">{variant.name}</span>
       <span className="font-mono text-sm text-slate-600">{fmt(variant.price)}</span>
-      <button onClick={() => { setName(variant.name); setPrice(String(variant.price)); setEditing(true); }} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600" title={tx('Edit')} aria-label={`Edit ${variant.name}`}>
+      <button onClick={() => { setName(variant.name); setPrice(String(variant.price)); setEditing(true); }} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-indigo-600" title={tx('Edit')} aria-label={tx('Edit {{name}}', { name: variant.name })}>
         <Pencil className="h-3.5 w-3.5" />
       </button>
       <button onClick={async () => {
-        if (!window.confirm(`Delete variant "${variant.name}"?`)) return;
+        if (!window.confirm(tx('Delete variant "{{name}}"?', { name: variant.name }))) return;
         try { await onDelete.mutateAsync({ menuItemId, variantId: variant.id }); toast.success(tx('Variant deleted')); }
-        catch (e: any) { toast.error(e?.response?.data?.message || 'Failed to delete'); }
-      }} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600" title={tx('Delete variant')} aria-label={`Delete ${variant.name}`}>
+        catch (e: any) { toast.error(e?.response?.data?.message || tx('Failed to delete')); }
+      }} className="h-11 w-11 inline-flex items-center justify-center text-slate-400 hover:text-rose-600" title={tx('Delete variant')} aria-label={tx('Delete {{name}}', { name: variant.name })}>
         <Trash2 className="h-3.5 w-3.5" />
       </button>
     </div>

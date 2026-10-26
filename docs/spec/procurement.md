@@ -68,7 +68,15 @@ same points as Nest. No subscribers in this module.
 
 ## Deviations
 
-_None._
+Pending owner approval:
+
+1. **Line units (ADR-S003, V5).** PO lines snapshot `unitOfMeasureId` + `uomFactor` (default: the product's
+   purchase unit); GRN lines (`uomId`, `uomFactor`) inherit the PO line's snapshot, or take `uomId` /
+   the purchase unit on ad-hoc receipts; debit-note lines accept `uomId` (default: purchase unit) and a
+   return-to-vendor ships `quantity x uomFactor` base units (Nest shipped `quantity` base units). Stock
+   posting uses the snapshot; pre-V5 lines keep the live purchase-unit conversion. New 400s:
+   `Unit <code> is not enabled for purchasing on product <name>`, `Unit <code> is not active for product
+   <name>`.
 
 Same as Nest, kept on purpose:
 

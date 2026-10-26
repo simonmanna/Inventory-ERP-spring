@@ -1,3 +1,4 @@
+import { tx } from '@/lib/i18n/tx';
 /**
  * Developer-configurable module features.
  *
@@ -18,15 +19,15 @@ export interface ModuleFeature {
 }
 
 export const MODULE_FEATURES: ModuleFeature[] = [
-  { key: 'crm', label: 'CRM', description: 'Customers, leads, opportunities, and pipeline tracking', sections: ['CRM'] },
-  { key: 'rental', label: 'Rentals', description: 'Hire-out agreements, rental units, returns, and settlement', sections: ['Rentals'] },
-  { key: 'manufacturing', label: 'Production (Manufacturing / Bakery)', description: 'BOMs, production orders, work orders, and MRP', sections: ['Production'] },
-  { key: 'repair', label: 'Repair & Maintenance', description: 'Repair jobs, work tickets, and maintenance scheduling', sections: ['Repair & Maintenance'] },
-  { key: 'communication', label: 'Communication', description: 'Unified inbox, channels, and messaging automation', sections: ['Communication'] },
-  { key: 'assets', label: 'Fixed Assets', description: 'Fixed asset register, categories, and depreciation', sections: ['Fixed Assets'] },
-  { key: 'taskBoard', label: 'Task Management', description: 'Kanban-style task management and workflow tracking', sections: ['Task Management'] },
-  { key: 'accounting', label: 'Accounting', description: 'Chart of accounts, journals, and the posting engine', sections: ['Accounting'] },
-  { key: 'expense', label: 'Expenses', description: 'Petty cash, opex tracking, approvals, and reimbursements', sections: ['Expenses'] },
+  { key: 'crm', label: 'CRM', description: tx('Customers, leads, opportunities, and pipeline tracking'), sections: ['CRM'] },
+  { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
+  { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
+  { key: 'repair', label: tx('Repair & Maintenance'), description: tx('Repair jobs, work tickets, and maintenance scheduling'), sections: ['Repair & Maintenance'] },
+  { key: 'communication', label: tx('Communication'), description: tx('Unified inbox, channels, and messaging automation'), sections: ['Communication'] },
+  { key: 'assets', label: tx('Fixed Assets'), description: tx('Fixed asset register, categories, and depreciation'), sections: ['Fixed Assets'] },
+  { key: 'taskBoard', label: tx('Task Management'), description: tx('Kanban-style task management and workflow tracking'), sections: ['Task Management'] },
+  { key: 'accounting', label: tx('Accounting'), description: tx('Chart of accounts, journals, and the posting engine'), sections: ['Accounting'] },
+  { key: 'expense', label: tx('Expenses'), description: tx('Petty cash, opex tracking, approvals, and reimbursements'), sections: ['Expenses'] },
 ];
 
 /** Section title -> feature key that gates it. */
@@ -40,12 +41,38 @@ export const featureEnabled = (
   key: string,
 ): boolean => features?.[key] !== false;
 
+/**
+ * Is this feature included in the licence?
+ *
+ * `undefined` licensed set means "we do not know yet" — the status request has not landed, or it
+ * failed. That must read as "do not hide anything", for the same reason an empty feature map does:
+ * navigation blanking out because a request was slow is a worse failure than briefly offering a
+ * module the licence will refuse anyway, which the server then blocks with a clear message.
+ */
+export const featureLicensed = (
+  licensed: string[] | undefined | null,
+  key: string,
+): boolean => !licensed || licensed.includes(key);
+
+/**
+ * The effective state of a feature: **licensed AND enabled**.
+ *
+ * The licence is the ceiling and Developer Settings is the switch. An operator may turn a licensed
+ * module off; they can never turn an unlicensed one on.
+ */
+export const featureAvailable = (
+  features: Record<string, boolean> | undefined,
+  licensed: string[] | undefined | null,
+  key: string,
+): boolean => featureLicensed(licensed, key) && featureEnabled(features, key);
+
 /** Sections with no feature key mapped are always visible. */
 export const sectionEnabled = (
   features: Record<string, boolean> | undefined,
   title?: string,
+  licensed?: string[] | null,
 ): boolean => {
   if (!title) return true;
   const key = SECTION_FEATURE_KEY[title];
-  return !key || featureEnabled(features, key);
+  return !key || featureAvailable(features, licensed, key);
 };

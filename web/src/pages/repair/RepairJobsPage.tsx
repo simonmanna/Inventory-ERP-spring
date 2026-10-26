@@ -8,12 +8,12 @@ import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
 const STATUS_FILTERS = [
-  { value: '', label: 'All' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'in_progress', label: 'In progress' },
-  { value: 'testing', label: 'Testing' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: '', label: tx('All') },
+  { value: 'pending', label: tx('Pending') },
+  { value: 'in_progress', label: tx('In progress') },
+  { value: 'testing', label: tx('Testing') },
+  { value: 'completed', label: tx('Completed') },
+  { value: 'cancelled', label: tx('Cancelled') },
 ];
 
 const STATUS_STYLES: Record<string, string> = {
@@ -60,9 +60,9 @@ export function RepairJobsPage() {
                   <div>
                     <p className="text-sm font-medium">{j.jobNumber} · {j.order?.repairNumber}</p>
                     <p className="text-xs text-muted-foreground">
-                      {j.technician?.name ?? 'Unassigned'}
-                      {j.deadline ? ` · due ${date(j.deadline)}` : ''}
-                      {j.actualHours != null ? ` · ${j.actualHours} h` : j.estimatedHours != null ? ` · est ${j.estimatedHours} h` : ''}
+                      {j.technician?.name ?? tx('Unassigned')}
+                      {j.deadline ? tx(' · due {{v1}}', { v1: date(j.deadline) }) : ''}
+                      {j.actualHours != null ? ` · ${j.actualHours} h` : j.estimatedHours != null ? tx(' · est {{estimatedHours}} h', { estimatedHours: j.estimatedHours }) : ''}
                     </p>
                   </div>
                 </div>

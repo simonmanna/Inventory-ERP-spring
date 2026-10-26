@@ -62,7 +62,7 @@ export const VoidItemDialog: React.FC<Props> = ({ open, line, sentToKitchen, onC
       await onConfirm(line.lineId, reason.trim());
       onClose();
     } catch (e: any) {
-      setErr(e?.response?.data?.message || e?.message || 'Could not void the item');
+      setErr(e?.response?.data?.message || e?.message || tx('Could not void the item'));
     } finally {
       setBusy(false);
     }
@@ -119,7 +119,7 @@ export const VoidItemDialog: React.FC<Props> = ({ open, line, sentToKitchen, onC
             disabled={!reason.trim() || !pin || busy || verify.isPending}
             onClick={submit}
           >
-            <AlertTriangle className="w-4 h-4 mr-1" /> {busy || verify.isPending ? 'Voiding…' : 'Void Item'}
+            <AlertTriangle className="w-4 h-4 mr-1" /> {busy || verify.isPending ? tx('Voiding…') : tx('Void Item')}
           </Button>
         </DialogFooter>
       </DialogContent>

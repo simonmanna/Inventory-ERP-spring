@@ -1,0 +1,34 @@
+# Licence authority image. Java 25, non-root, tini. Deliberately leaner than the API image: this
+# service signs licences and holds customer records, so it gets no database client, no rclone and
+# nothing else that is not needed to answer HTTP.
+
+FROM eclipse-temurin:25-jdk-alpine AS build
+WORKDIR /src
+# The version catalogue lives in the backend build and is shared, so both are copied before the
+# dependency warm-up: one pinned stack for the whole product (settings.gradle.kts reads it).
+COPY backend/gradle/libs.versions.toml /src/backend/gradle/libs.versions.toml
+WORKDIR /src/license-server
+COPY license-server/gradlew license-server/settings.gradle.kts license-server/build.gradle.kts \
+     license-server/gradle.properties ./
+COPY license-server/gradle gradle
+RUN ./gradlew --no-daemon dependencies > /dev/null
+COPY license-server/src src
+RUN ./gradlew --no-daemon bootJar -x test \
+ && java -Djarmode=tools -jar build/libs/license-server.jar extract --layers --launcher --destination /extracted
+
+FROM eclipse-temurin:25-jre-alpine AS runtime
+RUN apk add --no-cache tini \
+ && addgroup -S app && adduser -S app -G app \
+ && mkdir -p /app && chown -R app:app /app
+WORKDIR /app
+COPY --from=build --chown=app:app /extracted/dependencies/ ./
+COPY --from=build --chown=app:app /extracted/spring-boot-loader/ ./
+COPY --from=build --chown=app:app /extracted/snapshot-dependencies/ ./
+COPY --from=build --chown=app:app /extracted/application/ ./
+USER app
+ENV PORT=3100 \
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8"
+EXPOSE 3100
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:${PORT}/actuator/health/liveness || exit 1
+ENTRYPOINT ["/sbin/tini", "--", "java", "org.springframework.boot.loader.launch.JarLauncher"]

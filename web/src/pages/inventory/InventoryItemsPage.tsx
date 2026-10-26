@@ -39,12 +39,12 @@ interface Stats { totalItems: number; lowStockCount: number; totalLocations: num
 interface Location { id: string; code: string; name: string; type: string }
 
 const PRODUCT_TYPE_LABELS: Record<string, string> = {
-  stockable: 'Stockable',
-  consumable: 'Consumable',
-  service: 'Service',
-  fee: 'Fee',
-  subscription: 'Subscription',
-  asset: 'Asset',
+  stockable: tx('Stockable'),
+  consumable: tx('Consumable'),
+  service: tx('Service'),
+  fee: tx('Fee'),
+  subscription: tx('Subscription'),
+  asset: tx('Asset'),
 };
 
 export function InventoryItemsPage() {
@@ -219,7 +219,7 @@ export function InventoryItemsPage() {
           </div>
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <span>{items.data.meta.total} {tx('product(s)')}</span>
-            <span>{tx('Page')} {items.data.meta.page} of {items.data.meta.totalPages}</span>
+            <span>{tx('Page')} {items.data.meta.page} {tx('of')} {items.data.meta.totalPages}</span>
           </div>
         </>
       )}

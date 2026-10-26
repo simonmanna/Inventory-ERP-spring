@@ -1,9 +1,15 @@
 package com.poscafe.pos.data
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import java.security.KeyStore
 import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,16 +23,147 @@ import javax.inject.Singleton
  *   - dbPassphrase   SQLCipher key (generated on first run)
  *   - saleCounter    monotonic counter behind provisional numbers
  */
+// commit() is deliberate where used: counters, keys and revocation must hit disk before we go on.
+@SuppressLint("ApplySharedPref")
 @Singleton
-class DeviceConfig @Inject constructor(@ApplicationContext private val context: Context) {
+class DeviceConfig internal constructor(private val context: Context, testPrefs: SharedPreferences?) {
 
-    private val prefs = EncryptedSharedPreferences.create(
+    @Inject constructor(@ApplicationContext context: Context) : this(context, null)
+
+    /** [testPrefs] lets JVM tests use plain prefs: the Android Keystore is not available there. */
+    private val prefs: SharedPreferences = testPrefs ?: openPrefs()
+
+    /**
+     * Some devices lose or corrupt the Keystore master key (OS update, factory
+     * restore of the keystore, OEM bugs); EncryptedSharedPreferences then
+     * throws on every launch and the app can never start. The SQLCipher
+     * passphrase lived in those prefs, so the database is unreadable too:
+     * recover by wiping both and starting over at setup, and record it so the
+     * setup screen can say why.
+     */
+    private fun openPrefs(): SharedPreferences = try {
+        createPrefs()
+    } catch (e: Exception) {
+        Log.e(TAG, "Encrypted config unreadable, resetting device", e)
+        context.deleteSharedPreferences(PREFS_NAME)
+        runCatching {
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+        }
+        context.deleteDatabase(DB_NAME)
+        createPrefs().also { it.edit().putBoolean("keystoreReset", true).commit() }
+    }
+
+    private fun createPrefs(): SharedPreferences = EncryptedSharedPreferences.create(
         context,
-        "pos-device-config",
+        PREFS_NAME,
         MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
     )
+
+    /** True once after [openPrefs] had to wipe the device; cleared by [acknowledgeKeystoreReset]. */
+    val keystoreReset: Boolean get() = prefs.getBoolean("keystoreReset", false)
+
+    fun acknowledgeKeystoreReset() {
+        prefs.edit().remove("keystoreReset").apply()
+    }
+
+    /** Set when the server revoked this device's token; drives the app back to setup. */
+    private val _revoked = MutableStateFlow(prefs.getBoolean("revoked", false))
+    val revoked: StateFlow<Boolean> = _revoked
+
+    fun markRevoked(value: Boolean) {
+        prefs.edit().putBoolean("revoked", value).commit()
+        _revoked.value = value
+        if (!value) _setupRequested.value = false
+    }
+
+    // ---- licence (from /sync/pull, persisted so it survives a restart offline) ----
+
+    /**
+     * What the installation's licence allows, as last reported by the server.
+     *
+     * Persisted deliberately: a till that is restarted with no network must still know whether it
+     * may sell. The alternative — assuming the best — would let an expired licence be cleared by
+     * pulling the plug, and the alternative to that — assuming the worst — would stop a shop every
+     * time it rebooted before the first pull. Keeping the last known answer is the only honest
+     * option, and it is also the one that fails in the customer's favour for exactly one session.
+     */
+    private val _license = MutableStateFlow(readLicense())
+    val license: StateFlow<LicenseState> = _license
+
+    /** The licence as a till needs it. */
+    data class LicenseState(
+        val mode: String = "ACTIVE",
+        /** May this terminal start a new sale? */
+        val writable: Boolean = true,
+        val message: String? = null,
+        val daysRemaining: Long? = null,
+        val graceUntil: String? = null,
+        /** True once a pull has actually reported a licence; false means "never heard". */
+        val known: Boolean = false,
+    ) {
+        /** Worth putting on the screen: expiring soon, in grace, or stopped. */
+        val warrants: Boolean get() = !writable || mode == "GRACE" ||
+            (daysRemaining != null && daysRemaining <= 14)
+    }
+
+    private fun readLicense(): LicenseState = LicenseState(
+        mode = prefs.getString("license.mode", "ACTIVE") ?: "ACTIVE",
+        writable = prefs.getBoolean("license.writable", true),
+        message = prefs.getString("license.message", null),
+        daysRemaining = prefs.getLong("license.days", Long.MIN_VALUE)
+            .takeIf { it != Long.MIN_VALUE },
+        graceUntil = prefs.getString("license.graceUntil", null),
+        known = prefs.getBoolean("license.known", false),
+    )
+
+    /** Record what a pull reported. A pull that carried no licence leaves the last answer alone. */
+    fun applyLicense(mode: String, writable: Boolean, message: String?, daysRemaining: Long?,
+                     graceUntil: String?) {
+        prefs.edit()
+            .putString("license.mode", mode)
+            .putBoolean("license.writable", writable)
+            .putString("license.message", message)
+            .putLong("license.days", daysRemaining ?: Long.MIN_VALUE)
+            .putString("license.graceUntil", graceUntil)
+            .putBoolean("license.known", true)
+            .commit()
+        _license.value = LicenseState(mode, writable, message, daysRemaining, graceUntil, known = true)
+    }
+
+    /** A manager chose to re-enroll; in memory only, since a cleared enrollment sends start-up to setup anyway. */
+    private val _setupRequested = MutableStateFlow(false)
+    val setupRequested: StateFlow<Boolean> = _setupRequested
+
+    fun requestSetup() {
+        _setupRequested.value = true
+    }
+
+    // ---- offline PIN lockout (survives app restarts) ----
+
+    fun pinFailures(userId: String): Int = prefs.getInt("pinFails.$userId", 0)
+
+    fun lastPinFailureAt(userId: String): Long = prefs.getLong("pinFailAt.$userId", 0L)
+
+    fun recordPinFailure(userId: String) {
+        prefs.edit()
+            .putInt("pinFails.$userId", pinFailures(userId) + 1)
+            .putLong("pinFailAt.$userId", System.currentTimeMillis())
+            .commit()
+    }
+
+    fun clearPinFailures(userId: String) {
+        prefs.edit().remove("pinFails.$userId").remove("pinFailAt.$userId").commit()
+    }
+
+    /** Every lockout (tests; a device wipe). Syncs clear per user on a PIN reset only. */
+    fun clearPinFailures() {
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith("pinFails.") || it.startsWith("pinFailAt.") }.forEach(editor::remove)
+        editor.commit()
+    }
 
     var serverUrl: String?
         get() = prefs.getString("serverUrl", null)
@@ -107,7 +244,8 @@ class DeviceConfig @Inject constructor(@ApplicationContext private val context: 
         val bytes = ByteArray(32)
         SecureRandom().nextBytes(bytes)
         val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-        prefs.edit().putString("dbPassphrase", encoded).apply()
+        // Synchronous: losing this key after the DB is created loses the DB.
+        check(prefs.edit().putString("dbPassphrase", encoded).commit()) { "Could not store the database key" }
         return encoded.toByteArray(Charsets.UTF_8)
     }
 
@@ -115,12 +253,19 @@ class DeviceConfig @Inject constructor(@ApplicationContext private val context: 
     @Synchronized
     fun nextProvisionalNumber(): String {
         val next = prefs.getLong("saleCounter", 0L) + 1
-        prefs.edit().putLong("saleCounter", next).apply()
+        // Synchronous: an async write lost to a crash would reissue this number.
+        check(prefs.edit().putLong("saleCounter", next).commit()) { "Could not advance the sale counter" }
         return "%s-%06d".format(prefix, next)
     }
 
     /** Revocation wipe: forget enrollment (DB wipe is handled by the caller). */
     fun clearEnrollment() {
-        prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").apply()
+        prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").commit()
+    }
+
+    private companion object {
+        const val TAG = "DeviceConfig"
+        const val PREFS_NAME = "pos-device-config"
+        const val DB_NAME = "pos-cafe.db"
     }
 }
