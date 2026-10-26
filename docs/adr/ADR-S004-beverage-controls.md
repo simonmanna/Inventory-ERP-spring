@@ -1,7 +1,8 @@
 # ADR-S004: Beverage count controls — variance cause codes and unweighed-bottle exceptions
 
-- Status: proposed (2026-10-26). This deliberately departs from the NestJS reference and needs the owner's approval.
-- Related: ADR-S001 (frozen wire contract), `V6__beverage_controls.sql`, `docs/spec/beverage.md` "Deviations"
+- Status: accepted (2026-10-26, approved by the owner). Deliberate deviation from the NestJS reference.
+- Related: ADR-S001 (frozen wire contract), `V6__beverage_controls.sql`, `V7__beverage_double_pour.sql`,
+  `docs/spec/beverage.md` "Deviations"
 
 ## Context
 
@@ -37,15 +38,19 @@ We reviewed it against a bar loss-control brief and found two gaps:
 
    The exception is stored on the session (`unweighedReason`, `unweighedCount`) and in the audit row.
    Unweighed lines are never adjusted, so stock is left as the system has it.
-3. **Serving presets (named single or double shots) are not added.** A double is already expressed as a menu
-   item whose recipe draws 60 ml, and the yield and variance maths flow through recipes. A separate preset
-   table would duplicate the recipe and could drift from it.
+3. **Single and double shot sizes per product (V7).** `standardPourMl` is the single shot; the new optional
+   `Product.doublePourMl` is the double (NULL = 2 × single; must be > 0). Both are set on the product setup
+   screen. The yield report adds `doublePourMl` and `doublesPerBottle`. Sales still draw ml only through
+   menu-item recipes, so this never moves stock and cannot drift from what was sold: a double sold is a menu
+   item whose recipe draws the double size. No separate preset table.
 
 ## Consequences
 
 - With the setting off, which is the default, every route behaves as in Nest. The only wire difference is
-  additive response fields (`reasonCode`, `unweighedReason`, `unweighedCount`).
-- The parity harness must ignore those three fields, or both sides must run with the setting off.
+  additive fields: `reasonCode`, `unweighedReason`, `unweighedCount` (counts and variance report),
+  `doublePourMl`, `doublesPerBottle` (yield report) and `doublePourMl` on products.
+- The parity harness ignores exactly those fields for `beverage-control.json` (`contract-tests/allowed-diffs.json`,
+  `*` path segments).
 - New error messages, which do not exist in Nest:
   - `"<n> bottle line(s) with stock were not weighed. Weigh them, or submit an unweighed exception with a reason and manager approval."`
   - `"Submitting with unweighed bottles requires manager approval."`

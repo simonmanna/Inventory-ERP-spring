@@ -212,12 +212,12 @@ public class BeverageCountService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list() {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> s : SqlRows.list(BottleCountSession.class, jdbc.sql("SELECT * FROM \"BottleCountSession\""
-                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL ORDER BY \"startedAt\" DESC LIMIT 100")
-                .param(org()))) {
-            long n = jdbc.sql("SELECT count(*) FROM \"BottleCountLine\" WHERE \"sessionId\" = ? AND \"organizationId\" = ?")
-                    .params(s.get("id"), org()).query(Long.class).single();
-            s.put("_count", Obj.of("lines", n));
+        for (Map<String, Object> row : jdbc.sql("SELECT s.*, (SELECT count(*) FROM \"BottleCountLine\" l"
+                        + " WHERE l.\"sessionId\" = s.id) AS \"_lineCount\" FROM \"BottleCountSession\" s"
+                        + " WHERE s.\"organizationId\" = ? AND s.\"deletedAt\" IS NULL ORDER BY s.\"startedAt\" DESC LIMIT 100")
+                .param(org()).query().listOfRows()) {
+            Map<String, Object> s = SqlRows.as(BottleCountSession.class, row);
+            s.put("_count", Obj.of("lines", ((Number) row.get("_lineCount")).longValue()));
             out.add(s);
         }
         return out;

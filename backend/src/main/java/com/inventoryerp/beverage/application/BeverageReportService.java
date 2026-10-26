@@ -33,7 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class BeverageReportService {
 
-    record BevProduct(String id, String name, double containerVolumeMl, double standardPourMl, double costPerMl) {}
+    record BevProduct(String id, String name, double containerVolumeMl, double standardPourMl, double doublePourMl,
+            double costPerMl) {}
 
     record Sold(Map<String, Double> byProduct, Map<String, double[]> byWaiter, double alcoholSalesValue) {}
 
@@ -51,10 +52,12 @@ public class BeverageReportService {
     private List<BevProduct> beverageProducts() {
         List<BevProduct> out = new ArrayList<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, name, \"containerVolumeMl\", \"standardPourMl\","
-                + " \"costPrice\" FROM \"Product\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
+                + " \"doublePourMl\", \"costPrice\" FROM \"Product\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
                 + " AND \"measurementMethod\"::text = 'digital_weight'").param(org()))) {
             out.add(new BevProduct(str(r, "id"), str(r, "name"), dec(r, "containerVolumeMl").doubleValue(),
-                    dec(r, "standardPourMl").doubleValue(), dec(r, "costPrice").doubleValue()));
+                    dec(r, "standardPourMl").doubleValue(), r.get("doublePourMl") != null
+                            ? dec(r, "doublePourMl").doubleValue() : dec(r, "standardPourMl").doubleValue() * 2,
+                    dec(r, "costPrice").doubleValue()));
         }
         return out;
     }
@@ -116,27 +119,24 @@ public class BeverageReportService {
 
     /** Latest submitted bottle-count line per product (optionally by location). */
     private Map<String, Map<String, Object>> latestCountLines(String locationId) {
-        StringBuilder sql = new StringBuilder("SELECT id, \"submittedAt\", \"locationId\" FROM \"BottleCountSession\""
-                + " WHERE \"organizationId\" = :org AND \"deletedAt\" IS NULL AND status = 'submitted'");
+        // The 50 most recent submitted sessions and their lines in one round trip, newest session first.
+        StringBuilder sql = new StringBuilder("SELECT l.\"productId\", l.\"systemMl\", l.\"countedMl\", l.\"varianceMl\","
+                + " l.\"varianceG\", l.confidence, l.\"reasonCode\", s.\"submittedAt\", s.\"locationId\" FROM (SELECT id,"
+                + " \"submittedAt\", \"locationId\" FROM \"BottleCountSession\" WHERE \"organizationId\" = :org"
+                + " AND \"deletedAt\" IS NULL AND status = 'submitted'");
         if (locationId != null) {
             sql.append(" AND \"locationId\" = :loc");
         }
-        sql.append(" ORDER BY \"submittedAt\" DESC NULLS LAST LIMIT 50");
+        sql.append(" ORDER BY \"submittedAt\" DESC NULLS LAST, id LIMIT 50) s JOIN \"BottleCountLine\" l"
+                + " ON l.\"sessionId\" = s.id AND l.\"organizationId\" = :org"
+                + " ORDER BY s.\"submittedAt\" DESC NULLS LAST, s.id");
         var spec = jdbc.sql(sql.toString()).param("org", org());
         if (locationId != null) {
             spec = spec.param("loc", locationId);
         }
         Map<String, Map<String, Object>> byProduct = new HashMap<>();
-        for (Map<String, Object> s : SqlRows.list(spec)) {
-            for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT \"productId\", \"systemMl\", \"countedMl\","
-                    + " \"varianceMl\", \"varianceG\", confidence, \"reasonCode\" FROM \"BottleCountLine\" WHERE \"sessionId\" = ?"
-                    + " AND \"organizationId\" = ?").params(s.get("id"), org()))) {
-                if (!byProduct.containsKey(str(l, "productId"))) {
-                    l.put("submittedAt", s.get("submittedAt"));
-                    l.put("locationId", s.get("locationId"));
-                    byProduct.put(str(l, "productId"), l);
-                }
-            }
+        for (Map<String, Object> l : SqlRows.list(spec)) {
+            byProduct.putIfAbsent(str(l, "productId"), l);
         }
         return byProduct;
     }
@@ -192,11 +192,15 @@ public class BeverageReportService {
             double soldShots = p.standardPourMl() > 0 ? soldMl / p.standardPourMl() : 0;
             double shotsPerBottle = p.standardPourMl() > 0 ? p.containerVolumeMl() / p.standardPourMl() : 0;
             double bottlesSold = p.containerVolumeMl() > 0 ? soldMl / p.containerVolumeMl() : 0;
+            double doublesPerBottle = p.doublePourMl() > 0 ? p.containerVolumeMl() / p.doublePourMl() : 0;
             rows.add(Obj.of("productId", p.id(), "product", p.name(),
                     "shotsPerBottle", JsNumbers.js(JsNumbers.round(shotsPerBottle, 1)),
                     "soldMl", JsNumbers.js(JsNumbers.round(soldMl, 1)),
                     "soldShots", JsNumbers.js(JsNumbers.round(soldShots, 1)),
-                    "bottlesSold", JsNumbers.js(JsNumbers.round(bottlesSold, 2))));
+                    "bottlesSold", JsNumbers.js(JsNumbers.round(bottlesSold, 2)),
+                    // ADR-S004: configured double shot (null config = 2 × single) and doubles per bottle.
+                    "doublePourMl", JsNumbers.js(p.doublePourMl()),
+                    "doublesPerBottle", JsNumbers.js(JsNumbers.round(doublesPerBottle, 1))));
         }
         return rows;
     }

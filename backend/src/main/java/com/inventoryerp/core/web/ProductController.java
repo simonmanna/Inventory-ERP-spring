@@ -90,6 +90,7 @@ public class ProductController {
             BigDecimal actualEmptyWeightG,
             BigDecimal fullBottleWeightG,
             BigDecimal standardPourMl,
+            @DecimalMin(value = "0", inclusive = false, message = "must be a positive number") BigDecimal doublePourMl,
             Boolean allowPartialBottle,
             BigDecimal varianceToleranceG) {}
 
@@ -132,6 +133,7 @@ public class ProductController {
             BigDecimal actualEmptyWeightG,
             BigDecimal fullBottleWeightG,
             BigDecimal standardPourMl,
+            @DecimalMin(value = "0", inclusive = false, message = "must be a positive number") BigDecimal doublePourMl,
             Boolean allowPartialBottle,
             BigDecimal varianceToleranceG) {}
 

@@ -88,6 +88,9 @@ export interface YieldRow {
   soldMl: number;
   soldShots: number;
   bottlesSold: number;
+  /** ADR-S004: configured double shot (2 × single when unset). */
+  doublePourMl?: number;
+  doublesPerBottle?: number;
 }
 
 export interface BartenderRow {

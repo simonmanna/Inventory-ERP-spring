@@ -38,6 +38,13 @@ function diff(a, b, at = '$', out = []) {
   return out;
 }
 
+// Allowed-diff paths are prefixes; a `*` segment matches any one key or array index ($.body.*.reasonCode).
+const escapeRe = (t) => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+const pathMatches = (allowedPath, p) =>
+  new RegExp('^' + allowedPath.split('*').map(escapeRe).join('[^.]+') + '(\\.|$)').test(p);
+const isAllowed = (d, file, stepName) => allowed.some((a) =>
+  (!a.step || a.step === stepName) && (!a.scenario || a.scenario === file) && pathMatches(a.path, d.path));
+
 const pick = (obj, p) => p.replace(/^\$\.?/, '').split('.').filter(Boolean).reduce((o, k) => o?.[k], obj);
 const subst = (v, vars) => JSON.parse(JSON.stringify(v ?? null).replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? ''));
 
@@ -62,7 +69,7 @@ for (const file of files) {
       for (const [name, jsonPath] of Object.entries(step.capture ?? {})) vars[side][name] = pick(body, jsonPath);
       results[side] = { status: res.status, totalCount: res.headers.get('x-total-count'), body: normalize(body) };
     }
-    const diffs = diff(results.nest, results.spring).filter((d) => !allowed.some((a) => (a.step === step.name || !a.step) && d.path.startsWith(a.path)));
+    const diffs = diff(results.nest, results.spring).filter((d) => !isAllowed(d, file, step.name));
     if (diffs.length) {
       failures++;
       console.log(`  ✗ ${step.name}`);

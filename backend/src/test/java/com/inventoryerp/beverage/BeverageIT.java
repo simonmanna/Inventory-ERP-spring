@@ -70,6 +70,15 @@ class BeverageIT extends ApiTestSupport {
         throw new AssertionError("no line for " + productId);
     }
 
+    JsonNode yieldRow(String productId) {
+        for (JsonNode r : ok(200, "GET", "/beverage/reports/yield?from=2020-01-01", null)) {
+            if (r.get("productId").asString().equals(productId)) {
+                return r;
+            }
+        }
+        throw new AssertionError("no yield row for " + productId);
+    }
+
     BigDecimal onHand(String productId, String loc) {
         return jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
                 .params(productId, loc).query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
@@ -173,12 +182,14 @@ class BeverageIT extends ApiTestSupport {
         assertThat(dash.get("openVariances").asInt()).isEqualTo(1);
         assertThat(dash.get("totalLossValue").asDouble()).isEqualTo(5);
         assertThat(dash.get("shrinkage").has("lastMonth")).isTrue();
-        JsonNode yield = ok(200, "GET", "/beverage/reports/yield?from=2020-01-01", null);
-        for (JsonNode r : yield) {
-            if (r.get("productId").asString().equals(p)) {
-                assertThat(r.get("shotsPerBottle").asDouble()).isEqualTo(23.3);
-            }
-        }
+        JsonNode yieldRow = yieldRow(p);
+        assertThat(yieldRow.get("shotsPerBottle").asDouble()).isEqualTo(23.3);
+        assertThat(yieldRow.get("doublePourMl").asDouble()).isEqualTo(60);
+        assertThat(yieldRow.get("doublesPerBottle").asDouble()).isEqualTo(11.7);
+        Res badDouble = as("PATCH", "/products/" + p, Map.of("doublePourMl", 0));
+        assertThat(badDouble.status()).isEqualTo(400);
+        ok(200, "PATCH", "/products/" + p, Map.of("doublePourMl", 50));
+        assertThat(yieldRow(p).get("doublesPerBottle").asDouble()).isEqualTo(14);
         assertThat(ok(200, "GET", "/beverage/reports/bartender", null).isArray()).isTrue();
     }
 

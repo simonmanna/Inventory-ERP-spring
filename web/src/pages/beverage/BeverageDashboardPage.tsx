@@ -136,6 +136,7 @@ export function BeverageDashboardPage() {
               <tr className="border-b bg-muted/50">
                 <th className="px-3 py-2 text-left">{tx('Product')}</th>
                 <th className="px-3 py-2 text-right">{tx('Shots / bottle')}</th>
+                <th className="px-3 py-2 text-right">{tx('Doubles / bottle')}</th>
                 <th className="px-3 py-2 text-right">{tx('Sold ml')}</th>
                 <th className="px-3 py-2 text-right">{tx('Shots sold')}</th>
                 <th className="px-3 py-2 text-right">{tx('Bottles sold')}</th>
@@ -146,13 +147,14 @@ export function BeverageDashboardPage() {
                 <tr key={r.productId} className="border-b hover:bg-muted/20">
                   <td className="px-3 py-2">{r.product}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmt(r.shotsPerBottle)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{r.doublesPerBottle != null ? fmt(r.doublesPerBottle) : '—'}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmt(r.soldMl)}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmt(r.soldShots)}</td>
                   <td className="px-3 py-2 text-right font-mono">{fmt(r.bottlesSold)}</td>
                 </tr>
               ))}
               {yields.data && yields.data.length === 0 && (
-                <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">{tx('No data')}</td></tr>
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">{tx('No data')}</td></tr>
               )}
             </tbody>
           </table>

@@ -21,6 +21,18 @@ Set `APP_TIMEZONE` to the shop's zone (e.g. `Africa/Kampala`). It plays the role
 receipt/bill/KOT date and time, report "local" days and date-only filters. The JVM and the database session
 stay UTC (stored timestamps do not change). Default `UTC` = a Nest host without `TZ`.
 
+Optional modules load only when their flag is on (`ENABLE_BEVERAGE`, `ENABLE_HR`, ...; mirror with
+`VITE_ENABLE_*` for the web build) and are then gated per tenant by its `OrganizationModule` rows.
+Beverage control (bar bottle weighing) organization settings, all optional:
+
+| Setting key | Default | Effect |
+|---|---|---|
+| `beverage.varianceToleranceG` | `5` | Grams of variance per line before it is flagged (product `varianceToleranceG` wins). |
+| `beverage.requireAllBottlesWeighed` | `false` | `true`: a count with unweighed bottles that hold stock can only be submitted with a reason and manager approval (ADR-S004). |
+
+Grant `beverage:approve` only to supervisors: they approve flagged counts and unweighed exceptions and cannot
+approve a count they started.
+
 ## 3. First install
 
 ```bash

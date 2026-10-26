@@ -52,8 +52,9 @@ Any deviation from Nest behaviour must be listed here with the owner's approval.
 
 | # | Change | Status | Detail |
 |---|---|---|---|
-| 1 | `BottleCountLine.reasonCode` variance cause codes (draft input, line + variance-report output) | proposed — awaiting owner approval | [ADR-S004](../adr/ADR-S004-beverage-controls.md), `V6__beverage_controls.sql` |
-| 2 | Opt-in unweighed-bottle exception on submit (`beverage.requireAllBottlesWeighed`, `unweighedReason` + manager approval; `unweighedReason`/`unweighedCount` on the session) | proposed — awaiting owner approval | [ADR-S004](../adr/ADR-S004-beverage-controls.md) |
+| 1 | `BottleCountLine.reasonCode` variance cause codes (draft input, line + variance-report output) | approved by owner 2026-10-26 | [ADR-S004](../adr/ADR-S004-beverage-controls.md), `V6__beverage_controls.sql` |
+| 2 | Opt-in unweighed-bottle exception on submit (`beverage.requireAllBottlesWeighed`, `unweighedReason` + manager approval; `unweighedReason`/`unweighedCount` on the session) | approved by owner 2026-10-26 | [ADR-S004](../adr/ADR-S004-beverage-controls.md) |
+| 3 | Per-product double shot `Product.doublePourMl` (null = 2 × single); yield report adds `doublePourMl`, `doublesPerBottle` | approved by owner 2026-10-26 | [ADR-S004](../adr/ADR-S004-beverage-controls.md) §3, `V7__beverage_double_pour.sql` |
 
 ## Status
 
