@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.licensing;
 
+import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.AccessGuardInterceptor;
 import com.inventoryerp.kernel.web.ApiPathConfig;
 import com.inventoryerp.shared.web.ApiException;
@@ -105,6 +106,15 @@ public class LicenseEnforcementInterceptor implements HandlerInterceptor {
         RequiresFeature feature = AccessGuardInterceptor.find(method, RequiresFeature.class);
         if (feature != null && licenses.enforcing() && !state.grants(feature.value())) {
             throw refusal(LicenseMessages.featureNotLicensed(feature.value()), state);
+        }
+        // Same ceiling for a vertical module. The reconciler switches its OrganizationModule rows
+        // off, but the module guard (Nest parity) still allows a tenant with no rows at all and any
+        // module whose ENABLE_* flag is set — so the licence has to say no here itself. Only once a
+        // licence is held: an install whose trial ran out keeps its reads, as everywhere else.
+        RequiresModule module = AccessGuardInterceptor.find(method, RequiresModule.class);
+        String moduleFeature = module == null ? null : LicenseFeatures.featureForModule(module.value());
+        if (moduleFeature != null && licenses.enforcing() && state.licensed() && !state.grants(moduleFeature)) {
+            throw refusal(LicenseMessages.featureNotLicensed(moduleFeature), state);
         }
 
         if (state.allowsWrites() || !licenses.enforcing()) {

@@ -383,6 +383,27 @@ All four phases implemented, 2026-10-26.
 | P-L3 web | `web/src/features/license`, `pages/settings/LicensePage.tsx` | **done** — licence page, banner, global 402 dialog, licence ceiling on the sidebar and on Developer Settings. Typecheck and lint clean. |
 | P-L4 Android + ops | `android/.../LicenseBanner.kt`, `docker-compose.yml`, `.github/workflows/ci.yml` | **done** — licence carried on `/sync/pull`, persisted on the device, banner on the till, new sales blocked while the queue still drains. Compose profile, Dockerfile and a CI job for the authority. |
 
+### Fixed after the first live deployment (2026-10-26)
+
+1. **Online activation and check-in never worked.** `LicenseServerClient` read the authority's
+   answer with `EntityJson.parseJson`, which returns a `JsonNode`, then tested it for `Map` — so every
+   2xx answer was "unreadable" and reported as unreachable, while the authority had in fact
+   activated the install. Every other test stubbed the authority above the client.
+   `LicenseServerClientTest` now runs it against a real socket.
+2. **Suspend and revoke did not reach an install.** The authority answered a suspended or revoked
+   licence's heartbeat with a bare 403, and the install keeps the token it holds on any refusal, so
+   it traded on until that token's grace ran out (a year on a yearly plan). The heartbeat now hands
+   back a signed token with `lic.status` = `suspended` / `revoked`, which the state machine already
+   maps to `READ_ONLY` / `REVOKED`. A revoked licence gets it even though revoking released its slots.
+   `/activate` still refuses both with 403.
+3. **The licence was not a ceiling for vertical modules.** The reconciler only switches existing
+   `OrganizationModule` rows off, and the module guard (Nest parity) still allows a tenant with no
+   rows at all, or any module whose `ENABLE_*` flag is set. `LicenseEnforcementInterceptor` now
+   refuses a `@RequiresModule` route whose feature the held licence lacks (402,
+   `'<feature>' is not included in your licence.`), reads included, as `@RequiresFeature` does.
+4. `license-server/gradlew` was committed without its executable bit, so the authority's Docker
+   image never built; `Dockerfile.license` now `chmod`s it as well.
+
 ### Deliberate deviation from the frozen contract
 
 `GET /sync/pull` gained a `license` member (ADR-S001 freezes the ported routes; this is additive and
@@ -402,9 +423,8 @@ does not send it. Parity scenarios for `sync` should expect the extra member.
    (`web/src/lib/i18n/phrases/*.json`, empty values → English fallback). `pnpm web:i18n` therefore
    fails until a translator fills them. Machine-guessing a lockout message in three languages is not
    a risk worth taking: a cashier mis-told that the till is dead is a support call at best.
-3. **`backend/src/main/resources/license-keys.json` ships empty.** Fill it from
-   `GET /admin/keys/pinned` on the authority before cutting a release, or an air-gapped install
-   cannot verify an offline licence (a connected one fetches and caches the keys on first contact).
+3. ~~`license-keys.json` ships empty.~~ Filled 2026-10-26 with the production authority's first
+   key (`kid 9a76fdc6…`). Refill it from `GET /admin/keys/pinned` after every key rotation.
 4. **Clocks are defended in one direction only.** Winding a clock back cannot buy term (the
    high-water mark); winding it forward only expires the licence sooner, which costs the attacker,
    so it is not defended against.

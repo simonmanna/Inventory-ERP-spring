@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Talks to the licence authority. The only part of licensing that needs a network, and nothing it
@@ -136,11 +137,16 @@ public class LicenseServerClient {
     private Issued issued(HttpResponse<String> response) {
         int status = response.statusCode();
         if (status >= 200 && status < 300) {
-            Object parsed = EntityJson.parseJson(response.body());
-            if (!(parsed instanceof Map<?, ?> map)) {
+            JsonNode parsed;
+            try {
+                parsed = EntityJson.tree(response.body());
+            } catch (RuntimeException e) {
+                parsed = null;
+            }
+            if (parsed == null || !parsed.isObject()) {
                 throw new Unreachable("The licence server returned something unreadable", null);
             }
-            return new Issued(string(map.get("token")), string(map.get("kid")), string(map.get("status")));
+            return new Issued(string(parsed.get("token")), string(parsed.get("kid")), string(parsed.get("status")));
         }
         if (status >= 500) {
             throw new Unreachable("The licence server answered " + status, null);
@@ -152,24 +158,28 @@ public class LicenseServerClient {
     }
 
     private static String messageOf(String body) {
-        Object parsed;
+        JsonNode parsed;
         try {
-            parsed = EntityJson.parseJson(body);
+            parsed = EntityJson.tree(body);
         } catch (RuntimeException e) {
             return "The licence server refused this request.";
         }
-        if (parsed instanceof Map<?, ?> map && map.get("message") != null) {
-            Object message = map.get("message");
-            // Validation failures come back as a list of messages.
-            if (message instanceof java.util.List<?> list && !list.isEmpty()) {
-                return String.valueOf(list.getFirst());
-            }
-            return String.valueOf(message);
+        JsonNode message = parsed == null ? null : parsed.get("message");
+        if (message == null || message.isNull()) {
+            return "The licence server refused this request.";
         }
-        return "The licence server refused this request.";
+        // Validation failures come back as a list of messages.
+        if (message.isArray()) {
+            return message.isEmpty() ? "The licence server refused this request." : string(message.get(0));
+        }
+        return string(message);
     }
 
-    private static String string(Object value) {
-        return value == null ? null : String.valueOf(value);
+    /** Text of a JSON value; {@code null} for a missing or null node. Package-private for tests. */
+    static String string(JsonNode value) {
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        return value.isString() ? value.asString() : value.toString();
     }
 }

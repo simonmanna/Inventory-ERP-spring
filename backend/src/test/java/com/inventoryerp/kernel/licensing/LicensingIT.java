@@ -263,6 +263,28 @@ class LicensingIT extends ApiTestSupport {
         assertThat(as("GET", "/webhooks/endpoints", null).status()).isEqualTo(200);
     }
 
+    @Test
+    void anUnlicensedModuleIsRefusedEvenWhereTheModuleGuardWouldAllowIt() {
+        // The test profile sets app.modules.tasks=true, which the module guard honours whatever the
+        // OrganizationModule rows say — the licence must still be the ceiling.
+        applyLicence(licence("active", Instant.now().plus(Duration.ofDays(30)), 7,
+                List.of("crm", "accounting"), 5, 25, 1));
+
+        var refused = as("GET", "/tasks", null);
+
+        assertThat(refused.status()).isEqualTo(402);
+        assertThat(refused.body().path("message").asString())
+                .isEqualTo("'taskBoard' is not included in your licence.");
+    }
+
+    @Test
+    void aLicensedModuleIsNotRefusedByTheLicence() {
+        applyLicence(licence("active", Instant.now().plus(Duration.ofDays(30)), 7,
+                List.of("crm", "accounting", "taskBoard"), 5, 25, 1));
+
+        assertThat(as("GET", "/tasks", null).status()).isNotEqualTo(402);
+    }
+
     // ---- seat caps ----
 
     @Test

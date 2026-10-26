@@ -317,18 +317,26 @@ class LicenseServerIT {
 
     @Test
     @Order(13)
-    void suspendingStopsCheckInAndResumingRestoresIt() {
+    void suspendingReachesTheInstallOnItsNextCheckInAndResumingLiftsIt() {
         post("/api/v1/admin/licenses/" + licenseId + "/suspend",
                 Map.of("reason", "non-payment"), ownerToken);
 
-        Reply refused = post("/api/v1/heartbeat", Map.of("token", installToken), null);
-        assertThat(refused.status()).isEqualTo(403);
-        assertThat(refused.body().get("message"))
-                .isEqualTo("This licence is suspended. Contact your supplier.");
+        // A signed token saying so, not a bare refusal: the install keeps what it holds on a 403.
+        Reply suspended = post("/api/v1/heartbeat", Map.of("token", installToken), null);
+        assertThat(suspended.status()).isEqualTo(200);
+        assertThat(heartbeatStatus(suspended)).isEqualTo("suspended");
 
         assertThat(post("/api/v1/admin/licenses/" + licenseId + "/resume", null, ownerToken).status())
                 .isEqualTo(200);
-        assertThat(post("/api/v1/heartbeat", Map.of("token", installToken), null).status()).isEqualTo(200);
+        Reply resumed = post("/api/v1/heartbeat", Map.of("token", installToken), null);
+        assertThat(resumed.status()).isEqualTo(200);
+        assertThat(heartbeatStatus(resumed)).isEqualTo("active");
+    }
+
+    private Object heartbeatStatus(Reply reply) {
+        Jws.Parsed parsed = Jws.parse((String) reply.body().get("token"));
+        assertThat(Jws.verify(publicKeyFromJwks(parsed.kid()), parsed)).isTrue();
+        return licenceClaim(Json.readObject(parsed.payloadJson())).get("status");
     }
 
     @Test
@@ -356,10 +364,10 @@ class LicenseServerIT {
     void revokingEndsEverythingAtOnce() {
         post("/api/v1/admin/licenses/" + licenseId + "/revoke", Map.of("reason", "chargeback"), ownerToken);
 
-        Reply refused = post("/api/v1/heartbeat", Map.of("token", installToken), null);
-        assertThat(refused.status()).isEqualTo(403);
-        assertThat(refused.body().get("message"))
-                .isEqualTo("This licence has been revoked. Contact your supplier.");
+        // The install learns of it on its next check-in, from a token it can verify.
+        Reply revoked = post("/api/v1/heartbeat", Map.of("token", installToken), null);
+        assertThat(revoked.status()).isEqualTo(200);
+        assertThat(heartbeatStatus(revoked)).isEqualTo("revoked");
 
         Reply reactivation = post("/api/v1/activate",
                 Map.of("licenseKey", licenseKey, "fingerprint", FINGERPRINT_A), null);

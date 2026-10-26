@@ -110,22 +110,23 @@ public class ActivationService {
      * Routine check-in. The install sends the token it holds; it gets a fresh one back, which is how
      * a renewal, a suspension or a plan change reaches a customer without anyone touching the install.
      *
-     * <p>A revoked licence is refused here with 403 — the one case where the server can end a
-     * licence immediately rather than waiting for the token to lapse.
+     * <p>A suspended or revoked licence still gets a token, signed with {@code lic.status} set to
+     * {@code suspended} / {@code revoked}: that is what turns the install read-only at once. A bare
+     * 403 would not — the install keeps the token it holds on any refusal, so it would trade on until
+     * that token's grace ran out. Resuming is the same path in reverse: the next check-in carries
+     * {@code active} again.
      */
     @Transactional
     public Issued heartbeat(String token, Report report, String ip) {
         Verified verified = verify(token);
         LicenseService.Loaded loaded = licenses.load(verified.activation().getLicenseId());
-        LicenseStatus status = loaded.license().statusType();
-        if (status == LicenseStatus.REVOKED) {
-            throw ApiException.forbidden(LicenseMessages.REVOKED);
-        }
-        if (status == LicenseStatus.SUSPENDED) {
-            throw ApiException.forbidden(LicenseMessages.SUSPENDED);
-        }
 
         LicenseActivation activation = verified.activation();
+        if (loaded.license().statusType() == LicenseStatus.REVOKED) {
+            // Revoking released every slot, but the install must still learn of it — from a token it
+            // can verify, not from a refusal it would shrug off.
+            return issue(loaded, activation);
+        }
         if (!activation.isActive()) {
             // The slot was released from the admin side while this install was away.
             throw ApiException.forbidden(LicenseMessages.ALREADY_ACTIVATED);
