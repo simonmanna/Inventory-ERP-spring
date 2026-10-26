@@ -11,7 +11,7 @@ WORKDIR /src/license-server
 COPY license-server/gradlew license-server/settings.gradle.kts license-server/build.gradle.kts \
      license-server/gradle.properties ./
 COPY license-server/gradle gradle
-RUN ./gradlew --no-daemon dependencies > /dev/null
+RUN chmod +x gradlew && ./gradlew --no-daemon dependencies > /dev/null
 COPY license-server/src src
 RUN ./gradlew --no-daemon bootJar -x test \
  && java -Djarmode=tools -jar build/libs/license-server.jar extract --layers --launcher --destination /extracted

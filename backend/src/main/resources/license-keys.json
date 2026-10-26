@@ -11,5 +11,15 @@
     "app.license.server-url before it can verify a licence. An air-gapped deployment therefore needs",
     "this file filled in; a connected one will fetch and then cache the set on first contact."
   ],
-  "keys": []
+  "keys": [
+    {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "alg": "EdDSA",
+      "use": "sig",
+      "kid": "9a76fdc6003226960a365252e6feb279",
+      "x": "-dxhx5QfXrBtP3iclTOYD-T1xHnhO7XqjPGHZVbQAnQ",
+      "status": "current"
+    }
+  ]
 }

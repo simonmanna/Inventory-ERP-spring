@@ -57,4 +57,17 @@ public final class LicenseFeatures {
     public static String moduleName(String feature) {
         return MODULE_NAME_BY_FEATURE.getOrDefault(feature, feature);
     }
+
+    /**
+     * The feature a {@code @RequiresModule} name is sold as, or {@code null} for a module the
+     * licence does not price separately (orders, for example).
+     */
+    public static String featureForModule(String module) {
+        for (String feature : ALL) {
+            if (moduleName(feature).equals(module)) {
+                return feature;
+            }
+        }
+        return null;
+    }
 }
