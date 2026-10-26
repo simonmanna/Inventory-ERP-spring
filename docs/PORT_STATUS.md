@@ -20,7 +20,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [pos](spec/pos.md) | P5 | 219 | 219 |
 | [sync](spec/sync.md) | P6 | 8 | 8 |
 | [backup](spec/backup.md) | P6 | 13 | 13 |
-| [beverage](spec/beverage.md) | P7 | 10 | 0 |
+| [beverage](spec/beverage.md) | P7 | 10 | 10 |
 | [fixedasset](spec/fixedasset.md) | P7 | 54 | 0 |
 | [hr](spec/hr.md) | P7 | 140 | 140 |
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 0 |
@@ -28,7 +28,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **879** |
+| **total** | | **1118** | **889** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -838,16 +838,16 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## beverage
 
-- [ ] GET /api/v1/beverage/counts — BeverageCountController.list
-- [ ] GET /api/v1/beverage/counts/:id — BeverageCountController.get
-- [ ] POST /api/v1/beverage/counts/:id/cancel — BeverageCountController.cancel
-- [ ] PATCH /api/v1/beverage/counts/:id/draft — BeverageCountController.saveDraft
-- [ ] POST /api/v1/beverage/counts/:id/submit — BeverageCountController.submit
-- [ ] POST /api/v1/beverage/counts/start — BeverageCountController.start
-- [ ] GET /api/v1/beverage/reports/bartender — BeverageReportController.bartender
-- [ ] GET /api/v1/beverage/reports/dashboard — BeverageReportController.dashboard
-- [ ] GET /api/v1/beverage/reports/variance — BeverageReportController.variance
-- [ ] GET /api/v1/beverage/reports/yield — BeverageReportController.yieldReport
+- [x] GET /api/v1/beverage/counts — BeverageCountController.list
+- [x] GET /api/v1/beverage/counts/:id — BeverageCountController.get
+- [x] POST /api/v1/beverage/counts/:id/cancel — BeverageCountController.cancel
+- [x] PATCH /api/v1/beverage/counts/:id/draft — BeverageCountController.saveDraft
+- [x] POST /api/v1/beverage/counts/:id/submit — BeverageCountController.submit
+- [x] POST /api/v1/beverage/counts/start — BeverageCountController.start
+- [x] GET /api/v1/beverage/reports/bartender — BeverageReportController.bartender
+- [x] GET /api/v1/beverage/reports/dashboard — BeverageReportController.dashboard
+- [x] GET /api/v1/beverage/reports/variance — BeverageReportController.variance
+- [x] GET /api/v1/beverage/reports/yield — BeverageReportController.yieldReport
 
 ## fixedasset
 
