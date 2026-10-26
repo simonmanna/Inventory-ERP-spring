@@ -43,12 +43,14 @@ public class BeverageCountController {
             String bottleNumber,
             @OneOf({"MANUAL", "SCALE", "BLUETOOTH", "USB", "IMPORT", "API"}) String measurementSource) {}
 
-    /** {@code SaveBottleCountLineDto}. */
+    /** {@code SaveBottleCountLineDto} plus the ADR-S004 {@code reasonCode}. */
     public record SaveBottleCountLineRequest(
             @NotNull(message = "must be a string") String lineId,
             Double sealedFullCount,
             List<@Valid BottleReadingRequest> readings,
-            String reason) {}
+            String reason,
+            @OneOf({"spillage", "breakage", "complimentary", "staff_drink", "unrecorded_sale", "bottle_transfer",
+                    "measurement_error", "unexplained"}) String reasonCode) {}
 
     /** {@code SaveBottleCountDraftDto}. */
     public record SaveBottleCountDraftRequest(
@@ -56,8 +58,9 @@ public class BeverageCountController {
             String notes,
             @NotNull(message = "must be an array") List<@Valid SaveBottleCountLineRequest> lines) {}
 
-    /** {@code SubmitBottleCountDto}. */
-    public record SubmitBottleCountRequest(String approverId, String approverEmail, String managerPin) {}
+    /** {@code SubmitBottleCountDto} plus the ADR-S004 {@code unweighedReason}. */
+    public record SubmitBottleCountRequest(String approverId, String approverEmail, String managerPin,
+            String unweighedReason) {}
 
     private final BeverageCountService counts;
 
@@ -91,7 +94,7 @@ public class BeverageCountController {
         List<DraftLine> lines = dto.lines().stream().map(l -> new DraftLine(l.lineId(), l.sealedFullCount(),
                 l.readings() == null ? null : l.readings().stream()
                         .map(r -> new Reading(r.measuredWeightG(), r.bottleNumber(), r.measurementSource())).toList(),
-                l.reason())).toList();
+                l.reason(), l.reasonCode())).toList();
         return counts.saveDraft(id, lines, dto.name(), dto.notes());
     }
 
@@ -101,7 +104,7 @@ public class BeverageCountController {
     public Map<String, Object> submit(@PathVariable String id,
             @Valid @RequestBody(required = false) SubmitBottleCountRequest dto) {
         return counts.submit(id, dto == null ? null
-                : new Approval(dto.approverId(), dto.approverEmail(), dto.managerPin()));
+                : new Approval(dto.approverId(), dto.approverEmail(), dto.managerPin(), dto.unweighedReason()));
     }
 
     @PostMapping("/{id}/cancel")

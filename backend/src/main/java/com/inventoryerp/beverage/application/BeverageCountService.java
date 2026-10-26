@@ -63,11 +63,19 @@ public class BeverageCountService {
     /** One physical open-bottle weighing. */
     public record Reading(double measuredWeightG, String bottleNumber, String measurementSource) {}
 
-    /** One draft line save. */
-    public record DraftLine(String lineId, Double sealedFullCount, List<Reading> readings, String reason) {}
+    /** Variance cause codes for {@code BottleCountLine.reasonCode} (ADR-S004; not in Nest). */
+    public static final List<String> REASON_CODES = List.of("spillage", "breakage", "complimentary", "staff_drink",
+            "unrecorded_sale", "bottle_transfer", "measurement_error", "unexplained");
 
-    /** Optional manager-approval credentials on submit. */
-    public record Approval(String approverId, String approverEmail, String managerPin) {}
+    /** One draft line save; {@code reasonCode} is the ADR-S004 extension. */
+    public record DraftLine(String lineId, Double sealedFullCount, List<Reading> readings, String reason,
+            String reasonCode) {}
+
+    /**
+     * Optional manager-approval credentials on submit; {@code unweighedReason} is the ADR-S004 unweighed-bottle
+     * exception.
+     */
+    public record Approval(String approverId, String approverEmail, String managerPin, String unweighedReason) {}
 
     record ComputedReading(double measuredWeightG, String bottleNumber, String measurementSource, double remainingMl,
             String confidence) {}
@@ -107,6 +115,15 @@ public class BeverageCountService {
             }
         }
         return Double.isFinite(n) && n > 0 ? n : DEFAULT_TOLERANCE_G;
+    }
+
+    /** ADR-S004 opt-in: every bottle holding stock must be weighed (or excepted) before submit. */
+    private boolean requireAllBottlesWeighed() {
+        String raw = jdbc.sql("SELECT value::text FROM \"Setting\" WHERE \"organizationId\" = ? AND scope = 'organization'"
+                        + " AND key = 'beverage.requireAllBottlesWeighed' LIMIT 1")
+                .param(org()).query(String.class).optional().orElse(null);
+        JsonNode v = raw == null ? null : EntityJson.tree(raw);
+        return v != null && (v.isBoolean() ? v.asBoolean() : v.isString() && "true".equals(v.asString()));
     }
 
     /** Explicit location, else the active warehouse (where POS sales deduct stock). */
@@ -330,13 +347,13 @@ public class BeverageCountService {
                         .update();
             }
             jdbc.sql("UPDATE \"BottleCountLine\" SET \"sealedFullCount\" = ?, \"countedMl\" = ?, \"varianceMl\" = ?,"
-                            + " \"varianceG\" = ?, \"expectedShots\" = ?, reason = ?, confidence = ?, \"countedById\" = ?,"
-                            + " \"countedAt\" = " + (c.counted() ? NOW : "NULL")
+                            + " \"varianceG\" = ?, \"expectedShots\" = ?, reason = ?, \"reasonCode\" = ?, confidence = ?,"
+                            + " \"countedById\" = ?, \"countedAt\" = " + (c.counted() ? NOW : "NULL")
                             + " WHERE id = ? AND \"sessionId\" = ? AND \"organizationId\" = ?")
                     .params(BigDecimal.valueOf(sealed), c.counted() ? BigDecimal.valueOf(c.countedMl()) : null,
                             BigDecimal.valueOf(c.varianceMl()), BigDecimal.valueOf(c.varianceG()),
                             c.expectedShots() == null ? null : BigDecimal.valueOf(c.expectedShots()), l.reason(),
-                            c.confidence(), c.counted() ? user : null, l.lineId(), id, org())
+                            l.reasonCode(), c.confidence(), c.counted() ? user : null, l.lineId(), id, org())
                     .update();
         }
 
@@ -416,7 +433,20 @@ public class BeverageCountService {
         }
         List<Map<String, Object>> varianceLines = counted.stream().filter(l -> dec(l, "varianceMl").signum() != 0)
                 .toList();
-        boolean needsApproval = !flagged.isEmpty();
+
+        // ADR-S004: bottles that hold stock but were not weighed need a recorded, approved exception (opt-in).
+        long unweighed = 0;
+        String unweighedReason = null;
+        if (requireAllBottlesWeighed()) {
+            unweighed = lines.stream().filter(l -> l.get("countedMl") == null && dec(l, "systemMl").signum() > 0).count();
+            String given = dto == null ? null : dto.unweighedReason();
+            if (unweighed > 0 && (given == null || given.trim().isEmpty())) {
+                throw ApiException.badRequest(unweighed + " bottle line(s) with stock were not weighed. Weigh them, or"
+                        + " submit an unweighed exception with a reason and manager approval.");
+            }
+            unweighedReason = unweighed > 0 ? given.trim() : null;
+        }
+        boolean needsApproval = !flagged.isEmpty() || unweighed > 0;
 
         Map<String, Object> session = SqlRows.one(BottleCountSession.class, jdbc.sql("SELECT * FROM"
                 + " \"BottleCountSession\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL FOR UPDATE")
@@ -428,8 +458,10 @@ public class BeverageCountService {
 
         String approverId = null;
         if (needsApproval) {
-            Approval a = dto == null ? new Approval(null, null, null) : dto;
-            approverId = assertManagerApproval(a, str(session, "startedById"));
+            Approval a = dto == null ? new Approval(null, null, null, null) : dto;
+            approverId = assertManagerApproval(a, str(session, "startedById"), !flagged.isEmpty()
+                    ? "This count has a variance over tolerance and requires manager approval."
+                    : "Submitting with unweighed bottles requires manager approval.");
         }
 
         String adjustmentId = null;
@@ -465,17 +497,23 @@ public class BeverageCountService {
 
         jdbc.sql("UPDATE \"BottleCountSession\" SET status = 'submitted', \"submittedById\" = ?, \"submittedAt\" = " + NOW
                         + ", \"approvedById\" = ?, \"approvedAt\" = " + (approverId != null ? NOW : "NULL")
-                        + ", \"adjustmentId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
-                .params(user, approverId, adjustmentId, id, org()).update();
+                        + ", \"adjustmentId\" = ?, \"unweighedReason\" = ?, \"unweighedCount\" = ?, \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(user, approverId, adjustmentId, unweighedReason, (int) unweighed, id, org()).update();
 
-        audit.recordInTx(AuditInput.of("BottleCountSession", id, "measure", null, Obj.of(
+        Map<String, Object> auditValues = Obj.of(
                 "countCode", session.get("countCode"),
                 "locationId", session.get("locationId"),
                 "counterId", session.get("startedById"),
                 "approverId", approverId,
                 "adjustmentId", adjustmentId,
                 "flaggedLines", flagged.size(),
-                "varianceLines", varianceLines.size())));
+                "varianceLines", varianceLines.size());
+        if (unweighed > 0) {
+            auditValues.put("unweighedLines", unweighed);
+            auditValues.put("unweighedReason", unweighedReason);
+        }
+        audit.recordInTx(AuditInput.of("BottleCountSession", id, "measure", null, auditValues));
 
         return withLines(session(id));
     }
@@ -494,9 +532,9 @@ public class BeverageCountService {
      * Manager-approval gate (segregation of duties): approver by id or email, active, not the counter, PIN when
      * given, and holding {@code beverage:approve}. Returns the approver id.
      */
-    private String assertManagerApproval(Approval a, String counterUserId) {
+    private String assertManagerApproval(Approval a, String counterUserId, String missingMessage) {
         if (a.approverId() == null && a.approverEmail() == null) {
-            throw ApiException.badRequest("This count has a variance over tolerance and requires manager approval.");
+            throw ApiException.badRequest(missingMessage);
         }
         Map<String, Object> manager = a.approverId() != null
                 ? SqlRows.one(jdbc.sql("SELECT id, \"pinHash\" FROM \"User\" WHERE id = ? AND \"organizationId\" = ?"

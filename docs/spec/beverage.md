@@ -48,7 +48,12 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+Any deviation from Nest behaviour must be listed here with the owner's approval.
+
+| # | Change | Status | Detail |
+|---|---|---|---|
+| 1 | `BottleCountLine.reasonCode` variance cause codes (draft input, line + variance-report output) | proposed — awaiting owner approval | [ADR-S004](../adr/ADR-S004-beverage-controls.md), `V6__beverage_controls.sql` |
+| 2 | Opt-in unweighed-bottle exception on submit (`beverage.requireAllBottlesWeighed`, `unweighedReason` + manager approval; `unweighedReason`/`unweighedCount` on the session) | proposed — awaiting owner approval | [ADR-S004](../adr/ADR-S004-beverage-controls.md) |
 
 ## Status
 

@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatCurrency } from '@/lib/utils';
 import {
-  useBeverageDashboard, useBeverageVariance, useBeverageYield, useBeverageBartender,
+  useBeverageDashboard, useBeverageVariance, useBeverageYield, useBeverageBartender, BOTTLE_REASON_CODES,
 } from '@/features/beverage/api';
 import { tx } from '@/lib/i18n/tx';
 
@@ -105,6 +105,7 @@ export function BeverageDashboardPage() {
                 <th className="px-3 py-2 text-right">{tx('Variance g')}</th>
                 <th className="px-3 py-2 text-right">{tx('Loss value')}</th>
                 <th className="px-3 py-2 text-center">{tx('Confidence')}</th>
+                <th className="px-3 py-2 text-left">{tx('Cause')}</th>
               </tr>
             </thead>
             <tbody>
@@ -117,10 +118,11 @@ export function BeverageDashboardPage() {
                   <td className="px-3 py-2 text-right font-mono">{r.varianceG > 0 ? '+' : ''}{fmt(r.varianceG)}</td>
                   <td className="px-3 py-2 text-right font-mono">{r.lossValue ? formatCurrency(r.lossValue) : '—'}</td>
                   <td className="px-3 py-2 text-center">{r.confidence && <Badge variant="outline" className={CONF[r.confidence]}>{r.confidence.replace('_', ' ').toLowerCase()}</Badge>}</td>
+                  <td className="px-3 py-2">{r.reasonCode ? tx(BOTTLE_REASON_CODES.find((c) => c.value === r.reasonCode)?.label ?? r.reasonCode) : '—'}</td>
                 </tr>
               ))}
               {variance.data && variance.data.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">{tx('No bottle counts yet')}</td></tr>
+                <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">{tx('No bottle counts yet')}</td></tr>
               )}
             </tbody>
           </table>

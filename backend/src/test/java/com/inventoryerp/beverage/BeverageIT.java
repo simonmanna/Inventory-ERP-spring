@@ -217,6 +217,68 @@ class BeverageIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("ADR-S004: reason codes; opt-in unweighed-bottle exception needs a reason and manager approval")
+    void controls() {
+        String loc = location();
+        String weighedP = bottleProduct();
+        String skippedP = bottleProduct();
+        stockIn(loc, weighedP, 700);
+        stockIn(loc, skippedP, 700);
+        String settingId = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Setting\" (id, \"organizationId\", key, value, \"updatedAt\")"
+                        + " VALUES (?, ?, 'beverage.requireAllBottlesWeighed', 'true'::jsonb, now())")
+                .params(settingId, demoOrg).update();
+        try {
+            JsonNode count = ok(201, "POST", "/beverage/counts/start", Map.of("locationId", loc));
+            String id = count.get("id").asString();
+            String lineId = lineFor(count, weighedP).get("id").asString();
+            Res badCode = as("PATCH", "/beverage/counts/" + id + "/draft", Map.of("lines", List.of(Map.of("lineId",
+                    lineId, "reasonCode", "theft"))));
+            assertThat(badCode.status()).isEqualTo(400);
+            JsonNode saved = ok(200, "PATCH", "/beverage/counts/" + id + "/draft", Map.of("lines", List.of(Map.of(
+                    "lineId", lineId, "reasonCode", "complimentary", "readings", List.of(Map.of("measuredWeightG",
+                            1200))))));
+            JsonNode line = lineFor(saved, weighedP);
+            assertThat(line.get("reasonCode").asString()).isEqualTo("complimentary");
+            assertThat(line.get("confidence").asString()).isEqualTo("GOOD");
+
+            Res skipped = as("POST", "/beverage/counts/" + id + "/submit", Map.of());
+            assertThat(skipped.status()).isEqualTo(400);
+            assertThat(skipped.body().get("message").asString()).endsWith(" bottle line(s) with stock were not weighed."
+                    + " Weigh them, or submit an unweighed exception with a reason and manager approval.");
+            Res noApprover = as("POST", "/beverage/counts/" + id + "/submit", Map.of("unweighedReason", "Locked cabinet"));
+            assertThat(noApprover.status()).isEqualTo(400);
+            assertThat(noApprover.body().get("message").asString())
+                    .isEqualTo("Submitting with unweighed bottles requires manager approval.");
+            String manager = approverToken("bev-exc-" + suffix() + "@demo.test", true);
+            JsonNode done = ok(201, "POST", "/beverage/counts/" + id + "/submit",
+                    Map.of("unweighedReason", " Locked cabinet ", "approverId", manager));
+            assertThat(done.get("status").asString()).isEqualTo("submitted");
+            assertThat(done.get("unweighedReason").asString()).isEqualTo("Locked cabinet");
+            assertThat(done.get("unweighedCount").asInt()).isGreaterThanOrEqualTo(1);
+            assertThat(done.get("approvedById").asString()).isEqualTo(manager);
+            assertThat(onHand(skippedP, loc)).isEqualByComparingTo("700");
+            JsonNode variance = ok(200, "GET", "/beverage/reports/variance?locationId=" + loc, null);
+            assertThat(variance.get(0).has("reasonCode")).isTrue();
+        } finally {
+            jdbc.sql("DELETE FROM \"Setting\" WHERE id = ?").param(settingId).update();
+        }
+
+        String loc2 = location();
+        String p2 = bottleProduct();
+        stockIn(loc2, p2, 700);
+        JsonNode optOut = ok(201, "POST", "/beverage/counts/start", Map.of("locationId", loc2));
+        String other = lineFor(optOut, p2).get("id").asString();
+        assertThat(other).isNotEmpty();
+        JsonNode anyLine = optOut.get("lines").get(0);
+        ok(200, "PATCH", "/beverage/counts/" + optOut.get("id").asString() + "/draft", Map.of("lines", List.of(Map.of(
+                "lineId", anyLine.get("id").asString(), "sealedFullCount", 0, "readings", List.of(Map.of("measuredWeightG",
+                        anyLine.get("productId").asString().equals(p2) ? 1200 : 500))))));
+        JsonNode nest = ok(201, "POST", "/beverage/counts/" + optOut.get("id").asString() + "/submit", Map.of());
+        assertThat(nest.get("unweighedCount").asInt()).isZero();
+    }
+
+    @Test
     @DisplayName("authorization matrix: 401 without token, 403 without permission")
     void authorization() {
         assertThat(assertAuthorizationMatrix("com.inventoryerp.beverage")).isEqualTo(10);

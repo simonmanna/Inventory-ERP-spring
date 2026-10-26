@@ -129,7 +129,7 @@ public class BeverageReportService {
         Map<String, Map<String, Object>> byProduct = new HashMap<>();
         for (Map<String, Object> s : SqlRows.list(spec)) {
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT \"productId\", \"systemMl\", \"countedMl\","
-                    + " \"varianceMl\", \"varianceG\", confidence FROM \"BottleCountLine\" WHERE \"sessionId\" = ?"
+                    + " \"varianceMl\", \"varianceG\", confidence, \"reasonCode\" FROM \"BottleCountLine\" WHERE \"sessionId\" = ?"
                     + " AND \"organizationId\" = ?").params(s.get("id"), org()))) {
                 if (!byProduct.containsKey(str(l, "productId"))) {
                     l.put("submittedAt", s.get("submittedAt"));
@@ -152,13 +152,14 @@ public class BeverageReportService {
                     "countedMl", JsNumbers.js(r.countedMl), "varianceMl", JsNumbers.js(r.varianceMl),
                     "varianceG", JsNumbers.js(r.varianceG), "variancePct", JsNumbers.js(JsNumbers.round(r.variancePct, 2)),
                     "lossValue", JsNumbers.js(JsNumbers.round(r.lossValue, 2)), "confidence", r.confidence,
-                    "countedAt", r.countedAt));
+                    "countedAt", r.countedAt, "reasonCode", r.reasonCode));
         }
         return rows;
     }
 
     private record Row(String productId, String product, double systemMl, double countedMl, double varianceMl,
-            double varianceG, double variancePct, double lossValue, String confidence, Object countedAt) {}
+            double varianceG, double variancePct, double lossValue, String confidence, Object countedAt,
+            String reasonCode) {}
 
     private List<Row> varianceRows(String locationId) {
         List<BevProduct> products = beverageProducts();
@@ -175,7 +176,7 @@ public class BeverageReportService {
             double variancePct = systemMl > 0 ? (varianceMl / systemMl) * 100 : 0;
             rows.add(new Row(p.id(), p.name(), systemMl, dec(l, "countedMl").doubleValue(), varianceMl,
                     dec(l, "varianceG").doubleValue(), variancePct, JsNumbers.round(lossValue, 2), str(l, "confidence"),
-                    SqlRows.value(l.get("submittedAt"))));
+                    SqlRows.value(l.get("submittedAt")), str(l, "reasonCode")));
         }
         return rows;
     }
