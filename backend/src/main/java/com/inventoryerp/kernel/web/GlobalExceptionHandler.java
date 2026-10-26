@@ -108,7 +108,10 @@ public class GlobalExceptionHandler {
     ResponseEntity<Object> unreadable(HttpMessageNotReadableException ex, HttpServletRequest req) {
         Throwable cause = ex.getMostSpecificCause();
         if (cause instanceof UnrecognizedPropertyException u) {
-            return badRequest(req, ex, List.of("property " + u.getPropertyName() + " should not exist"));
+            // class-validator prefixes a nested whitelist error with its parent path: "lines.0.property x ..."
+            String parent = parentPath(u.getPath());
+            return badRequest(req, ex, List.of((parent.isEmpty() ? "" : parent + ".") + "property "
+                    + u.getPropertyName() + " should not exist"));
         }
         if (cause instanceof tools.jackson.core.exc.StreamReadException) {
             // Express body-parser: malformed JSON is a 400 with the parser message.
@@ -231,6 +234,16 @@ public class GlobalExceptionHandler {
             out.add(prefixed(field, e.getDefaultMessage()));
         }
         return out;
+    }
+
+    /** Dotted JSON path of everything above the last reference ({@code lines.0.readings.0}); empty at top level. */
+    static String parentPath(List<tools.jackson.core.JacksonException.Reference> path) {
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < path.size() - 1; i++) {
+            tools.jackson.core.JacksonException.Reference ref = path.get(i);
+            parts.add(ref.getPropertyName() != null ? ref.getPropertyName() : String.valueOf(ref.getIndex()));
+        }
+        return String.join(".", parts);
     }
 
     /** class-validator style "{field} {constraint}"; custom messages already naming the field pass through. */

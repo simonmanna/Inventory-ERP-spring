@@ -38,12 +38,12 @@ function diff(a, b, at = '$', out = []) {
   return out;
 }
 
-// Allowed-diff paths are prefixes; a `*` segment matches any one key or array index ($.body.*.reasonCode).
+// Allowed-diff paths are prefixes and `scenario` is a file-name prefix; a `*` segment matches any one key or array index ($.body.*.reasonCode).
 const escapeRe = (t) => t.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 const pathMatches = (allowedPath, p) =>
   new RegExp('^' + allowedPath.split('*').map(escapeRe).join('[^.]+') + '(\\.|$)').test(p);
 const isAllowed = (d, file, stepName) => allowed.some((a) =>
-  (!a.step || a.step === stepName) && (!a.scenario || a.scenario === file) && pathMatches(a.path, d.path));
+  (!a.step || a.step === stepName) && (!a.scenario || file.startsWith(a.scenario)) && pathMatches(a.path, d.path));
 
 const pick = (obj, p) => p.replace(/^\$\.?/, '').split('.').filter(Boolean).reduce((o, k) => o?.[k], obj);
 const subst = (v, vars) => JSON.parse(JSON.stringify(v ?? null).replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? ''));

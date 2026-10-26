@@ -222,6 +222,12 @@ class BeverageIT extends ApiTestSupport {
         assertThat(badReading.status()).isEqualTo(400);
         Res extra = as("POST", "/beverage/counts/start", Map.of("locationId", loc, "nope", 1));
         assertThat(extra.status()).isEqualTo(400);
+        assertThat(extra.body().get("message").get(0).asString()).isEqualTo("property nope should not exist");
+        Res nestedExtra = as("PATCH", "/beverage/counts/" + id + "/draft", Map.of("lines", List.of(Map.of("lineId", "x",
+                "readings", List.of(Map.of("measuredWeightG", 1, "nope", 1))))));
+        assertThat(nestedExtra.status()).isEqualTo(400);
+        assertThat(nestedExtra.body().get("message").get(0).asString())
+                .isEqualTo("lines.0.readings.0.property nope should not exist");
 
         Res foreign = call("GET", "/beverage/counts/" + first.get("id").asString(), null, otherToken);
         assertThat(foreign.status()).isIn(403, 404);

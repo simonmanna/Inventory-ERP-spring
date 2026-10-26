@@ -245,7 +245,7 @@ class InventoryIT extends ApiTestSupport {
         Res extra = as("POST", "/inventory/direct-stock/in", Map.of("locationId", loc, "responsibleById", adminId,
                 "approvedById", adminId, "items", List.of(in)));
         assertThat(extra.status()).isEqualTo(400);
-        assertThat(extra.body().get("message").get(0).asString()).isEqualTo("property serialNumbers should not exist");
+        assertThat(extra.body().get("message").get(0).asString()).isEqualTo("items.0.property serialNumbers should not exist");
         stockIn(loc, List.of(line(p, 2, 10)));
         JsonNode out = ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById",
                 adminId, "approvedById", adminId, "items", List.of(line(p, 1, null))));

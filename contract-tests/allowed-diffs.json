@@ -1,11 +1,13 @@
 [
   { "path": "$.body.accessToken", "reason": "Spring access tokens omit the permissions claim (CONTRACT section 7), so the token string differs by design." },
-  { "scenario": "beverage-control.json", "path": "$.body.*.unweighedReason", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
-  { "scenario": "beverage-control.json", "path": "$.body.*.unweighedCount", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
-  { "scenario": "beverage-control.json", "path": "$.body.unweighedReason", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
-  { "scenario": "beverage-control.json", "path": "$.body.unweighedCount", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
-  { "scenario": "beverage-control.json", "path": "$.body.lines.*.reasonCode", "reason": "ADR-S004 (approved): additive variance cause code on count lines." },
-  { "scenario": "beverage-control.json", "path": "$.body.*.reasonCode", "reason": "ADR-S004 (approved): additive variance cause code in the variance report." },
-  { "scenario": "beverage-control.json", "path": "$.body.*.doublePourMl", "reason": "ADR-S004 (approved): additive double-shot size in the yield report." },
-  { "scenario": "beverage-control.json", "path": "$.body.*.doublesPerBottle", "reason": "ADR-S004 (approved): additive doubles-per-bottle in the yield report." }
+  { "scenario": "beverage-", "path": "$.body.*.unweighedReason", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
+  { "scenario": "beverage-", "path": "$.body.*.unweighedCount", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
+  { "scenario": "beverage-", "path": "$.body.unweighedReason", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
+  { "scenario": "beverage-", "path": "$.body.unweighedCount", "reason": "ADR-S004 (approved): additive session field for the unweighed-bottle exception." },
+  { "scenario": "beverage-", "path": "$.body.lines.*.reasonCode", "reason": "ADR-S004 (approved): additive variance cause code on count lines." },
+  { "scenario": "beverage-", "path": "$.body.*.reasonCode", "reason": "ADR-S004 (approved): additive variance cause code in the variance report." },
+  { "scenario": "beverage-", "path": "$.body.*.doublePourMl", "reason": "ADR-S004 (approved): additive double-shot size in the yield report." },
+  { "scenario": "beverage-", "path": "$.body.doublePourMl", "reason": "ADR-S004 (approved): additive Product.doublePourMl (V7)." },
+  { "scenario": "beverage-", "path": "$.body.*.doublesPerBottle", "reason": "ADR-S004 (approved): additive doubles-per-bottle in the yield report." },
+  { "scenario": "beverage-", "step": "bottle product", "path": "$.body.units", "reason": "ADR-S003: Spring product responses carry per-product units (V5); Nest has none." }
 ]
