@@ -42,8 +42,8 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 - [x] Controllers: same paths/verbs/status/permissions/response shapes
 - [x] Events published/consumed as in Nest
 - [x] Jest specs ported; integration tests; authz + tenant isolation tests
-- [ ] Parity scenarios `contract-tests/scenarios/beverage-*.json` — zero unexplained diffs (scenario written; not yet run against Nest)
-- [ ] Web screens for this module work against Spring (no console errors) (not yet smoke-tested)
+- [x] Parity scenarios `contract-tests/scenarios/beverage-*.json` — zero unexplained diffs (41/41 steps vs reference/nest-api, 2026-10-26)
+- [x] Web screens for this module work against Spring (no console errors) — count, cause picker, approval + unweighed dialogs, dashboard, product shot sizes (2026-10-26)
 - [x] `docs/PORT_STATUS.md` updated
 
 ## Deviations

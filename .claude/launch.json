@@ -4,20 +4,38 @@
     {
       "name": "api-3011",
       "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
-      "runtimeArgs": ["-c", "cd backend && PORT=3011 ./gradlew bootRun --console=plain"],
+      "runtimeArgs": [
+        "-c",
+        "cd backend && PORT=3011 ./gradlew bootRun --console=plain"
+      ],
       "port": 3011
     },
     {
       "name": "api-walk",
       "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
-      "runtimeArgs": ["-c", "cd backend && PORT=3011 SPRING_PROFILES_ACTIVE=seed JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/erp_walk?stringtype=unspecified' ENABLE_ORDERS=true ENABLE_HR=true APP_TIMEZONE=Africa/Kampala ./gradlew bootRun --console=plain"],
+      "runtimeArgs": [
+        "-c",
+        "cd backend && PORT=3011 SPRING_PROFILES_ACTIVE=seed JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/erp_walk?stringtype=unspecified' ENABLE_ORDERS=true ENABLE_HR=true APP_TIMEZONE=Africa/Kampala ./gradlew bootRun --console=plain"
+      ],
       "port": 3011
     },
     {
       "name": "web-returns",
       "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
-      "runtimeArgs": ["-c", "cd web && npx vite --config vite.returns-preview.config.mjs"],
+      "runtimeArgs": [
+        "-c",
+        "cd web && npx vite --config vite.returns-preview.config.mjs"
+      ],
       "port": 5179
+    },
+    {
+      "name": "api-acct",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && PORT=3011 SPRING_PROFILES_ACTIVE=seed JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/erp_acct_verify?stringtype=unspecified' ENABLE_ASSETS=true ENABLE_HR=true ./gradlew bootRun --console=plain"
+      ],
+      "port": 3011
     }
   ]
 }
