@@ -78,6 +78,12 @@ import { InventoryValuationPage } from '@/pages/accounting/inventory-valuation';
 import { InventoryGlTieOutPage } from '@/pages/accounting/inventory-gl-tieout';
 import { YearEndClosePage } from '@/pages/accounting/year-end-close';
 import { TrialBalancePage } from '@/pages/accounting/trial-balance';
+import { BudgetsPage } from '@/pages/accounting/budgets';
+import { BudgetDetailPage } from '@/pages/accounting/budget-detail';
+import { OpeningBalancesPage } from '@/pages/accounting/opening-balances';
+import { TaxReportPage } from '@/pages/accounting/tax-report';
+import { ConsolidatedReportPage } from '@/pages/accounting/consolidated-report';
+import { StatementsPage } from '@/pages/invoicing/statements';
 import { DetailedAccountingReportPage } from '@/pages/accounting/detailed-report';
 import { BalanceSheetPage } from '@/pages/accounting/balance-sheet';
 import { InvoicesPage } from '@/pages/invoicing/invoices';
@@ -294,6 +300,12 @@ export function App() {
           <Route path="/journal-entries/new" element={<JournalEntryCreatePage />} />
           <Route path="/journal-entries/:id" element={<JournalEntryDetailPage />} />
           <Route path="/trial-balance" element={<RequireReport reportId="accounting.trial-balance"><TrialBalancePage /></RequireReport>} />
+          <Route path="/budgets" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetsPage /></RequirePermission>} />
+          <Route path="/budgets/:id" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetDetailPage /></RequirePermission>} />
+          <Route path="/opening-balances" element={<RequirePermission permission={PERMISSIONS.openingBalance.read}><OpeningBalancesPage /></RequirePermission>} />
+          <Route path="/tax-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><TaxReportPage /></RequirePermission>} />
+          <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
+          <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
           <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />
           <Route path="/accounting-detailed-report" element={<RequireReport reportId="accounting.detailed"><DetailedAccountingReportPage /></RequireReport>} />
           <Route path="/profit-and-loss" element={<RequireReport reportId="accounting.profit-and-loss"><ProfitAndLossPage /></RequireReport>} />

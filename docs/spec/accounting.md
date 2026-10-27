@@ -95,6 +95,17 @@ Same as Nest, kept on purpose:
   the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
 - `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
 
+## Extensions beyond Nest (ADR-S005)
+
+These are additive routes the owner asked for. Nest has no counterpart.
+- `/budgets` (CRUD, `PUT /:id/lines`, `POST /:id/approve`, `POST /:id/reopen`, `GET /:id/vs-actual`), with
+  permissions `budget:*`. Tables are `Budget` and `BudgetLine` (V8). Lines can be edited only while the budget is
+  draft, and approving it locks them. Actuals are posted GL lines in each account's natural sign, filtered by the
+  budget's branch or cost centre.
+- `GET /reports/accounting/consolidated?from&to&statement=pl|tb` (`report:accounting`) shows each branch side by
+  side, plus the consolidated total. Lines are attributed by their line `branchId`; lines without one fall into
+  `unassigned`.
+
 ## Status
 
 P2: 110/110 routes. Tests: `AccountingIT` (seed, accounts, journal entries + maker-checker, period

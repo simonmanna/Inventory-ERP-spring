@@ -92,6 +92,18 @@ export const PERMISSIONS = {
     update: 'cost_center:update',
     delete: 'cost_center:delete',
   },
+  // ---- ADR-S005 — accounting completion ----
+  budget: {
+    read: 'budget:read',
+    create: 'budget:create',
+    update: 'budget:update',
+    delete: 'budget:delete',
+    approve: 'budget:approve',
+  },
+  openingBalance: {
+    read: 'opening_balance:read',
+    post: 'opening_balance:post',
+  },
 
   // ---- Accounting (Phase 2) ----
   account: {
@@ -145,6 +157,7 @@ export const PERMISSIONS = {
     post: 'invoice:post',
     cancel: 'invoice:cancel',
     delete: 'invoice:delete',
+    send: 'invoice:send',
   },
   creditNote: {
     read: 'credit_note:read',

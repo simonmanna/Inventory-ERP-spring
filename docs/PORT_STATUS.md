@@ -21,16 +21,20 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [sync](spec/sync.md) | P6 | 8 | 8 |
 | [backup](spec/backup.md) | P6 | 13 | 13 |
 | [beverage](spec/beverage.md) | P7 | 10 | 10 |
-| [fixedasset](spec/fixedasset.md) | P7 | 54 | 0 |
+| [fixedasset](spec/fixedasset.md) | P7 | 54 | 54 |
 | [hr](spec/hr.md) | P7 | 140 | 140 |
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 0 |
 | [rental](spec/rental.md) | P7 | 47 | 0 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **889** |
+| **total** | | **1118** | **943** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
+
+**Extensions beyond Nest (ADR-S005, not counted above):** 20 routes. `/budgets` (9), `/reports/accounting/consolidated`,
+`/opening-balances` (GET, POST), `/reports/tax/summary`, AR / AP statements (JSON, PDF, e-mail; 5), `/invoices/:id/pdf`
+and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 ## kernel
 
@@ -851,60 +855,60 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## fixedasset
 
-- [ ] GET /api/v1/asset-categories — AssetCategoryController.list
-- [ ] POST /api/v1/asset-categories — AssetCategoryController.create
-- [ ] DELETE /api/v1/asset-categories/:id — AssetCategoryController.remove
-- [ ] GET /api/v1/asset-categories/:id — AssetCategoryController.findOne
-- [ ] PATCH /api/v1/asset-categories/:id — AssetCategoryController.update
-- [ ] GET /api/v1/asset-categories/all — AssetCategoryController.findAll
-- [ ] GET /api/v1/fixed-assets — AssetController.list
-- [ ] POST /api/v1/fixed-assets — AssetController.create
-- [ ] GET /api/v1/fixed-assets-dashboard/reports/:type — AssetDashboardController.reports
-- [ ] GET /api/v1/fixed-assets-dashboard/summary — AssetDashboardController.summary
-- [ ] GET /api/v1/fixed-assets-dashboard/upcoming — AssetDashboardController.upcoming
-- [ ] DELETE /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.remove
-- [ ] GET /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.find
-- [ ] POST /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.upsert
-- [ ] GET /api/v1/fixed-assets/:assetId/assignments — AssetAssignmentController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/assignments — AssetAssignmentController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/assignments/:id/return — AssetAssignmentController.returnAsset
-- [ ] GET /api/v1/fixed-assets/:assetId/checkinout — AssetCheckInOutController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/checkinout — AssetCheckInOutController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/checkinout/:id/checkin — AssetCheckInOutController.checkIn
-- [ ] GET /api/v1/fixed-assets/:assetId/depreciation — AssetDepreciationController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/depreciation/:id/post — AssetDepreciationController.postEntry
-- [ ] GET /api/v1/fixed-assets/:assetId/depreciation/period/:period — AssetDepreciationController.byPeriod
-- [ ] POST /api/v1/fixed-assets/:assetId/depreciation/run — AssetDepreciationController.run
-- [ ] GET /api/v1/fixed-assets/:assetId/disposal — AssetDisposalController.find
-- [ ] POST /api/v1/fixed-assets/:assetId/disposal — AssetDisposalController.create
-- [ ] GET /api/v1/fixed-assets/:assetId/inspections — AssetInspectionController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/inspections — AssetInspectionController.create
-- [ ] GET /api/v1/fixed-assets/:assetId/insurance — AssetInsuranceController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/insurance — AssetInsuranceController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/insurance/:id — AssetInsuranceController.update
-- [ ] GET /api/v1/fixed-assets/:assetId/maintenance — AssetMaintenanceController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/maintenance — AssetMaintenanceController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/maintenance/:id — AssetMaintenanceController.update
-- [ ] GET /api/v1/fixed-assets/:assetId/maintenance/due — AssetMaintenanceController.due
-- [ ] GET /api/v1/fixed-assets/:assetId/repairs — AssetRepairController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/repairs — AssetRepairController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/repairs/:id — AssetRepairController.update
-- [ ] GET /api/v1/fixed-assets/:assetId/revaluations — AssetRevaluationController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/revaluations — AssetRevaluationController.create
-- [ ] GET /api/v1/fixed-assets/:assetId/transfers — AssetTransferController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/transfers — AssetTransferController.create
-- [ ] GET /api/v1/fixed-assets/:assetId/warranties — AssetWarrantyController.list
-- [ ] POST /api/v1/fixed-assets/:assetId/warranties — AssetWarrantyController.create
-- [ ] PATCH /api/v1/fixed-assets/:assetId/warranties/:id — AssetWarrantyController.update
-- [ ] GET /api/v1/fixed-assets/:assetId/warranties/expiring — AssetWarrantyController.expiring
-- [ ] DELETE /api/v1/fixed-assets/:id — AssetController.remove
-- [ ] GET /api/v1/fixed-assets/:id — AssetController.findOne
-- [ ] PATCH /api/v1/fixed-assets/:id — AssetController.update
-- [ ] PATCH /api/v1/fixed-assets/:id/restore — AssetController.restore
-- [ ] GET /api/v1/fixed-assets/by-barcode/:barcode — AssetController.findByBarcode
-- [ ] GET /api/v1/fixed-assets/by-code/:code — AssetController.findByCode
-- [ ] GET /api/v1/fixed-assets/dashboard — AssetController.dashboard
-- [ ] GET /api/v1/fixed-assets/search — AssetController.search
+- [x] GET /api/v1/asset-categories — AssetCategoryController.list
+- [x] POST /api/v1/asset-categories — AssetCategoryController.create
+- [x] DELETE /api/v1/asset-categories/:id — AssetCategoryController.remove
+- [x] GET /api/v1/asset-categories/:id — AssetCategoryController.findOne
+- [x] PATCH /api/v1/asset-categories/:id — AssetCategoryController.update
+- [x] GET /api/v1/asset-categories/all — AssetCategoryController.findAll
+- [x] GET /api/v1/fixed-assets — AssetController.list
+- [x] POST /api/v1/fixed-assets — AssetController.create
+- [x] GET /api/v1/fixed-assets-dashboard/reports/:type — AssetDashboardController.reports
+- [x] GET /api/v1/fixed-assets-dashboard/summary — AssetDashboardController.summary
+- [x] GET /api/v1/fixed-assets-dashboard/upcoming — AssetDashboardController.upcoming
+- [x] DELETE /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.remove
+- [x] GET /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.find
+- [x] POST /api/v1/fixed-assets/:assetId/acquisition — AssetAcquisitionController.upsert
+- [x] GET /api/v1/fixed-assets/:assetId/assignments — AssetAssignmentController.list
+- [x] POST /api/v1/fixed-assets/:assetId/assignments — AssetAssignmentController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/assignments/:id/return — AssetAssignmentController.returnAsset
+- [x] GET /api/v1/fixed-assets/:assetId/checkinout — AssetCheckInOutController.list
+- [x] POST /api/v1/fixed-assets/:assetId/checkinout — AssetCheckInOutController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/checkinout/:id/checkin — AssetCheckInOutController.checkIn
+- [x] GET /api/v1/fixed-assets/:assetId/depreciation — AssetDepreciationController.list
+- [x] POST /api/v1/fixed-assets/:assetId/depreciation/:id/post — AssetDepreciationController.postEntry
+- [x] GET /api/v1/fixed-assets/:assetId/depreciation/period/:period — AssetDepreciationController.byPeriod
+- [x] POST /api/v1/fixed-assets/:assetId/depreciation/run — AssetDepreciationController.run
+- [x] GET /api/v1/fixed-assets/:assetId/disposal — AssetDisposalController.find
+- [x] POST /api/v1/fixed-assets/:assetId/disposal — AssetDisposalController.create
+- [x] GET /api/v1/fixed-assets/:assetId/inspections — AssetInspectionController.list
+- [x] POST /api/v1/fixed-assets/:assetId/inspections — AssetInspectionController.create
+- [x] GET /api/v1/fixed-assets/:assetId/insurance — AssetInsuranceController.list
+- [x] POST /api/v1/fixed-assets/:assetId/insurance — AssetInsuranceController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/insurance/:id — AssetInsuranceController.update
+- [x] GET /api/v1/fixed-assets/:assetId/maintenance — AssetMaintenanceController.list
+- [x] POST /api/v1/fixed-assets/:assetId/maintenance — AssetMaintenanceController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/maintenance/:id — AssetMaintenanceController.update
+- [x] GET /api/v1/fixed-assets/:assetId/maintenance/due — AssetMaintenanceController.due
+- [x] GET /api/v1/fixed-assets/:assetId/repairs — AssetRepairController.list
+- [x] POST /api/v1/fixed-assets/:assetId/repairs — AssetRepairController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/repairs/:id — AssetRepairController.update
+- [x] GET /api/v1/fixed-assets/:assetId/revaluations — AssetRevaluationController.list
+- [x] POST /api/v1/fixed-assets/:assetId/revaluations — AssetRevaluationController.create
+- [x] GET /api/v1/fixed-assets/:assetId/transfers — AssetTransferController.list
+- [x] POST /api/v1/fixed-assets/:assetId/transfers — AssetTransferController.create
+- [x] GET /api/v1/fixed-assets/:assetId/warranties — AssetWarrantyController.list
+- [x] POST /api/v1/fixed-assets/:assetId/warranties — AssetWarrantyController.create
+- [x] PATCH /api/v1/fixed-assets/:assetId/warranties/:id — AssetWarrantyController.update
+- [x] GET /api/v1/fixed-assets/:assetId/warranties/expiring — AssetWarrantyController.expiring
+- [x] DELETE /api/v1/fixed-assets/:id — AssetController.remove
+- [x] GET /api/v1/fixed-assets/:id — AssetController.findOne
+- [x] PATCH /api/v1/fixed-assets/:id — AssetController.update
+- [x] PATCH /api/v1/fixed-assets/:id/restore — AssetController.restore
+- [x] GET /api/v1/fixed-assets/by-barcode/:barcode — AssetController.findByBarcode
+- [x] GET /api/v1/fixed-assets/by-code/:code — AssetController.findByCode
+- [x] GET /api/v1/fixed-assets/dashboard — AssetController.dashboard
+- [x] GET /api/v1/fixed-assets/search — AssetController.search
 
 ## hr
 

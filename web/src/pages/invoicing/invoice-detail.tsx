@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileDown, Mail } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ import { useOpenSession, useReceivePayment } from '@/pages/pos/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
+import { openPdf, useEmailInvoice } from '@/features/finance/api';
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
@@ -87,6 +88,10 @@ export function InvoiceDetailPage() {
   const [activeTab, setActiveTab] = useState<'lines' | 'journal' | 'info' | 'payments'>('lines');
   const [payOpen, setPayOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
+  const emailInvoice = useEmailInvoice();
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
   const [reference, setReference] = useState('');
@@ -324,6 +329,26 @@ export function InvoiceDetailPage() {
           {canPay && has(PERMISSIONS.payment.create) && (
             <Button size="sm" className="bg-white text-sky-700 hover:bg-sky-50 font-semibold shadow-sm" onClick={openPay}>
               {tx('Register Payment')}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="bg-white/15 border-white/40 text-white hover:bg-white/25"
+            onClick={() => openPdf(`/invoices/${inv.id}/pdf`)}
+          >
+            <FileDown className="mr-1 h-4 w-4" />
+            {tx('PDF')}
+          </Button>
+          {!isDraft && inv.status !== 'cancelled' && has(PERMISSIONS.invoice.send) && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white/15 border-white/40 text-white hover:bg-white/25"
+              onClick={() => setEmailOpen(true)}
+            >
+              <Mail className="mr-1 h-4 w-4" />
+              {tx('Email')}
             </Button>
           )}
         </div>
@@ -692,6 +717,47 @@ export function InvoiceDetailPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Email invoice (ADR-S005) */}
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent className="border-sky-100 max-w-md">
+          <DialogHeader className="border-b border-sky-100 pb-3">
+            <DialogTitle className="text-sky-900">{tx('Email Invoice')}</DialogTitle>
+            <DialogDescription className="text-sky-600">
+              {tx('Send')} {inv.documentNumber} {tx('as a PDF attachment.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>{tx('To')}</Label>
+              <Input
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder={tx("Customer's email on file")}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>{tx('Message (optional)')}</Label>
+              <Input value={emailMessage} onChange={(e) => setEmailMessage(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEmailOpen(false)}>{tx('Close')}</Button>
+            <Button
+              className="bg-sky-600 hover:bg-sky-700 text-white"
+              disabled={emailInvoice.isPending}
+              onClick={() =>
+                emailInvoice.mutate(
+                  { id: inv.id, to: emailTo || undefined, message: emailMessage || undefined },
+                  { onSuccess: () => setEmailOpen(false) },
+                )
+              }
+            >
+              {emailInvoice.isPending ? tx('Sending...') : tx('Send')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Cancel confirm */}
       <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
