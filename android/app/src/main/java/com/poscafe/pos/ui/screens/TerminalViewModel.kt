@@ -69,6 +69,7 @@ import com.poscafe.pos.data.local.dao.ProductDao
 import com.poscafe.pos.data.local.dao.ProductPackagingDao
 import com.poscafe.pos.data.local.dao.RegisterDao
 import com.poscafe.pos.data.local.dao.SettingsDao
+import com.poscafe.pos.data.local.dao.StaffDao
 import com.poscafe.pos.data.local.dao.TableDao
 import com.poscafe.pos.data.local.entity.*
 import com.poscafe.pos.data.repo.*
@@ -101,6 +102,7 @@ class TerminalViewModel @Inject constructor(
     private val holdDao: HoldDao,
     private val customerDao: CustomerDao,
     private val customerRepo: CustomerRepository,
+    private val staffDao: StaffDao,
     opQueue: OpQueueDao,
     private val auth: AuthRepository,
     private val sales: SaleRepository,
@@ -134,6 +136,25 @@ class TerminalViewModel @Inject constructor(
         sessions.openSession().map { SessionLoad(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     data class SessionLoad(val open: LocalCashSessionEntity?)
+
+    /** Signed-in cashier's id; the screen sets it, since [AuthRepository.current] is not observable. */
+    val currentUserId = MutableStateFlow<String?>(null)
+
+    /**
+     * Who owns the open shift when it is not the signed-in cashier, else null. The server
+     * rejects such a sale ("This register is open under another cashier...") unless the org
+     * runs a shared drawer, a setting devices are never sent. Taking money for a sale the
+     * server will refuse is worse than refusing it here, so the till stops it up front.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val foreignShiftOwner: StateFlow<String?> =
+        combine(session, currentUserId) { s, me -> s to me }
+            .mapLatest { (s, me) ->
+                if (s == null || me == null || s.actorUserId == me) null
+                else staffDao.byId(s.actorUserId)?.let { listOfNotNull(it.firstName, it.lastName).joinToString(" ") }
+                    ?: "another cashier"
+            }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val tables: StateFlow<List<PosTableEntity>> =
         tableDao.tables().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val queuedOps: StateFlow<Int> =
@@ -166,8 +187,20 @@ class TerminalViewModel @Inject constructor(
             }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** Dine-in target; null = takeaway/counter sale. */
+    /** Dine-in target; null = no table picked yet (dine-in) or a takeaway sale. */
     val selectedTable = MutableStateFlow<PosTableEntity?>(null)
+
+    /**
+     * Cafe/restaurant order type, as on the web terminal: an order starts as
+     * dine-in and needs a table before anything can be rung up. Takeaway is an
+     * explicit choice, never the silent default. Ignored in retail mode.
+     */
+    val takeaway = MutableStateFlow(false)
+
+    /** Cafe mode, dine-in, no table yet: the Sell tab shows the floor instead of the menu. */
+    val needsTable: StateFlow<Boolean> =
+        combine(isRetailMode, takeaway, selectedTable) { retail, ta, table -> !retail && !ta && table == null }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     init {
         // Retail has no tables — a table picked in cafe mode must never leak
@@ -195,6 +228,8 @@ class TerminalViewModel @Inject constructor(
      *  the cashier onto the table they assign, rather than being wiped. */
     fun selectTable(table: PosTableEntity?) {
         if (isRetailMode.value) { selectedTable.value = null; return }
+        // Picking a table makes it dine-in; "no table" from the picker is takeaway.
+        takeaway.value = table == null
         val previous = selectedTable.value
         if (previous?.id == table?.id) return
         viewModelScope.launch {
@@ -220,12 +255,28 @@ class TerminalViewModel @Inject constructor(
 
     /** Bank the tab and return to the floor without settling. */
     fun saveTab() {
-        val table = selectedTable.value ?: return
+        if (selectedTable.value != null) backToFloor()
+    }
+
+    /**
+     * Back to the floor for the next order. A table's order is banked on its tab first; a
+     * takeaway cart has nowhere to go, so the floor is only reachable once it is empty.
+     */
+    fun backToFloor() {
+        if (isRetailMode.value) return
+        val table = selectedTable.value
+        if (table == null && cart.isNotEmpty()) return
         viewModelScope.launch {
-            tabRepo.save(table.id, cart, guestCount = 0, partnerId = selectedCustomer?.id, firedLineIds = firedLineIds, actorUserId = auth.current?.userId)
+            table?.let {
+                tabRepo.save(it.id, cart, guestCount = 0, partnerId = selectedCustomer?.id, firedLineIds = firedLineIds, actorUserId = auth.current?.userId)
+            }
+            // Deselect before emptying the cart so the tab autosave can't save the empty cart over it.
+            selectedTable.value = null
+            takeaway.value = false
             cart = emptyList()
             firedLineIds = emptySet()
-            selectedTable.value = null
+            selectedCustomer = null
+            orderDiscountPercent = 0.0
         }
     }
 
@@ -360,6 +411,7 @@ class TerminalViewModel @Inject constructor(
 
     /** Tap = instant add for plain items; items with options open the sheet. */
     fun onItemTap(item: MenuItemEntity) {
+        if (needsTable.value) { error = SELECT_TABLE; return }
         viewModelScope.launch {
             val variants = menuDao.variants(item.id)
             val modGroups = menuDao.modifierGroupsFor(item.id).map { ModGroup(it, menuDao.modifiers(it.id)) }
@@ -516,6 +568,14 @@ class TerminalViewModel @Inject constructor(
         val billLines = cart.filter { it.lineId in lineIds }
         if (billLines.isEmpty()) return
         val table = if (isRetailMode.value) null else selectedTable.value
+        if (needsTable.value) { error = SELECT_TABLE; return }
+        session.value?.let { s ->
+            if (s.actorUserId != user.userId) {
+                error = "This shift was opened by ${foreignShiftOwner.value ?: "another cashier"}. " +
+                    "Close it (More → Close session) and open your own before selling."
+                return
+            }
+        }
         viewModelScope.launch {
             charging = true
             try {
@@ -538,6 +598,8 @@ class TerminalViewModel @Inject constructor(
                     cart = emptyList()
                     orderDiscountPercent = 0.0
                     selectedTable.value = null
+                    selectedCustomer = null
+                    takeaway.value = false
                     successSale = sale
                 } else {
                     // Split remainder stays open on the tab (auto-persisted).
@@ -574,6 +636,10 @@ class TerminalViewModel @Inject constructor(
     }
 
     fun dismissSuccess() { successSale = null }
+
+    companion object {
+        const val SELECT_TABLE = "Select a table first, or choose Takeaway."
+    }
 
     // ---- cash session ----
 

@@ -45,7 +45,9 @@ export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # or any JDK 17
 
 `androidTest` holds the Room `MigrationTest` and `e2e/PosDeviceE2ETest`, which
 drives the installed app through its UI with UiAutomator: server change,
-re-enrolment, cash sale, PIN lockout across a restart, revocation. Server
+re-enrolment, cash sale (`-e table "'Table 1'"` for dine-in, else takeaway),
+table-first floor, another cashier's shift, PIN lockout across a restart,
+revocation. Server
 details are instrumentation arguments; a test without them is skipped.
 
 Run them with `am instrument`, **not** `connectedDebugAndroidTest` — Gradle
@@ -119,7 +121,18 @@ Toolchain: Gradle 8.13 · AGP 8.13 · Kotlin 2.0.21 · compileSdk/targetSdk 36 �
    (Settings → Offline devices) and gets a token shown *once*. Enter the server
    URL, device id, token and prefix on the tablet's setup screen; the first
    pull seeds the catalog.
-2. **Sell offline.** Menu, cart and checkout run entirely from Room. Each sale
+2. **Sell offline.** In cafe/restaurant mode (`pos.mode` = `cafe`, the default)
+   the Sell tab opens on the **table floor**, as on the web terminal: a dine-in
+   order starts by picking a table, and the menu and cart only appear after
+   that. Takeaway is an explicit button, never the default. Back, the table
+   picker's **Floor** button, saving a tab and settling all return to the floor;
+   a table's order stays on its tab. Retail mode has no tables.
+   Only the cashier who opened the shift can charge on it: the server rejects
+   any other cashier's sale ("This register is open under another cashier...")
+   unless the org runs a shared drawer, a setting devices are never sent. So the
+   till shows who owns the shift and refuses the charge up front; the other
+   cashier closes that shift (More → Close session) and opens their own.
+   Menu, cart and checkout run entirely from Room. Each sale
    gets a provisional number (`D1-000042`, printed with an OFFLINE marker) and
    is appended to the op queue.
 3. **Sync.** `SyncWorker` pushes the queue (`POST /sync/push` — per-op
