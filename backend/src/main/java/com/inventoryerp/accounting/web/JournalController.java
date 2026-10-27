@@ -29,8 +29,8 @@ public class JournalController {
 
     /** {@code CreateJournalDto}. */
     public record CreateJournalRequest(
-            @NotBlank(message = "should not be empty") String code,
-            @NotBlank(message = "should not be empty") String name,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String code,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
             @NotNull(message = "journalType must be one of the following values: general, sales, purchase, cash, bank,"
                     + " adjustment, opening, closing")
             @OneOf({"general", "sales", "purchase", "cash", "bank", "adjustment", "opening", "closing"}) String journalType,

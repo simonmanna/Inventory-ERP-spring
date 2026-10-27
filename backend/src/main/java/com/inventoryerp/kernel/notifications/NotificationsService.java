@@ -163,6 +163,39 @@ public class NotificationsService {
         smtp.send(message);
     }
 
+    /** One file attached to an external e-mail. */
+    public record Attachment(String filename, String contentType, byte[] content) {}
+
+    /**
+     * E-mail to an external address (customer / supplier documents, ADR-S005) over the same SMTP transport. Without
+     * {@code SMTP_HOST} the message is logged ("would-send") and {@code false} is returned; a transport failure
+     * propagates.
+     */
+    public boolean sendExternalEmail(String to, String subject, String textBody, Attachment attachment) {
+        if (smtp == null) {
+            log.warn("[DEV-EMAIL] to={} subject={} attachment={}", to, subject,
+                    attachment == null ? "-" : attachment.filename());
+            return false;
+        }
+        try {
+            var message = smtp.createMimeMessage();
+            var helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(smtpFrom);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(textBody, "<p>" + HtmlUtils.htmlEscape(textBody).replace("\n", "<br>") + "</p>");
+            if (attachment != null) {
+                helper.addAttachment(attachment.filename(),
+                        new org.springframework.core.io.ByteArrayResource(attachment.content()),
+                        attachment.contentType());
+            }
+            smtp.send(message);
+            return true;
+        } catch (jakarta.mail.MessagingException e) {
+            throw new IllegalStateException("Email could not be sent: " + e.getMessage(), e);
+        }
+    }
+
     private void sendSms(SendInput input) {
         if (input.userId() == null) {
             throw new IllegalStateException("sms channel requires userId");

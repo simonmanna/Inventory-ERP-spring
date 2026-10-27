@@ -66,6 +66,26 @@ public final class QueryParams {
         return ApiException.withBody(HttpStatus.BAD_REQUEST, body);
     }
 
+    /**
+     * {@code @Query(key, new DefaultValuePipe(def), ParseIntPipe)} behind the transforming global pipe: the raw value
+     * goes through {@code Number()} first ({@code "1e1"} = 10, {@code "0x2"} = 2), {@code DefaultValuePipe} treats
+     * {@code NaN} as missing ({@code "x"} = def), and {@code ParseIntPipe} rejects a fraction or an infinity.
+     */
+    public static int parseInt(String raw, int def) {
+        if (raw == null) {
+            return def;
+        }
+        double n = com.inventoryerp.kernel.common.JsNumbers.number(raw);
+        if (Double.isNaN(n)) {
+            return def;
+        }
+        // String(n) must match /^-?\d+$/: no fraction, no infinity, no exponent form (|n| >= 1e21).
+        if (Double.isInfinite(n) || n != Math.rint(n) || Math.abs(n) >= 1e21) {
+            throw ApiException.badRequest("Validation failed (numeric string is expected)");
+        }
+        return (int) n;
+    }
+
     private static Integer integer(Map<String, String> raw, String key, int min, Integer max, List<String> errors) {
         String v = raw.get(key);
         if (v == null) {

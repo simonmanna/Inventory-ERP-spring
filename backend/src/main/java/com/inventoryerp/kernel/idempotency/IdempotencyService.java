@@ -2,6 +2,7 @@ package com.inventoryerp.kernel.idempotency;
 
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
+import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -16,8 +17,12 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.SerializationContext;
+import tools.jackson.databind.ValueSerializer;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.module.SimpleModule;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
@@ -71,10 +76,24 @@ public class IdempotencyService {
 
     private final JdbcClient jdbc;
     private final JsonMapper mapper;
+    /**
+     * Writes the response cache like Prisma writes a {@code Json} column: a {@code Decimal} becomes a JSON number, so a
+     * replay answers {@code "debit": 1000} where the first response said {@code "debit": "1000"} (Nest parity).
+     */
+    private final JsonMapper cacheMapper;
 
     public IdempotencyService(JdbcClient jdbc, JsonMapper mapper) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        SimpleModule prismaJson = new SimpleModule("prisma-json-column");
+        prismaJson.addSerializer(BigDecimal.class, new ValueSerializer<BigDecimal>() {
+            @Override
+            public void serialize(BigDecimal value, JsonGenerator gen, SerializationContext ctx) {
+                BigDecimal stripped = value.stripTrailingZeros();
+                gen.writeNumber(stripped.scale() < 0 ? stripped.setScale(0) : stripped);
+            }
+        });
+        this.cacheMapper = mapper.rebuild().addModule(prismaJson).build();
     }
 
     /** Read + validate the {@code Idempotency-Key} header value; null when absent/blank. */
@@ -217,7 +236,7 @@ public class IdempotencyService {
                         UPDATE "IdempotencyRecord" SET "statusCode" = ?, "responseJson" = ?::jsonb, status = 'completed',
                                "completedAt" = now()
                         WHERE "organizationId" = ? AND key = ?""")
-                .params(statusCode, mapper.writeValueAsString(body), op.organizationId(), op.key())
+                .params(statusCode, cacheMapper.writeValueAsString(body), op.organizationId(), op.key())
                 .update();
     }
 

@@ -53,8 +53,8 @@ public class ProductController {
 
     /** {@code CreateProductDto}. */
     public record CreateProductRequest(
-            @NotBlank(message = "should not be empty") String code,
-            @NotBlank(message = "should not be empty") String name,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String code,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
             String sku,
             String description,
             @OneOf({"stockable", "consumable", "service", "fee", "subscription", "asset"}) String productType,
@@ -90,6 +90,7 @@ public class ProductController {
             BigDecimal actualEmptyWeightG,
             BigDecimal fullBottleWeightG,
             BigDecimal standardPourMl,
+            @DecimalMin(value = "0", inclusive = false, message = "must be a positive number") BigDecimal doublePourMl,
             Boolean allowPartialBottle,
             BigDecimal varianceToleranceG) {}
 
@@ -132,6 +133,7 @@ public class ProductController {
             BigDecimal actualEmptyWeightG,
             BigDecimal fullBottleWeightG,
             BigDecimal standardPourMl,
+            @DecimalMin(value = "0", inclusive = false, message = "must be a positive number") BigDecimal doublePourMl,
             Boolean allowPartialBottle,
             BigDecimal varianceToleranceG) {}
 

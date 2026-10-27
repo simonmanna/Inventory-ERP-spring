@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Fixed assets — `fixedasset`
 
 | | |
@@ -24,8 +23,12 @@ Asset register with categories, acquisition, assignment, check-in/out, depreciat
 
 ## Business rules to reproduce exactly
 
-1. Depreciation methods and GL posting exactly as the Nest depreciation service; posted runs immutable.
-2. Disposal posts gain/loss.
+1. Depreciation methods and GL posting must match the Nest depreciation service exactly. A run posts
+   `Dr depreciation_expense / Cr accumulated_depreciation` on the first day of the period, and only when
+   `postEntries` is true. An entry that is already posted is never posted again.
+2. Disposal **records** `gainLoss = disposalValue − currentValue` and `bookValueAtDisposal`. It then sets the asset
+   to `disposed` with `currentValue = 0`. Nest posts **no** GL entry for a disposal, a revaluation or an
+   acquisition. (This doc used to say "Disposal posts gain/loss"; the Nest code wins.)
 
 Error messages: copy verbatim from the "Error messages" table in the generated spec.
 
@@ -56,8 +59,32 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+1. `GET /fixed-assets?sortBy=<x>` with a field that does not exist answers **400** `Invalid sortBy field: x`. Nest's
+   answer comes from a Prisma validation error (500). Spring builds JPQL from the field name, so it has to reject
+   unknown fields.
+2. Depreciation maths runs on `BigDecimal` at 20 significant digits instead of JS doubles. The values stored in the
+   `Decimal(18,6)` columns are the same apart from last-digit rounding edge cases.
+
+## Same as Nest, kept on purpose
+
+- `period/:period` and `run` ignore the `:assetId` path segment. A run targets one asset only through `body.assetId`.
+- `PATCH /fixed-assets/:id/restore` only matches a live asset (the tenancy extension adds `deletedAt: null`), so
+  restoring a deleted asset answers 404.
+- `DELETE /asset-categories/:id` with live assets answers **404** `Cannot delete category with N assigned assets`.
+- The `PATCH` bodies for insurance, maintenance, repairs and warranties are `Partial<CreateXDto>`, so they are
+  never validated.
+- The approval gates (`asset_acquisition`, `asset_transfer`, `asset_revaluation`, `asset_disposal`,
+  `depreciation_run`) commit their request row before the 403 / 400. This matches Nest, which runs without a
+  transaction.
+- A depreciation run commits per asset, and a GL post that fails leaves its entry unposted (logged, not fatal).
 
 ## Status
 
-Not started.
+54/54 routes. The controllers are `AssetController`, `AssetCategoryController`, `AssetRecordsController`,
+`AssetDepreciationController` and `AssetDashboardController`. Tests:
+- `DepreciationCalculatorTest`: every method, salvage floor, short lives.
+- `FixedAssetIT`: categories and tree, register CRUD and lookups, depreciation run, idempotent period, balanced
+  GL post, lifecycle sub-records and status transitions, disposal gain/loss, dashboards, validation, tenant
+  isolation, and the authorization matrix (54).
+
+Parity scenarios have not yet been run against Nest.

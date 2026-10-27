@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (364 permissions). Constant name = GROUP__ACTION.
+ * exactly (372 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -67,6 +67,13 @@ public final class Permissions {
     public static final String COST_CENTER__READ = "cost_center:read";
     public static final String COST_CENTER__UPDATE = "cost_center:update";
     public static final String COST_CENTER__DELETE = "cost_center:delete";
+    public static final String BUDGET__READ = "budget:read";
+    public static final String BUDGET__CREATE = "budget:create";
+    public static final String BUDGET__UPDATE = "budget:update";
+    public static final String BUDGET__DELETE = "budget:delete";
+    public static final String BUDGET__APPROVE = "budget:approve";
+    public static final String OPENING_BALANCE__READ = "opening_balance:read";
+    public static final String OPENING_BALANCE__POST = "opening_balance:post";
     public static final String ACCOUNT__CREATE = "account:create";
     public static final String ACCOUNT__READ = "account:read";
     public static final String ACCOUNT__UPDATE = "account:update";
@@ -97,6 +104,7 @@ public final class Permissions {
     public static final String INVOICE__POST = "invoice:post";
     public static final String INVOICE__CANCEL = "invoice:cancel";
     public static final String INVOICE__DELETE = "invoice:delete";
+    public static final String INVOICE__SEND = "invoice:send";
     public static final String CREDIT_NOTE__READ = "credit_note:read";
     public static final String CREDIT_NOTE__CREATE = "credit_note:create";
     public static final String CREDIT_NOTE__POST = "credit_note:post";
@@ -434,6 +442,13 @@ public final class Permissions {
             "cost_center:read",
             "cost_center:update",
             "cost_center:delete",
+            "budget:read",
+            "budget:create",
+            "budget:update",
+            "budget:delete",
+            "budget:approve",
+            "opening_balance:read",
+            "opening_balance:post",
             "account:create",
             "account:read",
             "account:update",
@@ -464,6 +479,7 @@ public final class Permissions {
             "invoice:post",
             "invoice:cancel",
             "invoice:delete",
+            "invoice:send",
             "credit_note:read",
             "credit_note:create",
             "credit_note:post",

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.inventoryerp.accounting.domain.Currency;
 import com.inventoryerp.core.domain.Partner;
 import com.inventoryerp.kernel.auth.EncryptionService;
+import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.domain.Setting;
 import com.inventoryerp.kernel.domain.User;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
@@ -14,6 +15,7 @@ import com.inventoryerp.kernel.security.SecretValidatorAccess;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.settings.SettingRegistry;
 import com.inventoryerp.shared.persistence.TenancyFilters;
+import com.inventoryerp.shared.web.ApiException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +47,22 @@ class KernelUnitTest {
         assertThat(filters(Currency.class)).isEmpty();
         // Setting has a nullable organizationId and is scoped explicitly in SettingsService.
         assertThat(filters(Setting.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("parseInt mirrors ValidationPipe Number() + DefaultValuePipe + ParseIntPipe (probed on Nest)")
+    void queryParseInt() {
+        assertThat(QueryParams.parseInt(null, 25)).isEqualTo(25);
+        assertThat(QueryParams.parseInt("x", 1)).isEqualTo(1);
+        assertThat(QueryParams.parseInt("", 1)).isZero();
+        assertThat(QueryParams.parseInt(" 3 ", 1)).isEqualTo(3);
+        assertThat(QueryParams.parseInt("1e1", 1)).isEqualTo(10);
+        assertThat(QueryParams.parseInt("0x2", 1)).isEqualTo(2);
+        assertThat(QueryParams.parseInt("-1", 1)).isEqualTo(-1);
+        for (String bad : List.of("1.5", "Infinity", "1e21")) {
+            assertThatThrownBy(() -> QueryParams.parseInt(bad, 1)).isInstanceOf(ApiException.class)
+                    .hasMessage("Validation failed (numeric string is expected)");
+        }
     }
 
     @Test

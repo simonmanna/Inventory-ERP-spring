@@ -9,6 +9,7 @@ import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -31,7 +32,7 @@ public class PartnerController {
     /** {@code CreatePartnerDto}. */
     public record CreatePartnerRequest(
             String code,
-            @NotBlank(message = "should not be empty") String name,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
             Boolean isCompany,
             Boolean isCustomer,
             Boolean isSupplier,

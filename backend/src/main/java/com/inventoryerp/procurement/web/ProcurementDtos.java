@@ -1,6 +1,6 @@
 package com.inventoryerp.procurement.web;
 
-import com.inventoryerp.shared.web.ApiException;
+import com.inventoryerp.kernel.crud.QueryParams;
 
 /** Validation messages and helpers shared by the procurement controllers (class-validator wording). */
 final class ProcurementDtos {
@@ -18,14 +18,8 @@ final class ProcurementDtos {
     static final String NOT_EMPTY = "should not be empty";
     static final String POSITIVE = "must be a positive number";
 
-    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}. */
+    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}: {@link QueryParams#parseInt}. */
     static int parseInt(String raw, int def) {
-        if (raw == null) {
-            return def;
-        }
-        if (!raw.matches("-?\\d+")) {
-            throw ApiException.badRequest("Validation failed (numeric string is expected)");
-        }
-        return Integer.parseInt(raw);
+        return QueryParams.parseInt(raw, def);
     }
 }

@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.procurement.web.ProcurementDtos.ARR;
 import static com.inventoryerp.procurement.web.ProcurementDtos.DATE_MSG;
 import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
@@ -19,7 +20,6 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
-import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -45,12 +45,12 @@ public class LandedCostController {
 
     /** {@code CreateLandedCostDto}. */
     public record CreateLandedCostRequest(
-            @NotEmpty(message = NOT_EMPTY) String goodsReceiptId,
-            @NotEmpty(message = NOT_EMPTY) String creditAccountId,
+            @NotNull(message = "must be a string") @NotEmpty(message = NOT_EMPTY) String goodsReceiptId,
+            @NotNull(message = "must be a string") @NotEmpty(message = NOT_EMPTY) String creditAccountId,
             @OneOf({"value", "quantity", "equal"}) String allocationMethod,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid LandedCostChargeRequest> charges) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid LandedCostChargeRequest> charges) {}
 
     private final LandedCostService landedCosts;
 

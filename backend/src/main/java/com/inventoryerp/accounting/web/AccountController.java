@@ -31,9 +31,9 @@ public class AccountController {
 
     /** {@code CreateAccountDto}. */
     public record CreateAccountRequest(
-            @NotBlank(message = "should not be empty") String code,
-            @NotBlank(message = "should not be empty") String name,
-            @NotBlank(message = "should not be empty") String categoryId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String code,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String categoryId,
             String parentAccountId,
             Integer sortOrder,
             String currencyId,

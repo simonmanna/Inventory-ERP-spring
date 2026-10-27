@@ -64,6 +64,11 @@ class TreasuryIT extends ApiTestSupport {
         assertThat(first.status()).as(first.raw().body()).isEqualTo(200);
         Res replay = keyed(adminToken, "POST", "/accounts/cash-flow/deposit", deposit, key);
         assertThat(replay.body().get("id").asString()).isEqualTo(first.body().get("id").asString());
+        // Nest caches the body in a Prisma Json column: decimals are strings first, numbers on replay.
+        assertThat(first.body().get("lines").get(0).get("debit").isString()).isTrue();
+        assertThat(replay.body().get("lines").get(0).get("debit").isNumber()).isTrue();
+        assertThat(replay.body().get("lines").get(0).get("debit").decimalValue())
+                .isEqualByComparingTo(first.body().get("lines").get(0).get("debit").asString());
         assertThat(first.body().get("dimensions").get("treasuryOperation").asString()).isEqualTo("owner_contribution");
 
         Res wrongKind = keyed(adminToken, "POST", "/accounts/cash-flow/withdraw", Map.of("accountId", accountId("1200"),

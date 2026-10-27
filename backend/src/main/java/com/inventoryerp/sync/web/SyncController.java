@@ -6,6 +6,7 @@ import com.inventoryerp.kernel.licensing.LicenseSyncView;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.Public;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import com.inventoryerp.shared.validation.OneOf;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.sync.application.SyncDeadLetterService;
@@ -22,7 +23,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -90,7 +90,7 @@ public class SyncController {
     /** {@code SyncPushDto}. */
     public record SyncPushRequest(
             @NotNull(message = STR) String deviceId,
-            @NotNull(message = "must be an array") @Size(min = 1, message = "must contain at least 1 elements") @Valid
+            @NotNull(message = "must be an array") @ArrayMinSize(1) @Valid
                     List<SyncOpRequest> ops) {}
 
     private final SyncDevicesService devices;

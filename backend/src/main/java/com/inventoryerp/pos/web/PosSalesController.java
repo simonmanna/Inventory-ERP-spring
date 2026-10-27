@@ -1,5 +1,6 @@
 package com.inventoryerp.pos.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.pos.web.PosDtos.ARR;
 import static com.inventoryerp.pos.web.PosDtos.DATE_MSG;
 import static com.inventoryerp.pos.web.PosDtos.ISO_DATE;
@@ -20,7 +21,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -67,7 +67,7 @@ public class PosSalesController {
             String approvalToken,
             @DecimalMin(value = "0", message = MIN0) Double expectedTotal,
             String partnerId,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) @Valid List<CheckoutLineRequest> lines,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Valid List<CheckoutLineRequest> lines,
             Double transactionDiscountPercent,
             @OneOf({"percentage", "fixed_amount"}) String transactionDiscountType,
             @DecimalMin(value = "0", message = MIN0) Double transactionDiscountAmount,
@@ -100,7 +100,7 @@ public class PosSalesController {
     /** {@code AddToTabDto}. */
     public record AddToTabRequest(
             String cashSessionId,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) @Valid List<CheckoutLineRequest> lines,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Valid List<CheckoutLineRequest> lines,
             String partnerId,
             Double guestCount,
             Boolean sendToKitchen,

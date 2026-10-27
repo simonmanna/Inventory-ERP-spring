@@ -1,5 +1,6 @@
 package com.inventoryerp.orders.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
@@ -10,7 +11,6 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -110,7 +110,7 @@ final class OrdersDtos {
 
     /** {@code AddOrderItemsDto}. */
     public record AddOrderItemsRequest(
-            @NotNull(message = ARR) @Size(min = 1, message = "must contain at least 1 elements") @Valid
+            @NotNull(message = ARR) @ArrayMinSize(1) @Valid
                     List<OrderLineInput> lines) {}
 
     /** {@code CancelOrderDto}. */

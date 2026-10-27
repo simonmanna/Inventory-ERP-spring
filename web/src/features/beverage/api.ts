@@ -3,6 +3,19 @@ import { api } from '@/lib/api';
 
 // ── types ────────────────────────────────────────────────────────────────────
 
+/** Variance cause codes (ADR-S004) — value sent to the API, label shown to staff. */
+export const BOTTLE_REASON_CODES = [
+  { value: 'spillage', label: 'Spillage' },
+  { value: 'breakage', label: 'Breakage' },
+  { value: 'complimentary', label: 'Complimentary drink' },
+  { value: 'staff_drink', label: 'Staff drink' },
+  { value: 'unrecorded_sale', label: 'Incorrect or unrecorded sale' },
+  { value: 'bottle_transfer', label: 'Bottle transfer' },
+  { value: 'measurement_error', label: 'Measurement error' },
+  { value: 'unexplained', label: 'Unexplained variance' },
+] as const;
+export type BottleReasonCode = (typeof BOTTLE_REASON_CODES)[number]['value'];
+
 export interface BottleReading {
   id?: string;
   bottleNumber?: string | null;
@@ -23,6 +36,7 @@ export interface BottleCountLine {
   varianceG: string;
   expectedShots: string | null;
   reason?: string | null;
+  reasonCode?: BottleReasonCode | null;
   confidence: 'GOOD' | 'SUSPICIOUS' | 'OUT_OF_RANGE';
   readings: BottleReading[];
 }
@@ -38,6 +52,8 @@ export interface BottleCountSession {
   submittedAt?: string | null;
   approvedById?: string | null;
   adjustmentId?: string | null;
+  unweighedReason?: string | null;
+  unweighedCount?: number;
   notes?: string | null;
   lines: BottleCountLine[];
   _count?: { lines: number };
@@ -48,6 +64,7 @@ export interface SaveBottleLineInput {
   sealedFullCount?: number;
   readings?: { measuredWeightG: number; bottleNumber?: string; measurementSource?: string }[];
   reason?: string;
+  reasonCode?: BottleReasonCode;
 }
 
 export interface VarianceRow {
@@ -61,6 +78,7 @@ export interface VarianceRow {
   lossValue: number;
   confidence: string | null;
   countedAt: string | null;
+  reasonCode?: BottleReasonCode | null;
 }
 
 export interface YieldRow {
@@ -70,6 +88,9 @@ export interface YieldRow {
   soldMl: number;
   soldShots: number;
   bottlesSold: number;
+  /** ADR-S004: configured double shot (2 × single when unset). */
+  doublePourMl?: number;
+  doublesPerBottle?: number;
 }
 
 export interface BartenderRow {
@@ -116,7 +137,7 @@ export function useSaveBottleDraft() {
 export function useSubmitBottleCount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, body }: { id: string; body?: { approverId?: string; approverEmail?: string; managerPin?: string } }) =>
+    mutationFn: async ({ id, body }: { id: string; body?: { approverId?: string; approverEmail?: string; managerPin?: string; unweighedReason?: string } }) =>
       (await api.post<BottleCountSession>(`/beverage/counts/${id}/submit`, body ?? {})).data,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['beverage-counts'] });

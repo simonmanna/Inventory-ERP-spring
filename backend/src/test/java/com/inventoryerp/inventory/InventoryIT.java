@@ -81,6 +81,14 @@ class InventoryIT extends ApiTestSupport {
         assertThat(transit.status()).isEqualTo(400);
         assertThat(transit.body().get("message").get(0).asString())
                 .isEqualTo("type must be a user-managed location type (transit is system-managed)");
+        assertThat(validationMessages(as("POST", "/inventory/locations", Map.of("name", "X"))))
+                .containsExactly("code should not be empty", "code must be a string");
+        // Unknown property + missing fields: one 400 with everything, in class-validator order (Nest parity).
+        assertThat(validationMessages(as("POST", "/inventory/stock-outs", Map.of("locationId", "L", "lines", List.of()))))
+                .containsExactly("property lines should not exist", "responsibleById should not be empty",
+                        "responsibleById must be a string", "approvedById should not be empty",
+                        "approvedById must be a string", "items must contain at least 1 elements",
+                        "items must be an array");
         String id = location("bar");
         assertThat(ok(200, "GET", "/inventory/locations/" + id, null).get("type").asString()).isEqualTo("bar");
         assertThat(ok(200, "PATCH", "/inventory/locations/" + id, Map.of("name", "Back bar")).get("name").asString())
@@ -245,7 +253,7 @@ class InventoryIT extends ApiTestSupport {
         Res extra = as("POST", "/inventory/direct-stock/in", Map.of("locationId", loc, "responsibleById", adminId,
                 "approvedById", adminId, "items", List.of(in)));
         assertThat(extra.status()).isEqualTo(400);
-        assertThat(extra.body().get("message").get(0).asString()).isEqualTo("property serialNumbers should not exist");
+        assertThat(extra.body().get("message").get(0).asString()).isEqualTo("items.0.property serialNumbers should not exist");
         stockIn(loc, List.of(line(p, 2, 10)));
         JsonNode out = ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById",
                 adminId, "approvedById", adminId, "items", List.of(line(p, 1, null))));

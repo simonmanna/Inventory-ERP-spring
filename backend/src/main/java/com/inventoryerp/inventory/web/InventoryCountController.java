@@ -33,7 +33,7 @@ public class InventoryCountController {
 
     /** {@code StartCountDto}. */
     public record StartCountRequest(
-            @NotEmpty(message = "should not be empty") String locationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = "should not be empty") String locationId,
             @OneOf({"opening", "closing", "cycle", "spot"}) String countType,
             String notes,
             Boolean blind,
@@ -43,7 +43,7 @@ public class InventoryCountController {
 
     /** {@code SaveCountLineDto}. */
     public record SaveCountLine(
-            @NotEmpty(message = "should not be empty") String lineId,
+            @NotNull(message = "must be a string") @NotEmpty(message = "should not be empty") String lineId,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal countedQty,
             String reason) {}
 

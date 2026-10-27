@@ -106,6 +106,7 @@ const schema = z.object({
   actualEmptyWeightG: z.string().optional().or(z.literal('')),
   fullBottleWeightG: z.string().optional().or(z.literal('')),
   standardPourMl: z.string().optional().or(z.literal('')),
+  doublePourMl: z.string().optional().or(z.literal('')),
   allowPartialBottle: z.boolean(),
   varianceToleranceG: z.string().optional().or(z.literal('')),
   incomeAccountOverrideId: z.string().optional().or(z.literal('')),
@@ -126,6 +127,7 @@ const BEVERAGE_DEFAULTS = {
   actualEmptyWeightG: '',
   fullBottleWeightG: '',
   standardPourMl: '',
+  doublePourMl: '',
   allowPartialBottle: true,
   varianceToleranceG: '',
 } as const;
@@ -307,6 +309,7 @@ export function ProductEditPage() {
       actualEmptyWeightG: toStr(p.actualEmptyWeightG),
       fullBottleWeightG: toStr(p.fullBottleWeightG),
       standardPourMl: toStr(p.standardPourMl),
+      doublePourMl: toStr(p.doublePourMl),
       allowPartialBottle: p.allowPartialBottle ?? true,
       varianceToleranceG: toStr(p.varianceToleranceG),
       incomeAccountOverrideId: p.incomeAccountOverrideId ?? '',
@@ -414,6 +417,7 @@ export function ProductEditPage() {
         actualEmptyWeightG: isWeight ? numOrUndef(values.actualEmptyWeightG) : undefined,
         fullBottleWeightG: isWeight ? numOrUndef(values.fullBottleWeightG) : undefined,
         standardPourMl: isWeight ? numOrUndef(values.standardPourMl) : undefined,
+        doublePourMl: isWeight ? numOrUndef(values.doublePourMl) : undefined,
         allowPartialBottle: isWeight ? values.allowPartialBottle : undefined,
         varianceToleranceG: isWeight ? numOrUndef(values.varianceToleranceG) : undefined,
         incomeAccountOverrideId: values.incomeAccountOverrideId || undefined,
@@ -894,8 +898,12 @@ export function ProductEditPage() {
                         <Input type="number" min={0} step="0.1" placeholder="e.g. 1150" {...form.register('fullBottleWeightG')} />
                       </div>
                       <div className="space-y-1.5">
-                        <Label className="text-sm">{tx('Standard Pour (ml)')}</Label>
-                        <Input type="number" min={0} step="0.1" placeholder="e.g. 44" {...form.register('standardPourMl')} />
+                        <Label className="text-sm">{tx('Single Shot (ml)')}</Label>
+                        <Input type="number" min={0} step="0.1" placeholder="e.g. 30" {...form.register('standardPourMl')} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-sm">{tx('Double Shot (ml)')}</Label>
+                        <Input type="number" min={0} step="0.1" placeholder={tx('Default: 2 × single')} {...form.register('doublePourMl')} />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-sm">{tx('Variance Tolerance (g)')}</Label>

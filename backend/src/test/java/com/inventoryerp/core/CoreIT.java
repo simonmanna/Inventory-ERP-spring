@@ -69,7 +69,8 @@ class CoreIT extends ApiTestSupport {
                 "pageSize must not be greater than 1000", "sortOrder must be one of the following values: asc, desc");
         Res body = as("POST", "/branches", Map.of("name", "x", "bogus", 1));
         assertThat(body.status()).isEqualTo(400);
-        assertThat(messages(body.body())).containsExactly("property bogus should not exist");
+        // class-validator reports the whitelist error together with the field errors (verified on Nest).
+        assertThat(messages(body.body())).containsExactly("property bogus should not exist", "code must be a string");
     }
 
     @Test

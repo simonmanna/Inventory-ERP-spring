@@ -7,11 +7,11 @@ import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +48,7 @@ public class JournalEntryController {
             String branchId,
             String costCenterId,
             @NotNull(message = "must be an array")
-            @Size(min = 2, message = "must contain at least 2 elements") List<@Valid ManualLine> lines) {}
+            @ArrayMinSize(2) List<@Valid ManualLine> lines) {}
 
     /** {@code ReverseJournalEntryDto}. */
     public record ReverseJournalEntryRequest(

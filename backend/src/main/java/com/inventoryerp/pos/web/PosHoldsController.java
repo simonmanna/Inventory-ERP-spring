@@ -1,5 +1,6 @@
 package com.inventoryerp.pos.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.pos.web.PosDtos.ARR;
 import static com.inventoryerp.pos.web.PosDtos.MIN1;
 import static com.inventoryerp.pos.web.PosDtos.NUM;
@@ -10,7 +11,6 @@ import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.pos.application.PosHoldsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -47,7 +47,7 @@ public class PosHoldsController {
             String branchId,
             String cashSessionId,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) @Valid List<PosHoldLineRequest> lines) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) @Valid List<PosHoldLineRequest> lines) {}
 
     private final PosHoldsService svc;
 

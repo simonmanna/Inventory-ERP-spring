@@ -8,10 +8,12 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.outlined.ShoppingBag
 import androidx.compose.material.icons.outlined.TableRestaurant
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,36 +33,90 @@ import com.poscafe.pos.ui.components.pressScale
 
 /**
  * Floor view. Table statuses are the last-synced server truth (read-only on
- * the device); picking a table starts a dine-in order on the Sell tab.
+ * the device); picking a table starts (or resumes) its dine-in order on the
+ * Sell tab.
  */
 @Composable
 fun TablesScreen(vm: TerminalViewModel, onTableChosen: () -> Unit, onMenu: (() -> Unit)? = null) {
     val tables by vm.tables.collectAsStateWithLifecycle()
     val selected by vm.selectedTable.collectAsStateWithLifecycle()
+    val openTabIds by vm.openTabTableIds.collectAsStateWithLifecycle()
+    TableFloor(
+        tables = tables,
+        selectedId = selected?.id,
+        openTabTableIds = openTabIds.toSet(),
+        onSelect = { table ->
+            // Through selectTable so the current tab is banked and this table's tab loaded.
+            vm.selectTable(table)
+            onTableChosen()
+        },
+        onMenu = onMenu,
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+    )
+}
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+/**
+ * The table grid. In cafe mode the Sell tab shows this instead of the menu
+ * until a table is picked (same as the web terminal); [onTakeaway] offers
+ * the explicit no-table alternative.
+ */
+@Composable
+fun TableFloor(
+    tables: List<PosTableEntity>,
+    selectedId: String?,
+    openTabTableIds: Set<String>,
+    onSelect: (PosTableEntity) -> Unit,
+    modifier: Modifier = Modifier,
+    onMenu: (() -> Unit)? = null,
+    onTakeaway: (() -> Unit)? = null,
+) {
+    Column(modifier) {
         Row(
             Modifier.fillMaxWidth().padding(vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 onMenu?.let {
                     IconButton(onClick = it) { Icon(Icons.Filled.Menu, "Menu") }
                 }
-                Text("Tables", style = MaterialTheme.typography.headlineSmall)
+                Column {
+                    Text("Tables", style = MaterialTheme.typography.headlineSmall)
+                    if (onTakeaway != null) {
+                        Text(
+                            "Pick a table to start the order",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                LegendDot("Available", MaterialTheme.colorScheme.primary)
-                LegendDot("Occupied", MaterialTheme.colorScheme.error)
-                LegendDot("Reserved", com.poscafe.pos.ui.theme.LocalPosAccents.current.warning)
+            onTakeaway?.let {
+                OutlinedButton(onClick = it) {
+                    Icon(Icons.Outlined.ShoppingBag, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Takeaway")
+                }
             }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LegendDot("Available", MaterialTheme.colorScheme.primary)
+            LegendDot("Occupied", MaterialTheme.colorScheme.error)
+            LegendDot("Reserved", com.poscafe.pos.ui.theme.LocalPosAccents.current.warning)
         }
         if (tables.isEmpty()) {
             EmptyState(
                 icon = Icons.Outlined.TableRestaurant,
                 title = "No tables synced",
-                subtitle = "Tables set up in the back office appear here after a sync.",
+                subtitle = "Create tables in the back office; they appear here after a sync.",
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -73,11 +129,9 @@ fun TablesScreen(vm: TerminalViewModel, onTableChosen: () -> Unit, onMenu: (() -
                 items(tables, key = { it.id }) { table ->
                     TableCard(
                         table = table,
-                        selected = selected?.id == table.id,
-                        onClick = {
-                            vm.selectedTable.value = table
-                            onTableChosen()
-                        },
+                        selected = selectedId == table.id,
+                        openTab = table.id in openTabTableIds,
+                        onClick = { onSelect(table) },
                     )
                 }
             }
@@ -94,9 +148,10 @@ private fun LegendDot(label: String, color: androidx.compose.ui.graphics.Color) 
 }
 
 @Composable
-private fun TableCard(table: PosTableEntity, selected: Boolean, onClick: () -> Unit) {
-    val statusColor = tableStatusColor(table.status)
-    val statusLabel = table.status.replace('_', ' ').replaceFirstChar { it.uppercase() }
+private fun TableCard(table: PosTableEntity, selected: Boolean, openTab: Boolean, onClick: () -> Unit) {
+    // An unsettled tab on this till is fresher than the last-synced server status.
+    val statusColor = if (openTab) MaterialTheme.colorScheme.error else tableStatusColor(table.status)
+    val statusLabel = if (openTab) "Open tab" else table.status.replace('_', ' ').replaceFirstChar { it.uppercase() }
     val interaction = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
@@ -119,7 +174,7 @@ private fun TableCard(table: PosTableEntity, selected: Boolean, onClick: () -> U
                 Text("Table ${table.number}", style = MaterialTheme.typography.titleSmall)
                 StatusDot(statusColor, size = 10.dp)
             }
-            table.name?.takeIf { it.isNotBlank() }?.let {
+            table.name?.takeIf { it.isNotBlank() && it != "Table ${table.number}" }?.let {
                 Text(
                     it,
                     style = MaterialTheme.typography.bodySmall,

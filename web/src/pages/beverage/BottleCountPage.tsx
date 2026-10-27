@@ -16,14 +16,17 @@ import { dateTime } from '@/lib/format';
 import { useProducts, type Product } from '@/features/products/api';
 import {
   useBottleCounts, useStartBottleCount, useSaveBottleDraft, useSubmitBottleCount, useCancelBottleCount,
-  type BottleCountSession,
+  BOTTLE_REASON_CODES, type BottleCountSession, type BottleReasonCode,
 } from '@/features/beverage/api';
 import { bevConfigFromProduct, computeLine, type BevConfig, type Confidence } from '@/features/beverage/math';
 import { useScale } from '@/features/beverage/use-scale';
 import { tx } from '@/lib/i18n/tx';
 
 interface Location { id: string; code: string; name: string }
-type LineEdit = { sealed: string; readings: { g: string; bottleNumber: string }[]; reason: string };
+type LineEdit = {
+  sealed: string; readings: { g: string; bottleNumber: string }[]; reason: string; reasonCode: BottleReasonCode | '';
+};
+const EMPTY_EDIT: LineEdit = { sealed: '', readings: [], reason: '', reasonCode: '' };
 
 const CONF_STYLES: Record<Confidence, string> = {
   GOOD: 'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -48,6 +51,9 @@ export function BottleCountPage() {
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approverEmail, setApproverEmail] = useState('');
   const [managerPin, setManagerPin] = useState('');
+  // Set when the org requires every bottle weighed and some were skipped (ADR-S004).
+  const [unweighedNeeded, setUnweighedNeeded] = useState(false);
+  const [unweighedReason, setUnweighedReason] = useState('');
 
   const scale = useScale();
   const start = useStartBottleCount();
@@ -80,6 +86,7 @@ export function BottleCountPage() {
         sealed: num(ln.sealedFullCount) ? String(num(ln.sealedFullCount)) : '',
         readings: (ln.readings ?? []).map((r) => ({ g: String(num(r.measuredWeightG)), bottleNumber: r.bottleNumber ?? '' })),
         reason: ln.reason ?? '',
+        reasonCode: ln.reasonCode ?? '',
       };
     }
     setEdits(e);
@@ -95,18 +102,18 @@ export function BottleCountPage() {
     );
 
   const setEdit = (id: string, patch: Partial<LineEdit>) =>
-    setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] ?? { sealed: '', readings: [], reason: '' }), ...patch } }));
+    setEdits((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_EDIT), ...patch } }));
 
   const addReading = (id: string) => {
-    const cur = edits[id] ?? { sealed: '', readings: [], reason: '' };
+    const cur = edits[id] ?? EMPTY_EDIT;
     setEdit(id, { readings: [...cur.readings, { g: '', bottleNumber: '' }] });
   };
   const removeReading = (id: string, idx: number) => {
-    const cur = edits[id] ?? { sealed: '', readings: [], reason: '' };
+    const cur = edits[id] ?? EMPTY_EDIT;
     setEdit(id, { readings: cur.readings.filter((_, i) => i !== idx) });
   };
   const setReading = (id: string, idx: number, patch: Partial<{ g: string; bottleNumber: string }>) => {
-    const cur = edits[id] ?? { sealed: '', readings: [], reason: '' };
+    const cur = edits[id] ?? EMPTY_EDIT;
     setEdit(id, { readings: cur.readings.map((r, i) => (i === idx ? { ...r, ...patch } : r)) });
   };
 
@@ -114,7 +121,7 @@ export function BottleCountPage() {
   const rows = useMemo(() => {
     const lines = session?.lines ?? [];
     return lines.map((ln) => {
-      const ed = edits[ln.id] ?? { sealed: '', readings: [], reason: '' };
+      const ed = edits[ln.id] ?? EMPTY_EDIT;
       const cfg = cfgByProduct.get(ln.productId);
       const grams = ed.readings.map((r) => Number(r.g)).filter((g) => Number.isFinite(g) && g > 0);
       const c = computeLine(cfg, Number(ed.sealed) || 0, grams, num(ln.systemMl));
@@ -133,11 +140,12 @@ export function BottleCountPage() {
 
   const buildPayload = () => ({
     lines: (session?.lines ?? []).map((ln) => {
-      const ed = edits[ln.id] ?? { sealed: '', readings: [], reason: '' };
+      const ed = edits[ln.id] ?? EMPTY_EDIT;
       const readings = ed.readings
         .map((r) => ({ measuredWeightG: Number(r.g), bottleNumber: r.bottleNumber.trim() || undefined, measurementSource: scale.source }))
         .filter((r) => Number.isFinite(r.measuredWeightG) && r.measuredWeightG > 0);
-      return { lineId: ln.id, sealedFullCount: Number(ed.sealed) || 0, readings, reason: ed.reason.trim() || undefined };
+      return { lineId: ln.id, sealedFullCount: Number(ed.sealed) || 0, readings, reason: ed.reason.trim() || undefined,
+        reasonCode: ed.reasonCode || undefined };
     }),
   });
 
@@ -149,7 +157,7 @@ export function BottleCountPage() {
     );
   };
 
-  const doSubmit = (creds?: { approverEmail?: string; managerPin?: string }) => {
+  const doSubmit = (creds?: { approverEmail?: string; managerPin?: string; unweighedReason?: string }) => {
     if (!session) return;
     if (missingReasons > 0) { notify.error(tx('{{missingReasons}} flagged line(s) need a reason', { missingReasons })); return; }
     const id = session.id;
@@ -163,9 +171,13 @@ export function BottleCountPage() {
             onSuccess: (s) => {
               notify.success(s.adjustmentId ? tx('Count submitted — stock adjusted') : tx('Count submitted'));
               setSession(null); setEdits({}); setApprovalOpen(false); setApproverEmail(''); setManagerPin('');
+              setUnweighedNeeded(false); setUnweighedReason('');
             },
             onError: (e: any) => {
               const msg = e?.response?.data?.message ?? tx('Submit failed');
+              if (/were not weighed/i.test(String(msg)) && !creds?.unweighedReason) {
+                setUnweighedNeeded(true); setApprovalOpen(true); return;
+              }
               if (/approval|approver/i.test(String(msg)) && !creds) { setApprovalOpen(true); return; }
               notify.error(msg);
             },
@@ -342,7 +354,23 @@ export function BottleCountPage() {
                     </div>
 
                     {counted && confidence !== 'GOOD' && (
-                      <div className="mt-3">
+                      <div className="mt-3 space-y-2">
+                        <label className="text-xs text-muted-foreground">{tx('Cause')}</label>
+                        <Select
+                          value={ed.reasonCode || undefined}
+                          onValueChange={(v) => {
+                            const code = v as BottleReasonCode;
+                            const label = BOTTLE_REASON_CODES.find((c) => c.value === code)?.label ?? '';
+                            setEdit(ln.id, { reasonCode: code, reason: ed.reason.trim() ? ed.reason : tx(label) });
+                          }}
+                        >
+                          <SelectTrigger className="h-9"><SelectValue placeholder={tx('Select a cause…')} /></SelectTrigger>
+                          <SelectContent>
+                            {BOTTLE_REASON_CODES.map((c) => (
+                              <SelectItem key={c.value} value={c.value}>{tx(c.label)}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <label className="text-xs text-muted-foreground">{tx('Reason (required)')}</label>
                         <Input
                           className={needReason ? 'border-destructive focus-visible:ring-destructive' : ''}
@@ -401,14 +429,25 @@ export function BottleCountPage() {
         </div>
       )}
 
-      {/* Manager approval — required when a line is over tolerance or impossible. */}
+      {/* Manager approval — required when a line is over tolerance or impossible, or bottles were left unweighed. */}
       <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5" /> {tx('Manager approval')}</DialogTitle></DialogHeader>
           <div className="space-y-3 pt-2">
-            <p className="text-sm text-muted-foreground">
-              {tx('This count has')} {flagged.length} {tx('flagged line(s) over tolerance. A manager (not the person who counted) must approve.')}
-            </p>
+            {flagged.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                {tx('This count has')} {flagged.length} {tx('flagged line(s) over tolerance. A manager (not the person who counted) must approve.')}
+              </p>
+            )}
+            {unweighedNeeded && (
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  {tx('Some bottles holding stock were not weighed. Record why; a manager (not the person who counted) must approve.')}
+                </p>
+                <label className="text-sm font-medium">{tx('Unweighed bottles reason')}</label>
+                <Input value={unweighedReason} onChange={(e) => setUnweighedReason(e.target.value)} placeholder={tx('e.g. cabinet locked')} />
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium">{tx('Manager email')}</label>
               <Input type="email" value={approverEmail} onChange={(e) => setApproverEmail(e.target.value)} placeholder={tx('manager@bar.com')} />
@@ -420,8 +459,12 @@ export function BottleCountPage() {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setApprovalOpen(false)}>{tx('Cancel')}</Button>
               <Button
-                disabled={!approverEmail.trim() || busy}
-                onClick={() => doSubmit({ approverEmail: approverEmail.trim(), managerPin: managerPin.trim() || undefined })}
+                disabled={!approverEmail.trim() || (unweighedNeeded && !unweighedReason.trim()) || busy}
+                onClick={() => doSubmit({
+                  approverEmail: approverEmail.trim(),
+                  managerPin: managerPin.trim() || undefined,
+                  unweighedReason: unweighedNeeded ? unweighedReason.trim() : undefined,
+                })}
               >
                 <CheckCircle2 className="mr-1 h-4 w-4" /> {tx('Approve & Submit')}
               </Button>

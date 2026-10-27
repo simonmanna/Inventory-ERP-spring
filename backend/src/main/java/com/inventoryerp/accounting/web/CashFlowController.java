@@ -55,12 +55,13 @@ public class CashFlowController {
 
     /** {@code CashFlowDto}. */
     public record CashFlowRequest(
-            @NotBlank(message = "should not be empty") String accountId,
-            @NotBlank(message = "should not be empty") String counterpartAccountId,
-            @NotBlank(message = "should not be empty") String operationType,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String accountId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty")
+            String counterpartAccountId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String operationType,
             @NotNull(message = "must be a number conforming to the specified constraints")
             @DecimalMin(value = "0.01", message = "must not be less than 0.01") BigDecimal amount,
-            @NotBlank(message = "should not be empty") String description,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String description,
             @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String date) {}
 
     private final CashFlowService cashFlow;

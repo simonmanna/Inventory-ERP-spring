@@ -74,6 +74,13 @@ class InvoicingIT extends ApiTestSupport {
         assertThat(draft.get("totalAmount").asString()).isEqualTo("100");
         assertThat(draft.get("lines")).hasSize(1);
         assertThat(draft.get("partner").get("id").asString()).isEqualTo(customer);
+        assertThat(validationMessages(as("POST", "/invoices", Map.of("partnerId", customer, "issueDate", today))))
+                .containsExactly("lines must contain at least 1 elements", "lines must be an array");
+        // DefaultValuePipe treats Number("x") = NaN as missing; ParseIntPipe still rejects a fraction.
+        assertThat(ok(200, "GET", "/invoices?page=x", null).get("meta").get("page").asInt()).isEqualTo(1);
+        assertThat(ok(200, "GET", "/invoices?page=1e1", null).get("meta").get("page").asInt()).isEqualTo(10);
+        assertThat(as("GET", "/invoices?page=1.5", null).body().get("message").asString())
+                .isEqualTo("Validation failed (numeric string is expected)");
 
         JsonNode preview = ok(201, "POST", "/invoices/journal-preview", Map.of("partnerId", customer, "issueDate", today,
                 "lines", List.of(Map.of("productId", service, "quantity", 1, "unitPrice", 10))));
@@ -98,8 +105,6 @@ class InvoicingIT extends ApiTestSupport {
         JsonNode list = ok(200, "GET", "/invoices?partnerId=" + customer, null);
         assertThat(list.get("data").get(0).get("source").asString()).isEqualTo("manual");
         assertThat(list.get("data").get(0).get("paymentStatus").asString()).isEqualTo("unpaid");
-        Res badPage = as("GET", "/invoices?page=x", null);
-        assertThat(badPage.body().get("message").asString()).isEqualTo("Validation failed (numeric string is expected)");
 
         JsonNode cancelled = ok(200, "POST", "/invoices/" + id + "/cancel", null);
         assertThat(cancelled.get("status").asString()).isEqualTo("cancelled");
@@ -314,9 +319,9 @@ class InvoicingIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("authorization: invoicing (30) and expenses (18) routes answer 401 / 403")
+    @DisplayName("authorization: invoicing (30 + 10 ADR-S005) and expenses (18) routes answer 401 / 403")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(30);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(40);
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(18);
     }
 }

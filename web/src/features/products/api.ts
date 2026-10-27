@@ -51,6 +51,7 @@ export interface Product {
   liquidWeightG?: string | null;
   conversionFactorMlPerG?: string | null;
   standardPourMl?: string | null;
+  doublePourMl?: string | null;
   allowPartialBottle?: boolean;
   varianceToleranceG?: string | null;
   // M3 — Inventory account overrides (optional; null = inherit).
@@ -130,6 +131,7 @@ export interface CreateProductInput {
   actualEmptyWeightG?: number;
   fullBottleWeightG?: number;
   standardPourMl?: number;
+  doublePourMl?: number;
   allowPartialBottle?: boolean;
   varianceToleranceG?: number;
 }

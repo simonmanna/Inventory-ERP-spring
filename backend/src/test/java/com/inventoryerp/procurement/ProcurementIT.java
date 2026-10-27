@@ -484,8 +484,9 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(page.get("meta").get("pageSize").asInt()).isEqualTo(2);
         assertThat(page.get("data").get(0).get("partner").get("id").asString()).isEqualTo(supplier);
         assertThat(page.get("data").get(0).get("partner").size()).isEqualTo(2);
-        assertThat(as("GET", "/procurement/purchase-orders?page=x", null).body().get("message").asString())
-                .isEqualTo("Validation failed (numeric string is expected)");
+        // DefaultValuePipe treats Number("x") = NaN as missing (verified on Nest).
+        assertThat(ok(200, "GET", "/procurement/purchase-orders?page=x", null).get("meta").get("page").asInt())
+                .isEqualTo(1);
         // Nest builds `contains` on enum columns → Prisma validation error → 500.
         assertThat(as("GET", "/procurement/purchase-orders?search=PO", null).status()).isEqualTo(500);
         JsonNode dated = ok(200, "GET", "/procurement/purchase-orders?partnerId=" + supplier + "&dateFrom=" + today

@@ -110,6 +110,7 @@ class PosDeviceE2ETest {
         need("cashierName", "cashierPin", "item")
         signIn(arg("cashierName")!!, arg("cashierPin")!!)
         ensureShiftOpen()
+        startOrder()
         addItem(arg("item")!!)
         // Phones show the cart behind a "View cart" bar; tablets show it beside the menu.
         val charge = By.textStartsWith("Charge")
@@ -121,6 +122,49 @@ class PosDeviceE2ETest {
         val number = device.findObject(By.text(Pattern.compile("[A-Z0-9]+-\\d{6}")))?.text
         log("sale completed: ${number ?: "(number not shown)"}")
         tap("New order")
+        // A finished sale hands the till back to the floor for the next order.
+        if (arg("table") != null) waitText(FLOOR_HINT)
+    }
+
+    /** A cashier who does not own the open shift is told so and cannot charge (the server would reject it). */
+    @Test
+    fun foreignShiftBlocksCharge() {
+        need("cashierName", "cashierPin", "item")
+        signIn(arg("cashierName")!!, arg("cashierPin")!!)
+        waitText("Shift opened by")
+        startOrder()
+        addItem(arg("item")!!)
+        val charge = By.textStartsWith("Charge")
+        if (!device.wait(Until.hasObject(charge), 2_000)) tap("View cart")
+        find(charge).click()
+        waitText("Checkout")
+        tap("Complete payment")
+        waitText("Close it (More")
+        if (device.hasObject(By.text("Payment successful"))) fail("sale went through on another cashier's shift")
+        log("charge refused on another cashier's shift")
+    }
+
+    /** Cafe mode: a dine-in order cannot be rung up before a table is picked. */
+    @Test
+    fun dineInStartsAtTheFloor() {
+        need("cashierName", "cashierPin")
+        signIn(arg("cashierName")!!, arg("cashierPin")!!)
+        waitText(FLOOR_HINT)
+        if (device.hasObject(By.text("All"))) fail("the menu is reachable before a table is picked")
+        log("Sell opens on the floor, menu hidden")
+        tap("Takeaway")
+        waitText("All")
+        log("Takeaway opens the menu without a table")
+        // Phones collapse the unset chip to its icon; tablets show the label.
+        (device.findObject(By.desc("Takeaway")) ?: find(By.text("Takeaway"))).click()
+        tap("Floor")
+        waitText(FLOOR_HINT)
+        log("Floor button returns to the tables")
+        tap(arg("table") ?: "Table 1")
+        waitText("All")
+        device.pressBack()
+        waitText(FLOOR_HINT)
+        log("Back from a table returns to the floor")
     }
 
     /** Three wrong PINs trigger the backoff; the host restarts the app and runs [pinLockoutSurvivesRestart]. */
@@ -282,6 +326,14 @@ class PosDeviceE2ETest {
         }
     }
 
+    /** Cafe mode starts at the floor: pick `-e table` (e.g. "Table 1"), else go takeaway. */
+    private fun startOrder() {
+        if (!device.wait(Until.hasObject(By.text(FLOOR_HINT)), 3_000)) return
+        val table = arg("table")
+        if (table != null) tap(table) else tap("Takeaway")
+        log("order started: ${table ?: "takeaway"}")
+    }
+
     private fun addItem(name: String) {
         tap("All")
         val item = device.wait(Until.findObject(By.text(name)), TIMEOUT)
@@ -345,5 +397,6 @@ class PosDeviceE2ETest {
     private companion object {
         const val TAG = "PosE2E"
         const val TIMEOUT = 15_000L
+        const val FLOOR_HINT = "Pick a table to start the order"
     }
 }

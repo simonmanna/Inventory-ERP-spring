@@ -79,6 +79,19 @@ Same as Nest, kept on purpose:
   services write them through Prisma; approval gates that Nest runs outside `$transaction` run in
   `REQUIRES_NEW` so a refused request survives.
 
+## Extensions beyond Nest (ADR-S005)
+
+These are additive routes the owner asked for. Nest has no counterpart.
+- `GET/POST /opening-balances`. Permissions are `opening_balance:read` and `opening_balance:post`, and the POST
+  requires an `Idempotency-Key`. GL lines post as one `GEN` entry, and any difference goes to `retained_earnings`.
+  Customer and supplier balances become posted invoices and bills, tagged `sourceType = opening_balance`.
+- `GET /reports/tax/summary?from&to&branchId` (`report:accounting`) shows output tax and input tax by tax, the
+  net amount payable, and a GL cross-check.
+- `GET /reports/ar/customers/:id/statement[.pdf]`, `POST …/statement/email` and
+  `GET /reports/ap/suppliers/:id/statement[.pdf]` (`report:ar`) build a GL-based statement with aging.
+- `GET /invoices/:id/pdf` (`invoice:read`) and `POST /invoices/:id/email` (`invoice:send`, posted invoices
+  only). Sending stamps `Document.data.lastEmailedAt` and `Document.data.lastEmailedTo`.
+
 ## Status
 
 P3b: 30/30 routes. Tests: `InvoicingIT` (invoice draft / preview / edit / post / cancel with JE reversal,

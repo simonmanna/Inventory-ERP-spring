@@ -1,5 +1,6 @@
 package com.poscafe.pos.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -106,6 +107,16 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
     val searchQuery by vm.productSearchQuery.collectAsStateWithLifecycle()
     val customers by vm.customers.collectAsStateWithLifecycle()
     val selectedCustomer = vm.selectedCustomer
+    val needsTable by vm.needsTable.collectAsStateWithLifecycle()
+    val takeaway by vm.takeaway.collectAsStateWithLifecycle()
+    val openTabIds by vm.openTabTableIds.collectAsStateWithLifecycle()
+    val foreignShiftOwner by vm.foreignShiftOwner.collectAsStateWithLifecycle()
+    val signedInId = vm.cashier?.userId
+    LaunchedEffect(signedInId) { vm.currentUserId.value = signedInId }
+    // Cafe mode: Back from an order returns to the floor (a table's order stays on its tab).
+    BackHandler(enabled = !isRetail && !needsTable && (selectedTable != null || vm.cart.isEmpty())) {
+        vm.backToFloor()
+    }
 
     var showCheckout by remember { mutableStateOf(false) }
     var showCartSheet by remember { mutableStateOf(false) }
@@ -138,12 +149,25 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
                 onRecallHold = { holdMode.value = HoldDialogMode.Recall; showHoldDialog = true },
                 onOpenSession = { vm.loadRegisters(); showOpenSession = true },
                 isRetailMode = isRetail,
+                takeaway = takeaway,
+                foreignShiftOwner = foreignShiftOwner,
                 searchQuery = searchQuery,
                 onSearchQueryChanged = vm::onSearchQueryChanged,
                 onSearch = vm::searchProducts,
                 onScanBarcode = { showBarcodeScanner = true },
             )
-            Row(Modifier.weight(1f)) {
+            if (needsTable) {
+                // Cafe/restaurant: dine-in starts at the floor. No menu, no cart
+                // until a table is picked (or Takeaway is chosen explicitly).
+                TableFloor(
+                    tables = tables,
+                    selectedId = null,
+                    openTabTableIds = openTabIds.toSet(),
+                    onSelect = { vm.selectTable(it) },
+                    onTakeaway = { vm.selectTable(null) },
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                )
+            } else Row(Modifier.weight(1f)) {
                 Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
                     if (isRetail) {
                         RetailCatalog(
@@ -187,7 +211,7 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
             }
         }
 
-        if (!wide && vm.cart.isNotEmpty()) {
+        if (!wide && !needsTable && vm.cart.isNotEmpty()) {
             CartBar(
                 count = vm.cart.sumOf { it.quantity }.toInt(),
                 total = vm.totals.total,
@@ -273,7 +297,6 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
     }
 
     if (!isRetail && showTablePicker) {
-        val openTabIds by vm.openTabTableIds.collectAsStateWithLifecycle()
         TablePickerDialog(
             tables = tables,
             openTabTableIds = openTabIds.toSet(),
@@ -281,6 +304,10 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
             onSelect = { vm.selectTable(it); showTablePicker = false },
             onDismiss = { showTablePicker = false },
             onReservations = { showTablePicker = false; showReservations = true },
+            // A takeaway cart with items has no tab to bank on; pick a table for it instead.
+            onFloor = if (selectedTable == null && vm.cart.isNotEmpty()) null else ({
+                vm.backToFloor(); showTablePicker = false
+            }),
         )
     }
 
@@ -345,6 +372,8 @@ internal fun TerminalHeader(
     onRecallHold: () -> Unit = {},
     onOpenSession: () -> Unit,
     isRetailMode: Boolean = false,
+    takeaway: Boolean = false,
+    foreignShiftOwner: String? = null,
     searchQuery: String = "",
     onSearchQueryChanged: (String) -> Unit = {},
     onSearch: (String) -> Unit = {},
@@ -368,7 +397,12 @@ internal fun TerminalHeader(
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (isRetailMode) "Retail POS" else "New order",
+                        when {
+                            isRetailMode -> "Retail POS"
+                            table != null -> table.name?.takeIf { it.isNotBlank() } ?: "Table ${table.number}"
+                            takeaway -> "Takeaway"
+                            else -> "New order"
+                        },
                         style = MaterialTheme.typography.headlineSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -420,8 +454,8 @@ internal fun TerminalHeader(
                     onPickTable?.let { pickTable ->
                         HeaderChip(
                             icon = Icons.Outlined.TableRestaurant,
-                            label = table?.let { "Table ${it.number}" } ?: "Takeaway",
-                            fallback = "Takeaway",
+                            label = table?.let { "Table ${it.number}" } ?: if (takeaway) "Takeaway" else "Table",
+                            fallback = if (takeaway) "Takeaway" else "Table",
                             active = table != null,
                             onClick = pickTable,
                         )
@@ -462,6 +496,21 @@ internal fun TerminalHeader(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
+            }
+        }
+        if (sessionOpen && foreignShiftOwner != null) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Shift opened by $foreignShiftOwner. Close it (More → Close session) and open your own to sell.",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                )
             }
         }
         if (isRetailMode) {
@@ -554,6 +603,7 @@ fun TablePickerDialog(
     onDismiss: () -> Unit,
     openTabTableIds: Set<String> = emptySet(),
     onReservations: (() -> Unit)? = null,
+    onFloor: (() -> Unit)? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -619,7 +669,10 @@ fun TablePickerDialog(
             }
         },
         confirmButton = {
-            onReservations?.let { TextButton(onClick = it) { Text("Reservations") } }
+            Row {
+                onFloor?.let { TextButton(onClick = it) { Text("Floor") } }
+                onReservations?.let { TextButton(onClick = it) { Text("Reservations") } }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )

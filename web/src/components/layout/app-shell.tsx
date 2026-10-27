@@ -75,6 +75,10 @@ import {
   ChevronDown,
   Undo2,
   ListRestart,
+  Target,
+  FileInput,
+  ReceiptText,
+  Network,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -209,6 +213,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/credit-notes', label: tx('Credit Notes'), icon: FileMinus, permission: PERMISSIONS.creditNote.read },
       { to: '/payments', label: tx('Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
+      { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar },
     ],
   },
   {
@@ -302,6 +307,10 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory-gl-tieout', label: tx('Inventory ↔ GL'), icon: ShieldCheck, permission: PERMISSIONS.report.accounting, reportId: 'accounting.inventory-gl-tieout' },
       { to: '/year-end-close', label: tx('Year-End Close'), icon: Lock, permission: PERMISSIONS.fiscalPeriod.update },
       { to: '/balance-sheet', label: tx('Balance Sheet'), icon: Landmark, permission: PERMISSIONS.report.accounting, reportId: 'accounting.balance-sheet' },
+      { to: '/tax-report', label: tx('Tax Report'), icon: ReceiptText, permission: PERMISSIONS.report.accounting },
+      { to: '/budgets', label: tx('Budgets'), icon: Target, permission: PERMISSIONS.budget.read },
+      { to: '/consolidated-report', label: tx('Branch Consolidation'), icon: Network, permission: PERMISSIONS.report.accounting },
+      { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read },
       { to: '/reports', label: tx('Report Center'), icon: BarChart3, permission: PERMISSIONS.report.accounting, reportId: 'accounting.report-center' },
     ],
   },
