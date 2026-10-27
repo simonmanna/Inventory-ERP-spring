@@ -1,10 +1,21 @@
 package com.inventoryerp.kernel.web;
 
+import com.inventoryerp.kernel.idempotency.CachedBodyFilter;
 import com.inventoryerp.kernel.idempotency.IdempotencyInterceptor;
 import com.inventoryerp.shared.web.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.ElementKind;
+import jakarta.validation.Path;
+import jakarta.validation.Valid;
+import jakarta.validation.Validator;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.ParameterizedType;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,9 +29,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.ObjectError;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.validation.beanvalidation.SpringValidatorAdapter;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,7 +47,14 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.TokenStreamContext;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ValueDeserializer;
+import tools.jackson.databind.deser.DeserializationProblemHandler;
 import tools.jackson.databind.exc.UnrecognizedPropertyException;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Renders every error like the Nest {@code GlobalExceptionFilter}: an HttpException's response object
@@ -51,12 +72,16 @@ public class GlobalExceptionHandler {
     private final boolean exposeDetail;
     private final boolean prod;
     private final IdempotencyInterceptor idempotency;
+    private final JsonMapper mapper;
+    private final Validator validator;
 
     public GlobalExceptionHandler(@Value("${app.errors.expose-detail:false}") boolean exposeDetail,
-            Environment env, IdempotencyInterceptor idempotency) {
+            Environment env, IdempotencyInterceptor idempotency, JsonMapper mapper, Validator validator) {
         this.exposeDetail = exposeDetail;
         this.prod = env.acceptsProfiles(Profiles.of("prod"));
         this.idempotency = idempotency;
+        this.mapper = mapper;
+        this.validator = validator;
     }
 
     @ExceptionHandler(ApiException.class)
@@ -108,6 +133,10 @@ public class GlobalExceptionHandler {
     ResponseEntity<Object> unreadable(HttpMessageNotReadableException ex, HttpServletRequest req) {
         Throwable cause = ex.getMostSpecificCause();
         if (cause instanceof UnrecognizedPropertyException u) {
+            List<String> all = whitelistAndFieldMessages(req);
+            if (all != null) {
+                return badRequest(req, ex, all);
+            }
             // class-validator prefixes a nested whitelist error with its parent path: "lines.0.property x ..."
             String parent = parentPath(u.getPath());
             return badRequest(req, ex, List.of((parent.isEmpty() ? "" : parent + ".") + "property "
@@ -219,7 +248,7 @@ public class GlobalExceptionHandler {
 
     private static List<String> messages(List<ObjectError> errors) {
         List<String> out = new ArrayList<>();
-        for (ObjectError e : errors) {
+        for (ObjectError e : classValidatorOrder(errors)) {
             String field = e instanceof FieldError fe ? fe.getField() : e.getObjectName();
             String msg = e.getDefaultMessage();
             if (msg != null && msg.startsWith("@")) {
@@ -234,6 +263,129 @@ public class GlobalExceptionHandler {
             out.add(prefixed(field, e.getDefaultMessage()));
         }
         return out;
+    }
+
+    /**
+     * class-validator runs the whitelist check and the property constraints in one pass: the 400 lists every unknown
+     * property ({@code property x should not exist}, nested ones under their parent path) followed by the field
+     * messages. Jackson stops at the first unknown property, so the cached body is read again skipping unknown
+     * properties and then validated. Null when that is not possible (the single whitelist message stays).
+     */
+    private List<String> whitelistAndFieldMessages(HttpServletRequest req) {
+        if (!(req.getAttribute(EmptyBodyAdvice.BODY_TARGET) instanceof EmptyBodyAdvice.BodyTarget target)
+                || !(req.getAttribute(CachedBodyFilter.RAW_BODY) instanceof byte[] raw)) {
+            return null;
+        }
+        List<String> unknown = new ArrayList<>();
+        Object body;
+        try {
+            body = mapper.readerFor(mapper.constructType(target.type()))
+                    .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .withHandler(new DeserializationProblemHandler() {
+                        @Override
+                        public boolean handleUnknownProperty(DeserializationContext ctxt, JsonParser p,
+                                ValueDeserializer<?> deserializer, Object beanOrClass, String propertyName) {
+                            // The parser already sits on the value; for an object/array value that is its own
+                            // context, so climb to the object that holds the unknown property.
+                            TokenStreamContext holder = p.streamReadContext();
+                            while (holder != null
+                                    && !(holder.inObject() && propertyName.equals(holder.currentName()))) {
+                                holder = holder.getParent();
+                            }
+                            String parent = holder == null ? "" : contextPath(holder.getParent());
+                            unknown.add((parent.isEmpty() ? "" : parent + ".") + "property " + propertyName
+                                    + " should not exist");
+                            p.skipChildren();
+                            return true;
+                        }
+                    })
+                    .readValue(raw);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (unknown.isEmpty()) {
+            return null;
+        }
+        List<String> out = new ArrayList<>(unknown);
+        boolean validated = target.parameter().hasParameterAnnotation(Valid.class)
+                || target.parameter().hasParameterAnnotation(Validated.class);
+        if (body != null && validated) {
+            BeanPropertyBindingResult result = new BeanPropertyBindingResult(body, "body");
+            new SpringValidatorAdapter(validator).validate(body, result);
+            out.addAll(messages(result.getAllErrors()));
+        }
+        return out;
+    }
+
+    /**
+     * class-validator order: properties in declaration order (nested properties and list indexes likewise), and the
+     * constraints of one property in reverse decorator order. Hibernate Validator collects violations in a
+     * {@code HashSet}, so the order is rebuilt from the DTO's declared components and annotation order (DTO records
+     * list their constraints in Nest decorator order).
+     */
+    static List<ObjectError> classValidatorOrder(List<ObjectError> errors) {
+        List<ObjectError> sorted = new ArrayList<>(errors);
+        sorted.sort(Comparator.comparing(GlobalExceptionHandler::orderKey, GlobalExceptionHandler::compareKeys));
+        return sorted;
+    }
+
+    private static List<Integer> orderKey(ObjectError error) {
+        List<Integer> key = new ArrayList<>();
+        ConstraintViolation<?> violation;
+        try {
+            violation = error.unwrap(ConstraintViolation.class);
+        } catch (IllegalArgumentException e) {
+            key.add(Integer.MAX_VALUE);
+            return key;
+        }
+        Class<?> type = violation.getRootBeanClass();
+        java.lang.reflect.Field field = null;
+        for (Path.Node node : violation.getPropertyPath()) {
+            if (node.isInIterable()) {
+                key.add(node.getIndex() == null ? 0 : node.getIndex());
+            }
+            if (node.getKind() != ElementKind.PROPERTY || type == null) {
+                continue;
+            }
+            List<java.lang.reflect.Field> fields = Arrays.stream(type.getDeclaredFields())
+                    .filter(f -> !java.lang.reflect.Modifier.isStatic(f.getModifiers())).toList();
+            field = fields.stream().filter(f -> f.getName().equals(node.getName())).findFirst().orElse(null);
+            key.add(field == null ? Integer.MAX_VALUE : fields.indexOf(field));
+            type = field == null ? null : elementType(field);
+        }
+        Annotation constraint = violation.getConstraintDescriptor().getAnnotation();
+        int position = field == null ? -1 : Arrays.asList(field.getAnnotations()).indexOf(constraint);
+        key.add(-position);
+        return key;
+    }
+
+    /** The bean type a property leads to: the element type for a collection, else the declared type. */
+    private static Class<?> elementType(java.lang.reflect.Field field) {
+        if (Collection.class.isAssignableFrom(field.getType())
+                && field.getGenericType() instanceof ParameterizedType p
+                && p.getActualTypeArguments()[0] instanceof Class<?> element) {
+            return element;
+        }
+        return field.getType();
+    }
+
+    private static int compareKeys(List<Integer> a, List<Integer> b) {
+        for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            int c = Integer.compare(a.get(i), b.get(i));
+            if (c != 0) {
+                return c;
+            }
+        }
+        return Integer.compare(a.size(), b.size());
+    }
+
+    /** Dotted path of a parser context ({@code lines.0}); empty at the root. */
+    private static String contextPath(TokenStreamContext ctx) {
+        List<String> parts = new ArrayList<>();
+        for (TokenStreamContext c = ctx; c != null && !c.inRoot(); c = c.getParent()) {
+            parts.addFirst(c.inArray() ? String.valueOf(c.getCurrentIndex()) : c.currentName());
+        }
+        return String.join(".", parts);
     }
 
     /** Dotted JSON path of everything above the last reference ({@code lines.0.readings.0}); empty at top level. */

@@ -1,7 +1,7 @@
 package com.inventoryerp.pos.web;
 
 import com.inventoryerp.kernel.crud.EntityPatch;
-import com.inventoryerp.shared.web.ApiException;
+import com.inventoryerp.kernel.crud.QueryParams;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -72,15 +72,9 @@ final class PosDtos {
         return v;
     }
 
-    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}. */
+    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}: {@link QueryParams#parseInt}. */
     static int parseInt(String raw, int def) {
-        if (raw == null) {
-            return def;
-        }
-        if (!raw.matches("-?\\d+")) {
-            throw ApiException.badRequest("Validation failed (numeric string is expected)");
-        }
-        return Integer.parseInt(raw);
+        return QueryParams.parseInt(raw, def);
     }
 
     /**

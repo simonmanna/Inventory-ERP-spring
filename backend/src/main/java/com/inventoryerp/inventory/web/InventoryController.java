@@ -1,5 +1,6 @@
 package com.inventoryerp.inventory.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.inventory.web.InventoryDtos.DOC_STATUSES;
 import static com.inventoryerp.inventory.web.InventoryDtos.ISO_DATE;
 import static com.inventoryerp.inventory.web.InventoryDtos.LOCATION_TYPES;
@@ -57,12 +58,11 @@ public class InventoryController {
     private static final String STR = "must be a string";
     private static final String EMPTY = "should not be empty";
     private static final String ARR = "must be an array";
-    private static final String MIN1 = "must contain at least 1 elements";
 
     /** {@code CreateLocationDto}. */
     public record CreateLocationRequest(
-            @NotEmpty(message = EMPTY) String code,
-            @NotEmpty(message = EMPTY) String name,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String code,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String name,
             @OneOf(value = {"warehouse", "store", "virtual", "main_kitchen", "bar", "storage_room", "walkin_fridge",
                     "freezer", "dry_storage", "front_counter", "branch", "production"},
                     message = InventoryDtos.USER_LOCATION_TYPE_MESSAGE) String type,
@@ -79,7 +79,7 @@ public class InventoryController {
 
     /** {@code DirectStockInItemDto} / {@code DirectStockOutItemDto}. */
     public record DirectStockItem(
-            @NotEmpty(message = EMPTY) String productId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String productId,
             String variantId,
             @NotNull(message = NUM) @Positive(message = "must be a positive number") BigDecimal quantity,
             BigDecimal unitCost,
@@ -90,11 +90,11 @@ public class InventoryController {
 
     /** {@code DirectStockInDto} / {@code DirectStockOutDto}. */
     public record DirectStockRequest(
-            @NotEmpty(message = EMPTY) String locationId,
-            @NotEmpty(message = EMPTY) String responsibleById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String locationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
             String approvedById,
             @Size(max = 128, message = "must be shorter than or equal to 128 characters") String approverPin,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid DirectStockItem> items,
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid DirectStockItem> items,
             String notes) {}
 
     /** {@code StockOutItemDto}. */
@@ -134,61 +134,61 @@ public class InventoryController {
 
     /** {@code CreateStockOutDto}. */
     public record CreateStockOutRequest(
-            @NotEmpty(message = EMPTY) String locationId,
-            @NotEmpty(message = EMPTY) String responsibleById,
-            @NotEmpty(message = EMPTY) String approvedById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String locationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"general_use", "kitchen_testing", "training", "damaged", "sample", "expired", "complimentary",
                     "other"}) String category,
             String reason,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid StockOutLine> items) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid StockOutLine> items) {}
 
     /** {@code CreateWasteDto}. */
     public record CreateWasteRequest(
-            @NotEmpty(message = EMPTY) String locationId,
-            @NotEmpty(message = EMPTY) String responsibleById,
-            @NotEmpty(message = EMPTY) String approvedById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String locationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"expired", "spoiled", "burnt", "contaminated", "breakage", "other", "overmixed", "packaging_defect",
                     "qc_rejection"}) String category,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid WasteLine> items) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid WasteLine> items) {}
 
     /** {@code CreateStockAdjustmentDto}. */
     public record CreateAdjustmentRequest(
-            @NotEmpty(message = EMPTY) String locationId,
-            @NotEmpty(message = EMPTY) String responsibleById,
-            @NotEmpty(message = EMPTY) String approvedById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String locationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"cycle_count", "damaged", "expired", "theft", "found", "initial_count", "other"}) String reason,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid AdjustmentLine> items) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid AdjustmentLine> items) {}
 
     /** {@code CreateStockTransferDto}. */
     public record CreateTransferRequest(
-            @NotEmpty(message = EMPTY) String fromLocationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String fromLocationId,
             @OneOf({"immediate", "transit"}) String mode,
-            @NotEmpty(message = EMPTY) String toLocationId,
-            @NotEmpty(message = EMPTY) String responsibleById,
-            @NotEmpty(message = EMPTY) String approvedById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String toLocationId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             String notes,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid TransferLine> items) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid TransferLine> items) {}
 
     /** {@code ReceiveStockTransferLineDto}. */
     public record ReceiveLineRequest(
-            @NotEmpty(message = EMPTY) String itemId,
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String itemId,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal received,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal damaged,
             @JsonProperty("short") @DecimalMin(value = "0", message = "short must not be less than 0") BigDecimal shortQty) {}
 
     /** {@code ReceiveStockTransferDto}. */
     public record ReceiveTransferRequest(
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid ReceiveLineRequest> lines,
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid ReceiveLineRequest> lines,
             String notes) {}
 
     /** {@code ApproveAdjustmentDto}. */
     public record ApproveAdjustmentRequest(Boolean force, String forceReason) {}
 
     /** {@code ReverseStockDocDto}. */
-    public record ReverseRequest(@NotEmpty(message = EMPTY) String reason) {}
+    public record ReverseRequest(@NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String reason) {}
 
     private final LocationService locations;
     private final StockDocService stockDocs;

@@ -18,7 +18,8 @@ const files = fs.readdirSync(path.join(here, 'scenarios')).filter((f) => f.endsW
 // Values that legitimately differ between two runs are replaced by stable placeholders.
 const VOLATILE_KEYS = new Set(['id', 'requestId', 'createdAt', 'updatedAt', 'timestamp', 'accessToken', 'refreshToken', 'posToken', 'mfaToken', 'durationMs', 'latencyMs']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+const UUID_IN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const ISO =/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 function normalize(v, key) {
   if (Array.isArray(v)) return v.map((x) => normalize(x));
   if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, normalize(v[k], k)]));
@@ -26,6 +27,8 @@ function normalize(v, key) {
     if (VOLATILE_KEYS.has(key) || UUID.test(v)) return `<${key ?? 'value'}>`;
     if (ISO.test(v)) return '<timestamp>';
     if (/^ey[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) return '<jwt>';
+    // Ids embedded in larger strings (DRAFT-<uuid>, postingKey "cash-flow:deposit:<uuid>", "/journal-entries/<uuid>").
+    return v.replace(UUID_IN, '<uuid>');
   }
   return v;
 }
@@ -70,6 +73,12 @@ for (const file of files) {
       results[side] = { status: res.status, totalCount: res.headers.get('x-total-count'), body: normalize(body) };
     }
     const diffs = diff(results.nest, results.spring).filter((d) => !isAllowed(d, file, step.name));
+    // A capture that resolves to nothing (failed login, 429, error body) silently turns every later step into an
+    // unauthenticated or `//` request on both sides, which then "match". Treat it as a failure of this step.
+    for (const name of Object.keys(step.capture ?? {})) {
+      const state = (side) => (vars[side][name] == null ? `missing (HTTP ${results[side].status})` : 'ok');
+      if (vars.nest[name] == null || vars.spring[name] == null) diffs.push({ path: `capture:${name}`, nest: state('nest'), spring: state('spring') });
+    }
     if (diffs.length) {
       failures++;
       console.log(`  ✗ ${step.name}`);

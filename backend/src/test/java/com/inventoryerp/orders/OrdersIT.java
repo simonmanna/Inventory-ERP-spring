@@ -99,9 +99,9 @@ class OrdersIT extends ApiTestSupport {
         assertThat(list.get("rows").get(0).get("id").asString()).isEqualTo(id);
         assertThat(list.get("meta").get("pageSize").asInt()).isEqualTo(25);
         assertThat(list.get("rows").get(0).get("totalAmount").isNumber()).isTrue();
-        Res badPage = as("GET", "/orders?page=x", null);
-        assertThat(badPage.status()).isEqualTo(400);
-        assertThat(badPage.body().get("message").asString()).isEqualTo("Validation failed (numeric string is expected)");
+        // DefaultValuePipe treats Number("x") = NaN as missing; ParseIntPipe still rejects a fraction.
+        assertThat(ok(200, "GET", "/orders?page=x", null).get("meta").get("page").asInt()).isEqualTo(1);
+        assertThat(as("GET", "/orders?page=1.5", null).status()).isEqualTo(400);
         assertThat(ok(200, "GET", "/orders?status=cancelled&orderType=delivery&dateFrom=2000-01-01&dateTo=2000-01-02",
                 null).get("total").asInt()).isZero();
 

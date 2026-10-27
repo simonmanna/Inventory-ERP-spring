@@ -1,6 +1,7 @@
 package com.inventoryerp.orders.web;
 
 import com.inventoryerp.kernel.crud.EntityPatch;
+import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -13,7 +14,6 @@ import com.inventoryerp.orders.web.OrdersDtos.CreateOrderRequest;
 import com.inventoryerp.orders.web.OrdersDtos.SaveOrderItemsRequest;
 import com.inventoryerp.orders.web.OrdersDtos.UpdateOrderHeaderRequest;
 import com.inventoryerp.orders.web.OrdersDtos.UpdateOrderSettingsRequest;
-import com.inventoryerp.shared.web.ApiException;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -69,15 +69,9 @@ public class OrdersController {
                 transactionKind, dateFrom, dateTo));
     }
 
-    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}. */
+    /** Nest {@code ParseIntPipe} after {@code DefaultValuePipe(def)}: {@link QueryParams#parseInt}. */
     private static int parseInt(String raw, int def) {
-        if (raw == null) {
-            return def;
-        }
-        if (!raw.matches("-?\\d+")) {
-            throw ApiException.badRequest("Validation failed (numeric string is expected)");
-        }
-        return Integer.parseInt(raw);
+        return QueryParams.parseInt(raw, def);
     }
 
     @GetMapping("/{id}")

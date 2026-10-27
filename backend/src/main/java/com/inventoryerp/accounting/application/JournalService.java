@@ -6,11 +6,8 @@ import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
-import com.inventoryerp.shared.web.PageQuery;
-import com.inventoryerp.shared.web.PageResult;
 import jakarta.persistence.EntityManager;
 import java.util.List;
-import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,13 +39,6 @@ public class JournalService extends BaseCrudService<Journal> {
         return List.of(Sort.asc("code"));
     }
 
-    /** {@code GET /journals}: pageSize defaults to 100. */
-    @Override
-    @Transactional(readOnly = true)
-    public PageResult<Map<String, Object>> list(PageQuery query) {
-        return super.list(new PageQuery(query.page(), query.pageSize() == null ? 100 : query.pageSize(), query.search(),
-                query.sortBy(), query.sortOrder()));
-    }
 
     /**
      * The journal a sales document posts to: preferred id → org setting {@code accounting.defaultSalesJournalId}

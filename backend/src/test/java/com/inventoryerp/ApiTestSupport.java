@@ -159,6 +159,13 @@ public abstract class ApiTestSupport {
         return r.body();
     }
 
+    /** The {@code message} array of a 400, in order. */
+    protected static List<String> validationMessages(Res r) {
+        List<String> out = new ArrayList<>();
+        r.body().get("message").forEach(m -> out.add(m.asString()));
+        return out;
+    }
+
     protected String login(String org, String email, String password) {
         Res r = call("POST", "/auth/login", Map.of("organizationCode", org, "email", email, "password", password),
                 (String) null);

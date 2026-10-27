@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.DATE_MSG;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.ISO_DATE;
 
@@ -15,7 +16,6 @@ import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +54,7 @@ public class InvoiceController {
             BigDecimal exchangeRate,
             String reference,
             String notes,
-            @NotNull(message = "must be an array") @Size(min = 1, message = "must contain at least 1 elements")
+            @NotNull(message = "must be an array") @ArrayMinSize(1)
             List<@Valid InvoiceLine> lines) {
 
         InvoiceInput toInput() {

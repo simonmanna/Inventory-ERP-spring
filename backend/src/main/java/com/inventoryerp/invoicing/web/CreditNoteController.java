@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.DATE_MSG;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.ISO_DATE;
 
@@ -14,7 +15,6 @@ import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,7 +38,7 @@ public class CreditNoteController {
             String reference,
             String notes,
             String reversedDocumentId,
-            @NotNull(message = "must be an array") @Size(min = 1, message = "must contain at least 1 elements")
+            @NotNull(message = "must be an array") @ArrayMinSize(1)
             List<@Valid InvoiceLine> lines) {}
 
     private final CreditNoteService creditNotes;

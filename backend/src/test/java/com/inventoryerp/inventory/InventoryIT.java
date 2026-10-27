@@ -81,6 +81,14 @@ class InventoryIT extends ApiTestSupport {
         assertThat(transit.status()).isEqualTo(400);
         assertThat(transit.body().get("message").get(0).asString())
                 .isEqualTo("type must be a user-managed location type (transit is system-managed)");
+        assertThat(validationMessages(as("POST", "/inventory/locations", Map.of("name", "X"))))
+                .containsExactly("code should not be empty", "code must be a string");
+        // Unknown property + missing fields: one 400 with everything, in class-validator order (Nest parity).
+        assertThat(validationMessages(as("POST", "/inventory/stock-outs", Map.of("locationId", "L", "lines", List.of()))))
+                .containsExactly("property lines should not exist", "responsibleById should not be empty",
+                        "responsibleById must be a string", "approvedById should not be empty",
+                        "approvedById must be a string", "items must contain at least 1 elements",
+                        "items must be an array");
         String id = location("bar");
         assertThat(ok(200, "GET", "/inventory/locations/" + id, null).get("type").asString()).isEqualTo("bar");
         assertThat(ok(200, "PATCH", "/inventory/locations/" + id, Map.of("name", "Back bar")).get("name").asString())

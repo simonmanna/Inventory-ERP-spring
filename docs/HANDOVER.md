@@ -26,9 +26,11 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (879/1118). Per-module status,
 
 ## Open items (not done, do not claim them)
 
-1. **Parity harness not run** against a live Nest for any P2/P3 scenario (`contract-tests/scenarios/*.json`
-   exist; `node contract-tests/run.mjs` needs both servers + same seed). Spec checklists leave the
-   "Parity scenarios" and "Web screens" boxes unticked for this reason.
+1. **Parity not yet green.** 2026-10-27 run for accounting / expenses / inventory / invoicing / procurement:
+   final 167 ✓, 16 ✗ after the S1–S5 fixes; the 16 left are owner decisions (UoM ADR-S003, dev-only 500 detail) — see
+   `docs/audits/2026-10-27-phase-a-parity-run.md`. Runs before 2026-10-27 could count unauthenticated steps as
+   matches (harness ignored failed captures; Nest throttles logins to 10 / 5 min) — re-verify older "green" claims.
+   Spec checklists leave the "Parity scenarios" and "Web screens" boxes unticked until diffs are fixed.
 2. **Web screens**: P8 Playwright smoke over 31 pages (POS, KDS, HR, orders, reports) is clean; no deeper per-screen
    walkthrough was done.
 3. **JaCoCo ≥ 80 %** on `application` packages not reached: 74 % overall, 57–92 % per package. The build gate is a

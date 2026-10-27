@@ -31,8 +31,8 @@ public class TreasuryController {
 
     /** {@code CreateBankAccountDto}. */
     public record CreateBankAccountRequest(
-            @NotBlank(message = "should not be empty") String accountId,
-            @NotBlank(message = "should not be empty") String name,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String accountId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
             String bankName,
             String accountNumber,
             String currencyId,
@@ -44,8 +44,8 @@ public class TreasuryController {
 
     /** {@code TransferDto}. */
     public record TransferRequest(
-            @NotBlank(message = "should not be empty") String fromAccountId,
-            @NotBlank(message = "should not be empty") String toAccountId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String fromAccountId,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String toAccountId,
             @NotNull(message = "must be a positive number") @Positive(message = "must be a positive number") BigDecimal amount,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String date,

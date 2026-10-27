@@ -53,7 +53,8 @@ class AccountingIT extends ApiTestSupport {
         JsonNode registry = ok(200, "GET", "/account-mappings/registry", null);
         assertThat(registry.get(0).get("key").asString()).isEqualTo("accounts_receivable");
         JsonNode page = ok(200, "GET", "/accounts", null);
-        assertThat(page.get("meta").get("pageSize").asInt()).isEqualTo(200);
+        // Nest's PaginationDto initializer (25) makes the controller's `pageSize ?? 200` dead code.
+        assertThat(page.get("meta").get("pageSize").asInt()).isEqualTo(25);
         // Other suites add accounts (register drawers) to the shared org, so check presence, not position.
         assertThat(page.get("data").findValuesAsString("code")).contains("1000");
         JsonNode tree = ok(200, "GET", "/accounts/tree?includeBalances=true", null);
@@ -78,6 +79,14 @@ class AccountingIT extends ApiTestSupport {
                 "parentAccountId", accountId("1000")));
         assertThat(created.get("normalBalance").asString()).isEqualTo("debit");
         assertThat(created.get("cashFlowCategory").asString()).isEqualTo("operating");
+        // Nest's PaginationDto initializer (25) wins over the controller's `pageSize ?? 200`.
+        assertThat(ok(200, "GET", "/accounts", null).get("meta").get("pageSize").asInt()).isEqualTo(25);
+        assertThat(ok(200, "GET", "/journals", null).get("meta").get("pageSize").asInt()).isEqualTo(25);
+        assertThat(ok(200, "GET", "/bank-accounts", null).get("meta").get("pageSize").asInt()).isEqualTo(25);
+        // Whitelist and field errors come together, in class-validator order.
+        Res unknownAndMissing = as("POST", "/accounts", Map.of("code", code, "name", "X", "categoryKey", "bank"));
+        assertThat(validationMessages(unknownAndMissing)).containsExactly(
+                "property categoryKey should not exist", "categoryId should not be empty", "categoryId must be a string");
         Res dupe = as("POST", "/accounts", Map.of("code", code, "name", "Again", "categoryId", cash));
         assertThat(dupe.status()).isEqualTo(409);
         assertThat(dupe.body().get("message").asString()).isEqualTo("Account code '" + code + "' is already used by 'Till 9'");
@@ -207,7 +216,7 @@ class AccountingIT extends ApiTestSupport {
         JsonNode journal = ok(201, "POST", "/journals", Map.of("code", code, "name", "Petty", "journalType", "cash"));
         assertThat(ok(200, "GET", "/journals/" + journal.get("id").asString(), null).get("journalType").asString())
                 .isEqualTo("cash");
-        assertThat(ok(200, "GET", "/journals", null).get("meta").get("pageSize").asInt()).isEqualTo(100);
+        assertThat(ok(200, "GET", "/journals", null).get("meta").get("pageSize").asInt()).isEqualTo(25);
         JsonNode cc = ok(201, "POST", "/cost-centers", Map.of("code", "CC-" + code, "name", "Kitchen"));
         assertThat(cc.get("type").asString()).isEqualTo("cost");
         assertThat(ok(200, "PATCH", "/cost-centers/" + cc.get("id").asString(), Map.of("name", "Bar")).get("count")

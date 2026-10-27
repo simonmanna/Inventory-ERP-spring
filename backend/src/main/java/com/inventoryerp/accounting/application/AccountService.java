@@ -9,8 +9,6 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.persistence.DbEnum;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
-import com.inventoryerp.shared.web.PageQuery;
-import com.inventoryerp.shared.web.PageResult;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -97,13 +95,6 @@ public class AccountService extends BaseCrudService<Account> {
         return out;
     }
 
-    /** {@code GET /accounts}: pageSize defaults to 200. */
-    @Override
-    @Transactional(readOnly = true)
-    public PageResult<Map<String, Object>> list(PageQuery query) {
-        return super.list(new PageQuery(query.page(), query.pageSize() == null ? 200 : query.pageSize(), query.search(),
-                query.sortBy(), query.sortOrder()));
-    }
 
     @Override
     @Transactional

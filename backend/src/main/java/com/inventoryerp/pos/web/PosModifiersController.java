@@ -1,5 +1,6 @@
 package com.inventoryerp.pos.web;
 
+import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.pos.web.PosDtos.ARR;
 import static com.inventoryerp.pos.web.PosDtos.MIN1;
 import static com.inventoryerp.pos.web.PosDtos.NUM;
@@ -73,7 +74,7 @@ public class PosModifiersController {
             @DecimalMax(value = "99999999", message = MAX_PRICE) Double price,
             String description,
             String imageUrl,
-            @NotNull(message = ARR) @Size(min = 1, message = MIN1) List<@Valid ComboItemRequest> items) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid ComboItemRequest> items) {}
 
     public record UpdateComboRequest(
             String name,
