@@ -38,9 +38,11 @@ public class WorkOrderService {
     private static final BigDecimal SIXTY = BigDecimal.valueOf(60);
 
     private final MfgDb db;
+    private final QualityService quality;
 
-    public WorkOrderService(MfgDb db) {
+    public WorkOrderService(MfgDb db, QualityService quality) {
         this.db = db;
+        this.quality = quality;
     }
 
     /** Materialise the work orders of a production order from its routing (idempotent). */
@@ -166,6 +168,7 @@ public class WorkOrderService {
             throw ApiException.badRequest("Production order " + order.get("orderCode") + " is " + order.get("status")
                     + "; work-order time can no longer be costed to it.");
         }
+        quality.validateReason(dto.scrapReasonCode());
         int logged = closeOpenLogs(wo);
         int labourMins = dto.labourMins() != null ? dto.labourMins() : logged;
         Map<String, Object> resource = wo.get("resourceId") == null ? null
@@ -181,6 +184,9 @@ public class WorkOrderService {
         data.put("qtyGood", dto.qtyGood() != null ? dto.qtyGood() : wo.get("qtyGood"));
         data.put("qtyScrap", dto.qtyScrap() != null ? dto.qtyScrap() : wo.get("qtyScrap"));
         data.put("notes", dto.notes() != null ? dto.notes() : wo.get("notes"));
+        if (dto.scrapReasonCode() != null) {
+            data.put("scrapReasonCode", dto.scrapReasonCode());
+        }
         data.put("updatedBy", TenantContext.userId());
         Map<String, Object> updated = db.update(WorkOrder.class, id, data);
 

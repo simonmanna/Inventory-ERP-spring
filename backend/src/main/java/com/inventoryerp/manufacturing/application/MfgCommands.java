@@ -11,6 +11,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Request bodies of the manufacturing routes, mirroring the class-validator rules of {@code dto/bom.dto.ts},
@@ -274,7 +275,9 @@ public final class MfgCommands {
             @DecimalMin(value = "0", message = MIN0) BigDecimal qtyGood,
             @DecimalMin(value = "0", message = MIN0) BigDecimal qtyScrap,
             @Min(value = 0, message = MIN0) Integer labourMins,
-            String notes) {}
+            String notes,
+            /** ADR-S006 C: scrap reason of qtyScrap. */
+            String scrapReasonCode) {}
 
     // ------------------------------------------------------------------ ADR-S006 B: MRP
 
@@ -299,4 +302,47 @@ public final class MfgCommands {
 
     /** {@code POST /mrp/runs/:id/firm}: the planned orders to firm (all open ones when absent). */
     public record FirmPlannedOrders(List<String> ids) {}
+
+    // ------------------------------------------------------------------ ADR-S006 C: shop floor & quality
+
+    /** Scrap / waste reason (create: code + name required; update: any subset). */
+    public record ScrapReasonInput(@Size(min = 1, message = EMPTY) String code, @Size(min = 1, message = EMPTY) String name,
+            Boolean isActive) {}
+
+    /** QC plan; {@code items} = [{key, label, type: boolean|number|text, required, min, max}]. */
+    public record QcPlanInput(@Size(min = 1, message = EMPTY) String name, String productId, String bomId,
+            List<Map<String, Object>> items, Boolean isActive) {}
+
+    /** One weekly working window (minutes from midnight UTC; weekday 0 = Sunday). */
+    public record ShiftInput(
+            @NotNull(message = INT) @Min(value = 0, message = MIN0)
+            @jakarta.validation.constraints.Max(value = 6, message = "must not be greater than 6") Integer weekday,
+            @NotNull(message = INT) @Min(value = 0, message = MIN0)
+            @jakarta.validation.constraints.Max(value = 1439, message = "must not be greater than 1439") Integer startMinute,
+            @NotNull(message = INT) @Min(value = 1, message = "must not be less than 1")
+            @jakarta.validation.constraints.Max(value = 1440, message = "must not be greater than 1440") Integer endMinute) {}
+
+    /** A non-working day. */
+    public record ClosureInput(@NotNull(message = DATE_MSG) @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
+            String reason) {}
+
+    /** Work-centre calendar (each list, when present, replaces the stored one). */
+    public record CalendarInput(List<@Valid @NotNull ShiftInput> shifts, List<@Valid @NotNull ClosureInput> closures) {}
+
+    /** {@code POST /production-orders/:id/schedule}. */
+    public record ScheduleInput(@Pattern(regexp = ISO_DATE, message = DATE_MSG) String startAt) {}
+
+    /** Manual / setup time entry on a work order. */
+    public record TimeLogInput(
+            @NotNull(message = INT) @Min(value = 1, message = "must not be less than 1") Integer minutes,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String startedAt,
+            @OneOf({"run", "setup", "manual"}) String kind,
+            String resourceId,
+            String notes) {}
+
+    /** {@code POST /production-orders/:id/rework}. */
+    public record ReworkInput(
+            @Positive(message = POS) BigDecimal quantity,
+            List<@Valid @NotNull MaterialInput> materials,
+            String notes) {}
 }

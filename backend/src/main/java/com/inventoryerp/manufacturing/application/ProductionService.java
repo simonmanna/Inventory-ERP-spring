@@ -88,12 +88,14 @@ public class ProductionService {
     private final UomConversionService uom;
     private final PosStockLocation posStockLocation;
     private final BomService boms;
+    private final QualityService quality;
     private final TransactionTemplate newTx;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             StockService stock, StockPostingService stockPosting, StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
-            PlatformTransactionManager txm) {
+            QualityService quality, PlatformTransactionManager txm) {
+        this.quality = quality;
         this.db = db;
         this.seq = seq;
         this.audit = audit;
@@ -522,6 +524,9 @@ public class ProductionService {
             throw ApiException.badRequest("Order " + pre.get("orderCode") + " is not awaiting QC (status "
                     + pre.get("status") + ").");
         }
+        // ADR-S006 C: reason codes from the scrap-reason master; checklist against the order's QC plan.
+        quality.validateReason(dto.wasteCategory());
+        quality.validateChecklist(pre, dto.checklist());
         String quarantineId = resolveQuarantineLocation();
         String destinationId = pre.get("outputLocationId") != null ? str(pre, "outputLocationId")
                 : str(pre, "locationId");
@@ -811,6 +816,11 @@ public class ProductionService {
             throw ApiException.badRequest("No active warehouse for finished goods. Create one first.");
         }
         return wh;
+    }
+
+    /** The QC quarantine location id (created on first use). */
+    String quarantineLocation() {
+        return resolveQuarantineLocation();
     }
 
     /** The virtual QC quarantine location, auto-created (and committed) once per org. */

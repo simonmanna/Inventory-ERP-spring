@@ -231,7 +231,7 @@ final class Phase4Controllers {
         @RequirePermissions(Permissions.WORK_ORDER__MANAGE)
         public Map<String, Object> complete(@PathVariable String id,
                 @Valid @RequestBody(required = false) CompleteWorkOrder dto) {
-            return svc.complete(id, dto != null ? dto : new CompleteWorkOrder(null, null, null, null));
+            return svc.complete(id, dto != null ? dto : new CompleteWorkOrder(null, null, null, null, null));
         }
     }
 }
