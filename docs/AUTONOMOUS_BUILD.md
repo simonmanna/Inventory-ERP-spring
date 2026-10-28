@@ -60,7 +60,8 @@ unverified merges — fixing that is the first task.
 
 1. **Tier 0** — finish 0.1 → 0.3 → 0.2, re-verify 0.4. Nest parity rules (`AGENTS.md` §1, §6) apply in full.
    Exit: 1,118/1,118 routes ticked, parity harness green, `./gradlew build` green, web screens work.
-2. **Tier 1** — items 1.1 → 1.7 in roadmap order.
+2. **Tier 1** — **1.8 landed costing & cost centres first** (paying-client requirement, full scope in
+   `ROADMAP.md` §1.8), then items 1.1 → 1.7 in roadmap order.
 3. **Tier 2** — 2.4 first (dimensions), then 2.1, 2.2, 2.3, 2.5, then 2.6–2.10, then i18n + e-commerce connector.
 4. **Tier 3** — 3.3 (scale) and 3.1, 3.2 first, then 3.4–3.7. For 3.7 ship the SPIs + 2 reference connectors
    (EDI X12 850/810, one carrier) — ecosystem breadth is ongoing, not a blocker.

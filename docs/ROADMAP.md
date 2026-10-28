@@ -29,12 +29,12 @@ Each item that changes the wire contract or adds a framework still gets its own 
 | Tier | Goal | Items | Effort |
 |---|---|---|---|
 | 0 | Finish the parity port | 4 | ~16 EW |
-| 1 | Sellable to a general SMB | 7 | ~40 EW (one e-invoicing standard) |
+| 1 | Sellable to a general SMB | 8 | ~47 EW (one e-invoicing standard) |
 | 2 | Odoo Enterprise / BC parity | 10 (+2 small) | ~85 EW |
 | 3 | SAP / D365 F&O class | 7 | ~70 EW + ongoing ecosystem |
 | 4 | Vehicle / fleet management module | 1 module | ~10 EW |
 
-Rough total: **~220 EW** (≈ 4 engineer-years). With a team of 4: Tier 0–1 ≈ 3.5 months, Tier 2 ≈ +5 months.
+Rough total: **~227 EW** (≈ 4 engineer-years). With a team of 4: Tier 0–1 ≈ 3.5 months, Tier 2 ≈ +5 months.
 
 ---
 
@@ -62,8 +62,66 @@ Follow `AGENTS.md` §6; parity rules apply in full.
 | 1.5 | Complete sales cycle | P1 | M (6 EW) | Pricelists + price rules, discount policies, partial delivery / backorders, sales returns (RMA), customer credit limits + hold, drop-ship |
 | 1.6 | Dunning & collections | P2 | S (2 EW) | Reminder levels, letters/e-mail, interest/fees, promise-to-pay |
 | 1.7 | Year-end close | P2 | S (2 EW) | Retained-earnings rollover, closing entries, period-close checklist with blockers |
+| 1.8 | Landed costing & cost centres | P1 | M (7 EW) | Client requirement (Tally-style). Full landed-cost vouchers across receipts/suppliers with quantity/value/weight/volume/manual allocation, late-cost revaluation, and hierarchical cost centres on every transaction line with allocation rules and reports. Detailed scope: §1.8 below |
 
 **Exit:** a non-hospitality SMB in one target country can run quote-to-cash, procure-to-pay, statutory tax
+
+### 1.8 Landed costing & cost centres (client requirement)
+
+Two related but distinct dimensions — build both, integrated:
+
+- **Landed cost (item costing)** answers *"what did this product really cost?"* — customs, freight, transport,
+  insurance, clearing, handling are capitalised onto the goods (IAS 2).
+- **Cost centres** answer *"which department / branch / project / warehouse incurred the expense?"* — management
+  reporting dimension on GL lines.
+
+One document may carry both: a freight bill is allocated to products (inventory valuation) **and** tagged to an
+import project cost centre (management reporting).
+
+**Already on `main` (extend, never break):** `procurement` `LandedCostService` / `LandedCostController` — one
+landed cost per *posted* goods receipt, methods `value | quantity | equal`, single credit account, layer re-costing
+(capitalised on on-hand qty, expensed on already-consumed qty), allocation rows, GL posting, period-lock check.
+`accounting` `CostCenter` (code, name, type, active) with `costCenterId` + `branchId` on `JournalEntry` and
+`JournalLine`. Existing routes and JSON stay identical; everything below is new routes/fields (ADR first).
+
+Worked example to use as the acceptance test: 100 laptops × UGX 2,000,000 = 200,000,000; customs 30,000,000,
+freight 5,000,000, clearing 2,000,000, insurance 1,000,000 → landed 238,000,000 → **UGX 2,380,000 / unit**.
+Sale at 2,800,000 → gross profit **420,000** (not 800,000). Mixed shipment: transport 3,000,000 by value with
+cement 60 % / steel 40 % → 1,800,000 / 1,200,000; original expense and per-product split both retained.
+
+**Landed cost scope**
+
+| Area | Requirement |
+|---|---|
+| Landed Cost Voucher | One document linked to one **or more** goods receipts and/or purchase invoices (a shipment); draft → approved → posted → reversed; sequence numbers; attachments (source invoices) |
+| Charge lines | Multiple lines per voucher: kind (customs duty, freight, transport, insurance, clearing, loading/handling, other — configurable charge types with default GL account), amount, currency + FX rate, tax code, **capitalisable flag** |
+| Multiple suppliers | Each charge line may have its own supplier (goods vendor ≠ freight forwarder ≠ clearing agent ≠ customs authority); posting credits each supplier's AP (or a clearing account) and can generate/link the vendor bill |
+| Allocation methods | `quantity`, `value`, `weight`, `volume`, `manual` (user enters amount or % per line; must sum to charge total), plus existing `equal`. Method **per charge line**, not only per voucher. Weight/volume from product master (new `weight`, `volume` + UoM fields) or overridden on the receipt line. Rounding remainder to last line (existing rule) |
+| Preview | Allocation preview route + UI before posting: per product, per charge — basis, share %, allocated amount, unit cost before/after |
+| Partial shipments | Voucher spans several receipts of one PO/shipment; goods arriving in multiple deliveries; allocation across all selected receipt lines |
+| Late costs | Charges arriving after goods receipt (and after partial sale): capitalise on remaining on-hand, expense the consumed share to COGS / variance (existing split, extended to multi-receipt); estimated vs actual accrual with true-up when the real invoice arrives |
+| Valuation integration | Respect org valuation method: AVCO re-averages, FIFO bumps the specific layers, standard cost posts to purchase price variance. Batch/serial-level cost where tracked |
+| Accounting | Balanced JE through the posting engine + account mappings: Dr Inventory (capitalised) / Dr COGS or variance (consumed) / Dr recoverable input tax (never capitalised) / Cr supplier AP or landed-cost clearing. No double counting: a charge booked as an expense bill and then landed must reclass, not re-post. Reversal = reversing JE + layer restore |
+| IAS 2 rules | Only direct acquisition costs capitalise; selling, most admin costs and recoverable taxes do not. Charge-type flag drives this; non-capitalisable lines post to expense with cost centre |
+| Audit trail | Keep original charge amounts, basis values, shares, before/after unit costs, approver, timestamps, source documents; immutable once posted |
+| Reports | Landed cost by shipment, by item, by supplier, by branch; landed vs purchase price per item; product gross margin using landed cost |
+
+**Cost centre scope**
+
+| Area | Requirement |
+|---|---|
+| Master | Hierarchical cost centres (parent/child, categories e.g. department, branch, project, warehouse, vehicle); active dates; default per user, branch, warehouse, employee, vehicle |
+| Tagging | Cost centre on every expense/revenue line of: journal entries, vendor bills, expenses, sales invoices, payroll, landed-cost charge lines, stock issues/adjustments, fixed-asset depreciation, POS (per branch), fleet (Tier 4) |
+| Split / allocation | One line split across several cost centres by % or amount (Tally "cost allocation"); allocation rules (e.g. rent by floor area) run as periodic allocation journals |
+| Rules | Per-account policy: cost centre required / optional / forbidden; validation errors on posting |
+| Budgets | Budget vs actual per cost centre (extend `BudgetService`) |
+| Reports | Cost centre P&L, expense breakdown, cost centre × account matrix, roll-up by hierarchy, drill-down to source documents, period comparison, export |
+| Relation to 2.4 | Cost centre is the first concrete analytic dimension; design the storage so 2.4 generic dimensions generalise it without a data migration |
+
+Deliverables: ADR (data model + posting rules), `docs/spec/procurement.md` + `docs/spec/accounting.md` updates,
+Flyway migrations, permissions (`procurement:landed_cost:*`, `accounting:cost_center:*` — follow existing naming),
+web screens (voucher editor with allocation preview, cost-centre tree, reports), seed data with the laptop and
+cement/steel examples, ITs asserting the figures above and GL balance, authorization + tenant + idempotency tests.
 filing and bank reconciliation without spreadsheets.
 
 ## Tier 2 — Odoo Enterprise / Business Central parity
@@ -127,7 +185,7 @@ Permissions `fleet:*`, web screens, authorization + tenant tests, seed data, `do
 ## Suggested sequence
 
 1. Tier 0 (all) → retire Nest.
-2. 1.1–1.4 for the first target country (localization, tax returns, e-invoicing, bank feeds).
+2. 1.8 (client requirement), then 1.1–1.4 for the first target country (localization, tax returns, e-invoicing, bank feeds).
 3. 1.5–1.7, then 2.4 (dimensions) and 2.1–2.3 (WMS, barcode, MRP).
 4. 2.5 customization platform before onboarding partners; 2.6–2.10 by customer demand.
 5. Tier 3 only after paying customers outgrow Tier 2.
