@@ -42,6 +42,10 @@ public class RoutingService {
             op.put("durationMins", o.durationMins() != null ? o.durationMins() : 0);
             op.put("setupMins", o.setupMins() != null ? o.setupMins() : 0);
             op.put("instructions", o.instructions());
+            op.put("isSubcontracted", o.isSubcontracted() != null ? o.isSubcontracted() : false);
+            op.put("subcontractorId", o.subcontractorId());
+            op.put("subcontractCostPerUnit", o.subcontractCostPerUnit() != null ? o.subcontractCostPerUnit()
+                    : java.math.BigDecimal.ZERO);
             db.insert(RoutingOperation.class, op);
         }
         return withOperations(routing);

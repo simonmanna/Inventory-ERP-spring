@@ -89,13 +89,15 @@ public class ProductionService {
     private final PosStockLocation posStockLocation;
     private final BomService boms;
     private final QualityService quality;
+    private final CostingService costing;
     private final TransactionTemplate newTx;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             StockService stock, StockPostingService stockPosting, StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
-            QualityService quality, PlatformTransactionManager txm) {
+            QualityService quality, CostingService costing, PlatformTransactionManager txm) {
         this.quality = quality;
+        this.costing = costing;
         this.db = db;
         this.seq = seq;
         this.audit = audit;
@@ -236,6 +238,8 @@ public class ProductionService {
         data.put("notes", dto.notes());
         data.put("performedById", TenantContext.userId());
         data.put("createdBy", TenantContext.userId());
+        // ADR-S006 D: the BOM's current standard cost, for variance analysis at completion.
+        data.put("standardCostId", costing.currentStandardId(bomId));
         Map<String, Object> created = db.insert(ProductionOrder.class, data);
         String id = str(created, "id");
 
@@ -352,8 +356,21 @@ public class ProductionService {
                 continue;
             }
             String batchNumber = ov != null && ov.batchNumber() != null ? ov.batchNumber() : str(line, "batchNumber");
-            StockMove move = StockMove.of(str(line, "productId"), str(order, "locationId"), qty)
-                    .variant(str(line, "variantId")).uom(str(line, "uomId")).moveType("production_consume")
+            String productId = str(line, "productId");
+            Map<String, Object> substitute = null;
+            if (ov != null && ov.substituteProductId() != null && !ov.substituteProductId().equals(productId)) {
+                // ADR-S006 D: an approved BOM substitute, ratio units per component unit.
+                substitute = costing.substituteFor(str(order, "bomId"), productId, ov.substituteProductId());
+                if (substitute == null) {
+                    throw ApiException.badRequest("Product " + ov.substituteProductId()
+                            + " is not an approved substitute for " + line.get("productName") + ".");
+                }
+                productId = ov.substituteProductId();
+                qty = BomService.mul(qty, dec(substitute, "ratio"));
+            }
+            StockMove move = StockMove.of(productId, str(order, "locationId"), qty)
+                    .variant(substitute != null ? null : str(line, "variantId"))
+                    .uom(substitute != null ? null : str(line, "uomId")).moveType("production_consume")
                     .strategy(line.get("distStrategy") != null ? str(line, "distStrategy") : "FEFO")
                     .batch(batchNumber).date(date).source(SOURCE, code).notes(code);
             Issued res = stock.issue(move);
@@ -364,6 +381,12 @@ public class ProductionService {
             upd.put("totalCost", res.totalValue());
             upd.put("ledgerCode", res.ledgerCode());
             upd.put("batchNumber", batchNumber);
+            if (substitute != null) {
+                upd.put("productId", productId);
+                upd.put("variantId", null);
+                upd.put("uomId", null);
+                upd.put("productName", productNames(List.of(productId)).getOrDefault(productId, "Material"));
+            }
             db.update(ProductionMaterial.class, str(line, "id"), upd);
         }
         Map<String, Object> data = new LinkedHashMap<>();
@@ -509,6 +532,7 @@ public class ProductionService {
                 "sourceType", SOURCE, "sourceId", code));
         // Released after the fact (not consumed): the consume leg already moved real stock.
         reservations.release(SOURCE, id);
+        costing.recordVariances(id);
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "receive", null, Obj.of("orderCode", code,
                 "producedQty", JsNumbers.dec(dto.qtyProduced()), "outputUnitCost", JsNumbers.dec(outputUnitCost))));
         return updated;

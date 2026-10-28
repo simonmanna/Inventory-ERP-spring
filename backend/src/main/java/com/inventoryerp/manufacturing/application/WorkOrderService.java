@@ -39,10 +39,12 @@ public class WorkOrderService {
 
     private final MfgDb db;
     private final QualityService quality;
+    private final com.inventoryerp.kernel.sequence.SequenceService seq;
 
-    public WorkOrderService(MfgDb db, QualityService quality) {
+    public WorkOrderService(MfgDb db, QualityService quality, com.inventoryerp.kernel.sequence.SequenceService seq) {
         this.db = db;
         this.quality = quality;
+        this.seq = seq;
     }
 
     /** Materialise the work orders of a production order from its routing (idempotent). */
@@ -176,6 +178,17 @@ public class WorkOrderService {
         BigDecimal labourCost = BomService.mul(Money.div(BigDecimal.valueOf(labourMins), SIXTY),
                 resource == null ? BigDecimal.ZERO : dec(resource, "costPerHour"));
         String kind = resource != null && "machine".equals(resource.get("kind")) ? "machine" : "labour";
+        // ADR-S006 D: a subcontracted operation costs qty × the subcontractor's unit price instead of labour.
+        Map<String, Object> op = wo.get("routingOperationId") == null ? null
+                : db.children(com.inventoryerp.manufacturing.domain.RoutingOperation.class, "id",
+                        wo.get("routingOperationId"), null).stream().findFirst().orElse(null);
+        boolean subcontracted = op != null && Boolean.TRUE.equals(op.get("isSubcontracted"));
+        BigDecimal subQty = BigDecimal.ZERO;
+        if (subcontracted) {
+            subQty = dto.qtyGood() != null ? dto.qtyGood() : order == null ? BigDecimal.ZERO : dec(order, "plannedQty");
+            labourCost = BomService.mul(subQty, dec(op, "subcontractCostPerUnit"));
+            kind = "outsourcing";
+        }
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "completed");
@@ -187,6 +200,9 @@ public class WorkOrderService {
         if (dto.scrapReasonCode() != null) {
             data.put("scrapReasonCode", dto.scrapReasonCode());
         }
+        if (subcontracted) {
+            data.put("subcontractCost", labourCost);
+        }
         data.put("updatedBy", TenantContext.userId());
         Map<String, Object> updated = db.update(WorkOrder.class, id, data);
 
@@ -195,9 +211,27 @@ public class WorkOrderService {
             db.update(ProductionOrder.class, orderId,
                     Obj.of("overheadCost", new MfgDb.Raw("\"overheadCost\" + ?", labourCost)));
             db.insert(ProductionCostComponent.class, Obj.of("orderId", orderId, "kind", kind, "amount", labourCost,
-                    "sourceType", "work_order", "sourceId", id, "notes", labourMins + " min · " + wo.get("name")));
+                    "sourceType", "work_order", "sourceId", id, "notes", subcontracted
+                            ? "Subcontract · " + wo.get("name") : labourMins + " min · " + wo.get("name")));
+            if (subcontracted) {
+                raiseSubcontractRequest(op, wo, order, subQty, labourCost);
+            }
         }
         return updated;
+    }
+
+    /** A draft purchase request for the subcontracted service, so procurement can order and bill it. */
+    private void raiseSubcontractRequest(Map<String, Object> op, Map<String, Object> wo, Map<String, Object> order,
+            BigDecimal qty, BigDecimal cost) {
+        Map<String, Object> pr = db.insert(com.inventoryerp.procurement.domain.PurchaseRequest.class, Obj.of(
+                "requestNumber", seq.next("purchase_request", "SUBPR-", 5), "requestedById", TenantContext.userId(),
+                "partnerId", op.get("subcontractorId"), "description", "Subcontract " + wo.get("name") + " · "
+                        + (order == null ? "" : order.get("orderCode")), "status", "draft", "createdBy",
+                TenantContext.userId()));
+        db.insert(com.inventoryerp.procurement.domain.PurchaseRequestLine.class, Obj.of("purchaseRequestId",
+                pr.get("id"), "description", "Subcontract " + wo.get("name"), "quantity", qty, "estimatedUnitPrice",
+                qty.signum() > 0 ? com.inventoryerp.kernel.common.Money.div(cost, qty) : BigDecimal.ZERO,
+                "lineNumber", 0));
     }
 
     /**

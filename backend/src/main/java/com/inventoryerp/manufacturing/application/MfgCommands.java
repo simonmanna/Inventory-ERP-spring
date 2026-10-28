@@ -139,7 +139,9 @@ public final class MfgCommands {
     public record StartMaterialInput(
             @NotNull(message = STR) @Size(min = 1, message = EMPTY) String lineId,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = MIN0) BigDecimal qtyConsumed,
-            String batchNumber) {}
+            String batchNumber,
+            /** ADR-S006 D: consume this BOM substitute instead (qtyConsumed is in component units). */
+            String substituteProductId) {}
 
     /** {@code StartProductionDto}. */
     public record StartOrder(
@@ -258,7 +260,11 @@ public final class MfgCommands {
             String workCenterId,
             @Min(value = 0, message = MIN0) Integer durationMins,
             @Min(value = 0, message = MIN0) Integer setupMins,
-            String instructions) {}
+            String instructions,
+            /** ADR-S006 D: subcontracted operation. */
+            Boolean isSubcontracted,
+            String subcontractorId,
+            @DecimalMin(value = "0", message = MIN0) BigDecimal subcontractCostPerUnit) {}
 
     /** {@code CreateRoutingDto}. */
     public record CreateRouting(
@@ -345,4 +351,19 @@ public final class MfgCommands {
             @Positive(message = POS) BigDecimal quantity,
             List<@Valid @NotNull MaterialInput> materials,
             String notes) {}
+
+    // ------------------------------------------------------------------ ADR-S006 D: costing & engineering
+
+    /** One substitute of a BOM line: {@code ratio} units replace 1 unit of the component. */
+    public record SubstituteInput(
+            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @Positive(message = POS) BigDecimal ratio,
+            Integer priority,
+            String notes) {}
+
+    /** Replace a BOM line's substitutes. */
+    public record SubstituteList(@NotNull(message = ARRAY) List<@Valid @NotNull SubstituteInput> substitutes) {}
+
+    /** {@code POST /boms/:id/revise}. */
+    public record ReviseBom(String title, String reason) {}
 }
