@@ -50,6 +50,17 @@ public class CostingController {
         return costing.freezeStandard(id);
     }
 
+    /** ADR-S008: roll-up → draft product standard (body: {@code effectiveFrom}, {@code convertMethod}). */
+    @PostMapping("/boms/{id}/product-standard")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.STANDARD_COST__MANAGE)
+    public Map<String, Object> proposeProductStandard(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
+        Object from = dto == null ? null : dto.get("effectiveFrom");
+        Object convert = dto == null ? null : dto.get("convertMethod");
+        return costing.proposeProductStandard(id, from == null ? null : from.toString(), Boolean.TRUE.equals(convert));
+    }
+
     @GetMapping("/boms/{id}/standard-costs")
     @RequirePermissions(Permissions.BOM__READ)
     public List<Map<String, Object>> standards(@PathVariable String id) {

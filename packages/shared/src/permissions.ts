@@ -99,6 +99,17 @@ export const PERMISSIONS = {
     manage: 'costing_policy:manage',
     approve: 'costing_policy:approve',
   },
+  // ---- ADR-S008 — standard & process costing ----
+  standardCost: {
+    read: 'standard_cost:read',
+    manage: 'standard_cost:manage',
+    approve: 'standard_cost:approve',
+  },
+  processCosting: {
+    read: 'process_costing:read',
+    manage: 'process_costing:manage',
+    close: 'process_costing:close',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',

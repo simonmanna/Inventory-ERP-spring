@@ -356,3 +356,138 @@ export const errMsg = (e: any) => {
   const m = e?.response?.data?.message ?? e?.message;
   return Array.isArray(m) ? m.join(', ') : m;
 };
+
+// ------------------------------------------------------------------ standard costing (ADR-S008)
+
+export interface StandardCost {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string | null;
+  productCostingMethod: string;
+  version: number;
+  status: 'draft' | 'approved' | 'active' | 'superseded' | 'cancelled';
+  effectiveFrom: string;
+  materialCost: string;
+  labourCost: string;
+  overheadCost: string;
+  subcontractCost: string;
+  totalCost: string;
+  source: 'manual' | 'bom_rollup';
+  convertMethod: boolean;
+  previousCost: string | null;
+  revaluationAmount: string;
+  revaluationQuantity: string;
+  notes: string | null;
+}
+
+export function useStandardCosts(params?: { productId?: string; status?: string }) {
+  return useQuery({
+    queryKey: ['standard-costs', params],
+    queryFn: async () => (await api.get<StandardCost[]>('/inventory/standard-costs', { params })).data,
+  });
+}
+
+export function useStandardVariances(from: string, to: string, kind?: string) {
+  return useQuery({
+    queryKey: ['standard-variances', from, to, kind],
+    enabled: !!from && !!to,
+    queryFn: async () =>
+      (await api.get<{ rows: any[]; totals: Record<string, string>; total: string }>('/inventory/standard-costs/variances', {
+        params: { from, to, kind: kind || undefined },
+      })).data,
+  });
+}
+
+export function useCreateStandardCost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: Record<string, unknown>) => (await api.post<StandardCost>('/inventory/standard-costs', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['standard-costs'] }),
+  });
+}
+
+export function useProposeBomStandard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ bomId, ...body }: { bomId: string; effectiveFrom?: string; convertMethod?: boolean }) =>
+      (await api.post<StandardCost>(`/manufacturing/boms/${bomId}/product-standard`, body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['standard-costs'] }),
+  });
+}
+
+export function useStandardCostAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action }: { id: string; action: 'approve' | 'activate' | 'cancel' }) =>
+      action === 'activate'
+        ? idempotentPost<StandardCost>(`/inventory/standard-costs/${id}/activate`)
+        : (await api.post<StandardCost>(`/inventory/standard-costs/${id}/${action}`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['standard-costs'] }),
+  });
+}
+
+// ------------------------------------------------------------------ process costing (ADR-S008)
+
+export function useCostProcesses() {
+  return useQuery({ queryKey: ['cost-processes'], queryFn: async () => (await api.get<any[]>('/manufacturing/process-costing/processes')).data });
+}
+
+export function useCostProcess(id?: string) {
+  return useQuery({
+    queryKey: ['cost-processes', id],
+    enabled: !!id,
+    queryFn: async () => (await api.get<any>(`/manufacturing/process-costing/processes/${id}`)).data,
+  });
+}
+
+export function useSaveCostProcess() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: any) =>
+      id
+        ? (await api.patch(`/manufacturing/process-costing/processes/${id}`, body)).data
+        : (await api.post('/manufacturing/process-costing/processes', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-processes'] }),
+  });
+}
+
+export function useOpenProcessPeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ processId, periodFrom, periodTo }: { processId: string; periodFrom: string; periodTo: string }) =>
+      (await api.post(`/manufacturing/process-costing/processes/${processId}/periods`, { periodFrom, periodTo })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-processes'] }),
+  });
+}
+
+export function useProcessPeriod(id?: string) {
+  return useQuery({
+    queryKey: ['process-period', id],
+    enabled: !!id,
+    queryFn: async () => (await api.get<any>(`/manufacturing/process-costing/periods/${id}`)).data,
+  });
+}
+
+export function useProcessPreview(id?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['process-period', id, 'preview'],
+    enabled: !!id && enabled,
+    retry: false,
+    queryFn: async () => (await api.get<any>(`/manufacturing/process-costing/periods/${id}/preview`)).data,
+  });
+}
+
+export function useProcessPeriodAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, kind, body }: { id: string; kind: 'units' | 'materials' | 'costs' | 'close'; body?: unknown }) =>
+      kind === 'units'
+        ? (await api.patch(`/manufacturing/process-costing/periods/${id}/units`, body)).data
+        : idempotentPost<any>(`/manufacturing/process-costing/periods/${id}/${kind}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['process-period'] });
+      qc.invalidateQueries({ queryKey: ['cost-processes'] });
+    },
+  });
+}

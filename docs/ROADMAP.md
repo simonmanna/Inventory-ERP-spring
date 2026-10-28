@@ -313,7 +313,7 @@ Also in Tier 2 (small, schedule opportunistically): full UI i18n (S), e-commerce
 
 | # | Item | Pri | Effort | Scope |
 |---|---|---|---|---|
-| 3.1 | Advanced costing | P1 | L (10 EW) | Actual costing / material ledger, standard-cost variance analysis (price, usage, efficiency), activity-based costing |
+| 3.1 | Advanced costing — **standard costing with GL variances + process costing built 2026-10-28 (ADR-S008)** | P1 | L (10 EW) | Actual costing / material ledger, standard-cost variance analysis (price, usage, efficiency), activity-based costing |
 | 3.2 | IFRS 15 / IFRS 16 | P1 | L (10 EW) | Revenue recognition (performance obligations, contract assets), lease accounting (ROU asset, liability schedules) |
 | 3.3 | Scale & data lifecycle | P1 | XL (16 EW) | Load tests at 10M+ journal lines, partitioning, read replicas, archiving/purge policy, async report generation |
 | 3.4 | Governance, risk & compliance | P2 | L (8 EW) | Segregation-of-duties conflict matrix on roles, control tests, evidence export (SOX/SOC 2), field-level change history |

@@ -387,6 +387,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/mrp', label: tx('MRP'), icon: CalendarDays },
       { to: '/manufacturing/shop-floor', label: tx('Shop Floor'), icon: Boxes },
       { to: '/manufacturing/engineering', label: tx('Engineering & Costing'), icon: ScrollText },
+      { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read },
+      { to: '/manufacturing/process-costing', label: tx('Process Costing'), icon: Layers, permission: PERMISSIONS.processCosting.read },
       { to: '/manufacturing/resources', label: tx('Work Centres'), icon: Boxes },
       { to: '/manufacturing/reports', label: tx('Reports'), icon: BarChart3, reportId: 'manufacturing.reports' },
     ],

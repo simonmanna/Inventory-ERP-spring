@@ -9,6 +9,7 @@ import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.application.StockMove.Received;
+import com.inventoryerp.inventory.application.StandardCostService;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockReservationService;
 import com.inventoryerp.inventory.application.StockReservationService.Reserve;
@@ -90,12 +91,15 @@ public class ProductionService {
     private final BomService boms;
     private final QualityService quality;
     private final CostingService costing;
+    private final StandardCostService standards;
     private final TransactionTemplate newTx;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             StockService stock, StockPostingService stockPosting, StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
-            QualityService quality, CostingService costing, PlatformTransactionManager txm) {
+            QualityService quality, CostingService costing, StandardCostService standards,
+            PlatformTransactionManager txm) {
+        this.standards = standards;
         this.quality = quality;
         this.costing = costing;
         this.db = db;
@@ -500,13 +504,17 @@ public class ProductionService {
         if (qtyProducedBase.signum() <= 0) {
             throw ApiException.badRequest("Produced quantity resolves to 0 in base units.");
         }
-        BigDecimal outputUnitCost = Money.div(pool, qtyProducedBase);
+        // ADR-S008: a standard-governed output is received at its standard; the rest of WIP becomes variances.
+        BigDecimal standardUnit = standards.activeStandard(str(order, "outputProductId")).orElse(null);
+        BigDecimal outputUnitCost = standardUnit != null ? standardUnit : Money.div(pool, qtyProducedBase);
+        BigDecimal outputValue = standardUnit != null
+                ? standardUnit.multiply(qtyProducedBase).setScale(6, java.math.RoundingMode.HALF_UP) : pool;
         String mainBatch = receiveOutput(str(order, "outputProductId"), str(order, "outputVariantId"),
                 receiveLocationId, qtyProducedBase, outputUnitCost,
                 dto.batchNumber() != null ? dto.batchNumber() : str(order, "batchNumber"),
                 dto.expiryDate() != null ? dto.expiryDate() : iso(order.get("expiryDate")),
                 dto.mfgDate() != null ? dto.mfgDate() : iso(order.get("mfgDate")), code, date,
-                mainLine == null ? null : str(mainLine, "id"), pool);
+                mainLine == null ? null : str(mainLine, "id"), outputValue);
 
         BigDecimal expectedQty = mainLine != null ? dec(mainLine, "qtyExpected") : dec(order, "plannedQty");
         BigDecimal yieldVariance = BomService.mul(expectedQty.subtract(dto.qtyProduced()), outputUnitCost);
@@ -533,6 +541,15 @@ public class ProductionService {
         // Released after the fact (not consumed): the consume leg already moved real stock.
         reservations.release(SOURCE, id);
         costing.recordVariances(id);
+        if (standardUnit != null) {
+            String varianceJe = standards.postProductionVariances(id, code, str(order, "outputProductId"),
+                    pool.subtract(outputValue), qtyProducedBase, outputValue, stockPosting.wipAccount(), date);
+            if (varianceJe != null) {
+                db.jdbc().sql("UPDATE \"ProductionOrder\" SET \"varianceJournalEntryId\" = ? WHERE id = ?")
+                        .params(varianceJe, id).update();
+                updated.put("varianceJournalEntryId", varianceJe);
+            }
+        }
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "receive", null, Obj.of("orderCode", code,
                 "producedQty", JsNumbers.dec(dto.qtyProduced()), "outputUnitCost", JsNumbers.dec(outputUnitCost))));
         return updated;
@@ -698,6 +715,12 @@ public class ProductionService {
                 "Production reversal · " + code);
         // 2) Materials back to their source location, clearing WIP (Dr Stock Valuation / Cr WIP).
         returnMaterials(order, "production_reversal", date, "Production reversal · " + code);
+        // 3) ADR-S008: standard-cost variances of the order are reversed with it.
+        String varianceJe = db.jdbc().sql("SELECT \"varianceJournalEntryId\" FROM \"ProductionOrder\" WHERE id = ?")
+                .param(id).query(String.class).optional().orElse(null);
+        if (varianceJe != null) {
+            standards.reverseJournal(varianceJe, "Reversal of production variances · " + code);
+        }
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "cancelled");

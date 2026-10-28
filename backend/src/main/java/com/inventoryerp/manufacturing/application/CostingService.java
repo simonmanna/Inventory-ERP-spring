@@ -50,7 +50,11 @@ public class CostingService {
     private final BomService boms;
     private final UomConversionService uom;
 
-    public CostingService(MfgDb db, BomService boms, UomConversionService uom) {
+    private final com.inventoryerp.inventory.application.StandardCostService productStandards;
+
+    public CostingService(MfgDb db, BomService boms, UomConversionService uom,
+            com.inventoryerp.inventory.application.StandardCostService productStandards) {
+        this.productStandards = productStandards;
         this.db = db;
         this.boms = boms;
         this.uom = uom;
@@ -189,6 +193,28 @@ public class CostingService {
         data.put("createdBy", TenantContext.userId());
         data.put("computedAt", Instant.now());
         return db.insert(BomStandardCost.class, data);
+    }
+
+    /**
+     * ADR-S008: freeze the roll-up as the BOM standard and propose it as a draft product standard (per output unit,
+     * by element) for approval and activation — the standard that drives GL variances.
+     */
+    @Transactional
+    public Map<String, Object> proposeProductStandard(String bomId, String effectiveFrom, Boolean convertMethod) {
+        Map<String, Object> bom = boms.getOrThrow(bomId);
+        Map<String, Object> frozen = freezeStandard(bomId);
+        BigDecimal qty = dec(frozen, "outputQuantity");
+        if (qty.signum() <= 0) {
+            throw ApiException.badRequest("The BOM output quantity must be positive to derive a unit standard");
+        }
+        java.util.function.Function<String, BigDecimal> perUnit = k -> Money.div(dec(frozen, k), qty)
+                .setScale(6, java.math.RoundingMode.HALF_UP);
+        return productStandards.create(new com.inventoryerp.inventory.application.StandardCostService.StandardInput(
+                str(bom, "outputProductId"), effectiveFrom != null ? effectiveFrom
+                        : java.time.LocalDate.now(com.inventoryerp.kernel.common.BusinessZone.get()).toString(),
+                perUnit.apply("materialCost"), perUnit.apply("labourCost"), perUnit.apply("overheadCost"),
+                perUnit.apply("subcontractCost"), "From BOM v" + bom.get("version") + " roll-up", convertMethod,
+                "bom_rollup", str(frozen, "id")));
     }
 
     @Transactional(readOnly = true)

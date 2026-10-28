@@ -146,3 +146,22 @@ Done. Parity: 61/61 Nest routes (42 in the generated table + 19 phase-4 routes).
 with web screens (39 additional routes). Tests: `BomExplodeTest`, `ManufacturingIT` (Nest flow spec + authz matrix over
 all 100 routes + tenant isolation), `ManufacturingHardeningIT`, `MrpPlanningIT`, `ShopFloorIT`,
 `CostingEngineeringIT`; JaCoCo line coverage of `manufacturing.application` 89.5%.
+
+## ADR-S008 extensions — standard costing in production, process costing
+
+- Completing an order whose output product has an **active product standard** receives the output at standard and
+  posts the WIP residual as variances (`ProductionOrder.varianceJournalEntryId`); reversal reverses it.
+- `POST /manufacturing/boms/{id}/product-standard` (`standard_cost:manage`): BOM roll-up → draft product standard.
+- Process costing (`process_costing:read` / `manage` / `close`):
+
+| Method | Path |
+|---|---|
+| GET, POST | `/manufacturing/process-costing/processes` |
+| GET, PATCH | `/manufacturing/process-costing/processes/{id}` |
+| POST | `/manufacturing/process-costing/processes/{id}/periods` |
+| GET | `/manufacturing/process-costing/periods/{id}`, `/{id}/preview` |
+| PATCH | `/manufacturing/process-costing/periods/{id}/units` |
+| POST | `/manufacturing/process-costing/periods/{id}/materials`, `/costs`, `/close` (Idempotency-Key) |
+| GET | `/manufacturing/process-costing/reports/cost-of-production?from&to` |
+
+Tests: `ProcessCostCalculatorTest`, `StandardProcessCostingIT`. Web: Manufacturing → Standard Costs, Process Costing.

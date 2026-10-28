@@ -161,6 +161,22 @@ public class StockPostingService {
         return new Resolution(unitCost, totalValue, unitCost, null);
     }
 
+    /** The receipt entry {@link #postReceipt} would post for {@code totalValue} (STOCK_IN rule, else Dr stock / Cr GRNI). */
+    public List<Line> receiptLines(String productId, BigDecimal totalValue) {
+        List<Line> lines = totalValue.signum() > 0 ? resolveLines("STOCK_IN", productId, totalValue) : null;
+        if (lines != null) {
+            return lines;
+        }
+        String v = JsNumbers.dec(totalValue);
+        return List.of(Line.debit(determination.mapped("stock_valuation"), v, "Stock receipt"),
+                Line.credit(determination.mapped("grni_accrued"), v, "GRNI accrual"));
+    }
+
+    /** The WIP account production posts to (falls back to stock valuation, like the production legs). */
+    public String wipAccount() {
+        return wipOr(determination.mapped("stock_valuation"));
+    }
+
     /** Voucher a goods receipt against the supplier: Dr GRNI + Dr Input Tax / Cr AP. */
     public void postReceiptVoucher(String partnerId, BigDecimal netTotal, BigDecimal taxTotal, Instant date,
             String sourceType, String sourceId, String description, String postingKey) {

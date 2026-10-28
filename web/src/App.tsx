@@ -130,6 +130,8 @@ import { PurchaseOrderReceivePage } from '@/pages/procurement/PurchaseOrderRecei
 import { PurchaseOrderPayPage } from '@/pages/procurement/PurchaseOrderPayPage';
 import { GoodsReceiptsPage } from '@/pages/procurement/goods-receipts';
 import { CostPoliciesPage } from '@/pages/costing/CostPoliciesPage';
+import { StandardCostsPage } from '@/pages/costing/StandardCostsPage';
+import { ProcessCostingPage } from '@/pages/costing/ProcessCostingPage';
 import { CostCenterAccountingPage } from '@/pages/costing/CostCenterAccountingPage';
 import { LandedCostVouchersPage, LandedCostVoucherEditPage, LandedCostVoucherDetailPage } from '@/pages/costing/LandedCostVouchersPage';
 import { ShipmentsPage } from '@/pages/costing/ShipmentsPage';
@@ -365,6 +367,8 @@ export function App() {
           <Route path="/manufacturing/mrp" element={<MrpPage />} />
           <Route path="/manufacturing/shop-floor" element={<ShopFloorPage />} />
           <Route path="/manufacturing/engineering" element={<EngineeringChangesPage />} />
+          <Route path="/manufacturing/standard-costs" element={<StandardCostsPage />} />
+          <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />

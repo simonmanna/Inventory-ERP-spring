@@ -88,9 +88,13 @@ public class StockService {
     private final SettingResolverService settings;
     private final UomConversionService uomConversion;
 
+    private final org.springframework.beans.factory.ObjectProvider<StandardCostService> standards;
+
     public StockService(JdbcClient jdbc, InventoryLookups lookups, EventBus events, SequenceService seq,
             AuditService audit, StockPostingService stockPosting, CostResolver costResolver,
-            SettingResolverService settings, UomConversionService uomConversion) {
+            SettingResolverService settings, UomConversionService uomConversion,
+            org.springframework.beans.factory.ObjectProvider<StandardCostService> standards) {
+        this.standards = standards;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.events = events;
@@ -244,7 +248,11 @@ public class StockService {
         BigDecimal[] base = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity,
                 dto.unitCost != null ? dto.unitCost : Money.ZERO);
         BigDecimal qty = base[0];
-        BigDecimal unitCost = base[1];
+        BigDecimal actualUnitCost = base[1];
+        // ADR-S008: a standard-governed product enters stock at its standard; the difference is PPV (below).
+        StandardCostService std = "STANDARD".equals(costing) ? standards.getIfAvailable() : null;
+        BigDecimal standardUnit = std == null ? null : std.activeStandard(dto.productId).orElse(null);
+        BigDecimal unitCost = standardUnit != null ? standardUnit : actualUnitCost;
         List<String> serials = dto.serialNumbers == null ? List.of() : dto.serialNumbers;
         if (bool(product, "serialTracking")) {
             assertWholeSerialQuantity(productName, qty);
@@ -340,6 +348,11 @@ public class StockService {
             if ("stock_gain".equals(glCtx.kind())) {
                 stockPosting.postAdjustment(dto.productId, qty, unitCost, glCtx.date(), glCtx.sourceType(),
                         glCtx.sourceId(), "Direct stock-in · " + productName + " · " + JsNumbers.dec(dto.quantity));
+            } else if (standardUnit != null) {
+                std.postReceipt(dto.productId, qty, actualUnitCost, standardUnit,
+                        stockPosting.receiptLines(dto.productId, actualUnitCost.multiply(qty)), glCtx.date(),
+                        glCtx.sourceType(), glCtx.sourceId(), "Stock receipt · " + productName + " · "
+                                + JsNumbers.dec(dto.quantity));
             } else {
                 stockPosting.postReceipt(dto.productId, qty, unitCost, glCtx.date(), glCtx.sourceType(),
                         glCtx.sourceId(), "Stock receipt · " + productName + " · " + JsNumbers.dec(dto.quantity));
