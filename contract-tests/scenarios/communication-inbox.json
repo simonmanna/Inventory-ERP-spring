@@ -1,0 +1,26 @@
+{
+  "name": "Communication (ENABLE_COMMUNICATION=true on both sides): inbox reads, validation, 404s, rules catalog, webhook",
+  "vars": {"org": "DEMO", "email": "admin@demo.test", "password": "Admin@123"},
+  "steps": [
+    {"name": "login", "method": "POST", "path": "/api/v1/auth/login", "body": {"organizationCode": "{{org}}", "email": "{{email}}", "password": "{{password}}"}, "capture": {"token": "$.accessToken"}},
+    {"name": "conversations", "method": "GET", "path": "/api/v1/communication/conversations"},
+    {"name": "conversation: bad kind", "method": "POST", "path": "/api/v1/communication/conversations", "body": {"kind": "broadcast"}},
+    {"name": "conversation: unknown field", "method": "POST", "path": "/api/v1/communication/conversations", "body": {"foo": 1}},
+    {"name": "conversation: not found", "method": "GET", "path": "/api/v1/communication/conversations/00000000-0000-0000-0000-000000000000"},
+    {"name": "messages: conversation not found", "method": "GET", "path": "/api/v1/communication/conversations/00000000-0000-0000-0000-000000000000/messages"},
+    {"name": "send: empty body", "method": "POST", "path": "/api/v1/communication/conversations/00000000-0000-0000-0000-000000000000/messages", "body": {"body": ""}},
+    {"name": "resolve-context: missing contextId", "method": "POST", "path": "/api/v1/communication/conversations/resolve-context", "body": {"contextType": "Invoice"}},
+    {"name": "templates", "method": "GET", "path": "/api/v1/communication/templates"},
+    {"name": "template: missing body", "method": "POST", "path": "/api/v1/communication/templates", "body": {"key": "x"}},
+    {"name": "rules eventable", "method": "GET", "path": "/api/v1/communication/rules/eventable"},
+    {"name": "rules", "method": "GET", "path": "/api/v1/communication/rules"},
+    {"name": "rule: not eventable", "method": "POST", "path": "/api/v1/communication/rules", "body": {"eventName": "user.login", "templateKey": "x", "recipientResolver": "user"}},
+    {"name": "rule enabled: not a boolean", "method": "PATCH", "path": "/api/v1/communication/rules/00000000-0000-0000-0000-000000000000/enabled", "body": {}},
+    {"name": "channels", "method": "GET", "path": "/api/v1/communication/channels"},
+    {"name": "channel: unknown provider", "method": "POST", "path": "/api/v1/communication/channels", "body": {"providerId": "sms", "name": "x"}},
+    {"name": "channel pairing: not found", "method": "GET", "path": "/api/v1/communication/channels/00000000-0000-0000-0000-000000000000/pairing"},
+    {"name": "channel connect: not found", "method": "POST", "path": "/api/v1/communication/channels/00000000-0000-0000-0000-000000000000/connect"},
+    {"name": "channel remove: not found", "method": "DELETE", "path": "/api/v1/communication/channels/00000000-0000-0000-0000-000000000000"},
+    {"name": "telegram webhook: unknown channel", "method": "POST", "path": "/api/v1/communication/webhooks/telegram/00000000-0000-0000-0000-000000000000", "body": {"update_id": 1}}
+  ]
+}

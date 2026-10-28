@@ -27,8 +27,8 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [rental](spec/rental.md) | P7 | 47 | 0 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
-| [communication](spec/communication.md) | P7 | 22 | 0 |
-| **total** | | **1118** | **943** |
+| [communication](spec/communication.md) | P7 | 22 | 22 |
+| **total** | | **1118** | **965** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -1231,25 +1231,25 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## communication
 
-- [ ] GET /api/v1/communication/channels — CommunicationController.listChannels
-- [ ] POST /api/v1/communication/channels — CommunicationController.createChannel
-- [ ] DELETE /api/v1/communication/channels/:id — CommunicationController.removeChannel
-- [ ] POST /api/v1/communication/channels/:id/connect — CommunicationController.connectChannel
-- [ ] POST /api/v1/communication/channels/:id/disconnect — CommunicationController.disconnectChannel
-- [ ] GET /api/v1/communication/channels/:id/pairing — CommunicationController.pairingState
-- [ ] GET /api/v1/communication/conversations — CommunicationController.list
-- [ ] POST /api/v1/communication/conversations — CommunicationController.create
-- [ ] GET /api/v1/communication/conversations/:id — CommunicationController.get
-- [ ] GET /api/v1/communication/conversations/:id/messages — CommunicationController.listMessages
-- [ ] POST /api/v1/communication/conversations/:id/messages — CommunicationController.send
-- [ ] POST /api/v1/communication/conversations/:id/read — CommunicationController.markRead
-- [ ] POST /api/v1/communication/conversations/resolve-context — CommunicationController.resolveContext
-- [ ] GET /api/v1/communication/rules — CommunicationController.listRules
-- [ ] POST /api/v1/communication/rules — CommunicationController.upsertRule
-- [ ] DELETE /api/v1/communication/rules/:id — CommunicationController.deleteRule
-- [ ] PATCH /api/v1/communication/rules/:id/enabled — CommunicationController.setRuleEnabled
-- [ ] GET /api/v1/communication/rules/eventable — CommunicationController.eventable
-- [ ] GET /api/v1/communication/stream — CommunicationController.streamInbox
-- [ ] GET /api/v1/communication/templates — CommunicationController.listTemplates
-- [ ] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
-- [ ] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
+- [x] GET /api/v1/communication/channels — CommunicationController.listChannels
+- [x] POST /api/v1/communication/channels — CommunicationController.createChannel
+- [x] DELETE /api/v1/communication/channels/:id — CommunicationController.removeChannel
+- [x] POST /api/v1/communication/channels/:id/connect — CommunicationController.connectChannel
+- [x] POST /api/v1/communication/channels/:id/disconnect — CommunicationController.disconnectChannel
+- [x] GET /api/v1/communication/channels/:id/pairing — CommunicationController.pairingState
+- [x] GET /api/v1/communication/conversations — CommunicationController.list
+- [x] POST /api/v1/communication/conversations — CommunicationController.create
+- [x] GET /api/v1/communication/conversations/:id — CommunicationController.get
+- [x] GET /api/v1/communication/conversations/:id/messages — CommunicationController.listMessages
+- [x] POST /api/v1/communication/conversations/:id/messages — CommunicationController.send
+- [x] POST /api/v1/communication/conversations/:id/read — CommunicationController.markRead
+- [x] POST /api/v1/communication/conversations/resolve-context — CommunicationController.resolveContext
+- [x] GET /api/v1/communication/rules — CommunicationController.listRules
+- [x] POST /api/v1/communication/rules — CommunicationController.upsertRule
+- [x] DELETE /api/v1/communication/rules/:id — CommunicationController.deleteRule
+- [x] PATCH /api/v1/communication/rules/:id/enabled — CommunicationController.setRuleEnabled
+- [x] GET /api/v1/communication/rules/eventable — CommunicationController.eventable
+- [x] GET /api/v1/communication/stream — CommunicationController.streamInbox
+- [x] GET /api/v1/communication/templates — CommunicationController.listTemplates
+- [x] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
+- [x] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
