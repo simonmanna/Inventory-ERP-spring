@@ -24,11 +24,11 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [fixedasset](spec/fixedasset.md) | P7 | 54 | 54 |
 | [hr](spec/hr.md) | P7 | 140 | 140 |
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 42 |
-| [rental](spec/rental.md) | P7 | 47 | 0 |
+| [rental](spec/rental.md) | P7 | 47 | 47 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 22 |
-| **total** | | **1118** | **965** |
+| **total** | | **1118** | **1054** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -1165,53 +1165,57 @@ ADR-S006 extensions (production-ready manufacturing; beyond the Nest contract, n
 
 ## rental
 
-- [ ] GET /api/v1/rental/agreements — RentalController.listAgreements
-- [ ] POST /api/v1/rental/agreements — RentalController.createAgreement
-- [ ] GET /api/v1/rental/agreements/:id — RentalController.getAgreement
-- [ ] POST /api/v1/rental/agreements/:id/cancel — RentalController.cancelAgreement
-- [ ] POST /api/v1/rental/agreements/:id/checkout — RentalController.checkoutAgreement
-- [ ] POST /api/v1/rental/agreements/:id/confirm — RentalController.confirmAgreement
-- [ ] GET /api/v1/rental/agreements/:id/deposit — RentalController.getDeposit
-- [ ] POST /api/v1/rental/agreements/:id/deposit/collect — RentalController.collectDeposit
-- [ ] POST /api/v1/rental/agreements/:id/deposit/forfeit — RentalController.forfeitDeposit
-- [ ] POST /api/v1/rental/agreements/:id/deposit/refund — RentalController.refundDeposit
-- [ ] GET /api/v1/rental/availability — RentalController.checkAvailability
-- [ ] GET /api/v1/rental/availability/units — RentalController.availabilityUnits
-- [ ] GET /api/v1/rental/catalog — RentalController.listCatalog
-- [ ] POST /api/v1/rental/damages/:id/waive — RentalController.waiveDamage
-- [ ] GET /api/v1/rental/extensions — RentalController.listExtensions
-- [ ] POST /api/v1/rental/extensions — RentalController.extend
-- [ ] POST /api/v1/rental/locations/bootstrap — RentalController.bootstrapLocations
-- [ ] POST /api/v1/rental/packages — RentalController.createPackage
-- [ ] DELETE /api/v1/rental/packages/:id — RentalController.deletePackage
-- [ ] PATCH /api/v1/rental/packages/:id — RentalController.updatePackage
-- [ ] POST /api/v1/rental/rates — RentalController.createRate
-- [ ] DELETE /api/v1/rental/rates/:id — RentalController.deleteRate
-- [ ] PATCH /api/v1/rental/rates/:id — RentalController.updateRate
-- [ ] GET /api/v1/rental/reports/fleet — RentalController.fleet
-- [ ] GET /api/v1/rental/reports/revenue — RentalController.revenue
-- [ ] GET /api/v1/rental/reports/utilization — RentalController.utilization
-- [ ] GET /api/v1/rental/reservations — RentalController.listReservations
-- [ ] POST /api/v1/rental/reservations — RentalController.createReservation
-- [ ] POST /api/v1/rental/reservations/:id/cancel — RentalController.cancelReservation
-- [ ] POST /api/v1/rental/reservations/:id/confirm — RentalController.confirmReservation
-- [ ] GET /api/v1/rental/returns — RentalController.listReturns
-- [ ] POST /api/v1/rental/returns — RentalController.createReturn
-- [ ] GET /api/v1/rental/returns/:id — RentalController.getReturn
-- [ ] POST /api/v1/rental/returns/:id/inspect — RentalController.inspectReturn
-- [ ] POST /api/v1/rental/returns/:id/settle — RentalController.settleReturn
-- [ ] GET /api/v1/rental/scores/:partnerId — RentalController.getScore
-- [ ] PATCH /api/v1/rental/scores/:partnerId/hold — RentalController.scoreHold
-- [ ] GET /api/v1/rental/service-orders — RentalController.listServiceOrders
-- [ ] POST /api/v1/rental/service-orders — RentalController.createServiceOrder
-- [ ] POST /api/v1/rental/service-orders/:id/cancel — RentalController.cancelServiceOrder
-- [ ] POST /api/v1/rental/service-orders/:id/complete — RentalController.completeServiceOrder
-- [ ] GET /api/v1/rental/swaps — RentalController.listSwaps
-- [ ] POST /api/v1/rental/swaps — RentalController.swap
-- [ ] GET /api/v1/rental/units — RentalController.listUnits
-- [ ] PATCH /api/v1/rental/units/:id — RentalController.updateUnit
-- [ ] POST /api/v1/rental/units/:id/retire — RentalController.retireUnit
-- [ ] POST /api/v1/rental/units/generate — RentalController.generateUnits
+- [x] GET /api/v1/rental/agreements — RentalController.listAgreements
+- [x] POST /api/v1/rental/agreements — RentalController.createAgreement
+- [x] GET /api/v1/rental/agreements/:id — RentalController.getAgreement
+- [x] POST /api/v1/rental/agreements/:id/cancel — RentalController.cancelAgreement
+- [x] POST /api/v1/rental/agreements/:id/checkout — RentalController.checkoutAgreement
+- [x] POST /api/v1/rental/agreements/:id/confirm — RentalController.confirmAgreement
+- [x] GET /api/v1/rental/agreements/:id/deposit — RentalController.getDeposit
+- [x] POST /api/v1/rental/agreements/:id/deposit/collect — RentalController.collectDeposit
+- [x] POST /api/v1/rental/agreements/:id/deposit/forfeit — RentalController.forfeitDeposit
+- [x] POST /api/v1/rental/agreements/:id/deposit/refund — RentalController.refundDeposit
+- [x] GET /api/v1/rental/availability — RentalController.checkAvailability
+- [x] GET /api/v1/rental/availability/units — RentalController.availabilityUnits
+- [x] GET /api/v1/rental/catalog — RentalController.listCatalog
+- [x] POST /api/v1/rental/damages/:id/waive — RentalController.waiveDamage
+- [x] GET /api/v1/rental/extensions — RentalController.listExtensions
+- [x] POST /api/v1/rental/extensions — RentalController.extend
+- [x] POST /api/v1/rental/locations/bootstrap — RentalController.bootstrapLocations
+- [x] POST /api/v1/rental/packages — RentalController.createPackage
+- [x] DELETE /api/v1/rental/packages/:id — RentalController.deletePackage
+- [x] PATCH /api/v1/rental/packages/:id — RentalController.updatePackage
+- [x] POST /api/v1/rental/rates — RentalController.createRate
+- [x] DELETE /api/v1/rental/rates/:id — RentalController.deleteRate
+- [x] PATCH /api/v1/rental/rates/:id — RentalController.updateRate
+- [x] GET /api/v1/rental/reports/fleet — RentalController.fleet
+- [x] GET /api/v1/rental/reports/revenue — RentalController.revenue
+- [x] GET /api/v1/rental/reports/utilization — RentalController.utilization
+- [x] GET /api/v1/rental/reservations — RentalController.listReservations
+- [x] POST /api/v1/rental/reservations — RentalController.createReservation
+- [x] POST /api/v1/rental/reservations/:id/cancel — RentalController.cancelReservation
+- [x] POST /api/v1/rental/reservations/:id/confirm — RentalController.confirmReservation
+- [x] GET /api/v1/rental/returns — RentalController.listReturns
+- [x] POST /api/v1/rental/returns — RentalController.createReturn
+- [x] GET /api/v1/rental/returns/:id — RentalController.getReturn
+- [x] POST /api/v1/rental/returns/:id/inspect — RentalController.inspectReturn
+- [x] POST /api/v1/rental/returns/:id/settle — RentalController.settleReturn
+- [x] GET /api/v1/rental/scores/:partnerId — RentalController.getScore
+- [x] PATCH /api/v1/rental/scores/:partnerId/hold — RentalController.scoreHold
+- [x] GET /api/v1/rental/service-orders — RentalController.listServiceOrders
+- [x] POST /api/v1/rental/service-orders — RentalController.createServiceOrder
+- [x] POST /api/v1/rental/service-orders/:id/cancel — RentalController.cancelServiceOrder
+- [x] POST /api/v1/rental/service-orders/:id/complete — RentalController.completeServiceOrder
+- [x] GET /api/v1/rental/swaps — RentalController.listSwaps
+- [x] POST /api/v1/rental/swaps — RentalController.swap
+- [x] GET /api/v1/rental/units — RentalController.listUnits
+- [x] PATCH /api/v1/rental/units/:id — RentalController.updateUnit
+- [x] POST /api/v1/rental/units/:id/retire — RentalController.retireUnit
+- [x] POST /api/v1/rental/units/generate — RentalController.generateUnits
+
+Verified by `RentalIT` (12 tests: catalog, units, availability, reservations + cron, full agreement lifecycle,
+deposits, score hold + override, reports, tenant isolation, 47-route authorization matrix); `rental.application`
+line coverage 89.6 %. Parity harness not yet run against a live Nest.
 
 ## repair
 
