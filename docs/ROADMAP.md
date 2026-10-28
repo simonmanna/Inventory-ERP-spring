@@ -1,7 +1,8 @@
 # Roadmap — from parity port to world-class ERP
 
-Status: **draft for owner review** (2026-10-27). Nothing here is approved; each item that changes the wire
-contract or adds a framework needs its own ADR in `docs/adr/` (see `AGENTS.md` §1, §3).
+Status: **approved for autonomous execution** (2026-10-28). Execution rules, decision authority and the
+resume protocol are in [`AUTONOMOUS_BUILD.md`](AUTONOMOUS_BUILD.md); live progress is in `BUILD_LOG.md`.
+Each item that changes the wire contract or adds a framework still gets its own ADR in `docs/adr/`.
 
 ## How to read this
 
@@ -18,7 +19,7 @@ contract or adds a framework needs its own ADR in `docs/adr/` (see `AGENTS.md` �
 
 | Area | State |
 |---|---|
-| Routes ported | 943 / 1,118 (+20 ADR-S005 extensions) |
+| Routes ported | 965 / 1,118 ticked (+20 ADR-S005 extensions); rental + repair code merged but unverified |
 | Strong | GL + posting engine, periods, multi-currency + FX revaluation, bank reconciliation, cash sessions, AVCO/FIFO/standard costing, batches/serials/expiry, reservations/ATP, transfers, counts, procurement with GRNI + landed cost + 3-way match, POS (restaurant + offline Android), HR/payroll, fixed assets, approvals, audit, multi-tenant, licensing |
 | Basic | Tax (codes + summary report), sales cycle, analytics (fixed reports), cost dimensions (cost center + branch only) |
 | Absent | Localization, e-invoicing, bank feeds, WMS, MRP, intercompany, subscriptions, customization platform, BI, portals, AI |
@@ -31,8 +32,9 @@ contract or adds a framework needs its own ADR in `docs/adr/` (see `AGENTS.md` �
 | 1 | Sellable to a general SMB | 7 | ~40 EW (one e-invoicing standard) |
 | 2 | Odoo Enterprise / BC parity | 10 (+2 small) | ~85 EW |
 | 3 | SAP / D365 F&O class | 7 | ~70 EW + ongoing ecosystem |
+| 4 | Vehicle / fleet management module | 1 module | ~10 EW |
 
-Rough total: **~210 EW** (≈ 4 engineer-years). With a team of 4: Tier 0–1 ≈ 3.5 months, Tier 2 ≈ +5 months.
+Rough total: **~220 EW** (≈ 4 engineer-years). With a team of 4: Tier 0–1 ≈ 3.5 months, Tier 2 ≈ +5 months.
 
 ---
 
@@ -40,12 +42,12 @@ Rough total: **~210 EW** (≈ 4 engineer-years). With a team of 4: Tier 0–1 �
 
 Follow `AGENTS.md` §6; parity rules apply in full.
 
-| # | Item | Pri | Effort | Notes |
-|---|---|---|---|---|
-| 0.1 | `manufacturing` (42 routes) | P1 | M (5 EW) | BOMs, production orders, work centres, routings, QC; needed before MRP (2.3) |
-| 0.2 | `repair` (64 routes) | P2 | M (5 EW) | Largest remaining surface; quotations, jobs, warranties, service contracts |
-| 0.3 | `rental` (47 routes) | P2 | M (4 EW) | Reservations, agreements, deposits, damages |
-| 0.4 | `communication` (22 routes) | P3 | S (2 EW) | Channels, conversations, templates, WhatsApp; secrets handling per `SECURITY.md` |
+| # | Item | Pri | Effort | Status (2026-10-28) | Notes |
+|---|---|---|---|---|---|
+| 0.1 | `manufacturing` (42 routes) | P1 | M (5 EW) | **In progress** — 42/42 ticked, ADR-S006 package A done; package B (time-phased MRP, `MrpPlanningService`) committed WIP, unverified | BOMs, production orders, work centres, routings, QC; needed before MRP (2.3) |
+| 0.2 | `repair` (64 routes) | P2 | M (5 EW) | **WIP merged, unverified** — routes/services/tests written, build not run, routes not ticked | Quotations, jobs, warranties, service contracts |
+| 0.3 | `rental` (47 routes) | P2 | M (4 EW) | **WIP merged** — services + controller, tests pending, routes not ticked | Reservations, agreements, deposits, damages |
+| 0.4 | `communication` (22 routes) | P3 | S (2 EW) | **Done** — 22/22 ticked, specs + IT + parity scenario | Channels, conversations, templates, WhatsApp; secrets handling per `SECURITY.md` |
 
 **Exit:** `PORT_STATUS.md` 1,118 / 1,118, parity harness green, Nest retired.
 
@@ -94,6 +96,25 @@ Also in Tier 2 (small, schedule opportunistically): full UI i18n (S), e-commerce
 | 3.5 | Treasury | P2 | M (6 EW) | Cash forecasting from AR/AP/PO/SO, liquidity planning, FX exposure |
 | 3.6 | AI features | P2 | XL (16 EW) | Vendor-bill OCR → draft bill, bank-match suggestions, anomaly detection on postings, demand forecasting, natural-language report assistant |
 | 3.7 | Ecosystem | P3 | XL (ongoing) | EDI (X12/EDIFACT), carrier integrations, marketplace connectors, extension/app packaging + partner program |
+
+## Tier 4 — Vehicle / fleet management (`fleet` module)
+
+New module `com.inventoryerp.fleet`, feature flag `app.modules.fleet`, ADR-S0xx before code. Effort ~10 EW (L).
+
+| # | Area | Scope |
+|---|---|---|
+| 4.1 | Vehicle registry | Vehicles (VIN, plate, make/model/year, type, fuel type, capacity, status), documents, photos; optional link to `fixedasset` asset for depreciation |
+| 4.2 | Drivers & assignments | Driver profile linked to `hr` employee, licence class + expiry, vehicle ↔ driver assignment history, check-out / check-in with odometer + condition |
+| 4.3 | Odometer, trips & logbook | Odometer readings (monotonic validation), trips (purpose, route, start/end km, cost center), private vs business use |
+| 4.4 | Fuel & energy | Fuel / charging logs, fuel cards, efficiency (L/100 km, km/kWh), anomaly flags; expense posting to GL |
+| 4.5 | Maintenance | Service schedules by km / time / engine hours, preventive work orders (reuse `repair` where possible), parts from `inventory`, vendor service bills via `procurement` |
+| 4.6 | Inspections & compliance | Checklist-based inspections (pre-trip/DVIR), defects → work orders; registration, insurance, permits, road tax with expiry alerts |
+| 4.7 | Incidents & fines | Accidents, damage, insurance claims, traffic fines charged to driver or company |
+| 4.8 | Tyres & components | Tyre positions, rotation, tread depth, lifecycle |
+| 4.9 | Telematics SPI | Pluggable GPS / OBD provider interface (positions, odometer sync, alerts); mock provider for tests |
+| 4.10 | Costs & reports | Cost per vehicle / km, total cost of ownership, utilisation, upcoming renewals/services dashboard, fuel report; GL postings through the posting engine with cost-center dimension |
+
+Permissions `fleet:*`, web screens, authorization + tenant tests, seed data, `docs/spec/fleet.md`.
 
 ## Cross-cutting (every tier)
 
