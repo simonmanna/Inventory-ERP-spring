@@ -37,6 +37,9 @@ Sessions end (context limit, usage limit, crash). Progress must never depend on 
   - Bank formats: CAMT.053, MT940, OFX import; SEPA pain.001 export.
   - Payment gateway: Stripe (test mode) + generic SPI.
   - Vertical focus: horizontal SMB ERP while keeping the hospitality/POS strengths intact.
+  - Inventory costing (1.8): AVCO **and** FIFO both implemented behind a configurable, effective-dated
+    `InventoryCostPolicy`; default AVCO org-wide, FIFO selectable per org / category; method changes only via an
+    approved policy version + migration job, never a free toggle after postings.
 - Only stop for something truly impossible to resolve alone (e.g. a destructive action on production data).
   Log it under `Blocked` in `BUILD_LOG.md`, skip to the next independent item, and continue.
 

@@ -62,67 +62,231 @@ Follow `AGENTS.md` §6; parity rules apply in full.
 | 1.5 | Complete sales cycle | P1 | M (6 EW) | Pricelists + price rules, discount policies, partial delivery / backorders, sales returns (RMA), customer credit limits + hold, drop-ship |
 | 1.6 | Dunning & collections | P2 | S (2 EW) | Reminder levels, letters/e-mail, interest/fees, promise-to-pay |
 | 1.7 | Year-end close | P2 | S (2 EW) | Retained-earnings rollover, closing entries, period-close checklist with blockers |
-| 1.8 | Landed costing & cost centres | P1 | M (7 EW) | Client requirement (Tally-style). Full landed-cost vouchers across receipts/suppliers with quantity/value/weight/volume/manual allocation, late-cost revaluation, and hierarchical cost centres on every transaction line with allocation rules and reports. Detailed scope: §1.8 below |
+| 1.8 | Landed costing & cost centres | P1 | M (7 EW) | Client requirement (Tally-style). Configurable costing policy (AVCO or FIFO, effective-dated, controlled migration); landed-cost vouchers across shipments/receipts/suppliers with quantity/value/weight/volume/manual allocation and late-cost revaluation; hierarchical cost centres as a first-class GL dimension with allocations, budgets and reports. Detailed scope: §1.8 below |
 
 **Exit:** a non-hospitality SMB in one target country can run quote-to-cash, procure-to-pay, statutory tax
 
 ### 1.8 Landed costing & cost centres (client requirement)
 
-Two related but distinct dimensions — build both, integrated:
+Target client: trading / distribution (imported electronics, construction materials — cement, steel, aggregate),
+multi-branch, multi-warehouse, UGX base currency with foreign-currency imports. Build it as a **reusable ERP
+capability** on a shared costing + GL foundation — never a special case inside the purchase screen.
 
-- **Landed cost (item costing)** answers *"what did this product really cost?"* — customs, freight, transport,
-  insurance, clearing, handling are capitalised onto the goods (IAS 2).
-- **Cost centres** answer *"which department / branch / project / warehouse incurred the expense?"* — management
-  reporting dimension on GL lines.
+#### 1.8.0 Architecture and principles
 
-One document may carry both: a freight bill is allocated to products (inventory valuation) **and** tagged to an
-import project cost centre (management reporting).
+```
+Purchasing & receiving (PO · GRN · vendor bill)        Cost centres (dimensions · allocations · budgets)
+            │                                                         │
+      Landed cost (vouchers · charges · allocation · late adjustments)│
+            │                                                         │
+   Shared inventory costing engine (AVCO | FIFO policy · layers · movements · COGS)
+            │                                                         │
+   General ledger + subledgers (posting engine · AP · inventory control · audit)
+            │
+   Financial & management reporting (P&L · balance sheet · product margin · cost-centre P&L · reconciliations)
+```
 
-**Already on `main` (extend, never break):** `procurement` `LandedCostService` / `LandedCostController` — one
-landed cost per *posted* goods receipt, methods `value | quantity | equal`, single credit account, layer re-costing
-(capitalised on on-hand qty, expensed on already-consumed qty), allocation rows, GL posting, period-lock check.
-`accounting` `CostCenter` (code, name, type, active) with `costCenterId` + `branchId` on `JournalEntry` and
-`JournalLine`. Existing routes and JSON stay identical; everything below is new routes/fields (ADR first).
+Two questions, kept **connected but logically separate**:
 
-Worked example to use as the acceptance test: 100 laptops × UGX 2,000,000 = 200,000,000; customs 30,000,000,
-freight 5,000,000, clearing 2,000,000, insurance 1,000,000 → landed 238,000,000 → **UGX 2,380,000 / unit**.
-Sale at 2,800,000 → gross profit **420,000** (not 800,000). Mixed shipment: transport 3,000,000 by value with
-cement 60 % / steel 40 % → 1,800,000 / 1,200,000; original expense and per-product split both retained.
+- **Landed cost / item costing** — *what did this product cost?* (customs, freight, clearing, insurance capitalised per IAS 2).
+- **Cost centre** — *which unit incurred / earned it?* (analytic attribute on GL lines, never a second expense or extra JE).
 
-**Landed cost scope**
+A freight bill can increase inventory value, be attributed to an import-project cost centre, and be payable to a
+separate transport supplier — the system records all three facts **without recording the expense twice**.
 
-| Area | Requirement |
+Principles (each becomes a test): every posting balances · every valuation change traces to its source document ·
+cost-centre attribution never mixes with inventory cost allocation · posted documents corrected only by reversal or
+controlled adjustment · company / branch / tenant boundaries preserved · **inventory subledger reconciles to the
+inventory control account**.
+
+**Already on `main` (extend, never break existing routes/JSON):** `procurement` `LandedCostService` — one voucher per
+*posted* GRN, methods `value | quantity | equal`, one credit account, layer re-costing (capitalised on on-hand,
+expensed on consumed), allocation rows, GL posting, period lock. `core` `Product.costingMethod`
+(`AVCO | FIFO | STANDARD | SPECIFIC`, default from org setting `inventory.defaultCostingMethod`, freely editable today).
+`accounting` `CostCenter` (flat: code, name, type, active) with `costCenterId` + `branchId` on `JournalEntry` /
+`JournalLine`; GRNI; perpetual inventory. New behaviour = new routes / new fields, ADR first.
+
+#### 1.8.1 Configurable costing policy (AVCO or FIFO)
+
+The valuation method is an **approved accounting policy**, not a per-user product toggle.
+
+- New `InventoryCostPolicy` (org; scope = organisation default, optionally per product category / inventory class;
+  `method` = `AVCO | FIFO` (+ `SPECIFIC` for serialised items, `STANDARD` kept for manufacturing); `effectiveFrom`;
+  `status` draft → approved → active → superseded; `approvedBy/At`; `version`).
+- Org admin chooses the method in **Settings → Inventory → Costing policy**; only the approved method is enabled for
+  new products. Both AVCO and FIFO are fully implemented behind one `CostingStrategy` interface
+  (`receive`, `issue`, `revalue(landedAdjustment)`, `valuation(asOf)`) selected by the active policy.
+- `Product.costingMethod` stays on the wire (contract) but is **derived from the active policy** for the product's
+  scope; direct edits that disagree with the policy are rejected once the product has posted movements.
+- **No free switching after postings.** Changing method = new policy version with a future `effectiveFrom`, approved by
+  a user holding the policy-approve permission, executed by a controlled **method-migration job**: closes the period
+  boundary, snapshots valuation, re-layers stock (AVCO → FIFO: one opening layer per item/warehouse at current average;
+  FIFO → AVCO: collapse layers to weighted average), posts any rounding difference to a revaluation account, and
+  produces a reconciliation report. Old movements keep the method version they were costed with.
+- Every cost movement stores `policyVersionId` + method so historical figures can always be explained.
+- Defaults: AVCO recommended for bulk interchangeable goods (cement, aggregate); FIFO where receipt-layer traceability
+  matters (imported electronics); SPECIFIC for serialised items. Lower-of-cost-and-NRV write-down report + posting
+  (IAS 2) for both methods.
+
+#### 1.8.2 Landed cost workflow
+
+Dedicated **Landed Cost Voucher (LCV)** — users never edit purchase prices to include freight or customs.
+
+1. **Select goods** — link one or more GRNs, purchase invoices or an import **shipment** (new grouping: reference,
+   origin, vessel/BL/AWB, ETA, currency). Capture supplier, item, qty, warehouse, currency, receipt date.
+2. **Enter charge lines** — each line: cost component, own **supplier** + **supplier invoice reference**, amount,
+   currency + rate + rate date, tax code/treatment, capitalisation eligibility (defaulted from component master).
+3. **Choose allocation basis per line** — `value | quantity | weight | volume | manual %/amount` (+ existing `equal`);
+   a line may apply to **selected receipt lines only**. Weight/volume from product master (new fields + UoM) or
+   overridden per receipt line.
+4. **Preview** — per item × charge: basis, share %, allocated amount, original cost, new unit cost, rounding
+   difference, resulting inventory value, split on-hand vs already consumed (COGS).
+5. **Approve and post** — separate prepare / review / approve / post / reverse permissions. Checks: period open,
+   duplicate supplier invoice (supplier + reference unique), allocation total = eligible charge exactly, receipts still
+   posted, account mappings complete. Posting writes cost movements + GL atomically.
+6. **Reconcile and report** — match actuals to estimates, clear differences, shipment profitability, valuation.
+
+**Cost component master** (configurable, effective-dated default treatment + GL account):
+
+| Component | Default treatment |
 |---|---|
-| Landed Cost Voucher | One document linked to one **or more** goods receipts and/or purchase invoices (a shipment); draft → approved → posted → reversed; sequence numbers; attachments (source invoices) |
-| Charge lines | Multiple lines per voucher: kind (customs duty, freight, transport, insurance, clearing, loading/handling, other — configurable charge types with default GL account), amount, currency + FX rate, tax code, **capitalisable flag** |
-| Multiple suppliers | Each charge line may have its own supplier (goods vendor ≠ freight forwarder ≠ clearing agent ≠ customs authority); posting credits each supplier's AP (or a clearing account) and can generate/link the vendor bill |
-| Allocation methods | `quantity`, `value`, `weight`, `volume`, `manual` (user enters amount or % per line; must sum to charge total), plus existing `equal`. Method **per charge line**, not only per voucher. Weight/volume from product master (new `weight`, `volume` + UoM fields) or overridden on the receipt line. Rounding remainder to last line (existing rule) |
-| Preview | Allocation preview route + UI before posting: per product, per charge — basis, share %, allocated amount, unit cost before/after |
-| Partial shipments | Voucher spans several receipts of one PO/shipment; goods arriving in multiple deliveries; allocation across all selected receipt lines |
-| Late costs | Charges arriving after goods receipt (and after partial sale): capitalise on remaining on-hand, expense the consumed share to COGS / variance (existing split, extended to multi-receipt); estimated vs actual accrual with true-up when the real invoice arrives |
-| Valuation integration | Respect org valuation method: AVCO re-averages, FIFO bumps the specific layers, standard cost posts to purchase price variance. Batch/serial-level cost where tracked |
-| Accounting | Balanced JE through the posting engine + account mappings: Dr Inventory (capitalised) / Dr COGS or variance (consumed) / Dr recoverable input tax (never capitalised) / Cr supplier AP or landed-cost clearing. No double counting: a charge booked as an expense bill and then landed must reclass, not re-post. Reversal = reversing JE + layer restore |
-| IAS 2 rules | Only direct acquisition costs capitalise; selling, most admin costs and recoverable taxes do not. Charge-type flag drives this; non-capitalisable lines post to expense with cost centre |
-| Audit trail | Keep original charge amounts, basis values, shares, before/after unit costs, approver, timestamps, source documents; immutable once posted |
-| Reports | Landed cost by shipment, by item, by supplier, by branch; landed vs purchase price per item; product gross margin using landed cost |
+| Import duty, non-recoverable | Capitalise if directly attributable |
+| Freight to bring goods to intended location | Capitalise |
+| Clearing / handling / loading | Capitalise when directly attributable |
+| Insurance in transit | Capitalise |
+| Recoverable VAT / input tax | Input tax receivable — **never** inventory |
+| Selling & distribution after acquisition | Expense (with cost centre) |
+| General administration | Expense (with cost centre) |
+| Abnormal waste, penalties, demurrage, avoidable costs | Review; default expense |
 
-**Cost centre scope**
+**Estimates and late costs** — estimated charges may be accrued at receipt (Dr inventory / Cr landed-cost accrual);
+the actual invoice later clears the accrual and the difference revalues stock. Charges arriving after part of the
+stock was sold, transferred, returned or consumed are split by the **costing engine** (never by adding to product
+master cost):
 
-| Area | Requirement |
+- **AVCO**: capitalise the on-hand share into the average; consumed share → COGS (or variance account per policy).
+  Location-aware when the average is kept per warehouse.
+- **FIFO**: bump the specific receipt layers; for the consumed part of each layer, trace the issues that consumed it
+  and post the COGS adjustment in the current open period with source links.
+- Transfers carry the adjusted cost to the destination layer / average.
+
+#### 1.8.3 Posting rules (effective-dated account mappings; posting engine only)
+
+Perpetual inventory. Worked figures (UGX) are acceptance tests:
+
+| Event | Dr | Cr |
+|---|---|---|
+| A. GRN 100 laptops × 2,000,000 | Inventory control 200,000,000 | GRNI 200,000,000 |
+| A. Vendor bill matched | GRNI 200,000,000 | AP goods supplier 200,000,000 |
+| B. Customs 30M, freight 5M, clearing 2M, insurance 1M, all on hand | Inventory control 38,000,000 | AP per service supplier (4 bills) 38,000,000 |
+| C. Same, 50 of 100 already sold | Inventory 19,000,000 · COGS 19,000,000 | AP 38,000,000 |
+| D. Branch rent 2,000,000 | Rent expense 2,000,000 *(branch Kampala, dept Admin, CC Kampala Admin)* | AP 2,000,000 |
+| E. Pay service suppliers | AP 38,000,000 | Bank 38,000,000 |
+
+Result B: inventory 238,000,000 → **2,380,000 / laptop**; sale at 2,800,000 → gross profit **420,000** (not 800,000).
+Mixed shipment: transport 3,000,000 by value, cement 60 % / steel 40 % → **1,800,000 / 1,200,000**, original charge kept.
+
+Rules: no freight/customs expense debit when capitalised. Optional two-stage mode via **landed-cost clearing account**
+(Dr clearing / Cr AP on bill; Dr inventory / Cr clearing on LCV) — one mode per org, never both for one charge;
+clearing must reconcile to zero or to listed open items. Invoice-before-receipt uses purchase accrual / receipt
+clearing, never duplicate inventory. Recoverable VAT → input tax. Foreign currency: transaction + base amount, rate,
+rate date; capitalise at the charge's booking rate, later FX differences to FX gain/loss (not inventory).
+Withholding tax, supplier credit notes, returns and purchase discounts per approved policy (credit note on a landed
+charge = negative LCV adjustment).
+
+#### 1.8.4 Cost centre accounting
+
+First-class accounting dimension, not a field on expense vouchers. Keep separate concepts: **branch** (legal/operational
+location), **warehouse** (stock location), **cost centre** (responsible unit), **project / shipment** (temporary
+grouping), **department** (classification mapping to one or more cost centres). Do not duplicate the org hierarchy.
+
+Example hierarchy: Company → Kampala Branch → {Sales, Warehouse Operations, Import} · Mbarara Branch → {Sales,
+Warehouse Operations}.
+
+| Feature | Behaviour |
 |---|---|
-| Master | Hierarchical cost centres (parent/child, categories e.g. department, branch, project, warehouse, vehicle); active dates; default per user, branch, warehouse, employee, vehicle |
-| Tagging | Cost centre on every expense/revenue line of: journal entries, vendor bills, expenses, sales invoices, payroll, landed-cost charge lines, stock issues/adjustments, fixed-asset depreciation, POS (per branch), fleet (Tier 4) |
-| Split / allocation | One line split across several cost centres by % or amount (Tally "cost allocation"); allocation rules (e.g. rent by floor area) run as periodic allocation journals |
-| Rules | Per-account policy: cost centre required / optional / forbidden; validation errors on posting |
-| Budgets | Budget vs actual per cost centre (extend `BudgetService`) |
-| Reports | Cost centre P&L, expense breakdown, cost centre × account matrix, roll-up by hierarchy, drill-down to source documents, period comparison, export |
-| Relation to 2.4 | Cost centre is the first concrete analytic dimension; design the storage so 2.4 generic dimensions generalise it without a data migration |
+| Master | Code, name, parent, branch, category, status, effective from/to |
+| Defaults | Inherit from branch, department, employee, supplier, warehouse, document — configurable precedence |
+| Allocation | Split a line across centres by fixed %, amount or driver (floor area, headcount, sales); periodic allocation journals; e.g. 10,000,000 shared office cost → Sales 60 % / Admin 40 % |
+| Budgets | Period × account × cost centre (extend `BudgetService`), budget vs actual |
+| Approvals | Route transactions above thresholds to the centre's manager (existing approvals engine) |
+| Restrictions | Per-account rule required / optional / forbidden; inactive or out-of-date centres rejected on new postings |
+| Coverage | JE, vendor bills, expenses, sales invoices, payroll, LCV charge lines, stock issues/adjustments, depreciation, POS (by branch), fleet (Tier 4) |
+| Reports | Cost-centre P&L, expense by centre, centre × account matrix, hierarchy roll-up, budget vs actual, department profitability, drill-down to source |
+| Audit | Original transaction + allocation history preserved; allocations sum exactly to source amount |
 
-Deliverables: ADR (data model + posting rules), `docs/spec/procurement.md` + `docs/spec/accounting.md` updates,
-Flyway migrations, permissions (`procurement:landed_cost:*`, `accounting:cost_center:*` — follow existing naming),
-web screens (voucher editor with allocation preview, cost-centre tree, reports), seed data with the laptop and
-cement/steel examples, ITs asserting the figures above and GL balance, authorization + tenant + idempotency tests.
-filing and bank reconciliation without spreadsheets.
+Relation to 2.4: cost centre is the first concrete dimension; store it so 2.4 generic dimensions generalise it without
+a data migration.
+
+#### 1.8.5 Data model (Flyway V{n}; quoted camelCase table names like the existing schema)
+
+| Table | Purpose |
+|---|---|
+| `InventoryCostPolicy` | Org, scope (org / category), method, effectiveFrom, status, version, approvals |
+| `CostComponent` | Charge type master: code, default treatment, capitalisable, GL account, tax treatment, effective dates |
+| `Shipment` (+ `ShipmentReceipt`) | Import shipment grouping receipts / invoices |
+| `LandedCost` (extend) | Voucher: shipment, currency, rate, status workflow, totals, approvals |
+| `LandedCostReceipt` | Voucher ↔ GRN / purchase invoice bridge |
+| `LandedCostCharge` (extend) | Component, supplier, supplier invoice ref (unique per supplier), currency/rate/date, tax, capitalisable, method, estimate/actual |
+| `LandedCostAllocation` (extend) | Charge line × receipt line: basis, share, allocated, capitalised, to-COGS, rounding, unit before/after |
+| `InventoryCostLayer` | Item, warehouse, batch, source receipt, original/remaining qty, unit cost (FIFO; AVCO keeps one rolling record) |
+| `InventoryCostMovement` | Source doc type/id, item, warehouse, qty, value, movement type, posting date, policyVersionId, JE link |
+| `CostCenter` (extend) | parentId, branchId, category, effectiveFrom/To |
+| `CostAllocationRule` / `CostAllocation` | Driver rules; source journal line → destination centre, basis, % / amount |
+| `AccountDimensionRule` | Account × dimension: required / optional / forbidden |
+| Posting mappings | Effective-dated rules for GRNI, inventory, landed-cost clearing/accrual, AP, input tax, COGS, revaluation, CC defaults |
+
+Reuse existing cost-layer / stock-valuation tables where they already cover a row above — extend, do not duplicate.
+Schema rules: `numeric` for all money/qty (no float); transaction + base currency, rate, rate date; unique constraints
+on source document to block double posting; `organizationId` on every FK path and query; immutable posted lines; store
+posted values + method version; source reference on every inventory and GL movement. **No generic `expenseAmount`
+field that mutates product cost.**
+
+#### 1.8.6 Engines, controls and concurrency
+
+- **Allocation engine** — pure, deterministic calculator (unit-tested): all methods, selected-lines subset, exact
+  totals, remainder to last line, auditable breakdown.
+- **Valuation engine** — `CostingStrategy` AVCO + FIFO (+ SPECIFIC), late-adjustment revaluation, NRV.
+- **Posting service** — cost movements + JE in one transaction; `Idempotency-Key` required; source-document uniqueness;
+  `@Version` + `SELECT … FOR UPDATE` on voucher and layers/averages; two users cannot post one voucher; allocation
+  cannot exceed eligible charge; closed period untouched without authorised reopen; reversal restores layers and posts
+  a reversing JE.
+- **Permissions** — prepare / review / approve / post / reverse / close, policy approve, cost-centre manage, branch
+  restrictions (follow existing `procurement:*` / `accounting:*` / `inventory:*` naming; add to `packages/shared`).
+
+#### 1.8.7 Reports and reconciliation
+
+Landed cost by shipment (purchase value, each component, total, cost per item) · by item / supplier / branch · product
+profitability (revenue, COGS incl. landed cost, GP, margin) · cost-centre P&L + budget vs actual · inventory valuation
+by item and warehouse · **inventory subledger ↔ GL inventory control reconciliation** · open landed-cost clearing /
+accruals · method-migration reconciliation.
+
+#### 1.8.8 Acceptance tests (item not done until all pass)
+
+Allocation equals source charge exactly incl. rounding · recoverable VAT excluded from cost · GRN + vendor bill do not
+duplicate inventory · multi-product, multi-freight-supplier shipment posts correctly · partial sales before late
+invoice → correct inventory/COGS split **under AVCO and under FIFO** (same scenarios run with each policy) · repeated
+post requests do not duplicate JEs or movements · cost-centre allocations sum to source · branch and company reports
+reconcile · subledger = inventory control account · reversals, period locks, permissions, audit trail · concurrent
+posting and concurrent stock movements cannot corrupt valuation · method switch only via approved policy + migration
+job, totals preserved · foreign currency, supplier credit notes, returns, purchase discounts per policy · authorization
+(403) and tenant isolation per route · laptop and cement/steel figures above.
+
+#### 1.8.9 Delivery plan (~7 EW)
+
+| Phase | Effort | Deliverable |
+|---|---|---|
+| 1. Policy & discovery | 0.5 EW | ADR (costing policy, posting rules, data model); defaults recorded as Accepted (autonomous) |
+| 2. Data model & config | 1 EW | Migrations, cost policy, cost components, cost-centre hierarchy, dimension rules, posting mappings, settings UI |
+| 3. Landed-cost workflow | 1.5 EW | Shipments, multi-receipt / multi-supplier voucher, allocation preview, approvals, posting |
+| 4. Costing integration | 1.5 EW | AVCO + FIFO strategies, late adjustments, method-migration job, NRV |
+| 5. Cost-centre accounting | 1 EW | Tagging across modules, splits, allocation rules, budgets, reports |
+| 6. Tests & reconciliation | 1.5 EW | §1.8.8 suite, reconciliation reports, seed data with both examples, web screens |
+
+Client accountant still to confirm — do **not** block; ship the configurable default and log it in `BUILD_LOG.md`:
+(1) valuation method per inventory class (default AVCO org-wide, FIFO selectable); (2) which costs capitalise, which
+taxes are recoverable, post-sale cost treatment (defaults = component table above); (3) cost-centre hierarchy,
+allocation rules and required reports (seed the Kampala / Mbarara example).
 
 ## Tier 2 — Odoo Enterprise / Business Central parity
 
