@@ -119,3 +119,26 @@ valuation/tie-out, CSV/PDF exports, dashboard, FX revaluation, journal_entry wor
 `currency` specs). The listed `test/business-simulation/*` and `test/integration/*` specs drive POS,
 inventory and stock-posting flows and are ported with P3–P5. Parity scenarios are written
 (`accounting-ledger`, `accounting-treasury`, `accounting-reports`) but have not been run against Nest.
+
+## ADR-S007 extensions — cost-centre accounting (roadmap 1.8)
+
+- `CostCenter`: `parentId`, `branchId`, `category`, `description`, `managerUserId`, `validFrom`, `validTo`;
+  tenancy + soft-delete filters added (**deviation / fix**: the Nest-port list was not tenant-filtered).
+- Posting engine applies, per entry: split rules (`dimensions.costAllocationRuleId`), defaults (partner → branch →
+  user) on revenue / expense lines, account rules (`required` / `forbidden`), validity on the posting date.
+- Manual journal lines accept `branchId`, `costCenterId`, `dimensions` (additive DTO fields).
+- `ensureByCode` sets `isActive` / `isPostable` explicitly on the created account (fix).
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/cost-centers/tree` | `cost_center:read` |
+| GET/POST, DELETE | `/cost-centers/defaults`, `/defaults/{id}` | `cost_center:read` / `update` |
+| GET, PUT | `/cost-centers/account-rules`, `/account-rules/{accountId}` | `cost_center:read` / `update` |
+| GET | `/cost-centers/allocation-rules`, `/{id}`, `/{id}/preview?periodFrom&periodTo` | `cost_center:read` |
+| POST/PATCH/DELETE | `/cost-centers/allocation-rules`, `/{id}` | `cost_center:allocate` |
+| POST | `/cost-centers/allocation-rules/{id}/run` (Idempotency-Key) | `cost_center:allocate` |
+| GET, POST | `/cost-centers/allocation-runs`, `/allocation-runs/{id}/reverse` | `cost_center:read` / `allocate` |
+| GET | `/cost-centers/reports/profit-and-loss?from&to[&costCenterId]`, `/reports/matrix?from&to` | `cost_center:read` |
+
+Tests: `CostCenterAccountingIT`. Web: Cost Centers (hierarchy fields), Cost Centre Accounting (P&L, matrix,
+hierarchy, allocation rules / runs, defaults & account rules).

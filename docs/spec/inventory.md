@@ -92,3 +92,11 @@ idempotent replay, authorization matrix = 69 routes, tenant isolation), `Invento
 Deferred to the phase that owns the other side of the flow: the `test/integration/audit/inv-*`,
 `procurement-flow`, `pos-*` and `sync-*` Jest suites listed in the generated spec drive POS / procurement /
 sync routes (P4–P6) and are ported there.
+
+## ADR-S007 extensions — configurable costing policy (roadmap 1.8)
+
+`/inventory/cost-policies` (GET list, GET `/current`, GET `/{id}`, GET `/{id}/preview`, POST, PATCH `/{id}`,
+POST `/{id}/approve`, `/{id}/activate` (Idempotency-Key), `/{id}/cancel`); permissions `costing_policy:read`,
+`manage`, `approve`. Daily job `inventory-cost-policy-activation` (00:15 UTC, ShedLock) activates approved policies
+whose `effectiveFrom` has come. With an active policy `costingMethod` on products follows the policy (deviation from
+Nest only for organisations that create a policy). Tests: `InventoryCostPolicyIT`. Web: Inventory → Costing Policy.

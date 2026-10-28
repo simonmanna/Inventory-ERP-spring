@@ -389,8 +389,8 @@ class RepairIT extends ApiTestSupport {
         assertThat(issued.get("status").asString()).isEqualTo("issued");
         assertThat(issued.get("totalCost").asString()).isEqualTo("110");
         assertThat(issued.get("locationId").asString()).isEqualTo(warehouseId);
-        Map<String, Object> mv = jdbc.sql("SELECT \"sourceType\", \"sourceId\", quantity FROM \"StockMove\""
-                + " WHERE \"sourceType\" = 'repair_part_issue' AND \"sourceId\" = ?").param(id).query().singleRow();
+        Map<String, Object> mv = jdbc.sql("SELECT -SUM(\"quantityChange\") AS quantity FROM \"InventoryLedger\""
+                + " WHERE \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?").param(id).query().singleRow();
         assertThat(((BigDecimal) mv.get("quantity"))).isEqualByComparingTo("2");
         assertThat(as("POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId)).body()
                 .get("message").asString()).isEqualTo("Part already issued");

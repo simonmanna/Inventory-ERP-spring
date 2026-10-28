@@ -271,6 +271,71 @@ public class StockPostingService {
                 "inventory:landed_cost:" + TenantContext.organizationId() + ":" + sourceId, lines));
     }
 
+    /** The stock account a product's receipts debit (STOCK_IN rule, else {@code stock_valuation}). */
+    public String stockAccount(String productId, BigDecimal amount) {
+        List<Line> ruled = resolveLines("STOCK_IN", productId, amount.signum() > 0 ? amount : BigDecimal.ONE);
+        if (ruled != null) {
+            for (Line r : ruled) {
+                if (r.debit() != null && Money.dec(r.debit()).signum() > 0) {
+                    return r.accountId();
+                }
+            }
+        }
+        return determination.mapped("stock_valuation");
+    }
+
+    /**
+     * Landed cost voucher (ADR-S007): Dr stock per product (capitalised share) + Dr COGS (consumed share, tagged with
+     * {@code cogsCostCenterId}) + the caller's other lines (expensed charges, recoverable tax, credits). Must balance.
+     */
+    public Map<String, Object> postLandedVoucher(List<LandedLine> landed, String cogsCostCenterId, List<Line> other,
+            Instant date, String sourceId, String description) {
+        List<Line> lines = new ArrayList<>();
+        BigDecimal cogsTotal = Money.ZERO;
+        Map<String, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
+        for (LandedLine l : landed) {
+            BigDecimal cap = Money.dec(l.capitalized());
+            if (cap.signum() > 0) {
+                byAccount.merge(stockAccount(l.productId(), cap), cap, BigDecimal::add);
+            }
+            cogsTotal = cogsTotal.add(Money.dec(l.expensed()));
+        }
+        byAccount.forEach((acc, v) -> lines.add(Line.debit(acc, JsNumbers.dec(v), description)));
+        if (cogsTotal.signum() > 0) {
+            lines.add(new Line(determination.mapped("cogs"), JsNumbers.dec(cogsTotal), null, null,
+                    description + " · already consumed", null, cogsCostCenterId, null));
+        }
+        lines.addAll(other);
+        if (lines.size() < 2) {
+            return null;
+        }
+        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher", sourceId,
+                "inventory:landed_cost_voucher:" + TenantContext.organizationId() + ":" + sourceId, lines));
+    }
+
+    /**
+     * After reversing a voucher: the part of a capitalisation that could no longer be taken out of stock (sold since)
+     * moves from stock back to COGS — Dr stock / Cr COGS per product — so the GL keeps tying to the sub-ledger.
+     */
+    public Map<String, Object> postLandedReclass(Map<String, BigDecimal> unabsorbedByProduct, String cogsCostCenterId,
+            Instant date, String sourceId, String description) {
+        List<Line> lines = new ArrayList<>();
+        BigDecimal total = Money.ZERO;
+        for (Map.Entry<String, BigDecimal> e : unabsorbedByProduct.entrySet()) {
+            if (e.getValue().signum() > 0) {
+                lines.add(Line.debit(stockAccount(e.getKey(), e.getValue()), JsNumbers.dec(e.getValue()), description));
+                total = total.add(e.getValue());
+            }
+        }
+        if (total.signum() <= 0) {
+            return null;
+        }
+        lines.add(new Line(determination.mapped("cogs"), null, JsNumbers.dec(total), null, description, null,
+                cogsCostCenterId, null));
+        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher_reversal", sourceId,
+                "inventory:landed_cost_reclass:" + TenantContext.organizationId() + ":" + sourceId, lines));
+    }
+
     /** Count/adjustment variance: gain → ADJUSTMENT_GAIN, loss → ADJUSTMENT_LOSS. */
     public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
             String sourceId, String description) {

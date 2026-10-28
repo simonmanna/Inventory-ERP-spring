@@ -173,6 +173,10 @@ public class AccountResolverService {
             account.setNormalBalance(category.getNormalBalance());
             account.setIsSystem(true);
             account.setIsProtected(true);
+            // Set explicitly: with @DynamicInsert the DB defaults are not reflected in this persistence context, and
+            // a posting in the same transaction would read the new account as inactive / non-postable.
+            account.setIsActive(true);
+            account.setIsPostable(true);
             em.persist(account);
             em.flush();
             invalidate(organizationId);

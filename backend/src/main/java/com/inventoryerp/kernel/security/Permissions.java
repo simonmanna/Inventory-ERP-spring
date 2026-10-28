@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (372 permissions). Constant name = GROUP__ACTION.
+ * exactly (382 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -67,6 +67,16 @@ public final class Permissions {
     public static final String COST_CENTER__READ = "cost_center:read";
     public static final String COST_CENTER__UPDATE = "cost_center:update";
     public static final String COST_CENTER__DELETE = "cost_center:delete";
+    public static final String COST_CENTER__ALLOCATE = "cost_center:allocate";
+    public static final String COSTING_POLICY__READ = "costing_policy:read";
+    public static final String COSTING_POLICY__MANAGE = "costing_policy:manage";
+    public static final String COSTING_POLICY__APPROVE = "costing_policy:approve";
+    public static final String LANDED_COST__READ = "landed_cost:read";
+    public static final String LANDED_COST__CREATE = "landed_cost:create";
+    public static final String LANDED_COST__APPROVE = "landed_cost:approve";
+    public static final String LANDED_COST__POST = "landed_cost:post";
+    public static final String LANDED_COST__REVERSE = "landed_cost:reverse";
+    public static final String LANDED_COST__CONFIGURE = "landed_cost:configure";
     public static final String BUDGET__READ = "budget:read";
     public static final String BUDGET__CREATE = "budget:create";
     public static final String BUDGET__UPDATE = "budget:update";
@@ -442,6 +452,16 @@ public final class Permissions {
             "cost_center:read",
             "cost_center:update",
             "cost_center:delete",
+            "cost_center:allocate",
+            "costing_policy:read",
+            "costing_policy:manage",
+            "costing_policy:approve",
+            "landed_cost:read",
+            "landed_cost:create",
+            "landed_cost:approve",
+            "landed_cost:post",
+            "landed_cost:reverse",
+            "landed_cost:configure",
             "budget:read",
             "budget:create",
             "budget:update",

@@ -64,7 +64,25 @@ const formSchema = z.object({
   code: z.string().min(1, tx('Code is required')),
   name: z.string().min(1, tx('Name is required')),
   type: z.enum(['cost', 'profit'], { required_error: 'Type is required' }),
+  parentId: z.string().optional(),
+  category: z.enum(['department', 'branch', 'project', 'warehouse', 'shipment', 'vehicle', 'other']).optional(),
+  description: z.string().optional(),
+  validFrom: z.string().optional(),
+  validTo: z.string().optional(),
+  isActive: z.boolean().optional(),
 });
+
+const CATEGORY_LABELS: Record<string, string> = {
+  department: tx('Department'),
+  branch: tx('Branch'),
+  project: tx('Project'),
+  warehouse: tx('Warehouse'),
+  shipment: tx('Shipment'),
+  vehicle: tx('Vehicle'),
+  other: tx('Other'),
+};
+
+const EMPTY_FORM = { code: '', name: '', type: 'cost' as const, parentId: '', category: 'department' as const, description: '', validFrom: '', validTo: '', isActive: true };
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -77,6 +95,8 @@ function CostCentersPage() {
 
   const typeParam = tab === 'all' ? undefined : tab;
   const { data, isLoading } = useCostCenters({ page, type: typeParam });
+  const { data: everything } = useCostCenters({ page: 1 });
+  const allCenters = everything?.data ?? [];
   const createCenter = useCreateCostCenter();
   const updateCenter = useUpdateCostCenter();
   const deleteCenter = useDeleteCostCenter();
@@ -85,18 +105,28 @@ function CostCentersPage() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: { code: '', name: '', type: 'cost' },
+    defaultValues: EMPTY_FORM,
   });
 
   function handleOpenCreate() {
     setEditing(null);
-    form.reset({ code: '', name: '', type: 'cost' });
+    form.reset(EMPTY_FORM);
     setDialogOpen(true);
   }
 
   function handleOpenEdit(center: CostCenter) {
     setEditing(center);
-    form.reset({ code: center.code, name: center.name, type: center.type as 'cost' | 'profit' });
+    form.reset({
+      code: center.code,
+      name: center.name,
+      type: center.type as 'cost' | 'profit',
+      parentId: center.parentId ?? '',
+      category: (center.category ?? 'department') as FormValues['category'],
+      description: center.description ?? '',
+      validFrom: center.validFrom ? String(center.validFrom).slice(0, 10) : '',
+      validTo: center.validTo ? String(center.validTo).slice(0, 10) : '',
+      isActive: center.isActive,
+    });
     setDialogOpen(true);
   }
 
@@ -106,11 +136,18 @@ function CostCentersPage() {
   }
 
   async function onSubmit(values: FormValues) {
+    const body = {
+      ...values,
+      parentId: values.parentId || null,
+      description: values.description || null,
+      validFrom: values.validFrom || null,
+      validTo: values.validTo || null,
+    };
     try {
       if (isEdit && editing) {
-        await updateCenter.mutateAsync({ id: editing.id, ...values });
+        await updateCenter.mutateAsync({ id: editing.id, ...body } as any);
       } else {
-        await createCenter.mutateAsync(values);
+        await createCenter.mutateAsync(body as any);
       }
       setDialogOpen(false);
     } catch {
@@ -141,6 +178,17 @@ function CostCentersPage() {
     {
       key: 'name',
       header: tx('Name'),
+      render: (c) => (
+        <span>
+          {c.name}
+          {c.parentId && <span className="ml-2 text-xs text-muted-foreground">↳ {allCenters.find((p) => p.id === c.parentId)?.code ?? ''}</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'category',
+      header: tx('Category'),
+      render: (c) => <Badge variant="outline">{CATEGORY_LABELS[c.category ?? 'department'] ?? c.category}</Badge>,
     },
     {
       key: 'type',
@@ -309,6 +357,38 @@ function CostCentersPage() {
                 <p className="text-sm text-destructive">{form.formState.errors.type.message}</p>
               )}
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="parentId">{tx('Parent')}</Label>
+                <select id="parentId" className="w-full rounded-md border p-2 text-sm" {...form.register('parentId')}>
+                  <option value="">{tx('None (top level)')}</option>
+                  {allCenters.filter((c) => c.id !== editing?.id).map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="category">{tx('Category')}</Label>
+                <select id="category" className="w-full rounded-md border p-2 text-sm" {...form.register('category')}>
+                  {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="validFrom">{tx('Valid from')}</Label>
+                <Input id="validFrom" type="date" {...form.register('validFrom')} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="validTo">{tx('Valid to')}</Label>
+                <Input id="validTo" type="date" {...form.register('validTo')} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">{tx('Description')}</Label>
+              <Input id="description" {...form.register('description')} />
+            </div>
+            {isEdit && (
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" {...form.register('isActive')} /> {tx('Active (inactive centres are refused on new postings)')}
+              </label>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                 {tx('Cancel')}

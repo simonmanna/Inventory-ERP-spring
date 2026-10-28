@@ -31,13 +31,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/journal-entries")
 public class JournalEntryController {
 
-    /** {@code ManualJournalLineDto}. */
+    /** {@code ManualJournalLineDto}; ADR-S007 adds per-line branch, cost center and dimensions (split rules). */
     public record ManualLine(
             @NotNull(message = "must be a string") String accountId,
             BigDecimal debit,
             BigDecimal credit,
             String partnerId,
-            String description) {}
+            String description,
+            String branchId,
+            String costCenterId,
+            Map<String, Object> dimensions) {}
 
     /** {@code CreateJournalEntryDto}. */
     public record CreateJournalEntryRequest(
@@ -80,7 +83,7 @@ public class JournalEntryController {
     public Map<String, Object> create(@Valid @RequestBody CreateJournalEntryRequest dto) {
         List<PostingRequest.Line> lines = dto.lines().stream()
                 .map(l -> new PostingRequest.Line(l.accountId(), l.debit(), l.credit(), l.partnerId(), l.description(),
-                        null, null, null))
+                        l.branchId(), l.costCenterId(), l.dimensions()))
                 .toList();
         return entries.createManual(dto.journalCode(), EntityPatch.toInstant(dto.date()), dto.description(),
                 dto.branchId(), dto.costCenterId(), lines);

@@ -91,6 +91,21 @@ export const PERMISSIONS = {
     read: 'cost_center:read',
     update: 'cost_center:update',
     delete: 'cost_center:delete',
+    allocate: 'cost_center:allocate',
+  },
+  // ---- ADR-S007 — landed costing, costing policy, cost centres ----
+  costingPolicy: {
+    read: 'costing_policy:read',
+    manage: 'costing_policy:manage',
+    approve: 'costing_policy:approve',
+  },
+  landedCost: {
+    read: 'landed_cost:read',
+    create: 'landed_cost:create',
+    approve: 'landed_cost:approve',
+    post: 'landed_cost:post',
+    reverse: 'landed_cost:reverse',
+    configure: 'landed_cost:configure',
   },
   // ---- ADR-S005 — accounting completion ----
   budget: {

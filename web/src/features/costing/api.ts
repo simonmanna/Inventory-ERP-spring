@@ -1,0 +1,358 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
+
+/**
+ * ADR-S007 — costing & cost centres: configurable AVCO / FIFO costing policy, cost-centre accounting (hierarchy,
+ * defaults, account rules, split + periodic allocation, reports) and landed cost (cost components, shipments,
+ * multi-receipt vouchers, reports).
+ */
+
+// ------------------------------------------------------------------ costing policy
+
+export type CostMethod = 'AVCO' | 'FIFO' | 'SPECIFIC' | 'STANDARD';
+
+export interface CostPolicy {
+  id: string;
+  code: string;
+  scopeType: 'organization' | 'category';
+  categoryId: string | null;
+  categoryName: string | null;
+  method: CostMethod;
+  effectiveFrom: string;
+  status: 'draft' | 'approved' | 'active' | 'superseded' | 'cancelled';
+  version: number;
+  notes: string | null;
+  approvedAt: string | null;
+  activatedAt: string | null;
+  migrationSummary: { products: number; quants: number; valueBefore: string; valueAfter: string; difference: string } | null;
+  migrationLines?: Array<{ id: string; productName: string; sku: string | null; methodFrom: string; methodTo: string; quantity: string; valueBefore: string; valueAfter: string }>;
+}
+
+export function useCostPolicies() {
+  return useQuery({ queryKey: ['cost-policies'], queryFn: async () => (await api.get<CostPolicy[]>('/inventory/cost-policies')).data });
+}
+
+export function useCurrentCostPolicy() {
+  return useQuery({
+    queryKey: ['cost-policies', 'current'],
+    queryFn: async () => (await api.get<{ active: CostPolicy[]; defaultMethod: CostMethod; governed: boolean }>('/inventory/cost-policies/current')).data,
+  });
+}
+
+export function useCostPolicy(id?: string) {
+  return useQuery({ queryKey: ['cost-policies', id], enabled: !!id, queryFn: async () => (await api.get<CostPolicy>(`/inventory/cost-policies/${id}`)).data });
+}
+
+export function useCostPolicyPreview(id?: string) {
+  return useQuery({
+    queryKey: ['cost-policies', id, 'preview'],
+    enabled: !!id,
+    queryFn: async () => (await api.get<{ products: any[]; totalValue: string }>(`/inventory/cost-policies/${id}/preview`)).data,
+  });
+}
+
+export function useCreateCostPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { scopeType: string; categoryId?: string; method: CostMethod; effectiveFrom: string; notes?: string }) =>
+      (await api.post<CostPolicy>('/inventory/cost-policies', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-policies'] }),
+  });
+}
+
+export function useCostPolicyAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action }: { id: string; action: 'approve' | 'activate' | 'cancel' }) =>
+      action === 'activate'
+        ? idempotentPost<CostPolicy>(`/inventory/cost-policies/${id}/activate`)
+        : (await api.post<CostPolicy>(`/inventory/cost-policies/${id}/${action}`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-policies'] }),
+  });
+}
+
+// ------------------------------------------------------------------ cost centres
+
+export interface CostCenterNode {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  category: string;
+  parentId: string | null;
+  branchId: string | null;
+  isActive: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+  children: CostCenterNode[];
+}
+
+export function useCostCenterTree() {
+  return useQuery({ queryKey: ['cost-centers', 'tree'], queryFn: async () => (await api.get<CostCenterNode[]>('/cost-centers/tree')).data });
+}
+
+/** Flatten the tree depth-first with a `depth` for indented pickers. */
+export function flattenTree(nodes: CostCenterNode[] = [], depth = 0): Array<CostCenterNode & { depth: number }> {
+  return nodes.flatMap((n) => [{ ...n, depth }, ...flattenTree(n.children, depth + 1)]);
+}
+
+export interface AllocationRule {
+  id: string;
+  code: string;
+  name: string;
+  kind: 'split' | 'periodic';
+  driver: string;
+  sourceCostCenterId: string | null;
+  sourceCostCenterCode: string | null;
+  accountIds: string[] | null;
+  isActive: boolean;
+  notes: string | null;
+  targets: Array<{ costCenterId: string; code: string; name: string; weight: string; sharePct: string }>;
+}
+
+export function useAllocationRules() {
+  return useQuery({ queryKey: ['cost-alloc-rules'], queryFn: async () => (await api.get<AllocationRule[]>('/cost-centers/allocation-rules')).data });
+}
+
+export function useAllocationRuns() {
+  return useQuery({ queryKey: ['cost-alloc-runs'], queryFn: async () => (await api.get<any[]>('/cost-centers/allocation-runs')).data });
+}
+
+export function useSaveAllocationRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: any) =>
+      id ? (await api.patch(`/cost-centers/allocation-rules/${id}`, body)).data : (await api.post('/cost-centers/allocation-rules', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-alloc-rules'] }),
+  });
+}
+
+export function useDeleteAllocationRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => api.delete(`/cost-centers/allocation-rules/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-alloc-rules'] }),
+  });
+}
+
+export function useAllocationPreview(id?: string, periodFrom?: string, periodTo?: string) {
+  return useQuery({
+    queryKey: ['cost-alloc-preview', id, periodFrom, periodTo],
+    enabled: !!id && !!periodFrom && !!periodTo,
+    queryFn: async () => (await api.get<any>(`/cost-centers/allocation-rules/${id}/preview`, { params: { periodFrom, periodTo } })).data,
+  });
+}
+
+export function useRunAllocation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, periodFrom, periodTo }: { id: string; periodFrom: string; periodTo: string }) =>
+      idempotentPost<any>(`/cost-centers/allocation-rules/${id}/run`, { periodFrom, periodTo }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-alloc-runs'] }),
+  });
+}
+
+export function useReverseAllocationRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => idempotentPost<any>(`/cost-centers/allocation-runs/${id}/reverse`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-alloc-runs'] }),
+  });
+}
+
+export function useCostCenterDefaults() {
+  return useQuery({ queryKey: ['cost-center-defaults'], queryFn: async () => (await api.get<any[]>('/cost-centers/defaults')).data });
+}
+
+export function useSaveCostCenterDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { scopeType: string; scopeId: string; costCenterId: string }) => (await api.post('/cost-centers/defaults', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-center-defaults'] }),
+  });
+}
+
+export function useDeleteCostCenterDefault() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => api.delete(`/cost-centers/defaults/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-center-defaults'] }),
+  });
+}
+
+export function useAccountDimensionRules() {
+  return useQuery({ queryKey: ['account-dimension-rules'], queryFn: async () => (await api.get<any[]>('/cost-centers/account-rules')).data });
+}
+
+export function useSetAccountDimensionRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ accountId, rule }: { accountId: string; rule: 'required' | 'optional' | 'forbidden' }) =>
+      (await api.put(`/cost-centers/account-rules/${accountId}`, { rule })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['account-dimension-rules'] }),
+  });
+}
+
+export function useCostCenterPnl(from: string, to: string, costCenterId?: string) {
+  return useQuery({
+    queryKey: ['cost-center-pnl', from, to, costCenterId],
+    enabled: !!from && !!to,
+    queryFn: async () => (await api.get<any>('/cost-centers/reports/profit-and-loss', { params: { from, to, costCenterId: costCenterId || undefined } })).data,
+  });
+}
+
+export function useCostCenterMatrix(from: string, to: string) {
+  return useQuery({
+    queryKey: ['cost-center-matrix', from, to],
+    enabled: !!from && !!to,
+    queryFn: async () => (await api.get<any>('/cost-centers/reports/matrix', { params: { from, to } })).data,
+  });
+}
+
+// ------------------------------------------------------------------ landed cost
+
+export type AllocationMethod = 'value' | 'quantity' | 'equal' | 'weight' | 'volume' | 'manual';
+export type Treatment = 'capitalize' | 'expense' | 'recoverable_tax';
+
+export interface CostComponent {
+  id: string;
+  code: string;
+  name: string;
+  kind: string;
+  treatment: Treatment;
+  defaultAllocationMethod: AllocationMethod;
+  expenseAccountId: string | null;
+  expenseAccountCode: string | null;
+  description: string | null;
+  isActive: boolean;
+}
+
+export function useCostComponents() {
+  return useQuery({ queryKey: ['cost-components'], queryFn: async () => (await api.get<CostComponent[]>('/procurement/cost-components')).data });
+}
+
+export function useSaveCostComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: any) =>
+      id ? (await api.patch(`/procurement/cost-components/${id}`, body)).data : (await api.post('/procurement/cost-components', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cost-components'] }),
+  });
+}
+
+export function useShipments() {
+  return useQuery({ queryKey: ['shipments'], queryFn: async () => (await api.get<any[]>('/procurement/shipments')).data });
+}
+
+export function useShipment(id?: string) {
+  return useQuery({ queryKey: ['shipments', id], enabled: !!id, queryFn: async () => (await api.get<any>(`/procurement/shipments/${id}`)).data });
+}
+
+export function useSaveShipment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: any) =>
+      id ? (await api.patch(`/procurement/shipments/${id}`, body)).data : (await api.post('/procurement/shipments', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shipments'] }),
+  });
+}
+
+export function useShipmentReceipt() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, goodsReceiptId, remove }: { id: string; goodsReceiptId: string; remove?: boolean }) =>
+      remove
+        ? (await api.delete(`/procurement/shipments/${id}/receipts/${goodsReceiptId}`)).data
+        : (await api.post(`/procurement/shipments/${id}/receipts`, { goodsReceiptId })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shipments'] }),
+  });
+}
+
+export interface ChargeDraft {
+  costComponentId?: string;
+  kind?: string;
+  description?: string;
+  supplierId?: string;
+  supplierInvoiceRef?: string;
+  invoiceDate?: string;
+  currencyCode?: string;
+  exchangeRate?: number;
+  amount: number;
+  taxAmount?: number;
+  treatment?: Treatment;
+  allocationMethod?: AllocationMethod;
+  expenseAccountId?: string;
+  creditAccountId?: string;
+  costCenterId?: string;
+  appliesToLineIds?: string[];
+  manualAllocations?: Record<string, number>;
+}
+
+export interface VoucherDraft {
+  shipmentId?: string;
+  goodsReceiptIds?: string[];
+  date?: string;
+  notes?: string;
+  costCenterId?: string;
+  charges: ChargeDraft[];
+}
+
+export function useLandedCostVouchers(params?: { status?: string; shipmentId?: string }) {
+  return useQuery({
+    queryKey: ['landed-cost-vouchers', params],
+    queryFn: async () => (await api.get<any[]>('/procurement/landed-cost-vouchers', { params })).data,
+  });
+}
+
+export function useLandedCostVoucher(id?: string) {
+  return useQuery({
+    queryKey: ['landed-cost-vouchers', id],
+    enabled: !!id,
+    queryFn: async () => (await api.get<any>(`/procurement/landed-cost-vouchers/${id}`)).data,
+  });
+}
+
+export function useLandedCostPreview(id?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['landed-cost-vouchers', id, 'preview'],
+    enabled: !!id && enabled,
+    queryFn: async () => (await api.get<any>(`/procurement/landed-cost-vouchers/${id}/preview`)).data,
+  });
+}
+
+export function useSaveLandedCostVoucher() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id?: string; body: VoucherDraft }) =>
+      id ? (await api.put(`/procurement/landed-cost-vouchers/${id}`, body)).data : idempotentPost<any>('/procurement/landed-cost-vouchers', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['landed-cost-vouchers'] }),
+  });
+}
+
+export function useLandedCostAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action }: { id: string; action: 'submit' | 'approve' | 'post' | 'reverse' | 'cancel' }) =>
+      action === 'post' || action === 'reverse'
+        ? idempotentPost<any>(`/procurement/landed-cost-vouchers/${id}/${action}`)
+        : (await api.post(`/procurement/landed-cost-vouchers/${id}/${action}`)).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['landed-cost-vouchers'] });
+      qc.invalidateQueries({ queryKey: ['inventory-product-stock-levels'] });
+    },
+  });
+}
+
+export function useLandedCostReport<T = any>(kind: 'by-shipment' | 'by-item' | 'by-supplier' | 'product-profitability' | 'clearing', from?: string, to?: string) {
+  return useQuery({
+    queryKey: ['landed-cost-report', kind, from, to],
+    enabled: kind === 'clearing' || (!!from && !!to),
+    queryFn: async () => (await api.get<T>(`/procurement/landed-cost-reports/${kind}`, { params: kind === 'clearing' ? {} : { from, to } })).data,
+  });
+}
+
+export const errMsg = (e: any) => {
+  const m = e?.response?.data?.message ?? e?.message;
+  return Array.isArray(m) ? m.join(', ') : m;
+};

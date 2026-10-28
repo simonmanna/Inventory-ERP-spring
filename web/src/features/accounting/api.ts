@@ -689,6 +689,13 @@ export interface CostCenter {
   name: string;
   type: string;
   isActive: boolean;
+  /** ADR-S007 hierarchy + classification. */
+  parentId?: string | null;
+  branchId?: string | null;
+  category?: string;
+  description?: string | null;
+  validFrom?: string | null;
+  validTo?: string | null;
 }
 
 export function useCostCenters(params?: { page?: number; type?: string }) {

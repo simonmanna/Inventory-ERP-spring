@@ -62,11 +62,13 @@ Follow `AGENTS.md` §6; parity rules apply in full.
 | 1.5 | Complete sales cycle | P1 | M (6 EW) | Pricelists + price rules, discount policies, partial delivery / backorders, sales returns (RMA), customer credit limits + hold, drop-ship |
 | 1.6 | Dunning & collections | P2 | S (2 EW) | Reminder levels, letters/e-mail, interest/fees, promise-to-pay |
 | 1.7 | Year-end close | P2 | S (2 EW) | Retained-earnings rollover, closing entries, period-close checklist with blockers |
-| 1.8 | Landed costing & cost centres | P1 | M (7 EW) | Client requirement (Tally-style). Configurable costing policy (AVCO or FIFO, effective-dated, controlled migration); landed-cost vouchers across shipments/receipts/suppliers with quantity/value/weight/volume/manual allocation and late-cost revaluation; hierarchical cost centres as a first-class GL dimension with allocations, budgets and reports. Detailed scope: §1.8 below |
+| 1.8 | Landed costing & cost centres — **built 2026-10-28 (ADR-S007)** | P1 | M (7 EW) | Client requirement (Tally-style). Configurable costing policy (AVCO or FIFO, effective-dated, controlled migration); landed-cost vouchers across shipments/receipts/suppliers with quantity/value/weight/volume/manual allocation and late-cost revaluation; hierarchical cost centres as a first-class GL dimension with allocations, budgets and reports. Detailed scope: §1.8 below |
 
 **Exit:** a non-hospitality SMB in one target country can run quote-to-cash, procure-to-pay, statutory tax
 
 ### 1.8 Landed costing & cost centres (client requirement)
+
+> **Status 2026-10-28:** implemented per ADR-S007 (`V12`), see `docs/spec/{procurement,accounting,inventory}.md`. Remaining follow-ups: estimated-cost accrual with true-up, supplier credit note on a landed charge (today: reverse + repost), manager-threshold approval routing.
 
 Target client: trading / distribution (imported electronics, construction materials — cement, steel, aggregate),
 multi-branch, multi-warehouse, UGX base currency with foreign-currency imports. Build it as a **reusable ERP

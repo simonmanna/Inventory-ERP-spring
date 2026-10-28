@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -71,12 +72,15 @@ public class ProductService extends BaseCrudService<Product> {
     private final AuditService audit;
     private final EventBus events;
     private final FilesService files;
+    private final ObjectProvider<ProductCostingPolicy> costingPolicy;
 
-    public ProductService(EntityManager em, AuditService audit, EventBus events, FilesService files) {
+    public ProductService(EntityManager em, AuditService audit, EventBus events, FilesService files,
+            ObjectProvider<ProductCostingPolicy> costingPolicy) {
         super(em, Product.class);
         this.audit = audit;
         this.events = events;
         this.files = files;
+        this.costingPolicy = costingPolicy;
     }
 
     @Override
@@ -167,6 +171,7 @@ public class ProductService extends BaseCrudService<Product> {
     @Transactional
     public Map<String, Object> create(Record dto, List<Packaging> packagings, List<Unit> units) {
         Map<String, Object> data = applyBeverageComputation(EntityPatch.data(dto, "packagings", "units"), null);
+        applyCostingPolicy(data, null);
         applyOrgInventoryDefaults(data);
         applyInventoryConfig(data, null);
         Product row = EntityPatch.apply(newInstance(), data);
@@ -201,6 +206,7 @@ public class ProductService extends BaseCrudService<Product> {
                 applyBeverageComputation(data, existing);
             }
             if (inventoryTouched) {
+                applyCostingPolicy(data, existing);
                 applyInventoryConfig(data, existing);
             }
         }
@@ -391,6 +397,49 @@ public class ProductService extends BaseCrudService<Product> {
         }
         if (serial != null) {
             data.put("serialTracking", serial);
+        }
+    }
+
+    /**
+     * ADR-S007: with an active inventory cost policy, AVCO / FIFO is the policy's choice, not the product's. Create
+     * takes the policy method when none is sent and rejects the other interchangeable method; STANDARD (manufactured)
+     * and SPECIFIC (serialised) stay selectable. Once stock has moved, AVCO ↔ FIFO changes only through a new policy
+     * version (its activation re-costs the stock).
+     */
+    private void applyCostingPolicy(Map<String, Object> data, Product existing) {
+        ProductCostingPolicy policy = costingPolicy.getIfAvailable();
+        if (policy == null) {
+            return;
+        }
+        String categoryId = (String) eff(data, "categoryId", existing == null ? null : existing.getCategoryId());
+        String method = policy.methodFor(categoryId).orElse(null);
+        if (method == null || !("AVCO".equals(method) || "FIFO".equals(method))) {
+            return;
+        }
+        String requested = enumValue(data.get("costingMethod"));
+        if (existing == null) {
+            if (requested == null) {
+                data.put("costingMethod", method);
+            } else if (("AVCO".equals(requested) || "FIFO".equals(requested)) && !requested.equals(method)) {
+                throw ApiException.badRequest("Costing method " + requested + " conflicts with the active inventory"
+                        + " cost policy (" + method + "); change the policy instead of the product");
+            }
+            return;
+        }
+        String current = enumValue(existing.getCostingMethod());
+        if (requested == null || requested.equals(current)) {
+            return;
+        }
+        if (("AVCO".equals(requested) || "FIFO".equals(requested)) && !requested.equals(method)) {
+            throw ApiException.badRequest("Costing method " + requested + " conflicts with the active inventory"
+                    + " cost policy (" + method + "); change the policy instead of the product");
+        }
+        Number moved = (Number) em.createNativeQuery("SELECT count(*) FROM \"InventoryLedger\" WHERE \"productId\" = ?1"
+                + " AND \"organizationId\" = ?2").setParameter(1, existing.getId())
+                .setParameter(2, TenantContext.organizationId()).getSingleResult();
+        if (moved.longValue() > 0) {
+            throw ApiException.badRequest("The costing method of " + existing.getName() + " cannot be changed after"
+                    + " stock has moved while an inventory cost policy is active; approve a new policy version instead");
         }
     }
 

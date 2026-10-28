@@ -83,7 +83,21 @@
     "create": "cost_center:create",
     "read": "cost_center:read",
     "update": "cost_center:update",
-    "delete": "cost_center:delete"
+    "delete": "cost_center:delete",
+    "allocate": "cost_center:allocate"
+  },
+  "costingPolicy": {
+    "read": "costing_policy:read",
+    "manage": "costing_policy:manage",
+    "approve": "costing_policy:approve"
+  },
+  "landedCost": {
+    "read": "landed_cost:read",
+    "create": "landed_cost:create",
+    "approve": "landed_cost:approve",
+    "post": "landed_cost:post",
+    "reverse": "landed_cost:reverse",
+    "configure": "landed_cost:configure"
   },
   "budget": {
     "read": "budget:read",

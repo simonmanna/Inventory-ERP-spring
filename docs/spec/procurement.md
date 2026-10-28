@@ -121,3 +121,33 @@ JaCoCo line coverage (full build): `procurement.application` 91.1 %, `procuremen
 
 Parity scenarios: `contract-tests/scenarios/procurement-purchasing.json`, `procurement-landed-cost.json` — not run
 against a live Nest yet. Web procurement screens (incl. `landed-cost-panel.tsx`) not exercised against Spring.
+
+## ADR-S007 extensions — landed cost vouchers, shipments, cost components (roadmap 1.8)
+
+New routes (no Nest counterpart; legacy `/procurement/landed-costs` unchanged except that a list filtered by
+`goodsReceiptId` also returns vouchers covering that receipt, and `post` refuses a voucher):
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/landed-cost-vouchers` (`status`, `shipmentId`) | `landed_cost:read` |
+| GET | `/procurement/landed-cost-vouchers/{id}` · `/{id}/preview` | `landed_cost:read` |
+| POST | `/procurement/landed-cost-vouchers` (Idempotency-Key) | `landed_cost:create` |
+| PUT | `/procurement/landed-cost-vouchers/{id}` (draft) | `landed_cost:create` |
+| POST | `/procurement/landed-cost-vouchers/{id}/submit` · `/cancel` | `landed_cost:create` |
+| POST | `/procurement/landed-cost-vouchers/{id}/approve` | `landed_cost:approve` |
+| POST | `/procurement/landed-cost-vouchers/{id}/post` (Idempotency-Key) | `landed_cost:post` |
+| POST | `/procurement/landed-cost-vouchers/{id}/reverse` (Idempotency-Key) | `landed_cost:reverse` |
+| GET/POST/PATCH | `/procurement/shipments`, `/{id}`, `/{id}/receipts`, DELETE `/{id}/receipts/{grnId}` | `landed_cost:read` / `create` |
+| GET | `/procurement/cost-components` | `landed_cost:read` |
+| POST/PATCH | `/procurement/cost-components`, `/{id}` | `landed_cost:configure` |
+| GET | `/procurement/landed-cost-reports/{by-shipment,by-item,by-supplier,product-profitability}?from&to`, `/clearing` | `landed_cost:read` |
+
+GL per posted voucher: Dr stock (capitalised, per product stock account) · Dr COGS (consumed share, voucher cost
+centre) · Dr expense (expensed charges, charge cost centre) · Dr `tax_receivable` (recoverable tax) / Cr each charge's
+credit account, default landed-cost clearing `2155` (`landed_cost_clearing`). Reversal = reversing entry + Dr stock /
+Cr COGS for the part sold since. A posted voucher blocks reversal of any of its receipts.
+
+Tests: `LandedCostVoucherIT` (laptop 2,380,000 / unit; 19M + 19M after half sold; cement / steel 1.8M / 1.2M; weight;
+manual; selected lines; expense with cost centre; recoverable tax; duplicate supplier invoice; workflow; reversal;
+FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isolation). Web: Landed Costs, Import
+Shipments, Landed Cost Reports (incl. cost components) under Purchases.

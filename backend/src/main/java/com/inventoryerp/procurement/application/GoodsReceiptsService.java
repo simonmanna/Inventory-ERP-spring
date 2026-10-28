@@ -395,8 +395,10 @@ public class GoodsReceiptsService {
         if (!"posted".equals(grn.get("status"))) {
             throw ApiException.badRequest("Only posted goods receipts can be reversed");
         }
-        long landed = jdbc.sql("SELECT count(*) FROM \"LandedCost\" WHERE \"organizationId\" = ? AND \"goodsReceiptId\" = ?"
-                + " AND status = 'posted'").params(orgId, id).query(Long.class).single();
+        long landed = jdbc.sql("SELECT count(*) FROM \"LandedCost\" WHERE \"organizationId\" = ? AND status = 'posted'"
+                + " AND (\"goodsReceiptId\" = ? OR id IN (SELECT \"landedCostId\" FROM \"LandedCostReceipt\""
+                + " WHERE \"organizationId\" = ? AND \"goodsReceiptId\" = ?))").params(orgId, id, orgId, id)
+                .query(Long.class).single();
         if (landed > 0) {
             throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " has posted landed cost — the"
                     + " capitalised freight/duty would be stranded; return the goods with a debit note instead");

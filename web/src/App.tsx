@@ -129,6 +129,11 @@ import { PurchaseOrderDetailPage } from '@/pages/procurement/PurchaseOrderDetail
 import { PurchaseOrderReceivePage } from '@/pages/procurement/PurchaseOrderReceivePage';
 import { PurchaseOrderPayPage } from '@/pages/procurement/PurchaseOrderPayPage';
 import { GoodsReceiptsPage } from '@/pages/procurement/goods-receipts';
+import { CostPoliciesPage } from '@/pages/costing/CostPoliciesPage';
+import { CostCenterAccountingPage } from '@/pages/costing/CostCenterAccountingPage';
+import { LandedCostVouchersPage, LandedCostVoucherEditPage, LandedCostVoucherDetailPage } from '@/pages/costing/LandedCostVouchersPage';
+import { ShipmentsPage } from '@/pages/costing/ShipmentsPage';
+import { LandedCostReportsPage } from '@/pages/costing/LandedCostReportsPage';
 import { GoodsReceiptCreatePage } from '@/pages/procurement/goods-receipt-create';
 import GoodsReceiptDetailPage from '@/pages/procurement/goods-receipt-detail';
 import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
@@ -323,6 +328,7 @@ export function App() {
           <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />
           <Route path="/accounts/fiscal-positions" element={<FiscalPositionsPage />} />
           <Route path="/cost-centers" element={<CostCentersPage />} />
+          <Route path="/cost-center-accounting" element={<CostCenterAccountingPage />} />
           <Route path="/currency" element={<CurrencyPage />} />
           <Route path="/inventory-valuation" element={<RequireReport reportId="accounting.inventory-valuation"><InventoryValuationPage /></RequireReport>} />
           <Route path="/inventory-gl-tieout" element={<RequireReport reportId="accounting.inventory-gl-tieout"><InventoryGlTieOutPage /></RequireReport>} />
@@ -430,6 +436,13 @@ export function App() {
           <Route path="/procurement/goods-receipts" element={<GoodsReceiptsPage />} />
           <Route path="/procurement/goods-receipts/new" element={<GoodsReceiptCreatePage />} />
           <Route path="/procurement/goods-receipts/:id" element={<GoodsReceiptDetailPage />} />
+          <Route path="/procurement/landed-cost-vouchers" element={<LandedCostVouchersPage />} />
+          <Route path="/procurement/landed-cost-vouchers/new" element={<LandedCostVoucherEditPage />} />
+          <Route path="/procurement/landed-cost-vouchers/:id" element={<LandedCostVoucherDetailPage />} />
+          <Route path="/procurement/landed-cost-vouchers/:id/edit" element={<LandedCostVoucherEditPage />} />
+          <Route path="/procurement/shipments" element={<ShipmentsPage />} />
+          <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
+          <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
           <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
           <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
           <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />

@@ -175,6 +175,12 @@ public class Product {
     @Column(name = "containerVolumeMl", precision = 20, scale = 6)
     private BigDecimal containerVolumeMl;
 
+    @Column(name = "weight", precision = 20, scale = 6)
+    private BigDecimal weight;
+
+    @Column(name = "volume", precision = 20, scale = 6)
+    private BigDecimal volume;
+
     @Column(name = "emptyBottleWeightG", precision = 20, scale = 6)
     private BigDecimal emptyBottleWeightG;
 
@@ -961,5 +967,21 @@ public class Product {
 
     public void setTax(Tax tax) {
         this.tax = tax;
+    }
+
+    public BigDecimal getWeight() {
+        return weight;
+    }
+
+    public void setWeight(BigDecimal weight) {
+        this.weight = weight;
+    }
+
+    public BigDecimal getVolume() {
+        return volume;
+    }
+
+    public void setVolume(BigDecimal volume) {
+        this.volume = volume;
     }
 }

@@ -51,9 +51,12 @@ public class PostingService {
     private final FiscalPeriodControl fiscalPeriod;
     private final CurrencyService currency;
     private final AccountResolverService accounts;
+    private final CostCenterRulesService costCenters;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
-            FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts) {
+            FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
+            CostCenterRulesService costCenters) {
+        this.costCenters = costCenters;
         this.em = em;
         this.jdbc = jdbc;
         this.events = events;
@@ -91,6 +94,9 @@ public class PostingService {
         }
         assertAccounts(lines, true);
         applyRounding(lines);
+        List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
+        boolean centersResolved = ruled != lines;
+        lines = ruled;
 
         int year = date.atOffset(ZoneOffset.UTC).getYear();
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
@@ -114,7 +120,7 @@ public class PostingService {
         entry.setPostedAt(Instant.now());
         entry.setPostedBy(TenantContext.userId());
         em.persist(entry);
-        List<JournalLine> rows = persistLines(entry, lines, request, rate, entryDims);
+        List<JournalLine> rows = persistLines(entry, lines, request, rate, entryDims, centersResolved);
         em.flush();
         em.refresh(entry);
         String entryId = entry.getId();
@@ -224,6 +230,9 @@ public class PostingService {
         }
         assertAccounts(lines, false);
         applyRounding(lines);
+        List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
+        boolean centersResolved = ruled != lines;
+        lines = ruled;
         Map<String, String> entryDims = normalizeDimensions(request.dimensions());
         JournalEntry entry = new JournalEntry();
         entry.setOrganizationId(organizationId);
@@ -240,7 +249,7 @@ public class PostingService {
         entry.setDimensions(entryDims == null ? null : EntityJson.toJson(entryDims));
         entry.setCreatedBy(TenantContext.userId());
         em.persist(entry);
-        List<JournalLine> rows = persistLines(entry, lines, request, rate, entryDims);
+        List<JournalLine> rows = persistLines(entry, lines, request, rate, entryDims, centersResolved);
         em.flush();
         em.refresh(entry);
         return render(entry, rows);
@@ -388,7 +397,7 @@ public class PostingService {
     }
 
     private List<JournalLine> persistLines(JournalEntry entry, List<NormalizedLine> lines, PostingRequest request,
-            BigDecimal rate, Map<String, String> entryDims) {
+            BigDecimal rate, Map<String, String> entryDims, boolean centersResolved) {
         List<JournalLine> rows = new ArrayList<>();
         int i = 1;
         for (NormalizedLine l : lines) {
@@ -405,7 +414,7 @@ public class PostingService {
             row.setBaseDebit(l.baseDebit());
             row.setBaseCredit(l.baseCredit());
             row.setBranchId(l.branchId() != null ? l.branchId() : request.branchId());
-            row.setCostCenterId(l.costCenterId() != null ? l.costCenterId() : request.costCenterId());
+            row.setCostCenterId(centersResolved || l.costCenterId() != null ? l.costCenterId() : request.costCenterId());
             Map<String, String> dims = normalizeDimensions(l.dimensions());
             Map<String, String> effective = dims != null ? dims : entryDims;
             row.setDimensions(effective == null ? null : EntityJson.toJson(effective));
