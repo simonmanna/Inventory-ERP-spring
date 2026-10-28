@@ -23,7 +23,7 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [beverage](spec/beverage.md) | P7 | 10 | 10 |
 | [fixedasset](spec/fixedasset.md) | P7 | 54 | 54 |
 | [hr](spec/hr.md) | P7 | 140 | 140 |
-| [manufacturing](spec/manufacturing.md) | P7 | 42 | 0 |
+| [manufacturing](spec/manufacturing.md) | P7 | 42 | 42 |
 | [rental](spec/rental.md) | P7 | 47 | 0 |
 | [repair](spec/repair.md) | P7 | 64 | 0 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
@@ -1055,48 +1055,71 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## manufacturing
 
-- [ ] GET /api/v1/manufacturing/boms — BomController.list
-- [ ] POST /api/v1/manufacturing/boms — BomController.create
-- [ ] DELETE /api/v1/manufacturing/boms/:id — BomController.remove
-- [ ] GET /api/v1/manufacturing/boms/:id — BomController.get
-- [ ] PATCH /api/v1/manufacturing/boms/:id — BomController.update
-- [ ] POST /api/v1/manufacturing/boms/:id/activate — BomController.activate
-- [ ] POST /api/v1/manufacturing/mrp/from-document/:id — MrpController.fromDocument
-- [ ] POST /api/v1/manufacturing/mrp/run — MrpController.run
-- [ ] POST /api/v1/manufacturing/mrp/scan-min-stock — MrpController.scanMinStock
-- [ ] GET /api/v1/manufacturing/plans — ProductionPlanController.list
-- [ ] POST /api/v1/manufacturing/plans — ProductionPlanController.create
-- [ ] GET /api/v1/manufacturing/plans/:id — ProductionPlanController.get
-- [ ] POST /api/v1/manufacturing/plans/:id/cancel — ProductionPlanController.cancel
-- [ ] POST /api/v1/manufacturing/plans/:id/confirm — ProductionPlanController.confirm
-- [ ] POST /api/v1/manufacturing/plans/:id/lines — ProductionPlanController.addLines
-- [ ] GET /api/v1/manufacturing/production-orders — ProductionController.list
-- [ ] POST /api/v1/manufacturing/production-orders — ProductionController.create
-- [ ] GET /api/v1/manufacturing/production-orders/:id — ProductionController.get
-- [ ] POST /api/v1/manufacturing/production-orders/:id/cancel — ProductionController.cancel
-- [ ] POST /api/v1/manufacturing/production-orders/:id/complete — ProductionController.complete
-- [ ] POST /api/v1/manufacturing/production-orders/:id/confirm — ProductionController.confirm
-- [ ] POST /api/v1/manufacturing/production-orders/:id/qc — ProductionController.recordQc
-- [ ] POST /api/v1/manufacturing/production-orders/:id/reverse — ProductionController.reverse
-- [ ] POST /api/v1/manufacturing/production-orders/:id/start — ProductionController.start
-- [ ] POST /api/v1/manufacturing/production-orders/finished-goods/:productId/menu-item — ProductionController.createMenuItem
-- [ ] GET /api/v1/manufacturing/reports/capacity — ProductionReportController.capacity
-- [ ] GET /api/v1/manufacturing/reports/forecast — ProductionReportController.demandForecast
-- [ ] GET /api/v1/manufacturing/reports/genealogy/backward/:orderId — ProductionReportController.backward
-- [ ] GET /api/v1/manufacturing/reports/genealogy/forward/:productId — ProductionReportController.forward
-- [ ] GET /api/v1/manufacturing/reports/ingredient-usage — ProductionReportController.ingredientUsage
-- [ ] GET /api/v1/manufacturing/reports/kpis — ProductionReportController.kpis
-- [ ] GET /api/v1/manufacturing/reports/shortage/:productId — ProductionReportController.shortage
-- [ ] GET /api/v1/manufacturing/reports/trends — ProductionReportController.trends
-- [ ] GET /api/v1/manufacturing/reports/wip-reconciliation — ProductionReportController.wip
-- [ ] GET /api/v1/manufacturing/reports/yield-by-bom — ProductionReportController.yieldByBom
-- [ ] GET /api/v1/manufacturing/requests — ProductionRequestController.list
-- [ ] POST /api/v1/manufacturing/requests — ProductionRequestController.create
-- [ ] GET /api/v1/manufacturing/requests/:id — ProductionRequestController.get
-- [ ] POST /api/v1/manufacturing/requests/:id/approve — ProductionRequestController.approve
-- [ ] POST /api/v1/manufacturing/requests/:id/cancel — ProductionRequestController.cancel
-- [ ] POST /api/v1/manufacturing/requests/:id/reject — ProductionRequestController.reject
-- [ ] POST /api/v1/manufacturing/requests/:id/submit — ProductionRequestController.submit
+- [x] GET /api/v1/manufacturing/boms — BomController.list
+- [x] POST /api/v1/manufacturing/boms — BomController.create
+- [x] DELETE /api/v1/manufacturing/boms/:id — BomController.remove
+- [x] GET /api/v1/manufacturing/boms/:id — BomController.get
+- [x] PATCH /api/v1/manufacturing/boms/:id — BomController.update
+- [x] POST /api/v1/manufacturing/boms/:id/activate — BomController.activate
+- [x] POST /api/v1/manufacturing/mrp/from-document/:id — MrpController.fromDocument
+- [x] POST /api/v1/manufacturing/mrp/run — MrpController.run
+- [x] POST /api/v1/manufacturing/mrp/scan-min-stock — MrpController.scanMinStock
+- [x] GET /api/v1/manufacturing/plans — ProductionPlanController.list
+- [x] POST /api/v1/manufacturing/plans — ProductionPlanController.create
+- [x] GET /api/v1/manufacturing/plans/:id — ProductionPlanController.get
+- [x] POST /api/v1/manufacturing/plans/:id/cancel — ProductionPlanController.cancel
+- [x] POST /api/v1/manufacturing/plans/:id/confirm — ProductionPlanController.confirm
+- [x] POST /api/v1/manufacturing/plans/:id/lines — ProductionPlanController.addLines
+- [x] GET /api/v1/manufacturing/production-orders — ProductionController.list
+- [x] POST /api/v1/manufacturing/production-orders — ProductionController.create
+- [x] GET /api/v1/manufacturing/production-orders/:id — ProductionController.get
+- [x] POST /api/v1/manufacturing/production-orders/:id/cancel — ProductionController.cancel
+- [x] POST /api/v1/manufacturing/production-orders/:id/complete — ProductionController.complete
+- [x] POST /api/v1/manufacturing/production-orders/:id/confirm — ProductionController.confirm
+- [x] POST /api/v1/manufacturing/production-orders/:id/qc — ProductionController.recordQc
+- [x] POST /api/v1/manufacturing/production-orders/:id/reverse — ProductionController.reverse
+- [x] POST /api/v1/manufacturing/production-orders/:id/start — ProductionController.start
+- [x] POST /api/v1/manufacturing/production-orders/finished-goods/:productId/menu-item — ProductionController.createMenuItem
+- [x] GET /api/v1/manufacturing/reports/capacity — ProductionReportController.capacity
+- [x] GET /api/v1/manufacturing/reports/forecast — ProductionReportController.demandForecast
+- [x] GET /api/v1/manufacturing/reports/genealogy/backward/:orderId — ProductionReportController.backward
+- [x] GET /api/v1/manufacturing/reports/genealogy/forward/:productId — ProductionReportController.forward
+- [x] GET /api/v1/manufacturing/reports/ingredient-usage — ProductionReportController.ingredientUsage
+- [x] GET /api/v1/manufacturing/reports/kpis — ProductionReportController.kpis
+- [x] GET /api/v1/manufacturing/reports/shortage/:productId — ProductionReportController.shortage
+- [x] GET /api/v1/manufacturing/reports/trends — ProductionReportController.trends
+- [x] GET /api/v1/manufacturing/reports/wip-reconciliation — ProductionReportController.wip
+- [x] GET /api/v1/manufacturing/reports/yield-by-bom — ProductionReportController.yieldByBom
+- [x] GET /api/v1/manufacturing/requests — ProductionRequestController.list
+- [x] POST /api/v1/manufacturing/requests — ProductionRequestController.create
+- [x] GET /api/v1/manufacturing/requests/:id — ProductionRequestController.get
+- [x] POST /api/v1/manufacturing/requests/:id/approve — ProductionRequestController.approve
+- [x] POST /api/v1/manufacturing/requests/:id/cancel — ProductionRequestController.cancel
+- [x] POST /api/v1/manufacturing/requests/:id/reject — ProductionRequestController.reject
+- [x] POST /api/v1/manufacturing/requests/:id/submit — ProductionRequestController.submit
+
+Also ported (registered by the Nest module, missed by the route extractor — `phase4.controller.ts` uses one-line
+decorators): 19 routes, not counted in the table above.
+
+- [x] GET /api/v1/manufacturing/work-centers — WorkCenterController.list
+- [x] GET /api/v1/manufacturing/work-centers/capacity — WorkCenterController.capacity
+- [x] POST /api/v1/manufacturing/work-centers — WorkCenterController.create
+- [x] PATCH /api/v1/manufacturing/work-centers/:id — WorkCenterController.update
+- [x] DELETE /api/v1/manufacturing/work-centers/:id — WorkCenterController.remove
+- [x] GET /api/v1/manufacturing/resources — ResourceController.list
+- [x] POST /api/v1/manufacturing/resources — ResourceController.create
+- [x] PATCH /api/v1/manufacturing/resources/:id — ResourceController.update
+- [x] DELETE /api/v1/manufacturing/resources/:id — ResourceController.remove
+- [x] GET /api/v1/manufacturing/routings — RoutingController.list
+- [x] GET /api/v1/manufacturing/routings/:id — RoutingController.get
+- [x] POST /api/v1/manufacturing/routings — RoutingController.create
+- [x] DELETE /api/v1/manufacturing/routings/:id — RoutingController.remove
+- [x] GET /api/v1/manufacturing/production-orders/:orderId/work-orders — WorkOrderController.list
+- [x] POST /api/v1/manufacturing/production-orders/:orderId/work-orders/generate — WorkOrderController.generate
+- [x] PATCH /api/v1/manufacturing/work-orders/:id/assign — WorkOrderActionController.assign
+- [x] POST /api/v1/manufacturing/work-orders/:id/start — WorkOrderActionController.start
+- [x] POST /api/v1/manufacturing/work-orders/:id/pause — WorkOrderActionController.pause
+- [x] POST /api/v1/manufacturing/work-orders/:id/complete — WorkOrderActionController.complete
 
 ## rental
 
