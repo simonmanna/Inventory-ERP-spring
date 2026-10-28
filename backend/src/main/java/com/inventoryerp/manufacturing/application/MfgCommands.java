@@ -275,4 +275,28 @@ public final class MfgCommands {
             @DecimalMin(value = "0", message = MIN0) BigDecimal qtyScrap,
             @Min(value = 0, message = MIN0) Integer labourMins,
             String notes) {}
+
+    // ------------------------------------------------------------------ ADR-S006 B: MRP
+
+    /** Planning parameters of one product. */
+    public record PlanningParams(
+            @OneOf({"make", "buy"}) String procurement,
+            @Min(value = 0, message = MIN0) Integer leadTimeDays,
+            @DecimalMin(value = "0", message = MIN0) BigDecimal safetyStock,
+            @DecimalMin(value = "0", message = MIN0) BigDecimal reorderPoint,
+            @DecimalMin(value = "0", message = MIN0) BigDecimal minOrderQty,
+            @DecimalMin(value = "0", message = MIN0) BigDecimal orderMultiple,
+            String supplierId,
+            String locationId,
+            Boolean isActive) {}
+
+    /** {@code POST /mrp/runs}. */
+    public record MrpRunInput(
+            @Min(value = 1, message = "must not be less than 1")
+            @jakarta.validation.constraints.Max(value = 730, message = "must not be greater than 730")
+            Integer horizonDays,
+            String locationId) {}
+
+    /** {@code POST /mrp/runs/:id/firm}: the planned orders to firm (all open ones when absent). */
+    public record FirmPlannedOrders(List<String> ids) {}
 }
