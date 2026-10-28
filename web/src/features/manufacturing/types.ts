@@ -118,6 +118,10 @@ export interface CreateBomInput {
   isDefault?: boolean;
   notes?: string;
   lines: BomLineInput[];
+  /** ADR-S006: fixed overhead per run, absorbed into WIP on complete. */
+  overheadCost?: number;
+  /** ADR-S006: routing whose operations become the order's work orders. */
+  routingId?: string;
 }
 
 export interface CreateProductionOrderInput {

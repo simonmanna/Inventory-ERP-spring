@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
-import { useActivateBom, useBoms, useCreateBom } from '@/features/manufacturing/api';
+import { useActivateBom, useBoms, useCreateBom, useRoutings } from '@/features/manufacturing/api';
 import { useProductOptions } from '@/features/manufacturing/options';
 import type { Bom, BomStatus } from '@/features/manufacturing/types';
 import { tx } from '@/lib/i18n/tx';
@@ -42,6 +42,10 @@ export function BomsPage() {
   const [outputProductId, setOutputProductId] = useState('');
   const [outputQuantity, setOutputQuantity] = useState('1');
   const [expectedYieldPct, setExpectedYieldPct] = useState('100');
+  const [overheadCost, setOverheadCost] = useState('');
+  const [routingId, setRoutingId] = useState('');
+  const [qcRequired, setQcRequired] = useState(false);
+  const { data: routings } = useRoutings();
   const [lines, setLines] = useState<DraftLine[]>([{ componentProductId: '', quantity: '' }]);
 
   const productName = useMemo(() => {
@@ -54,6 +58,9 @@ export function BomsPage() {
     setOutputProductId('');
     setOutputQuantity('1');
     setExpectedYieldPct('100');
+    setOverheadCost('');
+    setRoutingId('');
+    setQcRequired(false);
     setLines([{ componentProductId: '', quantity: '' }]);
   };
 
@@ -71,6 +78,9 @@ export function BomsPage() {
         outputProductId,
         outputQuantity: Number(outputQuantity),
         expectedYieldPct: Number(expectedYieldPct),
+        ...(Number(overheadCost) > 0 ? { overheadCost: Number(overheadCost) } : {}),
+        ...(routingId ? { routingId } : {}),
+        qcRequired,
         lines: cleanLines,
       });
       notify.success(tx('BOM created as a draft. Activate it to use in production.'));
@@ -183,6 +193,26 @@ export function BomsPage() {
                 <Label>{tx('Expected yield %')}</Label>
                 <Input type="number" value={expectedYieldPct} onChange={(e) => setExpectedYieldPct(e.target.value)} />
               </div>
+              <div className="space-y-1">
+                <Label>{tx('Overhead per run')}</Label>
+                <Input type="number" min="0" value={overheadCost} onChange={(e) => setOverheadCost(e.target.value)} placeholder="0" />
+              </div>
+              <div className="space-y-1">
+                <Label>{tx('Routing')}</Label>
+                <Select value={routingId || 'none'} onValueChange={(v) => setRoutingId(v === 'none' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder={tx('None')} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{tx('None')}</SelectItem>
+                    {((routings as Array<{ id: string; name: string }> | undefined) ?? []).map((r) => (
+                      <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <label className="col-span-2 flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={qcRequired} onChange={(e) => setQcRequired(e.target.checked)} />
+                {tx('Quality inspection required (output held in quarantine until QC)')}
+              </label>
             </div>
 
             <div className="space-y-2">
