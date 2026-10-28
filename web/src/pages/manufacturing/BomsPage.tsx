@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Plus, Trash2, CheckCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -139,7 +140,7 @@ export function BomsPage() {
               <TableBody>
                 {boms.map((b) => (
                   <TableRow key={b.id}>
-                    <TableCell className="font-mono text-xs">{b.code}</TableCell>
+                    <TableCell className="font-mono text-xs"><Link className="underline" to={`/manufacturing/boms/${b.id}`}>{b.code}</Link></TableCell>
                     <TableCell>{b.name}</TableCell>
                     <TableCell className="text-sm">{productName(b.outputProductId)}</TableCell>
                     <TableCell className="text-right">{Number(b.outputQuantity)}</TableCell>

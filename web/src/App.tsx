@@ -45,6 +45,10 @@ import { ProductionOrderDetailPage } from '@/pages/manufacturing/ProductionOrder
 import { ManufacturingPlanningPage } from '@/pages/manufacturing/ManufacturingPlanningPage';
 import { ManufacturingReportsPage } from '@/pages/manufacturing/ManufacturingReportsPage';
 import { ManufacturingResourcesPage } from '@/pages/manufacturing/ManufacturingResourcesPage';
+import { MrpPage } from '@/pages/manufacturing/MrpPage';
+import { ShopFloorPage } from '@/pages/manufacturing/ShopFloorPage';
+import { BomDetailPage } from '@/pages/manufacturing/BomDetailPage';
+import { EngineeringChangesPage } from '@/pages/manufacturing/EngineeringChangesPage';
 import { ChartOfAccountsPage } from '@/pages/accounting/chart-of-accounts';
 import { AccountDetailPage } from '@/pages/accounting/AccountDetailPage';
 import { CashFlowReportPage } from '@/pages/accounting/cash-flow-report';
@@ -351,6 +355,10 @@ export function App() {
           {/* Manufacturing — static segments before the :id route */}
           <Route path="/manufacturing" element={<ProductionDashboardPage />} />
           <Route path="/manufacturing/boms" element={<BomsPage />} />
+          <Route path="/manufacturing/boms/:id" element={<BomDetailPage />} />
+          <Route path="/manufacturing/mrp" element={<MrpPage />} />
+          <Route path="/manufacturing/shop-floor" element={<ShopFloorPage />} />
+          <Route path="/manufacturing/engineering" element={<EngineeringChangesPage />} />
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />

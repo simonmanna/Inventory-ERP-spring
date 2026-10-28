@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { OrderAdvancedPanel } from './OrderAdvancedPanel';
 import { ArrowLeft, Play, PackageCheck, XCircle, ClipboardCheck, ShieldCheck, Undo2, Hammer, Pause } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -110,6 +111,8 @@ export function ProductionOrderDetailPage() {
         <Stat label={tx('Unit cost')} value={order.status === 'completed' ? Number(order.outputUnitCost).toFixed(2) : '—'} />
         <Stat label={tx('Yield variance')} value={Number(order.yieldVariance).toFixed(2)} />
       </div>
+
+      <OrderAdvancedPanel order={order as any} />
 
       <Card>
         <CardHeader><CardTitle>{tx('Materials')}</CardTitle></CardHeader>

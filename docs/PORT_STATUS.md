@@ -1121,6 +1121,48 @@ decorators): 19 routes, not counted in the table above.
 - [x] POST /api/v1/manufacturing/work-orders/:id/pause — WorkOrderActionController.pause
 - [x] POST /api/v1/manufacturing/work-orders/:id/complete — WorkOrderActionController.complete
 
+ADR-S006 extensions (production-ready manufacturing; beyond the Nest contract, not counted): 39 routes.
+
+- [x] GET /api/v1/manufacturing/planning-params — MrpPlanningController.params
+- [x] PUT /api/v1/manufacturing/planning-params/:productId — MrpPlanningController.upsertParams
+- [x] POST /api/v1/manufacturing/mrp/runs — MrpPlanningController.run
+- [x] GET /api/v1/manufacturing/mrp/runs — MrpPlanningController.runs
+- [x] GET /api/v1/manufacturing/mrp/runs/:id — MrpPlanningController.get
+- [x] POST /api/v1/manufacturing/mrp/runs/:id/firm — MrpPlanningController.firmRun
+- [x] POST /api/v1/manufacturing/mrp/planned-orders/:id/firm — MrpPlanningController.firm
+- [x] POST /api/v1/manufacturing/mrp/planned-orders/:id/cancel — MrpPlanningController.cancel
+- [x] GET /api/v1/manufacturing/work-centers/:id/calendar — ShopFloorController.calendar
+- [x] PUT /api/v1/manufacturing/work-centers/:id/calendar — ShopFloorController.saveCalendar
+- [x] POST /api/v1/manufacturing/production-orders/:id/schedule — ShopFloorController.schedule
+- [x] GET /api/v1/manufacturing/schedule — ShopFloorController.scheduleView
+- [x] GET /api/v1/manufacturing/work-orders/:id/time-logs — ShopFloorController.timeLogs
+- [x] POST /api/v1/manufacturing/work-orders/:id/time-logs — ShopFloorController.addTimeLog
+- [x] POST /api/v1/manufacturing/production-orders/:id/rework — ShopFloorController.rework
+- [x] GET /api/v1/manufacturing/production-orders/:id/qc-plan — ShopFloorController.qcPlan
+- [x] GET /api/v1/manufacturing/scrap-reasons — ShopFloorController.reasons
+- [x] POST /api/v1/manufacturing/scrap-reasons — ShopFloorController.createReason
+- [x] PATCH /api/v1/manufacturing/scrap-reasons/:id — ShopFloorController.updateReason
+- [x] DELETE /api/v1/manufacturing/scrap-reasons/:id — ShopFloorController.removeReason
+- [x] GET /api/v1/manufacturing/qc-plans — ShopFloorController.plans
+- [x] POST /api/v1/manufacturing/qc-plans — ShopFloorController.createPlan
+- [x] PATCH /api/v1/manufacturing/qc-plans/:id — ShopFloorController.updatePlan
+- [x] DELETE /api/v1/manufacturing/qc-plans/:id — ShopFloorController.removePlan
+- [x] GET /api/v1/manufacturing/boms/:id/cost — CostingController.cost
+- [x] POST /api/v1/manufacturing/boms/:id/standard-cost — CostingController.freeze
+- [x] GET /api/v1/manufacturing/boms/:id/standard-costs — CostingController.standards
+- [x] GET /api/v1/manufacturing/boms/:id/substitutes — CostingController.substitutes
+- [x] PUT /api/v1/manufacturing/boms/:id/lines/:lineId/substitutes — CostingController.saveSubstitutes
+- [x] POST /api/v1/manufacturing/boms/:id/revise — CostingController.revise
+- [x] GET /api/v1/manufacturing/boms/:id/compare/:otherId — CostingController.compare
+- [x] GET /api/v1/manufacturing/engineering-changes — CostingController.changes
+- [x] GET /api/v1/manufacturing/engineering-changes/:id — CostingController.change
+- [x] POST /api/v1/manufacturing/engineering-changes/:id/approve — CostingController.approve
+- [x] POST /api/v1/manufacturing/engineering-changes/:id/reject — CostingController.reject
+- [x] POST /api/v1/manufacturing/engineering-changes/:id/apply — CostingController.apply
+- [x] GET /api/v1/manufacturing/reports/variances — CostingController.variances
+- [x] GET /api/v1/manufacturing/reports/where-used/:productId — CostingController.whereUsed
+- [x] GET /api/v1/manufacturing/production-orders/:id/availability — CostingController.availability
+
 ## rental
 
 - [ ] GET /api/v1/rental/agreements — RentalController.listAgreements

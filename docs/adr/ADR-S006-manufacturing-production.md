@@ -1,6 +1,6 @@
 # ADR-S006: Production-ready manufacturing — hardening, MRP, shop floor, costing & engineering
 
-- Status: accepted (owner, 2026-10-28)
+- Status: accepted (owner, 2026-10-28); implemented (packages A–D)
 - Builds on: the parity port of `manufacturing` (PR #4), roadmap items 0.1 and 2.3, and partly 3.1
 - Migration: `V9__manufacturing_production.sql` (version reserved for manufacturing)
 
@@ -45,7 +45,7 @@ new response fields. No new permission keys: the existing manufacturing permissi
 - `ProductPlanning` per product: make/buy, lead time, safety stock, reorder point, minimum order quantity, order
   multiple, preferred supplier and planning location. Defaults: products with an active BOM are *make*, others *buy*.
 - `POST /manufacturing/mrp/runs` (horizon days, optional location) computes low-level codes from the active-BOM
-  graph and nets level by level: gross requirement (open sales documents due in the horizon, approved production
+  graph and nets level by level: gross requirement (open back-office orders, proforma documents due in the horizon, submitted/approved production
   requests, open production orders' remaining materials, dependent demand of planned make orders, reorder point) +
   safety stock − (on hand − others' reservations + open PO remaining quantities + open production orders' remaining
   output). Shortfalls become planned orders sized by minimum quantity / multiple, due at the earliest demand date and

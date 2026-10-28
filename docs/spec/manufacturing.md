@@ -68,6 +68,62 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   `ManufacturingIT` restores the defaults first (the Nest spec seeds them by hand).
 - **No events** are published or consumed (Nest has none). No Flyway migration needed.
 
+## Production-ready extensions (ADR-S006)
+
+Additive routes beyond Nest (every Nest route keeps its contract). Packages: **A** hardening (see Deviations), **B** time-phased MRP, **C** shop floor & quality, **D** costing & engineering. Web: `/manufacturing/mrp`, `/manufacturing/shop-floor`, `/manufacturing/engineering`, `/manufacturing/boms/:id`, plus an order-detail panel (availability, scheduling, rework, variances).
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/manufacturing/planning-params` | `production_plan:read` |
+| PUT | `/api/v1/manufacturing/planning-params/:productId` | `production_plan:update` |
+| POST | `/api/v1/manufacturing/mrp/runs` | `production_plan:confirm` |
+| GET | `/api/v1/manufacturing/mrp/runs` | `production_plan:read` |
+| GET | `/api/v1/manufacturing/mrp/runs/:id` | `production_plan:read` |
+| POST | `/api/v1/manufacturing/mrp/runs/:id/firm` | `production_plan:confirm` |
+| POST | `/api/v1/manufacturing/mrp/planned-orders/:id/firm` | `production_plan:confirm` |
+| POST | `/api/v1/manufacturing/mrp/planned-orders/:id/cancel` | `production_plan:update` |
+| GET | `/api/v1/manufacturing/work-centers/:id/calendar` | `work_center:read` |
+| PUT | `/api/v1/manufacturing/work-centers/:id/calendar` | `work_center:update` |
+| POST | `/api/v1/manufacturing/production-orders/:id/schedule` | `work_order:manage` |
+| GET | `/api/v1/manufacturing/schedule` | `work_order:read` |
+| GET | `/api/v1/manufacturing/work-orders/:id/time-logs` | `work_order:read` |
+| POST | `/api/v1/manufacturing/work-orders/:id/time-logs` | `work_order:manage` |
+| POST | `/api/v1/manufacturing/production-orders/:id/rework` | `production_order:qc` |
+| GET | `/api/v1/manufacturing/production-orders/:id/qc-plan` | `production_order:read` |
+| GET | `/api/v1/manufacturing/scrap-reasons` | `production_order:read` |
+| POST | `/api/v1/manufacturing/scrap-reasons` | `production_order:qc` |
+| PATCH | `/api/v1/manufacturing/scrap-reasons/:id` | `production_order:qc` |
+| DELETE | `/api/v1/manufacturing/scrap-reasons/:id` | `production_order:qc` |
+| GET | `/api/v1/manufacturing/qc-plans` | `production_order:read` |
+| POST | `/api/v1/manufacturing/qc-plans` | `production_order:qc` |
+| PATCH | `/api/v1/manufacturing/qc-plans/:id` | `production_order:qc` |
+| DELETE | `/api/v1/manufacturing/qc-plans/:id` | `production_order:qc` |
+| GET | `/api/v1/manufacturing/boms/:id/cost` | `bom:read` |
+| POST | `/api/v1/manufacturing/boms/:id/standard-cost` | `bom:update` |
+| GET | `/api/v1/manufacturing/boms/:id/standard-costs` | `bom:read` |
+| GET | `/api/v1/manufacturing/boms/:id/substitutes` | `bom:read` |
+| PUT | `/api/v1/manufacturing/boms/:id/lines/:lineId/substitutes` | `bom:update` |
+| POST | `/api/v1/manufacturing/boms/:id/revise` | `bom:create` |
+| GET | `/api/v1/manufacturing/boms/:id/compare/:otherId` | `bom:read` |
+| GET | `/api/v1/manufacturing/engineering-changes` | `bom:read` |
+| GET | `/api/v1/manufacturing/engineering-changes/:id` | `bom:read` |
+| POST | `/api/v1/manufacturing/engineering-changes/:id/approve` | `bom:activate` |
+| POST | `/api/v1/manufacturing/engineering-changes/:id/reject` | `bom:activate` |
+| POST | `/api/v1/manufacturing/engineering-changes/:id/apply` | `bom:activate` |
+| GET | `/api/v1/manufacturing/reports/variances` | `production:report` |
+| GET | `/api/v1/manufacturing/reports/where-used/:productId` | `production:report` |
+| GET | `/api/v1/manufacturing/production-orders/:id/availability` | `production_order:read` |
+
+Behaviour notes:
+
+- **MRP demand**: open back-office orders (`Order` draft/confirmed, product lines), proforma documents due in the horizon, submitted/approved production requests not yet planned, remaining materials of draft/confirmed production orders, dependent demand of planned make orders, reorder point and safety stock. **Supply**: on hand (optionally one location) − active reservations of other sources + open PO remainders + open production output. Products without `ProductPlanning` are *make* when they have an active BOM, else *buy*, with `Product.minQuantity` as reorder point. A new run supersedes the previous run's unfirmed planned orders.
+- **Scheduling** is forward, minute-granular, in UTC, through `WorkCenterShift` windows (none = 24 h), skipping `WorkCenterClosure` days and honouring `parallelSlots` against work orders already scheduled at the centre.
+- **Quality**: once any active scrap reason exists, QC `wasteCategory` and work-order `scrapReasonCode` must be one of them. A QC plan (by BOM, else product) makes `recordQc` validate the checklist `[{key, value}]`.
+- **Rework** consumes the reworked units from `QC-QUARANTINE` in a linked `orderKind = rework` order (QC required) and closes the parent.
+- **Variances** are analytic (`ProductionVariance`), written at completion when the order references a frozen standard; positive = unfavourable; no GL effect.
+- **Subcontracted operations** add an `outsourcing` cost component absorbed through overhead and raise a draft `SUBPR-` purchase request for the subcontractor.
+- Deleting / replacing a draft BOM's lines (PATCH `lines`) also drops their substitutes.
+
 ## Deviations
 
 Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-S006 is additive):
@@ -86,7 +142,7 @@ Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-
 
 ## Status
 
-Ported: 61/61 routes (42 in the generated table + 19 phase-4 routes). `BomExplodeTest` (port of
-`bom.service.spec.ts`) and `ManufacturingIT` (port of `manufacturing-flow.spec.ts`: WIP-flat bake, idempotency
-guards, cancel, under-yield, zero-yield, QC, reverse, overhead; plus BOM rules, requests/plans/MRP, work orders,
-reports, tenant isolation and the authorization matrix).
+Done. Parity: 61/61 Nest routes (42 in the generated table + 19 phase-4 routes). ADR-S006: packages A–D complete
+with web screens (39 additional routes). Tests: `BomExplodeTest`, `ManufacturingIT` (Nest flow spec + authz matrix over
+all 100 routes + tenant isolation), `ManufacturingHardeningIT`, `MrpPlanningIT`, `ShopFloorIT`,
+`CostingEngineeringIT`; JaCoCo line coverage of `manufacturing.application` 89.5%.
