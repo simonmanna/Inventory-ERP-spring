@@ -50,8 +50,9 @@ final class RequestPlanControllers {
 
         @GetMapping
         @RequirePermissions(Permissions.PRODUCTION_REQUEST__READ)
-        public List<Map<String, Object>> list(@RequestParam(required = false) String status) {
-            return requests.list(status);
+        public List<Map<String, Object>> list(@RequestParam(required = false) String status,
+                @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
+            return requests.list(status, limit, offset);
         }
 
         @GetMapping("/{id}")
@@ -111,8 +112,9 @@ final class RequestPlanControllers {
 
         @GetMapping
         @RequirePermissions(Permissions.PRODUCTION_PLAN__READ)
-        public List<Map<String, Object>> list(@RequestParam(required = false) String status) {
-            return plans.list(status);
+        public List<Map<String, Object>> list(@RequestParam(required = false) String status,
+                @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
+            return plans.list(status, limit, offset);
         }
 
         @GetMapping("/{id}")

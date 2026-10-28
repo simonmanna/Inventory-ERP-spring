@@ -63,7 +63,9 @@ public final class MfgCommands {
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String effectiveFrom,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String effectiveTo,
             String notes,
-            @NotNull(message = ARRAY) @ArrayMinSize(1) List<@Valid @NotNull BomLineInput> lines) {}
+            @NotNull(message = ARRAY) @ArrayMinSize(1) List<@Valid @NotNull BomLineInput> lines,
+            /** ADR-S006 A8. */
+            String routingId) {}
 
     /** {@code UpdateBomDto}: a DRAFT edit; {@code lines} (when present) replaces the line set. */
     public record UpdateBom(
@@ -81,7 +83,11 @@ public final class MfgCommands {
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String effectiveTo,
             String notes,
             @Size(min = 1, message = "must contain at least 1 elements")
-            List<@Valid @NotNull BomLineInput> lines) {}
+            List<@Valid @NotNull BomLineInput> lines,
+            /** ADR-S006 A8. */
+            @DecimalMin(value = "0", message = MIN0) BigDecimal overheadCost,
+            /** ADR-S006 A8. */
+            String routingId) {}
 
     // ------------------------------------------------------------------ production orders
 

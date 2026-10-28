@@ -70,7 +70,19 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None._
+Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-S006 is additive):
+
+| # | Route | Nest | Spring |
+|---|---|---|---|
+| A1 | `POST /mrp/run` | base-unit shortfall labelled with the purchase UoM; open POs counted at full quantity | quantity converted to the purchase unit; POs net `quantity − receivedQuantity` |
+| A2 | `POST /work-orders/:id/pause`, `/complete` | labour += time since the *first* start on every pause | labour = sum of `WorkOrderTimeLog` run intervals (legacy work orders without logs keep the Nest maths) |
+| A3 | `POST /work-orders/:id/complete` | cost added to an already-posted order (never absorbed) | 400 `Production order <code> is <status>; work-order time can no longer be costed to it.` |
+| A4 | `POST /mrp/scan-min-stock` | ignores open production orders / requests (duplicate requests each scan) | on hand + open orders' remaining output + unplanned requests are netted |
+| A5 | `POST /production-orders/:id/reverse` | `qc_hold` orders cannot be reversed or cancelled | `qc_hold` orders reverse from the quarantine location |
+| A6 | `POST /production-orders/:id/complete` | `ProductionOutput.batchId` never set | set from the receipt's ledger row |
+| A7 | BOM / order create & update | unknown product / location → 500 (FK) | 404 `Product <id> not found` / `Location not found` / `Routing not found` |
+| A8 | `POST/PATCH /boms` | `routingId` not settable; `overheadCost` create-only | `routingId` on create + update, `overheadCost` on update (draft BOMs) |
+| A9 | list routes (BOMs, orders, requests, plans) | unbounded | optional `limit` (1–1000) / `offset`; still a bare array, unbounded when absent |
 
 ## Status
 

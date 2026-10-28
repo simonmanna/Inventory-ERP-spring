@@ -38,8 +38,9 @@ public class BomController {
     @GetMapping
     @RequirePermissions(Permissions.BOM__READ)
     public List<Map<String, Object>> list(@RequestParam(required = false) String outputProductId,
-            @RequestParam(required = false) String status) {
-        return boms.list(outputProductId, status);
+            @RequestParam(required = false) String status, @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset) {
+        return boms.list(outputProductId, status, limit, offset);
     }
 
     @GetMapping("/{id}")

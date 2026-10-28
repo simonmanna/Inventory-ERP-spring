@@ -184,8 +184,19 @@ public class ProductionService {
         if (!has(locationId)) {
             throw ApiException.badRequest("No production location: pass locationId or set the BOM default.");
         }
+        requireLocation(locationId);
         String outputLocationId = dto.outputLocationId() != null ? dto.outputLocationId()
                 : defOutputLocationId != null ? defOutputLocationId : resolvePosWarehouse();
+
+        // ADR-S006 A7: unknown references answer 404 instead of a foreign-key 500.
+        getProduct(outputProductId);
+        for (MaterialPlan m : materials) {
+            getProduct(m.productId());
+        }
+        if (dto.outputs() != null) {
+            dto.outputs().forEach(o -> getProduct(o.productId()));
+        }
+        requireLocation(outputLocationId);
 
         // Shelf-life → default expiry (overridable at complete).
         Instant mfgDate = date(dto.mfgDate());
@@ -620,7 +631,9 @@ public class ProductionService {
     public Map<String, Object> reverseOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
         Map<String, Object> pre = getOrThrow(id, true, false);
-        if (!"completed".equals(pre.get("status")) || pre.get("postedAt") == null) {
+        // ADR-S006 A5: a QC-held order can be reversed too (its finished goods sit in quarantine).
+        boolean held = "qc_hold".equals(pre.get("status"));
+        if ((!"completed".equals(pre.get("status")) && !held) || pre.get("postedAt") == null) {
             throw ApiException.badRequest("Only a completed order can be reversed (status " + pre.get("status") + ").");
         }
         if (pre.get("reversedAt") != null) {
@@ -629,8 +642,8 @@ public class ProductionService {
         if (dec(pre, "producedQty").signum() <= 0) {
             throw ApiException.badRequest("A scrapped (zero-yield) order has no output to reverse.");
         }
-        String fgLocationId = pre.get("outputLocationId") != null ? str(pre, "outputLocationId")
-                : str(pre, "locationId");
+        String fgLocationId = held ? resolveQuarantineLocation()
+                : pre.get("outputLocationId") != null ? str(pre, "outputLocationId") : str(pre, "locationId");
         BigDecimal fgQty = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
                         + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
                 .params(MfgDb.org(), pre.get("outputProductId"),
@@ -696,7 +709,7 @@ public class ProductionService {
 
     /** Newest first, each with materials and outputs. */
     @Transactional(readOnly = true)
-    public List<Map<String, Object>> list(String status, String outputProductId) {
+    public List<Map<String, Object>> list(String status, String outputProductId, Integer limit, Integer offset) {
         StringBuilder extra = new StringBuilder();
         List<Object> params = new ArrayList<>();
         if (status != null && !status.isEmpty()) {
@@ -707,7 +720,7 @@ public class ProductionService {
             extra.append(" AND \"outputProductId\" = ?");
             params.add(outputProductId);
         }
-        extra.append(" ORDER BY \"createdAt\" DESC");
+        extra.append(" ORDER BY \"createdAt\" DESC").append(MfgDb.page(limit, offset));
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> o : db.list(ProductionOrder.class, extra.toString(), params.toArray())) {
             out.add(withLines(o, true, true));
@@ -744,6 +757,10 @@ public class ProductionService {
             upd.put("totalCost", totalValue);
             upd.put("batchNumber", batchNumber);
             upd.put("ledgerCode", res.ledgerCode());
+            // ADR-S006 A6: link the output line to the lot it created (forward/backward genealogy).
+            upd.put("batchId", db.jdbc().sql("SELECT \"batchId\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                    + " AND \"ledgerCode\" = ? LIMIT 1").params(MfgDb.org(), res.ledgerCode()).query(String.class)
+                    .optional().orElse(null));
             db.update(ProductionOutput.class, lineId, upd);
         }
         return batchNumber;
@@ -810,7 +827,16 @@ public class ProductionService {
         });
     }
 
-    private Map<String, Object> getProduct(String id) {
+    /** 404 {@code Location not found} unless the location is live in this organization. */
+    void requireLocation(String id) {
+        boolean ok = db.jdbc().sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"deletedAt\" IS NULL").params(id, MfgDb.org()).query(Long.class).single() > 0;
+        if (!ok) {
+            throw ApiException.notFound("Location not found");
+        }
+    }
+
+    Map<String, Object> getProduct(String id) {
         Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, \"uomId\" FROM \"Product\" WHERE id = ? AND "
                 + MfgDb.scope(Product.class, null) + " LIMIT 1").params(id, MfgDb.org()));
         if (p == null) {

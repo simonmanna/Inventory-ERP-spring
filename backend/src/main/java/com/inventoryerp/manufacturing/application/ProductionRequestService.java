@@ -136,11 +136,12 @@ public class ProductionRequestService {
 
     /** Newest first, each with its lines. */
     @Transactional(readOnly = true)
-    public List<Map<String, Object>> list(String status) {
+    public List<Map<String, Object>> list(String status, Integer limit, Integer offset) {
         String extra = status != null && !status.isEmpty() ? " AND status = ?::\"ProductionRequestStatus\"" : "";
         Object[] params = extra.isEmpty() ? new Object[0] : new Object[] {status};
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> r : db.list(ProductionRequest.class, extra + " ORDER BY \"createdAt\" DESC", params)) {
+        for (Map<String, Object> r : db.list(ProductionRequest.class, extra + " ORDER BY \"createdAt\" DESC"
+                + MfgDb.page(limit, offset), params)) {
             out.add(withLines(r));
         }
         return out;

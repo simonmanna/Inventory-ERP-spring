@@ -3,6 +3,7 @@ package com.inventoryerp.manufacturing.application;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
+import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.sequence.SequenceService;
@@ -32,8 +33,11 @@ public class MrpService {
     private final SequenceService seq;
     private final BomService boms;
     private final ProductionRequestService requests;
+    private final UomConversionService uom;
 
-    public MrpService(MfgDb db, SequenceService seq, BomService boms, ProductionRequestService requests) {
+    public MrpService(MfgDb db, SequenceService seq, BomService boms, ProductionRequestService requests,
+            UomConversionService uom) {
+        this.uom = uom;
         this.db = db;
         this.seq = seq;
         this.boms = boms;
@@ -83,7 +87,8 @@ public class MrpService {
             if (bom == null) {
                 continue;
             }
-            BigDecimal onHand = onHand(str(p, "id"));
+            // ADR-S006 A4: open production orders and unplanned requests already cover part of the gap.
+            BigDecimal onHand = onHand(str(p, "id")).add(openSupply(str(p, "id")));
             BigDecimal min = dec(p, "minQuantity");
             if (onHand.compareTo(min) >= 0) {
                 continue;
@@ -144,6 +149,12 @@ public class MrpService {
                     .params(productId, MfgDb.org()));
             Object uomId = product == null ? null
                     : product.get("purchaseUomId") != null ? product.get("purchaseUomId") : product.get("uomId");
+            // ADR-S006 A1: the shortfall is in base units; express it in the unit the line is labelled with.
+            if (product != null && product.get("purchaseUomId") != null
+                    && !product.get("purchaseUomId").equals(product.get("uomId"))) {
+                shortQty = uom.fromBase(shortQty, str(product, "purchaseUomId"), productId, str(product, "uomId"), false)
+                        .setScale(6, java.math.RoundingMode.CEILING);
+            }
             shortLines.add(Obj.of("productId", productId, "description", "MRP shortfall", "quantity", shortQty,
                     "unitOfMeasureId", uomId));
         }
@@ -177,10 +188,27 @@ public class MrpService {
         return sum != null ? sum : BigDecimal.ZERO;
     }
 
-    /** Sum of not-yet-received purchase-order quantities per product. */
+    /**
+     * Open (production) supply of a finished good: remaining output of open orders + quantities of production
+     * requests not yet consolidated into a plan.
+     */
+    private BigDecimal openSupply(String productId) {
+        BigDecimal orders = db.jdbc().sql("SELECT coalesce(sum(greatest(\"plannedQty\" - \"producedQty\", 0)), 0) FROM"
+                + " \"ProductionOrder\" WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
+                + " AND status IN ('draft', 'confirmed', 'in_progress')").params(MfgDb.org(), productId)
+                .query(BigDecimal.class).single();
+        BigDecimal reqs = db.jdbc().sql("SELECT coalesce(sum(l.quantity), 0) FROM \"ProductionRequestLine\" l"
+                + " JOIN \"ProductionRequest\" r ON r.id = l.\"requestId\" WHERE l.\"organizationId\" = ?"
+                + " AND l.\"productId\" = ? AND r.\"deletedAt\" IS NULL AND r.status IN ('draft', 'submitted', 'approved')"
+                + " AND l.\"plannedLineId\" IS NULL").params(MfgDb.org(), productId).query(BigDecimal.class).single();
+        return orders.add(reqs);
+    }
+
+    /** Remaining (ordered − received) quantities of open purchase orders per product (ADR-S006 A1). */
     private Map<String, BigDecimal> openPurchaseQuantities(List<String> productIds) {
         Map<String, BigDecimal> out = new HashMap<>();
-        for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\", l.quantity FROM"
+        for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\","
+                        + " l.quantity - l.\"receivedQuantity\" AS quantity FROM"
                         + " \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\""
                         + " WHERE l.\"organizationId\" = :org AND l.\"productId\" IN (:ids)"
                         + " AND o.status IN ('draft', 'approved', 'active', 'sent', 'partially_received')")

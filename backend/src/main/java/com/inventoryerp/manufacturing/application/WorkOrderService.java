@@ -16,6 +16,7 @@ import com.inventoryerp.manufacturing.domain.Routing;
 import com.inventoryerp.manufacturing.domain.RoutingOperation;
 import com.inventoryerp.manufacturing.domain.WorkCenter;
 import com.inventoryerp.manufacturing.domain.WorkOrder;
+import com.inventoryerp.manufacturing.domain.WorkOrderTimeLog;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -126,12 +127,17 @@ public class WorkOrderService {
         if (!"pending".equals(wo.get("status")) && !"paused".equals(wo.get("status"))) {
             throw ApiException.badRequest("Cannot start a " + wo.get("status") + " work order.");
         }
+        Instant now = Instant.now();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "in_progress");
-        data.put("startedAt", wo.get("startedAt") != null ? wo.get("startedAt") : Instant.now());
+        data.put("startedAt", wo.get("startedAt") != null ? wo.get("startedAt") : now);
         data.put("pausedAt", null);
         data.put("updatedBy", TenantContext.userId());
-        return db.update(WorkOrder.class, id, data);
+        Map<String, Object> updated = db.update(WorkOrder.class, id, data);
+        // ADR-S006 A2: every run interval is a time log; labour = sum of closed logs.
+        db.insert(WorkOrderTimeLog.class, Obj.of("workOrderId", id, "resourceId", wo.get("resourceId"), "userId",
+                TenantContext.userId(), "kind", "run", "startedAt", now));
+        return updated;
     }
 
     @Transactional
@@ -140,19 +146,28 @@ public class WorkOrderService {
         if (!"in_progress".equals(wo.get("status"))) {
             throw ApiException.badRequest("Only an in-progress work order can pause.");
         }
+        int labour = closeOpenLogs(wo);
         return db.update(WorkOrder.class, id, Obj.of("status", "paused", "pausedAt", Instant.now(), "labourMins",
-                labourMins(wo) + elapsedMins(wo.get("startedAt")), "updatedBy", TenantContext.userId()));
+                labour, "updatedBy", TenantContext.userId()));
     }
 
-    /** Complete; logged labour × the resource's hourly cost rolls into the order's overhead + a cost component. */
+    /**
+     * Complete; logged labour × the resource's hourly cost rolls into the order's overhead + a cost component. Refused
+     * once the production order has posted its output (ADR-S006 A3: the cost could never be absorbed).
+     */
     @Transactional
     public Map<String, Object> complete(String id, CompleteWorkOrder dto) {
         Map<String, Object> wo = getOrThrow(id);
         if ("completed".equals(wo.get("status")) || "cancelled".equals(wo.get("status"))) {
             throw ApiException.badRequest("Work order already " + wo.get("status") + ".");
         }
-        int labourMins = dto.labourMins() != null ? dto.labourMins()
-                : labourMins(wo) + ("in_progress".equals(wo.get("status")) ? elapsedMins(wo.get("startedAt")) : 0);
+        Map<String, Object> order = db.byId(ProductionOrder.class, str(wo, "productionOrderId"));
+        if (order != null && (order.get("postedAt") != null || "cancelled".equals(order.get("status")))) {
+            throw ApiException.badRequest("Production order " + order.get("orderCode") + " is " + order.get("status")
+                    + "; work-order time can no longer be costed to it.");
+        }
+        int logged = closeOpenLogs(wo);
+        int labourMins = dto.labourMins() != null ? dto.labourMins() : logged;
         Map<String, Object> resource = wo.get("resourceId") == null ? null
                 : db.byId(Resource.class, str(wo, "resourceId"));
         BigDecimal labourCost = BomService.mul(Money.div(BigDecimal.valueOf(labourMins), SIXTY),
@@ -177,6 +192,25 @@ public class WorkOrderService {
                     "sourceType", "work_order", "sourceId", id, "notes", labourMins + " min · " + wo.get("name")));
         }
         return updated;
+    }
+
+    /**
+     * Close the open run log(s) of a work order and return its total labour minutes. Work orders started before
+     * time logs existed (no logs at all) keep the Nest arithmetic: stored minutes + time since start.
+     */
+    int closeOpenLogs(Map<String, Object> wo) {
+        String id = str(wo, "id");
+        long logs = db.jdbc().sql("SELECT count(*) FROM \"WorkOrderTimeLog\" WHERE \"organizationId\" = ?"
+                + " AND \"workOrderId\" = ?").params(MfgDb.org(), id).query(Long.class).single();
+        if (logs == 0) {
+            return labourMins(wo) + ("in_progress".equals(wo.get("status")) ? elapsedMins(wo.get("startedAt")) : 0);
+        }
+        db.jdbc().sql("UPDATE \"WorkOrderTimeLog\" SET \"endedAt\" = " + MfgDb.NOW + ", minutes = greatest(0,"
+                + " round(extract(epoch FROM (" + MfgDb.NOW + " - \"startedAt\")) / 60))::int"
+                + " WHERE \"organizationId\" = ? AND \"workOrderId\" = ? AND \"endedAt\" IS NULL")
+                .params(MfgDb.org(), id).update();
+        return db.jdbc().sql("SELECT coalesce(sum(minutes), 0)::int FROM \"WorkOrderTimeLog\" WHERE"
+                + " \"organizationId\" = ? AND \"workOrderId\" = ?").params(MfgDb.org(), id).query(Integer.class).single();
     }
 
     private static int labourMins(Map<String, Object> wo) {

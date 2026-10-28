@@ -39,8 +39,9 @@ public class ProductionController {
     @GetMapping
     @RequirePermissions(Permissions.PRODUCTION_ORDER__READ)
     public List<Map<String, Object>> list(@RequestParam(required = false) String status,
-            @RequestParam(required = false) String outputProductId) {
-        return production.list(status, outputProductId);
+            @RequestParam(required = false) String outputProductId, @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset) {
+        return production.list(status, outputProductId, limit, offset);
     }
 
     @GetMapping("/{id}")

@@ -114,6 +114,11 @@ public class BomService {
     @Transactional
     public Map<String, Object> create(CreateBom dto) {
         String variantKey = dto.outputVariantId() != null ? dto.outputVariantId() : "";
+        // ADR-S006 A7: references must exist; versions are allocated under a per-output lock.
+        requireReferences(dto.outputProductId(), dto.lines(), dto.defaultLocationId(), dto.defaultOutputLocationId(),
+                dto.routingId());
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
+                .param("bom:" + MfgDb.org() + ":" + dto.outputProductId() + ":" + variantKey).query().listOfRows();
         Integer latest = db.jdbc().sql("SELECT version FROM \"Bom\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
                         + " AND \"outputProductId\" = ? AND \"outputVariantKey\" = ? ORDER BY version DESC LIMIT 1")
                 .params(MfgDb.org(), dto.outputProductId(), variantKey).query(Integer.class).optional().orElse(null);
@@ -143,6 +148,7 @@ public class BomService {
         data.put("effectiveFrom", date(dto.effectiveFrom()));
         data.put("effectiveTo", date(dto.effectiveTo()));
         data.put("notes", dto.notes());
+        data.put("routingId", dto.routingId());
         data.put("createdBy", TenantContext.userId());
         Map<String, Object> bom = db.insert(Bom.class, data);
         String id = str(bom, "id");
@@ -162,6 +168,7 @@ public class BomService {
             throw ApiException.badRequest("BOM " + bom.get("code") + " is " + bom.get("status")
                     + " and cannot be edited. Create a new version instead.");
         }
+        requireReferences(null, dto.lines(), dto.defaultLocationId(), dto.defaultOutputLocationId(), dto.routingId());
         if (dto.lines() != null) {
             assertNoCycle(str(bom, "outputProductId"),
                     dto.lines().stream().map(BomLineInput::componentProductId).toList(), 0);
@@ -187,6 +194,8 @@ public class BomService {
         putIf(data, "effectiveFrom", date(dto.effectiveFrom()));
         putIf(data, "effectiveTo", date(dto.effectiveTo()));
         putIf(data, "notes", dto.notes());
+        putIf(data, "overheadCost", dto.overheadCost());
+        putIf(data, "routingId", dto.routingId());
         data.put("updatedBy", TenantContext.userId());
         return withLines(db.update(Bom.class, id, data));
     }
@@ -232,7 +241,7 @@ public class BomService {
 
     /** Ordered by output product, newest version first; each with its lines. */
     @Transactional(readOnly = true)
-    public List<Map<String, Object>> list(String outputProductId, String status) {
+    public List<Map<String, Object>> list(String outputProductId, String status, Integer limit, Integer offset) {
         StringBuilder extra = new StringBuilder();
         List<Object> params = new ArrayList<>();
         if (outputProductId != null) {
@@ -243,7 +252,7 @@ public class BomService {
             extra.append(" AND status = ?::\"BomStatus\"");
             params.add(status);
         }
-        extra.append(" ORDER BY \"outputProductId\" ASC, version DESC");
+        extra.append(" ORDER BY \"outputProductId\" ASC, version DESC").append(MfgDb.page(limit, offset));
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> b : db.list(Bom.class, extra.toString(), params.toArray())) {
             out.add(withLines(b));
@@ -363,6 +372,34 @@ public class BomService {
             List<String> next = db.children(BomLine.class, "bomId", child.getFirst().get("id"), null).stream()
                     .map(l -> str(l, "componentProductId")).toList();
             assertNoCycle(outputProductId, next, depth + 1);
+        }
+    }
+
+    /** 404s for unknown products / locations / routing referenced by a BOM body (ADR-S006 A7). */
+    private void requireReferences(String outputProductId, List<BomLineInput> lines, String locationId,
+            String outputLocationId, String routingId) {
+        List<String> products = new ArrayList<>();
+        if (outputProductId != null) {
+            products.add(outputProductId);
+        }
+        if (lines != null) {
+            lines.forEach(l -> products.add(l.componentProductId()));
+        }
+        for (String p : new java.util.LinkedHashSet<>(products)) {
+            if (db.jdbc().sql("SELECT count(*) FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " AND \"deletedAt\" IS NULL").params(p, MfgDb.org()).query(Long.class).single() == 0) {
+                throw ApiException.notFound("Product " + p + " not found");
+            }
+        }
+        for (String loc : java.util.Arrays.asList(locationId, outputLocationId)) {
+            if (loc != null && db.jdbc().sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ?"
+                    + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(loc, MfgDb.org())
+                    .query(Long.class).single() == 0) {
+                throw ApiException.notFound("Location not found");
+            }
+        }
+        if (routingId != null && db.byId(com.inventoryerp.manufacturing.domain.Routing.class, routingId) == null) {
+            throw ApiException.notFound("Routing not found");
         }
     }
 

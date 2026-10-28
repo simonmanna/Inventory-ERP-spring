@@ -158,6 +158,20 @@ public class MfgDb {
         return data;
     }
 
+    /**
+     * Optional {@code LIMIT/OFFSET} of a list route (ADR-S006 A9): absent = everything, as in Nest; {@code limit}
+     * 1..1000, {@code offset} >= 0.
+     */
+    static String page(Integer limit, Integer offset) {
+        if (limit != null && (limit < 1 || limit > 1000)) {
+            throw com.inventoryerp.shared.web.ApiException.badRequest("limit must be between 1 and 1000");
+        }
+        if (offset != null && offset < 0) {
+            throw com.inventoryerp.shared.web.ApiException.badRequest("offset must not be negative");
+        }
+        return (limit != null ? " LIMIT " + limit : "") + (offset != null ? " OFFSET " + offset : "");
+    }
+
     /** {@code findFirst({where: {id}})} under the tenancy scope, or null. */
     Map<String, Object> byId(Class<?> entity, String id) {
         List<Object> params = new ArrayList<>(List.of(id));
