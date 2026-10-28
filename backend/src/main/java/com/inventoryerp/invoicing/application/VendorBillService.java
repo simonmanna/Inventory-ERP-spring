@@ -168,6 +168,34 @@ public class VendorBillService {
         return doc;
     }
 
+    /**
+     * Raise and post a supplier bill on behalf of an approved landed cost voucher (one per supplier invoice). The
+     * voucher's own approval stands in for the bill approval, so no approval request is opened; posting still needs
+     * {@code expense:post}. Lines carry their GL account (the landed-cost clearing account), so the bill debits
+     * clearing and credits the supplier's payable.
+     */
+    @Transactional
+    public Map<String, Object> createPostedForLandedCost(String partnerId, String issueDate, String dueDate,
+            String currencyCode, BigDecimal exchangeRate, String reference, String sourceDocument, String notes,
+            List<LineInput> lines) {
+        validateDates(issueDate, dueDate);
+        Map<String, Object> doc = builder.createDocument("vendor_bill", new HeaderInput(partnerId, issueDate, dueDate,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, sourceDocument,
+                currencyCode, exchangeRate, reference, notes, null, "landed_cost", null), lines);
+        String id = (String) doc.get("id");
+        Map<String, Object> full = builder.document(id, "vendor_bill");
+        full.put("lines", builder.lines(id, false));
+        workflow.transition("vendor_bill", id, "post", null, full);
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("organizationId", org());
+        payload.put("documentId", id);
+        payload.put("documentNumber", doc.get("documentNumber"));
+        events.publish("bill.posted", payload);
+        audit.record(AuditInput.of("VendorBill", id, "create", null, Obj.of("documentNumber", doc.get("documentNumber"),
+                "source", "landed_cost", "sourceDocument", sourceDocument)));
+        return builder.document(id);
+    }
+
     /** Edit a draft bill. */
     @Transactional
     public Map<String, Object> update(String id, BillInput dto) {

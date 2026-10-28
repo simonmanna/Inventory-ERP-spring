@@ -147,7 +147,17 @@ centre) · Dr expense (expensed charges, charge cost centre) · Dr `tax_receivab
 credit account, default landed-cost clearing `2155` (`landed_cost_clearing`). Reversal = reversing entry + Dr stock /
 Cr COGS for the part sold since. A posted voucher blocks reversal of any of its receipts.
 
+Supplier payables (V14, ADR-S007 §2a): charge field `billMode` = `generate | link | none` (+ `vendorBillId`,
+`dueDate`). `generate` (default when a supplier + invoice no. are given and no credit account): posting also raises
+one posted vendor bill per (supplier, invoice no.) — `sourceType = 'landed_cost'`, `sourceDocument` = voucher code,
+lines Dr `2155` (charge + tax) / Cr that supplier's payable; charges of one invoice must share currency and rate.
+`link`: references a bill already booked against clearing. Reversal cancels generated bills and is refused
+(`Supplier bill … has payments; …`) once one is paid. `GET /{id}` adds `charges[].vendorBill` and a `suppliers[]`
+summary (charges, tax, invoices with bill number / status / residual).
+
 Tests: `LandedCostVoucherIT` (laptop 2,380,000 / unit; 19M + 19M after half sold; cement / steel 1.8M / 1.2M; weight;
 manual; selected lines; expense with cost centre; recoverable tax; duplicate supplier invoice; workflow; reversal;
-FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isolation). Web: Landed Costs, Import
+FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isolation; multi-supplier shipment with
+two goods vendors, generated + linked supplier bills, supplier-scoped charge, paid-bill reversal guard; bill-mode
+validation and one bill per invoice). Web: Landed Costs, Import
 Shipments, Landed Cost Reports (incl. cost components) under Purchases.

@@ -9,6 +9,8 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.StockPostingService;
+import com.inventoryerp.invoicing.application.DocumentBuilderService;
+import com.inventoryerp.invoicing.application.VendorBillService;
 import com.inventoryerp.inventory.application.StockPostingService.LandedLine;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -33,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -64,7 +67,19 @@ public class LandedCostVoucherService {
             String supplierInvoiceRef, String invoiceDate, String currencyCode, BigDecimal exchangeRate,
             BigDecimal amount, BigDecimal taxAmount, String treatment, String allocationMethod, String expenseAccountId,
             String creditAccountId, String costCenterId, List<String> appliesToLineIds,
-            Map<String, BigDecimal> manualAllocations) {}
+            Map<String, BigDecimal> manualAllocations, String billMode, String vendorBillId, String dueDate) {
+
+        /** Without the supplier-bill fields (bill mode resolved from supplier / credit account). */
+        public ChargeInput(String costComponentId, String kind, String description, String supplierId,
+                String supplierInvoiceRef, String invoiceDate, String currencyCode, BigDecimal exchangeRate,
+                BigDecimal amount, BigDecimal taxAmount, String treatment, String allocationMethod,
+                String expenseAccountId, String creditAccountId, String costCenterId, List<String> appliesToLineIds,
+                Map<String, BigDecimal> manualAllocations) {
+            this(costComponentId, kind, description, supplierId, supplierInvoiceRef, invoiceDate, currencyCode,
+                    exchangeRate, amount, taxAmount, treatment, allocationMethod, expenseAccountId, creditAccountId,
+                    costCenterId, appliesToLineIds, manualAllocations, null, null, null);
+        }
+    }
 
     /** Voucher body; receipts default to the shipment's. */
     public record VoucherInput(String shipmentId, List<String> goodsReceiptIds, String date, String notes,
@@ -93,12 +108,13 @@ public class LandedCostVoucherService {
     private final LandedCostLayers layers;
     private final CostComponentService components;
     private final ShipmentService shipments;
+    private final VendorBillService bills;
     private final TransactionTemplate tx;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
-            ShipmentService shipments, PlatformTransactionManager txm) {
+            ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -109,6 +125,7 @@ public class LandedCostVoucherService {
         this.layers = layers;
         this.components = components;
         this.shipments = shipments;
+        this.bills = bills;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -163,11 +180,44 @@ public class LandedCostVoucherService {
             names.put(r.get("id") + ":c", (String) r.get("component"));
             names.put(r.get("id") + ":s", (String) r.get("supplier"));
         }
+        Map<String, Map<String, Object>> billsById = new HashMap<>();
+        for (Map<String, Object> b : SqlRows.list(jdbc.sql("SELECT DISTINCT d.id, d.\"documentNumber\","
+                + " d.status::text AS status, d.\"totalAmount\", d.\"amountPaid\", d.\"amountResidual\","
+                + " d.\"paymentStatus\"::text AS \"paymentStatus\", d.\"dueDate\" FROM \"LandedCostCharge\" c"
+                + " JOIN \"Document\" d ON d.id = c.\"vendorBillId\" WHERE c.\"landedCostId\" = ?").param(id))) {
+            billsById.put((String) b.get("id"), b);
+        }
+        Map<String, Map<String, Object>> suppliers = new LinkedHashMap<>();
         for (Map<String, Object> c : charges) {
             c.put("costComponentCode", names.get(c.get("id") + ":c"));
             c.put("supplierName", names.get(c.get("id") + ":s"));
+            Map<String, Object> bill = billsById.get(c.get("vendorBillId"));
+            c.put("vendorBill", bill);
+            String key = c.get("supplierId") == null ? "" : (String) c.get("supplierId");
+            Map<String, Object> sup = suppliers.computeIfAbsent(key, k -> Obj.of("supplierId", c.get("supplierId"),
+                    "supplierName", c.get("supplierName"), "chargeCount", 0, "baseAmount", Money.ZERO, "taxAmount",
+                    Money.ZERO, "invoices", new ArrayList<Map<String, Object>>()));
+            BigDecimal rate = c.get("exchangeRate") == null ? BigDecimal.ONE : Money.dec(c.get("exchangeRate"));
+            sup.put("chargeCount", (Integer) sup.get("chargeCount") + 1);
+            sup.put("baseAmount", ((BigDecimal) sup.get("baseAmount")).add(Money.dec(c.get("baseAmount"))));
+            sup.put("taxAmount", ((BigDecimal) sup.get("taxAmount")).add(dp6(Money.dec(c.get("taxAmount")).multiply(rate))));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> invoices = (List<Map<String, Object>>) sup.get("invoices");
+            Object ref = c.get("supplierInvoiceRef");
+            if (ref != null && invoices.stream().noneMatch(i -> ref.equals(i.get("supplierInvoiceRef")))) {
+                Map<String, Object> inv = new LinkedHashMap<>();
+                inv.put("supplierInvoiceRef", ref);
+                inv.put("billMode", c.get("billMode"));
+                inv.put("vendorBill", bill);
+                invoices.add(inv);
+            }
         }
+        suppliers.values().forEach(sup -> {
+            sup.put("baseAmount", JsNumbers.dec((BigDecimal) sup.get("baseAmount")));
+            sup.put("taxAmount", JsNumbers.dec((BigDecimal) sup.get("taxAmount")));
+        });
         out.put("charges", charges);
+        out.put("suppliers", new ArrayList<>(suppliers.values()));
         List<Map<String, Object>> allocs = SqlRows.list(LandedCostAllocation.class, jdbc.sql("SELECT * FROM"
                 + " \"LandedCostAllocation\" WHERE \"landedCostId\" = ? ORDER BY \"chargeId\", id").param(id));
         Map<String, String> productNames = new HashMap<>();
@@ -322,6 +372,7 @@ public class LandedCostVoucherService {
                             + " \"taxAmount\" = ?, \"journalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                     .params(c.total(), c.capitalized(), c.expensed(), c.tax(), je == null ? null : je.get("id"), id)
                     .update();
+            raiseSupplierBills(lc, date);
             audit.recordInTx(AuditInput.of("LandedCost", id, "update", null, Obj.of("kind", "landed_cost_voucher_posted",
                     "code", lc.get("code"), "total", JsNumbers.dec(c.total()), "capitalized",
                     JsNumbers.dec(c.capitalized()), "expensed", JsNumbers.dec(c.expensed()), "tax",
@@ -336,6 +387,21 @@ public class LandedCostVoucherService {
             Map<String, Object> lc = lock(id);
             if (!"posted".equals(lc.get("status"))) {
                 throw ApiException.badRequest("Only a posted landed cost voucher can be reversed");
+            }
+            List<Map<String, Object>> generated = SqlRows.list(jdbc.sql("SELECT DISTINCT d.id, d.\"documentNumber\","
+                    + " d.status::text AS status, d.\"amountPaid\" FROM \"LandedCostCharge\" c JOIN \"Document\" d"
+                    + " ON d.id = c.\"vendorBillId\" WHERE c.\"landedCostId\" = ? AND c.\"billMode\" = 'generate'")
+                    .param(id));
+            for (Map<String, Object> b : generated) {
+                if ("posted".equals(b.get("status")) && Money.dec(b.get("amountPaid")).signum() > 0) {
+                    throw ApiException.badRequest("Supplier bill " + b.get("documentNumber") + " has payments; reverse"
+                            + " them before reversing landed cost " + lc.get("code"));
+                }
+            }
+            for (Map<String, Object> b : generated) {
+                if ("posted".equals(b.get("status"))) {
+                    bills.cancel((String) b.get("id"));
+                }
             }
             Map<String, BigDecimal> unabsorbed = new LinkedHashMap<>();
             for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT * FROM \"LandedCostAllocation\" WHERE"
@@ -681,6 +747,47 @@ public class LandedCostVoucherService {
                     throw ApiException.badRequest("Supplier not found");
                 }
             }
+            String supplierId = c.supplierId();
+            String supplierRef = blank(c.supplierInvoiceRef());
+            String billMode = billMode(c);
+            String vendorBillId = null;
+            switch (billMode) {
+                case "generate" -> {
+                    if (supplierId == null || supplierRef == null) {
+                        throw ApiException.badRequest("Charge " + label(c, kind) + ": a supplier bill needs a supplier"
+                                + " and the supplier invoice number");
+                    }
+                    if (c.creditAccountId() != null) {
+                        throw ApiException.badRequest("Charge " + label(c, kind) + ": a generated supplier bill credits"
+                                + " the supplier's payable; leave the credit account empty");
+                    }
+                    if (c.dueDate() != null && c.invoiceDate() != null && c.dueDate().compareTo(c.invoiceDate()) < 0) {
+                        throw ApiException.badRequest("Due date cannot be earlier than issue date");
+                    }
+                }
+                case "link" -> {
+                    Map<String, Object> bill = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", \"partnerId\","
+                            + " status::text AS status, reference FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                            + " AND \"documentType\" = 'vendor_bill'").params(c.vendorBillId(), org()));
+                    if (bill == null) {
+                        throw ApiException.badRequest("Vendor bill not found");
+                    }
+                    if ("cancelled".equals(bill.get("status"))) {
+                        throw ApiException.badRequest("Vendor bill " + bill.get("documentNumber") + " is cancelled");
+                    }
+                    if (supplierId != null && !supplierId.equals(bill.get("partnerId"))) {
+                        throw ApiException.badRequest("Vendor bill " + bill.get("documentNumber")
+                                + " belongs to another supplier than charge " + label(c, kind));
+                    }
+                    supplierId = (String) bill.get("partnerId");
+                    if (supplierRef == null) {
+                        supplierRef = bill.get("reference") != null ? (String) bill.get("reference")
+                                : (String) bill.get("documentNumber");
+                    }
+                    vendorBillId = c.vendorBillId();
+                }
+                default -> { }
+            }
             for (String acc : new String[] {c.creditAccountId(), expense}) {
                 if (acc != null) {
                     assertPostable(acc);
@@ -728,19 +835,22 @@ public class LandedCostVoucherService {
                             + " \"lineNumber\", \"costComponentId\", \"supplierId\", \"supplierInvoiceRef\", \"invoiceDate\","
                             + " \"currencyCode\", \"exchangeRate\", \"baseAmount\", \"taxAmount\", treatment, \"allocationMethod\","
                             + " \"expenseAccountId\", \"creditAccountId\", \"costCenterId\", \"appliesToLineIds\","
-                            + " \"manualAllocations\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                            + " ?::text[], ?::jsonb)")
+                            + " \"manualAllocations\", \"billMode\", \"vendorBillId\", \"dueDate\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb, ?, ?, ?::date)")
                     .params(chargeId, org(), id, kind, c.description(), c.amount(), n++, c.costComponentId(),
-                            c.supplierId(), blank(c.supplierInvoiceRef()), blank(c.invoiceDate()), c.currencyCode(), rate,
+                            supplierId, supplierRef, blank(c.invoiceDate()), blank(c.currencyCode()), rate,
                             base, tax, treatment, method, expense, c.creditAccountId(), blank(c.costCenterId()),
                             c.appliesToLineIds() == null || c.appliesToLineIds().isEmpty() ? null
                                     : c.appliesToLineIds().toArray(String[]::new),
-                            manualBase == null ? null : EntityJson.toJson(manualBase))
+                            manualBase == null ? null : EntityJson.toJson(manualBase), billMode, vendorBillId,
+                            blank(c.dueDate()))
                     .update();
-            written.add(Obj.of("id", chargeId, "supplierId", c.supplierId(), "supplierInvoiceRef",
-                    blank(c.supplierInvoiceRef())));
+            written.add(Obj.of("id", chargeId, "supplierId", supplierId, "supplierInvoiceRef", supplierRef,
+                    "billMode", billMode, "currencyCode", blank(c.currencyCode()), "exchangeRate", rate,
+                    "vendorBillId", vendorBillId));
         }
         assertNoDuplicateInvoices(id, written);
+        assertBillGroups(written);
         jdbc.sql("UPDATE \"LandedCost\" SET \"totalAmount\" = ?, \"taxAmount\" = ? WHERE id = ?")
                 .params(total, taxTotal, id).update();
     }
@@ -751,11 +861,11 @@ public class LandedCostVoucherService {
         for (Map<String, Object> c : charges) {
             Object supplier = c.get("supplierId");
             Object ref = c.get("supplierInvoiceRef");
-            if (supplier == null || ref == null) {
+            if (supplier == null || ref == null || c.get("vendorBillId") != null) {
                 continue;
             }
             if (!seen.add(supplier + "|" + ref)) {
-                throw ApiException.conflict("Supplier invoice " + ref + " appears twice on this voucher");
+                continue;
             }
             jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("lc-inv:" + org() + ":" + supplier + ":"
                     + ref).query().listOfRows();
@@ -766,6 +876,83 @@ public class LandedCostVoucherService {
                     .params(org(), supplier, ref, voucherId).query(String.class).optional().orElse(null);
             if (other != null) {
                 throw ApiException.conflict("Supplier invoice " + ref + " is already on landed cost " + other);
+            }
+        }
+    }
+
+    /**
+     * One posted vendor bill per (supplier, invoice no.) of the {@code generate} charges: each line debits the
+     * landed-cost clearing account with the charge plus its tax (what the voucher credited there), the bill credits the
+     * supplier's own payable. Clearing nets to zero per invoice; every supplier keeps its own document and balance.
+     */
+    private void raiseSupplierBills(Map<String, Object> lc, Instant voucherDate) {
+        Map<String, List<Map<String, Object>>> groups = new LinkedHashMap<>();
+        for (Map<String, Object> ch : chargesOf(lc)) {
+            if ("generate".equals(ch.get("billMode")) && ch.get("vendorBillId") == null) {
+                groups.computeIfAbsent(ch.get("supplierId") + "|" + ch.get("supplierInvoiceRef"), k -> new ArrayList<>())
+                        .add(ch);
+            }
+        }
+        String clearing = clearingAccount();
+        String fallbackDate = voucherDate.atZone(java.time.ZoneOffset.UTC).toLocalDate().toString();
+        for (List<Map<String, Object>> group : groups.values()) {
+            Map<String, Object> first = group.getFirst();
+            List<DocumentBuilderService.LineInput> billLines = new ArrayList<>();
+            String due = null;
+            for (Map<String, Object> ch : group) {
+                BigDecimal gross = Money.dec(ch.get("amount")).add(Money.dec(ch.get("taxAmount")));
+                String desc = (ch.get("description") != null ? ch.get("description") : ch.get("kind")) + " · landed cost "
+                        + lc.get("code");
+                billLines.add(new DocumentBuilderService.LineInput(null, null, null, null, clearing, (String) desc,
+                        BigDecimal.ONE, gross, null, null, null, null, null, null, null, false));
+                if (ch.get("dueDate") != null) {
+                    due = ch.get("dueDate").toString();
+                }
+            }
+            String issue = first.get("invoiceDate") != null ? first.get("invoiceDate").toString() : fallbackDate;
+            Map<String, Object> bill = bills.createPostedForLandedCost((String) first.get("supplierId"), issue,
+                    due != null ? due : issue, (String) first.get("currencyCode"), first.get("exchangeRate") == null
+                            ? BigDecimal.ONE : Money.dec(first.get("exchangeRate")),
+                    (String) first.get("supplierInvoiceRef"), (String) lc.get("code"),
+                    "Landed cost " + lc.get("code") + (lc.get("shipment") instanceof Map<?, ?> s
+                            ? " · shipment " + s.get("code") : ""), billLines);
+            for (Map<String, Object> ch : group) {
+                jdbc.sql("UPDATE \"LandedCostCharge\" SET \"vendorBillId\" = ? WHERE id = ?")
+                        .params(bill.get("id"), ch.get("id")).update();
+            }
+        }
+    }
+
+    /**
+     * Bill mode of a charge: explicit, else {@code link} when it references a bill, {@code generate} when it names a
+     * supplier and invoice number and keeps the default (clearing) credit account, otherwise {@code none}.
+     */
+    private static String billMode(ChargeInput c) {
+        if (c.billMode() != null) {
+            if ("link".equals(c.billMode()) && blank(c.vendorBillId()) == null) {
+                throw ApiException.badRequest("vendorBillId is required when billMode is link");
+            }
+            return c.billMode();
+        }
+        if (blank(c.vendorBillId()) != null) {
+            return "link";
+        }
+        return c.supplierId() != null && blank(c.supplierInvoiceRef()) != null && c.creditAccountId() == null
+                ? "generate" : "none";
+    }
+
+    /** Charges that become one supplier bill must share its currency and rate. */
+    private static void assertBillGroups(List<Map<String, Object>> charges) {
+        Map<String, Map<String, Object>> first = new HashMap<>();
+        for (Map<String, Object> c : charges) {
+            if (!"generate".equals(c.get("billMode"))) {
+                continue;
+            }
+            Map<String, Object> f = first.putIfAbsent(c.get("supplierId") + "|" + c.get("supplierInvoiceRef"), c);
+            if (f != null && (!Objects.equals(f.get("currencyCode"), c.get("currencyCode"))
+                    || Money.dec(f.get("exchangeRate")).compareTo(Money.dec(c.get("exchangeRate"))) != 0)) {
+                throw ApiException.badRequest("Charges on supplier invoice " + c.get("supplierInvoiceRef")
+                        + " must share one currency and exchange rate");
             }
         }
     }

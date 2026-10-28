@@ -96,6 +96,15 @@ public class LandedCostCharge {
     @Column(name = "manualAllocations")
     private String manualAllocations;
 
+    @Column(name = "billMode", nullable = false)
+    private String billMode;
+
+    @Column(name = "vendorBillId")
+    private String vendorBillId;
+
+    @Column(name = "dueDate")
+    private LocalDate dueDate;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "landedCostId", insertable = false, updatable = false)
     private LandedCost landedCost;
@@ -288,5 +297,29 @@ public class LandedCostCharge {
 
     public void setManualAllocations(String manualAllocations) {
         this.manualAllocations = manualAllocations;
+    }
+
+    public String getBillMode() {
+        return billMode;
+    }
+
+    public void setBillMode(String billMode) {
+        this.billMode = billMode;
+    }
+
+    public String getVendorBillId() {
+        return vendorBillId;
+    }
+
+    public void setVendorBillId(String vendorBillId) {
+        this.vendorBillId = vendorBillId;
+    }
+
+    public LocalDate getDueDate() {
+        return dueDate;
+    }
+
+    public void setDueDate(LocalDate dueDate) {
+        this.dueDate = dueDate;
     }
 }

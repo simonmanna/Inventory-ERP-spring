@@ -287,7 +287,13 @@ export interface ChargeDraft {
   costCenterId?: string;
   appliesToLineIds?: string[];
   manualAllocations?: Record<string, number>;
+  /** generate = posting raises the supplier's own bill; link = an existing bill; none = clearing only. */
+  billMode?: BillMode;
+  vendorBillId?: string;
+  dueDate?: string;
 }
+
+export type BillMode = 'generate' | 'link' | 'none';
 
 export interface VoucherDraft {
   shipmentId?: string;

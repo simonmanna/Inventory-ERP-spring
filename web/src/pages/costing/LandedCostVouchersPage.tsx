@@ -25,6 +25,7 @@ import {
   useSaveLandedCostVoucher,
   useShipments,
   type AllocationMethod,
+  type BillMode,
   type ChargeDraft,
   type Treatment,
 } from '@/features/costing/api';
@@ -39,6 +40,9 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline' | 'dest
 const METHODS: AllocationMethod[] = ['value', 'quantity', 'weight', 'volume', 'equal', 'manual'];
 const METHOD_LABEL: Record<AllocationMethod, string> = {
   value: tx('By value'), quantity: tx('By quantity'), weight: tx('By weight'), volume: tx('By volume'), equal: tx('Equal'), manual: tx('Manual'),
+};
+const BILL_MODE_LABEL: Record<BillMode, string> = {
+  generate: tx('Raise supplier bill on posting'), link: tx('Link existing supplier bill'), none: tx('No bill (clearing only)'),
 };
 const TREATMENT_LABEL: Record<Treatment, string> = {
   capitalize: tx('Add to inventory cost'), expense: tx('Expense'), recoverable_tax: tx('Recoverable tax'),
@@ -108,7 +112,7 @@ export function LandedCostVouchersPage() {
 
 type ChargeRow = ChargeDraft & { key: string; amountText: string; taxText: string; rateText: string; manualText: Record<string, string> };
 
-const blankCharge = (): ChargeRow => ({ key: crypto.randomUUID(), amount: 0, amountText: '', taxText: '', rateText: '', manualText: {} });
+const blankCharge = (): ChargeRow => ({ key: crypto.randomUUID(), amount: 0, amountText: '', taxText: '', rateText: '', manualText: {}, billMode: 'generate' });
 
 /** Create or edit a draft voucher. */
 export function LandedCostVoucherEditPage() {
@@ -127,6 +131,11 @@ export function LandedCostVoucherEditPage() {
     queryFn: async () => (await api.get<any>('/procurement/goods-receipts', { params: { status: 'posted', pageSize: 200 } })).data?.data ?? [],
   });
   const save = useSaveLandedCostVoucher();
+  const postedBills = useQuery({
+    queryKey: ['vendor-bills', 'for-landed-cost'],
+    queryFn: async () => (await api.get<any>('/vendor-bills', { params: { pageSize: 200 } })).data?.data ?? [],
+  });
+  const linkableBills = (postedBills.data ?? []).filter((b: any) => b.status !== 'cancelled');
 
   const [shipmentId, setShipmentId] = useState('');
   const [receipts, setReceipts] = useState<string[]>([]);
@@ -147,6 +156,8 @@ export function LandedCostVoucherEditPage() {
       supplierInvoiceRef: c.supplierInvoiceRef ?? '', currencyCode: c.currencyCode ?? '', treatment: c.treatment, allocationMethod: c.allocationMethod,
       expenseAccountId: c.expenseAccountId ?? undefined, creditAccountId: c.creditAccountId ?? undefined, costCenterId: c.costCenterId ?? undefined,
       appliesToLineIds: c.appliesToLineIds ?? undefined, amount: Number(c.amount), amountText: String(Number(c.amount)), taxText: Number(c.taxAmount) ? String(Number(c.taxAmount)) : '',
+      billMode: c.billMode ?? 'none', vendorBillId: c.vendorBillId ?? undefined, dueDate: c.dueDate ? String(c.dueDate).slice(0, 10) : undefined,
+      invoiceDate: c.invoiceDate ? String(c.invoiceDate).slice(0, 10) : undefined,
       rateText: Number(c.exchangeRate) !== 1 ? String(Number(c.exchangeRate)) : '',
       manualText: Object.fromEntries(Object.entries(c.manualAllocations ?? {}).map(([k, v]) => [k, String(Number(v) / (Number(c.exchangeRate) || 1))])),
     })));
@@ -160,7 +171,12 @@ export function LandedCostVoucherEditPage() {
       queryFn: async () => (await api.get<any>(`/procurement/goods-receipts/${g}`)).data,
     })),
   });
-  const receiptLines = lines.flatMap((q) => (q.data?.lines ?? []).map((l: any) => ({ ...l, receiptNumber: q.data?.receiptNumber })));
+  const receiptLines = lines.flatMap((q) => (q.data?.lines ?? []).map((l: any) => ({
+    ...l, receiptNumber: q.data?.receiptNumber, goodsSupplierId: q.data?.partnerId ?? q.data?.partner?.id, goodsSupplierName: q.data?.partner?.name,
+  })));
+  // Goods suppliers on this voucher (requirement: one shipment may hold goods bought from several vendors).
+  const goodsSuppliers = Array.from(new Map(receiptLines.filter((l: any) => l.goodsSupplierId)
+    .map((l: any) => [l.goodsSupplierId, l.goodsSupplierName ?? l.goodsSupplierId])).entries());
 
   const patch = (key: string, p: Partial<ChargeRow>) => setCharges((cs) => cs.map((c) => (c.key === key ? { ...c, ...p } : c)));
   const pickComponent = (key: string, componentId: string) => {
@@ -182,6 +198,10 @@ export function LandedCostVoucherEditPage() {
           description: c.description?.trim() || undefined,
           supplierId: c.supplierId || undefined,
           supplierInvoiceRef: c.supplierInvoiceRef?.trim() || undefined,
+          invoiceDate: c.invoiceDate || undefined,
+          billMode: c.billMode ?? 'generate',
+          vendorBillId: c.billMode === 'link' ? c.vendorBillId || undefined : undefined,
+          dueDate: c.billMode === 'generate' ? c.dueDate || undefined : undefined,
           currencyCode: c.currencyCode?.trim() || undefined,
           exchangeRate: c.rateText ? Number(c.rateText) : undefined,
           amount: Number(c.amountText),
@@ -189,7 +209,7 @@ export function LandedCostVoucherEditPage() {
           treatment: c.treatment,
           allocationMethod: c.allocationMethod,
           expenseAccountId: c.expenseAccountId || undefined,
-          creditAccountId: c.creditAccountId || undefined,
+          creditAccountId: c.billMode === 'generate' ? undefined : c.creditAccountId || undefined,
           costCenterId: c.costCenterId || undefined,
           appliesToLineIds: c.appliesToLineIds?.length ? c.appliesToLineIds : undefined,
           manualAllocations: c.allocationMethod === 'manual'
@@ -262,6 +282,28 @@ export function LandedCostVoucherEditPage() {
                 <Input type="number" min="0" placeholder={tx('Recoverable tax')} value={c.taxText} onChange={(e) => patch(c.key, { taxText: e.target.value })} />
               </div>
               <div className="grid gap-2 md:grid-cols-6">
+                <select className="rounded-md border p-2 text-sm md:col-span-2" value={c.billMode ?? 'generate'} onChange={(e) => patch(c.key, { billMode: e.target.value as BillMode })}>
+                  {(Object.keys(BILL_MODE_LABEL) as BillMode[]).map((m) => <option key={m} value={m}>{BILL_MODE_LABEL[m]}</option>)}
+                </select>
+                {c.billMode === 'link' ? (
+                  <select className="rounded-md border p-2 text-sm md:col-span-4" value={c.vendorBillId ?? ''}
+                    onChange={(e) => {
+                      const b = linkableBills.find((x: any) => x.id === e.target.value);
+                      patch(c.key, { vendorBillId: e.target.value || undefined, supplierId: b?.partnerId ?? c.supplierId, supplierInvoiceRef: b?.reference ?? b?.documentNumber ?? c.supplierInvoiceRef });
+                    }}>
+                    <option value="">{tx('Supplier bill…')}</option>
+                    {linkableBills.filter((b: any) => !c.supplierId || b.partnerId === c.supplierId).map((b: any) => (
+                      <option key={b.id} value={b.id}>{b.documentNumber} · {b.partner?.name ?? ''} {b.reference ? `· ${b.reference}` : ''} · {money(Number(b.totalAmount))} ({b.status})</option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <Input type="date" title={tx('Supplier invoice date')} value={c.invoiceDate ?? ''} onChange={(e) => patch(c.key, { invoiceDate: e.target.value || undefined })} />
+                    {c.billMode !== 'none' && <Input type="date" title={tx('Due date')} value={c.dueDate ?? ''} onChange={(e) => patch(c.key, { dueDate: e.target.value || undefined })} />}
+                  </>
+                )}
+              </div>
+              <div className="grid gap-2 md:grid-cols-6">
                 <select className="rounded-md border p-2 text-sm md:col-span-2" value={c.supplierId ?? ''} onChange={(e) => patch(c.key, { supplierId: e.target.value || undefined })}>
                   <option value="">{tx('Supplier (forwarder, customs…)')}</option>
                   {suppliers.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -296,6 +338,18 @@ export function LandedCostVoucherEditPage() {
                   <p className="text-xs text-muted-foreground">
                     {c.allocationMethod === 'manual' ? tx('Amount per receipt line (must total the charge):') : tx('Applies to (none ticked = all lines):')}
                   </p>
+                  {c.allocationMethod !== 'manual' && goodsSuppliers.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-muted-foreground">{tx('Only goods from:')}</span>
+                      {goodsSuppliers.map(([sid, name]) => (
+                        <Button key={sid} type="button" variant="outline" size="sm" className="h-7"
+                          onClick={() => patch(c.key, { appliesToLineIds: receiptLines.filter((l: any) => l.goodsSupplierId === sid).map((l: any) => l.id) })}>
+                          {name}
+                        </Button>
+                      ))}
+                      <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => patch(c.key, { appliesToLineIds: undefined })}>{tx('All goods')}</Button>
+                    </div>
+                  )}
                   {receiptLines.map((l: any) => (
                     <div key={l.id} className="flex items-center gap-2">
                       {c.allocationMethod === 'manual' ? (
@@ -305,6 +359,7 @@ export function LandedCostVoucherEditPage() {
                           onChange={(e) => patch(c.key, { appliesToLineIds: e.target.checked ? [...(c.appliesToLineIds ?? []), l.id] : (c.appliesToLineIds ?? []).filter((x) => x !== l.id) })} />
                       )}
                       <span className="font-mono text-xs">{l.receiptNumber}</span> {l.description} × {Number(l.quantity)}
+                      {l.goodsSupplierName && <span className="text-xs text-muted-foreground">· {l.goodsSupplierName}</span>}
                     </div>
                   ))}
                 </div>
@@ -315,7 +370,7 @@ export function LandedCostVoucherEditPage() {
             </div>
           ))}
           <p className="text-xs text-muted-foreground">
-            {tx('Charges are credited to the landed-cost clearing account; book the forwarder’s or customs bill against that account so nothing is expensed twice.')}
+            {tx('Each supplier keeps its own invoice and payable: “Raise supplier bill” posts one bill per supplier invoice (debit landed-cost clearing, credit that supplier) when the voucher is posted. Link a bill you already entered against clearing instead of raising a second one.')}
           </p>
         </CardContent>
       </Card>
@@ -349,6 +404,14 @@ export function LandedCostVoucherDetailPage() {
 
   if (!v) return <div className="p-6 text-sm text-muted-foreground">{tx('Loading…')}</div>;
   const allocations = unposted ? preview?.allocations ?? [] : v.allocations ?? [];
+  // Resulting landed cost per product (all charges), from the preview / posted allocation rows.
+  const byProduct = Array.from(allocations.reduce((m: Map<string, any>, a: any) => {
+    const k = `${a.productId}:${a.goodsReceiptId ?? ''}`;
+    const row = m.get(k) ?? { productName: a.productName, receiptNumber: v.receipts.find((r: any) => r.id === a.goodsReceiptId)?.receiptNumber, qty: Number(a.receivedQty), original: Number(a.originalValue ?? 0), allocated: 0 };
+    row.allocated += Number(a.allocatedAmount);
+    m.set(k, row);
+    return m;
+  }, new Map<string, any>()).values()) as any[];
   const chargeLabel = (cid: string) => {
     const c = v.charges.find((x: any) => x.id === cid);
     return c ? `${c.lineNumber}. ${c.costComponentCode ?? c.kind}` : '';
@@ -406,6 +469,48 @@ export function LandedCostVoucherDetailPage() {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle>{tx('Suppliers')}</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{tx('Supplier')}</TableHead>
+                <TableHead>{tx('Invoices / bills')}</TableHead>
+                <TableHead className="text-right">{tx('Charges (base)')}</TableHead>
+                <TableHead className="text-right">{tx('Tax')}</TableHead>
+                <TableHead className="text-right">{tx('Open payable')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(v.suppliers ?? []).map((s: any) => (
+                <TableRow key={s.supplierId ?? 'none'}>
+                  <TableCell>{s.supplierName ?? <span className="text-muted-foreground">{tx('No supplier (clearing)')}</span>}</TableCell>
+                  <TableCell className="space-x-1 text-sm">
+                    {s.invoices.length === 0 && '—'}
+                    {s.invoices.map((i: any) => (
+                      <span key={i.supplierInvoiceRef} className="inline-flex items-center gap-1">
+                        <span className="font-mono text-xs">#{i.supplierInvoiceRef}</span>
+                        {i.vendorBill
+                          ? <Badge variant={i.vendorBill.status === 'posted' ? 'default' : 'outline'}>{i.vendorBill.documentNumber} · {i.vendorBill.status}</Badge>
+                          : <Badge variant="outline">{i.billMode === 'generate' ? tx('bill on posting') : tx('no bill')}</Badge>}
+                      </span>
+                    ))}
+                  </TableCell>
+                  <TableCell className="text-right">{money(Number(s.baseAmount))}</TableCell>
+                  <TableCell className="text-right">{Number(s.taxAmount) ? money(Number(s.taxAmount)) : '—'}</TableCell>
+                  <TableCell className="text-right">
+                    {s.invoices.some((i: any) => i.vendorBill)
+                      ? money(s.invoices.reduce((t: number, i: any) => t + (i.vendorBill?.status === 'posted' ? Number(i.vendorBill.amountResidual ?? 0) : 0), 0))
+                      : '—'}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>{tx('Charges')}</CardTitle></CardHeader>
         <CardContent>
           <Table>
@@ -426,12 +531,47 @@ export function LandedCostVoucherDetailPage() {
                 <TableRow key={c.id}>
                   <TableCell>{c.lineNumber}</TableCell>
                   <TableCell>{c.costComponentCode ?? c.kind} <span className="text-xs text-muted-foreground">{c.description}</span></TableCell>
-                  <TableCell className="text-sm">{c.supplierName ?? '—'} {c.supplierInvoiceRef ? <span className="font-mono text-xs">#{c.supplierInvoiceRef}</span> : null}</TableCell>
+                  <TableCell className="text-sm">
+                    {c.supplierName ?? '—'} {c.supplierInvoiceRef ? <span className="font-mono text-xs">#{c.supplierInvoiceRef}</span> : null}
+                    {c.vendorBill && <span className="ml-1 text-xs text-muted-foreground">({c.vendorBill.documentNumber})</span>}
+                  </TableCell>
                   <TableCell>{TREATMENT_LABEL[c.treatment as Treatment] ?? c.treatment}</TableCell>
                   <TableCell>{c.treatment === 'capitalize' ? METHOD_LABEL[c.allocationMethod as AllocationMethod] : '—'}</TableCell>
                   <TableCell className="text-right">{Number(c.amount).toLocaleString()} {c.currencyCode ?? ''}</TableCell>
                   <TableCell className="text-right">{money(Number(c.baseAmount ?? c.amount))}</TableCell>
                   <TableCell className="text-right">{Number(c.taxAmount) ? money(Number(c.taxAmount) * Number(c.exchangeRate ?? 1)) : '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>{tx('Landed cost per product')}</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{tx('Product')}</TableHead>
+                <TableHead>{tx('Receipt')}</TableHead>
+                <TableHead className="text-right">{tx('Qty')}</TableHead>
+                <TableHead className="text-right">{tx('Goods value')}</TableHead>
+                <TableHead className="text-right">{tx('Additional costs')}</TableHead>
+                <TableHead className="text-right">{tx('Landed value')}</TableHead>
+                <TableHead className="text-right">{tx('Landed unit cost')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {byProduct.map((r, i) => (
+                <TableRow key={i}>
+                  <TableCell>{r.productName}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.receiptNumber ?? ''}</TableCell>
+                  <TableCell className="text-right">{r.qty.toLocaleString()}</TableCell>
+                  <TableCell className="text-right">{r.original ? money(r.original) : '—'}</TableCell>
+                  <TableCell className="text-right">{money(r.allocated)}</TableCell>
+                  <TableCell className="text-right">{r.original ? money(r.original + r.allocated) : '—'}</TableCell>
+                  <TableCell className="text-right">{r.original && r.qty ? money((r.original + r.allocated) / r.qty) : '—'}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

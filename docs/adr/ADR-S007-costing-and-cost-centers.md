@@ -45,6 +45,17 @@ Additive extension; every Nest route keeps its path, verb, permission and behavi
   credit account. The forwarder / customs / insurer vendor bill is booked against the clearing account, so AP stays
   driven by vendor bills (AP tie-out intact) and nothing is expensed twice. A clearing report shows credited vs
   cleared and the open charges.
+- **§2a Multi-supplier payables (V14).** One voucher holds goods from several vendors (several receipts) and charges
+  from several cost suppliers (transport, customs, clearing agent, insurer). Each charge line has a `billMode`:
+  `generate` (default when it names a supplier + invoice number and no credit account) — posting the voucher raises
+  one **posted vendor bill per (supplier, invoice no.)**, lines debiting clearing with charge + tax, crediting that
+  supplier's payable; so clearing nets to zero, every supplier keeps its own invoice, AP balance and payment
+  matching, and no combined "fictitious" bill exists. `link` — the supplier's bill was entered separately against
+  clearing and is referenced (`vendorBillId`; supplier/invoice no. taken from it). `none` — pre-V14 behaviour.
+  Several charges may share one invoice (one bill, same currency/rate). Generated bills skip the bill approval
+  request (the voucher's approval stands in) but need `expense:post`; reversal cancels them (`expense:cancel`) and is
+  refused once one has payments. A charge can be scoped to one goods supplier's lines (`appliesToLineIds`; the editor
+  offers an "only goods from" shortcut).
 - Reversal removes the capitalisation from what is still on hand (per-unit increment × remaining quantity), reverses
   the entry and reclasses the part sold since from stock to COGS so the sub-ledger keeps tying to the GL.
 - Product master gains `weight` and `volume` for the weight / volume bases.

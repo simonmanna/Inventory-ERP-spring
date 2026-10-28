@@ -62,7 +62,10 @@ public class LandedCostVoucherController {
             String creditAccountId,
             String costCenterId,
             List<String> appliesToLineIds,
-            Map<String, BigDecimal> manualAllocations) {}
+            Map<String, BigDecimal> manualAllocations,
+            @OneOf({"generate", "link", "none"}) String billMode,
+            String vendorBillId,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate) {}
 
     /** Create / replace body. */
     public record VoucherRequest(
@@ -86,7 +89,8 @@ public class LandedCostVoucherController {
                 dto.charges().stream().map(c -> new ChargeInput(c.costComponentId(), c.kind(), c.description(),
                         c.supplierId(), c.supplierInvoiceRef(), c.invoiceDate(), c.currencyCode(), c.exchangeRate(),
                         c.amount(), c.taxAmount(), c.treatment(), c.allocationMethod(), c.expenseAccountId(),
-                        c.creditAccountId(), c.costCenterId(), c.appliesToLineIds(), c.manualAllocations())).toList());
+                        c.creditAccountId(), c.costCenterId(), c.appliesToLineIds(), c.manualAllocations(), c.billMode(),
+                        c.vendorBillId(), c.dueDate())).toList());
     }
 
     // ------------------------------------------------------------------ vouchers

@@ -198,8 +198,21 @@ class LandedCostVoucherIT extends ApiTestSupport {
         assertThat(balance(mapped("stock_valuation")).subtract(sv0)).isEqualByComparingTo("38000000");
         String clearingNow = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '2155'")
                 .param(demoOrg).query(String.class).single();
-        assertThat(balance(clearingNow).subtract(cl0)).isEqualByComparingTo("-38000000");
+        // Customs, freight and clearing raised their own supplier bills (clearing debited back); only the
+        // supplier-less insurance line still waits in clearing.
+        assertThat(balance(clearingNow).subtract(cl0)).isEqualByComparingTo("-1000000");
         assertBalanced(posted.get("journalEntryId").asString());
+        String code = posted.get("code").asString();
+        assertThat(payable(customs, code)).isEqualByComparingTo("30000000");
+        assertThat(payable(forwarder, code)).isEqualByComparingTo("7000000");
+        assertThat(billCount(code)).isEqualTo(3);
+        assertThat(posted.get("suppliers")).hasSize(3);
+        posted.get("charges").forEach(c -> {
+            if (c.get("supplierId") != null && !c.get("supplierId").isNull()) {
+                assertThat(c.get("billMode").asString()).isEqualTo("generate");
+                assertThat(c.get("vendorBill").get("status").asString()).isEqualTo("posted");
+            }
+        });
 
         // Gross profit at 2,800,000 uses the landed unit cost.
         assertThat(new BigDecimal("2800000").subtract(avg(laptop))).isEqualByComparingTo("420000");
@@ -226,6 +239,157 @@ class LandedCostVoucherIT extends ApiTestSupport {
         assertThat(rev.body().get("status").asString()).isEqualTo("reversed");
         assertThat(avg(laptop)).isEqualByComparingTo("2000000");
         assertThat(balance(mapped("stock_valuation")).subtract(sv0)).isEqualByComparingTo("0");
+        assertThat(payable(customs, code)).isEqualByComparingTo("0");
+        assertThat(balance(clearingNow).subtract(cl0)).isEqualByComparingTo("0");
+    }
+
+    BigDecimal payable(String partnerId, String voucherCode) {
+        return jdbc.sql("SELECT COALESCE(SUM(\"amountResidual\"), 0) FROM \"Document\" WHERE \"organizationId\" = ?"
+                + " AND \"partnerId\" = ? AND \"documentType\" = 'vendor_bill' AND \"sourceDocument\" = ?"
+                + " AND status = 'posted'").params(demoOrg, partnerId, voucherCode).query(BigDecimal.class).single();
+    }
+
+    long billCount(String voucherCode) {
+        return jdbc.sql("SELECT count(*) FROM \"Document\" WHERE \"organizationId\" = ? AND \"documentType\" ="
+                + " 'vendor_bill' AND \"sourceDocument\" = ? AND status = 'posted'").params(demoOrg, voucherCode)
+                .query(Long.class).single();
+    }
+
+    String clearingAccountId() {
+        String id = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '2155'")
+                .param(demoOrg).query(String.class).optional().orElse(null);
+        if (id != null) {
+            return id;
+        }
+        // First voucher of the run creates 2155; force it through a throwaway draft.
+        String item = product("AVCO", false, null);
+        String grn = receive(List.of(rline(item, 1, 1))).get("id").asString();
+        String draft = voucher(List.of(grn), List.of(charge("kind", "other", "amount", 1))).get("id").asString();
+        approveAndPost(draft);
+        return jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '2155'")
+                .param(demoOrg).query(String.class).single();
+    }
+
+    JsonNode receiveFrom(String partnerId, List<Map<String, Object>> lines) {
+        return ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId", partnerId, "warehouseId",
+                warehouse, "receivedAt", java.time.Instant.now().toString(), "lines", lines));
+    }
+
+    @Test
+    @DisplayName("one shipment, two goods suppliers, four cost suppliers: own bills, linked bill, scoped charge, paid guard")
+    void multiSupplierShipment() {
+        String cementVendor = partner("Cement Vendor");
+        String steelVendor = partner("Steel Vendor");
+        String transport = partner("Transport Ltd");
+        String clearingAgent = partner("Clearing Agent Ltd");
+        String insurer = partner("Insurance Co");
+        String cement = product("AVCO", false, null);
+        String steel = product("AVCO", false, null);
+        String g1 = receiveFrom(cementVendor, List.of(rline(cement, 100, 1_200_000))).get("id").asString();
+        String g2 = receiveFrom(steelVendor, List.of(rline(steel, 100, 800_000))).get("id").asString();
+        String steelLine = jdbc.sql("SELECT id FROM \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ?").param(g2)
+                .query(String.class).single();
+        String clearing = clearingAccountId();
+        BigDecimal cl0 = balance(clearing);
+
+        // Customs assessment entered beforehand as its own bill against clearing: linked, not billed again.
+        String customsRef = "ASM-" + suffix();
+        Map<String, Object> billLine = new LinkedHashMap<>();
+        billLine.put("accountId", clearing);
+        billLine.put("description", "Import duty");
+        billLine.put("quantity", 1);
+        billLine.put("unitPrice", 30_000_000);
+        Res created = call("POST", "/vendor-bills", Map.of("partnerId", customs, "issueDate",
+                java.time.LocalDate.now().toString(), "reference", customsRef, "lines", List.of(billLine)), key());
+        assertThat(created.status()).as(created.raw().body()).isBetween(200, 201);
+        String assessmentId = created.body().get("id").asString();
+        Res postedBill = call("POST", "/vendor-bills/" + assessmentId + "/post", Map.of(), key());
+        assertThat(postedBill.status()).as(postedBill.raw().body()).isBetween(200, 201);
+        BigDecimal cl1 = balance(clearing);
+        assertThat(cl1.subtract(cl0)).isEqualByComparingTo("30000000");
+
+        String tRef = "TR-" + suffix();
+        JsonNode v = voucher(List.of(g1, g2), List.of(
+                charge("costComponentId", component("FREIGHT"), "supplierId", transport, "supplierInvoiceRef", tRef,
+                        "amount", 5_000_000),
+                charge("costComponentId", component("DUTY"), "amount", 30_000_000, "billMode", "link",
+                        "vendorBillId", assessmentId),
+                charge("costComponentId", component("CLEARING"), "supplierId", clearingAgent, "supplierInvoiceRef",
+                        "CA-" + suffix(), "amount", 2_000_000, "dueDate", java.time.LocalDate.now().plusDays(30)
+                                .toString()),
+                charge("costComponentId", component("INSURANCE"), "supplierId", insurer, "supplierInvoiceRef",
+                        "INS-" + suffix(), "amount", 1_000_000, "allocationMethod", "value", "appliesToLineIds",
+                        List.of(steelLine))));
+        String id = v.get("id").asString();
+        assertThat(v.get("charges").get(1).get("supplierId").asString()).isEqualTo(customs);
+        assertThat(v.get("charges").get(1).get("supplierInvoiceRef").asString()).isEqualTo(customsRef);
+
+        JsonNode posted = approveAndPost(id);
+        String code = posted.get("code").asString();
+        assertThat(posted.get("totalAmount").asString()).isEqualTo("38000000");
+        assertThat(posted.get("suppliers")).hasSize(4);
+        // 37M by value 60/40; insurance only on the steel -> cement 22.2M, steel 15.8M.
+        Map<String, BigDecimal> byProduct = new LinkedHashMap<>();
+        posted.get("allocations").forEach(a -> byProduct.merge(a.get("productId").asString(),
+                new BigDecimal(a.get("allocatedAmount").asString()), BigDecimal::add));
+        assertThat(byProduct.get(cement)).isEqualByComparingTo("22200000");
+        assertThat(byProduct.get(steel)).isEqualByComparingTo("15800000");
+        assertThat(avg(steel)).isEqualByComparingTo("958000");
+
+        // Each cost supplier holds its own payable; the linked customs bill is untouched; clearing nets to zero.
+        assertThat(payable(transport, code)).isEqualByComparingTo("5000000");
+        assertThat(payable(clearingAgent, code)).isEqualByComparingTo("2000000");
+        assertThat(payable(insurer, code)).isEqualByComparingTo("1000000");
+        assertThat(billCount(code)).isEqualTo(3);
+        assertThat(jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?").param(assessmentId)
+                .query(BigDecimal.class).single()).isEqualByComparingTo("30000000");
+        assertThat(balance(clearing).subtract(cl0)).isEqualByComparingTo("0");
+        assertBalanced(posted.get("journalEntryId").asString());
+
+        // A paid supplier bill blocks the reversal.
+        String transportBill = jdbc.sql("SELECT \"vendorBillId\" FROM \"LandedCostCharge\" WHERE \"landedCostId\" = ?"
+                + " AND \"supplierId\" = ?").params(id, transport).query(String.class).single();
+        jdbc.sql("UPDATE \"Document\" SET \"amountPaid\" = 100 WHERE id = ?").param(transportBill).update();
+        Res blocked = call("POST", "/procurement/landed-cost-vouchers/" + id + "/reverse", null, key());
+        assertThat(blocked.status()).isEqualTo(400);
+        assertThat(blocked.body().get("message").asString()).contains("has payments");
+        jdbc.sql("UPDATE \"Document\" SET \"amountPaid\" = 0 WHERE id = ?").param(transportBill).update();
+        Res rev = call("POST", "/procurement/landed-cost-vouchers/" + id + "/reverse", null, key());
+        assertThat(rev.status()).as(rev.raw().body()).isEqualTo(200);
+        assertThat(billCount(code)).isZero();
+        assertThat(balance(clearing).subtract(cl0)).isEqualByComparingTo("30000000");
+    }
+
+    @Test
+    @DisplayName("supplier-bill validation: generate needs an invoice no.; one invoice = one currency, one bill")
+    void supplierBillValidation() {
+        String item = product("AVCO", false, null);
+        String grn = receive(List.of(rline(item, 10, 100))).get("id").asString();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("goodsReceiptIds", List.of(grn));
+        body.put("charges", List.of(charge("kind", "freight", "amount", 10, "supplierId", forwarder, "billMode",
+                "generate")));
+        Res noRef = call("POST", "/procurement/landed-cost-vouchers", body, key());
+        assertThat(noRef.status()).isEqualTo(400);
+        assertThat(noRef.body().get("message").asString()).contains("needs a supplier and the supplier invoice number");
+
+        String ref = "MIX-" + suffix();
+        body.put("charges", List.of(
+                charge("kind", "freight", "amount", 10, "supplierId", forwarder, "supplierInvoiceRef", ref),
+                charge("kind", "handling", "amount", 10, "supplierId", forwarder, "supplierInvoiceRef", ref,
+                        "currencyCode", "EUR", "exchangeRate", 4000)));
+        Res mixed = call("POST", "/procurement/landed-cost-vouchers", body, key());
+        assertThat(mixed.status()).isEqualTo(400);
+        assertThat(mixed.body().get("message").asString()).contains("must share one currency");
+
+        // Two charges on one supplier invoice become one bill.
+        String id = voucher(List.of(grn), List.of(
+                charge("kind", "freight", "amount", 10, "supplierId", forwarder, "supplierInvoiceRef", ref),
+                charge("kind", "handling", "amount", 5, "supplierId", forwarder, "supplierInvoiceRef", ref)))
+                .get("id").asString();
+        String code = approveAndPost(id).get("code").asString();
+        assertThat(billCount(code)).isEqualTo(1);
+        assertThat(payable(forwarder, code)).isEqualByComparingTo("15");
     }
 
     @Test
