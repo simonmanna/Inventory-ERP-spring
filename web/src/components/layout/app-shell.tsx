@@ -796,7 +796,7 @@ export function AppShell() {
           {!collapsed && (
             <div className="ml-1 flex flex-1 flex-col leading-none">
               <span style={{ color: '#fff', fontWeight: 700, fontSize: 16, letterSpacing: '-0.3px' }}>
-                {org?.name ?? tx('Cafe POS')}
+                {org?.name ?? tx('ERP')}
               </span>
               <span
                 style={{

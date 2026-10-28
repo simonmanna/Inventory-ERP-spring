@@ -220,7 +220,7 @@ export function LoginPage() {
                       <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-md border border-white/25">
                         <Coffee className="h-6 w-6 text-sky-300" />
                       </div>
-                      <div className="text-xl font-extrabold tracking-tight">{tx('Cafe POS')}</div>
+                      <div className="text-xl font-extrabold tracking-tight">{tx('ERP')}</div>
                       <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-emerald-400/15 border border-emerald-300/30 px-3 py-1 text-xs font-bold text-emerald-300">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> {tx('Live')}
                       </span>
@@ -258,7 +258,7 @@ export function LoginPage() {
                           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 border border-white/20 text-sky-300">
                             <Coffee className="h-4 w-4" />
                           </div>
-                          <div className="font-extrabold text-base text-gradient">{tx('Cafe POS')}</div>
+                          <div className="font-extrabold text-base text-gradient">{tx('ERP')}</div>
                         </div>
 
                         <div className="mb-8">
