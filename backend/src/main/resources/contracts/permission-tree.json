@@ -505,7 +505,18 @@
     "dealRead": "crm:deal:read",
     "dealWrite": "crm:deal:write",
     "activityRead": "crm:activity:read",
-    "activityWrite": "crm:activity:write"
+    "activityWrite": "crm:activity:write",
+    "dealViewAll": "crm:deal:view_all",
+    "leadRead": "crm:lead:read",
+    "leadWrite": "crm:lead:write",
+    "quotationRead": "crm:quotation:read",
+    "quotationWrite": "crm:quotation:write",
+    "quotationApprove": "crm:quotation:approve",
+    "quotationConvert": "crm:quotation:convert",
+    "pricingRead": "crm:pricing:read",
+    "pricingManage": "crm:pricing:manage",
+    "reportRead": "crm:report:read",
+    "configure": "crm:configure"
   },
   "document": {
     "create": "document:create",

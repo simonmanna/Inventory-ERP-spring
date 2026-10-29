@@ -563,6 +563,19 @@ export const PERMISSIONS = {
     dealWrite: 'crm:deal:write',
     activityRead: 'crm:activity:read',
     activityWrite: 'crm:activity:write',
+    // CRM sales suite (ADR-S010)
+    /// See every salesperson's leads / opportunities (without it: own + unassigned only).
+    dealViewAll: 'crm:deal:view_all',
+    leadRead: 'crm:lead:read',
+    leadWrite: 'crm:lead:write',
+    quotationRead: 'crm:quotation:read',
+    quotationWrite: 'crm:quotation:write',
+    quotationApprove: 'crm:quotation:approve',
+    quotationConvert: 'crm:quotation:convert',
+    pricingRead: 'crm:pricing:read',
+    pricingManage: 'crm:pricing:manage',
+    reportRead: 'crm:report:read',
+    configure: 'crm:configure',
   },
   document: {
     create: 'document:create',
