@@ -30,9 +30,7 @@ import { RecurringPage } from '@/pages/recurring';
 import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
 import { ModulesPage } from '@/pages/modules';
-import { CrmDashboardPage } from '@/pages/crm/dashboard';
-import { DealsPage } from '@/pages/crm/deals';
-import { DealDetailPage } from '@/pages/crm/deal-detail';
+import { crmRoutes } from '@/pages/crm/routes';
 import { BackupPage } from '@/pages/settings/BackupPage';
 import { AssetDashboardPage } from '@/pages/fixed-asset/AssetDashboardPage';
 import { AssetCategoriesPage } from '@/pages/fixed-asset/AssetCategoriesPage';
@@ -456,10 +454,8 @@ export function App() {
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/new" element={<TaskEditPage />} />
           <Route path="/tasks/:id/edit" element={<TaskEditPage />} />
-          {/* CRM — static segments before /crm/deals/:id */}
-          <Route path="/crm" element={<CrmDashboardPage />} />
-          <Route path="/crm/deals" element={<DealsPage />} />
-          <Route path="/crm/deals/:id" element={<DealDetailPage />} />
+          {/* CRM sales suite (ADR-S010) — pages/crm/routes.tsx; /crm/deals links redirect */}
+          {crmRoutes}
 
                   </Route>
                 </Route>

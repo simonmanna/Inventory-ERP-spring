@@ -79,6 +79,9 @@ import {
   FileInput,
   ReceiptText,
   Network,
+  Inbox,
+  CalendarCheck,
+  Tags,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -373,8 +376,15 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'CRM',
     icon: Users,
     items: [
-      { to: '/crm', label: tx('CRM Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.crm.dashboardRead },
-      { to: '/crm/deals', label: tx('Deals'), icon: Handshake, permission: PERMISSIONS.crm.dealRead },
+      { to: '/crm', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.crm.dashboardRead },
+      { to: '/crm/pipeline', label: tx('Pipeline'), icon: Handshake, permission: PERMISSIONS.crm.dealRead },
+      { to: '/crm/leads', label: tx('Leads'), icon: Inbox, permission: PERMISSIONS.crm.leadRead },
+      { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
+      { to: '/crm/activities', label: tx('Activities'), icon: CalendarCheck, permission: PERMISSIONS.crm.activityRead },
+      { to: '/crm/customers', label: tx('Customers'), icon: Users2, permission: PERMISSIONS.crm.dealRead },
+      { to: '/crm/pricing', label: tx('Price Rules'), icon: Tags, permission: PERMISSIONS.crm.pricingRead },
+      { to: '/crm/reports', label: tx('Reports'), icon: BarChart3, permission: PERMISSIONS.crm.reportRead },
+      { to: '/crm/settings', label: tx('Configuration'), icon: SettingsIcon, permission: PERMISSIONS.crm.configure },
     ],
   },
   {
