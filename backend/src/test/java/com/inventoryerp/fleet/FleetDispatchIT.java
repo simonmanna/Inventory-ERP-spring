@@ -267,6 +267,9 @@ class FleetDispatchIT extends ApiTestSupport {
         assertThat(msg(dup)).startsWith("Sales order ").contains("already has delivery order " + doc.get("code")
                 .asString());
         assertThat(ok(200, "GET", "/fleet/dispatch/sources?type=sales_order", null).toString()).doesNotContain(order);
+        // The DO holds its own copy of the lines: close the confirmed order so POS shift-close suites (shared DEMO
+        // organization) do not see an open order.
+        ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "Delivered through fleet dispatch"));
 
         String truck = vehicle(tipper, 20, 14);
         String small = vehicle(tipper, 10, 8);
