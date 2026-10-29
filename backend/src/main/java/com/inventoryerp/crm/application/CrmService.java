@@ -155,6 +155,7 @@ public class CrmService {
                                 ? SqlRows.ts(EntityPatch.toInstant(input.expectedClose())) : null,
                         input.notes())
                 .update();
+        syncSuiteStage(id, input.stage() != null ? input.stage() : "lead");
         Map<String, Object> deal = dealRow(id);
         audit.record(AuditInput.of("Deal", id, "create", null, Obj.of("name", deal.get("name"), "stage", deal.get("stage"),
                 "amount", JsNumbers.js(new BigDecimal(deal.get("amount").toString())))));
@@ -191,6 +192,9 @@ public class CrmService {
         params.addAll(List.of(id, org()));
         jdbc.sql("UPDATE \"Deal\" SET " + String.join(", ", sets) + " WHERE id = ? AND \"organizationId\" = ? AND"
                 + " \"deletedAt\" IS NULL").params(params).update();
+        if (input.containsKey("stage") && input.get("stage") != null) {
+            syncSuiteStage(id, input.get("stage").toString());
+        }
         audit.record(AuditInput.of("Deal", id, "update", null, input));
         return dealRow(id);
     }
@@ -204,6 +208,7 @@ public class CrmService {
         }
         jdbc.sql("UPDATE \"Deal\" SET stage = ?::\"DealStage\", \"updatedAt\" = " + NOW + " WHERE id = ? AND"
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(stage, id, org()).update();
+        syncSuiteStage(id, stage);
         Map<String, Object> updated = dealRow(id);
         if ("won".equals(stage)) {
             jdbc.sql("UPDATE \"Partner\" SET \"isCustomer\" = true, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
@@ -452,6 +457,19 @@ public class CrmService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /**
+     * Keep the sales-suite columns (ADR-S010) in step with a legacy stage write: outcome status and the first
+     * configured stage mapped to that legacy stage. Never changes the legacy JSON of these routes.
+     */
+    private void syncSuiteStage(String id, String stage) {
+        jdbc.sql("UPDATE \"Deal\" SET status = CASE ? WHEN 'won' THEN 'won' WHEN 'lost' THEN 'lost' ELSE 'open' END,"
+                + " \"wonAt\" = CASE WHEN ? = 'won' THEN COALESCE(\"wonAt\", " + NOW + ") END, \"lostAt\" = CASE WHEN"
+                + " ? = 'lost' THEN COALESCE(\"lostAt\", " + NOW + ") END, \"stageId\" = COALESCE((SELECT s.id FROM"
+                + " \"CrmStage\" s WHERE s.\"organizationId\" = \"Deal\".\"organizationId\" AND s.\"isActive\" AND"
+                + " s.\"legacyStage\"::text = ? ORDER BY s.sequence LIMIT 1), \"stageId\"), \"stageChangedAt\" = " + NOW
+                + " WHERE id = ? AND \"organizationId\" = ?").params(stage, stage, stage, stage, id, org()).update();
+    }
 
     private Map<String, Object> requireDeal(String id) {
         Map<String, Object> deal = SqlRows.one(Deal.class, jdbc.sql("SELECT * FROM \"Deal\" WHERE id = ? AND"

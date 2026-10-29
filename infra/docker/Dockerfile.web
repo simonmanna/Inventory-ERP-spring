@@ -31,6 +31,8 @@ RUN pnpm --filter @erp/shared build
 RUN pnpm --filter @erp/web build
 
 FROM nginx:1.27-alpine AS runtime
+# Security fixes released after the base image.
+RUN apk upgrade --no-cache
 COPY --from=build /app/web/dist /usr/share/nginx/html
 COPY infra/docker/nginx.conf /etc/nginx/conf.d/default.conf
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

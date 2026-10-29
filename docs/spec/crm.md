@@ -55,7 +55,9 @@ consumes `invoice.created`.
 
 ## Deviations
 
-_None._
+- **Sales suite (ADR-S010, pending owner approval)** — additive: `Deal` gains suite columns (`kind`, `stageId`,
+  `status`, …; `partnerId` nullable for leads) that the parity JSON does not expose; legacy stage writes keep
+  `status` / `stageId` in sync. No parity route, verb, status code or response field changed.
 
 Same as Nest, kept on purpose:
 
@@ -73,3 +75,13 @@ Tests: `CrmIT` (ports `crm.service.spec.ts`: create / validation / audit + outbo
 customer + delete guard, soft delete / restore / archived lists, `{data, meta}` paging, activities lifecycle,
 invoice link replay, analytics, tenant isolation, authorization matrix = 21 routes). Parity scenario:
 `contract-tests/scenarios/crm-pipeline.json`.
+
+## Sales suite (ADR-S010)
+
+67 routes under `/crm/config`, `/crm/saved-filters`, `/crm/opportunities`, `/crm/leads`, `/crm/planner`,
+`/crm/pricing`, `/crm/quotations`, `/crm/reports`, `/crm/dashboard`, `/crm/customers`
+(`crm/web/CrmSuiteController.java`). Design and rules: [ADR-S010](../adr/ADR-S010-crm-sales-suite.md).
+Tests: `CrmSuiteIT` (stages config, lead conversion, kanban / grouped / list, won / lost / reopen + legacy sync,
+planned activities + reminders, price rules, quotation approval / credit / conversion to Order and proforma, reports,
+visibility, tenant isolation). Web: `web/src/pages/crm/*` (pipeline kanban, opportunity form, leads, quotations,
+activities, customers, price rules, reports, configuration).

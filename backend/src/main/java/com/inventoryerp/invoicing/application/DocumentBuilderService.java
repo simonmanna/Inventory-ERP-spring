@@ -239,6 +239,10 @@ public class DocumentBuilderService {
                 key = "vendorbill:" + year;
                 prefix = "BILL-" + year + "-";
             }
+            case "proforma_invoice" -> {
+                key = "proforma:" + year;
+                prefix = "PRO-" + year + "-";
+            }
             default -> {
                 key = "invoice:" + year;
                 prefix = "INV-" + year + "-";
