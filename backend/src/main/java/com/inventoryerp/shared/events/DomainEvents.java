@@ -145,4 +145,7 @@ public final class DomainEvents {
     public static final String FLEET_VEHICLE_CREATED = "fleet.vehicle.created";
     public static final String FLEET_VEHICLE_STATUS_CHANGED = "fleet.vehicle.status_changed";
     public static final String FLEET_METER_CORRECTED = "fleet.meter.corrected";
+    public static final String FLEET_WORK_ORDER_CREATED = "fleet.workorder.created";
+    public static final String FLEET_WORK_ORDER_COMPLETED = "fleet.workorder.completed";
+    public static final String FLEET_DEFECT_REPORTED = "fleet.defect.reported";
 }
