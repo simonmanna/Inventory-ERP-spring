@@ -444,9 +444,9 @@ class PosSaleIT extends ApiTestSupport {
     @Order(10)
     @DisplayName("sales reports read the POS invoices of the range")
     void reports() {
-        // POS sales carry the trading date (the day starts at 06:00 local; DEMO is UTC), not the calendar date.
+        // POS sales carry the trading date (the day starts at 06:00 in the org timezone), not the calendar date.
         String today = com.inventoryerp.accounting.application.OrgDates.tradingDate(java.time.Instant.now(),
-                java.time.ZoneOffset.UTC).atOffset(java.time.ZoneOffset.UTC).toLocalDate().toString();
+                com.inventoryerp.accounting.application.OrgDates.orgTimezone(jdbc, demoOrg)).atOffset(java.time.ZoneOffset.UTC).toLocalDate().toString();
         String range = "?fromDate=" + today + "&toDate=" + today;
         JsonNode summary = ok(200, "GET", "/pos/reports/sales-summary" + range + "&groupBy=day", null);
         assertThat(summary.get("totals").get("orders").asInt()).isGreaterThanOrEqualTo(4);
