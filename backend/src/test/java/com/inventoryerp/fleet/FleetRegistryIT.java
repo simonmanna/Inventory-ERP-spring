@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.fleet.application.FleetComplianceService;
+import com.inventoryerp.fleet.web.FleetCategoryController;
+import com.inventoryerp.fleet.web.FleetComplianceController;
+import com.inventoryerp.fleet.web.FleetMeterController;
+import com.inventoryerp.fleet.web.FleetVehicleController;
 import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.events.OutboxWorker;
 import java.io.ByteArrayOutputStream;
@@ -703,7 +707,9 @@ class FleetRegistryIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without a token and 403 without the permission on every fleet route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet")).isEqualTo(32);
+        // The 1.1 controllers only (later sub-modules count their own routes).
+        assertThat(assertAuthorizationMatrix(FleetVehicleController.class, FleetCategoryController.class,
+                FleetMeterController.class, FleetComplianceController.class)).isEqualTo(32);
         // A read-only fleet user can look but not change.
         Res denied = call("POST", "/fleet/vehicles/" + tipper(Map.of()).get("id").asString() + "/meter-readings",
                 Map.of("meterType", "odometer", "value", 5000), approverToken);

@@ -189,6 +189,10 @@ export const EVENTS = {
   FleetVehicleCreated: 'fleet.vehicle.created',
   FleetVehicleStatusChanged: 'fleet.vehicle.status_changed',
   FleetMeterCorrected: 'fleet.meter.corrected',
+  // Fleet 1.2 — drivers & operators: vehicle check-out / check-in and settled driver allowance claims.
+  FleetVehicleCheckedOut: 'fleet.vehicle.checked_out',
+  FleetVehicleCheckedIn: 'fleet.vehicle.checked_in',
+  FleetClaimSettled: 'fleet.claim.settled',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -435,6 +439,9 @@ export interface DomainEventMap {
   'fleet.vehicle.created': { organizationId: string; vehicleId: string; code: string; categoryId: string };
   'fleet.vehicle.status_changed': FleetVehicleStatusChangedPayload;
   'fleet.meter.corrected': FleetMeterCorrectedPayload;
+  'fleet.vehicle.checked_out': FleetCheckoutEventPayload;
+  'fleet.vehicle.checked_in': FleetCheckoutEventPayload;
+  'fleet.claim.settled': FleetClaimSettledPayload;
 }
 
 /** A vehicle moved between active / in_workshop / breakdown / idle / disposed. */
@@ -458,6 +465,31 @@ export interface FleetMeterCorrectedPayload {
   kind: 'adjust' | 'replace';
   previousValue: string | null;
   correctedValue: string;
+}
+
+/** A driver checked a vehicle out (or back in: then with the distance / hours used since check-out). */
+export interface FleetCheckoutEventPayload {
+  organizationId: string;
+  checkoutId: string;
+  vehicleId: string;
+  driverId: string;
+  checkedOutAt?: string;
+  checkedInAt?: string;
+  distanceKm?: string | null;
+  hoursUsed?: string | null;
+}
+
+/** A driver allowance / trip-expense claim was paid through expenses or exported to payroll. */
+export interface FleetClaimSettledPayload {
+  organizationId: string;
+  claimId: string;
+  code: string;
+  driverId: string;
+  vehicleId: string | null;
+  settlement: 'expenses' | 'payroll';
+  amount: string;
+  currencyCode: string;
+  journalEntryId: string | null;
 }
 
 /** A message was created (outbound) or received (inbound). */

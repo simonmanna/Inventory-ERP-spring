@@ -264,12 +264,22 @@ public abstract class ApiTestSupport {
      * the Nest message without its permission. Returns the number of checked routes.
      */
     protected int assertAuthorizationMatrix(String packagePrefix) {
+        return assertAuthorizationMatrix(type -> type.getPackageName().startsWith(packagePrefix));
+    }
+
+    /** Same as {@link #assertAuthorizationMatrix(String)} for exactly these controller classes. */
+    protected int assertAuthorizationMatrix(Class<?>... controllers) {
+        Set<Class<?>> only = Set.of(controllers);
+        return assertAuthorizationMatrix(only::contains);
+    }
+
+    private int assertAuthorizationMatrix(java.util.function.Predicate<Class<?>> controllerFilter) {
         String weak = weakToken();
         List<String> failures = new ArrayList<>();
         int checked = 0;
         for (var entry : mappings.getHandlerMethods().entrySet()) {
             HandlerMethod hm = entry.getValue();
-            if (!hm.getBeanType().getPackageName().startsWith(packagePrefix)) {
+            if (!controllerFilter.test(hm.getBeanType())) {
                 continue;
             }
             boolean isPublic = AnnotatedElementUtils.hasAnnotation(hm.getMethod(), Public.class)
