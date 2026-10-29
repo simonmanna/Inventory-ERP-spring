@@ -94,6 +94,17 @@ class RentalLifecycleIT extends ApiTestSupport {
         return h;
     }
 
+    /** The money routes require an {@code Idempotency-Key} (see docs/spec/rental.md, Deviations). */
+    private static final java.util.regex.Pattern MONEY_ROUTE = java.util.regex.Pattern.compile(
+            "/rental/(agreements/[^/]+/(checkout|deposit/(collect|refund|forfeit))|extensions|swaps|returns/[^/]+/settle)");
+
+    /** Admin call; money routes get a fresh {@code Idempotency-Key} so the business guards are what answers. */
+    @Override
+    protected Res as(String method, String path, Object body) {
+        return "POST".equals(method) && MONEY_ROUTE.matcher(path).matches() ? call(method, path, body, key())
+                : super.as(method, path, body);
+    }
+
     JsonNode post(String path, Object body) {
         Res r = call("POST", path, body, key());
         assertThat(r.status()).as("POST " + path + " → " + r.raw().body()).isIn(200, 201);
