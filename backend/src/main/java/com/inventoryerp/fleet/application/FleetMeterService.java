@@ -118,6 +118,29 @@ public class FleetMeterService {
                 sourceId, notes);
     }
 
+    /**
+     * Why the meter rule would refuse a reading of {@code value} at {@code at} (null = it would be accepted). Never
+     * throws for a rule violation, so a caller can record the reading or keep its document and flag it instead (fuel
+     * logs: anomaly {@code meter_not_increasing}). Same checks as {@link #recordAutomated}.
+     */
+    public String readingRejection(String vehicleId, String meterType, BigDecimal value, Instant at) {
+        Map<String, Object> v = vehicle(vehicleId, false);
+        try {
+            if (VehicleStatusPolicy.DISPOSED.equals(v.get("status"))) {
+                return "Vehicle " + v.get("code") + " is disposed; no further meter readings";
+            }
+            assertTracks(v, meterType);
+            MeterReadingPolicy.assertNotFuture(at, Instant.now());
+            MeterReadingPolicy.assertAfterReplacement(meterType, at, replacedAt(vehicleId, meterType));
+            BigDecimal lifetime = value.add(SqlRows.dec(v, offsetColumn(meterType)));
+            MeterReadingPolicy.assertMonotonic(meterType, value, lifetime, previous(vehicleId, meterType, at, null),
+                    next(vehicleId, meterType, at, null));
+            return null;
+        } catch (ApiException e) {
+            return e.getMessage();
+        }
+    }
+
     /** Opening reading of a vehicle being registered (same transaction as the vehicle insert). */
     public void recordOpening(String vehicleId, String meterType, BigDecimal value, Instant at) {
         insertReading(vehicleId, meterType, value, at, "opening", null, "Opening reading");

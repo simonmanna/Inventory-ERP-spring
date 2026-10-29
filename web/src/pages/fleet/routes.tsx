@@ -25,6 +25,7 @@ import { ChecklistTemplatesPage } from './maintenance/ChecklistTemplatesPage';
 import { InspectionsPage, InspectionDetailPage } from './maintenance/InspectionsPage';
 import { InspectionEntryPage } from './maintenance/InspectionEntryPage';
 import { DefectsPage } from './maintenance/DefectsPage';
+import { fuelRoutes } from './fuel/fuel-routes';
 
 /**
  * Route skeleton of the Fleet section (ADR-S009). Each sub-module adds its screens here, static segments before the
@@ -63,5 +64,6 @@ export const fleetRoutes = (
     <Route path="/fleet/inspections/new" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.inspect}><InspectionEntryPage /></RequirePermission>} />
     <Route path="/fleet/inspections/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><InspectionDetailPage /></RequirePermission>} />
     <Route path="/fleet/defects" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><DefectsPage /></RequirePermission>} />
+    {fuelRoutes}
   </>
 );

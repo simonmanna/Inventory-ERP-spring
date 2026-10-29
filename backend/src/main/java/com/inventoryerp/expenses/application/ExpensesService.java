@@ -30,6 +30,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -57,6 +58,14 @@ public class ExpensesService {
     /** {@code PayExpenseDto}. */
     public record PayInput(String paymentMethod, String accountId, String reference, String paymentNotes) {}
 
+    /**
+     * Tags of the expense-side line of an expense's payment postings (additive, for expenses raised by other modules,
+     * e.g. fleet fuel): cost centre, branch, analytic dimensions and an optional expense account overriding the
+     * category / default resolution. {@code null} tags = the line posts exactly as before.
+     */
+    public record PostingTags(String costCenterId, String branchId, Map<String, Object> dimensions,
+            String expenseAccountId) {}
+
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 
     private final JdbcClient jdbc;
@@ -66,9 +75,12 @@ public class ExpensesService {
     private final ApprovalsService approvals;
     private final PostingService posting;
     private final TransactionTemplate newTx;
+    private final ObjectProvider<ExpensePostingTagger> taggers;
 
     public ExpensesService(JdbcClient jdbc, EventBus events, SequenceService sequence, AuditService audit,
-            ApprovalsService approvals, PostingService posting, PlatformTransactionManager txm) {
+            ApprovalsService approvals, PostingService posting, PlatformTransactionManager txm,
+            ObjectProvider<ExpensePostingTagger> taggers) {
+        this.taggers = taggers;
         this.jdbc = jdbc;
         this.events = events;
         this.sequence = sequence;
@@ -344,6 +356,15 @@ public class ExpensesService {
     /** Create an expense; CASH pays immediately, CREDIT goes through the approval engine. */
     @Transactional
     public Map<String, Object> create(CreateInput dto) {
+        return create(dto, null);
+    }
+
+    /**
+     * {@link #create(CreateInput)} whose immediate (CASH) payment posting carries {@code tags} on the expense line;
+     * later payments of a CREDIT expense take their tags from the {@link ExpensePostingTagger}s.
+     */
+    @Transactional
+    public Map<String, Object> create(CreateInput dto, PostingTags tags) {
         String actorId = requireActor();
         boolean isCash = "CASH".equals(dto.paymentType());
         if (isCash && (dto.paymentMethod() == null || dto.paymentMethod().isEmpty() || dto.accountId() == null
@@ -365,7 +386,7 @@ public class ExpensesService {
                         + " expense instead");
             }
             recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null,
-                    category, null);
+                    category, tags);
         }
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", code));
         BusinessOutcome.record(jdbc, Obj.of("id", id, "expenseCode", code), isCash);
@@ -430,7 +451,7 @@ public class ExpensesService {
         String[] created = insertExpense(dto, actorId, true, approvedById == null ? actorId : approvedById, null);
         String id = created[0];
         recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null, null,
-                posting);
+                new PostingTags(posting.costCenterId(), null, posting.dimensions(), posting.expenseAccountId()));
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", created[1]));
         publish("expense.paid", Obj.of("expenseId", id));
         return loadDecorated(id);
@@ -660,13 +681,15 @@ public class ExpensesService {
     // ------------------------------------------------------------------ internals
 
     private void recordPayment(Map<String, Object> expense, String paidBy, String paymentMethod, String accountId,
-            String reference, String paymentNotes, Map<String, Object> category, SourcePosting source) {
+            String reference, String paymentNotes, Map<String, Object> category, PostingTags explicitTags) {
         BigDecimal residual = Money.dec(expense.get("amount")).subtract(Money.dec(expense.get("amountPaid")));
         if (residual.signum() <= 0) {
             throw ApiException.badRequest("Nothing left to pay");
         }
         String org = org();
-        String debit = source != null ? source.expenseAccountId() : resolveExpenseAccountId(category);
+        PostingTags tags = explicitTags != null ? explicitTags : tagsFor((String) expense.get("id"));
+        String debit = tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
+                : resolveExpenseAccountId(category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
                     + " before paying expenses");
@@ -685,8 +708,9 @@ public class ExpensesService {
         String value = JsNumbers.dec(residual);
         Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
                 "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, List.of(source == null ? Line.debit(debit, value, title)
-                        : new Line(debit, value, null, null, title, null, source.costCenterId(), source.dimensions()),
+                "expense_payment:" + paymentId, List.of(tags == null ? Line.debit(debit, value, title)
+                        : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(),
+                                tags.dimensions()),
                         Line.credit((String) credit.get("id"), value, "Paid: " + title))));
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"paymentNotes\", \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?,"
@@ -704,6 +728,17 @@ public class ExpensesService {
         Map<String, Object> values = Obj.of("paymentId", paymentId, "amount", value, "method", paymentMethod, "reason",
                 paymentNotes, "journalEntryId", entry.get("id"));
         audit.recordInTx(AuditInput.of("ExpensePayment", (String) expense.get("id"), "post", null, values));
+    }
+
+    /** The first tagger claiming the expense, or null (no tagger registered / none owns it). */
+    private PostingTags tagsFor(String expenseId) {
+        for (ExpensePostingTagger t : taggers) {
+            PostingTags tags = t.tagsFor(expenseId);
+            if (tags != null) {
+                return tags;
+            }
+        }
+        return null;
     }
 
     private String resolveExpenseAccountId(Map<String, Object> category) {
