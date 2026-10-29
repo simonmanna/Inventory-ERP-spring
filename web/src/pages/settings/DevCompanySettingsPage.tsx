@@ -157,146 +157,144 @@ export function DevCompanySettingsPage() {
         </Button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Company Profile */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <CardTitle>{tx('Company Profile')}</CardTitle>
-                <CardDescription>{tx('Basic company identity used across the system.')}</CardDescription>
-              </div>
+      {/* Company Profile — full width, sections laid out horizontally */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <CardTitle>{tx('Company Profile')}</CardTitle>
+              <CardDescription>{tx('Basic company identity used across the system.')}</CardDescription>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {q.isLoading ? (
-              <Skeleton className="h-32 w-full" />
-            ) : (
-              <>
-                {/* Company Logo */}
-                <div>
-                  <label className="text-sm font-medium">{tx('Company Logo')}</label>
-                  <div className="mt-2 flex items-center gap-4">
-                    {logoUrl ? (
-                      <div className="relative h-20 w-20 overflow-hidden rounded-lg border bg-muted">
-                        <img
-                          src={logoUrl}
-                          alt={tx('Company logo')}
-                          className="h-full w-full object-contain"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed bg-muted/30">
-                        <Building2 className="h-8 w-8 text-muted-foreground/50" />
-                      </div>
-                    )}
-                    <div className="flex flex-col gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                      >
-                        {uploading ? (
-                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                        ) : (
-                          <Upload className="mr-2 h-3 w-3" />
-                        )}
-                        {logoUrl ? tx('Replace') : tx('Upload')}
-                      </Button>
-                      {logoUrl && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setLogoUrl(null)}
-                        >
-                          {tx('Remove')}
-                        </Button>
-                      )}
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleFileUpload}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {q.isLoading ? (
+            <Skeleton className="h-32 w-full" />
+          ) : (
+            <div className="grid gap-6 md:grid-cols-3 md:divide-x">
+              {/* Company Logo */}
+              <div className="min-w-0">
+                <label className="text-sm font-medium">{tx('Company Logo')}</label>
+                <div className="mt-2 flex items-center gap-4">
+                  {logoUrl ? (
+                    <div className="relative h-20 w-20 overflow-hidden rounded-lg border bg-muted">
+                      <img
+                        src={logoUrl}
+                        alt={tx('Company logo')}
+                        className="h-full w-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
                       />
                     </div>
-                  </div>
-                  {logoUrl && (
-                    <p className="mt-1.5 text-xs text-muted-foreground truncate max-w-xs">
-                      {logoUrl}
-                    </p>
-                  )}
-                </div>
-
-                <hr className="border-t" />
-
-                {/* Company Name */}
-                <div>
-                  <label className="text-sm font-medium">{tx('Company Name')}</label>
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="mt-1"
-                    placeholder={tx('Your company name')}
-                  />
-                </div>
-
-                {/* POS Mode */}
-                <hr className="border-t" />
-                <div>
-                  <label className="text-sm font-medium">{tx('POS Mode')}</label>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    {tx('Choose between Cafe/Restaurant or Retail mode. This affects the POS terminal layout and available features.')}
-                  </p>
-                  {posLoading ? (
-                    <Skeleton className="h-10 w-64" />
                   ) : (
-                    <div className="space-y-3">
-                      <Select value={posMode} onValueChange={setPosMode}>
-                        <SelectTrigger className="w-64">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {POS_MODES.map((m) => (
-                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {POS_MODES.find((m) => m.value === posMode) && (
-                        <p className="text-sm text-muted-foreground">{POS_MODES.find((m) => m.value === posMode)!.desc}</p>
-                      )}
-                      <label className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="rounded"
-                          checked={sharedDrawer}
-                          onChange={(e) => setSharedDrawer(e.target.checked)}
-                        />
-                        {tx('Allow other cashiers on the register (shared drawer)')}
-                      </label>
-                      <Button onClick={async () => {
-                        try {
-                          await updatePos.mutateAsync({ posMode, sharedDrawer });
-                          notify.success(tx('POS settings saved'));
-                        } catch {
-                          notify.error(tx('Failed to save POS settings'));
-                        }
-                      }} disabled={updatePos.isPending} size="sm">
-                        {updatePos.isPending ? tx('Saving...') : tx('Save POS Mode')}
-                      </Button>
+                    <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed bg-muted/30">
+                      <Building2 className="h-8 w-8 text-muted-foreground/50" />
                     </div>
                   )}
+                  <div className="flex flex-col gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                    >
+                      {uploading ? (
+                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 h-3 w-3" />
+                      )}
+                      {logoUrl ? tx('Replace') : tx('Upload')}
+                    </Button>
+                    {logoUrl && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setLogoUrl(null)}
+                      >
+                        {tx('Remove')}
+                      </Button>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleFileUpload}
+                    />
+                  </div>
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+                {logoUrl && (
+                  <p className="mt-1.5 text-xs text-muted-foreground truncate max-w-xs">
+                    {logoUrl}
+                  </p>
+                )}
+              </div>
 
+              {/* Company Name */}
+              <div className="min-w-0 md:pl-6">
+                <label className="text-sm font-medium">{tx('Company Name')}</label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="mt-1"
+                  placeholder={tx('Your company name')}
+                />
+              </div>
+
+              {/* POS Mode */}
+              <div className="min-w-0 md:pl-6">
+                <label className="text-sm font-medium">{tx('POS Mode')}</label>
+                <p className="text-xs text-muted-foreground mb-3">
+                  {tx('Choose between Cafe/Restaurant or Retail mode. This affects the POS terminal layout and available features.')}
+                </p>
+                {posLoading ? (
+                  <Skeleton className="h-10 w-64" />
+                ) : (
+                  <div className="space-y-3">
+                    <Select value={posMode} onValueChange={setPosMode}>
+                      <SelectTrigger className="w-full max-w-64">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {POS_MODES.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {POS_MODES.find((m) => m.value === posMode) && (
+                      <p className="text-sm text-muted-foreground">{POS_MODES.find((m) => m.value === posMode)!.desc}</p>
+                    )}
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={sharedDrawer}
+                        onChange={(e) => setSharedDrawer(e.target.checked)}
+                      />
+                      {tx('Allow other cashiers on the register (shared drawer)')}
+                    </label>
+                    <Button onClick={async () => {
+                      try {
+                        await updatePos.mutateAsync({ posMode, sharedDrawer });
+                        notify.success(tx('POS settings saved'));
+                      } catch {
+                        notify.error(tx('Failed to save POS settings'));
+                      }
+                    }} disabled={updatePos.isPending} size="sm">
+                      {updatePos.isPending ? tx('Saving...') : tx('Save POS Mode')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Modules & Features side by side, each a vertical list */}
+      <div className="grid gap-6 lg:grid-cols-2">
         {/* Modules — these gate the left sidebar navigation */}
         <Card>
           <CardHeader>
