@@ -50,3 +50,19 @@ pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n       # i18n:
 
 **Open doubts**: default GL account codes for 1.2+ (ADR-S009 §6) need the accountant's confirmation; the reminder job
 for expiring documents arrives with 1.9 (the query exists now).
+
+## Phase 1.6 — Fleet: maintenance (schedules, work orders, downtime, inspections)
+
+```bash
+cd backend && ./gradlew test --tests 'com.inventoryerp.fleet.*'   # + FleetMaintenancePoliciesTest, FleetMaintenanceIT (8)
+pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n  # no new i18n gaps from the maintenance phrases
+```
+
+Click through (ENABLE_FLEET=true, admin): Fleet → Service Templates → new template for Tipper (10 000 km / 180 days,
+lead 500 km) → Apply to the class; record an odometer reading past the due point → Services Due shows it overdue →
+Raise work order → Start (vehicle "in workshop", downtime open) → Issue part (stock − qty; journal Dr 6420 on the
+vehicle cost centre / Cr stock) → Book labour → Add workshop bill (draft vendor bill in AP; journal Dr 6420 / Cr 2168)
+→ tick tasks → Complete (vehicle active, schedule re-based). On a phone: Fleet → Inspections → New inspection → fail
+"Brakes" → vehicle detail → Inspections shows "Blocked from dispatch" until the defect's work order is completed.
+Downtime → Report breakdown; Availability & Reliability shows availability / MTBF / MTTR.
+
