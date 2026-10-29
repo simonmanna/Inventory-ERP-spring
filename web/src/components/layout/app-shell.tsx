@@ -79,6 +79,12 @@ import {
   FileInput,
   ReceiptText,
   Network,
+  // fleet 1.6 maintenance
+  AlertTriangle,
+  TimerOff,
+  Activity,
+  CalendarCog,
+  ListChecks,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -435,6 +441,15 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet', label: tx('Fleet Overview'), icon: LayoutDashboard, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/vehicles', label: tx('Vehicles & Equipment'), icon: Truck, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/compliance', label: tx('Compliance & Renewals'), icon: ShieldCheck, permission: PERMISSIONS.fleetVehicle.read },
+      // 1.6 maintenance
+      { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/inspections', label: tx('Inspections'), icon: ClipboardCheck, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/defects', label: tx('Defects'), icon: AlertTriangle, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/maintenance/downtime', label: tx('Downtime'), icon: TimerOff, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/maintenance/reliability', label: tx('Availability & Reliability'), icon: Activity, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/maintenance/templates', label: tx('Service Templates'), icon: CalendarCog, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/maintenance/checklists', label: tx('Inspection Checklists'), icon: ListChecks, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/settings/classes', label: tx('Vehicle Classes'), icon: Layers, permission: PERMISSIONS.fleet.settings },
     ],
   },

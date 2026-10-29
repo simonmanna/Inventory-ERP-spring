@@ -7,6 +7,16 @@ import { VehicleFormPage } from './VehicleFormPage';
 import { VehicleDetailPage } from './VehicleDetailPage';
 import { FleetCompliancePage } from './FleetCompliancePage';
 import { FleetCategoriesPage } from './FleetCategoriesPage';
+import { MaintenanceDuePage } from './maintenance/MaintenanceDuePage';
+import { WorkOrdersPage } from './maintenance/WorkOrdersPage';
+import { WorkOrderDetailPage } from './maintenance/WorkOrderDetailPage';
+import { ServiceTemplatesPage } from './maintenance/ServiceTemplatesPage';
+import { DowntimePage } from './maintenance/DowntimePage';
+import { ReliabilityPage } from './maintenance/ReliabilityPage';
+import { ChecklistTemplatesPage } from './maintenance/ChecklistTemplatesPage';
+import { InspectionsPage, InspectionDetailPage } from './maintenance/InspectionsPage';
+import { InspectionEntryPage } from './maintenance/InspectionEntryPage';
+import { DefectsPage } from './maintenance/DefectsPage';
 
 /**
  * Route skeleton of the Fleet section (ADR-S009). Each sub-module adds its screens here, static segments before the
@@ -23,5 +33,17 @@ export const fleetRoutes = (
     <Route path="/fleet/vehicles/:id/edit" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.update}><VehicleFormPage /></RequirePermission>} />
     <Route path="/fleet/compliance" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.read}><FleetCompliancePage /></RequirePermission>} />
     <Route path="/fleet/settings/classes" element={<RequirePermission permission={[PERMISSIONS.fleet.settings, PERMISSIONS.fleetVehicle.read]}><FleetCategoriesPage /></RequirePermission>} />
+    {/* 1.6 maintenance */}
+    <Route path="/fleet/maintenance" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><MaintenanceDuePage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/work-orders" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><WorkOrdersPage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/work-orders/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><WorkOrderDetailPage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/templates" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><ServiceTemplatesPage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/downtime" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><DowntimePage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/reliability" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><ReliabilityPage /></RequirePermission>} />
+    <Route path="/fleet/maintenance/checklists" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><ChecklistTemplatesPage /></RequirePermission>} />
+    <Route path="/fleet/inspections" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><InspectionsPage /></RequirePermission>} />
+    <Route path="/fleet/inspections/new" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.inspect}><InspectionEntryPage /></RequirePermission>} />
+    <Route path="/fleet/inspections/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><InspectionDetailPage /></RequirePermission>} />
+    <Route path="/fleet/defects" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><DefectsPage /></RequirePermission>} />
   </>
 );
