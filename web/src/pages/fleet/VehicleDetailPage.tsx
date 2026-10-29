@@ -26,6 +26,8 @@ import { num } from './fleet-format';
 import { VehicleMetersTab } from './VehicleMetersTab';
 import { VehicleComplianceTab } from './VehicleComplianceTab';
 import { VehicleFilesTab } from './VehicleFilesTab';
+import { VehicleTyresTab } from './VehicleTyresTab';
+import { VehicleTelematicsTab } from './VehicleTelematicsTab';
 
 /** Vehicle detail (fleet 1.1): overview, meters + corrections, compliance, status history, linked asset, files. */
 export function VehicleDetailPage() {
@@ -102,6 +104,8 @@ export function VehicleDetailPage() {
           <TabsTrigger value="history">{tx('Status history')}</TabsTrigger>
           <TabsTrigger value="asset">{tx('Fixed asset')}</TabsTrigger>
           <TabsTrigger value="files">{tx('Photos & documents')}</TabsTrigger>
+          {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="tyres">{tx('Tyres')}</TabsTrigger>}
+          <TabsTrigger value="telematics">{tx('Telematics')}</TabsTrigger>
         </TabsList>
         <TabsContent value="overview"><OverviewTab v={v} /></TabsContent>
         <TabsContent value="meters"><VehicleMetersTab vehicle={v} /></TabsContent>
@@ -109,6 +113,8 @@ export function VehicleDetailPage() {
         <TabsContent value="history"><HistoryTab vehicleId={v.id} /></TabsContent>
         <TabsContent value="asset"><AssetTab vehicle={v} active={tab === 'asset'} /></TabsContent>
         <TabsContent value="files"><VehicleFilesTab vehicle={v} /></TabsContent>
+        <TabsContent value="tyres"><VehicleTyresTab vehicle={v} active={tab === 'tyres'} /></TabsContent>
+        <TabsContent value="telematics"><VehicleTelematicsTab vehicle={v} active={tab === 'telematics'} /></TabsContent>
       </Tabs>
 
       <StatusDialog vehicle={v} open={statusOpen} onOpenChange={setStatusOpen} />
