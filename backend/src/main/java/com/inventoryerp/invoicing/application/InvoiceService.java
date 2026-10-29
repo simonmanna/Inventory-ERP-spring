@@ -423,6 +423,24 @@ public class InvoiceService {
         return withLinesAndPartner(id);
     }
 
+    /**
+     * Mark a <b>draft</b> sales invoice whose goods leave the yard through another module's delivery (fleet 1.3
+     * dispatch issues the stock per load): posting it then skips the automatic stock issue of its tracked lines, so the
+     * goods are issued exactly once. {@code deliveryReference} null clears the mark. Additive (ADR-S009 §2): invoices
+     * without the mark — every POS and manual invoice — post exactly as before.
+     */
+    @Transactional
+    public void setStockIssuedByDelivery(String id, String deliveryReference) {
+        int n = jdbc.sql("UPDATE \"Document\" SET data = CASE WHEN ?::text IS NULL THEN COALESCE(data, '{}'::jsonb)"
+                        + " - 'stockIssuedBy' ELSE COALESCE(data, '{}'::jsonb) || jsonb_build_object('stockIssuedBy',"
+                        + " ?::text) END, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND"
+                        + " \"documentType\" = 'sales_invoice' AND status = 'draft'")
+                .params(deliveryReference, deliveryReference, id, org()).update();
+        if (n == 0) {
+            throw ApiException.badRequest("Only a draft sales invoice can hand its stock issue to a delivery");
+        }
+    }
+
     /** Cancel a posted, unpaid invoice (reversal), behind the {@code invoice_cancel} approval gate. */
     @Transactional
     public Map<String, Object> cancel(String id) {

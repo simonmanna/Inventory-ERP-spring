@@ -209,6 +209,7 @@ public class FleetClaimService {
             db.require(FleetVehicle.class, in.vehicleId(), false, "Vehicle not found");
         }
         assertNotFuture(in.claimDate());
+        assertTrip(in.tripId());
         String code = sequence.next("fleet_driver_claim", "CLM-", 6);
         Map<String, Object> row = db.insert(FleetDriverClaim.class, Obj.of(
                 "code", code,
@@ -250,6 +251,7 @@ public class FleetClaimService {
             db.require(FleetVehicle.class, in.vehicleId(), false, "Vehicle not found");
             data.put("vehicleId", in.vehicleId());
         }
+        assertTrip(in.tripId());
         putIf(data, "tripId", FleetVehicleService.trim(in.tripId()));
         if (in.claimDate() != null) {
             assertNotFuture(in.claimDate());
@@ -707,6 +709,14 @@ public class FleetClaimService {
             approvalAdmin.createWorkflow("Fleet driver claim", APPROVAL_ENTITY, null, true, true,
                     List.of(new ApprovalAdminService.Step(1, "Fleet manager",
                             List.of(Permissions.FLEET_DRIVER__APPROVE_ALLOWANCE), 1, null, null)));
+        }
+    }
+
+    /** A claim's trip (1.3 load) must exist in the organization. */
+    private void assertTrip(String tripId) {
+        String t = FleetVehicleService.trim(tripId);
+        if (t != null && !db.exists("FleetLoad", t, false)) {
+            throw ApiException.badRequest("Trip not found");
         }
     }
 

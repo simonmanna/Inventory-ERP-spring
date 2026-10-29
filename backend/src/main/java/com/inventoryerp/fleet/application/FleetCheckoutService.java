@@ -162,6 +162,10 @@ public class FleetCheckoutService {
         DriverEligibilityPolicy.assertEligible(drivers.facts(d), vf, FleetAssignmentService.day(at), "checked out");
         assertMeters(v, in.odometer(), in.hours(), "check out");
         String code = sequence.next("fleet_checkout", "CHK-", 6);
+        String tripId = FleetVehicleService.trim(in.tripId());
+        if (tripId != null && !db.exists("FleetLoad", tripId, false)) {
+            throw ApiException.badRequest("Trip not found");
+        }
         Map<String, Object> row;
         try {
             row = db.insert(FleetCheckout.class, Obj.of(

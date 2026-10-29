@@ -131,3 +131,26 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Expected GL: every entry balanced; mapping keys `fleet_fuel_expense` (6410) and `fleet_fuel_card_payable` (2165)
   created on first use.
 - Doubts: expense workflows configured by the client make supplier-credit fuel wait for approval in Expenses (by design).
+
+## Phase 1.3 — Fleet: trips, delivery planning & dispatch (ADR-S009)
+
+- Migration: `V22__fleet_dispatch.sql` (placeholder; renumbered at merge). 55 routes (`/fleet/customer-sites`,
+  `/fleet/delivery-orders`, `/fleet/dispatch-board`, `/fleet/dispatch/*`, `/fleet/trips`, `/fleet/delivery-discrepancies`,
+  `/fleet/transporter-rates`, `/fleet/delivery-charge-rules`, `/fleet/product-load-factors`).
+- Tests: `DispatchPoliciesTest`, `FleetDispatchIT` (9), `FleetClaimsIT` (trip FK).
+- Click-through (ENABLE_FLEET=true, ENABLE_ORDERS=true, admin):
+  1. Fleet → Customer Sites → add a site for a customer (GPS, gate notes, zone, 42 km). Dispatch Settings → Load
+     factors: aggregate 1 t per unit; Delivery charges: per tonne 2,000 for the customer.
+  2. Create a sales order (Orders) for 50 t aggregate → Fleet → Delivery Orders → Create from sales order → plan loads
+     with a 20 t tipper + driver → 3 trips (20 / 20 / 10 t). An expired-licence driver or a 10 t truck is refused.
+  3. Trip 1: Start loading (odometer) → Loaded quantity 19.5 → Dispatch → stock −19.5 t, Dr COGS / Cr stock balanced;
+     print the delivery note (PDF); a second dispatch is refused.
+  4. On a phone (driver user): My Trips → trip → POD: delivered 19, reason spillage, receiver, signature, photo →
+     trip delivered; Delivery Discrepancies shows the 0.5 t shortage; the recorder cannot approve, a dispatch manager
+     can → billable 19 t.
+  5. Close the trips (end odometer) → distance from the odometer. Short-close the order → Create invoice → draft
+     invoice with 49 t + transport charge 98,000 → post it in Invoicing: AR / revenue / 4250, stock does not move again.
+  6. Posted-invoice source → delivery → shortage approved → a draft credit note against the invoice appears in Credit
+     Notes (not posted). A returned load puts its stock back (Dr stock / Cr COGS).
+- Doubts: billing a delivered sales order through the orders module's `generateInvoice` would deduct stock again —
+  invoice deliveries from the delivery order.

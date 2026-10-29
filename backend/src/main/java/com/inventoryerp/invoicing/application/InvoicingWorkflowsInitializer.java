@@ -107,7 +107,10 @@ public class InvoicingWorkflowsInitializer {
         Map<String, Object> doc = ctx.entity();
         String id = (String) doc.get("id");
         List<Map<String, Object>> lines = builder.lines(id, false);
-        for (Map<String, Object> line : lines) {
+        // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here.
+        boolean stockByDelivery = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE id = ? AND"
+                + " data->>'stockIssuedBy' IS NOT NULL").param(id).query(Long.class).single() > 0;
+        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : lines) {
             String productId = (String) line.get("productId");
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {

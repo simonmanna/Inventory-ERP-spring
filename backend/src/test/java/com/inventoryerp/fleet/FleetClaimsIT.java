@@ -53,6 +53,7 @@ class FleetClaimsIT extends ApiTestSupport {
     String bank;
     String approverToken;
     String approverId;
+    String tripId;
     int seq;
 
     @BeforeAll
@@ -64,6 +65,21 @@ class FleetClaimsIT extends ApiTestSupport {
         }
         costCenter = ok(201, "POST", "/cost-centers", Map.of("code", "CLM-" + sfx, "name", "Haulage " + sfx))
                 .get("id").asString();
+        // A 1.3 trip the claims refer to (FleetDriverClaim."tripId" references FleetLoad since V931).
+        String loc = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"InventoryLocation\" (id, \"organizationId\", code, name, type, \"updatedAt\") VALUES"
+                + " (?, ?, ?, 'Claims yard', 'storage_room', now())").params(loc, demoOrg, "CLY-" + sfx).update();
+        String customer = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"updatedAt\") VALUES"
+                + " (?, ?, ?, ?, true, now())").params(customer, demoOrg, "CLC-" + sfx, "Claims customer " + sfx).update();
+        String order = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"FleetDeliveryOrder\" (id, \"organizationId\", code, \"partnerId\", \"locationId\","
+                + " \"requestedDate\") VALUES (?, ?, ?, ?, ?, current_date)").params(order, demoOrg, "DO-CL" + sfx,
+                        customer, loc).update();
+        tripId = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"FleetLoad\" (id, \"organizationId\", code, \"deliveryOrderId\", sequence,"
+                + " \"plannedDate\", \"locationId\") VALUES (?, ?, ?, ?, 1, current_date, ?)").params(tripId, demoOrg,
+                        "TRP-CL" + sfx, order, loc).update();
         bank = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '1200'").param(demoOrg)
                 .query(String.class).single();
         String equity = jdbc.sql("SELECT a.id FROM \"Account\" a JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
@@ -119,7 +135,7 @@ class FleetClaimsIT extends ApiTestSupport {
     JsonNode claim(JsonNode driver, JsonNode vehicle) {
         return ok(201, "POST", "/fleet/claims", Map.of("driverId", driver.get("id").asString(), "vehicleId",
                 vehicle.get("id").asString(), "claimDate", today.toString(), "routeZone", zone(), "description",
-                "Kampala → Gulu delivery", "tripId", "TRIP-" + sfx, "lines", List.of(
+                "Kampala → Gulu delivery", "tripId", tripId, "lines", List.of(
                         Map.of("lineType", "allowance", "basis", "per_day", "quantity", 2),
                         Map.of("lineType", "expense", "expenseType", "fuel", "amount", 15000, "description",
                                 "Top-up at Karuma"))));
@@ -249,7 +265,7 @@ class FleetClaimsIT extends ApiTestSupport {
         String id = draft.get("id").asString();
         assertThat(draft.get("code").asString()).startsWith("CLM-");
         assertThat(draft.get("status").asString()).isEqualTo("draft");
-        assertThat(draft.get("tripId").asString()).isEqualTo("TRIP-" + sfx);
+        assertThat(draft.get("tripId").asString()).isEqualTo(tripId);
         assertThat(new BigDecimal(draft.get("totalAmount").asString())).isEqualByComparingTo("65000");
         JsonNode allowance = draft.get("lines").get(0);
         assertThat(allowance.get("ruleCode").asString()).isEqualTo("DAYT-" + sfx);

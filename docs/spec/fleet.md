@@ -5,10 +5,10 @@
 | Phase | Track C Phase 1 (construction materials), roadmap Tier 4 |
 | Nest source | none — new module (no parity constraints; house rules apply) |
 | Design | [ADR-S009](../adr/ADR-S009-fleet-and-logistics.md) |
-| Routes | 32 (1.1) + 37 (1.2) — tables below; 1.3–1.9 outlined |
+| Routes | 32 (1.1) + 37 (1.2) + 55 (1.3) — tables below; 1.4 and 1.9 outlined |
 | Feature flag | `ENABLE_FLEET` → `app.modules.fleet` (controllers + module manifest only when `true`), licence feature `fleet`, module name `fleet`, web feature key `fleet` |
 | Java package | `com.inventoryerp.fleet` (`domain`, `application` are named interfaces) |
-| Migrations | `V15__fleet_vehicle_registry.sql`, `V16__fleet_drivers_operators.sql` (1.2 + hr `HrPayrollInput`) |
+| Migrations | `V15__fleet_vehicle_registry.sql`, `V16__fleet_drivers_operators.sql` (1.2 + hr `HrPayrollInput`), `V22__fleet_dispatch.sql` (1.3, placeholder number) |
 
 ## Purpose
 
@@ -23,7 +23,7 @@ and trips with proof of delivery (1.3), the weighbridge (1.4), fuel (1.5), maint
 |---|---|---|---|
 | 1.1 | Vehicle & equipment registry | **done** | configurable classes, vehicle master, status machine + history, odometer / hour-meter readings with the monotonic rule, approval-gated corrections, compliance documents + expiry query, photos / documents, linked fixed asset (read-only), lookups, overview |
 | 1.2 | Drivers & operators | **done** | driver / operator profile → hr employee (licence number / classes / issue / expiry, medical, operator permit), qualified classes, expiring-documents query, eligibility policy, assignments (primary / temporary), check-out / check-in (meters, fuel, condition, damage, photos), allowance rules, claims → approval → paid via expenses or exported to hr payroll, reversal |
-| 1.3 | Trips, delivery planning & dispatch | planned | customer sites, delivery orders from sales orders, dispatch board, loads within payload / volume, own fleet or transporter, trip lifecycle, delivery note, POD, stock issue once per load, discrepancies → approval → credit-note request, transport charges |
+| 1.3 | Trips, delivery planning & dispatch | **done** | customer sites, delivery orders from sales orders / invoices / manual, dispatch board, loads within payload / volume, own fleet or transporter, trip lifecycle, delivery note, POD, stock issue once per load, discrepancies → approval → credit-note request, transport charges — see "1.3 Trips, delivery planning & dispatch" |
 | 1.4 | Weighbridge | planned | stations, devices (`WeighbridgeAdapter` SPI: ASCII TCP / serial + simulator), stored tare with expiry, ticket workflow, tolerance exceptions with SoD approval, immutable tickets (void + reissue), inbound weighing → GRN |
 | 1.5 | Fuel & energy | done | fuel logs, cards, efficiency + anomaly flags, site tanks / bowsers (GRN in, stock issue out, dips, reconciliation), GL |
 | 1.6 | Maintenance | done | service templates / schedules (km / hours / calendar), fleet-owned work orders (parts, labour, external bills), downtime, availability, MTBF / MTTR, inspections (DVIR) → defects → work orders, dispatch block |
@@ -78,7 +78,7 @@ Meter corrections are decided in the approvals inbox (`POST /approvals/{requestI
 | Area | Base paths | Permissions |
 |---|---|---|
 | 1.2 | built — see "Routes (1.2)" | `fleet_driver:*`, `fleet:settings` |
-| 1.3 | `/fleet/sites`, `/fleet/delivery-orders`, `/fleet/dispatch/board`, `/fleet/loads` (trips) + lifecycle actions, `/fleet/loads/{id}/delivery-note`, `/pod`, `/fleet/discrepancies`, `/fleet/transporter-rates` | `fleet_dispatch:*`, `fleet_trip:*` |
+| 1.3 | built — see "1.3 Trips, delivery planning & dispatch" (`/fleet/customer-sites`, `/fleet/delivery-orders`, `/fleet/dispatch-board`, `/fleet/trips`, `/fleet/delivery-discrepancies`, `/fleet/transporter-rates`, `/fleet/delivery-charge-rules`, `/fleet/product-load-factors`) | `fleet_dispatch:*`, `fleet_trip:*`, `fleet:settings` |
 | 1.4 | `/fleet/weighbridge/stations`, `/devices`, `/tares`, `/tickets` (+ `/first-weigh`, `/second-weigh`, `/print`, `/void`), `/exceptions` | `weighbridge:*` |
 | 1.5 | `/fleet/fuel-cards`, `/fleet/fuel-logs` (+ `/post`, `/reverse` — idempotent), `/fleet/fuel-tanks`, `/dips`, `/reconciliation` | `fleet_fuel:*` |
 | 1.6 | `/fleet/service-templates`, `/fleet/service-schedules`, `/fleet/work-orders` (+ lines, start, complete — idempotent), `/fleet/downtime`, `/fleet/inspection-templates`, `/fleet/inspections`, `/fleet/defects` | `fleet_maintenance:*` |
@@ -350,7 +350,8 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | 1.2 drivers & operators | done (37 routes) | `DriverEligibilityPolicyTest`, `AllowanceCalculatorTest` (unit); `FleetDriversIT` (8: profiles, expiring documents, eligibility blocks, assignment history, check-out / check-in with meters + photos + breakdown, concurrent check-outs, tenant isolation, authorization matrix 17 routes); `FleetClaimsIT` (8: allowance rules, draft pricing / validation, approval flow incl. inbox subscriber and no-workflow, pay via expenses with idempotency replay + GL + reversal, expense:post / driver SoD, payroll export → payroll run → reversals, tenant isolation, authorization matrix 20 routes) |
 | 1.5 fuel, 1.6 maintenance | done | see their sections below |
 | 1.7 tyres, incidents, fines; 1.8 telematics | done | see their sections below |
-| 1.3, 1.4, 1.9 | planned | — |
+| 1.3 trips, delivery planning & dispatch | done (55 routes) | `DispatchPoliciesTest` (unit: load splitting by payload / volume / whole units, freight, delivery-charge rule choice + amounts, trip state machine); `FleetDispatchIT` (9: sales order → DO → loads → eligibility / capacity blocks → weighed → dispatch once with replay → delivery note → POD shortage → SoD approval → close → invoice + transport charge without a second stock issue; posted-invoice source → credit-note request + transporter freight + draft-invoice hand-over; returns; concurrent dispatch; weighbridge API; settings / validation / trip FK; tenant isolation; authorization matrix 55 routes) |
+| 1.4, 1.9 | planned | — |
 
 ## 1.6 Maintenance — fleet, mobile plant and (Phase 4) fixed plant
 
@@ -811,3 +812,183 @@ matrix).
 - `FleetIncident.workOrderId` is a free id until 1.6 work orders are merged (then validate / link).
 - No provider push webhook (pull only); no vendor adapter beyond the mock; no geofence editor (geofence events come
   from the provider).
+
+## 1.3 Trips, delivery planning & dispatch
+
+Status: **done** (Track C, 2026-10-29). Design: ADR-S009 §3 (tables), §6 (GL). Migration `V22__fleet_dispatch.sql`
+(placeholder number, renumbered at merge). Permissions: the existing `fleet_dispatch:*`, `fleet_trip:*` and
+`fleet:settings` keys (none added); invoicing a delivery order also needs `invoice:create`. Events (new in
+`packages/shared/src/events.ts`): `fleet.trip.dispatched`, `fleet.trip.delivered`, `fleet.trip.closed`,
+`fleet.trip.returned`, `fleet.delivery.discrepancy_decided`.
+
+### Routes (1.3) — 55, all under `/api/v1`, `@RequiresModule("fleet")`, package `fleet.web.dispatch`
+
+Idempotent (Idempotency-Key required, answer 200): trip dispatch, proof of delivery, return, discrepancy approve,
+delivery-order invoice — they move stock or raise accounting documents. Other POSTs answer 201.
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET / POST | `/fleet/customer-sites` | `fleet_dispatch:read` / `create` | `search, partnerId, zone, includeInactive, page, pageSize`; code `SITE-0001` when blank; lat + lon together |
+| GET / PATCH / DELETE | `/fleet/customer-sites/{id}` | `read` / `update` / `update` | delete = soft delete, or deactivate when used by a delivery order |
+| GET | `/fleet/delivery-orders` | `fleet_dispatch:read` | `search, status (… / active), partnerId, siteId, sourceType, dateFrom, dateTo, page, pageSize`; rows with ordered / unplanned / delivered totals and trip counts |
+| GET | `/fleet/delivery-orders/{id}` | `fleet_dispatch:read` | + site, lines (remaining, t / m³ per unit and factor source), trips, discrepancies, charges |
+| POST | `/fleet/delivery-orders` | `fleet_dispatch:create` | manual: `partnerId, siteId?, locationId?, requestedDate, windowFrom/To (HH:MM), priority, contact, costCenterId, lines[{productId, quantity, uomId?, unitPrice?, taxId?, batchNumber?}]` |
+| POST | `/fleet/delivery-orders/from-sales-order` | `fleet_dispatch:create` | `{sourceId = orders Order id, siteId?, locationId?, requestedDate?, …}` via `OrdersService.getOrder`; confirmed / in progress / completed only; POS sales (table / cash session) refused; 409 when a live DO exists |
+| POST | `/fleet/delivery-orders/from-invoice` | `fleet_dispatch:create` | sales invoice via `InvoiceService.findOne`: draft → stock mode `dispatch` (invoice marked), posted / paid → `invoiced` |
+| PATCH | `/fleet/delivery-orders/{id}` | `fleet_dispatch:update` | header; `clear: [...]` |
+| POST | `/fleet/delivery-orders/{id}/cancel` | `fleet_dispatch:cancel` | `{reason}`; refused once goods left the yard; open trips cancelled; marked draft invoice freed |
+| POST | `/fleet/delivery-orders/{id}/close` | `fleet_dispatch:update` | short-close; no open trips |
+| GET | `/fleet/delivery-orders/{id}/load-plan` | `fleet_dispatch:read` | preview split: `vehicleId, trailerId, payloadT, volumeM3, maxLoads` |
+| POST | `/fleet/delivery-orders/{id}/plan-loads` | `fleet_dispatch:plan` | creates the loads; with `vehicleId` (+ `trailerId`, `driverId`) they are assigned (eligibility + capacity) |
+| POST | `/fleet/delivery-orders/{id}/trips` | `fleet_dispatch:plan` | one load with explicit `lines[{deliveryOrderLineId, quantity, batchNumber?}]` (≤ remaining) |
+| GET | `/fleet/delivery-orders/{id}/delivery-charge` | `fleet_dispatch:read` | charge preview `{facts, rule, charge}` |
+| POST | `/fleet/delivery-orders/{id}/invoice` | `fleet_dispatch:update` (+ `invoice:create`) | draft customer invoice: billable goods (unless invoiced already) + transport charge; Idempotency-Key |
+| GET | `/fleet/dispatch-board` | `fleet_dispatch:read` | `from, to (≤ 62 days), partnerId, siteId` → `{days[{date, trips}], unplanned[delivery orders]}` |
+| GET | `/fleet/dispatch/sources` | `fleet_dispatch:read` | `type = sales_order / invoice, search` — documents without a live DO |
+| GET | `/fleet/dispatch/lookups` (+ `/customers`, `/products`) | `fleet_dispatch:read` | vehicles with payload / volume, drivers, transporters + rates, locations, cost centres, taxes; product search with load factors |
+| GET | `/fleet/trips` | `fleet_trip:read` | `search, status (… / open / on_road / active), dateFrom, dateTo, vehicleId, driverId, deliveryOrderId, partnerId, mine` (driver phone: trips of the caller's driver profile) |
+| GET / PATCH | `/fleet/trips/{id}` | `fleet_trip:read` / `update` | detail + lines, delivery order + site, POD (signed signature / photo URLs), discrepancies; PATCH date, location, cost centre, purpose, notes while open |
+| POST | `/fleet/trips/{id}/assign` | `fleet_dispatch:plan` | `{carrier: own, vehicleId, driverId?, trailerId?}` or `{carrier: transporter, transporterPartnerId, transporterRateId \| freightBasis + freightRate, transporterPlate?, transporterDriverName?}` |
+| GET | `/fleet/trips/{id}/assignment-check` | `fleet_trip:read` | `vehicleId, trailerId, driverId` → `{eligible, reasons, warnings, capacityT, capacityM3, …}` |
+| POST | `/fleet/trips/{id}/start-loading` | `fleet_trip:dispatch` | `{odometer?}` |
+| POST | `/fleet/trips/{id}/loaded-quantity` | `fleet_trip:dispatch` | manual loaded quantity `lines[{loadLineId, quantity, batchNumber?}]` → `weighed` |
+| POST | `/fleet/trips/{id}/dispatch` | `fleet_trip:dispatch` | `{odometer?}`; stock issue once; delivery-note number `DN-000001`; Idempotency-Key |
+| POST | `/fleet/trips/{id}/depart` | `fleet_trip:dispatch` | → `in_transit` |
+| POST | `/fleet/trips/{id}/proof-of-delivery` | `fleet_trip:deliver` | `{receiverName, receiverPhone?, receivedAt?, latitude?, longitude?, signature (PNG / JPEG data URL)?, endOdometer?, lines[{loadLineId, deliveredQty, returnedQty?, reason?, notes?}]}`; Idempotency-Key |
+| POST | `/fleet/trips/{id}/pod-photo` | `fleet_trip:deliver` | multipart `file` (image), after the POD |
+| POST | `/fleet/trips/{id}/close` | `fleet_trip:close` | `{endOdometer?, distanceKm?}` → distance + freight |
+| POST | `/fleet/trips/{id}/cancel` | `fleet_trip:cancel` | `{reason}`, before dispatch |
+| POST | `/fleet/trips/{id}/return` | `fleet_trip:close` | `{reason, reasonCode?}` whole load back; Idempotency-Key |
+| GET | `/fleet/trips/{id}/delivery-note` | `fleet_trip:read` | PDF (OpenPDF); reprints say COPY n |
+| GET | `/fleet/delivery-discrepancies` (+ `/{id}`) | `fleet_dispatch:read` | `status, kind, deliveryOrderId, partnerId, page, pageSize` |
+| POST | `/fleet/delivery-discrepancies/{id}/approve` | `fleet_dispatch:approve_discrepancy` | `{notes?}`; Idempotency-Key |
+| POST | `/fleet/delivery-discrepancies/{id}/reject` | `fleet_dispatch:approve_discrepancy` | `{notes}` required |
+| POST | `/fleet/delivery-discrepancies/{id}/sync` | `fleet_dispatch:approve_discrepancy` | apply an inbox decision now |
+| GET / POST | `/fleet/transporter-rates` | `fleet_dispatch:read` / `fleet:settings` | `{partnerId (supplier), name, basis per_trip / per_tonne / per_km, rate, zone?, effectiveFrom/To?}` |
+| PATCH / DELETE | `/fleet/transporter-rates/{id}` | `fleet:settings` | delete when unused, otherwise deactivate |
+| GET / POST | `/fleet/delivery-charge-rules` | `fleet_dispatch:read` / `fleet:settings` | `{name, partnerId?, zone?, minDistanceKm?, maxDistanceKm?, basis flat / per_trip / per_tonne / per_m3 / per_km, rate, minAmount?, taxId?}` |
+| PATCH / DELETE | `/fleet/delivery-charge-rules/{id}` | `fleet:settings` | delete when unused, otherwise deactivate |
+| GET | `/fleet/product-load-factors` (+ `/{productId}` resolved) | `fleet_dispatch:read` | |
+| PUT / DELETE | `/fleet/product-load-factors/{productId}` | `fleet:settings` | `{tonnesPerUnit?, cubicMetresPerUnit?}` per product base unit |
+
+Approvals are also decided in the approvals inbox (`POST /approvals/{requestId}/decide`, entity type
+`fleet_delivery_discrepancy`; `FleetDiscrepancyApprovalSubscriber` applies `approval.decided`).
+
+### Data model (V931)
+
+| Table | Purpose | Notable columns |
+|---|---|---|
+| `FleetCustomerSite` | construction site / delivery address | `code` (SITE-0001), `partnerId`, address, city, `latitude` / `longitude`, contact, `accessNotes`, `zone`, `distanceKm` (from the yard), soft delete |
+| `FleetProductLoadFactor` | planning factor per product | `tonnesPerUnit`, `cubicMetresPerUnit` per base unit (one per product) |
+| `FleetTransporterRate` | agreed freight of a transporter | `partnerId` (supplier), `basis`, `rate`, `zone`, effective dates |
+| `FleetDeliveryChargeRule` | transport charge to the customer | `partnerId?`, `zone?`, distance band, `basis`, `rate`, `minAmount`, `taxId` |
+| `FleetDeliveryOrder` | delivery order | `code` (DO-000001), customer, site, `sourceType` manual / sales_order / invoice + `sourceId` (one live DO per source), `stockMode` dispatch / invoiced, `goodsInvoiceId/Number/Kind` (credit-note target), `chargesInvoiceId`, yard `locationId`, cost centre, `requestedDate`, window, priority, status |
+| `FleetDeliveryOrderLine` | product line | `uomId` + snapshot `uomFactor`, `orderedQty`, `plannedQty`, `dispatchedQty`, `deliveredQty`, `returnedQty`, price / discount / tax (for invoicing and credit notes), batch |
+| `FleetLoad` | trip | `code` (TRP-000001), sequence, `plannedDate`, status, `carrier` own / transporter, vehicle / trailer / driver or transporter (+ rate, plate, driver name), freight basis / rate / amount, capacity, planned / loaded / delivered tonnes and m³, yard location, cost centre, start / end odometer + reading ids, distance + source, weigh source (`weighSourceType` / `weighSourceId`), `stockIssuedAt`, delivery note number + print count, lifecycle timestamps |
+| `FleetLoadLine` | product on a trip | planned / loaded / dispatched / delivered / returned / **billable** quantity, t / m³ per unit, batch, stock ledger code, issue unit cost and value, return ledger code |
+| `FleetProofOfDelivery` | POD (one per trip) | receiver, time, GPS + source (device / telematics / none), signature and photo file ids (kernel file store, owner type `fleet_trip`) |
+| `FleetDeliveryDiscrepancy` | discrepancy | `code` (DSC-000001), kind shortage / excess / returned, reason code, dispatched / delivered / difference qty, status, approval request, credit note id / number / amount |
+| `FleetDeliveryCharge` | charge put on an invoice | rule, basis, quantity, rate, amount, tax, invoice |
+
+`FleetCheckout."tripId"` and `FleetDriverClaim."tripId"` now reference `FleetLoad` (FK `NOT VALID`); the check-out and
+claim services answer 400 `Trip not found` for an unknown trip.
+
+### Rules (1.3)
+
+1. **Sources.** A delivery order comes from a confirmed back-office sales order (orders module `Order`, statuses
+   confirmed / in progress / completed, never a POS sale — orders with a table or cash session are refused), a sales
+   invoice, or manual entry. Lines keep the source line's unit (sales orders: the product's base unit), price, discount
+   and tax. **Stock mode** `dispatch`: fleet issues the goods per load (manual, un-billed sales order, draft invoice —
+   the draft invoice is marked through the additive `InvoiceService.setStockIssuedByDelivery(id, ref)`, so posting it
+   skips its automatic stock issue; cancelling the DO clears the mark). `invoiced`: the source already issued the goods
+   (posted invoice, or an order billed through the POS spine): dispatch moves no stock.
+2. **Load factors** (t / m³ per product base unit, `FleetLoadFactors`): fleet factor → `Product.weight` (kg) /
+   `Product.volume` (m³) → the base unit (t / kg / m³). Times the line's unit factor. Phase 4 replaces this with UoM
+   densities.
+3. **Planning** (`LoadPlanner`): greedy fill per load within payload and body volume (vehicle + trailer, or explicit),
+   rounded down to the unit step (whole units when the unit's rounding precision ≥ 1); a line without factors is not
+   limited (warning); one unit above capacity → 400; `maxLoads` guard. Planning locks the delivery order.
+4. **Assignment.** Own fleet: the vehicle (not a trailer) passes `FleetDispatchEligibilityService.assertEligible`
+   (status + blocking defects), the trailer must be of a trailer class and eligible, the driver passes
+   `DriverEligibilityPolicy` on the planned date (`… cannot be dispatched`); planned / weighed tonnage and m³ must fit
+   the combined capacity (`Trip TRP-… carries 20 t but VEH-… takes 10 t; split the load`). Transporter: a supplier
+   partner and its active rate card or an explicit basis + rate. Vehicle and driver are re-checked (today) at loading
+   and at dispatch. Lock order: delivery order → trip → vehicle → driver.
+5. **Lifecycle** (`TripStatusPolicy`): planned → loading → weighed → dispatched → in transit → delivered → closed;
+   loading / weighing / in transit are optional steps; cancelled before dispatch; returned after it. Odometer readings
+   go through `FleetMeterService.recordAutomated` (source `trip`, source ids `<tripId>:start` / `:end`).
+6. **Weighing.** Manual loaded quantity per line, or `recordWeighedQuantity(tripId, netQty, uom, sourceType, sourceId)`
+   (1.4b ticket): `t` / `kg` spread over the lines by planned tonnage, another unit only for single-line trips;
+   idempotent per source document, re-weigh allowed until dispatch.
+7. **Dispatch, exactly once.** Delivery order and trip locked `FOR UPDATE`, status must be open and `stockIssuedAt`
+   empty; each tracked line is issued from the trip's location through `StockService.issue` (product, batch — manual
+   pick when given — line unit + factor, move type `issue`, source `fleet_trip` / trip id) — the inventory engine posts
+   Dr COGS / Cr stock (balanced). The loaded quantity (default: planned) becomes dispatched and billable; any
+   difference to the plan is plannable again. Concurrent or replayed dispatches cannot issue twice (row lock + status +
+   Idempotency-Key).
+8. **POD.** Delivered and returned quantity per line; a difference (dispatched − delivered − returned) or a return
+   needs a reason. Returned goods are received back at once at the issue cost (`StockService.receiveReturn`, Dr stock /
+   Cr COGS, source `fleet_trip_return`) and become plannable again. GPS: the device's, else the vehicle's telematics fix
+   within 6 h (`FleetTelematicsService.lastKnownPosition`). Signature: PNG / JPEG data URL stored in the kernel file
+   store; photo via `/pod-photo`. A full **return** puts every line back the same way.
+9. **Discrepancies** (`FleetDiscrepancyService`): one per difference (shortage / excess) and per return, routed through
+   the approval engine (default workflow "Fleet delivery discrepancy", step "Dispatch manager", permission
+   `fleet_dispatch:approve_discrepancy`; an inactive workflow auto-approves); the recorder and the driver cannot decide
+   (403). Approved: the load line's billable quantity drops by the difference (rises for an excess); when the goods were
+   already invoiced a **draft credit note** is created through `CreditNoteService.create` (reversing the goods invoice
+   when it is a sales-invoice document) with product-less revenue lines, so posting it moves no stock — AR posts it.
+   Rejected: the customer stays billed for the dispatched quantity.
+10. **Close.** Distance: manual → odometer difference → telematics path distance (`distanceKm`) → site distance.
+    Transporter freight = `FreightCalculator` (per trip / per tonne delivered (else loaded / planned) / per km).
+11. **Invoicing & transport charges.** Once all trips are finished and no discrepancy is pending, `/invoice` creates
+    one draft sales invoice through `InvoiceService.create`: goods at their billable quantities (only when not invoiced
+    yet; the invoice is marked so posting does not issue them again) + the transport charge of the most specific
+    `FleetDeliveryChargeRule` (customer + zone > customer > zone > general; distance band; per basis; minimum) on
+    account 4250 Transport & Delivery Revenue (`fleet_transport_revenue`). Posting it (AR) gives Dr AR / Cr revenue +
+    transport revenue + tax.
+
+### GL (1.3)
+
+| Event | Debit | Credit | Posted by |
+|---|---|---|---|
+| Dispatch (stock mode dispatch) | COGS (inventory posting rules) | Stock | `StockService.issue`, once per load line |
+| Returned goods (POD return / full return) | Stock | COGS | `StockService.receiveReturn` |
+| Customer invoice of the delivery (posted by AR) | AR | Revenue, 4250 transport revenue, output tax | invoicing |
+| Approved shortage on invoiced goods (posted by AR) | Revenue (product category / default), tax | AR | invoicing credit note |
+| Transporter freight | — | — | computed on the trip (`freightAmount`); vendor bill / accrual in 1.9 freight bills |
+
+### Public API for later sub-modules
+
+- **1.4b weighbridge**: `FleetDispatchService.recordWeighedQuantity(tripId, netQty, uom, sourceType, sourceId)` (e.g.
+  `uom = "kg"`, `sourceType = "weighbridge_ticket"`, `sourceId` = ticket id); `FleetDispatchService.get(tripId)` /
+  `require(tripId, lock)` to show / validate the trip; trips of a delivery order via
+  `FleetDeliveryOrderService.get(id).trips`.
+- **1.9 costing / reports**: `FleetLoad` (`freightAmount`, `distanceKm`, `loadedTonnes`, `deliveredTonnes`,
+  `carrier`, vehicle / driver / transporter, cost centre), `FleetLoadLine` (`stockValue`, billable quantity),
+  `FleetDeliveryCharge`, `FleetDeliveryDiscrepancy`; `FreightCalculator.amount(basis, rate, tonnes, km)`;
+  `FleetDeliveryInvoiceService.transportRevenueAccount()`; events `fleet.trip.closed` (distance, freight) and
+  `fleet.delivery.discrepancy_decided`.
+- Additive in **invoicing**: `InvoiceService.setStockIssuedByDelivery(invoiceId, deliveryRef)` + the skip in
+  `InvoicingWorkflowsInitializer.postInvoice` (only for marked invoices; POS and other invoices unchanged).
+
+### Web (1.3)
+
+Dispatch Board `/fleet/dispatch` (day columns + unplanned orders, assign dialog with live eligibility), Delivery
+Orders `/fleet/delivery-orders` (+ `/new`, `/:id` with plan-loads, trips, charges, invoice), Trips `/fleet/trips`
+(+ `/:id` with state actions, delivery note print, POD), My Trips `/fleet/my-trips` (+ `/:id`: phone POD with signature
+pad, photo, GPS), Customer Sites `/fleet/customer-sites`, Delivery Discrepancies `/fleet/delivery-discrepancies`,
+Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load factors). Hooks in
+`web/src/features/fleet/dispatch-api.ts`, routes in `web/src/pages/fleet/dispatch/dispatch-routes.tsx`.
+
+### Tests (1.3)
+
+`DispatchPoliciesTest` (unit) and `FleetDispatchIT` (see Status). `FleetClaimsIT` now refers to a real trip.
+
+### Known gaps / owner decisions (1.3)
+
+- Billing a sales order through the orders module's own `generateInvoice` (POS billing spine, frozen) still deducts
+  stock: invoice delivered sales orders from the delivery order (`/invoice`) instead; documented for the owner.
+- An approved **excess** on invoiced goods adjusts the billable quantity only (no automatic supplementary invoice).
+- Editing a draft source invoice after its DO exists does not re-sync the DO lines.
+- Transporter freight is computed on the trip; posting it (vendor bill / accrual, Dr 6460 outbound freight) is 1.9.
+- Load factors are a stop-gap until Phase 4 UoM / density work.

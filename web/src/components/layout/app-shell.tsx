@@ -93,6 +93,10 @@ import {
   Cylinder,
   CreditCard,
   Settings2,
+  // fleet 1.3 dispatch
+  CalendarRange,
+  Route as RouteIcon,
+  Navigation,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -459,6 +463,13 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/drivers', label: tx('Drivers & Operators'), icon: IdCard, permission: PERMISSIONS.fleetDriver.read },
       { to: '/fleet/checkout', label: tx('Check-out / Check-in'), icon: LogOut, permission: PERMISSIONS.fleetDriver.checkout },
       { to: '/fleet/claims', label: tx('Driver Claims'), icon: Receipt, permission: PERMISSIONS.fleetDriver.read },
+      { to: '/fleet/dispatch', label: tx('Dispatch Board'), icon: CalendarRange, permission: PERMISSIONS.fleetDispatch.read },
+      { to: '/fleet/delivery-orders', label: tx('Delivery Orders'), icon: ClipboardList, permission: PERMISSIONS.fleetDispatch.read },
+      { to: '/fleet/trips', label: tx('Trips'), icon: RouteIcon, permission: PERMISSIONS.fleetTrip.read },
+      { to: '/fleet/my-trips', label: tx('My Trips'), icon: Navigation, permission: PERMISSIONS.fleetTrip.deliver },
+      { to: '/fleet/customer-sites', label: tx('Customer Sites'), icon: MapPin, permission: PERMISSIONS.fleetDispatch.read },
+      { to: '/fleet/delivery-discrepancies', label: tx('Delivery Discrepancies'), icon: Scale, permission: PERMISSIONS.fleetDispatch.read },
+      { to: '/fleet/settings/dispatch', label: tx('Dispatch Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
       // 1.6 maintenance
       { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },

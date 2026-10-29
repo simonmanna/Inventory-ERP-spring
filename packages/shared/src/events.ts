@@ -209,6 +209,13 @@ export const EVENTS = {
   FleetFineDeductionRequested: 'fleet.fine.deduction_requested',
   FleetFineDeductionCancelled: 'fleet.fine.deduction_cancelled',
   FleetTelematicsAlertRaised: 'fleet.telematics.alert_raised',
+  // Fleet 1.3 — dispatch: a trip left the yard (stock issued once), was delivered (POD), closed or returned; a delivery
+  // discrepancy was decided (an approved shortage on invoiced goods carries the draft credit note id).
+  FleetTripDispatched: 'fleet.trip.dispatched',
+  FleetTripDelivered: 'fleet.trip.delivered',
+  FleetTripClosed: 'fleet.trip.closed',
+  FleetTripReturned: 'fleet.trip.returned',
+  FleetDeliveryDiscrepancyDecided: 'fleet.delivery.discrepancy_decided',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -486,6 +493,25 @@ export interface DomainEventMap {
   'fleet.telematics.alert_raised': {
     organizationId: string; vehicleId: string; eventId: string; eventType: string; severity: string; occurredAt: string;
   };
+  'fleet.trip.dispatched': FleetTripEventPayload;
+  'fleet.trip.delivered': FleetTripEventPayload;
+  'fleet.trip.closed': FleetTripEventPayload & { distanceKm: string | null; freightAmount: string | null };
+  'fleet.trip.returned': FleetTripEventPayload & { reason: string };
+  'fleet.delivery.discrepancy_decided': {
+    organizationId: string; discrepancyId: string; code: string; loadId: string; deliveryOrderId: string;
+    status: 'approved' | 'rejected'; differenceQty: string; creditNoteId: string | null;
+  };
+}
+
+/** A fleet trip (load) of a delivery order (fleet 1.3). */
+export interface FleetTripEventPayload {
+  organizationId: string;
+  loadId: string;
+  code: string;
+  deliveryOrderId: string;
+  vehicleId: string | null;
+  driverId: string | null;
+  carrier: 'own' | 'transporter';
 }
 
 /** A traffic fine charged to a driver: payroll deducts `amount` from employee `employeeId` (hr wiring). */
