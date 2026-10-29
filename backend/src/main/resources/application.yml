@@ -116,6 +116,7 @@ app:
     hr: ${ENABLE_HR:false}
     orders: ${ENABLE_ORDERS:false}
     communication: ${ENABLE_COMMUNICATION:false}
+    fleet: ${ENABLE_FLEET:false}
 
 logging:
   level:

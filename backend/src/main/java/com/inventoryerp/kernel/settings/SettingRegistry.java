@@ -141,6 +141,12 @@ public final class SettingRegistry {
                 "JSON: { mode: fixed|percent|replacement, percent, fixedAmount }. Fallback: 10% of replacement cost.",
                 deposit, null, false, ORG_ONLY);
 
+        // ---- Fleet & logistics (ADR-S009) ----
+        def("fleet.complianceReminderDays", "fleet", "number", "Compliance Reminder Lead (days)",
+                "Default number of days before a vehicle's registration, insurance, licence, inspection or permit "
+                        + "expires that it is reported as expiring soon. Each document can override it.", 30, null,
+                false, ORG_ONLY);
+
         // ---- Purchasing ----
         def("purchasing.editProductPriceFromPurchaseScreen", "purchasing", "bool",
                 "Enable editing product price from purchase screen",

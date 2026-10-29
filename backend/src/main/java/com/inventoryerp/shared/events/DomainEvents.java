@@ -142,4 +142,7 @@ public final class DomainEvents {
     public static final String COMMUNICATION_MESSAGE_DELIVERED = "communication.message.delivered";
     public static final String COMMUNICATION_MESSAGE_FAILED = "communication.message.failed";
     public static final String COMMUNICATION_CHANNEL_STATUS_CHANGED = "communication.channel.status_changed";
+    public static final String FLEET_VEHICLE_CREATED = "fleet.vehicle.created";
+    public static final String FLEET_VEHICLE_STATUS_CHANGED = "fleet.vehicle.status_changed";
+    public static final String FLEET_METER_CORRECTED = "fleet.meter.corrected";
 }

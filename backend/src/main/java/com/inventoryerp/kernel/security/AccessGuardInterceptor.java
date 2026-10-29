@@ -40,7 +40,8 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
             "hr", "app.modules.hr",
             "beverage", "app.modules.beverage",
             "fixed-asset", "app.modules.assets",
-            "communication", "app.modules.communication");
+            "communication", "app.modules.communication",
+            "fleet", "app.modules.fleet");
 
     private final PermissionService permissions;
     private final FeatureFlagsService flags;

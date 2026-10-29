@@ -183,6 +183,12 @@ export const EVENTS = {
   CommunicationMessageDelivered: 'communication.message.delivered',
   CommunicationMessageFailed: 'communication.message.failed',
   CommunicationChannelStatusChanged: 'communication.channel.status_changed',
+
+  // Fleet & logistics (ADR-S009). Facts about the vehicle register that later sub-modules (dispatch, maintenance,
+  // costing) and alerts react to; published after the change commits.
+  FleetVehicleCreated: 'fleet.vehicle.created',
+  FleetVehicleStatusChanged: 'fleet.vehicle.status_changed',
+  FleetMeterCorrected: 'fleet.meter.corrected',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -424,6 +430,34 @@ export interface DomainEventMap {
   'communication.message.delivered': CommunicationDeliveryEventPayload;
   'communication.message.failed': CommunicationDeliveryEventPayload;
   'communication.channel.status_changed': CommunicationChannelEventPayload;
+
+  // Fleet & logistics.
+  'fleet.vehicle.created': { organizationId: string; vehicleId: string; code: string; categoryId: string };
+  'fleet.vehicle.status_changed': FleetVehicleStatusChangedPayload;
+  'fleet.meter.corrected': FleetMeterCorrectedPayload;
+}
+
+/** A vehicle moved between active / in_workshop / breakdown / idle / disposed. */
+export interface FleetVehicleStatusChangedPayload {
+  organizationId: string;
+  vehicleId: string;
+  fromStatus: string | null;
+  toStatus: string;
+  reason: string | null;
+  /** manual, registration, or the sub-module that moved it (maintenance, inspection, ...). */
+  source: string;
+  sourceId: string | null;
+}
+
+/** An approved meter correction (adjust a reading / meter replacement) was applied. */
+export interface FleetMeterCorrectedPayload {
+  organizationId: string;
+  vehicleId: string;
+  correctionId: string;
+  meterType: 'odometer' | 'hours';
+  kind: 'adjust' | 'replace';
+  previousValue: string | null;
+  correctedValue: string;
 }
 
 /** A message was created (outbound) or received (inbound). */

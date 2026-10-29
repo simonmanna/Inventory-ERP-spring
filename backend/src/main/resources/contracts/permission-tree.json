@@ -550,5 +550,76 @@
     "messageSend": "communication:message:send",
     "channelRead": "communication:channel:read",
     "channelManage": "communication:channel:manage"
+  },
+  "fleet": {
+    "report": "fleet:report",
+    "settings": "fleet:settings"
+  },
+  "fleetVehicle": {
+    "read": "fleet_vehicle:read",
+    "create": "fleet_vehicle:create",
+    "update": "fleet_vehicle:update",
+    "delete": "fleet_vehicle:delete",
+    "status": "fleet_vehicle:status",
+    "meter": "fleet_vehicle:meter",
+    "approveMeter": "fleet_vehicle:approve_meter",
+    "compliance": "fleet_vehicle:compliance"
+  },
+  "fleetDriver": {
+    "read": "fleet_driver:read",
+    "create": "fleet_driver:create",
+    "update": "fleet_driver:update",
+    "delete": "fleet_driver:delete",
+    "assign": "fleet_driver:assign",
+    "checkout": "fleet_driver:checkout",
+    "allowance": "fleet_driver:allowance",
+    "approveAllowance": "fleet_driver:approve_allowance"
+  },
+  "fleetDispatch": {
+    "read": "fleet_dispatch:read",
+    "create": "fleet_dispatch:create",
+    "update": "fleet_dispatch:update",
+    "plan": "fleet_dispatch:plan",
+    "cancel": "fleet_dispatch:cancel",
+    "approveDiscrepancy": "fleet_dispatch:approve_discrepancy"
+  },
+  "fleetTrip": {
+    "read": "fleet_trip:read",
+    "create": "fleet_trip:create",
+    "update": "fleet_trip:update",
+    "dispatch": "fleet_trip:dispatch",
+    "deliver": "fleet_trip:deliver",
+    "close": "fleet_trip:close",
+    "cancel": "fleet_trip:cancel"
+  },
+  "fleetFuel": {
+    "read": "fleet_fuel:read",
+    "create": "fleet_fuel:create",
+    "update": "fleet_fuel:update",
+    "post": "fleet_fuel:post",
+    "tank": "fleet_fuel:tank"
+  },
+  "fleetMaintenance": {
+    "read": "fleet_maintenance:read",
+    "create": "fleet_maintenance:create",
+    "update": "fleet_maintenance:update",
+    "schedule": "fleet_maintenance:schedule",
+    "complete": "fleet_maintenance:complete",
+    "inspect": "fleet_maintenance:inspect",
+    "tyre": "fleet_maintenance:tyre"
+  },
+  "fleetIncident": {
+    "read": "fleet_incident:read",
+    "create": "fleet_incident:create",
+    "update": "fleet_incident:update",
+    "charge": "fleet_incident:charge"
+  },
+  "weighbridge": {
+    "read": "weighbridge:read",
+    "weigh": "weighbridge:weigh",
+    "manualEntry": "weighbridge:manual_entry",
+    "approveException": "weighbridge:approve_exception",
+    "void": "weighbridge:void",
+    "configure": "weighbridge:configure"
   }
 }

@@ -625,6 +625,107 @@ export const PERMISSIONS = {
     channelRead: 'communication:channel:read',
     channelManage: 'communication:channel:manage',
   },
+  // ---- Fleet & logistics (module fleet, ADR-S009, construction-materials Track C Phase 1) ----
+  // Every Phase 1 key (1.1–1.9) is declared here at once; each sub-module wires its own routes to them.
+  // Route ↔ permission matrix: docs/spec/fleet.md §Permissions.
+  fleet: {
+    /// Fleet dashboards, cost / utilisation / delivery reports and their exports (1.9).
+    report: 'fleet:report',
+    /// Vehicle classes, fleet thresholds, telematics provider and allowance rules.
+    settings: 'fleet:settings',
+  },
+  fleetVehicle: {
+    read: 'fleet_vehicle:read',
+    create: 'fleet_vehicle:create',
+    update: 'fleet_vehicle:update',
+    delete: 'fleet_vehicle:delete',
+    /// Move a vehicle between active / in workshop / breakdown / idle / disposed.
+    status: 'fleet_vehicle:status',
+    /// Record odometer / hour-meter readings and request meter corrections.
+    meter: 'fleet_vehicle:meter',
+    /// Approver permission of the default meter-correction approval workflow (rollbacks).
+    approveMeter: 'fleet_vehicle:approve_meter',
+    /// Registration, insurance, road licence, inspection and operator-permit documents.
+    compliance: 'fleet_vehicle:compliance',
+  },
+  fleetDriver: {
+    read: 'fleet_driver:read',
+    create: 'fleet_driver:create',
+    update: 'fleet_driver:update',
+    delete: 'fleet_driver:delete',
+    /// Vehicle ↔ driver assignments.
+    assign: 'fleet_driver:assign',
+    /// Vehicle check-out / check-in (odometer, fuel level, condition, photos).
+    checkout: 'fleet_driver:checkout',
+    /// Record driver allowances and trip expenses.
+    allowance: 'fleet_driver:allowance',
+    approveAllowance: 'fleet_driver:approve_allowance',
+  },
+  fleetDispatch: {
+    /// Delivery orders, customer sites and the dispatch board.
+    read: 'fleet_dispatch:read',
+    create: 'fleet_dispatch:create',
+    update: 'fleet_dispatch:update',
+    /// Split orders into loads and assign truck / driver / trailer / transporter.
+    plan: 'fleet_dispatch:plan',
+    cancel: 'fleet_dispatch:cancel',
+    /// Approve delivered-vs-ordered discrepancies (separation of duties with the recorder).
+    approveDiscrepancy: 'fleet_dispatch:approve_discrepancy',
+  },
+  fleetTrip: {
+    read: 'fleet_trip:read',
+    create: 'fleet_trip:create',
+    update: 'fleet_trip:update',
+    /// Loading → dispatched → in transit (driver / dispatcher actions).
+    dispatch: 'fleet_trip:dispatch',
+    /// Proof of delivery (received quantity, receiver, signature, GPS).
+    deliver: 'fleet_trip:deliver',
+    close: 'fleet_trip:close',
+    cancel: 'fleet_trip:cancel',
+  },
+  fleetFuel: {
+    read: 'fleet_fuel:read',
+    create: 'fleet_fuel:create',
+    update: 'fleet_fuel:update',
+    /// Post / reverse fuel cost to the GL.
+    post: 'fleet_fuel:post',
+    /// Site fuel tanks / bowsers: dips, issues, reconciliation.
+    tank: 'fleet_fuel:tank',
+  },
+  fleetMaintenance: {
+    read: 'fleet_maintenance:read',
+    create: 'fleet_maintenance:create',
+    update: 'fleet_maintenance:update',
+    /// Service schedules and class templates.
+    schedule: 'fleet_maintenance:schedule',
+    /// Complete work orders: issue parts, book labour, post costs.
+    complete: 'fleet_maintenance:complete',
+    /// Pre-trip inspections (DVIR) and defects.
+    inspect: 'fleet_maintenance:inspect',
+    /// Tyres: fitment, rotation, removal, tread readings.
+    tyre: 'fleet_maintenance:tyre',
+  },
+  fleetIncident: {
+    /// Incidents / accidents, damage, insurance claims and traffic fines.
+    read: 'fleet_incident:read',
+    create: 'fleet_incident:create',
+    update: 'fleet_incident:update',
+    /// Charge a fine to a driver (payroll deduction) or to the company.
+    charge: 'fleet_incident:charge',
+  },
+  weighbridge: {
+    read: 'weighbridge:read',
+    /// Operator: register trucks, capture first / second weights, print tickets.
+    weigh: 'weighbridge:weigh',
+    /// Key in a weight instead of reading the indicator (always flagged on the ticket).
+    manualEntry: 'weighbridge:manual_entry',
+    /// Approve an out-of-tolerance ticket (never the operator's own).
+    approveException: 'weighbridge:approve_exception',
+    /// Void a printed ticket (re-issue with audit).
+    void: 'weighbridge:void',
+    /// Stations, indicator devices, tolerances, tare validity.
+    configure: 'weighbridge:configure',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

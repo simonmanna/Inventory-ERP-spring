@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (388 permissions). Constant name = GROUP__ACTION.
+ * exactly (441 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -399,6 +399,59 @@ public final class Permissions {
     public static final String COMMUNICATION__MESSAGE_SEND = "communication:message:send";
     public static final String COMMUNICATION__CHANNEL_READ = "communication:channel:read";
     public static final String COMMUNICATION__CHANNEL_MANAGE = "communication:channel:manage";
+    public static final String FLEET__REPORT = "fleet:report";
+    public static final String FLEET__SETTINGS = "fleet:settings";
+    public static final String FLEET_VEHICLE__READ = "fleet_vehicle:read";
+    public static final String FLEET_VEHICLE__CREATE = "fleet_vehicle:create";
+    public static final String FLEET_VEHICLE__UPDATE = "fleet_vehicle:update";
+    public static final String FLEET_VEHICLE__DELETE = "fleet_vehicle:delete";
+    public static final String FLEET_VEHICLE__STATUS = "fleet_vehicle:status";
+    public static final String FLEET_VEHICLE__METER = "fleet_vehicle:meter";
+    public static final String FLEET_VEHICLE__APPROVE_METER = "fleet_vehicle:approve_meter";
+    public static final String FLEET_VEHICLE__COMPLIANCE = "fleet_vehicle:compliance";
+    public static final String FLEET_DRIVER__READ = "fleet_driver:read";
+    public static final String FLEET_DRIVER__CREATE = "fleet_driver:create";
+    public static final String FLEET_DRIVER__UPDATE = "fleet_driver:update";
+    public static final String FLEET_DRIVER__DELETE = "fleet_driver:delete";
+    public static final String FLEET_DRIVER__ASSIGN = "fleet_driver:assign";
+    public static final String FLEET_DRIVER__CHECKOUT = "fleet_driver:checkout";
+    public static final String FLEET_DRIVER__ALLOWANCE = "fleet_driver:allowance";
+    public static final String FLEET_DRIVER__APPROVE_ALLOWANCE = "fleet_driver:approve_allowance";
+    public static final String FLEET_DISPATCH__READ = "fleet_dispatch:read";
+    public static final String FLEET_DISPATCH__CREATE = "fleet_dispatch:create";
+    public static final String FLEET_DISPATCH__UPDATE = "fleet_dispatch:update";
+    public static final String FLEET_DISPATCH__PLAN = "fleet_dispatch:plan";
+    public static final String FLEET_DISPATCH__CANCEL = "fleet_dispatch:cancel";
+    public static final String FLEET_DISPATCH__APPROVE_DISCREPANCY = "fleet_dispatch:approve_discrepancy";
+    public static final String FLEET_TRIP__READ = "fleet_trip:read";
+    public static final String FLEET_TRIP__CREATE = "fleet_trip:create";
+    public static final String FLEET_TRIP__UPDATE = "fleet_trip:update";
+    public static final String FLEET_TRIP__DISPATCH = "fleet_trip:dispatch";
+    public static final String FLEET_TRIP__DELIVER = "fleet_trip:deliver";
+    public static final String FLEET_TRIP__CLOSE = "fleet_trip:close";
+    public static final String FLEET_TRIP__CANCEL = "fleet_trip:cancel";
+    public static final String FLEET_FUEL__READ = "fleet_fuel:read";
+    public static final String FLEET_FUEL__CREATE = "fleet_fuel:create";
+    public static final String FLEET_FUEL__UPDATE = "fleet_fuel:update";
+    public static final String FLEET_FUEL__POST = "fleet_fuel:post";
+    public static final String FLEET_FUEL__TANK = "fleet_fuel:tank";
+    public static final String FLEET_MAINTENANCE__READ = "fleet_maintenance:read";
+    public static final String FLEET_MAINTENANCE__CREATE = "fleet_maintenance:create";
+    public static final String FLEET_MAINTENANCE__UPDATE = "fleet_maintenance:update";
+    public static final String FLEET_MAINTENANCE__SCHEDULE = "fleet_maintenance:schedule";
+    public static final String FLEET_MAINTENANCE__COMPLETE = "fleet_maintenance:complete";
+    public static final String FLEET_MAINTENANCE__INSPECT = "fleet_maintenance:inspect";
+    public static final String FLEET_MAINTENANCE__TYRE = "fleet_maintenance:tyre";
+    public static final String FLEET_INCIDENT__READ = "fleet_incident:read";
+    public static final String FLEET_INCIDENT__CREATE = "fleet_incident:create";
+    public static final String FLEET_INCIDENT__UPDATE = "fleet_incident:update";
+    public static final String FLEET_INCIDENT__CHARGE = "fleet_incident:charge";
+    public static final String WEIGHBRIDGE__READ = "weighbridge:read";
+    public static final String WEIGHBRIDGE__WEIGH = "weighbridge:weigh";
+    public static final String WEIGHBRIDGE__MANUAL_ENTRY = "weighbridge:manual_entry";
+    public static final String WEIGHBRIDGE__APPROVE_EXCEPTION = "weighbridge:approve_exception";
+    public static final String WEIGHBRIDGE__VOID = "weighbridge:void";
+    public static final String WEIGHBRIDGE__CONFIGURE = "weighbridge:configure";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -789,7 +842,60 @@ public final class Permissions {
             "communication:conversation:read_all",
             "communication:message:send",
             "communication:channel:read",
-            "communication:channel:manage");
+            "communication:channel:manage",
+            "fleet:report",
+            "fleet:settings",
+            "fleet_vehicle:read",
+            "fleet_vehicle:create",
+            "fleet_vehicle:update",
+            "fleet_vehicle:delete",
+            "fleet_vehicle:status",
+            "fleet_vehicle:meter",
+            "fleet_vehicle:approve_meter",
+            "fleet_vehicle:compliance",
+            "fleet_driver:read",
+            "fleet_driver:create",
+            "fleet_driver:update",
+            "fleet_driver:delete",
+            "fleet_driver:assign",
+            "fleet_driver:checkout",
+            "fleet_driver:allowance",
+            "fleet_driver:approve_allowance",
+            "fleet_dispatch:read",
+            "fleet_dispatch:create",
+            "fleet_dispatch:update",
+            "fleet_dispatch:plan",
+            "fleet_dispatch:cancel",
+            "fleet_dispatch:approve_discrepancy",
+            "fleet_trip:read",
+            "fleet_trip:create",
+            "fleet_trip:update",
+            "fleet_trip:dispatch",
+            "fleet_trip:deliver",
+            "fleet_trip:close",
+            "fleet_trip:cancel",
+            "fleet_fuel:read",
+            "fleet_fuel:create",
+            "fleet_fuel:update",
+            "fleet_fuel:post",
+            "fleet_fuel:tank",
+            "fleet_maintenance:read",
+            "fleet_maintenance:create",
+            "fleet_maintenance:update",
+            "fleet_maintenance:schedule",
+            "fleet_maintenance:complete",
+            "fleet_maintenance:inspect",
+            "fleet_maintenance:tyre",
+            "fleet_incident:read",
+            "fleet_incident:create",
+            "fleet_incident:update",
+            "fleet_incident:charge",
+            "weighbridge:read",
+            "weighbridge:weigh",
+            "weighbridge:manual_entry",
+            "weighbridge:approve_exception",
+            "weighbridge:void",
+            "weighbridge:configure");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(
