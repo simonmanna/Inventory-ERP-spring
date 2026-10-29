@@ -99,7 +99,7 @@ jobs:
           name: sbom
           path: sbom
       - name: Scan backend SBOM — fail on HIGH/CRITICAL with a fix available
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           scan-type: sbom
           scan-ref: sbom/inventory-erp-sbom.json
@@ -108,7 +108,7 @@ jobs:
           trivyignores: .trivyignore
           exit-code: '1'
       - name: Scan web dependencies (pnpm lockfile)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           scan-type: fs
           scan-ref: .
@@ -159,9 +159,13 @@ jobs:
         working-directory: contract-tests/e2e
         env:
           POS_API_BASE: http://localhost:3101
+        # Own throwaway package.json: without it npm walks up to the pnpm workspace root (workspace: deps,
+        # not installed in this job) and crashes resolving it ("Cannot read properties of null (reading 'edgesOut')").
         run: |
-          npx --yes vitest@4.1.9 run --config vitest.config.mjs
-          npx --yes vitest@4.1.9 run --config vitest.config.mjs
+          echo '{ "private": true }' > package.json
+          npm install --no-save --no-package-lock --no-audit --no-fund vitest@4.1.9
+          npx vitest run --config vitest.config.mjs
+          npx vitest run --config vitest.config.mjs
       - name: API log
         if: failure()
         run: cat backend/api.log
@@ -203,7 +207,7 @@ jobs:
       - run: docker build -f infra/docker/Dockerfile.api -t inventory-erp-api:ci .
       - run: docker build -f infra/docker/Dockerfile.web -t inventory-erp-web:ci .
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: inventory-erp-api:ci
           severity: HIGH,CRITICAL
@@ -211,7 +215,7 @@ jobs:
           trivyignores: .trivyignore
           exit-code: '1'
       - name: Scan web image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
           image-ref: inventory-erp-web:ci
           severity: HIGH,CRITICAL
