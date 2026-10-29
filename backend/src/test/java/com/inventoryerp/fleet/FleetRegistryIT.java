@@ -703,7 +703,8 @@ class FleetRegistryIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without a token and 403 without the permission on every fleet route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet")).isEqualTo(32);
+        // 32 registry routes (1.1); later sub-modules add theirs and assert their own count (e.g. 1.5: FleetFuelIT).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet")).isGreaterThanOrEqualTo(32);
         // A read-only fleet user can look but not change.
         Res denied = call("POST", "/fleet/vehicles/" + tipper(Map.of()).get("id").asString() + "/meter-readings",
                 Map.of("meterType", "odometer", "value", 5000), approverToken);
