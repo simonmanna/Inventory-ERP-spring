@@ -345,7 +345,8 @@ Permissions `fleet:*`, web screens, authorization + tenant tests, seed data, `do
 
 > **Status (Track C):** design in [ADR-S009](adr/ADR-S009-fleet-and-logistics.md), spec in
 > [`spec/fleet.md`](spec/fleet.md). 4.1 vehicle registry (+ the compliance documents of 4.6) built as Track C 1.1;
-> the other areas follow as Track C 1.2–1.9 (see `BUILD_LOG.md`).
+> 4.2 drivers & assignments (+ check-out / check-in, driver allowances → expenses / payroll) built as Track C 1.2;
+> the other areas follow as Track C 1.3–1.9 (see `BUILD_LOG.md`).
 
 ## Cross-cutting (every tier)
 

@@ -50,3 +50,50 @@ pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n       # i18n:
 
 **Open doubts**: default GL account codes for 1.2+ (ADR-S009 §6) need the accountant's confirmation; the reminder job
 for expiring documents arrives with 1.9 (the query exists now).
+
+## Phase 1.2 — Fleet: drivers & operators (ADR-S009)
+
+Built and verified in the main checkout: full backend build against local Postgres 16 (see `docs/BUILD_LOG.md` 1.2 row
+for the test count); web typecheck green, lint 0 errors (no new warnings), i18n: every 1.2 phrase translated in ti / lg /
+sw (no new gaps).
+
+**Commands**
+
+```bash
+cd backend && ./gradlew test --tests 'com.inventoryerp.fleet.*'   # + DriverEligibilityPolicyTest, AllowanceCalculatorTest, FleetDriversIT, FleetClaimsIT
+cd backend && ./gradlew test --tests 'com.inventoryerp.hr.*' --tests 'com.inventoryerp.invoicing.InvoicingIT'   # payroll + expenses unchanged
+pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n
+```
+
+**Migration**: `V16__fleet_drivers_operators.sql` (9 fleet tables + hr `HrPayrollInput`, RLS; no new permissions).
+
+**Click-through** (administrator + a second user with `fleet_driver:read`, `fleet_driver:approve_allowance`,
+`expense:post`)
+
+1. HR → add an employee; Fleet → **Drivers & Operators** → Add driver: pick the employee, licence `dl 123` classes
+   `c, ce`, expiry next year, qualified class Tipper truck → `DRV-0001`, licence shown `DL123`, classes `C, CE`.
+2. Detail → Licence & qualifications shows the documents card (licence Valid). Set the medical certificate to
+   yesterday → Expired; the list filter "Expired documents" finds the driver.
+3. Vehicle detail → **Driver assignments / check-outs** → Assign driver: an expired licence / unqualified class /
+   vehicle in workshop shows the reason and the Assign button stays disabled; the API answers with the same message.
+4. Assign primary driver A, then primary driver B → A's row is Ended ("Replaced by driver …"). A temporary cover
+   without an end is refused.
+5. **Check-out / Check-in** (on a phone): pick the truck → choose the driver, odometer above the current reading, fuel
+   75 %, condition Fair, damage Mirrors, take a photo → "Checked out (CHK-…)". A second check-out of the truck or of the
+   same driver on another truck → 409 with the vehicle / driver named. Check in with a lower odometer → refused; with a
+   higher one + "Report a breakdown" → closed, distance shown, the vehicle is Breakdown (status history source
+   `check_in`), meter readings show sources check_out / check_in.
+6. Fleet → **Allowance Rules** (`fleet:settings`): per day 20,000 general, 25,000 for Tipper truck, per night 35,000;
+   a second general per-day rule overlapping → refused.
+7. **Driver Claims** → New claim for the driver with the tipper: 2 × per day + fuel 15,000 → total 65,000 (tipper rate);
+   add a receipt; Submit → Waiting for approval; the submitter's Approve → 403; the second user approves.
+8. Pay via expenses (bank account) → Paid; Expenses shows `EXP-…` POSTED / PAID; the journal debits 6440 on the
+   truck's cost centre and credits the bank (balanced). Reverse → the expense is VOID, the journal reversed, the claim
+   Approved again.
+9. Export to payroll → Exported; HR → Payroll: a run for a period containing the claim date lists "Driver claim CLM-…"
+   as an allowance; approving the run debits 2185 for that amount (2185 nets to zero). Reversing the claim while the
+   input is in the run is refused; reverse the run first.
+
+**Open doubts**: account codes 6440 / 2185 and the "non-taxable by default" payroll treatment need the accountant's
+confirmation; claims are not yet linked to trips (1.3 adds the foreign key on `tripId`).
+
