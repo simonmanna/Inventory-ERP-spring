@@ -344,6 +344,40 @@ public class ExpensesService {
     /** Create an expense; CASH pays immediately, CREDIT goes through the approval engine. */
     @Transactional
     public Map<String, Object> create(CreateInput dto) {
+        return create(dto, null);
+    }
+
+    /**
+     * Posting tags of an expense raised by another module's document (e.g. a fleet traffic fine charged to the
+     * company, ADR-S009 §6): the source document, the debit account its payment entries use instead of the
+     * category / default expense account, and the cost centre + dimensions of that debit line.
+     */
+    public record SourceTags(String sourceType, String sourceId, String debitAccountId, String costCenterId,
+            Map<String, Object> dimensions) {}
+
+    /**
+     * Public API for other modules: {@link #create} on behalf of the document {@code tags.sourceType / sourceId},
+     * whose payment entries (on creation for CASH, on {@link #pay} for CREDIT) debit {@code tags.debitAccountId} on
+     * {@code tags.costCenterId} with {@code tags.dimensions}. Idempotent per source document: while an expense raised
+     * for it is live (not void, cancelled, rejected or deleted) that expense is returned instead of a second one.
+     */
+    @Transactional
+    public Map<String, Object> createFromSource(CreateInput dto, SourceTags tags) {
+        if (tags == null || tags.sourceType() == null || tags.sourceId() == null) {
+            throw ApiException.badRequest("An expense raised from another document needs its source type and id");
+        }
+        String existing = jdbc.sql("SELECT l.\"expenseId\" FROM \"ExpenseSourceLink\" l JOIN \"Expense\" e ON e.id ="
+                        + " l.\"expenseId\" WHERE l.\"organizationId\" = ? AND l.\"sourceType\" = ? AND l.\"sourceId\" = ?"
+                        + " AND e.\"deletedAt\" IS NULL AND e.status::text NOT IN ('VOID', 'CANCELLED', 'REJECTED')"
+                        + " ORDER BY l.\"createdAt\" DESC LIMIT 1")
+                .params(org(), tags.sourceType(), tags.sourceId()).query(String.class).optional().orElse(null);
+        if (existing != null) {
+            return loadDecorated(existing);
+        }
+        return create(dto, tags);
+    }
+
+    private Map<String, Object> create(CreateInput dto, SourceTags tags) {
         String actorId = requireActor();
         boolean isCash = "CASH".equals(dto.paymentType());
         if (isCash && (dto.paymentMethod() == null || dto.paymentMethod().isEmpty() || dto.accountId() == null
@@ -372,6 +406,15 @@ public class ExpensesService {
                 .update();
         audit.recordInTx(AuditInput.of("Expense", id, "create", null, Obj.of("expenseCode", code, "title",
                 dto.title().trim(), "amount", JsNumbers.js(dto.amount()), "paymentType", dto.paymentType())));
+        if (tags != null) {
+            jdbc.sql("INSERT INTO \"ExpenseSourceLink\" (id, \"organizationId\", \"expenseId\", \"sourceType\", \"sourceId\","
+                            + " \"debitAccountId\", \"costCenterId\", dimensions, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " ?::jsonb, " + NOW + ")")
+                    .params(UUID.randomUUID().toString(), org(), id, tags.sourceType(), tags.sourceId(),
+                            tags.debitAccountId(), tags.costCenterId(),
+                            tags.dimensions() == null ? null : com.inventoryerp.shared.web.EntityJson.toJson(tags.dimensions()))
+                    .update();
+        }
         if (isCash) {
             if (!TenantContext.has("expense:post")) {
                 throw ApiException.forbidden("Paying an expense on creation requires expense:post; save it as a credit"
@@ -623,7 +666,11 @@ public class ExpensesService {
             throw ApiException.badRequest("Nothing left to pay");
         }
         String org = org();
-        String debit = resolveExpenseAccountId(category);
+        // An expense raised by another module (ExpenseSourceLink) debits its own account / cost centre / dimensions.
+        Map<String, Object> link = SqlRows.one(jdbc.sql("SELECT \"debitAccountId\", \"costCenterId\", dimensions::text AS dims"
+                + " FROM \"ExpenseSourceLink\" WHERE \"expenseId\" = ? AND \"organizationId\" = ?").params(expense.get("id"), org));
+        String debit = link != null && link.get("debitAccountId") != null ? (String) link.get("debitAccountId")
+                : resolveExpenseAccountId(category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
                     + " before paying expenses");
@@ -642,7 +689,9 @@ public class ExpensesService {
         String value = JsNumbers.dec(residual);
         Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
                 "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, List.of(Line.debit(debit, value, title),
+                "expense_payment:" + paymentId, List.of(link == null ? Line.debit(debit, value, title)
+                        : new Line(debit, value, null, null, title, null, (String) link.get("costCenterId"),
+                                sourceDimensions((String) link.get("dims"))),
                         Line.credit((String) credit.get("id"), value, "Paid: " + title))));
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"paymentNotes\", \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?,"
@@ -660,6 +709,16 @@ public class ExpensesService {
         Map<String, Object> values = Obj.of("paymentId", paymentId, "amount", value, "method", paymentMethod, "reason",
                 paymentNotes, "journalEntryId", entry.get("id"));
         audit.recordInTx(AuditInput.of("ExpensePayment", (String) expense.get("id"), "post", null, values));
+    }
+
+    private static Map<String, Object> sourceDimensions(String json) {
+        if (json == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        com.inventoryerp.shared.web.EntityJson.tree(json).properties()
+                .forEach(e -> out.put(e.getKey(), e.getValue().isNull() ? null : e.getValue().asString()));
+        return out.isEmpty() ? null : out;
     }
 
     private String resolveExpenseAccountId(Map<String, Object> category) {
