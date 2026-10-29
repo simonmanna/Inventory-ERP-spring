@@ -525,6 +525,35 @@ public class GoodsReceiptsService {
                 Math.max(1, (long) Math.ceil((double) total / pageSize))));
     }
 
+    /**
+     * Cancel a DRAFT receipt that has no stock / GL effect yet (additive API, no route; used by the fleet weighbridge
+     * when a ticket that pre-filled the draft is voided). Posted receipts are reversed with {@link #reverse} instead.
+     * Idempotent: an already cancelled draft is returned unchanged.
+     */
+    public Map<String, Object> cancelDraft(String id, String reason) {
+        String orgId = org();
+        Map<String, Object> grn = SqlRows.one(GoodsReceiptNote.class, jdbc.sql("SELECT * FROM \"GoodsReceiptNote\""
+                + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL FOR UPDATE").params(id, orgId));
+        if (grn == null) {
+            throw ApiException.notFound("Goods receipt not found");
+        }
+        if ("cancelled".equals(String.valueOf(grn.get("status")))) {
+            return grn;
+        }
+        if (!"draft".equals(String.valueOf(grn.get("status")))) {
+            throw ApiException.badRequest("Only draft goods receipts can be cancelled (" + grn.get("receiptNumber")
+                    + " is " + grn.get("status") + ")");
+        }
+        String why = reason == null || reason.isBlank() ? null : reason.trim();
+        Map<String, Object> after = SqlRows.one(GoodsReceiptNote.class, jdbc.sql("UPDATE \"GoodsReceiptNote\" SET"
+                + " status = 'cancelled', notes = CASE WHEN ?::text IS NULL THEN notes ELSE concat_ws(E'\\n', notes,"
+                + " 'Cancelled: ' || ?::text) END, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                + " \"organizationId\" = ? RETURNING *").params(why, why, user(), id, orgId));
+        audit.recordInTx(AuditInput.of("GoodsReceiptNote", id, "cancel", Obj.of("status", "draft"),
+                Obj.of("status", "cancelled", "reason", why)));
+        return after;
+    }
+
     /** Receipt with ordered lines (+ product), order, warehouse and partner; {@code null} when missing. */
     @Transactional(readOnly = true)
     public Map<String, Object> findOne(String id) {

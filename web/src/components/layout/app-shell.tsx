@@ -491,6 +491,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/fuel/cards', label: tx('Fuel Cards'), icon: CreditCard, permission: PERMISSIONS.fleetFuel.read },
       { to: '/fleet/fuel/anomalies', label: tx('Fuel Anomalies'), icon: AlertTriangle, permission: PERMISSIONS.fleetFuel.read },
       { to: '/fleet/settings/fuel', label: tx('Fuel Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
+      // fleet 1.4 weighbridge
+      { to: '/fleet/weighbridge', label: tx('Weighbridge'), icon: Scale, permission: PERMISSIONS.weighbridge.read },
+      { to: '/fleet/weighbridge/exceptions', label: tx('Weighbridge Exceptions'), icon: AlertTriangle, permission: PERMISSIONS.weighbridge.read },
+      { to: '/fleet/weighbridge/reports', label: tx('Weighbridge Discrepancies'), icon: BarChart3, permission: PERMISSIONS.weighbridge.read },
+      { to: '/fleet/weighbridge/settings', label: tx('Weighbridge Settings'), icon: Settings2, permission: PERMISSIONS.weighbridge.configure },
     ],
   },
   {

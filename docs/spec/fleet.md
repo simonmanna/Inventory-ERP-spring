@@ -24,7 +24,7 @@ and trips with proof of delivery (1.3), the weighbridge (1.4), fuel (1.5), maint
 | 1.1 | Vehicle & equipment registry | **done** | configurable classes, vehicle master, status machine + history, odometer / hour-meter readings with the monotonic rule, approval-gated corrections, compliance documents + expiry query, photos / documents, linked fixed asset (read-only), lookups, overview |
 | 1.2 | Drivers & operators | **done** | driver / operator profile → hr employee (licence number / classes / issue / expiry, medical, operator permit), qualified classes, expiring-documents query, eligibility policy, assignments (primary / temporary), check-out / check-in (meters, fuel, condition, damage, photos), allowance rules, claims → approval → paid via expenses or exported to hr payroll, reversal |
 | 1.3 | Trips, delivery planning & dispatch | **done** | customer sites, delivery orders from sales orders / invoices / manual, dispatch board, loads within payload / volume, own fleet or transporter, trip lifecycle, delivery note, POD, stock issue once per load, discrepancies → approval → credit-note request, transport charges — see "1.3 Trips, delivery planning & dispatch" |
-| 1.4 | Weighbridge | planned | stations, devices (`WeighbridgeAdapter` SPI: ASCII TCP / serial + simulator), stored tare with expiry, ticket workflow, tolerance exceptions with SoD approval, immutable tickets (void + reissue), inbound weighing → GRN |
+| 1.4 | Weighbridge | **1.4a done; 1.4b outbound wiring pending** | stations, devices (`WeighbridgeAdapter` SPI: ASCII TCP / serial + simulator), stored tare with expiry, ticket workflow, tolerance exceptions with SoD approval, immutable tickets (void + reissue), inbound weighing → GRN |
 | 1.5 | Fuel & energy | done | fuel logs, cards, efficiency + anomaly flags, site tanks / bowsers (GRN in, stock issue out, dips, reconciliation), GL |
 | 1.6 | Maintenance | done | service templates / schedules (km / hours / calendar), fleet-owned work orders (parts, labour, external bills), downtime, availability, MTBF / MTTR, inspections (DVIR) → defects → work orders, dispatch block |
 | 1.7 | Tyres, incidents, fines | done | tyre positions / fitment / rotation / tread, cost per km; incidents, claims; fines charged to driver (payroll deduction) or company |
@@ -79,7 +79,7 @@ Meter corrections are decided in the approvals inbox (`POST /approvals/{requestI
 |---|---|---|
 | 1.2 | built — see "Routes (1.2)" | `fleet_driver:*`, `fleet:settings` |
 | 1.3 | built — see "1.3 Trips, delivery planning & dispatch" (`/fleet/customer-sites`, `/fleet/delivery-orders`, `/fleet/dispatch-board`, `/fleet/trips`, `/fleet/delivery-discrepancies`, `/fleet/transporter-rates`, `/fleet/delivery-charge-rules`, `/fleet/product-load-factors`) | `fleet_dispatch:*`, `fleet_trip:*`, `fleet:settings` |
-| 1.4 | `/fleet/weighbridge/stations`, `/devices`, `/tares`, `/tickets` (+ `/first-weigh`, `/second-weigh`, `/print`, `/void`), `/exceptions` | `weighbridge:*` |
+| 1.4 | built (1.4a) — see "1.4 Weighbridge" | `weighbridge:*` |
 | 1.5 | `/fleet/fuel-cards`, `/fleet/fuel-logs` (+ `/post`, `/reverse` — idempotent), `/fleet/fuel-tanks`, `/dips`, `/reconciliation` | `fleet_fuel:*` |
 | 1.6 | `/fleet/service-templates`, `/fleet/service-schedules`, `/fleet/work-orders` (+ lines, start, complete — idempotent), `/fleet/downtime`, `/fleet/inspection-templates`, `/fleet/inspections`, `/fleet/defects` | `fleet_maintenance:*` |
 | 1.7 | `/fleet/tyres`, `/fleet/incidents`, `/fleet/insurance-claims`, `/fleet/fines` (+ `/charge`) | `fleet_maintenance:tyre`, `fleet_incident:*` |
@@ -351,7 +351,8 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | 1.5 fuel, 1.6 maintenance | done | see their sections below |
 | 1.7 tyres, incidents, fines; 1.8 telematics | done | see their sections below |
 | 1.3 trips, delivery planning & dispatch | done (55 routes) | `DispatchPoliciesTest` (unit: load splitting by payload / volume / whole units, freight, delivery-charge rule choice + amounts, trip state machine); `FleetDispatchIT` (9: sales order → DO → loads → eligibility / capacity blocks → weighed → dispatch once with replay → delivery note → POD shortage → SoD approval → close → invoice + transport charge without a second stock issue; posted-invoice source → credit-note request + transporter freight + draft-invoice hand-over; returns; concurrent dispatch; weighbridge API; settings / validation / trip FK; tenant isolation; authorization matrix 55 routes) |
-| 1.4, 1.9 | planned | — |
+| 1.4a weighbridge core | done (36 routes) | `WeighbridgePoliciesTest`, `FleetWeighbridgeIT` — see "1.4 Weighbridge" |
+| 1.4b, 1.9 | planned | — |
 
 ## 1.6 Maintenance — fleet, mobile plant and (Phase 4) fixed plant
 
@@ -992,3 +993,157 @@ Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load f
 - Editing a draft source invoice after its DO exists does not re-sync the DO lines.
 - Transporter freight is computed on the trip; posting it (vendor bill / accrual, Dr 6460 outbound freight) is 1.9.
 - Load factors are a stop-gap until Phase 4 UoM / density work.
+## 1.4 Weighbridge — 1.4a done; 1.4b outbound wiring pending
+
+Requirements §5.1, ADR-S009 §3 / §7. 1.4a = stations, devices + adapter SPI, stored tares, the ticket workflow with
+tolerance exceptions, print / void / reissue, inbound weighing → procurement GRN, the public API and the event.
+**1.4b** (after 1.3 merges) wires outbound tickets to delivery orders / trips: adds the foreign keys on
+`WeighbridgeTicket."deliveryOrderId"` / `"tripId"` (text, no FK in 1.4a) and lets the completed ticket drive the trip's
+loaded quantity and its stock issue (`completedTicketsForTrip`, event `weighbridge.ticket.completed`).
+
+Migration `V23__fleet_weighbridge.sql` (placeholder number, renumbered at merge). Code: `fleet.application.Weighbridge*`
+(+ `AsciiFrameParser`, `StableWeightReader`, `*WeighbridgeAdapter`), `fleet.web.weighbridge`.
+
+### Routes (36, all under `/api/v1/fleet/weighbridge`, `@RequiresModule("fleet")`)
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/stations` · `/stations/{id}` | `weighbridge:read` | `includeInactive`; detail with devices |
+| POST / PATCH | `/stations` · `/stations/{id}` | `weighbridge:configure` | code (unique), name, branch, receiving store (`locationId`), `tolerancePct` (0.5), `toleranceKg` (20), `tareValidityDays` (30), `minWeightKg` (200) / `maxWeightKg` (100 000), `isActive`; `clear` |
+| GET | `/devices` | `weighbridge:read` | `stationId, includeInactive`; last read / status / error |
+| POST / PATCH | `/devices` · `/devices/{id}` | `weighbridge:configure` | `adapterType` (simulator, ascii-tcp, ascii-serial), `config` (validated by the adapter), `readTimeoutMs` (500–60 000, capped by `FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS`) |
+| POST | `/devices/{id}/test-read` | `weighbridge:configure` | reachability + one stable read; 201 `{ok, reachable, detail, weightKg, rawFrame | error}` |
+| POST | `/devices/{id}/read` | `weighbridge:weigh` | live stable weight for the big display (nothing stored); 503 unreachable / timeout / format, 409 motion / overload (`reason`) |
+| POST | `/devices/{id}/simulator-weight` | `weighbridge:configure` | `{weightKg, mode?, motionFrames?}` — simulator only (demo / tests) |
+| GET / PUT | `/product-settings` · `/product-settings/{productId}` | read / `configure` | `kgPerUnit` (kg per product base unit), `tolerancePct`, `toleranceKg`; all null deletes |
+| GET | `/lookups` · `/lookups/products` · `/lookups/partners` · `/lookups/purchase-orders` | `weighbridge:read` | stations, devices, adapters, subject types, units, stores; searches (`role` customer / supplier); POs active / partially received with lines |
+| GET | `/tickets` | `weighbridge:read` | `{data, meta}`; `queue` (live, open, awaiting_second, exceptions, completed, void, cancelled, all), `stationId, subjectType, partnerId, productId, vehicleId, search, manual, outOfTolerance, from, to, page, pageSize ≤ 200` |
+| GET | `/tickets/summary` · `/tickets/{id}` | `weighbridge:read` | queue counts; detail with exceptions, reissue chain, goods receipt, operators, device codes |
+| POST / PATCH | `/tickets` · `/tickets/{id}` | `weighbridge:weigh` | register / edit header (open or awaiting second weighing only) |
+| POST | `/tickets/{id}/first-weigh` · `/second-weigh` | `weighbridge:weigh` | `{deviceId}` or `{manualKg, manualReason}` (+ `weighbridge:manual_entry`, else 403); `saveTare` on the second; a repeated capture answers 409 |
+| POST | `/tickets/{id}/stored-tare` | `weighbridge:weigh` | `{tareId?}` — the plate's valid stored tare as one weighing |
+| POST | `/tickets/{id}/cancel` | `weighbridge:weigh` | `{reason}`; open / awaiting second only |
+| POST | `/tickets/{id}/print` | `weighbridge:weigh` | `application/pdf` (A5); completed or void; counts copies (`printCount`, original / copy n) |
+| POST | `/tickets/{id}/void` | `weighbridge:void` | `{reason, reissue?, copyWeights? (default true), corrections?}` → `{voided, reissued}` |
+| POST | `/tickets/{id}/goods-receipt` | `weighbridge:weigh` | inbound: create the draft GRN if missing (`locationId?`); idempotent (`created: false`) |
+| GET / POST | `/tares` | read / `weigh` | `vehicleId, plate, state` (current, valid, expired, all); weigh an empty truck (device or manual) |
+| POST | `/tares/{id}/revoke` | `weighbridge:configure` | `{reason}` |
+| GET | `/exceptions` | `weighbridge:read` | `status, stationId`; each row has `ownTicket` |
+| POST | `/exceptions/{id}/approve` · `/reject` · `/sync` | `weighbridge:approve_exception` | reject needs `notes`; sync applies an inbox decision |
+| GET | `/reports/discrepancies` | `weighbridge:read` | `groupBy` product / partner / station / vehicle / subject / day / month, `stationId, subjectType, partnerId, productId, from, to` |
+
+### Data model (V941)
+
+| Table | Notable columns |
+|---|---|
+| `WeighbridgeStation` | code (unique), branch, receiving store, tolerance % / kg, tare validity days, min / max weight |
+| `WeighbridgeDevice` | station, code (unique), `adapterType`, `config` JSONB (no secrets), `readTimeoutMs`, last read / status / error |
+| `WeighbridgeProductSetting` | product (unique), `kgPerUnit`, tolerance overrides |
+| `FleetVehicleTare` | vehicle (optional) + normalised plate, `tareKg`, `weighedAt`, `expiresAt`, station / device, source device / manual (+ raw frame / reason), `ticketId`, status active / superseded / revoked; one active per plate |
+| `WeighbridgeTicket` | number `WBT-<year>-000001` (sequence), station, `subjectType` (sale_delivery, purchase_receipt, internal_haulage, other) → `direction`, status, truck (vehicle or ad-hoc plate; a plate of a fleet vehicle links to it), trailer, driver (fleet driver or name), transporter, partner, `salesOrderId`, `deliveryOrderId` / `tripId` (**text, no FK — 1.4b**), PO + line, reference, product, ordered qty + unit, `expectedKg`, store; per weighing (first / second): kg, time, source device / manual / stored_tare, device, raw frame, manual reason, user, tare id; gross / tare / net kg, `netQty` + unit, variance kg / %, allowed kg, tolerance used, `withinTolerance`, `isManual`, `usedStoredTare`, completion, print counters, cancel / void fields, `reissuedFromId` / `replacedById`, `goodsReceiptId` / `goodsReceiptLineId` (unique); one live ticket per plate (partial unique index) |
+| `WeighbridgeException` | ticket, expected / net / variance / allowed, status pending / approved / rejected, `approvalRequestId`, raised / decided by; one pending per ticket |
+
+### Rules
+
+1. **Device reads** (`WeighbridgeAdapter.readStable(device, timeout)`): frames are parsed by `AsciiFrameParser`
+   (default `ST,GS,+0032150kg` style: status ST / US / MO / OL, gross / net marker, sign, weight, unit kg / t / g / lb;
+   configurable `frameRegex` with named groups, status tokens, default unit, implied decimals) and
+   `StableWeightReader` returns once `stableFrames` (default 3) consecutive stable frames show the same weight; motion
+   resets the run, overload fails at once; everything is bounded by the device timeout (capped by
+   `FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS`, default 15 s). The read runs **outside** the database transaction; the
+   ticket row is then locked `FOR UPDATE` and its state re-checked (two captures cannot both land). Device captures
+   store the raw frame and the device id. `ascii-serial` reads the frames from the serial device file (line settings
+   configured on the host with `stty`); a serial-to-Ethernet converter with `ascii-tcp` is the recommended set-up.
+2. **Plausibility**: a captured weight below the station minimum (empty platform) or above the maximum is refused.
+3. **Net** = heavier − lighter weighing, so outbound (tare first) and inbound (gross first) tickets work the same;
+   equal weighings are refused; a stored tare that is heavier than the weighed truck is refused.
+4. **Expected weight / units** (`WeighbridgeUnits`, no full UoM engine — Phase 4): kg per 1 document unit from (a) a
+   weight unit (KG category: t = 1 000 kg), (b) a product conversion (`ProductUomConversion`, the ADR-S003 density
+   bridge) to a weight unit, (c) the document unit in the product's base unit when that is a weight unit, (d) the
+   product's weighbridge setting `kgPerUnit` (kg per base unit — e.g. 1 600 kg per m³ of sand). A ticket with an
+   ordered quantity in a unit without any conversion is refused at registration. Net quantity is stored in the
+   document unit (else the product's base unit when convertible).
+5. **Tolerance**: allowed = max(absolute kg, expected × % / 100); product settings override the station per field;
+   |net − expected| > allowed → exception. No ordered quantity → no comparison (completes).
+6. **Exceptions**: approval engine entity `weighbridge_exception` (default workflow "Weighbridge exception", step
+   "Weighbridge supervisor", approver permission `weighbridge:approve_exception`, created on first use; snapshot
+   `amount` = |variance kg| so workflows can set kg thresholds). **Separation of duties**: whoever registered the
+   ticket or captured a weighing (and the requester) cannot approve or reject it (403); a decision made by such a user
+   in the approvals inbox is not applied (the exception stays pending for another approver). Approval completes the
+   ticket; rejection (reason required) discards the second weighing and the truck is weighed again. Unlike other
+   gates, an inactive / missing workflow does **not** auto-approve: the exception still waits for a decision.
+7. **Stored tare**: weighed on its own (`POST /tares`) or saved from a ticket (`saveTare`); expires after the station's
+   `tareValidityDays`; a new tare supersedes the plate's previous one; revocable; a ticket can use it as one weighing
+   only while valid (`… expired on …: weigh the empty truck again (re-tare)`).
+8. **Manual entry** only with `weighbridge:manual_entry` and a reason; flagged per weighing and on the ticket
+   (`isManual`), shown on the print, filterable in the queue and counted in the report.
+9. **Immutability**: completed / void tickets refuse edits and weighings (409 `… is completed and cannot be changed:
+   void and reissue it to correct it`); printing counts copies; correction = `void` (reason, `weighbridge:void`,
+   audited) + optional **reissue** with corrected header, keeping the weighings (re-evaluated → completed or exception)
+   or reopened for a new weighing; the chain is kept (`reissuedFromId` / `replacedById`).
+10. **Inbound → GRN** (procurement): a completed `purchase_receipt` ticket (PO required, line auto-picked when the PO
+    has one line) pre-fills **one DRAFT goods receipt with one line** through `GoodsReceiptsService.createDraft`
+    (PO line, net quantity in the PO line's unit, PO price, receiving store, branch of the station); the store posts it
+    with procurement's own approval / GL / over-receipt rules. Idempotent: the ticket keeps the GRN + line ids (unique
+    index), `POST /goods-receipt` returns the existing one. Voiding: a posted receipt blocks the void (409, reverse it
+    in procurement first); a draft is cancelled through the new additive `GoodsReceiptsService.cancelDraft` (no route).
+
+### Events
+
+| Event | When | Payload |
+|---|---|---|
+| `weighbridge.ticket.completed` | ticket completed (within tolerance, approved exception, reissue) | `organizationId, ticketId, ticketNumber, subjectType, direction, stationId, vehicleId, registrationPlate, partnerId, productId, salesOrderId, deliveryOrderId, tripId, purchaseOrderId, grossKg, tareKg, netKg, netQty, uomId, withinTolerance, manual, reissuedFromId, goodsReceiptId` |
+| `weighbridge.exception.raised` | out of tolerance | `organizationId, exceptionId, ticketId, ticketNumber, varianceKg, variancePct, allowedVarianceKg` |
+| `weighbridge.ticket.voided` | ticket voided | `organizationId, ticketId, ticketNumber, reason, replacedById, deliveryOrderId, tripId` |
+
+Consumed: `approval.decided` (entity type `weighbridge_exception`, `WeighbridgeApprovalSubscriber`).
+
+### Public API (1.4b / 1.9)
+
+- `WeighbridgeTicketService.completedTicket(id)` → `CompletedTicket` (net kg, `netQty` + `uomId` in the document unit,
+  gross / tare, ordered qty, variance, within tolerance, manual, stored tare, references, GRN id); 400 when not
+  completed. `completedTicketsForTrip(tripId)`, `completedTicketsForDeliveryOrder(deliveryOrderId)`.
+- `WeighbridgeStationService.readDevice(deviceId, stationId)` — a stable reading (for other weighing points).
+- `WeighbridgeAdapter` SPI (+ `WeighbridgeAdapters` registry), `AsciiFrameParser`, `WeighbridgeCalculator`,
+  `WeighbridgeUnits.kgPerUnit(productId, uomId)`.
+- Additive in procurement: `GoodsReceiptsService.cancelDraft(id, reason)`.
+
+### GL
+
+None in 1.4a: the weighbridge has no money effect. Stock and GL come from procurement's GRN post (inbound) and from
+the 1.3 dispatch stock issue driven by the ticket (1.4b).
+
+### Web
+
+Sidebar (Fleet): **Weighbridge** `/fleet/weighbridge` (queue: in progress / open / awaiting second / exceptions /
+completed / void, counts, search, station / subject / date filters, phone cards), **Weighbridge Exceptions**
+`/fleet/weighbridge/exceptions` (approve / reject; own tickets marked), **Weighbridge Discrepancies**
+`/fleet/weighbridge/reports`, **Weighbridge Settings** `/fleet/weighbridge/settings` (stations, indicators with test
+read and simulator weight, product settings). Ticket entry `/fleet/weighbridge/tickets/new` (remembers the station),
+weighing screen `/fleet/weighbridge/tickets/:id` (big weight display, read scale, capture first / second weight, use
+stored tare, manual entry, save tare, cancel, print / copy, void & reissue, create GRN), stored tares
+`/fleet/weighbridge/tares`. Tablet first: large inputs and buttons. Hooks: `web/src/features/fleet/weighbridge-api.ts`.
+
+### Tests
+
+`WeighbridgePoliciesTest` (unit: frame parser default / custom formats, units, implied decimals, validation; stable
+reader settling, overload, closed source, never-settling, garbage, silent with bounded time; CR / LF / STX / ETX
+splitter; net order-independence and equal weighings; tolerance max rule, edge, product override; tare expiry / states;
+simulator modes; `ascii-tcp` against an in-test socket server with a poll command, unreachable port).
+`FleetWeighbridgeIT` (outbound with the simulator → net 20 050 kg = 20.05 t, within tolerance, event, public API,
+queue; registration rules incl. one live ticket per truck, missing weight conversion, kg-per-unit setting + product
+tolerance, plausibility; exception SoD — operator 403, supervisor approves, request approved, subscriber idempotent;
+rejection → reweigh; approvals-inbox decision → subscriber; manual entry permission / reason / flag / report;
+immutability, PDF print counting, void + reissue audited and evented, reissue without weights; stored tare single
+weighing, expiry, supersede via `saveTare`, revoke, manual-tare permission; inbound PO → exactly one draft GRN line,
+replay, procurement post, posted-GRN void guard, draft cancelled on void + reissued GRN; `ascii-tcp` device read
+against an in-test indicator, motion-only 409, unreachable 503, test-read; concurrent first-weigh captures (one lands);
+discrepancy report by product; tenant isolation; 36-route authorization matrix).
+
+### Known gaps / next (1.4b and later)
+
+- 1.4b: FKs for `deliveryOrderId` / `tripId`, ticket ↔ load linking in dispatch, loaded quantity and the stock issue
+  from the completed ticket, `weighbridge.ticket.voided` handling in dispatch.
+- No direct serial-port library (serial = device file read with host line settings); no vendor-specific binary
+  protocols (Toledo / Cardinal) — add as adapters. No camera / ANPR plate capture. Report period uses the server
+  time zone for day / month grouping.
