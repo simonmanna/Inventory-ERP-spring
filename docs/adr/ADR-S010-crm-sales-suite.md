@@ -2,7 +2,7 @@
 
 - Status: Proposed (2026-10-29) — owner approval pending
 - Spec: [`docs/spec/crm.md`](../spec/crm.md) § "Sales suite (ADR-S010)"
-- Migration: `V16__crm_sales_suite.sql`
+- Migration: `V17__crm_sales_suite.sql`
 - UI references: `crm_reference/` (Odoo CRM screens), Real-Estate-Website CRM (stages with category / colour /
   probability, sources, lost reasons, tasks with reminders, saved views, round-robin assignment, management report)
 
@@ -50,7 +50,7 @@ Extend the `crm` module additively; keep the 21 parity routes and their JSON unc
    directory and Customer 360 with receivables and orders (read-only queries on `Partner`, `Document`, `Order`,
    `StockItem`, `StockReservation`).
 9. **Permissions** (new): `crm:deal:view_all`, `crm:lead:read|write`, `crm:quotation:read|write|approve|convert`,
-   `crm:pricing:read|manage`, `crm:report:read`, `crm:configure`. V16 grants them to Administrator and the lead /
+   `crm:pricing:read|manage`, `crm:report:read`, `crm:configure`. V17 grants them to Administrator and the lead /
    quotation / pricing-read / report subset to roles that already have `crm:deal:write`.
 10. Tables of the suite are accessed with plain SQL (`CrmDb`), like the parity service; no JPA entities.
 

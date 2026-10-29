@@ -71,13 +71,15 @@ public class HrPayrollService {
     private final SequenceService seq;
     private final PostingService posting;
     private final AccountDeterminationService accounts;
+    private final HrPayrollInputService payrollInputs;
 
     public HrPayrollService(HrDb hr, SequenceService seq, PostingService posting,
-            AccountDeterminationService accounts) {
+            AccountDeterminationService accounts, HrPayrollInputService payrollInputs) {
         this.hr = hr;
         this.seq = seq;
         this.posting = posting;
         this.accounts = accounts;
+        this.payrollInputs = payrollInputs;
     }
 
     private static String invalid(String what, Object v) {
@@ -416,6 +418,9 @@ public class HrPayrollService {
                 hr.jdbc().sql("DELETE FROM \"HrPayrollItem\" WHERE id = ? AND \"organizationId\" = ?"
                         + " AND \"deletedAt\" IS NULL").params(itemId, orgId).update();
             }
+            // Additive (ADR-S009 §2): payroll inputs queued by other modules; none → the Nest calculation unchanged.
+            payrollInputs.releaseRun(id);
+            List<Map<String, Object>> inputs = payrollInputs.pendingUntil(monthEnd);
             List<Map<String, Object>> employees = hr.where(HrEmployee.class).eq("isActive", true).list(null);
             List<Map<String, Object>> components = hr.where(HrPayrollComponent.class).eq("isActive", true).list(null);
             Map<String, Object> payeTable = activeTaxTable("PAYE", runDate);
@@ -459,6 +464,20 @@ public class HrPayrollService {
                     allowancesTotal += amount;
                     allowanceLines.add(line(orgId, c.get("name"), amount, c.get("isTaxable"), userId));
                 }
+                List<String> inputIds = new ArrayList<>();
+                double nonTaxableInputs = 0;
+                for (Map<String, Object> in : inputs) {
+                    if (!emp.get("id").equals(in.get("employeeId"))) {
+                        continue;
+                    }
+                    double amount = SqlRows.dec(in, "amount").doubleValue();
+                    allowancesTotal += amount;
+                    if (!Boolean.TRUE.equals(in.get("isTaxable"))) {
+                        nonTaxableInputs += amount;
+                    }
+                    allowanceLines.add(line(orgId, in.get("name"), amount, in.get("isTaxable"), userId));
+                    inputIds.add((String) in.get("id"));
+                }
                 List<Map<String, Object>> deductionLines = new ArrayList<>();
                 double pension = 0;
                 double ssf = 0;
@@ -488,7 +507,7 @@ public class HrPayrollService {
                     deductionLines.add(line(orgId, c.get("name"), amount, c.get("isTaxable"), userId));
                 }
                 double gross = baseAmount + overtimePay + allowancesTotal;
-                double taxableGross = Math.max(0, gross - pension - ssf);
+                double taxableGross = Math.max(0, gross - pension - ssf - nonTaxableInputs);
                 @SuppressWarnings("unchecked")
                 double tax = payeTable != null ? computeProgressive(taxableGross * MONTHS_PER_YEAR,
                         (List<Map<String, Object>>) payeTable.get("brackets")) / MONTHS_PER_YEAR : 0;
@@ -558,6 +577,7 @@ public class HrPayrollService {
                 data.put("absenceDays", BigDecimal.ZERO);
                 data.put("createdBy", userId);
                 Map<String, Object> item = hr.insert(HrPayrollItem.class, data);
+                payrollInputs.attach(inputIds, id, (String) item.get("id"));
                 for (Map<String, Object> al : allowanceLines) {
                     al.put("itemId", item.get("id"));
                     hr.insert(HrPayrollAllowance.class, al);
@@ -640,7 +660,25 @@ public class HrPayrollService {
             double advances = sum(runItems, "advanceDeduction");
             double other = sum(runItems, "otherDeductions");
             List<PostingRequest.Line> lines = new ArrayList<>();
-            lines.add(PostingRequest.Line.debit(salaryExpense, decOf(gross), "Salaries & wages"));
+            // Additive (ADR-S009 §2): payroll inputs with a debit account (another module's clearing liability) are
+            // debited there instead of salaries expense; without such inputs the journal is the Nest one.
+            List<Map<String, Object>> redirected = payrollInputs.redirectedDebits(id);
+            if (redirected.isEmpty()) {
+                lines.add(PostingRequest.Line.debit(salaryExpense, decOf(gross), "Salaries & wages"));
+            } else {
+                BigDecimal moved = BigDecimal.ZERO;
+                for (Map<String, Object> r : redirected) {
+                    moved = moved.add(SqlRows.dec(r, "amount"));
+                }
+                BigDecimal rest = decOf(gross).subtract(moved);
+                if (rest.signum() > 0) {
+                    lines.add(PostingRequest.Line.debit(salaryExpense, rest, "Salaries & wages"));
+                }
+                for (Map<String, Object> r : redirected) {
+                    lines.add(PostingRequest.Line.debit((String) r.get("debitAccountId"), SqlRows.dec(r, "amount"),
+                            "Payroll inputs settled"));
+                }
+            }
             credit(lines, netPayPayable, net, "Net pay payable");
             credit(lines, payePayable, tax, "PAYE tax payable");
             credit(lines, pensionPayable, pension, "Pension payable");
@@ -652,6 +690,7 @@ public class HrPayrollService {
             Map<String, Object> journal = posting.post(new PostingRequest("GEN", Instant.now(),
                     "Payroll " + run.get("runNumber") + " — " + period.get("periodCode"), null, null, "payroll_run", id,
                     "primary", "payroll_run:" + id, null, null, null, lines));
+            payrollInputs.markIncluded(id);
             for (Map<String, Object> loan : hr.where(HrEmployeeLoan.class).eq("status", "ACTIVE").list(null)) {
                 Map<String, Object> item = itemFor(runItems, loan.get("employeeId"));
                 double installment = item == null ? 0 : num(item.get("loanDeduction"));
@@ -719,8 +758,11 @@ public class HrPayrollService {
         }
         Object status = run.get("status");
         if ("DRAFT".equals(status) || "CALCULATED".equals(status)) {
-            return hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
-                    "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
+            return hr.inTx(() -> {
+                payrollInputs.releaseRun(id);
+                return hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
+                        "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
+            });
         }
         if (!"APPROVED".equals(status) && !"PAID".equals(status)) {
             throw ApiException.badRequest("Only APPROVED/PAID runs can be reversed");
@@ -730,6 +772,7 @@ public class HrPayrollService {
                 posting.reverse((String) run.get("journalEntryId"), null, "Reversal — "
                         + (dto.get("reason") == null ? "payroll run reversal" : PosSql.jsString(dto.get("reason"))));
             }
+            payrollInputs.reopenRun(id);
             Map<String, Object> reversed = hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
                     "glPosted", false, "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "cancel", Obj.of("status", status,
@@ -747,7 +790,10 @@ public class HrPayrollService {
         if ("APPROVED".equals(run.get("status")) || "PAID".equals(run.get("status"))) {
             throw ApiException.badRequest("Approved/paid runs cannot be deleted — reverse them");
         }
-        return hr.softDelete(HrPayrollRun.class, id, Obj.of("updatedBy", user()));
+        return hr.inTx(() -> {
+            payrollInputs.releaseRun(id);
+            return hr.softDelete(HrPayrollRun.class, id, Obj.of("updatedBy", user()));
+        });
     }
 
     // ─── payslips ───

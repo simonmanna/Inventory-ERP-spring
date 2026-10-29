@@ -7,6 +7,14 @@ import { VehicleFormPage } from './VehicleFormPage';
 import { VehicleDetailPage } from './VehicleDetailPage';
 import { FleetCompliancePage } from './FleetCompliancePage';
 import { FleetCategoriesPage } from './FleetCategoriesPage';
+import { DriversPage } from './DriversPage';
+import { DriverFormPage } from './DriverFormPage';
+import { DriverDetailPage } from './DriverDetailPage';
+import { CheckoutPage } from './CheckoutPage';
+import { AllowanceRulesPage } from './AllowanceRulesPage';
+import { ClaimsPage } from './ClaimsPage';
+import { ClaimFormPage } from './ClaimFormPage';
+import { ClaimDetailPage } from './ClaimDetailPage';
 
 /**
  * Route skeleton of the Fleet section (ADR-S009). Each sub-module adds its screens here, static segments before the
@@ -23,5 +31,15 @@ export const fleetRoutes = (
     <Route path="/fleet/vehicles/:id/edit" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.update}><VehicleFormPage /></RequirePermission>} />
     <Route path="/fleet/compliance" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.read}><FleetCompliancePage /></RequirePermission>} />
     <Route path="/fleet/settings/classes" element={<RequirePermission permission={[PERMISSIONS.fleet.settings, PERMISSIONS.fleetVehicle.read]}><FleetCategoriesPage /></RequirePermission>} />
+    {/* 1.2 drivers & operators */}
+    <Route path="/fleet/drivers" element={<RequirePermission permission={PERMISSIONS.fleetDriver.read}><DriversPage /></RequirePermission>} />
+    <Route path="/fleet/drivers/new" element={<RequirePermission permission={PERMISSIONS.fleetDriver.create}><DriverFormPage /></RequirePermission>} />
+    <Route path="/fleet/drivers/:id" element={<RequirePermission permission={PERMISSIONS.fleetDriver.read}><DriverDetailPage /></RequirePermission>} />
+    <Route path="/fleet/drivers/:id/edit" element={<RequirePermission permission={PERMISSIONS.fleetDriver.update}><DriverFormPage /></RequirePermission>} />
+    <Route path="/fleet/checkout" element={<RequirePermission permission={[PERMISSIONS.fleetDriver.checkout, PERMISSIONS.fleetVehicle.read]}><CheckoutPage /></RequirePermission>} />
+    <Route path="/fleet/claims" element={<RequirePermission permission={PERMISSIONS.fleetDriver.read}><ClaimsPage /></RequirePermission>} />
+    <Route path="/fleet/claims/new" element={<RequirePermission permission={PERMISSIONS.fleetDriver.allowance}><ClaimFormPage /></RequirePermission>} />
+    <Route path="/fleet/claims/:id" element={<RequirePermission permission={PERMISSIONS.fleetDriver.read}><ClaimDetailPage /></RequirePermission>} />
+    <Route path="/fleet/settings/allowances" element={<RequirePermission permission={[PERMISSIONS.fleet.settings, PERMISSIONS.fleetDriver.read]}><AllowanceRulesPage /></RequirePermission>} />
   </>
 );

@@ -26,6 +26,7 @@ import { num } from './fleet-format';
 import { VehicleMetersTab } from './VehicleMetersTab';
 import { VehicleComplianceTab } from './VehicleComplianceTab';
 import { VehicleFilesTab } from './VehicleFilesTab';
+import { VehicleDriversTab } from './VehicleDriversTab';
 
 /** Vehicle detail (fleet 1.1): overview, meters + corrections, compliance, status history, linked asset, files. */
 export function VehicleDetailPage() {
@@ -102,6 +103,7 @@ export function VehicleDetailPage() {
           <TabsTrigger value="history">{tx('Status history')}</TabsTrigger>
           <TabsTrigger value="asset">{tx('Fixed asset')}</TabsTrigger>
           <TabsTrigger value="files">{tx('Photos & documents')}</TabsTrigger>
+          {has(PERMISSIONS.fleetDriver.read) && <TabsTrigger value="drivers">{tx('Driver assignments / check-outs')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="overview"><OverviewTab v={v} /></TabsContent>
         <TabsContent value="meters"><VehicleMetersTab vehicle={v} /></TabsContent>
@@ -109,6 +111,7 @@ export function VehicleDetailPage() {
         <TabsContent value="history"><HistoryTab vehicleId={v.id} /></TabsContent>
         <TabsContent value="asset"><AssetTab vehicle={v} active={tab === 'asset'} /></TabsContent>
         <TabsContent value="files"><VehicleFilesTab vehicle={v} /></TabsContent>
+        <TabsContent value="drivers">{tab === 'drivers' && <VehicleDriversTab vehicle={v} />}</TabsContent>
       </Tabs>
 
       <StatusDialog vehicle={v} open={statusOpen} onOpenChange={setStatusOpen} />

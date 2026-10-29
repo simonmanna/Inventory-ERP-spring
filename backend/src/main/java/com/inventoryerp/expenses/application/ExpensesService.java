@@ -356,29 +356,16 @@ public class ExpensesService {
         if (dto.categoryId() != null && !dto.categoryId().isEmpty() && category == null) {
             throw ApiException.badRequest("Category not found");
         }
-        int year = EntityPatch.toInstant(dto.expenseDate()).atOffset(ZoneOffset.UTC).getYear();
-        String code = sequence.next("expense:" + year, "EXP-", 5);
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Expense\" (id, \"organizationId\", \"expenseCode\", title, description, amount, status,"
-                        + " \"paymentStatus\", \"paymentType\", \"expenseDate\", notes, \"categoryId\", \"categoryName\","
-                        + " \"supplierId\", \"createdById\", \"approvedById\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?,"
-                        + " ?, ?, ?::\"ExpenseStatus\", 'UNPAID', ?::\"ExpensePaymentType\", ?, ?, ?, ?, ?, ?, ?, " + NOW
-                        + ", " + NOW + ")")
-                .params(id, org(), code, dto.title().trim(), dto.description(), dto.amount(), isCash ? "POSTED" : "DRAFT",
-                        dto.paymentType(), SqlRows.ts(EntityPatch.toInstant(dto.expenseDate())), dto.notes(),
-                        category == null ? null : category.get("id"), category == null ? null : category.get("name"),
-                        dto.supplierId() == null || dto.supplierId().isEmpty() ? null : dto.supplierId(), actorId,
-                        isCash ? actorId : null)
-                .update();
-        audit.recordInTx(AuditInput.of("Expense", id, "create", null, Obj.of("expenseCode", code, "title",
-                dto.title().trim(), "amount", JsNumbers.js(dto.amount()), "paymentType", dto.paymentType())));
+        String[] created = insertExpense(dto, actorId, isCash, isCash ? actorId : null, category);
+        String id = created[0];
+        String code = created[1];
         if (isCash) {
             if (!TenantContext.has("expense:post")) {
                 throw ApiException.forbidden("Paying an expense on creation requires expense:post; save it as a credit"
                         + " expense instead");
             }
             recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null,
-                    category);
+                    category, null);
         }
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", code));
         BusinessOutcome.record(jdbc, Obj.of("id", id, "expenseCode", code), isCash);
@@ -391,6 +378,61 @@ public class ExpensesService {
                         + " WHERE id = ?").param(id).update();
             }
         }
+        return loadDecorated(id);
+    }
+
+    /** Inserts the expense row (+ audit); returns {@code [id, expenseCode]}. */
+    private String[] insertExpense(CreateInput dto, String actorId, boolean isCash, String approvedById,
+            Map<String, Object> category) {
+        int year = EntityPatch.toInstant(dto.expenseDate()).atOffset(ZoneOffset.UTC).getYear();
+        String code = sequence.next("expense:" + year, "EXP-", 5);
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Expense\" (id, \"organizationId\", \"expenseCode\", title, description, amount, status,"
+                        + " \"paymentStatus\", \"paymentType\", \"expenseDate\", notes, \"categoryId\", \"categoryName\","
+                        + " \"supplierId\", \"createdById\", \"approvedById\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                        + " ?, ?, ?::\"ExpenseStatus\", 'UNPAID', ?::\"ExpensePaymentType\", ?, ?, ?, ?, ?, ?, ?, " + NOW
+                        + ", " + NOW + ")")
+                .params(id, org(), code, dto.title().trim(), dto.description(), dto.amount(), isCash ? "POSTED" : "DRAFT",
+                        dto.paymentType(), SqlRows.ts(EntityPatch.toInstant(dto.expenseDate())), dto.notes(),
+                        category == null ? null : category.get("id"), category == null ? null : category.get("name"),
+                        dto.supplierId() == null || dto.supplierId().isEmpty() ? null : dto.supplierId(), actorId,
+                        approvedById)
+                .update();
+        audit.recordInTx(AuditInput.of("Expense", id, "create", null, Obj.of("expenseCode", code, "title",
+                dto.title().trim(), "amount", JsNumbers.js(dto.amount()), "paymentType", dto.paymentType())));
+        return new String[] {id, code};
+    }
+
+    /**
+     * How a payment of an expense raised by another module is booked: the expense account (instead of the category
+     * ledger / {@code default_expense} mapping) and the cost centre and analytic dimensions of the expense line.
+     */
+    public record SourcePosting(String expenseAccountId, String costCenterId, Map<String, Object> dimensions) {}
+
+    /**
+     * Record an expense another module has already approved (additive API, ADR-S009 §2 — fleet driver claims) and pay
+     * it at once from a cash-equivalent account: the row is {@code POSTED} with {@code approvedById} = that module's
+     * approver, the payment posts Dr {@code posting.expenseAccountId} (cost centre + dimensions on the line) / Cr the
+     * account, with the same treasury guards as a cash expense. The caller checks {@code expense:post}. Void it with
+     * {@link #voidExpense}, which reverses the payment journal.
+     */
+    @Transactional
+    public Map<String, Object> createPaidFromSource(CreateInput dto, String approvedById, SourcePosting posting) {
+        String actorId = requireActor();
+        if (dto.paymentMethod() == null || dto.paymentMethod().isEmpty() || dto.accountId() == null
+                || dto.accountId().isEmpty()) {
+            throw ApiException.badRequest("Cash expenses require paymentMethod and accountId");
+        }
+        if (posting == null || posting.expenseAccountId() == null) {
+            throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
+                    + " before paying expenses");
+        }
+        String[] created = insertExpense(dto, actorId, true, approvedById == null ? actorId : approvedById, null);
+        String id = created[0];
+        recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null, null,
+                posting);
+        publish("expense.created", Obj.of("expenseId", id, "expenseCode", created[1]));
+        publish("expense.paid", Obj.of("expenseId", id));
         return loadDecorated(id);
     }
 
@@ -556,7 +598,8 @@ public class ExpensesService {
         Map<String, Object> category = exp.get("categoryId") == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM"
                 + " \"ExpenseCategory\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                 .params(exp.get("categoryId"), org()));
-        recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(), category);
+        recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(), category,
+                null);
         publish("expense.paid", Obj.of("expenseId", id));
         Map<String, Object> result = loadDecorated(id);
         BusinessOutcome.record(jdbc, Obj.of("id", id, "paid", true), true);
@@ -617,13 +660,13 @@ public class ExpensesService {
     // ------------------------------------------------------------------ internals
 
     private void recordPayment(Map<String, Object> expense, String paidBy, String paymentMethod, String accountId,
-            String reference, String paymentNotes, Map<String, Object> category) {
+            String reference, String paymentNotes, Map<String, Object> category, SourcePosting source) {
         BigDecimal residual = Money.dec(expense.get("amount")).subtract(Money.dec(expense.get("amountPaid")));
         if (residual.signum() <= 0) {
             throw ApiException.badRequest("Nothing left to pay");
         }
         String org = org();
-        String debit = resolveExpenseAccountId(category);
+        String debit = source != null ? source.expenseAccountId() : resolveExpenseAccountId(category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
                     + " before paying expenses");
@@ -642,7 +685,8 @@ public class ExpensesService {
         String value = JsNumbers.dec(residual);
         Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
                 "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, List.of(Line.debit(debit, value, title),
+                "expense_payment:" + paymentId, List.of(source == null ? Line.debit(debit, value, title)
+                        : new Line(debit, value, null, null, title, null, source.costCenterId(), source.dimensions()),
                         Line.credit((String) credit.get("id"), value, "Paid: " + title))));
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"paymentNotes\", \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?,"

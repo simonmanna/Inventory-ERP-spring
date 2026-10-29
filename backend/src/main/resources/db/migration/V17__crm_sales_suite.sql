@@ -1,4 +1,4 @@
--- V16: CRM sales suite (ADR-S010) — configurable pipeline stages, leads vs opportunities, sales teams, tags, sources,
+-- V17: CRM sales suite (ADR-S010) — configurable pipeline stages, leads vs opportunities, sales teams, tags, sources,
 -- lost reasons, stage history, planned activities with reminders, quotations with approval and conversion to an
 -- Order or a proforma invoice, customer-specific price rules, saved filters and per-organization CRM settings.
 --
