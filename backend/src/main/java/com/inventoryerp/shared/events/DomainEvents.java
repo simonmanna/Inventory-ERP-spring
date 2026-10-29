@@ -145,6 +145,11 @@ public final class DomainEvents {
     public static final String FLEET_VEHICLE_CREATED = "fleet.vehicle.created";
     public static final String FLEET_VEHICLE_STATUS_CHANGED = "fleet.vehicle.status_changed";
     public static final String FLEET_METER_CORRECTED = "fleet.meter.corrected";
+    public static final String CRM_LEAD_CONVERTED = "crm.lead.converted";
+    public static final String CRM_DEAL_WON = "crm.deal.won";
+    public static final String CRM_DEAL_LOST = "crm.deal.lost";
+    public static final String CRM_QUOTATION_APPROVED = "crm.quotation.approved";
+    public static final String CRM_QUOTATION_CONVERTED = "crm.quotation.converted";
     public static final String FLEET_VEHICLE_CHECKED_OUT = "fleet.vehicle.checked_out";
     public static final String FLEET_VEHICLE_CHECKED_IN = "fleet.vehicle.checked_in";
     public static final String FLEET_CLAIM_SETTLED = "fleet.claim.settled";

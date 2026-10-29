@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (441 permissions). Constant name = GROUP__ACTION.
+ * exactly (452 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -363,6 +363,17 @@ public final class Permissions {
     public static final String CRM__DEAL_WRITE = "crm:deal:write";
     public static final String CRM__ACTIVITY_READ = "crm:activity:read";
     public static final String CRM__ACTIVITY_WRITE = "crm:activity:write";
+    public static final String CRM__DEAL_VIEW_ALL = "crm:deal:view_all";
+    public static final String CRM__LEAD_READ = "crm:lead:read";
+    public static final String CRM__LEAD_WRITE = "crm:lead:write";
+    public static final String CRM__QUOTATION_READ = "crm:quotation:read";
+    public static final String CRM__QUOTATION_WRITE = "crm:quotation:write";
+    public static final String CRM__QUOTATION_APPROVE = "crm:quotation:approve";
+    public static final String CRM__QUOTATION_CONVERT = "crm:quotation:convert";
+    public static final String CRM__PRICING_READ = "crm:pricing:read";
+    public static final String CRM__PRICING_MANAGE = "crm:pricing:manage";
+    public static final String CRM__REPORT_READ = "crm:report:read";
+    public static final String CRM__CONFIGURE = "crm:configure";
     public static final String DOCUMENT__CREATE = "document:create";
     public static final String DOCUMENT__READ = "document:read";
     public static final String DOCUMENT__UPDATE = "document:update";
@@ -807,6 +818,17 @@ public final class Permissions {
             "crm:deal:write",
             "crm:activity:read",
             "crm:activity:write",
+            "crm:deal:view_all",
+            "crm:lead:read",
+            "crm:lead:write",
+            "crm:quotation:read",
+            "crm:quotation:write",
+            "crm:quotation:approve",
+            "crm:quotation:convert",
+            "crm:pricing:read",
+            "crm:pricing:manage",
+            "crm:report:read",
+            "crm:configure",
             "document:create",
             "document:read",
             "document:update",

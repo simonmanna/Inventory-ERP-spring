@@ -99,8 +99,9 @@ jobs:
           name: sbom
           path: sbom
       - name: Scan backend SBOM — fail on HIGH/CRITICAL with a fix available
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.76.1
           scan-type: sbom
           scan-ref: sbom/inventory-erp-sbom.json
           severity: HIGH,CRITICAL
@@ -108,8 +109,9 @@ jobs:
           trivyignores: .trivyignore
           exit-code: '1'
       - name: Scan web dependencies (pnpm lockfile)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.76.1
           scan-type: fs
           scan-ref: .
           scanners: vuln
@@ -139,6 +141,7 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -156,12 +159,17 @@ jobs:
           for i in $(seq 1 90); do curl -fsS http://localhost:3101/api/v1/health/ready && exit 0; sleep 2; done
           cat api.log; exit 1
       - name: Sell loop (twice — the suite must be re-runnable)
-        working-directory: contract-tests/e2e
         env:
           POS_API_BASE: http://localhost:3101
+        # pnpm, outside the workspace: the runner's npm crashes resolving vitest
+        # ("Cannot read properties of null (reading 'edgesOut')"), in the repository and outside it.
         run: |
-          npx --yes vitest@4.1.9 run --config vitest.config.mjs
-          npx --yes vitest@4.1.9 run --config vitest.config.mjs
+          cp -r contract-tests/e2e "$RUNNER_TEMP/e2e"
+          cd "$RUNNER_TEMP/e2e"
+          echo '{ "private": true }' > package.json
+          pnpm add vitest@4.1.9
+          pnpm exec vitest run --config vitest.config.mjs
+          pnpm exec vitest run --config vitest.config.mjs
       - name: API log
         if: failure()
         run: cat backend/api.log
@@ -203,16 +211,18 @@ jobs:
       - run: docker build -f infra/docker/Dockerfile.api -t inventory-erp-api:ci .
       - run: docker build -f infra/docker/Dockerfile.web -t inventory-erp-web:ci .
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.76.1
           image-ref: inventory-erp-api:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: '1'
       - name: Scan web image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.76.1
           image-ref: inventory-erp-web:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true

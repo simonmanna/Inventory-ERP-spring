@@ -189,6 +189,11 @@ export const EVENTS = {
   FleetVehicleCreated: 'fleet.vehicle.created',
   FleetVehicleStatusChanged: 'fleet.vehicle.status_changed',
   FleetMeterCorrected: 'fleet.meter.corrected',
+  CrmLeadConverted: 'crm.lead.converted',
+  CrmDealWon: 'crm.deal.won',
+  CrmDealLost: 'crm.deal.lost',
+  CrmQuotationApproved: 'crm.quotation.approved',
+  CrmQuotationConverted: 'crm.quotation.converted',
   // Fleet 1.2 — drivers & operators: vehicle check-out / check-in and settled driver allowance claims.
   FleetVehicleCheckedOut: 'fleet.vehicle.checked_out',
   FleetVehicleCheckedIn: 'fleet.vehicle.checked_in',
@@ -439,6 +444,11 @@ export interface DomainEventMap {
   'fleet.vehicle.created': { organizationId: string; vehicleId: string; code: string; categoryId: string };
   'fleet.vehicle.status_changed': FleetVehicleStatusChangedPayload;
   'fleet.meter.corrected': FleetMeterCorrectedPayload;
+  'crm.lead.converted': { organizationId: string; dealId: string; partnerId: string };
+  'crm.deal.won': { organizationId: string; dealId: string; amount: number };
+  'crm.deal.lost': { organizationId: string; dealId: string; lostReasonId: string | null };
+  'crm.quotation.approved': { organizationId: string; quotationId: string; number: string };
+  'crm.quotation.converted': { organizationId: string; quotationId: string; convertedType: 'order' | 'proforma'; convertedId: string };
   'fleet.vehicle.checked_out': FleetCheckoutEventPayload;
   'fleet.vehicle.checked_in': FleetCheckoutEventPayload;
   'fleet.claim.settled': FleetClaimSettledPayload;

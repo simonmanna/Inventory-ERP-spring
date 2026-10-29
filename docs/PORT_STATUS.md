@@ -493,6 +493,7 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 - [x] PATCH /api/v1/crm/deals/:id/restore — DealsController.restore
 - [x] PATCH /api/v1/crm/deals/:id/stage — DealsController.changeStage
 - [x] GET /api/v1/crm/deals/deleted — DealsController.listDeleted
+- [x] Sales suite extension (ADR-S010): 67 routes, see docs/spec/crm.md
 
 ## task
 
