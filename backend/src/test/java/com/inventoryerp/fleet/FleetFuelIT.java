@@ -789,6 +789,10 @@ class FleetFuelIT extends ApiTestSupport {
         assertThat(lookups.get("vehicles").toString()).contains(v);
         assertThat(lookups.get("paymentAccounts").toString()).contains(bank);
         assertThat(ok(200, "GET", "/fleet/fuel/lookups/employees?search=Musa", null).toString()).contains(employee);
+        assertThat(ok(200, "GET", "/fleet/fuel/lookups/products?search=DSL-" + sfx, null).toString()).contains(fuel);
+        assertThat(lookups.get("locations").isArray()).isTrue();
+        assertThat(lookups.get("suppliers").toString()).contains(supplier);
+        assertThat(lookups.get("costCenters").toString()).contains(costCenter);
         JsonNode overview = ok(200, "GET", "/fleet/fuel/overview", null);
         assertThat(overview.has("openAnomalies")).isTrue();
         assertThat(overview.get("month").has("litres")).isTrue();
@@ -853,7 +857,7 @@ class FleetFuelIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without a token and 403 without the permission on every fuel route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.fuel")).isEqualTo(33);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.fuel")).isEqualTo(34);
         Res denied = call("PUT", "/fleet/fuel-settings", Map.of("overfillTolerancePct", 1), clerkToken);
         assertThat(denied.status()).isEqualTo(403);
         assertThat(msg(denied)).isEqualTo("Missing required permission(s): fleet:settings");

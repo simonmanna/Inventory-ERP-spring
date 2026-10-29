@@ -212,3 +212,122 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | foundation (module, flag, licence, permissions, ADR, spec, menu) | done | `ModularityTests`, `ArchitectureTests`, `ApplicationIT` |
 | 1.1 registry | done (32 routes) | `FleetPoliciesTest` (unit: status machine, meter rule, compliance state), `FleetRegistryIT` (14: classes, CRUD + filters, status machine, monotonic meters, concurrency, corrections adjust / replace / reject / no workflow, compliance + expiry query, attachments, linked asset, lookups, tenant isolation, authorization matrix 32 routes) |
 | 1.2–1.9 | planned | — |
+
+## 1.5 Fuel & energy
+
+Status: **done** (worktree `wt/c-fuel`, migration placeholder `V901__fleet_fuel.sql`, renumbered at merge). 34 routes,
+module-gated like 1.1. Controllers live in `com.inventoryerp.fleet.web.fuel`; services `FleetFuel*Service` in
+`fleet.application`; policies `FuelEfficiencyPolicy`, `FuelCardNumbers`.
+
+### Routes (1.5)
+
+| # | Method | Path | Permission | Notes |
+|---|---|---|---|---|
+| 1 | GET | `/fleet/fuel/overview` | `fleet_fuel:read` | month-to-date litres / cost, drafts, open anomalies, tanks below reorder, pending reconciliations |
+| 2 | GET | `/fleet/fuel/lookups` | `fleet_fuel:read` | vehicles (meters, tank size), active tanks (level), active cards (masked), cash / bank accounts and suppliers (expenses API), locations, cost centres |
+| 3 | GET | `/fleet/fuel/lookups/employees` | `fleet_fuel:read` | `search`; active hr employees (≤ 30) |
+| 4 | GET | `/fleet/fuel/lookups/products` | `fleet_fuel:read` | `search`; stocked products (tank fuel product) |
+| 5 | GET | `/fleet/fuel-logs` | `fleet_fuel:read` | `{data, meta, summary}`; `vehicleId, source, status, anomaly (any/open/none/type), tankId, fuelCardId, dateFrom, dateTo, search, page, pageSize, sortBy, sortOrder` |
+| 6 | GET | `/fleet/fuel-logs/{id}` | `fleet_fuel:read` | + vehicle, tank, card (masked), supplier, employee, cost centre, anomalies, GL entries (+ reversals), expense, receipt (signed URL) |
+| 7 | POST | `/fleet/fuel-logs` | `fleet_fuel:create` | **Idempotency-Key required**; draft, or `post: true` (also needs `fleet_fuel:post`, else 403) |
+| 8 | PATCH | `/fleet/fuel-logs/{id}` | `fleet_fuel:update` | drafts only; `clear: [...]` |
+| 9 | DELETE | `/fleet/fuel-logs/{id}` | `fleet_fuel:update` | drafts only (soft delete) |
+| 10 | POST | `/fleet/fuel-logs/{id}/post` | `fleet_fuel:post` | **Idempotency-Key required**; exactly once (row + vehicle locked) |
+| 11 | POST | `/fleet/fuel-logs/{id}/reverse` | `fleet_fuel:post` | **Idempotency-Key required**; `{reason}` |
+| 12 | POST | `/fleet/fuel-logs/{id}/receipt` | `fleet_fuel:create` | multipart `file` (camera photo / PDF) → vehicle attachment, linked to the log |
+| 13 | GET | `/fleet/fuel-anomalies` | `fleet_fuel:read` | `status` (open default / acknowledged / resolved / all), `type`, `vehicleId`, paging |
+| 14 | POST | `/fleet/fuel-anomalies/{id}/acknowledge` | `fleet_fuel:update` | `{note}` (required), audited; open only |
+| 15 | GET | `/fleet/vehicles/{id}/fuel` | `fleet_fuel:read` | totals, average L/100 km and L/h, class band, efficiency trend (last 60 measured logs), 10 recent logs |
+| 16–20 | GET / GET / POST / PATCH / DELETE | `/fleet/fuel-cards`, `/fleet/fuel-cards/{id}` | `read` / `read` / `create` / `update` / `update` | list `search` (last 4 / label / vehicle), `status`, `vehicleId`; 409 duplicate number; delete only unused (else cancel) |
+| 21 | GET | `/fleet/fuel-settings` | `fleet_fuel:read` | thresholds + band per active class (system classes seeded with default bands) |
+| 22 | PUT | `/fleet/fuel-settings` | `fleet:settings` | `overfillTolerancePct, dipApprovalLitres, dipApprovalPct` |
+| 23 | PUT | `/fleet/fuel-settings/bands/{categoryId}` | `fleet:settings` | `minLPer100Km, maxLPer100Km, minLPerHour, maxLPerHour` (replace; null = not checked) |
+| 24–28 | GET / GET / POST / PATCH / DELETE | `/fleet/fuel-tanks`, `/fleet/fuel-tanks/{id}` | `read` / `read` / `tank` / `tank` / `tank` | level, fill %, value, last dip, draft issues; one tank per inventory location; delete only unused |
+| 29 | GET | `/fleet/fuel-tanks/{id}/movements` | `fleet_fuel:read` | inventory ledger of the tank (GRN receipts, issues with fuel log, adjustments, reversals) |
+| 30 | GET | `/fleet/fuel-tanks/{id}/dips` | `fleet_fuel:read` | newest first (`limit`) |
+| 31 | POST | `/fleet/fuel-tanks/{id}/dips` | `fleet_fuel:tank` | `{dipLitres, dippedAt?, notes?}` → book at the dip time, variance |
+| 32 | GET | `/fleet/fuel-dips/{id}` | `fleet_fuel:read` | |
+| 33 | POST | `/fleet/fuel-dips/{id}/reconcile` | `fleet_fuel:tank` | **Idempotency-Key required**; `{reason}` (required when variance ≠ 0) |
+| 34 | POST | `/fleet/fuel-dips/{id}/sync` | `fleet_fuel:tank` | **Idempotency-Key required**; apply the decided approval now |
+
+### Data model (1.5)
+
+| Table | Purpose | Notable columns / constraints |
+|---|---|---|
+| `FleetFuelSettings` | one row per org | `overfillTolerancePct` (2), `dipApprovalLitres` (50), `dipApprovalPct` (0.5 % of capacity), `expenseCategoryId` (the "Fleet fuel" expense category, created on first use) |
+| `FleetFuelBand` | consumption band per vehicle class | min / max L/100 km and L/h; unique per class |
+| `FleetFuelCard` | fuel cards | `maskedNumber` (`**** 1234`), `last4`, `numberHash` (SHA-256 of org + number, unique among live cards) — the full number is never stored; provider partner, vehicle, employee, status (active / blocked / expired / cancelled), expiry, `limitAmount` + `limitPeriod` (daily / weekly / monthly) |
+| `FleetFuelTank` | site tank / bowser | `locationId` (inventory location, unique per org), `productId` (fuel, litres = base unit), `capacityL`, `reorderLevelL`, `kind` tank / bowser, `bowserVehicleId`, active, soft delete |
+| `FleetFuelLog` | fuel log | `code` FL-000001, vehicle, `fuelledAt`, `source` station / tank, litres, unit price, amount, full tank, odometer / hours, supplier, station, `paymentMethod` cash / fuel_card / credit, payment account, card, tank, receipt no. + attachment, employee (hr), cost centre, status draft / posted / reversed; efficiency (`previousFullLogId, segmentLitres, distanceKm, hoursRun, lPer100Km, lPerHour`), `anomalyCount`, meter reading ids + `meterNote`; `expenseId`, `journalEntryId`, `stockLedgerCode`, `stockUnitCost`, `stockValue`; post / reversal stamps. Checks: tank source ⇔ tank id; station needs a payment method |
+| `FleetFuelAnomaly` | review queue | type (overfill, meter_not_increasing, high_consumption, low_consumption, card_vehicle_mismatch, card_limit_exceeded), detail, observed / expected bounds, status open / acknowledged / resolved, note, acknowledged by / at; unique per log + type |
+| `FleetTankDip` | dips + reconciliation | `dipLitres`, `bookLitres` (inventory ledger as of the dip time), `varianceLitres`; status open → accepted / adjusted / pending_approval → adjusted / rejected / failed; reason, approval request, adjustment ledger code / litres / value; one pending reconciliation per tank |
+
+### Rules (1.5)
+
+1. **Fuel log validation**: vehicle not disposed; not more than 5 min in the future; the vehicle's meter must be given
+   (odometer and / or hours as it tracks; a meter it does not track is refused); station purchases need a payment
+   method, the amount or the price (the other is derived; both must agree within max(1, 0.5 %)), a cash / bank account
+   (cash), an active unexpired card (fuel card) or a supplier (credit); tank issues need an active tank and carry no
+   price (costed from stock at posting).
+2. **Posting** (exactly once: log row and vehicle row locked; `Idempotency-Key`): meter readings through
+   `FleetMeterService.recordAutomated(source = fuel, sourceId = log)`; a reading the monotonic meter rule refuses
+   (`FleetMeterService.readingRejection`) is not recorded — the log posts and is flagged `meter_not_increasing` with the
+   rule's message (corrections go through the 1.1 approval workflow). Then the GL / stock effect (below), then the
+   efficiency chain and anomalies are recomputed for the vehicle.
+3. **Efficiency** (full-to-full): a full-tank log is measured against the previous posted full-tank log of the
+   vehicle; the litres are its own plus every partial fill in between; L/100 km over the odometer distance, L/h over
+   the hour-meter run. Back-dated logs and reversals recompute the whole chain of the vehicle.
+4. **Anomalies**: overfill (litres > tank size × (1 + tolerance)), meter not above the previous log's meter (or refused
+   by the meter rule), consumption above / below the class band; at posting: card assigned to another vehicle, card
+   spend in its limit period above the limit (logged, not refused — the provider enforces the limit at the pump). Chain
+   anomalies that no longer apply are `resolved`; reversal resolves all of a log's anomalies. Acknowledge needs a note.
+5. **Tanks**: fuel comes in through the **normal procurement goods receipt** (PO receipt or ad-hoc GRN) into the tank's
+   inventory location — no fleet purchase flow; the tank's book level is that location's stock of its product. Issues
+   use `StockService.issue` (move type `internal_use`, `requireAvailable` — a tank never goes negative; concurrent issues
+   serialise on the stock row), costed by the product's method (AVCO / FIFO, ADR-S007).
+6. **Dips / reconciliation**: book = inventory ledger up to the dip time (post draft issues first); variance =
+   dip − book. Reconcile: no variance → accepted; |variance| ≤ both thresholds → `StockService.adjust` at once
+   (inventory's adjustment gain / loss posting); above → kernel approval engine, entity type
+   `fleet_tank_reconciliation` (default workflow "Fuel tank reconciliation", approver permission `fleet_fuel:post`,
+   requester cannot approve), applied on `approval.decided` (`FleetFuelApprovalSubscriber`) or `/sync`, as
+   current book + variance; it fails (status `failed`) instead of taking the book below zero or posting into a locked
+   period.
+
+### GL postings (1.5) — all balanced, posting key `fleet:fuel:<logId>`
+
+| Case | Debit | Credit | How |
+|---|---|---|---|
+| Tank issue | `fleet_fuel_expense` (6410), vehicle cost centre, dimensions `vehicleId`, `fuelLogId` | product stock account (`StockPostingService.stockAccount`) at issue cost | `StockService.issue(skipGl)` + `PostingService.post` (journal INV, source `fleet_fuel_log`) |
+| Station, fuel card | `fleet_fuel_expense`, cost centre, dimensions | `fleet_fuel_card_payable` (2165), partner = card provider | `PostingService.post` (GEN) — settled later from the provider's statement |
+| Station, cash | `fleet_fuel_expense`, cost centre, dimensions | the cash / bank account | `ExpensesService.create(CASH, tags)` → expense posted + paid (category "Fleet fuel") |
+| Station, supplier credit | same (when paid) | cash / bank on payment | `ExpensesService.create(CREDIT)` → approved / pending expense; its payment in Expenses is tagged through `FleetFuelExpenseTagger` |
+| Reversal | mirror | mirror | `PostingService.reverse` (keeps line cost centres); tank stock back through `StockReversalService.reverseLedgerSource` at the original cost; expenses voided (`ExpensesService.voidExpense`) |
+| Dip variance | adjustment loss / stock (or stock / gain) | | `StockService.adjust` (inventory's ADJUSTMENT_LOSS / GAIN rules) |
+
+Expenses module change (additive, no behaviour change for other callers): `ExpensesService.create(CreateInput,
+PostingTags)` overload and the `ExpensePostingTagger` SPI — the expense line of a payment posting can carry cost centre,
+branch, dimensions and the expense account; expenses no tagger claims post exactly as before.
+
+### Web (1.5)
+
+Menu Fleet → Fuel Logs `/fleet/fuel`, Fuel Tanks `/fleet/fuel/tanks` (+ `/:id`), Fuel Cards `/fleet/fuel/cards`, Fuel
+Anomalies `/fleet/fuel/anomalies`, Fuel Settings `/fleet/settings/fuel`; quick entry `/fleet/fuel/new` (phone first:
+large inputs, segment buttons, camera capture, sticky save bar; `?vehicleId=` / `?tankId=` prefill), detail
+`/fleet/fuel/logs/:id` (+ `/edit` for drafts); vehicle detail tab **Fuel** (totals, efficiency trend chart with the class
+band, recent logs). Pages in `web/src/pages/fleet/fuel/`, hooks in `web/src/features/fleet/fuel-api.ts`.
+
+### Tests (1.5)
+
+`FuelPoliciesTest` (unit: full-to-full efficiency, L/h, zero distance, band high / low, overfill tolerance, meter not
+increasing / refused, card masking + hash, limit periods); `FleetFuelIT` (9: fuel-card purchase GL + masking + limit /
+mismatch flags + blocked card; cash and credit purchases through expenses with the vehicle cost centre + reversal;
+tank issue stock + GL + idempotent replay + exactly once + insufficient stock + reversal; 5 concurrent issues on a
+contended tank; dip reconciliation immediate / approval with SoD / rejected; efficiency chain, back-dated recompute,
+anomalies, acknowledge, reversal recompute, vehicle fuel tab, bands / settings; drafts, validation, receipt upload,
+quick entry without `fleet_fuel:post`; tenant isolation; authorization matrix 34 routes).
+
+### Known gaps / next
+
+- No domain events yet (`fleet.fuel.posted` is planned in ADR-S009 §9; add with 1.9 reporting if needed).
+- Fuel-card provider statements are settled outside fleet (vendor bill / payment against `fleet_fuel_card_payable`).
+- The fuel log stores the person who fuelled as an hr employee; 1.2 driver profiles link to the same employee.

@@ -75,6 +75,12 @@ public class FleetFuelLogController {
         return lookups.employees(search);
     }
 
+    @GetMapping("/fuel/lookups/products")
+    @RequirePermissions(Permissions.FLEET_FUEL__READ)
+    public List<Map<String, Object>> products(@RequestParam(required = false) String search) {
+        return lookups.products(search);
+    }
+
     /** {@code {data, meta, summary}}; {@code anomaly} = any / open / none / an anomaly type. */
     @GetMapping("/fuel-logs")
     @RequirePermissions(Permissions.FLEET_FUEL__READ)

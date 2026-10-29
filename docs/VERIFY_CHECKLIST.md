@@ -50,3 +50,24 @@ pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n       # i18n:
 
 **Open doubts**: default GL account codes for 1.2+ (ADR-S009 §6) need the accountant's confirmation; the reminder job
 for expiring documents arrives with 1.9 (the query exists now).
+
+## Phase 1.5 — Fleet: fuel & energy (ADR-S009)
+
+- Migration: `V901__fleet_fuel.sql` (placeholder; renumbered at merge). 34 routes under `/fleet/fuel*`.
+- Tests: `./gradlew test --tests 'com.inventoryerp.fleet.*'` — `FuelPoliciesTest`, `FleetFuelIT` (9), `FleetRegistryIT`.
+- Click-through (ENABLE_FLEET=true, admin):
+  1. Fleet → Fuel Tanks → Add tank on an inventory location with a diesel product (litres); receive 1,000 L with a goods
+     receipt (Procurement → Goods receipts, ad hoc, warehouse = tank location) → tank level 1,000 L.
+  2. On a phone: Fleet → Fuel Logs → Record fuel → vehicle, Site tank, 120 L, odometer → Save & post → stock 880 L;
+     log detail shows Dr Fleet Fuel & Energy (vehicle cost centre) / Cr stock, balanced.
+  3. Record a station fill paid by fuel card (card registered under Fuel Cards: only `**** 1234` is shown) → Dr fuel /
+     Cr Fuel Card Payable; by cash → an expense "Fleet fuel" paid in Expenses; on credit → unpaid expense, pay it in
+     Expenses → the payment line carries the vehicle cost centre.
+  4. Two full-tank fills → efficiency (L/100 km) on the log and on the vehicle's Fuel tab chart; a fill above the
+     tank size or with the same odometer appears under Fuel Anomalies → Acknowledge with a note.
+  5. Tank detail → Record dip 990 L → Reconcile (reason) → adjusted at once; dip 700 L → waits for approval; approve
+     as another user with `fleet_fuel:post` (Approvals inbox) → adjusted, stock follows.
+  6. Reverse a posted log → GL mirrored, tank stock back, expense voided.
+- Expected GL: every entry balanced; mapping keys `fleet_fuel_expense` (6410) and `fleet_fuel_card_payable` (2165)
+  created on first use.
+- Doubts: expense workflows configured by the client make supplier-credit fuel wait for approval in Expenses (by design).

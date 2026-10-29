@@ -14,7 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Pickers and the overview tiles of the fuel screens (fleet 1.5): fuel-able vehicles with their meters and tank size,
- * active tanks with level, active cards (masked), cash / bank accounts for cash purchases, hr employees.
+ * active tanks with level, active cards (masked), cash / bank accounts and suppliers for station purchases (from the
+ * expenses module), inventory locations, cost centres, stocked products and hr employees.
  */
 @Service
 public class FleetFuelLookupService {
@@ -48,8 +49,24 @@ public class FleetFuelLookupService {
         List<Map<String, Object>> cards = SqlRows.list(db.jdbc().sql("SELECT id, \"maskedNumber\", label,"
                 + " \"vehicleId\", \"employeeId\", \"providerPartnerId\" FROM \"FleetFuelCard\" WHERE \"organizationId\""
                 + " = ? AND \"deletedAt\" IS NULL AND status = 'active' ORDER BY \"last4\"").param(org));
+        List<Map<String, Object>> locations = SqlRows.list(db.jdbc().sql("SELECT id, code, name, type::text AS type"
+                + " FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"isActive\" ="
+                + " true ORDER BY code").param(org));
+        List<Map<String, Object>> costCenters = SqlRows.list(db.jdbc().sql("SELECT id, code, name FROM \"CostCenter\""
+                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"isActive\" = true ORDER BY code")
+                .param(org));
         return Obj.of("vehicles", vehicles, "tanks", tankRows, "cards", cards, "paymentAccounts",
-                expenses.paymentAccounts());
+                expenses.paymentAccounts(), "suppliers", expenses.suppliers(), "locations", locations,
+                "costCenters", costCenters);
+    }
+
+    /** Stocked products matching {@code search} (code / name), at most 30 — the fuel product of a tank. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> products(String search) {
+        String like = "%" + (search == null ? "" : search.trim().replace("%", "\\%").replace("_", "\\_")) + "%";
+        return SqlRows.list(db.jdbc().sql("SELECT id, code, name, \"costingMethod\"::text AS \"costingMethod\" FROM"
+                + " \"Product\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"trackInventory\" = true"
+                + " AND (code ILIKE ? OR name ILIKE ?) ORDER BY name LIMIT 30").params(FleetDb.org(), like, like));
     }
 
     /** Active hr employees matching {@code search} (code / name), at most 30. */
