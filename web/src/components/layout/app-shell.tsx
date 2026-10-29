@@ -79,6 +79,11 @@ import {
   FileInput,
   ReceiptText,
   Network,
+  Fuel,
+  Cylinder,
+  CreditCard,
+  AlertTriangle,
+  Settings2,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -436,6 +441,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/vehicles', label: tx('Vehicles & Equipment'), icon: Truck, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/compliance', label: tx('Compliance & Renewals'), icon: ShieldCheck, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/settings/classes', label: tx('Vehicle Classes'), icon: Layers, permission: PERMISSIONS.fleet.settings },
+      { to: '/fleet/fuel', label: tx('Fuel Logs'), icon: Fuel, permission: PERMISSIONS.fleetFuel.read },
+      { to: '/fleet/fuel/tanks', label: tx('Fuel Tanks'), icon: Cylinder, permission: PERMISSIONS.fleetFuel.read },
+      { to: '/fleet/fuel/cards', label: tx('Fuel Cards'), icon: CreditCard, permission: PERMISSIONS.fleetFuel.read },
+      { to: '/fleet/fuel/anomalies', label: tx('Fuel Anomalies'), icon: AlertTriangle, permission: PERMISSIONS.fleetFuel.read },
+      { to: '/fleet/settings/fuel', label: tx('Fuel Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
     ],
   },
   {

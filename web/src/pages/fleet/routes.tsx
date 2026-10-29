@@ -7,6 +7,7 @@ import { VehicleFormPage } from './VehicleFormPage';
 import { VehicleDetailPage } from './VehicleDetailPage';
 import { FleetCompliancePage } from './FleetCompliancePage';
 import { FleetCategoriesPage } from './FleetCategoriesPage';
+import { fuelRoutes } from './fuel/fuel-routes';
 
 /**
  * Route skeleton of the Fleet section (ADR-S009). Each sub-module adds its screens here, static segments before the
@@ -23,5 +24,6 @@ export const fleetRoutes = (
     <Route path="/fleet/vehicles/:id/edit" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.update}><VehicleFormPage /></RequirePermission>} />
     <Route path="/fleet/compliance" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.read}><FleetCompliancePage /></RequirePermission>} />
     <Route path="/fleet/settings/classes" element={<RequirePermission permission={[PERMISSIONS.fleet.settings, PERMISSIONS.fleetVehicle.read]}><FleetCategoriesPage /></RequirePermission>} />
+    {fuelRoutes}
   </>
 );
