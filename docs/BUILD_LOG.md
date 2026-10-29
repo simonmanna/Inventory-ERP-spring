@@ -61,7 +61,7 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: 1.2 drivers & operators done (main); 1.5 fuel & energy — in-progress (C), worktree
+Current: 1.3 dispatch + 1.4a weighbridge core — in-progress (C), parallel worktrees
 Next action: merge 1.5 (worktree `wt/c-fuel`) into main (1.2 is committed on main), then start 1.3 dispatch + 1.6 maintenance.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
@@ -75,12 +75,12 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 0 state audit | done | | | baseline on d675ced: `./gradlew build` green, 669 tests / 0 failed (incl. POS trading-date tests after 9c82a91 — fix confirmed); no `fleet` package or remote branch on origin |
 | 1.1 vehicle & equipment registry | done | ebae379 a7aee65 3765aea | | fleet module + flag/licence/menu, ADR-S009, spec, V15 (7 tables, all 53 Phase 1 permissions), 32 routes, 6 screens, FleetPoliciesTest + FleetRegistryIT (14); full build 694 tests / 0 failed; license-server ITs need Docker |
 | 1.2 drivers & operators | done | c79aece 8daa231 9c3b53f | | V16 (9 fleet tables + hr `HrPayrollInput`), 37 routes, 9 screens + vehicle tab; eligibility policy, assignments, check-out/in with meters + photos, allowance rules, claims → expenses (Dr 6440 cc / Cr bank) or payroll (Dr 6440 / Cr 2185, settled by the run); additive hr `payroll-inputs` API + `ExpensesService.createPaidFromSource`; full build 719 tests / 0 failed |
-| 1.3 trips, delivery planning & dispatch | claimed (C) | | | |
-| 1.4 weighbridge | claimed (C) | | | |
-| 1.5 fuel & energy | in-progress (C) | | | |
-| 1.6 maintenance | in-progress (C, worktree) | | | |
-| 1.7 tyres, incidents, fines | in-progress (C, worktree) | | | |
-| 1.8 telematics SPI | in-progress (C, worktree) | | | |
+| 1.3 trips, delivery planning & dispatch | in-progress (C, worktree) | | | |
+| 1.4 weighbridge | in-progress (C, worktree) | | | |
+| 1.5 fuel & energy | done | c778199 c1cf1b8 53b0ab0 | | V19, 34 routes, FleetFuelIT + FuelPoliciesTest; merged with the 1.6/upstream CRM merge |
+| 1.6 maintenance | done | 8d23b3e 50e1954 ea4379e | | V18, 51 routes, FleetMaintenanceIT; dispatch check `FleetDispatchEligibilityService` |
+| 1.7 tyres, incidents, fines | done | a1c77e0 78da0fe f75e013 | | V20, tyres/incidents/insurance claims/fines; driver fine deductions = events + manual status until wired to hr in 1.9 |
+| 1.8 telematics SPI | done | a1c77e0 | | V21, mock provider, positions/distance API for 1.3 |
 | 1.9 fleet costing & reports | claimed (C) | | fleet-complete | |
 | 2.1 multi-stage production & WIP | todo | | | |
 | 2.2 quarry & extraction | todo | | | |
