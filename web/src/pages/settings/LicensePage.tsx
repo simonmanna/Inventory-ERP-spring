@@ -93,7 +93,7 @@ export function LicensePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            {MODULE_FEATURES.map((feature) => {
+            {MODULE_FEATURES.filter((feature) => !feature.core).map((feature) => {
               const included = status.features.includes(feature.key);
               return (
                 <div key={feature.key} className="flex items-center justify-between gap-3 text-sm">

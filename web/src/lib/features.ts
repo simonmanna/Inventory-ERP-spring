@@ -16,9 +16,12 @@ export interface ModuleFeature {
   description: string;
   /** Titles of the NAV_SECTIONS this feature gates. */
   sections: string[];
+  /** Core module: not sold through the licence, so only the local switch applies. */
+  core?: boolean;
 }
 
 export const MODULE_FEATURES: ModuleFeature[] = [
+  { key: 'pos', label: 'POS', description: tx('Point of sale terminal, menus, and tables'), sections: ['POS', 'Menus', 'Tables'], core: true },
   { key: 'crm', label: 'CRM', description: tx('Customers, leads, opportunities, and pipeline tracking'), sections: ['CRM'] },
   { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
   { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
@@ -34,6 +37,17 @@ export const MODULE_FEATURES: ModuleFeature[] = [
 const SECTION_FEATURE_KEY: Record<string, string> = Object.fromEntries(
   MODULE_FEATURES.flatMap((f) => f.sections.map((s) => [s, f.key] as const)),
 );
+
+const CORE_FEATURE_KEYS = new Set(MODULE_FEATURES.filter((f) => f.core).map((f) => f.key));
+
+/**
+ * Sections that only make sense in some POS modes. Menus and tables belong to
+ * the cafe/restaurant flow; retail and rental terminals never use them.
+ */
+const SECTION_POS_MODES: Record<string, string[]> = {
+  Menus: ['cafe'],
+  Tables: ['cafe'],
+};
 
 /** A feature is on unless it has been explicitly switched off. */
 export const featureEnabled = (
@@ -52,7 +66,7 @@ export const featureEnabled = (
 export const featureLicensed = (
   licensed: string[] | undefined | null,
   key: string,
-): boolean => !licensed || licensed.includes(key);
+): boolean => !licensed || CORE_FEATURE_KEYS.has(key) || licensed.includes(key);
 
 /**
  * The effective state of a feature: **licensed AND enabled**.
@@ -66,13 +80,19 @@ export const featureAvailable = (
   key: string,
 ): boolean => featureLicensed(licensed, key) && featureEnabled(features, key);
 
-/** Sections with no feature key mapped are always visible. */
+/**
+ * Sections with no feature key mapped are always visible. An unknown POS mode
+ * (settings still loading or unreadable) hides nothing, as with features.
+ */
 export const sectionEnabled = (
   features: Record<string, boolean> | undefined,
   title?: string,
   licensed?: string[] | null,
+  posMode?: string,
 ): boolean => {
   if (!title) return true;
   const key = SECTION_FEATURE_KEY[title];
-  return !key || featureAvailable(features, licensed, key);
+  if (key && !featureAvailable(features, licensed, key)) return false;
+  const modes = SECTION_POS_MODES[title];
+  return !modes || !posMode || modes.includes(posMode);
 };

@@ -91,6 +91,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useSidebarStore } from '@/lib/sidebar.store';
 import { useOrgFeatures } from '@/lib/use-org-features';
 import { sectionEnabled } from '@/lib/features';
+import { usePosSettings } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
 import { LicenseBlockedDialog } from '@/components/license/LicenseBlockedDialog';
 import { useLicense } from '@/features/license/api';
@@ -540,8 +541,10 @@ export function AppShell() {
   // message if someone reaches it by URL.
   const { data: orgFeatures } = useOrgFeatures();
   const { data: license } = useLicense();
+  // Menus and Tables only apply to the cafe/restaurant POS mode.
+  const { data: posSettings } = usePosSettings();
   const sections = VISIBLE_SECTIONS.filter((s) =>
-    sectionEnabled(orgFeatures, s.title, license?.features),
+    sectionEnabled(orgFeatures, s.title, license?.features, posSettings?.posMode),
   );
 
   // Accordion state: which titled sections are expanded (expanded sidebar only).
