@@ -63,9 +63,9 @@ class RepairIT extends ApiTestSupport {
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + adminToken);
         h.put("Idempotency-Key", "repair-it-stock-" + sfx);
-        Res in = call("POST", "/inventory/direct-stock/in", Map.of("locationId", warehouseId, "responsibleById", adminId,
-                "approvedById", adminId, "items", List.of(Map.of("productId", partProductId, "quantity", 10,
-                        "unitCost", 50))), h);
+        Res in = call("POST", "/inventory/direct-stock/in", Map.of("locationId", warehouseId,
+                "responsibleById", adminId, "approvedById", adminId, "items", List.of(Map.of("productId",
+                        partProductId, "quantity", 10, "unitCost", 50))), h);
         assertThat(in.status()).as(in.raw().body()).isIn(200, 201);
     }
 
@@ -96,6 +96,50 @@ class RepairIT extends ApiTestSupport {
                 "name", "Labour " + UUID.randomUUID().toString().substring(0, 6), "price", 25));
         body.putAll(extra);
         return ok(201, "POST", "/repair/labour-types", body);
+    }
+
+    static final String KEY_REQUIRED =
+            "An Idempotency-Key header is required for this operation so a retry can never charge twice.";
+
+    /** A money route call with an {@code Idempotency-Key} ({@code null} = no header). */
+    Res money(String method, String path, Object body, String key) {
+        Map<String, String> h = new LinkedHashMap<>();
+        h.put("Authorization", "Bearer " + adminToken);
+        if (key != null) {
+            h.put("Idempotency-Key", key);
+        }
+        return call(method, path, body, h);
+    }
+
+    static String key() {
+        return "repair-it-" + UUID.randomUUID();
+    }
+
+    /** Debits = credits over the journal entries of {@code sourceType/sourceId}; returns the debit total. */
+    BigDecimal assertJournalBalanced(String sourceType, String sourceId) {
+        Map<String, Object> row = jdbc.sql("SELECT coalesce(sum(l.debit), 0) AS d, coalesce(sum(l.credit), 0) AS c,"
+                        + " count(*) AS n FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
+                        + " WHERE e.\"organizationId\" = ? AND e.\"sourceType\" = ? AND e.\"sourceId\" = ?")
+                .params(demoOrg, sourceType, sourceId).query().singleRow();
+        assertThat(((Number) row.get("n")).longValue()).as(sourceType + " " + sourceId).isPositive();
+        assertThat((BigDecimal) row.get("d")).isEqualByComparingTo((BigDecimal) row.get("c"));
+        assertThat((BigDecimal) row.get("d")).isPositive();
+        return (BigDecimal) row.get("d");
+    }
+
+    /** The journal entry referenced by {@code table.journalEntryId}: posted, debits = credits; returns the total. */
+    BigDecimal assertEntryBalanced(String table, String id) {
+        Map<String, Object> row = jdbc.sql("SELECT coalesce(sum(l.debit), 0) AS d, coalesce(sum(l.credit), 0) AS c,"
+                        + " count(*) AS n FROM \"JournalLine\" l JOIN \"" + table + "\" x ON x.\"journalEntryId\" ="
+                        + " l.\"journalEntryId\" WHERE x.id = ? AND x.\"organizationId\" = ?")
+                .params(id, demoOrg).query().singleRow();
+        assertThat(((Number) row.get("n")).longValue()).as(table + " " + id).isPositive();
+        assertThat((BigDecimal) row.get("d")).isEqualByComparingTo((BigDecimal) row.get("c"));
+        return (BigDecimal) row.get("d");
+    }
+
+    long count(String sql, Object... params) {
+        return jdbc.sql(sql).params(params).query(Long.class).single();
     }
 
     @Test
@@ -214,8 +258,9 @@ class RepairIT extends ApiTestSupport {
 
         String withPartner = order(Map.of("partnerId", customerId)).get("id").asString();
         move(withPartner, "diagnosis");
-        assertThat(jdbc.sql("SELECT body FROM \"Notification\" WHERE \"organizationId\" = ? AND payload->>'repairOrderId'"
-                + " = ? AND title LIKE '%→ diagnosis'").params(demoOrg, withPartner).query(String.class).single())
+        assertThat(jdbc.sql("SELECT body FROM \"Notification\" WHERE \"organizationId\" = ?"
+                + " AND payload->>'repairOrderId' = ? AND title LIKE '%→ diagnosis'").params(demoOrg, withPartner)
+                .query(String.class).single())
                 .isEqualTo("Repair Cust " + sfx + " — undefined");
     }
 
@@ -267,7 +312,8 @@ class RepairIT extends ApiTestSupport {
         assertThat(approved.get("status").asString()).isEqualTo("approved");
         assertThat(approved.get("approvedBy").asString()).isEqualTo(adminId);
         assertThat(status(id)).isEqualTo("approved");
-        assertThat(jdbc.sql("SELECT note FROM \"RepairStatusHistory\" WHERE \"repairOrderId\" = ? AND action = 'approve'")
+        assertThat(jdbc.sql("SELECT note FROM \"RepairStatusHistory\" WHERE \"repairOrderId\" = ?"
+                + " AND action = 'approve'")
                 .param(id).query(String.class).single()).isEqualTo("Quotation " + q.get("quotationNumber").asString()
                 + " approved");
         Res again = as("POST", "/repair/quotations/" + qid + "/approve", null);
@@ -335,7 +381,8 @@ class RepairIT extends ApiTestSupport {
         JsonNode c1 = ok(201, "POST", "/repair/jobs/" + jid + "/checklist", Map.of("label", "Open", "completed", true));
         assertThat(c1.get("checklist").get(0).get("completed").asBoolean()).isTrue();
         assertThat(c1.get("checklist").get(0).get("completedAt").asString()).endsWith("Z");
-        JsonNode c2 = ok(201, "POST", "/repair/jobs/" + jid + "/checklist", Map.of("label", "Clean", "completed", false));
+        JsonNode c2 = ok(201, "POST", "/repair/jobs/" + jid + "/checklist", Map.of("label", "Clean",
+                "completed", false));
         assertThat(c2.get("checklist")).hasSize(2);
         assertThat(c2.get("checklist").get(1).get("completedAt").isNull()).isTrue();
 
@@ -389,9 +436,14 @@ class RepairIT extends ApiTestSupport {
         assertThat(issued.get("status").asString()).isEqualTo("issued");
         assertThat(issued.get("totalCost").asString()).isEqualTo("110");
         assertThat(issued.get("locationId").asString()).isEqualTo(warehouseId);
-        Map<String, Object> mv = jdbc.sql("SELECT -SUM(\"quantityChange\") AS quantity FROM \"InventoryLedger\""
-                + " WHERE \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?").param(id).query().singleRow();
-        assertThat(((BigDecimal) mv.get("quantity"))).isEqualByComparingTo("2");
+        Map<String, Object> mv = jdbc.sql("SELECT \"quantityChange\" AS q, abs(\"totalValue\") AS v,"
+                + " \"locationId\" AS loc FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                + " AND \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?").params(demoOrg, id).query()
+                .singleRow();
+        assertThat((BigDecimal) mv.get("q")).isEqualByComparingTo("-2");
+        assertThat(mv.get("loc")).isEqualTo(warehouseId);
+        // COGS at issue time: Dr expense / Cr stock valuation, balanced, for the ledger value of the relief.
+        assertThat(assertJournalBalanced("repair_part_issue", id)).isEqualByComparingTo((BigDecimal) mv.get("v"));
         assertThat(as("POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId)).body()
                 .get("message").asString()).isEqualTo("Part already issued");
         assertThat(as("DELETE", "/repair/parts/" + pid, null).body().get("message").asString())
@@ -407,39 +459,80 @@ class RepairIT extends ApiTestSupport {
         assertThat(as("DELETE", "/repair/parts/" + loose, null).body().get("message").asString())
                 .isEqualTo("Repair part not found");
         assertThat(as("POST", "/repair/parts/" + loose + "/issue", Map.of()).status()).isEqualTo(404);
+
+        // A failing stock relief (unknown location) rolls back with the part: still reserved, nothing moved.
+        String bad = ok(201, "POST", "/repair/orders/" + id + "/parts", Map.of("productId", partProductId))
+                .get("id").asString();
+        Res noLocation = as("POST", "/repair/parts/" + bad + "/issue", Map.of("locationId",
+                UUID.randomUUID().toString()));
+        assertThat(noLocation.status()).isEqualTo(404);
+        assertThat(noLocation.body().get("message").asString()).isEqualTo("Location not found");
+        assertThat(jdbc.sql("SELECT status::text FROM \"RepairPart\" WHERE id = ?").param(bad).query(String.class)
+                .single()).isEqualTo("reserved");
+
+        // Two concurrent issues of one part: the row lock lets exactly one relieve stock.
+        String raced = ok(201, "POST", "/repair/orders/" + id + "/parts", Map.of("productId", partProductId,
+                "quantity", 1)).get("id").asString();
+        List<java.util.concurrent.CompletableFuture<Res>> runs = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            runs.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> as("POST", "/repair/parts/" + raced
+                    + "/issue", Map.of("locationId", warehouseId))));
+        }
+        List<Integer> statuses = runs.stream().map(java.util.concurrent.CompletableFuture::join).map(Res::status)
+                .sorted().toList();
+        assertThat(statuses).containsExactly(201, 400);
+        assertThat(count("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?", demoOrg, id)).isEqualTo(2);
     }
 
     @Test
-    @DisplayName("billing: approved quotation → Order (repair kind, repairOrderLineId) + Invoice; guards; payment")
+    @DisplayName("billing: approved quotation → Order (repair kind, repairOrderLineId) + Invoice; balanced GL;"
+            + " idempotent bill and pay; no half-commit; payment settles")
     void billing() {
         String ltId = labourType(Map.of("price", 40, "productId", serviceProductId)).get("id").asString();
         String id = order(Map.of("partnerId", customerId)).get("id").asString();
-        Res none = as("POST", "/repair/orders/" + id + "/bill", null);
+        String bill = "/repair/orders/" + id + "/bill";
+        Res noKey = as("POST", bill, Map.of());
+        assertThat(noKey.status()).isEqualTo(400);
+        assertThat(noKey.body().get("message").asString()).isEqualTo(KEY_REQUIRED);
+        Res none = money("POST", bill, null, key());
         assertThat(none.status()).isEqualTo(400);
-        assertThat(none.body().get("message").asString()).isEqualTo("No approved quotation to bill — approve one first");
+        assertThat(none.body().get("message").asString())
+                .isEqualTo("No approved quotation to bill — approve one first");
         String qid = ok(201, "POST", "/repair/orders/" + id + "/quotations", Map.of("lines", List.of(
                 Map.of("kind", "labour", "labourTypeId", ltId, "quantity", 2),
                 Map.of("kind", "part", "productId", partProductId, "unitPrice", 100)))).get("id").asString();
         ok(201, "POST", "/repair/quotations/" + qid + "/approve", Map.of());
 
-        Res noProduct = as("POST", "/repair/orders/" + id + "/bill", Map.of("lines", List.of(Map.of("kind", "labour",
-                "description", "Mystery " + sfx))));
+        Res noProduct = money("POST", bill, Map.of("lines", List.of(Map.of("kind", "labour",
+                "description", "Mystery " + sfx))), key());
         assertThat(noProduct.body().get("message").asString()).isEqualTo("Line \"Mystery " + sfx + "\" has no billable"
                 + " product — labour types need a billing product; parts need a productId");
-        Res zero = as("POST", "/repair/orders/" + id + "/bill", Map.of("lines", List.of(Map.of("kind", "part",
-                "description", "P", "productId", partProductId, "quantity", 0))));
+        Res zero = money("POST", bill, Map.of("lines", List.of(Map.of("kind", "part", "description", "P",
+                "productId", partProductId, "quantity", 0))), key());
         assertThat(zero.body().get("message").asString()).isEqualTo("Line \"P\": quantity must be positive");
-        assertThat(as("POST", "/repair/orders/" + id + "/bill", Map.of("lines", List.of())).body().get("message")
-                .asString()).isEqualTo("No billable lines");
+        assertThat(money("POST", bill, Map.of("lines", List.of()), key()).body().get("message").asString())
+                .isEqualTo("No billable lines");
 
-        JsonNode billed = ok(201, "POST", "/repair/orders/" + id + "/bill", Map.of("paymentMode", "credit"));
+        // A failing invoice (invalid payment mode) rolls the whole bill back: no Order, the repair order stays
+        // billable. (Nest kept the Order and marked the repair order billed.)
+        assertThat(money("POST", bill, Map.of("paymentMode", "bogus"), key()).status()).isEqualTo(500);
+        assertThat(count("SELECT count(*) FROM \"Order\" WHERE \"repairOrderId\" = ?", id)).isZero();
+        assertThat(count("SELECT count(*) FROM \"RepairOrder\" WHERE id = ? AND \"orderId\" IS NULL"
+                + " AND \"invoiceId\" IS NULL", id)).isEqualTo(1);
+
+        String billKey = key();
+        Res billedRes = money("POST", bill, Map.of("paymentMode", "credit"), billKey);
+        assertThat(billedRes.status()).as(billedRes.raw().body()).isEqualTo(200);
+        JsonNode billed = billedRes.body();
         String orderId = billed.get("orderId").asString();
         String invoiceId = billed.get("invoiceId").asString();
         assertThat(billed.get("order").get("transactionKind").asString()).isEqualTo("repair");
         assertThat(billed.get("order").get("orderNumber").asString()).startsWith("OR-");
         assertThat(billed.get("invoice").get("id").asString()).isEqualTo(invoiceId);
         List<Map<String, Object>> items = jdbc.sql("SELECT \"repairOrderLineId\", \"repairFeeType\", \"productId\""
-                + " FROM \"OrderItem\" WHERE \"orderId\" = ? ORDER BY \"lineNumber\"").param(orderId).query().listOfRows();
+                + " FROM \"OrderItem\" WHERE \"orderId\" = ? ORDER BY \"lineNumber\"").param(orderId).query()
+                .listOfRows();
         assertThat(items).hasSize(2);
         assertThat(items.get(0).get("repairFeeType")).isEqualTo("labour");
         assertThat(items.get(0).get("productId")).isEqualTo(serviceProductId);
@@ -453,29 +546,59 @@ class RepairIT extends ApiTestSupport {
         assertThat((BigDecimal) ro.get("totalAmount")).isEqualByComparingTo("180");
         assertThat(jdbc.sql("SELECT \"repairOrderId\" FROM \"Order\" WHERE id = ?").param(orderId).query(String.class)
                 .single()).isEqualTo(id);
-        assertThat(as("POST", "/repair/orders/" + id + "/bill", null).body().get("message").asString())
+        // Dr receivable 180 / Cr revenue 180 through the posting engine.
+        assertThat(assertEntryBalanced("Invoice", invoiceId)).isEqualByComparingTo("180");
+
+        // Replay with the same key answers the stored response; the same key with another body is refused.
+        Res replay = money("POST", bill, Map.of("paymentMode", "credit"), billKey);
+        assertThat(replay.status()).isEqualTo(200);
+        assertThat(replay.body().get("invoiceId").asString()).isEqualTo(invoiceId);
+        assertThat(money("POST", bill, Map.of("paymentMode", "cash"), billKey).status()).isEqualTo(409);
+        assertThat(count("SELECT count(*) FROM \"Order\" WHERE \"repairOrderId\" = ?", id)).isEqualTo(1);
+        assertThat(money("POST", bill, null, key()).body().get("message").asString())
                 .isEqualTo("Repair order already billed");
 
-        Res pay = as("POST", "/repair/invoices/" + invoiceId + "/pay", Map.of("tenders", List.of(Map.of("method",
-                "bank_transfer", "amount", 1, "reference", "TRX-" + sfx))));
-        assertThat(pay.status()).as(pay.raw().body()).isIn(200, 201, 400, 409);
-        assertThat(as("POST", "/repair/invoices/" + UUID.randomUUID() + "/pay", Map.of("paymentMethod", "cash",
-                "amountTendered", 1, "cashSessionId", UUID.randomUUID().toString())).status()).isIn(400, 404);
+        String pay = "/repair/invoices/" + invoiceId + "/pay";
+        Map<String, Object> tender = Map.of("tenders", List.of(Map.of("method", "bank", "amount", 180,
+                "reference", "TRX-" + sfx)));
+        assertThat(as("POST", pay, tender).body().get("message").asString()).isEqualTo(KEY_REQUIRED);
+        String payKey = key();
+        Res paid = money("POST", pay, tender, payKey);
+        assertThat(paid.status()).as(paid.raw().body()).isEqualTo(200);
+        assertThat(paid.body().get("settlementStatus").asString()).isEqualTo("settled");
+        assertThat(paid.body().get("invoiceId").asString()).isEqualTo(invoiceId);
+        String paymentId = paid.body().get("paymentIds").get(0).asString();
+        assertThat(assertEntryBalanced("Payment", paymentId)).isEqualByComparingTo("180");
+        assertThat(jdbc.sql("SELECT status::text FROM \"Invoice\" WHERE id = ?").param(invoiceId).query(String.class)
+                .single()).isEqualTo("paid");
+        Res payReplay = money("POST", pay, tender, payKey);
+        assertThat(payReplay.status()).isEqualTo(200);
+        assertThat(payReplay.body().get("paymentIds").get(0).asString()).isEqualTo(paymentId);
+        assertThat(count("SELECT count(*) FROM \"PaymentAllocation\" WHERE \"invoiceId\" = ?", invoiceId))
+                .isEqualTo(1);
+        assertThat(money("POST", pay, tender, key()).body().get("message").asString())
+                .isEqualTo("Invoice is already fully paid");
+        assertThat(money("POST", "/repair/invoices/" + UUID.randomUUID() + "/pay", Map.of("paymentMethod", "bank"),
+                key()).status()).isEqualTo(404);
 
         // walk-in: an order without a partner bills against WALKIN, the labour line resolved by name.
         String walkIn = order(Map.of()).get("id").asString();
         String name = jdbc.sql("SELECT name FROM \"RepairLabourType\" WHERE id = ?").param(ltId).query(String.class)
                 .single();
-        JsonNode w = ok(201, "POST", "/repair/orders/" + walkIn + "/bill", Map.of("paymentMode", "credit",
-                "lines", List.of(Map.of("kind", "labour", "description", name.toUpperCase(), "unitPrice", 5))));
-        assertThat(jdbc.sql("SELECT p.code FROM \"Order\" o JOIN \"Partner\" p ON p.id = o.\"partnerId\" WHERE o.id = ?")
-                .param(w.get("orderId").asString()).query(String.class).single()).isEqualTo("WALKIN");
+        Res w = money("POST", "/repair/orders/" + walkIn + "/bill", Map.of("paymentMode", "credit",
+                "lines", List.of(Map.of("kind", "labour", "description", name.toUpperCase(), "unitPrice", 5))), key());
+        assertThat(w.status()).as(w.raw().body()).isEqualTo(200);
+        assertThat(jdbc.sql("SELECT p.code FROM \"Order\" o JOIN \"Partner\" p ON p.id = o.\"partnerId\""
+                + " WHERE o.id = ?")
+                .param(w.body().get("orderId").asString()).query(String.class).single()).isEqualTo("WALKIN");
+        assertEntryBalanced("Invoice", w.body().get("invoiceId").asString());
 
         String closed = order(Map.of()).get("id").asString();
         move(closed, "cancelled");
-        assertThat(as("POST", "/repair/orders/" + closed + "/bill", null).body().get("message").asString())
+        assertThat(money("POST", "/repair/orders/" + closed + "/bill", null, key()).body().get("message").asString())
                 .isEqualTo("Repair order is closed/cancelled — cannot bill");
-        assertThat(as("POST", "/repair/orders/" + UUID.randomUUID() + "/bill", null).status()).isEqualTo(404);
+        assertThat(money("POST", "/repair/orders/" + UUID.randomUUID() + "/bill", null, key()).status())
+                .isEqualTo(404);
 
         walk(id, "diagnosis", "waiting_approval", "approved", "repairing", "testing", "ready_pickup", "delivered",
                 "closed");
@@ -571,6 +694,13 @@ class RepairIT extends ApiTestSupport {
         assertThat(next).isAfter(Instant.now().plusSeconds(86_400 * 6));
         assertThat(jdbc.sql("SELECT status::text FROM \"RepairWarranty\" WHERE id = ?").param(wid).query(String.class)
                 .single()).isEqualTo("expired");
+        assertThat(count("SELECT count(*) FROM \"RepairStatusHistory\" h JOIN \"RepairOrder\" o ON o.id ="
+                + " h.\"repairOrderId\" WHERE o.notes = ? AND h.action = 'preventive'", "Auto-generated from schedule "
+                + sid)).isEqualTo(1);
+        TenantContext.run(TenantStore.organization(demoOrg), () -> new RepairCronWorker(repairDb, sequence)
+                .housekeeping());
+        assertThat(count("SELECT count(*) FROM \"RepairOrder\" WHERE notes = ?", "Auto-generated from schedule " + sid))
+                .as("a rolled-forward schedule is not due again").isEqualTo(1);
         TenantContext.run(TenantStore.organization(demoOrg), () -> {
             assertThat(contractService.rollSchedule(sid).get("lastRunAt")).isNotNull();
             try {
@@ -638,6 +768,89 @@ class RepairIT extends ApiTestSupport {
         List<String> others = new ArrayList<>();
         call("GET", "/repair/labour-types", null, otherToken).body().forEach(n -> others.add(n.get("id").asString()));
         assertThat(others).doesNotContain(lt);
+
+        // Reads and writes by id from the other organization find nothing.
+        String item = ok(201, "POST", "/repair/orders/" + id + "/items", Map.of("itemType", "Cable")).get("id")
+                .asString();
+        String att = ok(201, "POST", "/repair/orders/" + id + "/attachments", Map.of("caption", "intake")).get("id")
+                .asString();
+        String diag = ok(201, "POST", "/repair/orders/" + id + "/diagnosis", Map.of()).get("id").asString();
+        String quote = ok(201, "POST", "/repair/orders/" + id + "/quotations", Map.of()).get("id").asString();
+        String job = ok(201, "POST", "/repair/orders/" + id + "/jobs", Map.of()).get("id").asString();
+        String part = ok(201, "POST", "/repair/orders/" + id + "/parts", Map.of("productId", partProductId)).get("id")
+                .asString();
+        String warranty = ok(201, "POST", "/repair/warranties", Map.of("repairOrderId", id)).get("id").asString();
+        String contract = ok(201, "POST", "/repair/contracts", Map.of("title", "Iso " + sfx)).get("id").asString();
+        assertThat(call("DELETE", "/repair/orders/items/" + item, null, otherToken).body().get("count").asLong())
+                .isZero();
+        assertThat(call("DELETE", "/repair/orders/attachments/" + att, null, otherToken).body().get("count").asLong())
+                .isZero();
+        assertThat(call("PATCH", "/repair/diagnosis/" + diag, Map.of("rootCause", "x"), otherToken).status())
+                .isEqualTo(404);
+        assertThat(call("GET", "/repair/quotations/" + quote, null, otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/repair/quotations/" + quote + "/approve", Map.of(), otherToken).status())
+                .isEqualTo(404);
+        assertThat(call("GET", "/repair/jobs/" + job, null, otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/repair/jobs/" + job + "/start", null, otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/repair/parts/" + part + "/issue", Map.of("locationId", warehouseId), otherToken)
+                .status()).isEqualTo(404);
+        assertThat(call("DELETE", "/repair/parts/" + part, null, otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/repair/warranties/" + warranty + "/claims", Map.of(), otherToken).status())
+                .isEqualTo(404);
+        assertThat(call("PATCH", "/repair/contracts/" + contract, Map.of("notes", "x"), otherToken).status())
+                .isEqualTo(404);
+        assertThat(call("POST", "/repair/orders/" + id + "/transition", Map.of("status", "cancelled"), otherToken)
+                .status()).isEqualTo(404);
+        Map<String, String> otherKeyed = new LinkedHashMap<>();
+        otherKeyed.put("Authorization", "Bearer " + otherToken);
+        otherKeyed.put("Idempotency-Key", key());
+        assertThat(call("POST", "/repair/orders/" + id + "/bill", Map.of(), otherKeyed).status()).isEqualTo(404);
+        assertThat(count("SELECT count(*) FROM \"RepairOrderItem\" WHERE id IN (?, ?)", item, item)).isEqualTo(1);
+        assertThat(status(id)).isEqualTo("received");
+
+        // The other organization cannot write rows onto this organization's order (Nest would: no order lookup).
+        long history = count("SELECT count(*) FROM \"RepairStatusHistory\" WHERE \"repairOrderId\" = ?", id);
+        assertThat(call("POST", "/repair/orders/" + id + "/notes", Map.of("note", "hi"), otherToken).status())
+                .isEqualTo(500);
+        assertThat(call("POST", "/repair/orders/" + id + "/attachments", Map.of("caption", "x"), otherToken)
+                .status()).isEqualTo(500);
+        assertThat(call("POST", "/repair/warranties", Map.of("repairOrderId", id), otherToken).status())
+                .isEqualTo(500);
+        assertThat(count("SELECT count(*) FROM \"RepairStatusHistory\" WHERE \"repairOrderId\" = ?", id))
+                .isEqualTo(history);
+        assertThat(count("SELECT count(*) FROM \"RepairAttachment\" WHERE \"repairOrderId\" = ? AND"
+                + " \"organizationId\" <> ?", id, demoOrg)).isZero();
+        assertThat(count("SELECT count(*) FROM \"RepairWarranty\" WHERE \"repairOrderId\" = ? AND"
+                + " \"organizationId\" <> ?", id, demoOrg)).isZero();
+        String foreignOrder = call("POST", "/repair/orders", Map.of("itemType", "Foreign"), otherToken).body()
+                .get("id").asString();
+        String foreignJob = call("POST", "/repair/orders/" + foreignOrder + "/jobs", Map.of(), otherToken).body()
+                .get("id").asString();
+        assertThat(call("PATCH", "/repair/jobs/" + foreignJob, Map.of("repairOrderId", id), otherToken).status())
+                .isEqualTo(500);
+        assertThat(call("POST", "/repair/orders/" + foreignOrder + "/items", Map.of("repairOrderId", id), otherToken)
+                .status()).isEqualTo(500);
+        assertThat(count("SELECT count(*) FROM \"RepairJob\" WHERE \"repairOrderId\" = ? AND"
+                + " \"organizationId\" <> ?", id, demoOrg)).isZero();
+        assertThat(count("SELECT count(*) FROM \"RepairOrderItem\" WHERE \"repairOrderId\" = ? AND"
+                + " \"organizationId\" <> ?", id, demoOrg)).isZero();
+
+        // PATCH bodies: no tenant hop, unknown keys (incl. a quoted column name) are rejected before any SQL.
+        assertThat(as("PATCH", "/repair/labour-types/" + lt, Map.of("organizationId", otherOrg)).status())
+                .isEqualTo(500);
+        assertThat(as("POST", "/repair/orders/" + id + "/transition", Map.of("status", "diagnosis",
+                "extra", Map.of("organizationId", otherOrg))).status()).isEqualTo(500);
+        assertThat(status(id)).isEqualTo("received");
+        assertThat(as("PATCH", "/repair/jobs/" + job, Map.of("bogus", 1)).status()).isEqualTo(500);
+        assertThat(as("PATCH", "/repair/jobs/" + job, Map.of("notes\" = 'x', \"organizationId", otherOrg)).status())
+                .isEqualTo(500);
+        assertThat(jdbc.sql("SELECT \"organizationId\" FROM \"RepairLabourType\" WHERE id = ?").param(lt)
+                .query(String.class).single()).isEqualTo(demoOrg);
+        assertThat(jdbc.sql("SELECT \"organizationId\" FROM \"RepairJob\" WHERE id = ?").param(job)
+                .query(String.class).single()).isEqualTo(demoOrg);
+        assertThat(ok(200, "PATCH", "/repair/labour-types/" + lt, Map.of("organizationId", demoOrg, "price", 9))
+                .get("price").asString()).isEqualTo("9");
+
         assertThat(assertAuthorizationMatrix("com.inventoryerp.repair")).isEqualTo(64);
     }
 }

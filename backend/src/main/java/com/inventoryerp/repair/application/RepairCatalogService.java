@@ -46,7 +46,7 @@ public class RepairCatalogService {
 
     public Map<String, Object> updateLabourType(String id, Map<String, Object> dto) {
         ensureExists(RepairLabourType.class, id);
-        return db.update(RepairLabourType.class, id, RepairDb.body(dto));
+        return db.update(RepairLabourType.class, id, db.spread(RepairLabourType.class, dto));
     }
 
     public Map<String, Object> deleteLabourType(String id) {
@@ -74,7 +74,7 @@ public class RepairCatalogService {
 
     public Map<String, Object> updateTechnician(String id, Map<String, Object> dto) {
         ensureExists(RepairTechnician.class, id);
-        return db.update(RepairTechnician.class, id, RepairDb.body(dto));
+        return db.update(RepairTechnician.class, id, db.spread(RepairTechnician.class, dto));
     }
 
     public Map<String, Object> deleteTechnician(String id) {

@@ -58,21 +58,36 @@ public class RepairCronWorker {
         List<Map<String, Object>> due = db.where(RepairSchedule.class).eq("status", "active")
                 .and("\"nextDueAt\" <= ?", PosDb.param(now)).list(null);
         for (Map<String, Object> schedule : due) {
-            String repairNumber = seq.next("repair_order", "RPR-", 6);
-            Object title = schedule.get("title");
-            Map<String, Object> order = db.insert(RepairOrder.class, Obj.of("organizationId", orgId,
-                    "repairNumber", repairNumber, "status", "received", "orderType", "preventive",
-                    "itemType", RepairDb.nz(schedule.get("assetRef"), title),
-                    "problemDescription", RepairDb.nz(schedule.get("taskTemplate"), "Preventive maintenance: " + title),
-                    "notes", "Auto-generated from schedule " + schedule.get("id")));
-            db.insert(RepairStatusHistory.class, Obj.of("organizationId", orgId, "repairOrderId", order.get("id"),
-                    "toStatus", "received", "action", "preventive",
-                    "note", "Auto-generated preventive order from schedule " + schedule.get("id")));
-            db.update(RepairSchedule.class, (String) schedule.get("id"), Obj.of("lastRunAt", now,
-                    "nextDueAt", RepairContractService.addDays(now, ((Number) schedule.get("intervalDays")).intValue())));
-            db.notify(orgId, "Preventive order " + repairNumber, RepairDb.s(title),
-                    Obj.of("repairOrderId", order.get("id"), "repairNumber", repairNumber,
-                            "scheduleId", schedule.get("id")));
+            // One transaction per schedule: the preventive order, its history row and the roll-forward commit
+            // together, so a failure can never leave a generated order behind a schedule that is still due (which
+            // the next run would generate again). The schedule row is locked and re-checked against concurrent edits.
+            Map<String, Object> order = db.inTx(() -> {
+                Map<String, Object> locked = db.where(RepairSchedule.class).eq("id", schedule.get("id"))
+                        .eq("status", "active").and("\"nextDueAt\" <= ?", PosDb.param(now)).lock();
+                if (locked == null) {
+                    return null;
+                }
+                String repairNumber = seq.next("repair_order", "RPR-", 6);
+                Object title = locked.get("title");
+                Map<String, Object> created = db.insert(RepairOrder.class, Obj.of("organizationId", orgId,
+                        "repairNumber", repairNumber, "status", "received", "orderType", "preventive",
+                        "itemType", RepairDb.nz(locked.get("assetRef"), title),
+                        "problemDescription", RepairDb.nz(locked.get("taskTemplate"),
+                                "Preventive maintenance: " + title),
+                        "notes", "Auto-generated from schedule " + locked.get("id")));
+                db.insert(RepairStatusHistory.class, Obj.of("organizationId", orgId, "repairOrderId", created.get("id"),
+                        "toStatus", "received", "action", "preventive",
+                        "note", "Auto-generated preventive order from schedule " + locked.get("id")));
+                db.update(RepairSchedule.class, (String) locked.get("id"), Obj.of("lastRunAt", now,
+                        "nextDueAt", RepairContractService.addDays(now,
+                                ((Number) locked.get("intervalDays")).intValue())));
+                return created;
+            });
+            if (order != null) {
+                db.notify(orgId, "Preventive order " + order.get("repairNumber"), RepairDb.s(schedule.get("title")),
+                        Obj.of("repairOrderId", order.get("id"), "repairNumber", order.get("repairNumber"),
+                                "scheduleId", schedule.get("id")));
+            }
         }
 
         Map<String, Object> expired = db.where(RepairWarranty.class).eq("status", "active")

@@ -25,10 +25,10 @@ Format: `- [x] METHOD /path — handler`. Regenerate missing rows with `node too
 | [hr](spec/hr.md) | P7 | 140 | 140 |
 | [manufacturing](spec/manufacturing.md) | P7 | 42 | 42 |
 | [rental](spec/rental.md) | P7 | 47 | 47 |
-| [repair](spec/repair.md) | P7 | 64 | 0 |
+| [repair](spec/repair.md) | P7 | 64 | 64 |
 | [orders](spec/orders.md) | P7 | 11 | 11 |
 | [communication](spec/communication.md) | P7 | 22 | 22 |
-| **total** | | **1118** | **1054** |
+| **total** | | **1118** | **1118** |
 
 Health endpoints (`/api/v1/health*`) were completed in P0.
 
@@ -1213,76 +1213,76 @@ ADR-S006 extensions (production-ready manufacturing; beyond the Nest contract, n
 - [x] POST /api/v1/rental/units/:id/retire — RentalController.retireUnit
 - [x] POST /api/v1/rental/units/generate — RentalController.generateUnits
 
-Verified by `RentalIT` (12 tests: catalog, units, availability, reservations + cron, full agreement lifecycle,
-deposits, score hold + override, reports, tenant isolation, 47-route authorization matrix); `rental.application`
-line coverage 89.6 %. Parity harness not yet run against a live Nest.
+Verified by `RentalIT` (lifecycle, money-route idempotency, GL balance, cron, tenant isolation, 47-route
+authorization matrix), `RentalLifecycleIT` (catalog, units, availability, reservations + cron, agreement lifecycle,
+deposits, score hold + override, reports) and `RentalMathTest`. Parity harness not yet run against a live Nest.
 
 ## repair
 
-- [ ] PATCH /api/v1/repair/claims/:claimId — RepairController.resolveClaim
-- [ ] GET /api/v1/repair/contracts — RepairController.listContracts
-- [ ] POST /api/v1/repair/contracts — RepairController.createContract
-- [ ] DELETE /api/v1/repair/contracts/:id — RepairController.deleteContract
-- [ ] PATCH /api/v1/repair/contracts/:id — RepairController.updateContract
-- [ ] POST /api/v1/repair/contracts/:id/activate — RepairController.activateContract
-- [ ] POST /api/v1/repair/contracts/:id/cancel — RepairController.cancelContract
-- [ ] GET /api/v1/repair/dashboard — RepairController.dashboard
-- [ ] PATCH /api/v1/repair/diagnosis/:id — RepairController.updateDiagnosis
-- [ ] POST /api/v1/repair/invoices/:invoiceId/pay — RepairController.payInvoice
-- [ ] GET /api/v1/repair/jobs — RepairController.listJobs
-- [ ] GET /api/v1/repair/jobs/:id — RepairController.getJob
-- [ ] PATCH /api/v1/repair/jobs/:id — RepairController.updateJob
-- [ ] POST /api/v1/repair/jobs/:id/cancel — RepairController.cancelJob
-- [ ] POST /api/v1/repair/jobs/:id/checklist — RepairController.setChecklistItem
-- [ ] POST /api/v1/repair/jobs/:id/complete — RepairController.completeJob
-- [ ] POST /api/v1/repair/jobs/:id/start — RepairController.startJob
-- [ ] POST /api/v1/repair/jobs/:id/test — RepairController.testJob
-- [ ] GET /api/v1/repair/labour-types — RepairController.listLabourTypes
-- [ ] POST /api/v1/repair/labour-types — RepairController.createLabourType
-- [ ] DELETE /api/v1/repair/labour-types/:id — RepairController.deleteLabourType
-- [ ] PATCH /api/v1/repair/labour-types/:id — RepairController.updateLabourType
-- [ ] GET /api/v1/repair/orders — RepairController.listOrders
-- [ ] POST /api/v1/repair/orders — RepairController.createOrder
-- [ ] GET /api/v1/repair/orders/:id — RepairController.getOrder
-- [ ] POST /api/v1/repair/orders/:id/attachments — RepairController.addAttachment
-- [ ] POST /api/v1/repair/orders/:id/bill — RepairController.bill
-- [ ] POST /api/v1/repair/orders/:id/diagnosis — RepairController.createDiagnosis
-- [ ] POST /api/v1/repair/orders/:id/items — RepairController.addItem
-- [ ] POST /api/v1/repair/orders/:id/jobs — RepairController.createJob
-- [ ] POST /api/v1/repair/orders/:id/notes — RepairController.addNote
-- [ ] POST /api/v1/repair/orders/:id/parts — RepairController.reservePart
-- [ ] POST /api/v1/repair/orders/:id/quotations — RepairController.createQuotation
-- [ ] PATCH /api/v1/repair/orders/:id/technician — RepairController.assignTechnician
-- [ ] POST /api/v1/repair/orders/:id/transition — RepairController.transitionOrder
-- [ ] DELETE /api/v1/repair/orders/attachments/:attachmentId — RepairController.removeAttachment
-- [ ] DELETE /api/v1/repair/orders/items/:itemId — RepairController.removeItem
-- [ ] GET /api/v1/repair/parts — RepairController.listParts
-- [ ] DELETE /api/v1/repair/parts/:id — RepairController.deletePart
-- [ ] POST /api/v1/repair/parts/:id/issue — RepairController.issuePart
-- [ ] GET /api/v1/repair/quotations — RepairController.listQuotations
-- [ ] DELETE /api/v1/repair/quotations/:id — RepairController.deleteQuotation
-- [ ] GET /api/v1/repair/quotations/:id — RepairController.getQuotation
-- [ ] POST /api/v1/repair/quotations/:id/approve — RepairController.approveQuotation
-- [ ] POST /api/v1/repair/quotations/:id/reject — RepairController.rejectQuotation
-- [ ] POST /api/v1/repair/quotations/:id/revise — RepairController.reviseQuotation
-- [ ] POST /api/v1/repair/quotations/:id/submit — RepairController.submitQuotation
-- [ ] GET /api/v1/repair/reports/contracts — RepairController.contractsOverview
-- [ ] GET /api/v1/repair/reports/operational — RepairController.operationalReport
-- [ ] GET /api/v1/repair/reports/revenue — RepairController.revenueByMonth
-- [ ] GET /api/v1/repair/reports/technician-load — RepairController.technicianLoad
-- [ ] GET /api/v1/repair/reports/warranty-health — RepairController.warrantyHealth
-- [ ] GET /api/v1/repair/schedules — RepairController.listSchedules
-- [ ] POST /api/v1/repair/schedules — RepairController.createSchedule
-- [ ] DELETE /api/v1/repair/schedules/:id — RepairController.deleteSchedule
-- [ ] PATCH /api/v1/repair/schedules/:id — RepairController.updateSchedule
-- [ ] GET /api/v1/repair/technicians — RepairController.listTechnicians
-- [ ] POST /api/v1/repair/technicians — RepairController.createTechnician
-- [ ] DELETE /api/v1/repair/technicians/:id — RepairController.deleteTechnician
-- [ ] PATCH /api/v1/repair/technicians/:id — RepairController.updateTechnician
-- [ ] GET /api/v1/repair/warranties — RepairController.listWarranties
-- [ ] POST /api/v1/repair/warranties — RepairController.createWarranty
-- [ ] PATCH /api/v1/repair/warranties/:id — RepairController.updateWarranty
-- [ ] POST /api/v1/repair/warranties/:id/claims — RepairController.createClaim
+- [x] PATCH /api/v1/repair/claims/:claimId — RepairController.resolveClaim
+- [x] GET /api/v1/repair/contracts — RepairController.listContracts
+- [x] POST /api/v1/repair/contracts — RepairController.createContract
+- [x] DELETE /api/v1/repair/contracts/:id — RepairController.deleteContract
+- [x] PATCH /api/v1/repair/contracts/:id — RepairController.updateContract
+- [x] POST /api/v1/repair/contracts/:id/activate — RepairController.activateContract
+- [x] POST /api/v1/repair/contracts/:id/cancel — RepairController.cancelContract
+- [x] GET /api/v1/repair/dashboard — RepairController.dashboard
+- [x] PATCH /api/v1/repair/diagnosis/:id — RepairController.updateDiagnosis
+- [x] POST /api/v1/repair/invoices/:invoiceId/pay — RepairController.payInvoice
+- [x] GET /api/v1/repair/jobs — RepairController.listJobs
+- [x] GET /api/v1/repair/jobs/:id — RepairController.getJob
+- [x] PATCH /api/v1/repair/jobs/:id — RepairController.updateJob
+- [x] POST /api/v1/repair/jobs/:id/cancel — RepairController.cancelJob
+- [x] POST /api/v1/repair/jobs/:id/checklist — RepairController.setChecklistItem
+- [x] POST /api/v1/repair/jobs/:id/complete — RepairController.completeJob
+- [x] POST /api/v1/repair/jobs/:id/start — RepairController.startJob
+- [x] POST /api/v1/repair/jobs/:id/test — RepairController.testJob
+- [x] GET /api/v1/repair/labour-types — RepairController.listLabourTypes
+- [x] POST /api/v1/repair/labour-types — RepairController.createLabourType
+- [x] DELETE /api/v1/repair/labour-types/:id — RepairController.deleteLabourType
+- [x] PATCH /api/v1/repair/labour-types/:id — RepairController.updateLabourType
+- [x] GET /api/v1/repair/orders — RepairController.listOrders
+- [x] POST /api/v1/repair/orders — RepairController.createOrder
+- [x] GET /api/v1/repair/orders/:id — RepairController.getOrder
+- [x] POST /api/v1/repair/orders/:id/attachments — RepairController.addAttachment
+- [x] POST /api/v1/repair/orders/:id/bill — RepairController.bill
+- [x] POST /api/v1/repair/orders/:id/diagnosis — RepairController.createDiagnosis
+- [x] POST /api/v1/repair/orders/:id/items — RepairController.addItem
+- [x] POST /api/v1/repair/orders/:id/jobs — RepairController.createJob
+- [x] POST /api/v1/repair/orders/:id/notes — RepairController.addNote
+- [x] POST /api/v1/repair/orders/:id/parts — RepairController.reservePart
+- [x] POST /api/v1/repair/orders/:id/quotations — RepairController.createQuotation
+- [x] PATCH /api/v1/repair/orders/:id/technician — RepairController.assignTechnician
+- [x] POST /api/v1/repair/orders/:id/transition — RepairController.transitionOrder
+- [x] DELETE /api/v1/repair/orders/attachments/:attachmentId — RepairController.removeAttachment
+- [x] DELETE /api/v1/repair/orders/items/:itemId — RepairController.removeItem
+- [x] GET /api/v1/repair/parts — RepairController.listParts
+- [x] DELETE /api/v1/repair/parts/:id — RepairController.deletePart
+- [x] POST /api/v1/repair/parts/:id/issue — RepairController.issuePart
+- [x] GET /api/v1/repair/quotations — RepairController.listQuotations
+- [x] DELETE /api/v1/repair/quotations/:id — RepairController.deleteQuotation
+- [x] GET /api/v1/repair/quotations/:id — RepairController.getQuotation
+- [x] POST /api/v1/repair/quotations/:id/approve — RepairController.approveQuotation
+- [x] POST /api/v1/repair/quotations/:id/reject — RepairController.rejectQuotation
+- [x] POST /api/v1/repair/quotations/:id/revise — RepairController.reviseQuotation
+- [x] POST /api/v1/repair/quotations/:id/submit — RepairController.submitQuotation
+- [x] GET /api/v1/repair/reports/contracts — RepairController.contractsOverview
+- [x] GET /api/v1/repair/reports/operational — RepairController.operationalReport
+- [x] GET /api/v1/repair/reports/revenue — RepairController.revenueByMonth
+- [x] GET /api/v1/repair/reports/technician-load — RepairController.technicianLoad
+- [x] GET /api/v1/repair/reports/warranty-health — RepairController.warrantyHealth
+- [x] GET /api/v1/repair/schedules — RepairController.listSchedules
+- [x] POST /api/v1/repair/schedules — RepairController.createSchedule
+- [x] DELETE /api/v1/repair/schedules/:id — RepairController.deleteSchedule
+- [x] PATCH /api/v1/repair/schedules/:id — RepairController.updateSchedule
+- [x] GET /api/v1/repair/technicians — RepairController.listTechnicians
+- [x] POST /api/v1/repair/technicians — RepairController.createTechnician
+- [x] DELETE /api/v1/repair/technicians/:id — RepairController.deleteTechnician
+- [x] PATCH /api/v1/repair/technicians/:id — RepairController.updateTechnician
+- [x] GET /api/v1/repair/warranties — RepairController.listWarranties
+- [x] POST /api/v1/repair/warranties — RepairController.createWarranty
+- [x] PATCH /api/v1/repair/warranties/:id — RepairController.updateWarranty
+- [x] POST /api/v1/repair/warranties/:id/claims — RepairController.createClaim
 
 ## orders
 

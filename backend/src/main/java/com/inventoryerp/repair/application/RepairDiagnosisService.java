@@ -15,6 +15,7 @@ import com.inventoryerp.repair.domain.RepairQuotation;
 import com.inventoryerp.repair.domain.RepairQuotationLine;
 import com.inventoryerp.repair.domain.RepairStatusHistory;
 import com.inventoryerp.shared.web.ApiException;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -67,9 +68,10 @@ public class RepairDiagnosisService {
         });
     }
 
+    /** {@code update({ data: dto })} — every key must be a diagnosis column. */
     public Map<String, Object> updateDiagnosis(String id, Map<String, Object> dto) {
         ensureExists(RepairDiagnosis.class, id);
-        return db.update(RepairDiagnosis.class, id, RepairDb.body(dto));
+        return db.update(RepairDiagnosis.class, id, db.spread(RepairDiagnosis.class, dto));
     }
 
     // ─── quotations ───
@@ -78,7 +80,8 @@ public class RepairDiagnosisService {
         List<Map<String, Object>> rows = db.where(RepairQuotation.class)
                 .eqIf("status", query.get("status"))
                 .eqIf("repairOrderId", query.get("repairOrderId"))
-                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200), RepairDb.skip(query.get("skip")));
+                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200),
+                        RepairDb.skip(query.get("skip")));
         rows.forEach(this::withLines);
         return rows;
     }
@@ -104,27 +107,27 @@ public class RepairDiagnosisService {
             throw ApiException.notFound("Repair order not found");
         }
         List<Line> lines = buildLines(PosSql.list(nz(dto.get("lines"), List.of())));
-        double labourTotal = 0;
-        double partsTotal = 0;
-        double totalAmount = 0;
+        BigDecimal labourTotal = BigDecimal.ZERO;
+        BigDecimal partsTotal = BigDecimal.ZERO;
+        BigDecimal totalAmount = BigDecimal.ZERO;
         for (Line l : lines) {
             if ("labour".equals(l.kind)) {
-                labourTotal += l.amount;
+                labourTotal = labourTotal.add(l.amount);
             }
             if ("part".equals(l.kind)) {
-                partsTotal += l.amount;
+                partsTotal = partsTotal.add(l.amount);
             }
-            totalAmount += l.amount;
+            totalAmount = totalAmount.add(l.amount);
         }
         String quotationNumber = seq.next("repair_quotation", "QT-", 6);
-        double lt = labourTotal;
-        double pt = partsTotal;
-        double tt = totalAmount;
+        BigDecimal lt = labourTotal;
+        BigDecimal pt = partsTotal;
+        BigDecimal tt = totalAmount;
         return db.inTx(() -> {
             Map<String, Object> created = db.insert(RepairQuotation.class, Obj.of("organizationId", orgId,
                     "repairOrderId", orderId, "quotationNumber", quotationNumber, "status", "draft",
-                    "revision", nz(dto.get("revision"), 1), "labourTotal", PosSql.decOf(lt),
-                    "partsTotal", PosSql.decOf(pt), "taxTotal", 0, "totalAmount", PosSql.decOf(tt),
+                    "revision", nz(dto.get("revision"), 1), "labourTotal", lt,
+                    "partsTotal", pt, "taxTotal", BigDecimal.ZERO, "totalAmount", tt,
                     "validUntil", dateOrNull(dto.get("validUntil")), "notes", dto.get("notes"),
                     "createdBy", RepairDb.user()));
             List<Map<String, Object>> rows = new ArrayList<>();
@@ -132,8 +135,8 @@ public class RepairDiagnosisService {
                 Line l = lines.get(idx);
                 rows.add(db.insert(RepairQuotationLine.class, Obj.of("organizationId", orgId,
                         "quotationId", created.get("id"), "kind", l.kind, "description", l.description,
-                        "labourTypeId", l.labourTypeId, "productId", l.productId, "quantity", PosSql.decOf(l.quantity),
-                        "unitPrice", PosSql.decOf(l.unitPrice), "taxId", l.taxId, "amount", PosSql.decOf(l.amount),
+                        "labourTypeId", l.labourTypeId, "productId", l.productId, "quantity", l.quantity,
+                        "unitPrice", l.unitPrice, "taxId", l.taxId, "amount", l.amount,
                         "lineNumber", idx)));
             }
             created.put("lines", rows);
@@ -149,21 +152,24 @@ public class RepairDiagnosisService {
         return db.update(RepairQuotation.class, id, Obj.of("status", "pending"));
     }
 
-    /** Approve; a {@code waiting_approval} order moves to {@code approved} with a history row. */
+    /**
+     * Approve; a {@code waiting_approval} order moves to {@code approved} with a history row. The quotation is
+     * re-read under a row lock so two concurrent approvals cannot both pass the status check.
+     */
     public Map<String, Object> approveQuotation(String id, Map<String, Object> dto) {
         String orgId = RepairDb.org();
-        Map<String, Object> q = db.byId(RepairQuotation.class, id);
-        if (q == null) {
-            throw ApiException.notFound("Quotation not found");
-        }
-        Object status = q.get("status");
-        if (!"pending".equals(status) && !"draft".equals(status)) {
-            throw ApiException.badRequest("Quotation is " + status + " — only pending/draft can be approved");
-        }
         return db.inTx(() -> {
+            Map<String, Object> q = db.lockById(RepairQuotation.class, id);
+            if (q == null) {
+                throw ApiException.notFound("Quotation not found");
+            }
+            Object status = q.get("status");
+            if (!"pending".equals(status) && !"draft".equals(status)) {
+                throw ApiException.badRequest("Quotation is " + status + " — only pending/draft can be approved");
+            }
             Map<String, Object> updated = db.update(RepairQuotation.class, id, Obj.of("status", "approved",
                     "approvedAt", Instant.now(), "approvedBy", RepairDb.user()));
-            Map<String, Object> order = db.byId(RepairOrder.class, q.get("repairOrderId"));
+            Map<String, Object> order = db.lockById(RepairOrder.class, q.get("repairOrderId"));
             if (order != null && "waiting_approval".equals(order.get("status"))) {
                 lifecycles.assertTransition(RepairLifecycles.KEY, "waiting_approval", "approved", "approve");
                 db.update(RepairOrder.class, (String) order.get("id"), Obj.of("status", "approved",
@@ -191,7 +197,7 @@ public class RepairDiagnosisService {
         return db.inTx(() -> {
             Map<String, Object> updated = db.update(RepairQuotation.class, id, Obj.of("status", "rejected",
                     "rejectedAt", Instant.now(), "rejectedReason", dto.get("reason")));
-            Map<String, Object> order = db.byId(RepairOrder.class, q.get("repairOrderId"));
+            Map<String, Object> order = db.lockById(RepairOrder.class, q.get("repairOrderId"));
             if (order != null && "waiting_approval".equals(order.get("status"))) {
                 lifecycles.assertTransition(RepairLifecycles.KEY, "waiting_approval", "diagnosis", "revision");
                 db.update(RepairOrder.class, (String) order.get("id"), Obj.of("status", "diagnosis",
@@ -240,13 +246,14 @@ public class RepairDiagnosisService {
 
     // ─── line building ───
 
-    /** A priced quotation line. */
+    /** A priced quotation line (exact decimals). */
     record Line(String kind, Object description, Object labourTypeId, Object productId, Object taxId,
-            double quantity, double unitPrice, double amount) {}
+            BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount) {}
 
     /**
      * Resolve raw lines into priced lines with snapshot descriptions: labour from the labour type (name, price),
-     * parts from the product (name, sale price); an explicit {@code unitPrice} always wins.
+     * parts from the product (name, sale price); an explicit {@code unitPrice} always wins. JS number semantics
+     * ({@code Number(x)}, {@code Math.round(q * p * 100) / 100}) on exact decimals.
      */
     List<Line> buildLines(List<Object> raw) {
         List<Line> out = new ArrayList<>();
@@ -254,13 +261,13 @@ public class RepairDiagnosisService {
             Map<String, Object> r = raw.get(idx) instanceof Map<?, ?> ? PosSql.map(raw.get(idx)) : Map.of();
             String kind = "part".equals(r.get("kind")) ? "part" : "labour";
             Object description = r.get("description");
-            double unitPrice = PosSql.num(nz(r.get("unitPrice"), 0));
+            BigDecimal unitPrice = RepairDb.jsNum(nz(r.get("unitPrice"), 0));
             if ("labour".equals(kind) && PosSql.truthy(r.get("labourTypeId"))) {
                 Map<String, Object> lt = db.byId(RepairLabourType.class, r.get("labourTypeId"));
                 if (lt != null) {
                     description = nz(description, lt.get("name"));
                     if (r.get("unitPrice") == null) {
-                        unitPrice = orZero(PosSql.num(lt.get("price")));
+                        unitPrice = RepairDb.jsNumOrZero(lt.get("price"));
                     }
                 }
             }
@@ -269,23 +276,19 @@ public class RepairDiagnosisService {
                 if (p != null) {
                     description = nz(description, p.get("name"));
                     if (r.get("unitPrice") == null) {
-                        unitPrice = orZero(PosSql.num(nz(p.get("salesPrice"), 0)));
+                        unitPrice = RepairDb.jsNumOrZero(nz(p.get("salesPrice"), 0));
                     }
                 }
             }
-            double quantity = PosSql.num(nz(r.get("quantity"), 1));
-            if (!(quantity > 0)) {
+            BigDecimal quantity = RepairDb.jsNum(nz(r.get("quantity"), 1));
+            if (!RepairDb.positive(quantity)) {
                 throw ApiException.badRequest("Line " + (idx + 1) + ": quantity must be positive");
             }
+            RepairDb.finite(unitPrice, "unitPrice");
             out.add(new Line(kind, nz(description, "Line " + (idx + 1)), r.get("labourTypeId"), r.get("productId"),
-                    r.get("taxId"), quantity, unitPrice, PosSql.round2(quantity * unitPrice)));
+                    r.get("taxId"), quantity, unitPrice, RepairDb.round2(quantity.multiply(unitPrice))));
         }
         return out;
-    }
-
-    /** JS {@code n || 0}. */
-    static double orZero(double n) {
-        return Double.isNaN(n) ? 0 : n;
     }
 
     private void ensureExists(Class<?> entity, String id) {

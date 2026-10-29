@@ -10,7 +10,6 @@ import com.inventoryerp.repair.domain.RepairServiceContract;
 import com.inventoryerp.shared.web.ApiException;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -39,7 +38,8 @@ public class RepairContractService {
         return db.where(RepairServiceContract.class)
                 .eqIf("status", query.get("status"))
                 .eqIf("partnerId", query.get("partnerId"))
-                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200), RepairDb.skip(query.get("skip")));
+                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200),
+                        RepairDb.skip(query.get("skip")));
     }
 
     public Map<String, Object> createContract(Map<String, Object> dtoIn) {
@@ -56,7 +56,7 @@ public class RepairContractService {
 
     public Map<String, Object> updateContract(String id, Map<String, Object> dto) {
         ensureExists(RepairServiceContract.class, id);
-        Map<String, Object> data = new LinkedHashMap<>(RepairDb.body(dto));
+        Map<String, Object> data = db.spread(RepairServiceContract.class, dto);
         data.put("updatedBy", RepairDb.user());
         return db.update(RepairServiceContract.class, id, data);
     }
@@ -87,7 +87,8 @@ public class RepairContractService {
         return db.where(RepairSchedule.class)
                 .eqIf("status", query.get("status"))
                 .eqIf("contractId", query.get("contractId"))
-                .list("\"nextDueAt\" ASC", RepairDb.take(query.get("take"), 100, 300), RepairDb.skip(query.get("skip")));
+                .list("\"nextDueAt\" ASC", RepairDb.take(query.get("take"), 100, 300),
+                        RepairDb.skip(query.get("skip")));
     }
 
     public Map<String, Object> createSchedule(Map<String, Object> dtoIn) {
@@ -103,7 +104,7 @@ public class RepairContractService {
 
     public Map<String, Object> updateSchedule(String id, Map<String, Object> dto) {
         ensureExists(RepairSchedule.class, id);
-        return db.update(RepairSchedule.class, id, RepairDb.body(dto));
+        return db.update(RepairSchedule.class, id, db.spread(RepairSchedule.class, dto));
     }
 
     public Map<String, Object> deleteSchedule(String id) {

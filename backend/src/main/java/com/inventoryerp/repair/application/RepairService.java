@@ -162,16 +162,20 @@ public class RepairService {
 
     // ─── lifecycle transitions ───
 
+    /**
+     * Guarded transition with a status-history row. The order is read and locked inside the transaction, so two
+     * concurrent transitions cannot both pass the lifecycle check against the same stale status.
+     */
     Map<String, Object> transition(String id, String to, String action, Object note, Map<String, Object> extra) {
         String orgId = RepairDb.org();
         String userId = RepairDb.user();
-        Map<String, Object> order = db.byId(RepairOrder.class, id);
-        if (order == null) {
-            throw ApiException.notFound("Repair order not found");
-        }
-        String from = (String) order.get("status");
-        lifecycles.assertTransition(RepairLifecycles.KEY, from, to, action);
         return db.inTx(() -> {
+            Map<String, Object> order = db.lockById(RepairOrder.class, id);
+            if (order == null) {
+                throw ApiException.notFound("Repair order not found");
+            }
+            String from = (String) order.get("status");
+            lifecycles.assertTransition(RepairLifecycles.KEY, from, to, action);
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("status", to);
             data.put("updatedBy", userId);
@@ -192,7 +196,7 @@ public class RepairService {
                 data.put(stamp, now);
             }
             if (extra != null) {
-                data.putAll(extra);
+                data.putAll(db.spread(RepairOrder.class, extra));
             }
             Map<String, Object> updated = db.update(RepairOrder.class, id, data);
             db.insert(RepairStatusHistory.class, Obj.of("organizationId", orgId, "repairOrderId", id,
@@ -263,6 +267,7 @@ public class RepairService {
 
     // ─── items ───
 
+    /** Append an item line; the body is spread into the row like Prisma {@code data: { ..., ...dto }}. */
     public Map<String, Object> addItem(String orderId, Map<String, Object> dtoIn) {
         Map<String, Object> dto = RepairDb.body(dtoIn);
         String orgId = RepairDb.org();
@@ -274,7 +279,7 @@ public class RepairService {
         data.put("organizationId", orgId);
         data.put("repairOrderId", orderId);
         data.put("lineNumber", (int) lineNumber);
-        data.putAll(dto);
+        data.putAll(db.spread(RepairOrderItem.class, dto));
         return db.insert(RepairOrderItem.class, data);
     }
 
@@ -284,8 +289,13 @@ public class RepairService {
 
     // ─── attachments ───
 
+    /**
+     * Attach a file / photo / URL. Nest does not look the order up; a missing order fails on the foreign key (500),
+     * and so does another organization's order here (Nest would attach to it).
+     */
     public Map<String, Object> addAttachment(String orderId, Map<String, Object> dtoIn) {
         Map<String, Object> dto = RepairDb.body(dtoIn);
+        db.requireParent(RepairOrder.class, orderId, "RepairAttachment_repairOrderId_fkey");
         return db.insert(RepairAttachment.class, Obj.of("organizationId", RepairDb.org(), "repairOrderId", orderId,
                 "kind", nz(dto.get("kind"), "receipt"), "fileId", dto.get("fileId"), "caption", dto.get("caption"),
                 "url", dto.get("url"), "createdBy", RepairDb.user()));
@@ -295,16 +305,26 @@ public class RepairService {
         return db.where(RepairAttachment.class).eq("id", id).deleteMany();
     }
 
-    /** A free-text note on the order's history (at its current status). */
+    /**
+     * A free-text note on the order's history (at its current status). A missing order — or another organization's,
+     * which Nest would write into — fails on the foreign key (500).
+     */
     public Map<String, Object> addNote(String id, Map<String, Object> dtoIn) {
         Map<String, Object> dto = RepairDb.body(dtoIn);
         Object note = dto.get("note");
-        if (note == null || note.toString().trim().isEmpty()) {
+        if (note != null && !(note instanceof String)) {
+            throw new IllegalStateException("dto.note?.trim is not a function"); // JS TypeError → 500
+        }
+        if (note == null || ((String) note).trim().isEmpty()) {
             throw ApiException.badRequest("Note is required");
         }
         Map<String, Object> order = db.byId(RepairOrder.class, id);
+        if (order == null) {
+            throw new IllegalStateException(
+                    "Foreign key constraint violated on the constraint: `RepairStatusHistory_repairOrderId_fkey`");
+        }
         return db.insert(RepairStatusHistory.class, Obj.of("organizationId", RepairDb.org(), "repairOrderId", id,
-                "toStatus", order == null || order.get("status") == null ? "received" : order.get("status"),
+                "toStatus", order.get("status") == null ? "received" : order.get("status"),
                 "action", "note", "note", note, "changedBy", RepairDb.user()));
     }
 }

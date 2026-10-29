@@ -48,8 +48,8 @@ public class RepairReportsService {
         }
         if (PosSql.truthy(to)) {
             Instant d = RepairDb.jsDate(to);
-            Instant end = LocalDateTime.of(d.atOffset(ZoneOffset.UTC).toLocalDate(), LocalTime.of(23, 59, 59, 999_000_000))
-                    .toInstant(ZoneOffset.UTC);
+            Instant end = LocalDateTime.of(d.atOffset(ZoneOffset.UTC).toLocalDate(),
+                    LocalTime.of(23, 59, 59, 999_000_000)).toInstant(ZoneOffset.UTC);
             w.and("\"" + column + "\" <= ?", PosDb.param(end));
         }
     }
@@ -98,11 +98,11 @@ public class RepairReportsService {
     public List<Map<String, Object>> revenueByMonth(String from, String to) {
         RepairDb.Where w = orders("closed");
         range(w, "closedAt", from, to);
-        Map<String, Double> buckets = new TreeMap<>();
+        Map<String, BigDecimal> buckets = new TreeMap<>();
         for (Map<String, Object> r : w.list(null)) {
             Object closedAt = r.get("closedAt");
             String key = closedAt instanceof Instant i ? i.toString().substring(0, 7) : "unknown";
-            buckets.merge(key, PosSql.num(r.get("totalAmount")), Double::sum);
+            buckets.merge(key, RepairDb.jsNumOrZero(r.get("totalAmount")), BigDecimal::add);
         }
         List<Map<String, Object>> out = new ArrayList<>();
         buckets.forEach((month, revenue) -> {
@@ -162,11 +162,11 @@ public class RepairReportsService {
         List<Map<String, Object>> orders = w.list(null);
         long closed = 0;
         long cancelled = 0;
-        double revenue = 0;
+        BigDecimal revenue = BigDecimal.ZERO;
         for (Map<String, Object> o : orders) {
             if ("closed".equals(o.get("status"))) {
                 closed++;
-                revenue += PosSql.num(o.get("totalAmount"));
+                revenue = revenue.add(RepairDb.jsNumOrZero(o.get("totalAmount")));
             }
             if ("cancelled".equals(o.get("status"))) {
                 cancelled++;

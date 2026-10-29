@@ -1,5 +1,6 @@
 package com.inventoryerp.repair.web;
 
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -30,7 +31,12 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * {@code /repair} — the RMMS surface (port of {@code repair.controller.ts}): orders → items → diagnosis → quotation →
  * jobs → parts → bill → deliver → close · technicians · labour catalog · warranties + claims · contracts + schedules ·
- * reports. Bodies and queries are untyped ({@code dto: any}) in Nest, so they bind as maps.
+ * reports. Bodies and queries are untyped ({@code dto: any}) in Nest, so they bind as maps (no validation, like Nest).
+ *
+ * <p>The two routes that move money — billing ({@code POST /repair/orders/:id/bill}) and payment
+ * ({@code POST /repair/invoices/:invoiceId/pay}) — require an {@code Idempotency-Key} and answer 200 like every
+ * idempotent route (AGENTS.md §7/§8); Nest has no {@code @Idempotent} there — a deviation listed in
+ * docs/spec/repair.md.
  */
 @RestController
 @RequestMapping("/repair")
@@ -139,7 +145,8 @@ public class RepairController {
     @PostMapping("/orders/{id}/items")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.REPAIR__MANAGE)
-    public Map<String, Object> addItem(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> addItem(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return service.addItem(id, dto);
     }
 
@@ -166,21 +173,22 @@ public class RepairController {
     @PostMapping("/orders/{id}/notes")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.REPAIR__READ)
-    public Map<String, Object> addNote(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> addNote(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return service.addNote(id, dto);
     }
 
     // ─── billing ───
 
     @PostMapping("/orders/{id}/bill")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.REPAIR__MANAGE)
     public Map<String, Object> bill(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
         return posting.billRepair(id, dto);
     }
 
     @PostMapping("/invoices/{invoiceId}/pay")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.REPAIR__MANAGE)
     public Map<String, Object> payInvoice(@PathVariable String invoiceId,
             @RequestBody(required = false) Map<String, Object> dto) {
@@ -280,13 +288,15 @@ public class RepairController {
     @PostMapping("/orders/{id}/jobs")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.REPAIR__WORK)
-    public Map<String, Object> createJob(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> createJob(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return jobs.createJob(id, dto);
     }
 
     @PatchMapping("/jobs/{id}")
     @RequirePermissions(Permissions.REPAIR__WORK)
-    public Map<String, Object> updateJob(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> updateJob(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return jobs.updateJob(id, dto);
     }
 
@@ -315,7 +325,8 @@ public class RepairController {
     @PostMapping("/jobs/{id}/cancel")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.REPAIR__WORK)
-    public Map<String, Object> cancelJob(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> cancelJob(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return jobs.cancelJob(id, dto);
     }
 
@@ -346,7 +357,8 @@ public class RepairController {
     @PostMapping("/parts/{id}/issue")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.REPAIR__PARTS)
-    public Map<String, Object> issuePart(@PathVariable String id, @RequestBody(required = false) Map<String, Object> dto) {
+    public Map<String, Object> issuePart(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
         return parts.issuePart(id, dto);
     }
 

@@ -41,7 +41,8 @@ public class RepairJobService {
                 .eqIf("status", query.get("status"))
                 .eqIf("repairOrderId", query.get("repairOrderId"))
                 .eqIf("technicianId", query.get("technicianId"))
-                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200), RepairDb.skip(query.get("skip")));
+                .list("\"createdAt\" DESC", RepairDb.take(query.get("take"), 50, 200),
+                        RepairDb.skip(query.get("skip")));
         for (Map<String, Object> r : rows) {
             Map<String, Object> o = db.db().first(RepairOrder.class, "id = ?", r.get("repairOrderId"));
             Map<String, Object> brief = null;
@@ -140,7 +141,7 @@ public class RepairJobService {
         if (db.byId(RepairJob.class, id) == null) {
             throw ApiException.notFound("Repair job not found");
         }
-        return db.update(RepairJob.class, id, RepairDb.body(dto));
+        return db.update(RepairJob.class, id, db.spread(RepairJob.class, dto));
     }
 
     /** Toggle one checklist item ({@code {label, completed}}) inside the job's checklist JSON. */

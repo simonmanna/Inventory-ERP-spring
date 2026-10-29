@@ -1,5 +1,6 @@
 package com.inventoryerp.repair.application;
 
+import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.crud.TenancyScope;
@@ -7,15 +8,25 @@ import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.kernel.notifications.NotificationsService.SendInput;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosSql;
+import com.inventoryerp.repair.domain.RepairDiagnosis;
+import com.inventoryerp.repair.domain.RepairJob;
+import com.inventoryerp.repair.domain.RepairOrder;
+import com.inventoryerp.repair.domain.RepairQuotation;
+import com.inventoryerp.repair.domain.RepairWarranty;
+import com.inventoryerp.shared.web.EntityJson;
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -27,7 +38,13 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Shared data access for the repair services: Prisma-shaped reads under the tenancy extension (organization scope +
  * soft delete), {@code create}/{@code update} with Prisma's input coercion for the untyped ({@code dto: any}) bodies,
- * {@code $transaction}, the {@code take}/{@code skip} coercions and the in-app notification every repair flow sends.
+ * {@code $transaction}, row locks, the {@code take}/{@code skip} coercions, JS number semantics on {@link BigDecimal}
+ * and the in-app notification every repair flow sends.
+ *
+ * <p>Hardening over the Nest original (docs/spec/repair.md → Deviations): every written key must be a column of the
+ * model (Prisma's "Unknown argument" error, and no column name from a request body ever reaches SQL unchecked), an
+ * {@code organizationId} in a body cannot move a row to another tenant, and a body that re-points a row at a parent
+ * ({@code repairOrderId}, {@code quotationId}, ...) must name a parent of the caller's organization.
  */
 @Component
 @ConditionalOnProperty(name = "app.modules.repair", havingValue = "true")
@@ -61,7 +78,7 @@ public class RepairDb {
         return PosSql.user();
     }
 
-    /** {@code prisma.$transaction(async (tx) => ...)}. */
+    /** {@code prisma.$transaction(async (tx) => ...)} (joins an enclosing transaction). */
     public <T> T inTx(Supplier<T> body) {
         return tx.execute(st -> body.get());
     }
@@ -76,6 +93,11 @@ public class RepairDb {
     /** {@code findFirst({ where: { id } })} under the tenancy extension. */
     public Map<String, Object> byId(Class<?> entity, Object id) {
         return where(entity).eq("id", id).first();
+    }
+
+    /** {@link #byId} with the row locked ({@code SELECT ... FOR UPDATE}) for the rest of the transaction. */
+    public Map<String, Object> lockById(Class<?> entity, Object id) {
+        return where(entity).eq("id", id).lock();
     }
 
     public Where where(Class<?> entity) {
@@ -136,6 +158,12 @@ public class RepairDb {
             return rows.isEmpty() ? null : rows.getFirst();
         }
 
+        /** The first matching row, locked until the transaction ends. */
+        public Map<String, Object> lock() {
+            return SqlRows.one(entity, jdbc.sql("SELECT * FROM \"" + PosDb.table(entity) + "\" WHERE " + sql
+                    + " LIMIT 1 FOR UPDATE").params(args()));
+        }
+
         public List<Map<String, Object>> list(String orderBy) {
             return db.list(entity, sql + (orderBy == null ? "" : " ORDER BY " + orderBy), args());
         }
@@ -191,10 +219,21 @@ public class RepairDb {
     /**
      * Prisma input coercion of JS values: ISO strings / epoch numbers to dates, objects and arrays (and scalars) to
      * JSON columns. {@code undefined} (absent) keys never reach here; an explicit {@code null} clears the column.
+     * Every key must be a column of {@code entity} (Prisma "Unknown argument" → 500), and {@code organizationId} can
+     * only name the caller's organization (under the Nest RLS policy any other value fails the row check → 500).
      */
     static Map<String, Object> coerce(Class<?> entity, Map<String, Object> data) {
+        List<String> columns = EntityJson.columnNames(entity);
         Map<String, Object> out = new LinkedHashMap<>();
         data.forEach((k, v) -> {
+            if (!columns.contains(k)) {
+                throw new IllegalStateException("Invalid `prisma." + model(entity) + "` invocation: Unknown argument `"
+                        + k + "`.");
+            }
+            if ("organizationId".equals(k) && !Objects.equals(v, org())) {
+                throw new IllegalStateException("new row violates row-level security policy for table \""
+                        + PosDb.table(entity) + "\"");
+            }
             Object val = v;
             Field f = field(entity, k);
             if (v != null && !(v instanceof PosDb.Raw) && !(v instanceof PosDb.Json) && f != null) {
@@ -207,6 +246,41 @@ public class RepairDb {
             out.put(k, val);
         });
         return out;
+    }
+
+    private static String model(Class<?> entity) {
+        String n = entity.getSimpleName();
+        return Character.toLowerCase(n.charAt(0)) + n.substring(1);
+    }
+
+    /** Parents a request body may re-point a repair row at, with the model each key references. */
+    private static final Map<String, Class<?>> PARENTS = Map.of("repairOrderId", RepairOrder.class,
+            "quotationId", RepairQuotation.class, "diagnosisId", RepairDiagnosis.class,
+            "warrantyId", RepairWarranty.class, "jobId", RepairJob.class);
+
+    /**
+     * {@code data: { ...dto }} from an untyped request body: a copy whose parent references ({@code repairOrderId},
+     * {@code quotationId}, {@code diagnosisId}, {@code warrantyId}, {@code jobId}) must name rows of the caller's
+     * organization. Prisma would accept another tenant's parent and the row would then show up in that tenant's
+     * {@code include}s; here it is the foreign-key error a missing parent gives (500).
+     */
+    public Map<String, Object> spread(Class<?> entity, Map<String, Object> dto) {
+        Map<String, Object> data = new LinkedHashMap<>(body(dto));
+        List<String> columns = EntityJson.columnNames(entity);
+        PARENTS.forEach((key, parent) -> {
+            Object ref = data.get(key);
+            if (ref != null && columns.contains(key) && parent != entity) {
+                requireParent(parent, ref, PosDb.table(entity) + "_" + key + "_fkey");
+            }
+        });
+        return data;
+    }
+
+    /** A referenced parent row of the caller's organization, else Prisma's P2003 foreign-key error (500). */
+    public void requireParent(Class<?> parent, Object id, String constraint) {
+        if (id == null || byId(parent, id.toString()) == null) {
+            throw new IllegalStateException("Foreign key constraint violated on the constraint: `" + constraint + "`");
+        }
     }
 
     private static final Map<String, Field> FIELDS = new ConcurrentHashMap<>();
@@ -274,7 +348,8 @@ public class RepairDb {
         try {
             return EntityPatch.toInstant(v.toString().trim());
         } catch (RuntimeException e) {
-            throw new IllegalStateException("Invalid value for argument: Provided Date object is invalid. Expected Date.");
+            throw new IllegalStateException(
+                    "Invalid value for argument: Provided Date object is invalid. Expected Date.");
         }
     }
 
@@ -301,6 +376,71 @@ public class RepairDb {
 
     public static Map<String, Object> body(Map<String, Object> dto) {
         return dto == null ? new LinkedHashMap<>() : dto;
+    }
+
+    // ─── JS numbers on exact decimals (money and quantities never go through double) ───
+
+    private static final Pattern DECIMAL = Pattern.compile("[+-]?(\\d+\\.?\\d*|\\.\\d+)([eE][+-]?\\d+)?");
+    private static final BigDecimal HALF_CENT = new BigDecimal("0.005");
+
+    /**
+     * JS {@code Number(v)} as an exact decimal: {@code null} → 0, booleans → 1/0, numeric strings parsed exactly,
+     * {@code ""} → 0. Returns {@code null} where JS yields {@code NaN} or ±{@code Infinity}.
+     */
+    public static BigDecimal jsNum(Object v) {
+        if (v == null) {
+            return BigDecimal.ZERO;
+        }
+        if (v instanceof BigDecimal d) {
+            return d;
+        }
+        if (v instanceof Boolean b) {
+            return b ? BigDecimal.ONE : BigDecimal.ZERO;
+        }
+        if (v instanceof Double || v instanceof Float) {
+            double d = ((Number) v).doubleValue();
+            return Double.isFinite(d) ? PosSql.decOf(d) : null;
+        }
+        if (v instanceof Number n) {
+            return new BigDecimal(n.toString());
+        }
+        if (v instanceof String str) {
+            String t = str.strip();
+            if (t.isEmpty()) {
+                return BigDecimal.ZERO;
+            }
+            if (DECIMAL.matcher(t).matches()) {
+                return new BigDecimal(t);
+            }
+            double d = JsNumbers.number(t);
+            return Double.isFinite(d) ? PosSql.decOf(d) : null;
+        }
+        return null;
+    }
+
+    /** JS {@code Number(v) || 0}. */
+    public static BigDecimal jsNumOrZero(Object v) {
+        BigDecimal n = jsNum(v);
+        return n == null ? BigDecimal.ZERO : n;
+    }
+
+    /** JS {@code n > 0} ({@code NaN} is not). */
+    public static boolean positive(BigDecimal n) {
+        return n != null && n.signum() > 0;
+    }
+
+    /** JS {@code Math.round(n * 100) / 100} on an exact decimal (half rounds towards +∞, like Math.round). */
+    public static BigDecimal round2(BigDecimal n) {
+        return n.add(HALF_CENT).setScale(2, RoundingMode.FLOOR);
+    }
+
+    /** A decimal that must be finite to be stored (JS {@code NaN} has no Postgres-safe Prisma form here) → 500. */
+    public static BigDecimal finite(BigDecimal n, String argument) {
+        if (n == null) {
+            throw new IllegalStateException("Invalid value for argument `" + argument + "`: Expected Decimal, provided"
+                    + " NaN.");
+        }
+        return n;
     }
 
     // ─── notifications ───

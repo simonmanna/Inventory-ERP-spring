@@ -15,6 +15,7 @@ import com.inventoryerp.repair.domain.RepairOrder;
 import com.inventoryerp.repair.domain.RepairQuotation;
 import com.inventoryerp.repair.domain.RepairQuotationLine;
 import com.inventoryerp.shared.web.ApiException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,27 +48,24 @@ public class RepairPostingService {
         this.modules = modules;
     }
 
-    /** One billable line after product resolution. */
-    record Resolved(String productId, Object description, double quantity, double unitPrice, Object taxId,
+    /** One billable line after product resolution (exact decimals). */
+    record Resolved(String productId, Object description, BigDecimal quantity, BigDecimal unitPrice, Object taxId,
             Object repairFeeType) {}
 
     /**
      * Bill a repair order from its approved quotation (or the given {@code lines}). Returns
      * {@code {orderId, invoiceId, order, invoice}}.
+     *
+     * <p>Validation runs first, exactly as in Nest. The Order, its Invoice (with the balanced sales journal posted by
+     * {@link PosInvoiceService}) and the repair order's link and totals then commit in one transaction under a row
+     * lock on the repair order: a failed invoice no longer leaves the repair order marked as billed, and two
+     * concurrent bills cannot both pass the "already billed" check.
      */
     public Map<String, Object> billRepair(String repairOrderId, Map<String, Object> inputIn) {
         Map<String, Object> input = RepairDb.body(inputIn);
         String orgId = RepairDb.org();
         Map<String, Object> order = db.byId(RepairOrder.class, repairOrderId);
-        if (order == null) {
-            throw ApiException.notFound("Repair order not found");
-        }
-        if ("cancelled".equals(order.get("status")) || "closed".equals(order.get("status"))) {
-            throw ApiException.badRequest("Repair order is closed/cancelled — cannot bill");
-        }
-        if (PosSql.truthy(order.get("orderId")) || PosSql.truthy(order.get("invoiceId"))) {
-            throw ApiException.badRequest("Repair order already billed");
-        }
+        assertBillable(order);
 
         List<Map<String, Object>> lines = new ArrayList<>();
         if (input.get("lines") != null) {
@@ -90,8 +88,7 @@ public class RepairPostingService {
                     "\"lineNumber\" ASC")) {
                 lines.add(Obj.of("kind", l.get("kind"), "description", l.get("description"),
                         "productId", l.get("productId"), "labourTypeId", l.get("labourTypeId"),
-                        "quantity", PosSql.num(l.get("quantity")), "unitPrice", PosSql.num(l.get("unitPrice")),
-                        "taxId", l.get("taxId")));
+                        "quantity", l.get("quantity"), "unitPrice", l.get("unitPrice"), "taxId", l.get("taxId")));
             }
         }
 
@@ -107,83 +104,105 @@ public class RepairPostingService {
                 productId = lt == null || lt.get("productId") == null ? "" : lt.get("productId");
             }
             if (!PosSql.truthy(productId)) {
-                throw ApiException.badRequest("Line \"" + RepairDb.s(l.get("description")) + "\" has no billable product"
-                        + " — labour types need a billing product; parts need a productId");
+                throw ApiException.badRequest("Line \"" + RepairDb.s(l.get("description"))
+                        + "\" has no billable product — labour types need a billing product; parts need a productId");
             }
-            double qty = PosSql.num(nz(l.get("quantity"), 1));
-            if (!(qty > 0)) {
+            BigDecimal qty = RepairDb.jsNum(nz(l.get("quantity"), 1));
+            if (!RepairDb.positive(qty)) {
                 throw ApiException.badRequest("Line \"" + RepairDb.s(l.get("description"))
                         + "\": quantity must be positive");
             }
-            resolved.add(new Resolved(productId.toString(), l.get("description"), qty,
-                    PosSql.num(nz(l.get("unitPrice"), 0)), l.get("taxId"), l.get("kind")));
+            BigDecimal unitPrice = RepairDb.finite(RepairDb.jsNum(nz(l.get("unitPrice"), 0)), "unitPrice");
+            resolved.add(new Resolved(productId.toString(), l.get("description"), qty, unitPrice, l.get("taxId"),
+                    l.get("kind")));
         }
         if (resolved.isEmpty()) {
             throw ApiException.badRequest("No billable lines");
         }
 
-        String orderNumber = seq.next("pos_order", "OR-", 6);
-        String partnerId = order.get("partnerId") != null ? (String) order.get("partnerId")
-                : posOrders.ensureWalkInCustomer(orgId);
-        Map<String, Object> createdOrder = db.inTx(() -> {
+        BigDecimal labour = BigDecimal.ZERO;
+        BigDecimal parts = BigDecimal.ZERO;
+        BigDecimal all = BigDecimal.ZERO;
+        for (Resolved l : resolved) {
+            BigDecimal v = l.unitPrice().multiply(l.quantity());
+            if ("labour".equals(l.repairFeeType())) {
+                labour = labour.add(v);
+            }
+            if ("part".equals(l.repairFeeType())) {
+                parts = parts.add(v);
+            }
+            all = all.add(v);
+        }
+        BigDecimal labourTotal = labour;
+        BigDecimal partsTotal = parts;
+        BigDecimal linesTotal = all;
+
+        Map<String, Object> billed = db.inTx(() -> {
+            Map<String, Object> locked = db.lockById(RepairOrder.class, repairOrderId);
+            assertBillable(locked);
+            String orderNumber = seq.next("pos_order", "OR-", 6);
+            // Invoice.partnerId is required: walk-in repairs fall back to the org's WALKIN partner (POS convention).
+            String partnerId = locked.get("partnerId") != null ? (String) locked.get("partnerId")
+                    : posOrders.ensureWalkInCustomer(orgId);
             modules.assertKnownOrderKind("repair");
             Map<String, Object> o = db.db().insert(Order.class, Obj.of("organizationId", orgId,
                     "orderNumber", orderNumber, "orderType", "takeaway", "status", "confirmed", "partnerId", partnerId,
-                    "branchId", nz(input.get("branchId"), order.get("branchId")),
-                    "notes", "Repair " + order.get("repairNumber"), "transactionKind", "repair",
-                    "sourceDocumentType", "repair_order", "sourceDocumentId", order.get("id"),
-                    "repairOrderId", order.get("id")));
+                    "branchId", nz(input.get("branchId"), locked.get("branchId")),
+                    "notes", "Repair " + locked.get("repairNumber"), "transactionKind", "repair",
+                    "sourceDocumentType", "repair_order", "sourceDocumentId", locked.get("id"),
+                    "repairOrderId", locked.get("id")));
             for (int idx = 0; idx < resolved.size(); idx++) {
                 Resolved l = resolved.get(idx);
                 db.db().insert(OrderItem.class, Obj.of("organizationId", orgId, "orderId", o.get("id"),
                         "productId", l.productId(), "description", l.description(),
-                        "quantity", PosSql.decOf(l.quantity()), "unitPrice", PosSql.decOf(l.unitPrice()),
-                        "discountPercent", 0, "discountType", "percentage", "discountAmount", 0, "taxId", l.taxId(),
-                        "taxInclusive", false, "lineNumber", idx, "repairOrderLineId", order.get("id"),
-                        "repairFeeType", l.repairFeeType()));
+                        "quantity", l.quantity(), "unitPrice", l.unitPrice(),
+                        "discountPercent", BigDecimal.ZERO, "discountType", "percentage",
+                        "discountAmount", BigDecimal.ZERO, "taxId", l.taxId(), "taxInclusive", false,
+                        "lineNumber", idx, "repairOrderLineId", locked.get("id"), "repairFeeType", l.repairFeeType()));
             }
-            db.update(RepairOrder.class, (String) order.get("id"), Obj.of("orderId", o.get("id"),
-                    "updatedBy", RepairDb.user()));
-            return o;
+            db.update(RepairOrder.class, repairOrderId, Obj.of("orderId", o.get("id"), "updatedBy", RepairDb.user()));
+
+            Map<String, Object> invDto = new LinkedHashMap<>();
+            invDto.put("paymentMode", nz(input.get("paymentMode"), "cash"));
+            if (input.get("occurredAt") != null) {
+                invDto.put("occurredAt", input.get("occurredAt"));
+            }
+            Map<String, Object> invoice = posInvoice.generateInvoice((String) o.get("id"), invDto);
+
+            // Nest reads invoice.grandTotal ?? invoice.total — neither exists on Invoice — so totalAmount is the
+            // pre-tax line total (kept on purpose, docs/spec/repair.md).
+            BigDecimal tax = RepairDb.jsNumOrZero(nz(invoice.get("taxAmount"), 0));
+            BigDecimal total = RepairDb.jsNumOrZero(nz(nz(invoice.get("grandTotal"), invoice.get("total")), 0));
+            db.update(RepairOrder.class, repairOrderId, Obj.of("invoiceId", invoice.get("id"),
+                    "labourTotal", labourTotal, "partsTotal", partsTotal, "taxTotal", tax,
+                    "totalAmount", total.signum() != 0 ? total : linesTotal, "updatedBy", RepairDb.user()));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("orderId", o.get("id"));
+            out.put("invoiceId", invoice.get("id"));
+            out.put("order", o);
+            out.put("invoice", invoice);
+            return out;
         });
 
-        Map<String, Object> invDto = new LinkedHashMap<>();
-        invDto.put("paymentMode", nz(input.get("paymentMode"), "cash"));
-        if (input.get("occurredAt") != null) {
-            invDto.put("occurredAt", input.get("occurredAt"));
-        }
-        Map<String, Object> invoice = posInvoice.generateInvoice((String) createdOrder.get("id"), invDto);
-
-        double labour = 0;
-        double parts = 0;
-        double all = 0;
-        for (Resolved l : resolved) {
-            double v = l.unitPrice() * l.quantity();
-            if ("labour".equals(l.repairFeeType())) {
-                labour += v;
-            }
-            if ("part".equals(l.repairFeeType())) {
-                parts += v;
-            }
-            all += v;
-        }
-        double tax = RepairDiagnosisService.orZero(PosSql.num(nz(invoice.get("taxAmount"), 0)));
-        double total = RepairDiagnosisService.orZero(PosSql.num(nz(nz(invoice.get("grandTotal"), invoice.get("total")), 0)));
-        db.update(RepairOrder.class, (String) order.get("id"), Obj.of("invoiceId", invoice.get("id"),
-                "labourTotal", PosSql.decOf(labour), "partsTotal", PosSql.decOf(parts), "taxTotal", PosSql.decOf(tax),
-                "totalAmount", PosSql.decOf(total != 0 ? total : all), "updatedBy", RepairDb.user()));
-
+        Map<String, Object> invoice = PosSql.map(billed.get("invoice"));
         db.notify(orgId, "Repair billed — " + nz(invoice.get("invoiceNumber"), invoice.get("id")),
                 order.get("repairNumber") + " invoiced (" + resolved.size() + " lines)",
                 Obj.of("repairOrderId", order.get("id"), "invoiceId", invoice.get("id"),
                         "repairNumber", order.get("repairNumber")));
+        return billed;
+    }
 
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("orderId", createdOrder.get("id"));
-        out.put("invoiceId", invoice.get("id"));
-        out.put("order", createdOrder);
-        out.put("invoice", invoice);
-        return out;
+    /** The order exists, is not closed / cancelled and has no Order / Invoice yet (Nest's three guards). */
+    private static void assertBillable(Map<String, Object> order) {
+        if (order == null) {
+            throw ApiException.notFound("Repair order not found");
+        }
+        if ("cancelled".equals(order.get("status")) || "closed".equals(order.get("status"))) {
+            throw ApiException.badRequest("Repair order is closed/cancelled — cannot bill");
+        }
+        if (PosSql.truthy(order.get("orderId")) || PosSql.truthy(order.get("invoiceId"))) {
+            throw ApiException.badRequest("Repair order already billed");
+        }
     }
 
     /** Record payment tenders against the repair invoice (the POS settlement flow). */
