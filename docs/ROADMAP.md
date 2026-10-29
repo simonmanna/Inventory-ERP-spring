@@ -343,6 +343,10 @@ New module `com.inventoryerp.fleet`, feature flag `app.modules.fleet`, ADR-S0xx 
 
 Permissions `fleet:*`, web screens, authorization + tenant tests, seed data, `docs/spec/fleet.md`.
 
+> **Status (Track C):** design in [ADR-S009](adr/ADR-S009-fleet-and-logistics.md), spec in
+> [`spec/fleet.md`](spec/fleet.md). 4.1 vehicle registry (+ the compliance documents of 4.6) built as Track C 1.1;
+> the other areas follow as Track C 1.2–1.9 (see `BUILD_LOG.md`).
+
 ## Cross-cutting (every tier)
 
 - Each item: spec in `docs/spec/`, ADR when it adds routes/frameworks, integration tests on Testcontainers,

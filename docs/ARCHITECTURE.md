@@ -29,6 +29,7 @@ Modular monolith on Spring Boot 4 with Spring Modulith boundaries — the same s
 | `repair` | `modules/repair` | `ENABLE_REPAIR` | Repair* (15) |
 | `orders` | `modules/orders` | `ENABLE_ORDERS` | (uses pos Order tables via services) |
 | `communication` | `modules/communication` | `ENABLE_COMMUNICATION` | Conversation, Message, CommunicationChannel, ... (13) |
+| `fleet` | — (new, ADR-S009) | `ENABLE_FLEET` | Fleet* (7 in 1.1; hand-written entities, not generated) |
 
 Table ownership comes from `tools/prisma2jpa/generate.mjs` (`moduleOf`). If you move a table,
 change it there and regenerate.
