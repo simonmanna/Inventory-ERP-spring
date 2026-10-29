@@ -161,4 +161,7 @@ public final class DomainEvents {
     public static final String FLEET_FINE_DEDUCTION_REQUESTED = "fleet.fine.deduction_requested";
     public static final String FLEET_FINE_DEDUCTION_CANCELLED = "fleet.fine.deduction_cancelled";
     public static final String FLEET_TELEMATICS_ALERT_RAISED = "fleet.telematics.alert_raised";
+    public static final String WEIGHBRIDGE_TICKET_COMPLETED = "weighbridge.ticket.completed";
+    public static final String WEIGHBRIDGE_EXCEPTION_RAISED = "weighbridge.exception.raised";
+    public static final String WEIGHBRIDGE_TICKET_VOIDED = "weighbridge.ticket.voided";
 }

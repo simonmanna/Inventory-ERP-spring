@@ -209,6 +209,11 @@ export const EVENTS = {
   FleetFineDeductionRequested: 'fleet.fine.deduction_requested',
   FleetFineDeductionCancelled: 'fleet.fine.deduction_cancelled',
   FleetTelematicsAlertRaised: 'fleet.telematics.alert_raised',
+  // Fleet 1.4 weighbridge: a ticket completed (net weight final — drives the trip's loaded quantity / stock issue in
+  // 1.4b and the GRN of inbound weighing), an out-of-tolerance exception raised for approval, a ticket voided.
+  WeighbridgeTicketCompleted: 'weighbridge.ticket.completed',
+  WeighbridgeExceptionRaised: 'weighbridge.exception.raised',
+  WeighbridgeTicketVoided: 'weighbridge.ticket.voided',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -486,6 +491,44 @@ export interface DomainEventMap {
   'fleet.telematics.alert_raised': {
     organizationId: string; vehicleId: string; eventId: string; eventType: string; severity: string; occurredAt: string;
   };
+  'weighbridge.ticket.completed': WeighbridgeTicketCompletedPayload;
+  'weighbridge.exception.raised': {
+    organizationId: string; exceptionId: string; ticketId: string; ticketNumber: string;
+    /** Decimal strings (kg / %). */
+    varianceKg: string; variancePct: string | null; allowedVarianceKg: string;
+  };
+  'weighbridge.ticket.voided': {
+    organizationId: string; ticketId: string; ticketNumber: string; reason: string; replacedById: string | null;
+    deliveryOrderId: string | null; tripId: string | null;
+  };
+}
+
+/** A completed weighbridge ticket (fleet 1.4): net weight in kg and in the document unit. */
+export interface WeighbridgeTicketCompletedPayload {
+  organizationId: string;
+  ticketId: string;
+  ticketNumber: string;
+  subjectType: 'sale_delivery' | 'purchase_receipt' | 'internal_haulage' | 'other';
+  direction: 'outbound' | 'inbound' | 'internal';
+  stationId: string;
+  vehicleId: string | null;
+  registrationPlate: string;
+  partnerId: string | null;
+  productId: string | null;
+  salesOrderId: string | null;
+  deliveryOrderId: string | null;
+  tripId: string | null;
+  purchaseOrderId: string | null;
+  /** Decimal strings. */
+  grossKg: string;
+  tareKg: string;
+  netKg: string;
+  netQty: string | null;
+  uomId: string | null;
+  withinTolerance: boolean;
+  manual: boolean;
+  reissuedFromId: string | null;
+  goodsReceiptId: string | null;
 }
 
 /** A traffic fine charged to a driver: payroll deducts `amount` from employee `employeeId` (hr wiring). */
