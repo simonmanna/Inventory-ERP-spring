@@ -212,3 +212,207 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | foundation (module, flag, licence, permissions, ADR, spec, menu) | done | `ModularityTests`, `ArchitectureTests`, `ApplicationIT` |
 | 1.1 registry | done (32 routes) | `FleetPoliciesTest` (unit: status machine, meter rule, compliance state), `FleetRegistryIT` (14: classes, CRUD + filters, status machine, monotonic meters, concurrency, corrections adjust / replace / reject / no workflow, compliance + expiry query, attachments, linked asset, lookups, tenant isolation, authorization matrix 32 routes) |
 | 1.2–1.9 | planned | — |
+
+## 1.7 Tyres, incidents and fines
+
+Status: **done** (Track C, worktree `wt/c-tyres`). Migration `V921__fleet_tyres_incidents.sql` (placeholder number).
+Code: `FleetTyreService`, `TyrePolicy`, `TyrePositionLayout`, `FleetIncidentService`, `FleetFineService`,
+`FleetExpenseSubscriber`, `FleetEmployeeLookup`; controllers `FleetTyreController`, `FleetIncidentController`,
+`FleetFineController`.
+
+### Routes (1.7) — 34
+
+| # | Method | Path | Permission | Status | Notes |
+|---|---|---|---|---|---|
+| 1 | GET | `/fleet/tyres` | `fleet_maintenance:read` | 200 | `{data, meta}`; `search, status, vehicleId, tyreType, page, pageSize, sortBy (serialNumber, brand, status, createdAt, treadDepthMm), sortOrder`; each with `vehicle` and live `stats` |
+| 2 | GET | `/fleet/tyres/{id}` | `fleet_maintenance:read` | 200 | + supplier, product, stock location, `events` (newest first), `readings`, `stats` |
+| 3 | POST | `/fleet/tyres` | `fleet_maintenance:tyre` | 201 | serial normalised upper case, unique per org (409) |
+| 4 | PATCH | `/fleet/tyres/{id}` | `fleet_maintenance:tyre` | 200 | `clear: [...]`; refused when scrapped; product fixed once issued from stock |
+| 5 | DELETE | `/fleet/tyres/{id}` | `fleet_maintenance:tyre` | 200 | soft delete only when never fitted (else scrap) |
+| 6 | POST | `/fleet/tyres/{id}/fit` | `fleet_maintenance:tyre` | 200 | **`Idempotency-Key` required** (stock issue + GL); `{vehicleId, position, at?, odometer?, hours?, treadDepthMm?, notes?}`; 409 position taken |
+| 7 | POST | `/fleet/tyres/{id}/rotate` | `fleet_maintenance:tyre` | 201 | `{position, at?, odometer?, hours?}`; swaps with the tyre at the target position |
+| 8 | POST | `/fleet/tyres/{id}/remove` | `fleet_maintenance:tyre` | 201 | `{reason, at?, odometer?, hours?, treadDepthMm?, scrap?}` |
+| 9 | POST | `/fleet/tyres/{id}/retread` | `fleet_maintenance:tyre` | 201 | `{cost, newTreadDepthMm, partnerId?, at?}` from `removed` |
+| 10 | POST | `/fleet/tyres/{id}/scrap` | `fleet_maintenance:tyre` | 201 | `{reason}`; a fitted tyre is removed with `scrap: true` instead |
+| 11 | POST | `/fleet/tyres/{id}/readings` | `fleet_maintenance:tyre` | 201 | tread depth (+ pressure); `belowMinimum` flag |
+| 12 | GET | `/fleet/vehicles/{id}/tyres` | `fleet_maintenance:read` | 200 | axle layout with the tyre at each position, spares, `unplaced` |
+| 13 | GET | `/fleet/tyre-lookups/products` | `fleet_maintenance:read` | 200 | stock products picker (`search`) |
+| 14 | GET | `/fleet/incidents` | `fleet_incident:read` | 200 | `{data, meta}`; `search, status, vehicleId, incidentType, from, to` (business days), with vehicle, driver, `claimCount` |
+| 15 | GET | `/fleet/incidents/{id}` | `fleet_incident:read` | 200 | + vehicle, driver, `claims`, `attachments` (signed `url`), `fines` |
+| 16 | POST | `/fleet/incidents` | `fleet_incident:create` | 201 | numbered `INC-00001`; `markVehicleBreakdown` moves the vehicle to `breakdown` (source `incident`) |
+| 17 | PATCH | `/fleet/incidents/{id}` | `fleet_incident:update` | 200 | `clear: [...]`; `thirdParties` replaces the list; refused when cancelled |
+| 18 | POST | `/fleet/incidents/{id}/status` | `fleet_incident:update` | 201 | `{status, reason}`; close needs every claim decided |
+| 19 | POST | `/fleet/incidents/{id}/attachments` | `fleet_incident:update` | 201 | multipart `file`, `kind` photo / document, `title`; stored as a vehicle attachment + link |
+| 20 | DELETE | `/fleet/incidents/{id}/attachments/{attachmentId}` | `fleet_incident:update` | 200 | removes the stored file |
+| 21 | GET | `/fleet/claims` | `fleet_incident:read` | 200 | `{data, meta}`; `status, incidentId, search` |
+| 22 | POST | `/fleet/incidents/{id}/claims` | `fleet_incident:update` | 201 | draft; insurer (partner or name) required |
+| 23 | PATCH | `/fleet/claims/{id}` | `fleet_incident:update` | 200 | while draft / submitted / approved (claimed amount not after approval) |
+| 24 | POST | `/fleet/claims/{id}/status` | `fleet_incident:update` | 201 | `{status: submitted / approved / rejected / settled / withdrawn, amountApproved?, amountReceived?, date?, reason?}` |
+| 25 | GET | `/fleet/incident-lookups/employees` | `fleet_incident:read` | 200 | hr employees picker (drivers / operators) |
+| 26 | GET | `/fleet/fines` | `fleet_incident:read` | 200 | `{data, meta}`; `search, status, vehicleId, driverEmployeeId, chargedTo, overdue` |
+| 27 | GET | `/fleet/fines/{id}` | `fleet_incident:read` | 200 | + vehicle, driver, incident, `expense` (code, status, payment status), `deductions` |
+| 28 | POST | `/fleet/fines` | `fleet_incident:create` | 201 | numbered `FIN-00001`; notice number unique per org (409) |
+| 29 | PATCH | `/fleet/fines/{id}` | `fleet_incident:update` | 200 | open / disputed only |
+| 30 | POST | `/fleet/fines/{id}/status` | `fleet_incident:update` | 201 | `open ⇄ disputed`, `→ cancelled` (reason) |
+| 31 | POST | `/fleet/fines/{id}/charge` | `fleet_incident:charge` | 200 | **`Idempotency-Key` required**; `{chargeTo: company / driver, employeeId?, paymentType: CREDIT (default) / CASH, paymentMethod?, accountId?, paymentReference?, notes?}` |
+| 32 | POST | `/fleet/fines/{id}/reverse-charge` | `fleet_incident:charge` | 200 | **`Idempotency-Key` required**; `{reason}` |
+| 33 | GET | `/fleet/fine-deductions` | `fleet_incident:read` | 200 | payroll list; `status, employeeId` |
+| 34 | POST | `/fleet/fine-deductions/{id}/status` | `fleet_incident:charge` | 201 | `{status: exported / settled, reference?}` (manual until hr payroll consumes the event) |
+
+### Data model (1.7)
+
+| Table | Purpose | Notable columns / constraints |
+|---|---|---|
+| `FleetTyre` | tyre by serial | `serialNumber` unique per org (live), brand / model / size / `tyreType`, `purchaseCost`, `extraCost` (retreads), supplier, optional stock `productId` + `stockLocationId` with `stockIssuedAt` / `stockLedgerCode` / `stockIssueValue` / `issueJournalEntryId`, `status` (in_stock, fitted, removed, retreaded, scrapped), current `vehicleId` + `position` (unique per vehicle while fitted; CHECK fitted ⇔ both set), `fitOdometer` / `fitHours` (lifetime meters at stint start), `kmRun` / `hoursRun` (closed stints), `treadKmBase`, new / current / minimum tread (mm), `retreadCount`, soft delete |
+| `FleetTyreEvent` | lifecycle | registered, fitted, rotated, removed, retreaded, scrapped; positions, raw + lifetime meters, closing stint km / hours, tread, cost, reason, `meterReadingId` |
+| `FleetTyreReading` | tread readings | tread mm, pressure kPa, vehicle / position / lifetime odometer at the time |
+| `FleetIncident` | incident / accident | `incidentNumber`, vehicle, `driverEmployeeId` (hr), time, place, GPS (9,6), type, severity, description, damage, estimate, at fault, injuries, `thirdParties` JSONB, police report / station, `status`, `workOrderId` (1.6, **no FK** — built in parallel), repair reference / cost, soft delete |
+| `FleetIncidentAttachment` | photos / documents | link to `FleetVehicleAttachment` (kernel file store, cascade) |
+| `FleetInsuranceClaim` | claim | claim no., insurer partner / name, policy, submitted on, claimed / approved / received / excess, `status`, decided / settled on |
+| `FleetFine` | traffic fine | `fineNumber`, vehicle, driver, incident, offence time / place / text / code, authority, `noticeNumber` (unique), amount, due date, `status` (open, disputed, charged, settled, cancelled), `chargedTo`, `chargeCount`, `expenseId`, `deductionId`, `settledAt` |
+| `FleetFineDeduction` | salary-deduction request | fine, employee, amount, `status` (pending, exported, settled, cancelled; one non-cancelled per fine), export / settle references |
+| `ExpenseSourceLink` (expenses) | expense raised by another module | `expenseId` (unique), `sourceType` / `sourceId`, `debitAccountId`, `costCenterId`, `dimensions` — read by `ExpensesService.recordPayment` |
+
+`FleetMeterReading.source` gains `tyre` (fitment / rotation / removal readings, idempotent per value + minute).
+
+### Rules (1.7)
+
+1. Tyre status machine `TyrePolicy` (in_stock → fitted; fitted → fitted / removed / scrapped; removed → fitted /
+   retreaded / scrapped; retreaded → fitted / scrapped; scrapped terminal). Positions must exist in the vehicle's layout
+   (`TyrePositionLayout`, from the axle configuration and class kind); one tyre per position (vehicle row locked, the
+   partial unique index backs it). Events cannot be dated in the future or before the tyre's fitment.
+2. Meters of an event: the given raw odometer / hours are recorded through `FleetMeterService.recordAutomated`
+   (source `tyre`, monotonic rule); blank = the vehicle's current lifetime meters. A rotation / removal closes the
+   running stint (km = lifetime odometer now − at stint start).
+3. Cost per km = (purchase cost + retread costs) / km run (closed stints + the running stint), 4 decimals HALF_UP;
+   per engine hour likewise. Wear per 1,000 km, projected life and remaining tread % extrapolate from the tread used
+   since the current tread started (`treadKmBase`, reset by a retread).
+4. Stocked tyre: the first fitment issues one unit (`StockService.issue`, move type internal use, quantity only,
+   serial passed for serial-tracked products) from the tyre's stock location or the vehicle's home site, then posts
+   Dr `fleet_tyre_expense` (6430, vehicle cost centre, dimensions vehicleId / tyreId) / Cr the product's stock account
+   (stock-in rule debit, else `stock_valuation`), key `fleet:tyre:issue:<tyreId>`. The locked tyre row records the
+   issue, so replays and re-fitments never issue again. Without a stock purchase cost the issue value becomes it.
+5. Incident workflow `IncidentPolicy`: reported → investigating / repairing / closed / cancelled; closing needs every
+   claim settled, rejected or withdrawn; reopening a closed incident and cancelling need a reason; cancelled is
+   terminal and read-only. Claims: draft → submitted → approved (≤ claimed) → settled (received ≤ approved), rejected /
+   withdrawn need a reason.
+6. Fines: charge only `open` fines. **Company** → `ExpensesService.createFromSource` (source `fleet_fine`,
+   `<fineId>#<chargeNo>`, idempotent while the expense is live): CASH posts Dr 6450 (vehicle cost centre, dims) /
+   Cr the paying cash / bank account at once (fine `settled`), CREDIT waits for approval / payment in Expenses —
+   `expense.paid` settles the fine, `expense.voided` reopens it. **Driver** → `FleetFineDeduction` (pending) +
+   `fleet.fine.deduction_requested`; settled by payroll (or `/fine-deductions/{id}/status`). Reverse charge: voids the
+   expense (payments reversed by expenses) or cancels the deduction (`fleet.fine.deduction_cancelled`) — refused once
+   payroll settled it.
+
+### Events (1.7)
+
+| Event | When | Payload |
+|---|---|---|
+| `fleet.incident.reported` | incident created | `organizationId, incidentId, incidentNumber, vehicleId, incidentType, severity, occurredAt` |
+| `fleet.fine.charged` | fine charged | `organizationId, fineId, fineNumber, vehicleId, chargedTo, amount, expenseId, deductionId` |
+| `fleet.fine.deduction_requested` | fine charged to a driver | `organizationId, deductionId, fineId, fineNumber, employeeId, amount ("150000.00"), vehicleId, offence, offenceAt` |
+| `fleet.fine.deduction_cancelled` | driver charge reversed | the same + `reason` |
+
+Consumed: `expense.paid`, `expense.voided` (`FleetExpenseSubscriber`). **hr wiring at merge**: an hr subscriber of
+`fleet.fine.deduction_requested` / `_cancelled` creates / cancels the payroll deduction and calls
+`/fleet/fine-deductions/{id}/status` (or `FleetFineService.deductionStatus`) when exported / settled.
+
+### GL (1.7)
+
+| Event | Debit | Credit | Key |
+|---|---|---|---|
+| Stocked tyre first fitted | `fleet_tyre_expense` 6430 (vehicle cost centre; vehicleId, tyreId) | product stock account | `fleet:tyre:issue:<tyreId>` |
+| Fine charged to company, paid | `fleet_fines_expense` 6450 (vehicle cost centre; vehicleId, fineId) | cash / bank | expenses' `expense_payment:<paymentId>` |
+| Charge reversed | reversal of the payment entry (`PostingService.reverse` via `ExpensesService.voidExpense`) | | |
+
+### Web (1.7)
+
+Fleet → Tyres `/fleet/tyres` (+ `/:id`), Incidents & Claims `/fleet/incidents` (+ `/new`, `/:id`, `/:id/edit`),
+Traffic Fines `/fleet/fines` (+ `/:id`, salary-deductions tab); vehicle detail tab **Tyres** (axle diagram; tap a
+position to fit / rotate / remove / measure). Hooks in `web/src/features/fleet/tyres-api.ts`.
+
+### Tests (1.7)
+
+`FleetSafetyPoliciesTest` (unit: tyre status machine, cost per km / wear, wheel layouts, incident / claim / fine /
+deduction state machines), `FleetTyresIT` (lifecycle with swap and cost/km, stock issue once + replay + GL on the cost
+centre, concurrent fitment on one position, tenant isolation, 13-route matrix), `FleetIncidentsIT` (incident + photos
++ claims + close guard, fine → company CASH: GL balanced / replay / reversal, CREDIT paid in Expenses → settled,
+driver deduction + events + settle / reversal rules, tenant isolation, 21-route matrix).
+
+## 1.8 Telematics
+
+Status: **done** (Track C, worktree `wt/c-tyres`). Migration `V922__fleet_telematics.sql` (placeholder number).
+Code: SPI `TelematicsProvider` (ADR-S009 §7), `MockTelematicsProvider`, `TelematicsProviders`,
+`FleetTelematicsService`, `FleetTelematicsSyncJob`, `GeoDistance`; controller `FleetTelematicsController`.
+
+### Configuration
+
+`app.fleet.telematics.provider` (env `FLEET_TELEMATICS_PROVIDER`, default `mock`), `base-url` / `api-key`
+(`FLEET_TELEMATICS_URL` / `FLEET_TELEMATICS_API_KEY`, only "configured yes / no" is ever exposed), `sync-cron`
+(`FLEET_TELEMATICS_SYNC_CRON`, default every 5 min), `retention-days` (`FLEET_TELEMATICS_RETENTION_DAYS`, default 365,
+minimum 7). Read with `@Value` defaults, so `application.yml` needs no entry.
+
+### Routes (1.8) — 12
+
+| # | Method | Path | Permission | Status | Notes |
+|---|---|---|---|---|---|
+| 1 | GET | `/fleet/telematics/settings` | `fleet:settings` | 200 | provider, available providers, URL / key configured, retention |
+| 2 | GET | `/fleet/telematics/devices` | `fleet_vehicle:read` | 200 | `includeInactive, vehicleId`; with vehicle, sync status, last fix |
+| 3 | POST | `/fleet/telematics/devices` | `fleet:settings` | 201 | `{vehicleId?, provider?, externalUnitId, name?, imei?, simNumber?, syncOdometer?, syncHours?}`; one active device per unit and per vehicle (409) |
+| 4 | PATCH | `/fleet/telematics/devices/{id}` | `fleet:settings` | 200 | re-map (resets the cursors), `clear: ["vehicleId"]` unmaps, `isActive` |
+| 5 | DELETE | `/fleet/telematics/devices/{id}` | `fleet:settings` | 200 | deletes a device without data, otherwise deactivates it |
+| 6 | POST | `/fleet/telematics/sync` | `fleet:settings` | 201 | sync the caller's organization now → `{devices, positions, events, alerts, meterReadings, errors, purged}` |
+| 7 | GET | `/fleet/telematics/positions/latest` | `fleet_trip:read` | 200 | last fix per tracked vehicle + open alerts |
+| 8 | GET | `/fleet/vehicles/{id}/positions` | `fleet_trip:read` | 200 | `{data, meta}` newest first; `from, to` (default last 24 h), `page, pageSize ≤ 500` |
+| 9 | GET | `/fleet/vehicles/{id}/distance` | `fleet_trip:read` | 200 | `from, to` → `{distanceKm, points, first, last}` |
+| 10 | GET | `/fleet/vehicles/{id}/last-position` | `fleet_trip:read` | 200 | `{vehicleId, position}` (null when never reported) |
+| 11 | GET | `/fleet/telematics/events` | `fleet_trip:read` | 200 | `{data, meta}`; `vehicleId, eventType, alertsOnly, open, from, to` |
+| 12 | POST | `/fleet/telematics/events/{id}/acknowledge` | `fleet_trip:update` | 201 | alerts only, once; `{note?}` |
+
+### Data model (1.8)
+
+| Table | Purpose | Notable columns / constraints |
+|---|---|---|
+| `FleetTelematicsDevice` | unit ↔ vehicle | provider, `externalUnitId` (unique per org + provider while active), vehicle (one active device per vehicle), `syncOdometer` / `syncHours`, cursors `positionsSyncedTo` / `eventsSyncedTo`, `lastSyncAt` / `lastSyncStatus` (ok, partial, error) / `lastError`, cached last fix and meters |
+| `FleetPosition` | GPS fix | vehicle, device, `recordedAt`, lat / lon NUMERIC(9,6), speed, `externalId` (unique per device → re-pulls never duplicate); index (org, vehicle, time); retention purge by (org, time) |
+| `FleetTelematicsEvent` | ignition / alert | type (ignition_on / off, speeding, idling, geofence_enter / exit, harsh_braking / acceleration, other), time, position, speed, `data` JSONB, `externalId` (unique per device), `isAlert`, `severity` (info, warning, critical — speeding ≥ 30 km/h over the limit is critical), acknowledgement |
+
+Volume: positions are append-only; every query goes by (organization, vehicle, time) and is paged (≤ 500 per page,
+public API ≤ 10,000 points); the sync job purges positions older than the retention in batches of 5,000. Monthly
+partitioning can be added later without an API change.
+
+### Sync (job `fleet-telematics-sync`, ShedLock, `app.jobs.enabled` + fleet module)
+
+Per organization with an active device, per mapped device: positions from the cursor (first run: last hour, never
+more than 24 h back) to now; the meter snapshot through `FleetMeterService.recordAutomated` (source `telematics`,
+source id `tm:<device>:odo|hrs:<snapshot ms>` → idempotent; only meters the vehicle tracks; monotonic rule applies —
+a lower provider value fails that meter only); then the provider's events since the oldest device cursor (alerts
+publish `fleet.telematics.alert_raised`); each step in its own transaction, the outcome on the device.
+
+### Public API for 1.3 dispatch (`FleetTelematicsService`)
+
+- `positionsBetween(vehicleId, from, to)` → `List<PositionPoint(at, latitude, longitude, speedKmh, ignition)>`, oldest
+  first.
+- `distanceKm(vehicleId, from, to)` → `BigDecimal` km (3 decimals): haversine over consecutive fixes, segments
+  implying > 250 km/h skipped as GPS glitches (`GeoDistance.pathKm`).
+- `lastKnownPosition(vehicleId)` → `Optional<PositionPoint>`.
+
+### Web (1.8)
+
+Fleet → Live Fleet `/fleet/live` (last positions, alerts with acknowledge), Telematics `/fleet/telematics` (provider,
+devices ↔ vehicles, sync now); vehicle detail tab **Telematics** (unit, last position, distance 24 h / 7 days, recent
+positions, alerts). Hooks in `web/src/features/fleet/telematics-api.ts`.
+
+### Tests (1.8)
+
+`FleetSafetyPoliciesTest` (distance with glitch filter, mock provider determinism, alert severity), `FleetTelematicsIT`
+(device mapping rules, sync → positions / one reading per snapshot / events / alert + outbox, distance ≈ 30 km for an
+hour of mock fixes, positions paging, last position, acknowledge, failure isolation, tenant isolation, 12-route
+matrix).
+
+### Known gaps (1.7 / 1.8)
+
+- hr payroll does not consume `fleet.fine.deduction_requested` yet (wired at merge with 1.2's hr integration).
+- `FleetIncident.workOrderId` is a free id until 1.6 work orders are merged (then validate / link).
+- No provider push webhook (pull only); no vendor adapter beyond the mock; no geofence editor (geofence events come
+  from the provider).
