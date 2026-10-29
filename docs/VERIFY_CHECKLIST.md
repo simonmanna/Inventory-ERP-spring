@@ -113,7 +113,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 
 ## Phase 1.5 — Fleet: fuel & energy (ADR-S009)
 
-- Migration: `V18__fleet_fuel.sql` (placeholder; renumbered at merge). 34 routes under `/fleet/fuel*`.
+- Migration: `V19__fleet_fuel.sql` (placeholder; renumbered at merge). 34 routes under `/fleet/fuel*`.
 - Tests: `./gradlew test --tests 'com.inventoryerp.fleet.*'` — `FuelPoliciesTest`, `FleetFuelIT` (9), `FleetRegistryIT`.
 - Click-through (ENABLE_FLEET=true, admin):
   1. Fleet → Fuel Tanks → Add tank on an inventory location with a diesel product (litres); receive 1,000 L with a goods

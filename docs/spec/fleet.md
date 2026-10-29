@@ -354,7 +354,7 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 ## 1.6 Maintenance — fleet, mobile plant and (Phase 4) fixed plant
 
 Status: **done** (Track C, 2026-10-29). Design: ADR-S009 §5 (fleet-owned work orders, `repair` not reused) and §6
-(GL). Migration `V17__fleet_maintenance.sql`. Permissions: the existing
+(GL). Migration `V18__fleet_maintenance.sql`. Permissions: the existing
 `fleet_maintenance:*` keys (none added). Feature flag / module: `fleet`.
 
 ### Maintainable unit (reuse for fixed plant)
@@ -490,7 +490,7 @@ work order → resolved → eligible; downtime + reliability; tenant isolation; 
 
 ## 1.5 Fuel & energy
 
-Status: **done** (worktree `wt/c-fuel`, migration placeholder `V18__fleet_fuel.sql`, renumbered at merge). 34 routes,
+Status: **done** (worktree `wt/c-fuel`, migration placeholder `V19__fleet_fuel.sql`, renumbered at merge). 34 routes,
 module-gated like 1.1. Controllers live in `com.inventoryerp.fleet.web.fuel`; services `FleetFuel*Service` in
 `fleet.application`; policies `FuelEfficiencyPolicy`, `FuelCardNumbers`.
 
