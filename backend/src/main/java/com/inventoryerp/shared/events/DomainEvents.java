@@ -148,4 +148,7 @@ public final class DomainEvents {
     public static final String FLEET_VEHICLE_CHECKED_OUT = "fleet.vehicle.checked_out";
     public static final String FLEET_VEHICLE_CHECKED_IN = "fleet.vehicle.checked_in";
     public static final String FLEET_CLAIM_SETTLED = "fleet.claim.settled";
+    public static final String FLEET_WORK_ORDER_CREATED = "fleet.workorder.created";
+    public static final String FLEET_WORK_ORDER_COMPLETED = "fleet.workorder.completed";
+    public static final String FLEET_DEFECT_REPORTED = "fleet.defect.reported";
 }

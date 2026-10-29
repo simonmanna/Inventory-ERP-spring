@@ -193,6 +193,10 @@ export const EVENTS = {
   FleetVehicleCheckedOut: 'fleet.vehicle.checked_out',
   FleetVehicleCheckedIn: 'fleet.vehicle.checked_in',
   FleetClaimSettled: 'fleet.claim.settled',
+  // Fleet maintenance (1.6): work orders raised / completed, defects reported (a critical one blocks dispatch).
+  FleetWorkOrderCreated: 'fleet.workorder.created',
+  FleetWorkOrderCompleted: 'fleet.workorder.completed',
+  FleetDefectReported: 'fleet.defect.reported',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -442,6 +446,16 @@ export interface DomainEventMap {
   'fleet.vehicle.checked_out': FleetCheckoutEventPayload;
   'fleet.vehicle.checked_in': FleetCheckoutEventPayload;
   'fleet.claim.settled': FleetClaimSettledPayload;
+  'fleet.workorder.created': {
+    organizationId: string; workOrderId: string; code: string; vehicleId: string; type: string; source: string;
+  };
+  'fleet.workorder.completed': {
+    organizationId: string; workOrderId: string; code: string; vehicleId: string; type: string; totalCost: string;
+  };
+  'fleet.defect.reported': {
+    organizationId: string; defectId: string; code: string; vehicleId: string; severity: string;
+    blocksDispatch: boolean;
+  };
 }
 
 /** A vehicle moved between active / in_workshop / breakdown / idle / disposed. */

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Edit, RefreshCw, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ import { VehicleMetersTab } from './VehicleMetersTab';
 import { VehicleComplianceTab } from './VehicleComplianceTab';
 import { VehicleFilesTab } from './VehicleFilesTab';
 import { VehicleDriversTab } from './VehicleDriversTab';
+import { VehicleInspectionsTab, VehicleMaintenanceTab } from './maintenance/VehicleMaintenanceTabs';
 
 /** Vehicle detail (fleet 1.1): overview, meters + corrections, compliance, status history, linked asset, files. */
 export function VehicleDetailPage() {
@@ -34,7 +35,8 @@ export function VehicleDetailPage() {
   const navigate = useNavigate();
   const { data: v, isLoading, isError, refetch } = useVehicle(id);
   const has = useAuthStore((s) => s.hasPermission);
-  const [tab, setTab] = useState('overview');
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get('tab') ?? 'overview');
   const [statusOpen, setStatusOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const remove = useDeleteVehicle();
@@ -104,6 +106,8 @@ export function VehicleDetailPage() {
           <TabsTrigger value="asset">{tx('Fixed asset')}</TabsTrigger>
           <TabsTrigger value="files">{tx('Photos & documents')}</TabsTrigger>
           {has(PERMISSIONS.fleetDriver.read) && <TabsTrigger value="drivers">{tx('Driver assignments / check-outs')}</TabsTrigger>}
+          {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="maintenance">{tx('Maintenance')}</TabsTrigger>}
+          {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="inspections">{tx('Inspections')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="overview"><OverviewTab v={v} /></TabsContent>
         <TabsContent value="meters"><VehicleMetersTab vehicle={v} /></TabsContent>
@@ -112,6 +116,8 @@ export function VehicleDetailPage() {
         <TabsContent value="asset"><AssetTab vehicle={v} active={tab === 'asset'} /></TabsContent>
         <TabsContent value="files"><VehicleFilesTab vehicle={v} /></TabsContent>
         <TabsContent value="drivers">{tab === 'drivers' && <VehicleDriversTab vehicle={v} />}</TabsContent>
+        {has(PERMISSIONS.fleetMaintenance.read) && tab === 'maintenance' && <TabsContent value="maintenance"><VehicleMaintenanceTab vehicle={v} /></TabsContent>}
+        {has(PERMISSIONS.fleetMaintenance.read) && tab === 'inspections' && <TabsContent value="inspections"><VehicleInspectionsTab vehicle={v} /></TabsContent>}
       </Tabs>
 
       <StatusDialog vehicle={v} open={statusOpen} onOpenChange={setStatusOpen} />

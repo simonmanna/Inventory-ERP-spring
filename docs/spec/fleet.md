@@ -349,3 +349,140 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | 1.1 registry | done (32 routes) | `FleetPoliciesTest` (unit: status machine, meter rule, compliance state), `FleetRegistryIT` (14: classes, CRUD + filters, status machine, monotonic meters, concurrency, corrections adjust / replace / reject / no workflow, compliance + expiry query, attachments, linked asset, lookups, tenant isolation, authorization matrix 32 routes) |
 | 1.2 drivers & operators | done (37 routes) | `DriverEligibilityPolicyTest`, `AllowanceCalculatorTest` (unit); `FleetDriversIT` (8: profiles, expiring documents, eligibility blocks, assignment history, check-out / check-in with meters + photos + breakdown, concurrent check-outs, tenant isolation, authorization matrix 17 routes); `FleetClaimsIT` (8: allowance rules, draft pricing / validation, approval flow incl. inbox subscriber and no-workflow, pay via expenses with idempotency replay + GL + reversal, expense:post / driver SoD, payroll export → payroll run → reversals, tenant isolation, authorization matrix 20 routes) |
 | 1.3–1.9 | planned | — |
+
+## 1.6 Maintenance — fleet, mobile plant and (Phase 4) fixed plant
+
+Status: **done** (Track C, 2026-10-29). Design: ADR-S009 §5 (fleet-owned work orders, `repair` not reused) and §6
+(GL). Migration `V911__fleet_maintenance.sql` (placeholder number, renumbered at merge). Permissions: the existing
+`fleet_maintenance:*` keys (none added). Feature flag / module: `fleet`.
+
+### Maintainable unit (reuse for fixed plant)
+
+Every maintenance table keys on the unit id `vehicleId` → `FleetVehicle`. Trucks, trailers and mobile plant are units
+today; Phase 4 CMMS registers crushers, conveyors, screens, block machines and generators as units of a category with
+`kind = fixed_plant` (ADR-S009 §4), so schedules, work orders, downtime, inspections and the reliability report work
+for them without schema change. The services only use the unit view of `MaintainableUnits` (identity, class, cost
+centre, branch, lifetime meters, status hold / release); a separate plant register would implement that view.
+
+### Routes (51, all under `/api/v1`, `@RequiresModule("fleet")`)
+
+| Group | Routes | Permission |
+|---|---|---|
+| Service templates | `GET /fleet/service-templates` (`categoryId, includeInactive`), `POST`, `PATCH /{id}`, `DELETE /{id}` (400 when used → deactivate), `POST /{id}/apply` (`vehicleIds` or `categoryId`; skips units already planned) | read / `schedule` |
+| Schedules + due list | `GET /fleet/service-schedules` (due list: `state` = attention (default: due + overdue), due, overdue, ok, all; `vehicleId, categoryId, branchId, asOf, page, pageSize`), `GET` / `POST /fleet/vehicles/{id}/service-schedules`, `PATCH` / `DELETE /fleet/service-schedules/{id}`, `POST /fleet/service-schedules/{id}/work-order` (409 when a live one exists; `create`), `POST /fleet/service-schedules/generate` (`schedule`) | read / `schedule` / `create` |
+| Work orders | `GET /fleet/work-orders` (`search, vehicleId, status` (+ `live`), `type, priority, from, to, page, pageSize, sortBy, sortOrder`), `GET /{id}` (tasks, lines, cost summary, defects, downtime, `allowed` transitions), `POST` (201), `PATCH /{id}`, `POST /{id}/open`, `/start` (`update`), `/complete`, `/close` (`complete`), `/cancel` (`{reason}`, `update`) | read / `create` / `update` / `complete` |
+| Tasks | `POST /fleet/work-orders/{id}/tasks`, `PATCH` / `DELETE /fleet/work-orders/{id}/tasks/{taskId}` | `update` |
+| Cost lines (money: `Idempotency-Key` required, 200, replay) | `POST /fleet/work-orders/{id}/parts`, `/labour`, `/bills`, `POST /fleet/work-orders/{id}/lines/{lineId}/return`, `/reverse` | `complete` |
+| Pickers | `GET /fleet/maintenance/lookups/parts` (`search, locationId` → on-hand), `GET /fleet/maintenance/lookups/employees` | read |
+| Downtime | `GET /fleet/downtime` (`vehicleId, kind, reasonCode, open, from, to`), `GET /{id}`, `POST` (`createWorkOrder`), `POST /{id}/end`, `PATCH /{id}` | read / `create` / `update` |
+| Reliability | `GET /fleet/maintenance/reliability` (`from, to` (default last 30 days), `groupBy` vehicle / class, `vehicleId, categoryId, branchId`) | read |
+| Checklists | `GET /fleet/inspection-templates` (seeds the default "Daily pre-trip check" for an org without any), `POST`, `PATCH /{id}`, `DELETE /{id}` | read / `schedule` |
+| Inspections | `GET /fleet/inspections`, `GET /{id}` (items, defects, photos with signed URLs), `POST` (`inspect`), `POST /{id}/photos` (multipart `file`, `itemCode`) | read / `inspect` |
+| Defects | `GET /fleet/defects` (`status` = open (open + in repair, default), in_repair, resolved, dismissed, all; `severity`), `GET /{id}`, `POST` (driver report, `inspect`), `POST /{id}/work-order` (`create`; or `{workOrderId}` to attach), `POST /{id}/close` (`{outcome: resolved / dismissed, resolution}`, `inspect`) | read / `inspect` / `create` |
+| Dispatch eligibility | `GET /fleet/vehicles/{id}/dispatch-eligibility` → `{eligible, status, reasons[], blockingDefects[], warnings[]}` | `fleet_vehicle:read` |
+
+### Data model (V911)
+
+| Table | Purpose | Notable columns / rules |
+|---|---|---|
+| `FleetServiceTemplate` | plan per class | `code` unique per org, `categoryId` (null = any class), `intervalKm / intervalHours / intervalDays` (≥ 1 set), `leadKm / leadHours / leadDays` (due-soon window), `tasks` JSON array |
+| `FleetServiceSchedule` | plan per unit | intervals / leads / tasks (copied from the template, overridable), baseline `lastDoneOn / lastDoneKm / lastDoneHours` (lifetime meters; default today + current meters), `status` active / paused, `openWorkOrderId`, `lastWorkOrderId`; one schedule per unit + template |
+| `FleetWorkOrder` | maintenance job | `code` WO-00001, `type` preventive / corrective / breakdown / inspection_defect, `priority`, `status`, `source` manual / schedule / schedule_job / defect / downtime, `scheduleId` (one **live** work order per schedule: partial unique index), timestamps per state, completion meters, `previousVehicleStatus`, snapshot `costCenterId / branchId`, running `partsCost / labourCost / externalCost / totalCost` |
+| `FleetWorkOrderTask` | checklist of the job | `status` pending / done / skipped; completing needs no pending task |
+| `FleetWorkOrderLine` | cost line | `lineType` part / part_return / labour / external, `status` posted / reversed, product / location / quantity / `returnedQuantity` / `stockLedgerCode`, `employeeId / hours / workDate`, `partnerId / supplierReference / billDate / vendorBillId`, `unitCost`, signed `amount` (returns negative), `journalEntryId`, unique `postingKey`, reversal fields |
+| `FleetDowntime` | out-of-service period | `kind` unplanned (failure) / planned, `reasonCode` (engine, transmission, hydraulic, electrical, brakes, tyres, suspension, body, accident, preventive_service, inspection_defect, waiting_parts, operator_error, other), `startedAt / endedAt`, `workOrderId`, `source`; **one open downtime per unit** |
+| `FleetInspectionTemplate` | DVIR checklist | `kind` pre_trip / post_trip / periodic, `categoryId`, `items` JSON `{code, label, section, severity}` |
+| `FleetInspection` | recorded check | `code` INS-00001, inspector (hr employee) + recording user, meters, `result` pass / fail, `items` JSON with per-item result / notes, `photos` JSON (vehicle attachment ids), `defectCount` |
+| `FleetDefect` | fault | `code` DEF-00001, `severity` minor / major / critical, `status` open → in_repair → resolved / dismissed, `inspectionId`, `itemCode`, `workOrderId` |
+
+All tables: `organizationId` + RLS `tenant_isolation`, quoted camelCase, text UUIDs.
+
+### Rules
+
+1. **Next due** (`ServiceDuePolicy`): per dimension next due = baseline + interval (km and hours on lifetime meters,
+   days on the business date); remaining < 0 → `overdue`, 0 ≤ remaining ≤ lead → `due`, else `ok`; unknown meters never
+   trigger; a missing meter baseline counts from 0. Overall = worst dimension (**whichever first**), `dueTrigger` = the
+   dimension closest to its due point relative to the interval.
+2. **Generation**: the screen action, `generate` and the daily ShedLock job `fleet-maintenance-due` (cron
+   `FLEET_MAINTENANCE_DUE_CRON`, default 05:30; `app.jobs.enabled` and `app.modules.fleet`) raise one preventive work
+   order (status open, schedule tasks, priority high when overdue) per due / overdue active schedule without a live
+   work order; the schedule row is locked and the partial unique index makes a double booking impossible.
+3. **Lifecycle** (`MaintenancePolicies`): `draft → open → in_progress → completed → closed`; `draft / open /
+   in_progress → cancelled` only without posted cost lines (reverse / return first). **Start** holds the unit
+   `in_workshop` (source maintenance, remembers the previous status) and opens downtime (planned for preventive work,
+   unplanned otherwise) or links the unit's open downtime. **Complete** needs every task done / skipped; optional
+   completion meters are recorded (source `work_order`, monotonic rule); it ends the downtime, resolves linked
+   defects, re-bases the schedule (`lastDoneOn / Km / Hours` = completion) and releases the unit (back to its previous
+   active / idle status once no other work is in progress and no downtime is open). Parts are issued while open / in
+   progress; labour, bills, returns and reversals also after completion (late bills); nothing once closed.
+4. **Downtime**: recording an unplanned downtime moves the unit to `breakdown`, planned to `in_workshop`;
+   `createWorkOrder` raises the linked breakdown / corrective work order; ending it releases the unit.
+5. **Reliability** (`AvailabilityCalculator`): period = [from, min(to, now)) clipped at disposal; downtime = union of
+   intervals (overlaps once); availability % = (period − downtime) / period; failures = unplanned intervals starting in
+   the period; MTBF = uptime / failures; MTTR = unplanned downtime / failures; class / fleet totals recomputed from
+   summed seconds.
+6. **Inspections**: every checklist item answered (pass / fail / na); a class-specific checklist only for its class;
+   result fail when any item fails; each failed item raises a defect (answer severity, else the item's) unless the same
+   item already has an open defect on the unit (repeat failure). Defects → corrective work order (type
+   inspection_defect, priority urgent / high / normal by severity) or attached to a live one (`in_repair`);
+   completing the work order resolves them, cancelling re-opens them.
+7. **Dispatch block** (`MaintenancePolicies.blocksDispatch`): a **critical** defect that is open or in repair blocks
+   the unit; status must be operational (active). Major defects and due / overdue services are warnings only.
+
+### GL postings (PostingService; posting key per line; debits = credits; cost centre = the unit's)
+
+| Line | Entry | Accounts (mapping key / default code) |
+|---|---|---|
+| Part issue | `StockService.issue` (`internal_use`, quantity only, never below on-hand) + Dr maintenance / Cr the part's stock account at the issue cost, journal INV | `fleet_maintenance_expense` 6420; stock = `StockPostingService.stockAccount` |
+| Part return | bare receipt (`return_in`) at the issue unit cost + Dr stock / Cr maintenance | same |
+| Labour | memo cost (hours × rate, default the employee's hourly rate); with org setting `fleet.maintenanceLabourAbsorption` = true: Dr maintenance / Cr workshop labour absorbed, journal GEN | `fleet_maintenance_labour_absorbed` 6429 |
+| External bill | `VendorBillService.create` → **draft vendor bill** in AP (line on the clearing account; AP approves / posts: Dr clearing / Cr supplier) + accrual Dr maintenance / Cr clearing, journal GEN | `fleet_maintenance_accrual` 2168 "Fleet Workshop Bills to Receive" |
+| Reverse | `PostingService.reverse` of the line's entry; a part goes back to stock (`reversal_in`), a return is re-issued; refused for a part with returns (reverse them first) and for a bill already posted in AP (cancel it there first) | — |
+
+Every entry carries the dimensions `vehicleId` and `workOrderId`; the expense line carries the unit's cost centre.
+
+### Events
+
+`fleet.workorder.created` (`organizationId, workOrderId, code, vehicleId, type, source`), `fleet.workorder.completed`
+(`… totalCost`), `fleet.defect.reported` (`organizationId, defectId, code, vehicleId, severity, blocksDispatch`); the
+vehicle status changes publish `fleet.vehicle.status_changed` with `source = maintenance`.
+
+### Public API for later sub-modules
+
+- **`FleetDispatchEligibilityService.check(vehicleId)` / `assertEligible(vehicleId)`** — 1.3 dispatch, assignment and
+  check-out call it (`assertEligible` throws 400 "Vehicle X cannot be dispatched: …").
+- `FleetServiceScheduleService.dueForOrganization(organizationId, asOf)` — due / overdue services for the 1.9 alert
+  job; `attentionForVehicle(vehicleId)`.
+- `FleetWorkOrderService.createFor(WorkOrderInput, source)` (1.7 incidents / tyres can raise work orders);
+  `FleetWorkOrderCostService.maintenanceExpenseAccount()`.
+- `MaintainableUnits` (unit view, `hold` / `release` of the unit status around maintenance).
+
+### Web
+
+Sidebar **Fleet**: Services Due `/fleet/maintenance`, Maintenance Work Orders `/fleet/maintenance/work-orders`
+(+ `/:id` detail: state actions, tasks, parts / labour / bills dialogs, return / reverse, cost tiles, defects,
+downtime), Inspections `/fleet/inspections` (+ `/new` phone entry with big pass / fail / n.a. buttons and camera
+photos, `/:id`), Defects `/fleet/defects`, Downtime `/fleet/maintenance/downtime`, Availability & Reliability
+`/fleet/maintenance/reliability`, Service Templates `/fleet/maintenance/templates`, Inspection Checklists
+`/fleet/maintenance/checklists`. Vehicle detail tabs **Maintenance** (schedules + due, work orders, downtime) and
+**Inspections** (dispatch eligibility banner, open defects, inspections). Hooks in
+`web/src/features/fleet/maintenance-api.ts`, pages in `web/src/pages/fleet/maintenance/`.
+
+### Tests
+
+`FleetMaintenancePoliciesTest` (unit: next due km / hours / days whichever first, lead windows, unknown meters;
+availability / MTBF / MTTR incl. overlaps, clipping, open intervals, aggregation; defect block rule, defect / work-order
+state machines, inspection result) and `FleetMaintenanceIT` (8: template → schedule → due list → job / screen
+generation exactly once → lifecycle with unit status, downtime and schedule re-base; part issue with stock + balanced
+GL on the cost centre, idempotent replay, returns, reversals; concurrent issue of the last units; labour memo /
+absorbed, external bill → AP draft + accrual, reversal rules; inspection → critical defect → dispatch blocked →
+work order → resolved → eligible; downtime + reliability; tenant isolation; authorization matrix of all 51 routes).
+
+### Known gaps / owner decisions
+
+- Account codes 6420 / 6429 / 2168 are proposals (remap via the mapping keys).
+- A reversed external line whose AP bill is still a draft leaves that draft in AP (AP has no draft delete): discard it
+  there; the accrual is already reversed.
+- External bills are net of tax (AP may add tax on the draft bill; the accrual stays on the net amount).
+- Parts are issued in the product's base unit; serial-tracked parts need the serial-number flow (not exposed here).
+- Reason codes are a fixed list (translated in the web); configurable codes can follow with 4.x CMMS.

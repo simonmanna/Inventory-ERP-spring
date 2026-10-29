@@ -117,6 +117,9 @@ app:
     orders: ${ENABLE_ORDERS:false}
     communication: ${ENABLE_COMMUNICATION:false}
     fleet: ${ENABLE_FLEET:false}
+  # Fleet 1.6: daily preventive-maintenance run (raises work orders for due service schedules; ShedLock).
+  fleet:
+    maintenance-due-cron: ${FLEET_MAINTENANCE_DUE_CRON:0 30 5 * * *}
 
 logging:
   level:

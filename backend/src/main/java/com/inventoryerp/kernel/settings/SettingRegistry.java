@@ -146,6 +146,10 @@ public final class SettingRegistry {
                 "Default number of days before a vehicle's registration, insurance, licence, inspection or permit "
                         + "expires that it is reported as expiring soon. Each document can override it.", 30, null,
                 false, ORG_ONLY);
+        def("fleet.maintenanceLabourAbsorption", "fleet", "bool", "Post Workshop Labour to Maintenance Cost",
+                "When on, labour booked on fleet work orders is posted Dr fleet maintenance (vehicle cost centre) / "
+                        + "Cr workshop labour absorbed. Off: labour is a memo cost (payroll already expenses wages).",
+                false, null, false, ORG_ONLY);
 
         // ---- Purchasing ----
         def("purchasing.editProductPriceFromPurchaseScreen", "purchasing", "bool",
