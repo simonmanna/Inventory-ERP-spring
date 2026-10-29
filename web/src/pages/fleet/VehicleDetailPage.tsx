@@ -29,6 +29,8 @@ import { VehicleFilesTab } from './VehicleFilesTab';
 import { VehicleDriversTab } from './VehicleDriversTab';
 import { VehicleInspectionsTab, VehicleMaintenanceTab } from './maintenance/VehicleMaintenanceTabs';
 import { VehicleFuelTab } from './VehicleFuelTab';
+import { VehicleTyresTab } from './VehicleTyresTab';
+import { VehicleTelematicsTab } from './VehicleTelematicsTab';
 
 /** Vehicle detail (fleet 1.1): overview, meters + corrections, compliance, status history, linked asset, files. */
 export function VehicleDetailPage() {
@@ -110,6 +112,8 @@ export function VehicleDetailPage() {
           {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="maintenance">{tx('Maintenance')}</TabsTrigger>}
           {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="inspections">{tx('Inspections')}</TabsTrigger>}
           {has(PERMISSIONS.fleetFuel.read) && <TabsTrigger value="fuel">{tx('Fuel')}</TabsTrigger>}
+          {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="tyres">{tx('Tyres')}</TabsTrigger>}
+          <TabsTrigger value="telematics">{tx('Telematics')}</TabsTrigger>
         </TabsList>
         <TabsContent value="overview"><OverviewTab v={v} /></TabsContent>
         <TabsContent value="meters"><VehicleMetersTab vehicle={v} /></TabsContent>
@@ -121,6 +125,8 @@ export function VehicleDetailPage() {
         {has(PERMISSIONS.fleetMaintenance.read) && tab === 'maintenance' && <TabsContent value="maintenance"><VehicleMaintenanceTab vehicle={v} /></TabsContent>}
         {has(PERMISSIONS.fleetMaintenance.read) && tab === 'inspections' && <TabsContent value="inspections"><VehicleInspectionsTab vehicle={v} /></TabsContent>}
         <TabsContent value="fuel"><VehicleFuelTab vehicle={v} active={tab === 'fuel'} /></TabsContent>
+        <TabsContent value="tyres"><VehicleTyresTab vehicle={v} active={tab === 'tyres'} /></TabsContent>
+        <TabsContent value="telematics"><VehicleTelematicsTab vehicle={v} active={tab === 'telematics'} /></TabsContent>
       </Tabs>
 
       <StatusDialog vehicle={v} open={statusOpen} onOpenChange={setStatusOpen} />

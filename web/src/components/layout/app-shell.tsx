@@ -92,7 +92,6 @@ import {
   Fuel,
   Cylinder,
   CreditCard,
-  AlertTriangle,
   Settings2,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
@@ -469,6 +468,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/maintenance/reliability', label: tx('Availability & Reliability'), icon: Activity, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/templates', label: tx('Service Templates'), icon: CalendarCog, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/checklists', label: tx('Inspection Checklists'), icon: ListChecks, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/tyres', label: tx('Tyres'), icon: Target, permission: PERMISSIONS.fleetMaintenance.read },
+      { to: '/fleet/incidents', label: tx('Incidents & Claims'), icon: Shield, permission: PERMISSIONS.fleetIncident.read },
+      { to: '/fleet/fines', label: tx('Traffic Fines'), icon: Banknote, permission: PERMISSIONS.fleetIncident.read },
+      { to: '/fleet/live', label: tx('Live Fleet'), icon: MapPin, permission: PERMISSIONS.fleetTrip.read },
+      { to: '/fleet/telematics', label: tx('Telematics'), icon: Radio, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/settings/classes', label: tx('Vehicle Classes'), icon: Layers, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/settings/allowances', label: tx('Allowance Rules'), icon: HandCoins, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/fuel', label: tx('Fuel Logs'), icon: Fuel, permission: PERMISSIONS.fleetFuel.read },

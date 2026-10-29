@@ -156,4 +156,9 @@ public final class DomainEvents {
     public static final String FLEET_WORK_ORDER_CREATED = "fleet.workorder.created";
     public static final String FLEET_WORK_ORDER_COMPLETED = "fleet.workorder.completed";
     public static final String FLEET_DEFECT_REPORTED = "fleet.defect.reported";
+    public static final String FLEET_INCIDENT_REPORTED = "fleet.incident.reported";
+    public static final String FLEET_FINE_CHARGED = "fleet.fine.charged";
+    public static final String FLEET_FINE_DEDUCTION_REQUESTED = "fleet.fine.deduction_requested";
+    public static final String FLEET_FINE_DEDUCTION_CANCELLED = "fleet.fine.deduction_cancelled";
+    public static final String FLEET_TELEMATICS_ALERT_RAISED = "fleet.telematics.alert_raised";
 }

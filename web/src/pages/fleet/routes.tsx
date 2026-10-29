@@ -26,6 +26,15 @@ import { InspectionsPage, InspectionDetailPage } from './maintenance/Inspections
 import { InspectionEntryPage } from './maintenance/InspectionEntryPage';
 import { DefectsPage } from './maintenance/DefectsPage';
 import { fuelRoutes } from './fuel/fuel-routes';
+import { TyresPage } from './TyresPage';
+import { TyreDetailPage } from './TyreDetailPage';
+import { IncidentsPage } from './IncidentsPage';
+import { IncidentFormPage } from './IncidentFormPage';
+import { IncidentDetailPage } from './IncidentDetailPage';
+import { FinesPage } from './FinesPage';
+import { FineDetailPage } from './FineDetailPage';
+import { TelematicsPage } from './TelematicsPage';
+import { TelematicsLivePage } from './TelematicsLivePage';
 
 /**
  * Route skeleton of the Fleet section (ADR-S009). Each sub-module adds its screens here, static segments before the
@@ -65,5 +74,17 @@ export const fleetRoutes = (
     <Route path="/fleet/inspections/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><InspectionDetailPage /></RequirePermission>} />
     <Route path="/fleet/defects" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><DefectsPage /></RequirePermission>} />
     {fuelRoutes}
+    {/* 1.7 tyres, incidents & claims, traffic fines */}
+    <Route path="/fleet/tyres" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><TyresPage /></RequirePermission>} />
+    <Route path="/fleet/tyres/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><TyreDetailPage /></RequirePermission>} />
+    <Route path="/fleet/incidents" element={<RequirePermission permission={PERMISSIONS.fleetIncident.read}><IncidentsPage /></RequirePermission>} />
+    <Route path="/fleet/incidents/new" element={<RequirePermission permission={PERMISSIONS.fleetIncident.create}><IncidentFormPage /></RequirePermission>} />
+    <Route path="/fleet/incidents/:id" element={<RequirePermission permission={PERMISSIONS.fleetIncident.read}><IncidentDetailPage /></RequirePermission>} />
+    <Route path="/fleet/incidents/:id/edit" element={<RequirePermission permission={PERMISSIONS.fleetIncident.update}><IncidentFormPage /></RequirePermission>} />
+    <Route path="/fleet/fines" element={<RequirePermission permission={PERMISSIONS.fleetIncident.read}><FinesPage /></RequirePermission>} />
+    <Route path="/fleet/fines/:id" element={<RequirePermission permission={PERMISSIONS.fleetIncident.read}><FineDetailPage /></RequirePermission>} />
+    {/* 1.8 telematics */}
+    <Route path="/fleet/telematics" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.read}><TelematicsPage /></RequirePermission>} />
+    <Route path="/fleet/live" element={<RequirePermission permission={PERMISSIONS.fleetTrip.read}><TelematicsLivePage /></RequirePermission>} />
   </>
 );

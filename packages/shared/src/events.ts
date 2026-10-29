@@ -202,6 +202,13 @@ export const EVENTS = {
   FleetWorkOrderCreated: 'fleet.workorder.created',
   FleetWorkOrderCompleted: 'fleet.workorder.completed',
   FleetDefectReported: 'fleet.defect.reported',
+  // Fleet 1.7 / 1.8: incidents, traffic fines (a fine charged to the driver raises a payroll deduction request that
+  // hr payroll consumes), telematics alerts (speeding, idling, geofence) pulled from the provider.
+  FleetIncidentReported: 'fleet.incident.reported',
+  FleetFineCharged: 'fleet.fine.charged',
+  FleetFineDeductionRequested: 'fleet.fine.deduction_requested',
+  FleetFineDeductionCancelled: 'fleet.fine.deduction_cancelled',
+  FleetTelematicsAlertRaised: 'fleet.telematics.alert_raised',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -466,6 +473,33 @@ export interface DomainEventMap {
     organizationId: string; defectId: string; code: string; vehicleId: string; severity: string;
     blocksDispatch: boolean;
   };
+  'fleet.incident.reported': {
+    organizationId: string; incidentId: string; incidentNumber: string; vehicleId: string; incidentType: string;
+    severity: string; occurredAt: string;
+  };
+  'fleet.fine.charged': {
+    organizationId: string; fineId: string; fineNumber: string; vehicleId: string; chargedTo: 'company' | 'driver';
+    amount: string; expenseId: string | null; deductionId: string | null;
+  };
+  'fleet.fine.deduction_requested': FleetFineDeductionPayload;
+  'fleet.fine.deduction_cancelled': FleetFineDeductionPayload & { reason: string | null };
+  'fleet.telematics.alert_raised': {
+    organizationId: string; vehicleId: string; eventId: string; eventType: string; severity: string; occurredAt: string;
+  };
+}
+
+/** A traffic fine charged to a driver: payroll deducts `amount` from employee `employeeId` (hr wiring). */
+export interface FleetFineDeductionPayload {
+  organizationId: string;
+  deductionId: string;
+  fineId: string;
+  fineNumber: string;
+  employeeId: string;
+  /** Decimal string, e.g. "150000.00". */
+  amount: string;
+  vehicleId: string;
+  offence: string;
+  offenceAt: string;
 }
 
 /** A vehicle moved between active / in_workshop / breakdown / idle / disposed. */
