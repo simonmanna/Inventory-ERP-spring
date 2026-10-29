@@ -323,6 +323,9 @@ Also in Tier 2 (small, schedule opportunistically): full UI i18n (S), e-commerce
 
 ## Tier 4 — Vehicle / fleet management (`fleet` module)
 
+> **Prioritised 2026-10-29** for the construction-materials client — built first under
+> [`AUTONOMOUS_BUILD_CONSTRUCTION.md`](AUTONOMOUS_BUILD_CONSTRUCTION.md) Phase 1 (adds delivery dispatch + weighbridge).
+
 New module `com.inventoryerp.fleet`, feature flag `app.modules.fleet`, ADR-S0xx before code. Effort ~10 EW (L).
 
 | # | Area | Scope |

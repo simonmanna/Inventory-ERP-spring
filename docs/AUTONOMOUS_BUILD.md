@@ -5,6 +5,10 @@ Tier 0, Tier 1, Tier 2, Tier 3, Tier 4 (vehicle / fleet management) — and leav
 world-class ERP** on `main`, then write the final report. The owner has delegated all engineering decisions to
 you. Work autonomously. Do not stop, pause for approval, or ask questions until every tier is finished.
 
+> **Superseded execution order (2026-10-29):** the construction-materials client track in
+> [`AUTONOMOUS_BUILD_CONSTRUCTION.md`](AUTONOMOUS_BUILD_CONSTRUCTION.md) now takes priority (Fleet → Advanced
+> Manufacturing → requirements gaps → hardening). The rules in this file still apply.
+
 ---
 
 ## 0. First thing in every session (resume protocol)
