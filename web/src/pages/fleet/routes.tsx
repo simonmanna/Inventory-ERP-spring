@@ -26,6 +26,7 @@ import { InspectionsPage, InspectionDetailPage } from './maintenance/Inspections
 import { InspectionEntryPage } from './maintenance/InspectionEntryPage';
 import { DefectsPage } from './maintenance/DefectsPage';
 import { fuelRoutes } from './fuel/fuel-routes';
+import { dispatchRoutes } from './dispatch/dispatch-routes';
 import { TyresPage } from './TyresPage';
 import { TyreDetailPage } from './TyreDetailPage';
 import { IncidentsPage } from './IncidentsPage';
@@ -74,6 +75,8 @@ export const fleetRoutes = (
     <Route path="/fleet/inspections/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><InspectionDetailPage /></RequirePermission>} />
     <Route path="/fleet/defects" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><DefectsPage /></RequirePermission>} />
     {fuelRoutes}
+    {/* 1.3 trips, delivery planning & dispatch */}
+    {dispatchRoutes}
     {/* 1.7 tyres, incidents & claims, traffic fines */}
     <Route path="/fleet/tyres" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><TyresPage /></RequirePermission>} />
     <Route path="/fleet/tyres/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><TyreDetailPage /></RequirePermission>} />
