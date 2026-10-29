@@ -428,6 +428,17 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Fleet & logistics (ADR-S009). Sub-modules 1.2–1.9 add drivers, dispatch, weighbridge, fuel, maintenance, reports.
+    title: 'Fleet',
+    icon: Truck,
+    items: [
+      { to: '/fleet', label: tx('Fleet Overview'), icon: LayoutDashboard, permission: PERMISSIONS.fleetVehicle.read },
+      { to: '/fleet/vehicles', label: tx('Vehicles & Equipment'), icon: Truck, permission: PERMISSIONS.fleetVehicle.read },
+      { to: '/fleet/compliance', label: tx('Compliance & Renewals'), icon: ShieldCheck, permission: PERMISSIONS.fleetVehicle.read },
+      { to: '/fleet/settings/classes', label: tx('Vehicle Classes'), icon: Layers, permission: PERMISSIONS.fleet.settings },
+    ],
+  },
+  {
     title: 'Communication',
     icon: MessagesSquare,
     items: [
@@ -495,6 +506,7 @@ const SECTION_TITLE_KEYS: Record<string, string> = {
   Tables: 'nav.tables',
   'Beverage Control': 'nav.beverageControl',
   Rentals: 'nav.rentals',
+  Fleet: 'nav.fleet',
   'Repair & Maintenance': 'nav.repairMaintenance',
   'Human Resource': 'nav.workforce',
   'Human Resources': 'nav.workforce',

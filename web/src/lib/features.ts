@@ -25,6 +25,7 @@ export const MODULE_FEATURES: ModuleFeature[] = [
   { key: 'crm', label: 'CRM', description: tx('Customers, leads, opportunities, and pipeline tracking'), sections: ['CRM'] },
   { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
   { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
+  { key: 'fleet', label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance'), sections: ['Fleet'] },
   { key: 'repair', label: tx('Repair & Maintenance'), description: tx('Repair jobs, work tickets, and maintenance scheduling'), sections: ['Repair & Maintenance'] },
   { key: 'communication', label: tx('Communication'), description: tx('Unified inbox, channels, and messaging automation'), sections: ['Communication'] },
   { key: 'assets', label: tx('Fixed Assets'), description: tx('Fixed asset register, categories, and depreciation'), sections: ['Fixed Assets'] },

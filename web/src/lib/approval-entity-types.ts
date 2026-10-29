@@ -27,6 +27,8 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   // Rental — agreement approval (trip when score < min, over credit limit,
   // or the customer has an open overdue agreement).
   rental_agreement: tx('Rental Agreements'),
+  // Fleet (ADR-S009) — odometer / hour-meter rollbacks and meter replacements.
+  fleet_meter_correction: tx('Fleet Meter Corrections'),
 };
 
 export function entityTypeLabel(entityType: string): string {
