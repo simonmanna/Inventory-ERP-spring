@@ -91,6 +91,10 @@ Pending owner approval:
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
+- **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's
+  `cafe | retail`, so the web Rental terminal can be selected. The 400 message for other values lists all three
+  (`posMode must be one of the following values: cafe, retail, rental`).
+
 - **Sales returns register** (`SalesReturnsController`, `/returns`): read-only routes over the immutable `PosRefund`
   events — `GET /returns` (paged, filters `search`, `channel` = `retail|restaurant`, `stockDisposition`, `dateFrom`,
   `dateTo`; extra `summary` {count, amount}), `GET /returns/:id` (lines, payouts, journal entry),

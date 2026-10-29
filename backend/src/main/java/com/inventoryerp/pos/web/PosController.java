@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PosController {
 
     public record UpdatePosSettingsRequest(
-            @OneOf({"cafe", "retail"}) String posMode,
+            @OneOf({"cafe", "retail", "rental"}) String posMode,
             Boolean sharedDrawer,
             @OneOf({"offline", "online"}) String connectionMode,
             Boolean showClosingAmounts) {}

@@ -25,10 +25,12 @@ class PosMenuIT extends ApiTestSupport {
         JsonNode u = ok(200, "PATCH", "/pos/settings", Map.of("posMode", "retail", "sharedDrawer", true));
         assertThat(u.get("posMode").asString()).isEqualTo("retail");
         assertThat(ok(200, "GET", "/pos/settings", null).get("sharedDrawer").asBoolean()).isTrue();
+        assertThat(ok(200, "PATCH", "/pos/settings", Map.of("posMode", "rental")).get("posMode").asString())
+                .isEqualTo("rental");
         ok(200, "PATCH", "/pos/settings", Map.of("posMode", "cafe", "sharedDrawer", false));
         Res bad = as("PATCH", "/pos/settings", Map.of("posMode", "bogus"));
         assertThat(bad.status()).isEqualTo(400);
-        assertThat(bad.raw().body()).contains("posMode must be one of the following values: cafe, retail");
+        assertThat(bad.raw().body()).contains("posMode must be one of the following values: cafe, retail, rental");
         String code = jdbc.sql("SELECT code FROM \"Product\" WHERE id = ?").param(productId()).query(String.class).single();
         JsonNode found = ok(200, "GET", "/pos/lookup?sku=" + code.toLowerCase(), null);
         assertThat(found.toString()).contains("\"kind\":\"product\"").contains("stockItems");
