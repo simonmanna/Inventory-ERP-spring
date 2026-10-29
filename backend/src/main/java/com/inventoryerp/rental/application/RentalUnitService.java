@@ -46,7 +46,7 @@ public class RentalUnitService {
             params.add(q.get("productId"));
         }
         if (notEmpty(q.get("status"))) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?");
             params.add(q.get("status"));
         }
         if (notEmpty(q.get("search"))) {

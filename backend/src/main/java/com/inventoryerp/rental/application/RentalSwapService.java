@@ -103,8 +103,8 @@ public class RentalSwapService {
         posting.checkoutTransfer(agreementId, productId, line.get("quantity"));
 
         Map<String, Object> booking = db.first(RentalBooking.class, "\"organizationId\" = ? AND \"sourceType\" ="
-                + " 'agreement' AND \"sourceId\" = ? AND \"productId\" = ? AND status IN ('confirmed', 'active')"
-                + " ORDER BY id", orgId, agreementId, productId);
+                + " 'agreement' AND \"sourceId\" = ? AND \"productId\" = ? AND status IN ('confirmed', 'active')",
+                orgId, agreementId, productId);
         if (booking != null) {
             db.update(RentalBooking.class, Obj.of("unitId", toUnitId), "id = ?", booking.get("id"));
         }

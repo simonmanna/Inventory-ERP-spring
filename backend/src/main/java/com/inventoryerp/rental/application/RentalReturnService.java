@@ -33,7 +33,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class RentalReturnService {
 
     private static final String BY_ID = "id = ? AND \"organizationId\" = ?";
-    private static final double DAY = 86_400_000d;
 
     private final RentalRows rows;
     private final PosDb db;
@@ -71,19 +70,22 @@ public class RentalReturnService {
         List<Map<String, Object>> items = db.list(RentalReturn.class, where
                 + " ORDER BY \"receivedAt\" DESC LIMIT ? OFFSET ?", params.toArray());
         for (Map<String, Object> r : items) {
-            decorate(r);
+            decorate(r, false);
         }
         return RentalRows.envelope(total, p, items);
     }
 
-    /** {@code agreement: {select: {id, agreementNumber, partnerId}}, lines: {include: {damages: true}}}. */
-    private Map<String, Object> decorate(Map<String, Object> ret) {
+    /**
+     * {@code agreement: {select: {id, agreementNumber, partnerId}}, lines: {include: {damages: true}}}; only
+     * {@code get} orders the lines by id, damages are never ordered (database order, like Prisma).
+     */
+    private Map<String, Object> decorate(Map<String, Object> ret, boolean linesById) {
         ret.put("agreement", RentalRows.pick(db.first(RentalAgreement.class, "id = ?", ret.get("agreementId")), "id",
                 "agreementNumber", "partnerId"));
-        List<Map<String, Object>> lines = db.list(RentalReturnLine.class, "\"returnId\" = ? ORDER BY id ASC",
-                ret.get("id"));
+        List<Map<String, Object>> lines = db.list(RentalReturnLine.class, "\"returnId\" = ?"
+                + (linesById ? " ORDER BY id ASC" : ""), ret.get("id"));
         for (Map<String, Object> l : lines) {
-            l.put("damages", db.list(RentalDamage.class, "\"returnLineId\" = ? ORDER BY \"createdAt\", id", l.get("id")));
+            l.put("damages", db.list(RentalDamage.class, "\"returnLineId\" = ?", l.get("id")));
         }
         ret.put("lines", lines);
         return ret;
@@ -95,7 +97,7 @@ public class RentalReturnService {
         if (ret == null) {
             throw ApiException.notFound("Return not found");
         }
-        return decorate(ret);
+        return decorate(ret, true);
     }
 
     // ------------------------------------------------------------------ counter return
@@ -118,7 +120,7 @@ public class RentalReturnService {
             throw ApiException.badRequest("Agreement status '" + status + "' cannot be returned");
         }
         List<Map<String, Object>> agreementLines = db.list(RentalAgreementLine.class, "\"agreementId\" = ? AND"
-                + " \"organizationId\" = ? ORDER BY id", agreementId, orgId);
+                + " \"organizationId\" = ?", agreementId, orgId);
 
         String number = sequence.next("rental_return", "RET-", 5);
         Map<String, Object> ret = db.insert(RentalReturn.class, Obj.of("organizationId", orgId, "agreementId",
@@ -135,9 +137,8 @@ public class RentalReturnService {
             double quantityMissing = RentalRows.numOr(item, "quantityMissing", 0);
             double quantity = RentalRows.numOr(item, "quantity", 1);
             boolean isMissing = quantityMissing >= quantity || quantityMissing == PosSql.num(line.get("quantity"));
-            Instant dueAt = (Instant) line.get("dueAt");
-            int lateDays = (int) Math.max(0, Math.ceil((now.toEpochMilli() - dueAt.toEpochMilli()) / DAY));
-            double lateFee = lateDays > 0 ? lateDays * lateFeePerDay * quantity : 0;
+            int lateDays = RentalMath.lateDays(now, (Instant) line.get("dueAt"));
+            double lateFee = RentalMath.lateFee(lateDays, lateFeePerDay, quantity);
             db.insert(RentalReturnLine.class, Obj.of("organizationId", orgId, "returnId", ret.get("id"),
                     "agreementLineId", line.get("id"), "unitId", line.get("unitId"),
                     "quantity", RentalRows.dec(quantity), "quantityMissing", RentalRows.dec(quantityMissing),
@@ -170,6 +171,10 @@ public class RentalReturnService {
         if (ret == null) {
             throw ApiException.notFound("Return not found");
         }
+        // Nest answers with `this.get(ret.id)` on the non-transactional client from inside its interactive
+        // transaction: that read cannot see the uncommitted inspection, so the response is the return as it was
+        // before this call. Kept for parity (docs/spec/rental.md).
+        Map<String, Object> committed = get(returnId);
         String agreementId = (String) ret.get("agreementId");
         List<Map<String, Object>> retLines = db.list(RentalReturnLine.class, "\"returnId\" = ? ORDER BY id", returnId);
         Object rawItems = dto.get("items");
@@ -218,7 +223,7 @@ public class RentalReturnService {
                         meta);
             }
         }
-        return get(returnId);
+        return committed;
     }
 
     private String lineProduct(Object agreementLineId) {
@@ -255,7 +260,7 @@ public class RentalReturnService {
         Set<String> waive = new HashSet<>(PosSql.strings(dto.get("waiveDamageIds")));
         double lateFeeTotal = 0;
         double damageTotal = 0;
-        for (Map<String, Object> line : db.list(RentalReturnLine.class, "\"returnId\" = ? ORDER BY id", returnId)) {
+        for (Map<String, Object> line : db.list(RentalReturnLine.class, "\"returnId\" = ?", returnId)) {
             lateFeeTotal += PosSql.num(line.get("lateFeeAmount"));
             for (Map<String, Object> dmg : db.list(RentalDamage.class, "\"returnLineId\" = ?", line.get("id"))) {
                 if (!waive.contains((String) dmg.get("id"))) {
@@ -273,8 +278,8 @@ public class RentalReturnService {
             deposit.apply(agreementId, apply, "Settlement of " + returnNumber);
         }
         if (settlementTotal - apply > 0) {
-            String fallback = (String) db.first(RentalAgreementLine.class, "\"agreementId\" = ? AND \"organizationId\" = ?"
-                    + " ORDER BY id", agreementId, orgId).get("productId");
+            String fallback = (String) db.first(RentalAgreementLine.class, "\"agreementId\" = ? AND \"organizationId\" = ?",
+                    agreementId, orgId).get("productId");
             List<RentalPostingService.FeeLine> fees = new ArrayList<>();
             if (lateFeeTotal > 0) {
                 Map<String, Object> p = rows.productByCode("RENT-LATE", false);

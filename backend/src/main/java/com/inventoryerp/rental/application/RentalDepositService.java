@@ -146,23 +146,7 @@ public class RentalDepositService {
 
     private static String status(Map<String, Object> d, double addCollected, double addApplied, double addRefunded,
             double addForfeited) {
-        double collected = n(d, "totalCollected") + addCollected;
-        double applied = n(d, "totalApplied") + addApplied;
-        double refunded = n(d, "totalRefunded") + addRefunded;
-        double forfeited = n(d, "totalForfeited") + addForfeited;
-        if (collected == 0) {
-            return "held";
-        }
-        double consumed = applied + refunded + forfeited;
-        if (consumed >= collected) {
-            if (refunded > 0 && applied == 0 && forfeited == 0) {
-                return "refunded";
-            }
-            if (forfeited > 0 && applied == 0 && refunded == 0) {
-                return "forfeited";
-            }
-            return "applied";
-        }
-        return "partially_applied";
+        return RentalMath.depositStatus(n(d, "totalCollected") + addCollected, n(d, "totalApplied") + addApplied,
+                n(d, "totalRefunded") + addRefunded, n(d, "totalForfeited") + addForfeited);
     }
 }

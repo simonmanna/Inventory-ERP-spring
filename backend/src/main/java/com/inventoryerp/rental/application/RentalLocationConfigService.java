@@ -50,12 +50,13 @@ public class RentalLocationConfigService {
             db.jdbc().sql("""
                             INSERT INTO "RentalLocationConfig" (id, "organizationId", role, "locationId", "createdAt",
                               "updatedAt")
-                            VALUES (gen_random_uuid()::text, ?, ?::"RentalLocationRole", ?, now(), now())
+                            VALUES (gen_random_uuid()::text, ?, ?::"RentalLocationRole", ?, %s, %s)
                             ON CONFLICT ("organizationId", role)
-                            DO UPDATE SET "locationId" = EXCLUDED."locationId", "updatedAt" = now()""")
+                            DO UPDATE SET "locationId" = EXCLUDED."locationId", "updatedAt" = %s"""
+                            .formatted(RentalRows.NOW, RentalRows.NOW, RentalRows.NOW))
                     .params(orgId, row.role(), locationId).update();
         }
-        log.info("Rental locations ensured for org {}", orgId);
+        log.debug("Rental locations ensured for org {}", orgId);
     }
 
     /** Tx-aware role → InventoryLocation id, ensuring bootstrap first. */

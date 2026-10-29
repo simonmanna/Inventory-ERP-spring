@@ -1,5 +1,6 @@
 package com.inventoryerp.rental.web;
 
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -39,6 +40,10 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code /rental} (port of {@code rental.controller.ts}): catalog → availability → reserve → score → agreement →
  * checkout → extend / swap → return → inspect → settle → service orders → reports. Bodies and queries are untyped
  * in Nest ({@code any}), so they arrive here as plain maps and are coerced like JavaScript would.
+ *
+ * <p>The seven routes that move money (checkout, deposit collect / refund / forfeit, extension and swap fees,
+ * settlement) require an {@code Idempotency-Key} and answer 200 like every idempotent route (AGENTS.md §7/§8);
+ * Nest has no {@code @Idempotent} there — a deviation listed in docs/spec/rental.md.
  */
 @RestController
 @RequestMapping("/rental")
@@ -270,7 +275,7 @@ public class RentalController {
     }
 
     @PostMapping("/agreements/{id}/checkout")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__CHECKOUT)
     public Map<String, Object> checkoutAgreement(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> dto) {
@@ -293,7 +298,7 @@ public class RentalController {
     }
 
     @PostMapping("/agreements/{id}/deposit/collect")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__CHECKOUT)
     public Map<String, Object> collectDeposit(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> dto) {
@@ -302,7 +307,7 @@ public class RentalController {
     }
 
     @PostMapping("/agreements/{id}/deposit/refund")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__MANAGE)
     public Map<String, Object> refundDeposit(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> dto) {
@@ -311,7 +316,7 @@ public class RentalController {
     }
 
     @PostMapping("/agreements/{id}/deposit/forfeit")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__MANAGE)
     public Map<String, Object> forfeitDeposit(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> dto) {
@@ -328,7 +333,7 @@ public class RentalController {
     }
 
     @PostMapping("/extensions")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__MANAGE)
     public Map<String, Object> extend(@RequestBody(required = false) Map<String, Object> dto) {
         return extensions.extend(body(dto));
@@ -341,7 +346,7 @@ public class RentalController {
     }
 
     @PostMapping("/swaps")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__MANAGE)
     public Map<String, Object> swap(@RequestBody(required = false) Map<String, Object> dto) {
         return swaps.swap(body(dto));
@@ -378,7 +383,7 @@ public class RentalController {
     }
 
     @PostMapping("/returns/{id}/settle")
-    @ResponseStatus(HttpStatus.CREATED)
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__SETTLE)
     public Map<String, Object> settleReturn(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> dto) {

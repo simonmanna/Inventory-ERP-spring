@@ -44,7 +44,7 @@ public class RentalReservationService {
         StringBuilder where = new StringBuilder("\"organizationId\" = ?");
         List<Object> params = new ArrayList<>(List.of(RentalRows.org()));
         if (RentalUnitService.notEmpty(q.get("status"))) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?");
             params.add(q.get("status"));
         }
         if (RentalUnitService.notEmpty(q.get("partnerId"))) {
@@ -63,7 +63,7 @@ public class RentalReservationService {
     }
 
     private List<Map<String, Object>> linesWithProduct(Object reservationId) {
-        return RentalRows.with(db.list(RentalReservationLine.class, "\"reservationId\" = ? ORDER BY id", reservationId),
+        return RentalRows.with(db.list(RentalReservationLine.class, "\"reservationId\" = ?", reservationId),
                 "product", l -> rows.productBrief(l.get("productId")));
     }
 

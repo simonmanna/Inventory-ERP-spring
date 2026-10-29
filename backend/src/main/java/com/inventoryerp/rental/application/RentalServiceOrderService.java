@@ -42,7 +42,7 @@ public class RentalServiceOrderService {
             params.add(q.get("unitId"));
         }
         if (RentalUnitService.notEmpty(q.get("status"))) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?");
             params.add(q.get("status"));
         }
         long total = db.count(RentalServiceOrder.class, where.toString(), params.toArray());

@@ -75,23 +75,16 @@ public class RentalScoreService {
                 + " \"partnerId\" = ? AND status = 'cancelled'").params(orgId, partnerId).query(Long.class).single();
         long completed = jdbc.sql("SELECT count(*) FROM \"RentalAgreement\" WHERE \"organizationId\" = ? AND"
                 + " \"partnerId\" = ? AND status = 'closed'").params(orgId, partnerId).query(Long.class).single();
-        // Nest sums invoices in status 'open', a value InvoiceStatus does not have: no invoice ever matches
-        // (Prisma rejects the filter outright — see the Deviations in docs/spec/rental.md).
+        // Deviation (docs/spec/rental.md): Nest aggregates invoices in status 'open', a value InvoiceStatus does not
+        // have, so Prisma rejects the query and every recompute (GET /scores/:partnerId, settle) fails with 500. The
+        // filter can match no invoice, so the balance it would sum is 0.
         double unpaidBalance = 0;
 
         int lateReturns = ((Number) agg.get("late")).intValue();
         int lostItems = ((Number) agg.get("lost")).intValue();
         int damageEvents = (int) damages;
-        int score = 100;
-        score -= Math.min(lateReturns * 5, 30);
-        score -= Math.min(damageEvents * 15, 30);
-        score -= lostItems * 20;
-        score -= (int) Math.min(cancelled * 2, 10);
-        if (unpaidBalance > 0) {
-            score -= (int) Math.min(Math.ceil(unpaidBalance / 100_000) * 2, 10);
-        }
-        score = Math.max(0, Math.min(100, score));
-        String band = score >= 80 ? "good" : score >= 50 ? "caution" : "blocked";
+        int score = RentalMath.score(lateReturns, damageEvents, lostItems, cancelled, unpaidBalance);
+        String band = RentalMath.band(score);
 
         return SqlRows.one(RentalCustomerScore.class, jdbc.sql("""
                         INSERT INTO "RentalCustomerScore" (id, "organizationId", "partnerId", "lateReturns", "damageEvents",

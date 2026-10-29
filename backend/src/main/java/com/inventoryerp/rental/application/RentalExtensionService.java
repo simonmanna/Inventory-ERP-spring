@@ -98,7 +98,7 @@ public class RentalExtensionService {
         }
         Map<String, Object> agreement = db.first(RentalAgreement.class, "id = ?", line.get("agreementId"));
         String period = (String) line.get("ratePeriod");
-        int units = calcUnits(dueAt, newDueAt, period);
+        int units = RentalMath.calcUnits(dueAt, newDueAt, period);
         double amount = RentalRows.num(line.get("unitRate")) * units * quantity;
 
         Map<String, Object> ext = db.insert(RentalExtension.class, Obj.of("organizationId", orgId,
@@ -106,8 +106,8 @@ public class RentalExtensionService {
                 "additionalUnits", units, "additionalCharge", RentalRows.dec(amount),
                 "approvedById", RentalRows.user()));
         Map<String, Object> booking = db.first(RentalBooking.class, "\"organizationId\" = ? AND \"sourceType\" ="
-                + " 'agreement' AND \"sourceId\" = ? AND \"productId\" = ? AND status IN ('confirmed', 'active')"
-                + " ORDER BY id", orgId, agreementId, productId);
+                + " 'agreement' AND \"sourceId\" = ? AND \"productId\" = ? AND status IN ('confirmed', 'active')",
+                orgId, agreementId, productId);
         if (booking != null) {
             db.update(RentalBooking.class, Obj.of("endAt", newDueAt), "id = ?", booking.get("id"));
         }
@@ -130,22 +130,5 @@ public class RentalExtensionService {
         lifecycle.transition(RentalLifecycles.UNIT, "rental_unit", (String) (unitId != null ? unitId : line.get("id")),
                 "checked_out", "checked_out", "extend", "rental_extension", (String) ext.get("id"), meta);
         return ext;
-    }
-
-    /** Duration in rate-period units, rounded up (at least 1). */
-    static int calcUnits(Instant from, Instant to, String period) {
-        double ms = to.toEpochMilli() - from.toEpochMilli();
-        double day = 86_400_000d;
-        double hour = 3_600_000d;
-        if ("hour".equals(period)) {
-            return (int) Math.max(1, Math.ceil(ms / hour));
-        }
-        if ("week".equals(period)) {
-            return (int) Math.max(1, Math.ceil(ms / (7 * day)));
-        }
-        if ("month".equals(period)) {
-            return (int) Math.max(1, Math.ceil(ms / (30 * day)));
-        }
-        return (int) Math.max(1, Math.ceil(ms / day));
     }
 }

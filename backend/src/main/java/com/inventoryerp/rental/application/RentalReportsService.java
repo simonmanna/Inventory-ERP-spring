@@ -106,14 +106,14 @@ public class RentalReportsService {
         String orgId = RentalRows.org();
         Map<String, Object> byStatus = new LinkedHashMap<>();
         for (Map<String, Object> g : db.jdbc().sql("SELECT status::text AS status, count(id) AS n FROM \"RentalUnit\""
-                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL GROUP BY status ORDER BY status")
+                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL GROUP BY status")
                 .params(orgId).query().listOfRows()) {
             byStatus.put((String) g.get("status"), ((Number) g.get("n")).longValue());
         }
         StringBuilder where = new StringBuilder("\"organizationId\" = ? AND \"deletedAt\" IS NULL");
         List<Object> params = new ArrayList<>(List.of(orgId));
         if (RentalUnitService.notEmpty(q.get("status"))) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?");
             params.add(q.get("status"));
         }
         List<Map<String, Object>> items = db.list(RentalUnit.class, where + " ORDER BY \"unitCode\" ASC LIMIT 500",
@@ -123,7 +123,7 @@ public class RentalReportsService {
             u.put("agreementLines", SqlRows.list(db.jdbc().sql("""
                             SELECT l.id, l."dueAt" FROM "RentalAgreementLine" l
                             JOIN "RentalAgreement" a ON a.id = l."agreementId"
-                            WHERE l."unitId" = ? AND a.status = 'checked_out' ORDER BY l.id""").params(u.get("id"))));
+                            WHERE l."unitId" = ? AND a.status = 'checked_out'""").params(u.get("id"))));
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("byStatus", byStatus);

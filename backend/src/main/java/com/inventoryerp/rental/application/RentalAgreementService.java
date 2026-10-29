@@ -79,7 +79,7 @@ public class RentalAgreementService {
         StringBuilder where = new StringBuilder("\"organizationId\" = ?");
         List<Object> params = new ArrayList<>(List.of(RentalRows.org()));
         if (RentalUnitService.notEmpty(q.get("status"))) {
-            where.append(" AND status::text = ?");
+            where.append(" AND status = ?");
             params.add(q.get("status"));
         }
         if (RentalUnitService.notEmpty(q.get("partnerId"))) {
@@ -97,15 +97,19 @@ public class RentalAgreementService {
                 + " ORDER BY \"createdAt\" DESC LIMIT ? OFFSET ?", params.toArray());
         for (Map<String, Object> a : items) {
             a.put("partner", rows.partnerBrief(a.get("partnerId"), "id", "name", "code"));
-            a.put("lines", lines(a.get("id"), "id", "unitCode"));
+            a.put("lines", lines(a.get("id"), false, "id", "unitCode"));
         }
         return RentalRows.envelope(total, p, items);
     }
 
-    /** Lines with {@code product} and (when {@code unitKeys} are given) {@code unit} briefs. */
-    private List<Map<String, Object>> lines(Object agreementId, String... unitKeys) {
-        List<Map<String, Object>> lines = db.list(RentalAgreementLine.class, "\"agreementId\" = ? ORDER BY id ASC",
-                agreementId);
+    /**
+     * Lines with {@code product} and (when {@code unitKeys} are given) {@code unit} briefs. Only {@code get} orders
+     * them ({@code orderBy: {id: 'asc'}}); the other Nest includes have no order, so the rows come back in the
+     * database's order like Prisma's.
+     */
+    private List<Map<String, Object>> lines(Object agreementId, boolean byId, String... unitKeys) {
+        List<Map<String, Object>> lines = db.list(RentalAgreementLine.class, "\"agreementId\" = ?"
+                + (byId ? " ORDER BY id ASC" : ""), agreementId);
         for (Map<String, Object> l : lines) {
             l.put("product", rows.productBrief(l.get("productId")));
             if (unitKeys.length > 0) {
@@ -122,7 +126,7 @@ public class RentalAgreementService {
             throw ApiException.notFound("Agreement not found");
         }
         agreement.put("partner", rows.partnerBrief(agreement.get("partnerId"), "id", "name", "code", "phone"));
-        agreement.put("lines", lines(id, "id", "unitCode", "conditionGrade"));
+        agreement.put("lines", lines(id, true, "id", "unitCode", "conditionGrade"));
         return agreement;
     }
 
@@ -187,7 +191,7 @@ public class RentalAgreementService {
                     "ratePeriod", period, "rateUnits", (int) rateUnits, "unitRate", RentalRows.dec(unitRate),
                     "lineTotal", RentalRows.dec(lineTotal), "dueAt", dueAt));
         }
-        for (Map<String, Object> l : db.list(RentalAgreementLine.class, "\"agreementId\" = ? ORDER BY id", id)) {
+        for (Map<String, Object> l : db.list(RentalAgreementLine.class, "\"agreementId\" = ?", id)) {
             db.insert(RentalBooking.class, Obj.of("organizationId", orgId, "productId", l.get("productId"),
                     "unitId", l.get("unitId"), "quantity", l.get("quantity"), "startAt", startAt, "endAt", dueAt,
                     "status", "held", "sourceType", "agreement", "sourceId", id));
@@ -197,7 +201,7 @@ public class RentalAgreementService {
         }
         Map<String, Object> out = db.first(RentalAgreement.class, "id = ?", id);
         out.put("partner", rows.partnerBrief(out.get("partnerId"), "id", "name", "code"));
-        out.put("lines", lines(id));
+        out.put("lines", lines(id, false));
         return out;
     }
 
@@ -289,10 +293,10 @@ public class RentalAgreementService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> agreementLines = (List<Map<String, Object>>) agreement.get("lines");
         double depositAmount = dto.get("depositAmount") != null ? RentalRows.num(dto, "depositAmount")
-                : computeDeposit(agreementLines, policy instanceof Map<?, ?> m ? m : null);
+                : RentalMath.computeDeposit(agreementLines, policy instanceof Map<?, ?> m ? m : null);
 
         List<Map<String, Object>> lines = db.list(RentalAgreementLine.class, "\"agreementId\" = ? AND"
-                + " \"organizationId\" = ? ORDER BY id", id, orgId);
+                + " \"organizationId\" = ?", id, orgId);
         for (Map<String, Object> line : lines) {
             posting.checkoutTransfer(id, (String) line.get("productId"), line.get("quantity"));
         }
@@ -309,6 +313,8 @@ public class RentalAgreementService {
 
         for (Map<String, Object> line : lines) {
             Object unitId = line.get("unitId");
+            // Deviation (docs/spec/rental.md): Nest's `updateMany({where: {organizationId, id: line.unitId ??
+            // undefined}})` drops the id filter for a line without a unit and checks out every unit of the org.
             if (unitId != null) {
                 db.updateMany(com.inventoryerp.rental.domain.RentalUnit.class, Obj.of("status", "checked_out",
                         "rentalCount", PosDb.raw("\"rentalCount\" + 1")), "\"organizationId\" = ? AND id = ? AND"
@@ -329,20 +335,5 @@ public class RentalAgreementService {
         return db.update(RentalAgreement.class, Obj.of("status", "checked_out", "orderId", billed.get("orderId"),
                 "invoiceId", billed.get("invoiceId"), "depositId", dep == null ? null : dep.get("id"),
                 "checkedOutAt", PosDb.raw(RentalRows.NOW)), BY_ID, id, orgId);
-    }
-
-    /** Deposit required by policy: a fixed amount, else {@code ceil(sum(lineTotal) × percent / 100)} (10 %). */
-    static double computeDeposit(List<Map<String, Object>> lines, Map<?, ?> policyIn) {
-        Map<?, ?> policy = policyIn != null ? policyIn : Map.of("mode", "percent", "percent", 10);
-        Object mode = policy.get("mode") != null ? policy.get("mode") : "percent";
-        if ("fixed".equals(mode) && PosSql.truthy(policy.get("fixedAmount"))) {
-            return PosSql.num(policy.get("fixedAmount"));
-        }
-        double pct = (policy.get("percent") != null ? PosSql.num(policy.get("percent")) : 10) / 100;
-        double replacement = 0;
-        for (Map<String, Object> l : lines) {
-            replacement += PosSql.num(l.get("lineTotal"));
-        }
-        return Math.ceil(replacement * pct);
     }
 }

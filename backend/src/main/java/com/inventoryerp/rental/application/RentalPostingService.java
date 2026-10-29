@@ -3,6 +3,7 @@ package com.inventoryerp.rental.application;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.modules.ModuleRegistry;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosInvoiceService;
@@ -34,14 +35,16 @@ public class RentalPostingService {
     private final StockService stock;
     private final RentalLocationConfigService locations;
     private final PosInvoiceService posInvoice;
+    private final ModuleRegistry modules;
 
     public RentalPostingService(RentalRows rows, SequenceService sequence, StockService stock,
-            RentalLocationConfigService locations, PosInvoiceService posInvoice) {
+            RentalLocationConfigService locations, PosInvoiceService posInvoice, ModuleRegistry modules) {
         this.db = rows.db();
         this.sequence = sequence;
         this.stock = stock;
         this.locations = locations;
         this.posInvoice = posInvoice;
+        this.modules = modules;
     }
 
     /** Checkout transfer for one agreement line: RENT-STOCK → RENT-OUT. */
@@ -120,6 +123,7 @@ public class RentalPostingService {
     public Map<String, Object> createFeeInvoice(String agreementId, String partnerId, String branchId, String feeType,
             List<FeeLine> lines, String paymentMode) {
         String orgId = RentalRows.org();
+        modules.assertKnownOrderKind("rental");
         String orderNumber = sequence.next("pos_order", "OR-", 6);
         Map<String, Object> order = db.insert(Order.class, Obj.of("organizationId", orgId, "orderNumber", orderNumber,
                 "orderType", "takeaway", "status", "confirmed", "partnerId", partnerId, "branchId", branchId,

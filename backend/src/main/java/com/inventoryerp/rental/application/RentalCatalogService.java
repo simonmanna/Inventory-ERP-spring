@@ -141,14 +141,8 @@ public class RentalCatalogService {
         List<Map<String, Object>> bands = db.list(RentalRate.class, "\"organizationId\" = ? AND \"productId\" = ? AND"
                 + " period::text = ? AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY priority ASC,"
                 + " \"minUnits\" DESC", RentalRows.org(), productId, period);
-        for (Map<String, Object> b : bands) {
-            int min = ((Number) b.get("minUnits")).intValue();
-            Object max = b.get("maxUnits");
-            if (units >= min && (max == null || units <= ((Number) max).intValue())) {
-                return new ResolvedRate((String) b.get("id"), SqlRows.dec(b, "price").doubleValue());
-            }
-        }
-        return null;
+        Map<String, Object> b = RentalMath.pickBand(bands, units);
+        return b == null ? null : new ResolvedRate((String) b.get("id"), SqlRows.dec(b, "price").doubleValue());
     }
 
     // ------------------------------------------------------------------ packages
@@ -163,7 +157,7 @@ public class RentalCatalogService {
     }
 
     private List<Map<String, Object>> items(Object packageId) {
-        return db.list(RentalPackageItem.class, "\"packageId\" = ? ORDER BY id", packageId);
+        return db.list(RentalPackageItem.class, "\"packageId\" = ?", packageId);
     }
 
     @Transactional

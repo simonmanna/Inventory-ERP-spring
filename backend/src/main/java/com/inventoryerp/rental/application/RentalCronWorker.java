@@ -51,8 +51,8 @@ public class RentalCronWorker {
         }
     }
 
-    /** One org's pass (package-visible for tests). */
-    void runForOrg(String orgId) {
+    /** One org's pass in that org's tenant scope (also driven directly by the integration tests). */
+    public void runForOrg(String orgId) {
         TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
             List<String> expired = db.jdbc().sql("SELECT id FROM \"RentalReservation\" WHERE \"organizationId\" = ? AND"
                     + " status = 'held' AND \"expiresAt\" < ?").params(orgId, SqlRows.ts(Instant.now()))
