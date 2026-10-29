@@ -16,6 +16,53 @@ hard rules §9) still applies — read it, and follow it unless this file says o
 The owner has delegated all engineering decisions to you. **Do not stop, pause for approval, or ask
 questions** until the last line of `docs/BUILD_LOG.md` reads `STATUS: CONSTRUCTION ERP COMPLETE`.
 
+### Never stop to ask — decide, record, continue
+
+The owner is **not watching** and will **not answer questions** during the build. Stopping to ask wastes the
+session. Therefore:
+
+1. **Whenever you would ask a question, pick the recommended option instead** — the choice a strong ERP vendor
+   (Odoo, Business Central, SAP) would make, fitting this codebase's conventions, and favouring correctness,
+   auditability, security and simplicity. Use the defaults in §8. If two options are equally good, pick the one
+   that is easier to change later.
+2. **Use recommended settings everywhere**: secure, conventional config values and permission names; sensible
+   thresholds (tolerances, reminder lead times, anomaly bands) exposed as org settings with defaults so the
+   client can tune them later.
+3. **Record the decision, don't announce it**: append a row to `docs/DECISIONS_FOR_OWNER.md` (create it on first
+   use: `date | phase.item | question | decision taken | alternatives | how to change later`). Significant
+   design decisions also get an ADR. Commit it with the work.
+4. **Keep coding immediately** — never end a turn, pause, or wait for confirmation in the middle of a phase. Do
+   not use interactive question/approval tools. Do not write "should I…?" or "let me know if…" — no one will
+   reply.
+5. **Tell the owner later**: every phase summary in `BUILD_LOG.md` lists the decisions taken in that phase, and
+   the final report (Phase 7) has a "Decisions for owner review" section built from `DECISIONS_FOR_OWNER.md`,
+   so the owner can review and reverse anything afterwards.
+6. Only a truly impossible item (destructive action on production data, legal question with no safe default)
+   is skipped — log it under `Blocked`, move to the next independent item, and keep going.
+
+### Do not build, run or test here — the owner does that later
+
+The coding environment is for **writing code only**. The owner will build and test everything later on their
+own machine. This **overrides** every "run the build / only push green / verify in the browser / start the
+stack" instruction in `AUTONOMOUS_BUILD.md`, `AGENTS.md`, `CLAUDE.md`, `docs/TESTING.md` and the phase briefs:
+
+1. **Do not install anything**: no JDK, Gradle distributions, Docker, Postgres, Node/pnpm, browsers, or system
+   packages. Do not run `./gradlew`, `pnpm install`/`pnpm test`, `docker`, `bootRun`, dev servers, load tests,
+   or the parity harness. Do not wait on CI.
+2. **Still write all the tests** (unit, IT, authorization, tenant isolation, idempotency, GL balance) exactly as
+   the per-module loop says — just don't execute them.
+3. **Compensate with care**, since nothing is compiled: follow existing code patterns closely, check every
+   import, type, method signature, record field, repository method and permission constant you use against the
+   real source (open the file — never guess an API), keep Flyway migrations consistent with the entities
+   (`ddl-auto=validate` will fail on any mismatch), register new permissions/events in `packages/shared` **and**
+   update the generated Java constants by hand to match what `tools/contracts2java` would produce, keep web
+   imports/types consistent with existing components. Re-read each file you changed before committing.
+4. **Push after every module anyway** (without a build). Mark the item `done (unverified)` in `BUILD_LOG.md`.
+5. Keep a running **owner verification checklist** in `docs/VERIFY_CHECKLIST.md`: per module — commands to
+   run (`cd backend && ./gradlew build`, specific `--tests` filters, `pnpm -C web typecheck`/`test`), the
+   migrations added, the screens to click through with the expected result, and anything you were unsure of.
+   The owner works through it locally after the build.
+
 ---
 
 ## 0. Absolute constraints (read twice)
@@ -27,7 +74,7 @@ questions** until the last line of `docs/BUILD_LOG.md` reads `STATUS: CONSTRUCTI
    - Android: `android/**` (entirely).
    - Shared code (`kernel`, `inventory`, `accounting`, `invoicing`, `shared`, `packages/shared`) **may** change,
      but only additively and never in a way that changes POS behaviour, routes, JSON, or POS GL postings.
-     Every existing POS test (`*Pos*IT`, `PosLakeviewSimIT`, sync tests) must stay green after every commit.
+     Every existing POS test (`*Pos*IT`, `PosLakeviewSimIT`, sync tests) must keep passing (do not change POS code or POS tests; the owner runs them).
    - If a feature seems to need a POS change, build it outside the POS (new route / new screen) instead, and
      record the decision in an ADR. Never edit POS to make your feature fit.
 2. **Never edit** `reference/`, `V1__baseline.sql`, `V2__reference_data.sql`, or an already-applied migration.
@@ -37,7 +84,8 @@ questions** until the last line of `docs/BUILD_LOG.md` reads `STATUS: CONSTRUCTI
 4. All rules of `AGENTS.md` §8 apply: tenancy filter on every org-scoped query, idempotency on money routes,
    `BigDecimal` + `HALF_UP` (never `double`/`float`) for money and quantities, posting engine for every GL
    effect, records (not entities) from controllers, no logic/repositories in controllers, no secrets in logs.
-5. Only push **green** builds. Never force-push, rewrite pushed history, skip hooks, or commit `.env`/keys/dumps.
+5. Do not build or test in this environment (see above) — push carefully reviewed code after every module.
+   Never force-push, rewrite pushed history, skip hooks, or commit `.env`/keys/dumps.
 
 ## 1. Resume protocol (first thing in EVERY session)
 
@@ -52,7 +100,7 @@ Sessions will end (context limits, usage limits). Progress must live in git, not
 4. If the working tree has uncommitted changes from a crashed session: inspect, then finish or discard them
    deliberately; note what you did in the log.
 5. Keep going phase after phase. Never end a session voluntarily while work remains. When context is getting
-   full: commit + push the current **green** state, set the `Next action:` line in `BUILD_LOG.md`, push, and let
+   full: commit + push the current consistent state, set the `Next action:` line in `BUILD_LOG.md`, push, and let
    the session end. The next session resumes from the log.
 
 ### Coordination with other sessions
@@ -98,7 +146,7 @@ Phase 1 is pushed and tagged, and so on. Inside a phase you may reorder sub-item
    `@RequirePermissions` on every route; new permission strings added to `packages/shared/src/permissions.ts`,
    then `node tools/contracts2java/generate.mjs`; new domain events added to `packages/shared/src/events.ts`
    the same way; cross-module calls through the other module's `application` API or events (Spring Modulith —
-   `ModularityTests` must stay green); stock only through `StockService` / `StockPostingService`;
+   `ModularityTests` must keep passing); stock only through `StockService` / `StockPostingService`;
    GL only through the posting engine with effective-dated account mappings; document numbers through the
    existing numbering service; approvals through the existing approval workflow engine; audit trail through
    the existing audit service; scheduled jobs with ShedLock.
@@ -114,32 +162,32 @@ Phase 1 is pushed and tagged, and so on. Inside a phase you may reorder sub-item
    `docs/TESTING.md`; Testcontainers, or `IT_EXTERNAL_DB=true` against a local Postgres when Docker is absent);
    authorization test per route (403 without permission); tenant-isolation test (org A cannot see org B);
    idempotency replay test on every money route; GL balance assertion (debits = credits) for every posting;
-   reversal tests; concurrency test where stock/money is contended. JaCoCo ≥ 80 % lines on the module's
-   `application` package. Web: `pnpm` lint + typecheck + tests green.
-7. **Verify** — `cd backend && ./gradlew build` green; start the stack, exercise the feature end-to-end through
-   the web UI with zero console errors (use the browser preview tools if available), including the GL result in
-   the accounting screens.
+   reversal tests; concurrency test where stock/money is contended. Aim for ≥ 80 % line coverage of the
+   module's `application` package. Web tests next to the screens. **Write them; do not run them.**
+7. **Self-review instead of running** — re-read every changed file; cross-check APIs, imports, entity ↔ migration
+   columns, permission constants, routes ↔ web API calls; then add the module's section to
+   `docs/VERIFY_CHECKLIST.md` (commands, tests, screens to click, expected GL result, open doubts).
 8. **Document** — module spec status section, `docs/ROADMAP.md` status, `docs/requirements/GAP_ANALYSIS.md`
    rows ticked with evidence (route/screen/test names), OpenAPI annotations, `SeedRunner` demo data,
    `.env.example`, release notes in `docs/releases/`.
 9. **Commit + push** — Conventional Commits (`feat(fleet): ...`, `feat(manufacturing): ...`, `test(...)`,
    `docs(...)`), each ending with your co-author trailer. Then:
-   `git pull --rebase origin main && cd backend && ./gradlew build && cd .. && git push origin main`.
+   `git pull --rebase origin main && git push origin main` (no build here).
    Push after **every finished sub-module**, not only at phase end.
 10. **Log** — update `BUILD_LOG.md` (status, commit SHAs, notes, `Next action:`), commit + push, start the next
     item immediately.
 
-At the end of each phase: run the full build, push, create the annotated tag from §2
+At the end of each phase: push, create the annotated tag from §2
 (`git tag -a <tag> -m "<phase> complete" && git push origin <tag>`), write a short phase summary into
-`BUILD_LOG.md`, push.
+`BUILD_LOG.md` (including the decisions taken in that phase), push.
 
 ---
 
 ## Phase 0 — State audit (keep it short: ≤ 1 session)
 
-1. Run the full build; record test count and any failures in `BUILD_LOG.md`. Known flaky: POS trading-date tests
-   between 00:00 and 06:00 UTC (recently fixed in `9c82a91` — confirm). Fix any red that is not POS logic.
-   If a POS test is red, find the root cause outside POS (shared code you or others changed); do not edit POS.
+1. Do **not** run the build. Read `BUILD_LOG.md`, `PORT_STATUS.md` and `git log` to record the current state
+   (last owner-verified state: full suite green on `main` at `9c82a91`, 2026-10-29). Create
+   `docs/DECISIONS_FOR_OWNER.md` and `docs/VERIFY_CHECKLIST.md`.
 2. Inventory what already exists that Phases 1–2 will reuse — read their specs and services:
    `fixedasset` (assets, depreciation), `repair` (jobs, work orders, parts), `hr` (employees, shifts, payroll),
    `inventory` (locations, batches, UoM, reservations, counts, transfers, QC quarantine), `procurement`
@@ -268,7 +316,7 @@ Build and push each sub-module separately, in this order:
 **Phase 1 exit**: every sub-module above has routes + screens + tests + spec, an end-to-end IT covering
 *sales order → delivery order → dispatch → weighbridge ticket → stock issue → proof of delivery → invoice with
 transport charge → trip cost → GL balanced*, demo seed (trucks, drivers, sites, a week of deliveries and
-weighbridge tickets), build green, pushed, tagged `fleet-complete`.
+weighbridge tickets), verification checklist written, pushed, tagged `fleet-complete`.
 
 ---
 
@@ -287,7 +335,7 @@ availability, time-phased MRP with planned orders, forward finite scheduling, QC
 quarantine, standard costing with GL variances, process costing, variance + where-used reports, subcontracted
 operations. Write an ADR (`ADR-S0NN-advanced-multistage-manufacturing.md`) with the extension design. **All
 61 Nest-parity manufacturing routes and the ADR-S006/S008 routes keep their exact contract** — extensions are new
-routes/fields only, and existing ITs must stay green.
+routes/fields only, and existing ITs must keep passing (never weaken or delete them).
 
 Build and push each sub-module separately:
 
@@ -376,8 +424,8 @@ Build and push each sub-module separately:
 **Phase 2 exit**: end-to-end ITs for (a) *blast → extraction log → haul → ROM stockpile → crushing run with
 co-products → sized stockpiles → cost per tonne → GL WIP/FG balanced*; (b) *block order → recipe scaling →
 material issue → moulding → curing → strength QC → release + rejects → cost per acceptable block*;
-(c) multi-level order with intermediate stage + traceability report. All prior manufacturing ITs green, screens
-done, spec + ADR + `GAP_ANALYSIS.md` updated, demo seed (one quarry, one crusher line, one block plant, recipes,
+(c) multi-level order with intermediate stage + traceability report written; prior manufacturing ITs left
+intact (not weakened or deleted); screens done, verification checklist written, spec + ADR + `GAP_ANALYSIS.md` updated, demo seed (one quarry, one crusher line, one block plant, recipes,
 a month of runs), pushed, tagged `manufacturing-advanced-complete`.
 
 ---
@@ -388,9 +436,9 @@ a month of runs), pushed, tagged `manufacturing-advanced-complete`.
    `docs/requirements/construction-materials-erp.md` (sections 2.1–10): requirement · status
    (`present-verified` / `present-partial` / `missing`) · evidence (module, routes, screen path, test class) ·
    action.
-2. Do **not** trust names. For each `present-*` row, prove it: find the route + screen, and either point to an
-   existing passing test that covers it or add one (an IT per section is fine). Exercise the screen in the
-   running web app.
+2. Do **not** trust names. For each `present-*` row, prove it by reading the code: find the route + service +
+   screen, and either point to an existing test that covers it or write one (an IT per section is fine). Add
+   the screen to `docs/VERIFY_CHECKLIST.md` so the owner can click through it later.
 3. Every `present-partial` and `missing` row becomes a Phase 4 item in `BUILD_LOG.md` (grouped by module).
 4. Commit + push; tag `requirements-verified`.
 
@@ -445,15 +493,16 @@ may already exist):
 
 ## Phase 6 — Production hardening
 
-Apply `docs/phases/P8-hardening-release.md` and `AUTONOMOUS_BUILD.md` §6 to the **whole system**, with focus on
-everything built in Phases 1–5: security review (OWASP top 10, authz matrix over all new routes, tenant
-isolation, branch restrictions, rate limits), dependency CVE scan clean, indexes + N+1 checks, load test
-(`tools/perf`) on dispatch board, weighbridge ticket, production run, stock and report routes (p95 < 300 ms on
-list/detail with realistic volumes), backup/restore covering all new tables (restore drill documented),
-observability (metrics for new jobs/SPIs, structured logs with correlation id), zero-downtime migration review,
-Docker images build (`docker compose up -d --build`) and the full stack runs clean, CI green on `origin`.
-**POS regression**: run every POS/sync test and the `reference/e2e` sell loop if runnable — must be unchanged.
-Push; tag `v2.1.0-rc`.
+Apply `docs/phases/P8-hardening-release.md` and `AUTONOMOUS_BUILD.md` §6 to the **whole system** by code review
+(nothing is run here), with focus on everything built in Phases 1–5: security review (OWASP top 10, authz matrix
+test over all new routes, tenant isolation, branch restrictions, rate limits), dependency versions within the
+pinned stack, indexes for every new query path + N+1 review, load-test scripts in `tools/perf` for dispatch
+board, weighbridge ticket, production run, stock and report routes (p95 target < 300 ms — the owner runs them),
+backup/restore covering all new tables (restore drill documented), observability (metrics for new jobs/SPIs,
+structured logs with correlation id), zero-downtime migration review, Docker/compose files updated for new env
+vars. **POS regression**: confirm by `git diff` against `9c82a91` that no POS/Android file changed, and list the
+POS/sync test commands in `VERIFY_CHECKLIST.md`. Finish `VERIFY_CHECKLIST.md` with a full ordered run-book
+(build → tests → stack up → per-module click-through → perf → backup drill). Push; tag `v2.1.0-rc`.
 
 ## Phase 7 — Demo data, docs, final report
 
@@ -464,8 +513,9 @@ Push; tag `v2.1.0-rc`.
 2. User guide `docs/guides/construction-materials.md` (workflow per role: weighbridge operator, dispatcher,
    driver, plant supervisor, quality officer, storekeeper, accountant, manager) and admin/config guide.
 3. `docs/reports/CONSTRUCTION_ERP_REPORT.md`: what was built per phase (routes, screens, migrations,
-   permissions, jobs, tests, ADRs, commits), the final `GAP_ANALYSIS.md` (target: every row
-   `present-verified`), metrics (routes, tests, coverage, perf, CVE scan), autonomous decisions for owner review,
+   permissions, jobs, tests, ADRs, commits), the final `GAP_ANALYSIS.md` (target: every row covered),
+   metrics (routes, test classes written), **decisions for owner review** (from `docs/DECISIONS_FOR_OWNER.md`),
+   a pointer to `docs/VERIFY_CHECKLIST.md` (everything is unbuilt/untested until the owner runs it),
    known limitations / stubs needing real hardware or credentials (weighbridge model, telematics vendor, mobile
    money provider, lab), deployment/upgrade guide (new env vars, `ENABLE_*` flags, licence modules, migration
    order).
@@ -528,15 +578,19 @@ Paste into a new AI session (Claude Code, Codex, or similar) at the repo root:
 > Read `docs/AUTONOMOUS_BUILD_CONSTRUCTION.md` and follow it exactly. Resume from the Track C section of
 > `docs/BUILD_LOG.md`. Work autonomously phase by phase — Fleet first, then Advanced Manufacturing, then
 > requirements verification, gaps, BI, hardening and the final report — committing and pushing `main` after every
-> module and tagging every phase. Never modify the POS. Do not stop or ask for approval until `BUILD_LOG.md` ends
-> with `STATUS: CONSTRUCTION ERP COMPLETE`.
+> module and tagging every phase. Never modify the POS. Use the recommended settings and decisions whenever a
+> choice comes up — never stop mid-work to ask me; record each decision in `docs/DECISIONS_FOR_OWNER.md` and
+> report them in the phase summaries and the final report. Do not install environments, build, run or test the
+> system here — write the code and tests, and keep `docs/VERIFY_CHECKLIST.md` so I can build and test it later
+> on my machine. Do not stop or ask for approval until `BUILD_LOG.md` ends with
+> `STATUS: CONSTRUCTION ERP COMPLETE`.
 
 Unattended across usage limits (Git Bash, repo root; run on an isolated dev machine/VM — this grants the agent
 full permissions and push access):
 
 ```bash
 until grep -q "STATUS: CONSTRUCTION ERP COMPLETE" docs/BUILD_LOG.md 2>/dev/null; do
-  claude -p "Read docs/AUTONOMOUS_BUILD_CONSTRUCTION.md and follow it exactly. Resume from the Track C section of docs/BUILD_LOG.md. Never modify the POS. Do not stop until STATUS: CONSTRUCTION ERP COMPLETE." \
+  claude -p "Read docs/AUTONOMOUS_BUILD_CONSTRUCTION.md and follow it exactly. Resume from the Track C section of docs/BUILD_LOG.md. Never modify the POS. Use recommended decisions, never stop to ask (log them in docs/DECISIONS_FOR_OWNER.md). Do not install, build, run or test anything. Do not stop until STATUS: CONSTRUCTION ERP COMPLETE." \
     --permission-mode bypassPermissions --max-turns 500 || sleep 1800
   git pull --rebase origin main
 done
