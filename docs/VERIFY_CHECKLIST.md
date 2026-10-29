@@ -131,3 +131,13 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Expected GL: every entry balanced; mapping keys `fleet_fuel_expense` (6410) and `fleet_fuel_card_payable` (2165)
   created on first use.
 - Doubts: expense workflows configured by the client make supplier-credit fuel wait for approval in Expenses (by design).
+
+## Phase 1.4a — Fleet: weighbridge core (ADR-S009)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.fleet.application.WeighbridgePoliciesTest' --tests 'com.inventoryerp.fleet.FleetWeighbridgeIT'`; web `pnpm web:typecheck`, `pnpm web:i18n`.
+- Migration: `V941__fleet_weighbridge.sql` (placeholder, renumbered at merge).
+- Screens (ENABLE_FLEET=true): Fleet → Weighbridge Settings: add a station (receiving store) and a *Simulator* indicator, *Set weight* 12 000 → *Test read* shows 12 000 kg.
+  New ticket (sale delivery, 20 t of a TON product) → *Capture first weight*; set 32 050 → *Capture second weight* → completed, net 20 050 kg / 20.05 t, *Print ticket* opens the PDF; a second print says "Copy 2".
+  Set 33 000 on another ticket → exception; approve as a different user in Weighbridge Exceptions (the operator sees "Your own ticket").
+  Inbound ticket against a PO → completed ticket shows a draft goods receipt in Purchases → Goods receipts.
+- Expected GL: none from the weighbridge (GRN posting is procurement's).
