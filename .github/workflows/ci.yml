@@ -141,6 +141,7 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -160,15 +161,15 @@ jobs:
       - name: Sell loop (twice — the suite must be re-runnable)
         env:
           POS_API_BASE: http://localhost:3101
-        # Run outside the repository: inside it npm resolves the pnpm workspace root (pnpm-only fields, nothing
-        # installed in this job) and crashes ("Cannot read properties of null (reading 'edgesOut')").
+        # pnpm, outside the workspace: the runner's npm crashes resolving vitest
+        # ("Cannot read properties of null (reading 'edgesOut')"), in the repository and outside it.
         run: |
           cp -r contract-tests/e2e "$RUNNER_TEMP/e2e"
           cd "$RUNNER_TEMP/e2e"
           echo '{ "private": true }' > package.json
-          npm install --no-audit --no-fund vitest@4.1.9
-          npx vitest run --config vitest.config.mjs
-          npx vitest run --config vitest.config.mjs
+          pnpm add vitest@4.1.9
+          pnpm exec vitest run --config vitest.config.mjs
+          pnpm exec vitest run --config vitest.config.mjs
       - name: API log
         if: failure()
         run: cat backend/api.log
