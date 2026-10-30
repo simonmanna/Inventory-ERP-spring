@@ -157,6 +157,7 @@ import { RentalCatalogPage } from '@/pages/rental/RentalCatalogPage';
 import { RentalReturnsPage } from '@/pages/rental/RentalReturnsPage';
 import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
+import { quarryRoutes } from '@/pages/quarry/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -394,6 +395,8 @@ export function App() {
           <Route path="/rental/reports" element={<RequireReport reportId="rental.reports"><RentalReportsPage /></RequireReport>} />
           {/* Fleet & logistics (ADR-S009) — sub-modules 1.1–1.9 register their screens in pages/fleet/routes.tsx */}
           {fleetRoutes}
+          {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
+          {quarryRoutes}
           {/* Repair & Maintenance — static segments before /repair/orders/:id */}
           <Route path="/repair" element={<RepairDashboardPage />} />
           <Route path="/repair/orders" element={<RepairOrdersPage />} />

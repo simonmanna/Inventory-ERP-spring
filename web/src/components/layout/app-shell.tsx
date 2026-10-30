@@ -98,6 +98,13 @@ import {
   CalendarRange,
   Route as RouteIcon,
   Navigation,
+  // quarry 2.2
+  Bomb,
+  Gem,
+  MapPinned,
+  Mountain,
+  ShieldAlert,
+  Warehouse,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -504,6 +511,26 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Quarry & extraction (ADR-S012, Track C 2.2): sites, extraction into ROM stock, blasting, controlled explosives.
+    title: 'Quarry',
+    icon: Mountain,
+    items: [
+      { to: '/quarry', label: tx('Quarry Overview'), icon: LayoutDashboard, permission: PERMISSIONS.quarryExtraction.read },
+      { to: '/quarry/extraction', label: tx('Extraction Logs'), icon: ClipboardList, permission: PERMISSIONS.quarryExtraction.read },
+      { to: '/quarry/haulage', label: tx('Haulage'), icon: Truck, permission: PERMISSIONS.quarryExtraction.read },
+      { to: '/quarry/stockpiles', label: tx('ROM Stockpiles'), icon: Layers, permission: PERMISSIONS.quarrySite.read },
+      { to: '/quarry/plans', label: tx('Plans & Targets'), icon: Target, permission: PERMISSIONS.quarryExtraction.read },
+      { to: '/quarry/losses', label: tx('Losses'), icon: TrendingDown, permission: PERMISSIONS.quarryExtraction.read },
+      { to: '/quarry/blasts', label: tx('Drilling & Blasting'), icon: Bomb, permission: PERMISSIONS.quarryBlasting.read },
+      { to: '/quarry/explosive-issues', label: tx('Explosive Issues'), icon: ShieldAlert, permission: PERMISSIONS.quarryBlasting.read },
+      { to: '/quarry/magazines', label: tx('Magazines & Explosives'), icon: Warehouse, permission: PERMISSIONS.quarryBlasting.read },
+      { to: '/quarry/sites', label: tx('Quarry Sites'), icon: MapPinned, permission: PERMISSIONS.quarrySite.read },
+      { to: '/quarry/materials', label: tx('Materials & Grades'), icon: Gem, permission: PERMISSIONS.quarrySite.read },
+      { to: '/quarry/reports', label: tx('Quarry Reports'), icon: BarChart3, permission: PERMISSIONS.quarry.report },
+      { to: '/quarry/settings', label: tx('Quarry Settings'), icon: Settings2, permission: PERMISSIONS.quarry.settings },
+    ],
+  },
+  {
     title: 'Communication',
     icon: MessagesSquare,
     items: [
@@ -572,6 +599,7 @@ const SECTION_TITLE_KEYS: Record<string, string> = {
   'Beverage Control': 'nav.beverageControl',
   Rentals: 'nav.rentals',
   Fleet: 'nav.fleet',
+  Quarry: 'nav.quarry',
   'Repair & Maintenance': 'nav.repairMaintenance',
   'Human Resource': 'nav.workforce',
   'Human Resources': 'nav.workforce',
