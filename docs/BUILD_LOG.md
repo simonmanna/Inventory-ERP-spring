@@ -61,7 +61,7 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: 1.4b weighbridge ↔ dispatch + Phase 1 E2E IT, and 1.9 costing & reports — in-progress (C), parallel worktrees
+Current: 1.9 fleet costing & reports — in-progress (C, worktree)
 Next action: merge 1.5 (worktree `wt/c-fuel`) into main (1.2 is committed on main), then start 1.3 dispatch + 1.6 maintenance.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
@@ -76,7 +76,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 1.1 vehicle & equipment registry | done | ebae379 a7aee65 3765aea | | fleet module + flag/licence/menu, ADR-S009, spec, V15 (7 tables, all 53 Phase 1 permissions), 32 routes, 6 screens, FleetPoliciesTest + FleetRegistryIT (14); full build 694 tests / 0 failed; license-server ITs need Docker |
 | 1.2 drivers & operators | done | c79aece 8daa231 9c3b53f | | V16 (9 fleet tables + hr `HrPayrollInput`), 37 routes, 9 screens + vehicle tab; eligibility policy, assignments, check-out/in with meters + photos, allowance rules, claims → expenses (Dr 6440 cc / Cr bank) or payroll (Dr 6440 / Cr 2185, settled by the run); additive hr `payroll-inputs` API + `ExpensesService.createPaidFromSource`; full build 719 tests / 0 failed |
 | 1.3 trips, delivery planning & dispatch | done | 90d00ea ce56add 7b65e6c 76c5619 | | V22, 55 routes, FleetDispatchIT (9) incl. stock issue once + concurrency, POD, discrepancy → credit note, transport charge |
-| 1.4 weighbridge | in-progress (C) | d29d681 0736c5e 0ffba5f | | 1.4a done: V23, 36 routes, FleetWeighbridgeIT (14), ASCII/TCP + simulator adapters, SoD exceptions, inbound → draft GRN; 1.4b (ticket ↔ trip, drives stock issue) next |
+| 1.4 weighbridge | done | d29d681 0736c5e 0ffba5f 03b7a9b e8d4ff8 dc9ce2e | | 1.4a (V23, 36 routes) + 1.4b (V24, 6 routes): ticket completion feeds the trip, drives the stock issue; void before dispatch only; dispatch rule; FleetPhase1EndToEndIT (3) GL-balanced |
 | 1.5 fuel & energy | done | c778199 c1cf1b8 53b0ab0 | | V19, 34 routes, FleetFuelIT + FuelPoliciesTest; merged with the 1.6/upstream CRM merge |
 | 1.6 maintenance | done | 8d23b3e 50e1954 ea4379e | | V18, 51 routes, FleetMaintenanceIT; dispatch check `FleetDispatchEligibilityService` |
 | 1.7 tyres, incidents, fines | done | a1c77e0 78da0fe f75e013 | | V20, tyres/incidents/insurance claims/fines; driver fine deductions = events + manual status until wired to hr in 1.9 |
