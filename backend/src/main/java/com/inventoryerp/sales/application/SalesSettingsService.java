@@ -129,6 +129,13 @@ public class SalesSettingsService {
                 params.add(v);
             }
         }
+        // Executable today: goods issued at the gate (direct / at dispatch). Transit-location ownership policies need the
+        // accountant-validated postings of sales-postings.md §3 (rows C-E) before they can be switched on.
+        if ("via_transit".equals(movement) || !"at_dispatch".equals(transfer)
+                || "at_ownership_transfer".equals(in.get("revenueRecognition"))) {
+            throw ApiException.badRequest("Only the default policy (goods issued at dispatch, revenue at invoice) is"
+                    + " available until the transit postings are approved by the accountant");
+        }
         if ("direct".equals(movement) && !"at_dispatch".equals(transfer)) {
             throw ApiException.badRequest("Ownership can only pass after dispatch when goods move via a transit location");
         }

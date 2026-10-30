@@ -17,7 +17,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | done | S1 |
 | S3 | Credit module (limits, exposure, decisions, holds) | R2 | done | S1 |
 | S4 | ATP, reservations, backorders, supply pegs | R2 | done | S1 |
-| S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | todo | S4, fleet 1.4b |
+| S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | done (partial, see deviations) | S4, fleet 1.4b |
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | todo | S5, accountant answers |
 | S7 | Returns / RMA, claims, quality certificates | R2 | todo | S6 |
 | S8 | Collections: dunning, promise-to-pay, statement runs | R3 | todo | S3, S6 |
@@ -205,6 +205,30 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Deviations: purchase orders carry no receiving location, so purchase supply is organization-wide (not per yard);
   stock transfers in transit are not yet counted as supply; variants are not reserved (aggregates / blocks have none).
 
+## S5 — as built
+- `V29__sales_fulfilment.sql`: line projections `qtyLoaded`, `qtyDispatched` (net of returns, also `qtyDelivered`),
+  `qtyReceived` (POD), `qtyAccepted` (fleet billable after approved discrepancies); immutable
+  `SalesFulfilmentDecision`; inbox `SalesProcessedEvent`; `SalesReconciliation` log.
+- Fleet owns the new port `DeliverySourcePort`; sales implements it (`SalesDeliverySource`) — fleet never depends on
+  sales. `FleetDeliveryOrderService.fromSalesOrder` serves new B2B orders through the port (legacy back-office
+  orders unchanged); fleet refuses to dispatch a trip of a held / cancelled sales order.
+- `SalesFulfilmentService`: create the delivery order for the open quantities; `rebuild` recomputes projections
+  absolutely from fleet records (duplicates / out-of-order events harmless), billable by product basis (weighed /
+  accepted / ordered) with a decision per change, manual override (`sales:billing:override`, reason, sticky, never
+  below net invoiced), refreshes status and reservations. `SalesFulfilmentSubscriber` rebuilds on
+  `fleet.trip.*` and `fleet.delivery.discrepancy_decided`; `SalesReconcileJob` 03:10 nightly records drift.
+- Policies: only the default (issue at dispatch, revenue at invoice) is executable; other combinations are refused
+  until the accountant approves the transit postings.
+- Routes: `POST /sales/orders/{id}/delivery-orders`, `GET /{id}/fulfilment`, `POST /{id}/rebuild`,
+  `POST /{id}/lines/{lineId}/billable`.
+- Web: Fulfilment panel (create delivery order, deliveries, ordered / dispatched / received / accepted / billable /
+  invoiced, billable override dialog).
+- Tests: `SalesFulfilmentIT` (2): SO → DO → hold blocks dispatch → dispatch shrinks reservation → POD shortage →
+  approved → billable 29.5 → manual 30 → second trip via the event path → full delivery; reconciliation repair.
+- Deviations: one live delivery order per sales order (fleet's unique source index; close it to raise the next);
+  collect-at-yard through the weighbridge waits for fleet 1.4b (ticket ↔ trip); transit / ownership policies
+  deferred (accountant).
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
@@ -220,3 +244,15 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   PO, "full by" the PO date. Sales → Backorders lists it. Raise Yard A stock → *Re-plan* → fully reserved.
   Cancel an order → its reservation disappears (Inventory → reservations).
 - Expected GL: none.
+
+## Phase S5 — Fulfilment (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFulfilmentIT' --tests 'com.inventoryerp.fleet.FleetDispatchIT'`.
+- Migration: `V29__sales_fulfilment.sql`.
+- Screens (ENABLE_FLEET=true): confirmed sales order 50 t from the yard → Fulfilment panel → *Create delivery order* →
+  Fleet delivery order DO-… with 50 t → plan loads (30 t payload) → assign a transporter → put the sales order on hold
+  → *Dispatch* refused ("on hold") → release → dispatch trip 1 → order shows dispatched 30, reserved 20, status In
+  fulfilment. POD 29.5 with reason, approve the discrepancy as a dispatch manager → accepted / billable 29.5. Override
+  billable to 30 with a reason (pencil) → "*" marks the manual decision. Dispatch + deliver trip 2 → delivered fully,
+  invoicing "To invoice".
+- Expected GL: stock issue Dr COGS / Cr inventory at each dispatch (fleet, unchanged).

@@ -24,6 +24,7 @@ import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
+import { FulfilmentPanel } from './FulfilmentPanel';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -220,6 +221,7 @@ export function SalesOrderPage() {
             </div>
           )}
           {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
+          {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <FulfilmentPanel order={o} />}
           {o && o.status !== 'draft' && <AvailabilityPanel order={o} />}
           {o && <ChangeRequestsPanel orderId={o.id} />}
         </div>

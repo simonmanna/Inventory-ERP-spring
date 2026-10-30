@@ -4,6 +4,7 @@ import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.sales.application.SalesAtpService;
+import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
 import com.inventoryerp.sales.application.SalesOrderService;
 import com.inventoryerp.sales.application.SalesQuotationService;
@@ -156,11 +157,14 @@ public final class SalesController {
         private final SalesOrderService svc;
         private final SalesOrderChangeService changes;
         private final SalesAtpService atp;
+        private final SalesFulfilmentService fulfilment;
 
-        public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp) {
+        public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp,
+                SalesFulfilmentService fulfilment) {
             this.svc = svc;
             this.changes = changes;
             this.atp = atp;
+            this.fulfilment = fulfilment;
         }
 
         @GetMapping
@@ -271,6 +275,33 @@ public final class SalesController {
         public Map<String, Object> reserve(@PathVariable String id) {
             svc.require(id);
             return atp.reserveOrder(id);
+        }
+
+        @PostMapping("/{id}/delivery-orders")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
+        public Map<String, Object> deliver(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return fulfilment.createDelivery(id, body(b));
+        }
+
+        @GetMapping("/{id}/fulfilment")
+        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        public Map<String, Object> fulfilment(@PathVariable String id) {
+            return fulfilment.fulfilment(id);
+        }
+
+        @PostMapping("/{id}/rebuild")
+        @RequirePermissions(Permissions.SALES__CONFIGURE)
+        public List<Map<String, Object>> rebuild(@PathVariable String id) {
+            svc.require(id);
+            return fulfilment.rebuild(id);
+        }
+
+        @PostMapping("/{id}/lines/{lineId}/billable")
+        @RequirePermissions(Permissions.SALES__BILLING_OVERRIDE)
+        public Map<String, Object> billable(@PathVariable String id, @PathVariable String lineId,
+                @RequestBody Map<String, Object> b) {
+            return fulfilment.overrideBillable(id, lineId, body(b));
         }
 
         @GetMapping("/{id}/change-requests")

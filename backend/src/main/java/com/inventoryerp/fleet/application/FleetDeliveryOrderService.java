@@ -89,10 +89,12 @@ public class FleetDeliveryOrderService {
     private final OrdersService orders;
     private final InvoiceService invoices;
     private final FleetLoadFactors factors;
+    private final List<DeliverySourcePort> sources;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
-            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors) {
+            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, List<DeliverySourcePort> sources) {
+        this.sources = sources;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -246,6 +248,10 @@ public class FleetDeliveryOrderService {
     /** From a confirmed back-office sales order (never a POS sale). */
     @Transactional
     public Map<String, Object> fromSalesOrder(FromSourceInput in) {
+        DeliverySourcePort port = sourcePort("sales_order", in.sourceId());
+        if (port != null) {
+            return fromSource(port, in);
+        }
         Map<String, Object> order = orders.getOrder(in.sourceId());
         String number = str(order.get("orderNumber"));
         String status = str(order.get("status"));
@@ -292,6 +298,41 @@ public class FleetDeliveryOrderService {
         Header h = header(in, str(order.get("partnerId")), str(order.get("branchId")), null);
         return insert(h, "sales_order", in.sourceId(), number, invoiceId != null ? "invoiced" : "dispatch", invoiceId,
                 invoiceNumber, invoiceId != null ? "pos_invoice" : null, lines);
+    }
+
+    /** Provider owning a source document (ADR-S011 sales orders), or null for the legacy back-office order path. */
+    public DeliverySourcePort sourcePort(String sourceType, String sourceId) {
+        for (DeliverySourcePort p : sources) {
+            if (p.supports(sourceType, sourceId)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /** From a B2B sales order (ADR-S011): open quantity of each line, the order's site / yard by default. */
+    private Map<String, Object> fromSource(DeliverySourcePort port, FromSourceInput in) {
+        port.assertDeliverable(in.sourceId());
+        DeliverySourcePort.Source src = port.load(in.sourceId());
+        assertNoLiveOrder("sales_order", in.sourceId(), "Sales order " + src.number());
+        List<Line> lines = new ArrayList<>();
+        for (DeliverySourcePort.SourceLine l : src.lines()) {
+            if (l.quantity().signum() <= 0) {
+                continue;
+            }
+            Map<String, Object> product = product(l.productId());
+            String uomId = l.uomId() != null ? l.uomId() : (String) product.get("uomId");
+            lines.add(new Line(l.productId(), null, l.description(), uomId, l.uomFactor(), l.quantity().setScale(3,
+                    RoundingMode.HALF_UP), l.sourceLineId(), l.unitPrice(), l.discountPercent(), l.taxId(), null, null));
+        }
+        if (lines.isEmpty()) {
+            throw ApiException.badRequest("Sales order " + src.number() + " has nothing left to deliver");
+        }
+        FromSourceInput withDefaults = new FromSourceInput(in.sourceId(), in.siteId() != null ? in.siteId() : src.siteId(),
+                in.locationId() != null ? in.locationId() : src.locationId(), in.requestedDate(), in.windowFrom(),
+                in.windowTo(), in.priority(), in.contactName(), in.contactPhone(), in.costCenterId(), in.notes());
+        Header h = header(withDefaults, src.partnerId(), src.branchId(), src.requestedDate());
+        return insert(h, "sales_order", in.sourceId(), src.number(), "dispatch", null, null, null, lines);
     }
 
     /** From a sales invoice: draft → fleet issues the stock (the invoice is marked), posted → already issued. */
