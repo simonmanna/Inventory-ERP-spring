@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Ban, ClipboardCheck, Flag, PackageOpen, Printer, Scale, Send, Truck, Undo2, UserCheck } from 'lucide-react';
+import { Ban, ClipboardCheck, Flag, Gauge, PackageOpen, Printer, Scale, Send, Truck, Undo2, UserCheck } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,8 @@ export function TripActions({ trip, big = false, podPath }: { trip: TripDetail; 
   const s = trip.status;
   const isOpen = ['planned', 'loading', 'weighed'].includes(s);
   const onRoad = ['dispatched', 'in_transit'].includes(s);
+  const wb = trip.weighbridge;
+  const weighRequired = !!wb?.required;
   const size = big ? 'lg' : 'default';
   const cls = big ? 'h-12 w-full text-base sm:w-auto' : '';
 
@@ -66,7 +68,18 @@ export function TripActions({ trip, big = false, podPath }: { trip: TripDetail; 
         {s === 'planned' && has(PERMISSIONS.fleetTrip.dispatch) && (
           <Button size={size} className={cls} variant="outline" onClick={() => setOpen('loading')}><PackageOpen className="mr-1.5 h-4 w-4" /> {tx('Start loading')}</Button>
         )}
-        {isOpen && has(PERMISSIONS.fleetTrip.dispatch) && (
+        {isOpen && has(PERMISSIONS.weighbridge.weigh) && (
+          wb?.liveTicket ? (
+            <Button size={size} className={cls} variant="outline" onClick={() => navigate(`/fleet/weighbridge/tickets/${wb.liveTicket!.id}`)}>
+              <Gauge className="mr-1.5 h-4 w-4" /> {tx('Continue weighing {{number}}', { number: wb.liveTicket.ticketNumber })}
+            </Button>
+          ) : (
+            <Button size={size} className={cls} variant={weighRequired ? 'default' : 'outline'} onClick={() => navigate(`/fleet/weighbridge/tickets/new?tripId=${trip.id}`)}>
+              <Gauge className="mr-1.5 h-4 w-4" /> {tx('Weigh')}
+            </Button>
+          )
+        )}
+        {isOpen && !weighRequired && has(PERMISSIONS.fleetTrip.dispatch) && (
           <Button size={size} className={cls} variant="outline" onClick={() => setOpen('loaded')}><Scale className="mr-1.5 h-4 w-4" /> {tx('Loaded quantity')}</Button>
         )}
         {isOpen && has(PERMISSIONS.fleetTrip.dispatch) && (

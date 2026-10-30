@@ -279,6 +279,7 @@ export interface DeliveryOrderDetail extends DeliveryOrder {
   trips: TripSummary[];
   discrepancies: Discrepancy[];
   charges: DeliveryCharge[];
+  weighbridgeTickets?: LinkedWeighTicket[];
   createdTripIds?: string[];
   warnings?: string[];
   invoice?: { id: string; documentNumber: string; totalAmount: string; status: string };
@@ -321,11 +322,53 @@ export interface ProofOfDelivery {
   notes: string | null;
 }
 
+/** A weighbridge ticket linked to a trip / delivery order (fleet 1.4b). */
+export interface LinkedWeighTicket {
+  id: string;
+  ticketNumber: string;
+  status: 'open' | 'first_weighed' | 'exception' | 'completed' | 'cancelled' | 'void';
+  tripId: string | null;
+  tripCode: string | null;
+  registrationPlate: string;
+  grossKg: string | null;
+  tareKg: string | null;
+  netKg: string | null;
+  netQty: string | null;
+  netUomCode: string | null;
+  expectedKg: string | null;
+  varianceKg: string | null;
+  variancePct: string | null;
+  withinTolerance: boolean | null;
+  isManual: boolean;
+  usedStoredTare: boolean;
+  completedAt: string | null;
+  voidedAt: string | null;
+  voidReason: string | null;
+  replacedById: string | null;
+  tripFeedStatus: 'fed' | 'skipped' | 'failed' | 'cleared' | null;
+  tripFeedMessage: string | null;
+  tripFedAt: string | null;
+  createdAt: string;
+}
+
+/** Weighbridge state of a trip: required for dispatch (and why), live ticket, fed by a completed ticket. */
+export interface TripWeighbridge {
+  required: boolean;
+  reason: string | null;
+  ruleId: string | null;
+  mode: 'off' | 'all' | 'bulk' | 'categories';
+  branchId: string | null;
+  liveTicket: { id: string; ticketNumber: string; status: string } | null;
+  fedByTicket: boolean;
+}
+
 export interface TripDetail extends TripSummary {
   lines: TripLine[];
   deliveryOrder: (DeliveryOrder & { site?: CustomerSite | null }) | null;
   pod: ProofOfDelivery | null;
   discrepancies: Discrepancy[];
+  weighbridgeTickets?: LinkedWeighTicket[];
+  weighbridge?: TripWeighbridge;
 }
 
 export interface BoardDay { date: string; trips: TripSummary[] }

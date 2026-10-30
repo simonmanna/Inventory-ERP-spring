@@ -13,8 +13,8 @@ import { notify, apiMessage } from '@/lib/notify';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
-  SOURCE_LABEL, SUBJECT_LABEL, useCancelTicket, useLiveRead, usePrintTicket, useTicket, useTicketGoodsReceipt,
-  useUseStoredTare, useVoidTicket, useWeigh, useWeighbridgeLookups, type LiveReading, type Ticket,
+  SOURCE_LABEL, SUBJECT_LABEL, TRIP_FEED_LABEL, useCancelTicket, useFeedTrip, useLiveRead, usePrintTicket, useTicket,
+  useTicketGoodsReceipt, useUseStoredTare, useVoidTicket, useWeigh, useWeighbridgeLookups, type LiveReading, type Ticket,
 } from '@/features/fleet/weighbridge-api';
 import { Field, OptionalSelect } from '../fleet-ui';
 import { ManualFlag, Row, TicketStatusPill, WeightDisplay } from './weighbridge-ui';
@@ -170,8 +170,17 @@ export function TicketDetailPage() {
               {(t.driverName || t.driver) && <Row label={tx('Driver')}>{t.driverName ?? t.driver?.code}</Row>}
               {t.partner && <Row label={t.direction === 'inbound' ? tx('Supplier') : tx('Customer')}>{t.partner.name}</Row>}
               {t.purchaseOrder && <Row label={tx('Purchase order')}>{t.purchaseOrder.orderNumber}</Row>}
-              {t.deliveryOrderId && <Row label={tx('Delivery order')}>{t.deliveryOrderId}</Row>}
-              {t.tripId && <Row label={tx('Trip')}>{t.tripId}</Row>}
+              {t.deliveryOrderId && (
+                <Row label={tx('Delivery order')}>
+                  <Link className="text-primary" to={`/fleet/delivery-orders/${t.deliveryOrderId}`}>{t.deliveryOrder?.code ?? t.deliveryOrderId}</Link>
+                </Row>
+              )}
+              {t.tripId && (
+                <Row label={tx('Trip')}>
+                  <Link className="text-primary" to={`/fleet/trips/${t.tripId}`}>{t.trip?.code ?? t.tripId}</Link>
+                  {t.trip && <span className="ml-1 text-xs text-muted-foreground">({t.trip.status.replace('_', ' ')})</span>}
+                </Row>
+              )}
               {t.referenceNumber && <Row label={tx('Reference')}>{t.referenceNumber}</Row>}
               {t.product && <Row label={tx('Product')}>{t.product.name}</Row>}
               {t.orderedQty && <Row label={tx('Ordered')}>{qty(t.orderedQty, t.orderedUomCode)} ({kg(t.expectedKg)})</Row>}
@@ -184,6 +193,7 @@ export function TicketDetailPage() {
               {t.cancelReason && <Row label={tx('Cancel reason')}>{t.cancelReason}</Row>}
             </CardContent>
           </Card>
+          {t.tripId && t.tripFeedStatus && <TripFeedCard t={t} canWeigh={canWeigh} />}
           {(t.status === 'completed' || t.status === 'void') && (
             <Card>
               <CardContent className="space-y-2 pt-6">
@@ -210,6 +220,34 @@ export function TicketDetailPage() {
       {dialog === 'cancel' && <CancelDialog t={t} onClose={() => setDialog(null)} />}
       {dialog === 'grn' && <GoodsReceiptDialog t={t} onClose={() => setDialog(null)} />}
     </div>
+  );
+}
+
+/** 1.4b: how the completed ticket fed its trip; retry when it could not (e.g. after adding a kg-per-unit setting). */
+function TripFeedCard({ t, canWeigh }: { t: Ticket; canWeigh: boolean }) {
+  const feed = useFeedTrip();
+  const status = t.tripFeedStatus!;
+  const retry = async () => {
+    try {
+      await feed.mutateAsync(t.id);
+      notify.success(tx('The trip now carries the net weight of this ticket'));
+    } catch (err) {
+      notify.error(apiMessage(err, tx('Could not feed the trip')));
+    }
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">{tx('Trip loading')}</CardTitle></CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        <StatusPill tone={status === 'fed' ? 'success' : status === 'failed' ? 'danger' : 'neutral'}>{TRIP_FEED_LABEL[status]}</StatusPill>
+        {t.tripFeedMessage && <p className="text-muted-foreground">{t.tripFeedMessage}</p>}
+        {t.status === 'completed' && status !== 'fed' && canWeigh && (
+          <Button className="w-full" variant="outline" onClick={retry} disabled={feed.isPending}>
+            <Truck className="mr-1.5 h-4 w-4" /> {tx('Feed the trip again')}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
