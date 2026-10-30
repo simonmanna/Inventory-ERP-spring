@@ -72,6 +72,7 @@ export interface SalesOrder {
   currencyCode: string;
   exchangeRate: number;
   customerRef: string | null;
+  agreementId?: string | null;
   requestedDate: string | null;
   commitmentDate: string | null;
   ownerId: string | null;
@@ -86,7 +87,7 @@ export interface SalesOrder {
   cancelReason: string | null;
   createdAt: string;
   lines?: SalesOrderLine[];
-  relations?: { quotation: { id: string; number: string } | null; deliveries: Array<{ id: string; number: string; status: string }>; invoices: Array<{ id: string; number: string; status: string }>; changeRequests: number; revisions: number };
+  relations?: { quotation: { id: string; number: string } | null; agreement?: { id: string; number: string; name: string; status: string } | null; deliveries: Array<{ id: string; number: string; status: string }>; invoices: Array<{ id: string; number: string; status: string }>; changeRequests: number; revisions: number };
 }
 
 export interface ChangeRequest {

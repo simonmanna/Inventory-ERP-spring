@@ -21,7 +21,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | done (defaults pending accountant) | S5, accountant answers |
 | S7 | Returns / RMA, claims, quality certificates | R2 | done | S6 |
 | S8 | Collections: dunning, promise-to-pay, statement runs | R3 | done | S3, S6 |
-| S9 | Agreements, rebates, commissions, targets | R3 | todo | S2, S6 |
+| S9 | Agreements, rebates, commissions, targets | R3 | done | S2, S6 |
 | S10 | Analytics, dashboard, portal, AI assist | R3 | todo | all |
 
 Gates for every phase (from ADR-S011 / plan): `./gradlew build` green (Testcontainers) incl. `ModularityTests` and
@@ -290,64 +290,48 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Deviation: WhatsApp / SMS reminders are not sent yet (channel options e-mail / letter / record only); the
   communication module can be wired later.
 
+## S9 — as built
+- `V33__sales_agreements_rebates_commissions.sql`: `SalesAgreement` (+`Line`), `SalesOrder.agreementId`,
+  `RebateProgram`, `RebateAccrual`, `CommissionRule`, `CommissionStatement`, `SalesTarget`; permissions
+  `sales:agreement:read|manage`, `sales:rebate:manage`, `sales:commission:read|manage`, `sales:target:manage`.
+  Licence key `salesAgreements` (install `LicenseFeatures` + licence server `Entitlements.KNOWN_FEATURES`) gates the
+  agreement and rebate routes (402 without it); commissions and targets are base sales.
+- `SalesAgreementService`: blanket / contract agreement per customer — product lines with contract quantity, agreed
+  price (in the line's unit), discount, minimum release; draft → active → expired (daily job) | closed, draft / active
+  → cancelled (refused once a release is confirmed). Active agreements accept only end date, sites, notes and the
+  over-release flag. Sales orders carry `agreementId` (validated: active, same customer, valid today; its payment
+  term is the default); the pricing engine's new tier 0 prices their lines from the agreement (source `agreement`,
+  excluded from discount / margin breaches). Released = confirmed / in-fulfilment / done order lines net of closed
+  short, in base units; confirm adds approval reasons for a release beyond the balance (unless over-release is
+  allowed) or below the minimum release. Agreement detail shows released / balance / % and the releases; the order
+  shows its agreement (relations).
+- `SalesRevenueQuery`: product lines of posted invoices (+) and credit notes (−) with salesperson attribution
+  (invoice → its sales order owner → the reversed invoice's order owner → customer salesperson) and order team; the
+  `paid` basis takes invoice lines pro rata to the allocations of the period.
+- `SalesRebateService`: programmes scoped by customer / customer category × product / product category, month /
+  quarter / year, basis quantity or value, tiers (per unit or % of value; the highest tier reached applies to the whole
+  period). Accrual run recomputes each customer's period amount and posts only the difference (P15: Dr 4190 Sales
+  Rebates `sales_rebates` / Cr 2360 Rebate Accrual `rebate_accrual`; a drop reverses). Settlement (period ended,
+  idempotent route) issues and posts a credit note whose line is booked to the accrual account (P15a: Dr accrual / Cr
+  AR) against the customer's oldest open invoice; a settled accrual is final.
+- `SalesCommissionService`: rules by salesperson / team / product category, basis invoiced or paid, method % of
+  revenue, % of margin (revenue − product cost) or per unit, priority then specificity; credit notes claw back in the
+  month issued. Monthly statement per salesperson (draft, regenerated until approved); approval (not by the
+  salesperson) queues a taxable HR payroll earning (source `sales_commission`, Dr 6150 Sales Commissions
+  `sales_commission_expense`) for the employee linked to the user; a non-positive total is approved without payroll.
+  Statements are visible to their salesperson without `sales:commission:manage`. Targets per month × salesperson /
+  team / branch / product category with actual net revenue and achievement %.
+- `SalesAgreementJob`: 05:30 daily — expire agreements, accrue rebates as of yesterday.
+- Routes: `/sales/agreements*` (7), `/sales/rebates/*` (6), `/sales/commissions/*` (9), `/sales/targets*` (5).
+  Web: Agreements & rebates page, Commissions & targets page, agreement select on the sales order.
+- Tests: `SalesAgreementIT` (3) — tier-0 price, balance, over-release approval, wrong customer, rebate delta postings
+  / reversal / settlement / finality with AR and trial-balance tie-out, commission clawback + payroll earning, targets.
+- Deviations: amounts are in document currency (no FX conversion); commission margin uses the product's current cost,
+  not the issue cost; agreement delivery schedules and sites are stored but not enforced; rebate settlement credit
+  notes carry no VAT (accountant question Q-S9-1).
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
 - S0: rollback is a runbook (copy rows back + drop trigger + revert release) instead of a runtime source flag; a
   dual code path would keep two quotation engines alive, which ADR-S011 §4 forbids.
-
-## Phase S4 — ATP and reservations (ADR-S011)
-
-- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAtpIT'`.
-- Migration: `V28__sales_atp.sql`.
-- Screens: product with 150 t in Yard A and 50 t in Yard B, PO of 300 t due in 10 days. Order 100 t from Yard A →
-  *Confirm* → Availability panel: reserved 100. Second order 100 t from Yard A → reserved 50, short 50, pegged to the
-  PO, "full by" the PO date. Sales → Backorders lists it. Raise Yard A stock → *Re-plan* → fully reserved.
-  Cancel an order → its reservation disappears (Inventory → reservations).
-- Expected GL: none.
-
-## Phase S5 — Fulfilment (ADR-S011)
-
-- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFulfilmentIT' --tests 'com.inventoryerp.fleet.FleetDispatchIT'`.
-- Migration: `V29__sales_fulfilment.sql`.
-- Screens (ENABLE_FLEET=true): confirmed sales order 50 t from the yard → Fulfilment panel → *Create delivery order* →
-  Fleet delivery order DO-… with 50 t → plan loads (30 t payload) → assign a transporter → put the sales order on hold
-  → *Dispatch* refused ("on hold") → release → dispatch trip 1 → order shows dispatched 30, reserved 20, status In
-  fulfilment. POD 29.5 with reason, approve the discrepancy as a dispatch manager → accepted / billable 29.5. Override
-  billable to 30 with a reason (pencil) → "*" marks the manual decision. Dispatch + deliver trip 2 → delivered fully,
-  invoicing "To invoice".
-- Expected GL: stock issue Dr COGS / Cr inventory at each dispatch (fleet, unchanged).
-
-## Phase S6 — Billing, deposits, mobile money (ADR-S011)
-
-- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesBillingIT'`.
-- Migration: `V30__sales_billing_deposits.sql`.
-- Screens: confirmed order of 100 × 1 000 000 (product invoice policy "ordered") → Billing panel → *Record deposit*
-  30 000 000 by bank → Accounting: Dr Bank / Cr 2350 Customer Deposits. *Create invoice* → draft invoice 100 000 000
-  → post it in Invoicing → back on the order *Apply to…* the invoice → invoice open 70 000 000, deposit closed.
-  *Down payment invoice* 30 % → post → a deposit appears (source down payment); pay it; final invoice; apply.
-  *Record deposit* → "Mobile money — request on phone" (mock provider) → succeeded; a phone ending in 0 is declined.
-  Sales settings: deposit application "oldest_first" applies deposits automatically when an order invoice posts.
-- Expected GL: P2, P3, P8, P9, P10 of `docs/spec/sales-postings.md`; trial balance stays zero.
-
-## Phase S7 — Returns, complaints (ADR-S011)
-
-- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesReturnIT'`.
-- Migration: `V31__sales_returns.sql`.
-- Screens: delivered + invoiced order → *Return / claim* → 5 blocks "Wrong grade" → Returns → approve → *Receive
-  goods* (stock +5 at the yard) → *Record inspection* (restock) → *Close return* with "Credit note" → credit note
-  posted against the order invoice; order line: invoiced 20, credited 5, returned 5.
-  Scrap disposition: stock unchanged after receive + scrap; refund outcome creates a customer refund.
-  Claim without goods on an uninvoiced order → billable drops by the claim with a "Returned on RMA-…" decision.
-  Complaints: create one, link it to a return; it is resolved when the return closes.
-- Expected GL: P12 (credit note), P13 (Dr inventory / Cr COGS), scrap as waste expense, refund Dr AR / Cr bank.
-
-## Phase S8 — Collections (ADR-S011)
-
-- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesCollectionsIT'`.
-- Migration: `V32__sales_collections.sql`.
-- Screens: Sales → Collections → Dunning levels: L1 from 1 day e-mail, L2 from 30 days letter + fee 5 000, L3 from
-  60 days letter + credit hold. *Run dunning now* → customers reach their level; L2 raises a draft late-fee invoice;
-  L3 puts the customer on credit hold; a customer with an open promise is skipped; a second run does not repeat.
-  Worklist: filter 90+. Promises: record, then receipts by the date make it kept, otherwise broken.
-- Expected GL: none until the late-fee invoice is posted (Dr AR / Cr 4290).

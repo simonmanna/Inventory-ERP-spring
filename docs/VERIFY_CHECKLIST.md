@@ -214,3 +214,76 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   new orders are held (or blocked).
   Fleet: dispatching a trip for a blocked customer is refused with the credit reasons.
 - Expected GL: none.
+
+## Phase S4 — ATP and reservations (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAtpIT'`.
+- Migration: `V28__sales_atp.sql`.
+- Screens: product with 150 t in Yard A and 50 t in Yard B, PO of 300 t due in 10 days. Order 100 t from Yard A →
+  *Confirm* → Availability panel: reserved 100. Second order 100 t from Yard A → reserved 50, short 50, pegged to the
+  PO, "full by" the PO date. Sales → Backorders lists it. Raise Yard A stock → *Re-plan* → fully reserved.
+  Cancel an order → its reservation disappears (Inventory → reservations).
+- Expected GL: none.
+
+## Phase S5 — Fulfilment (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFulfilmentIT' --tests 'com.inventoryerp.fleet.FleetDispatchIT'`.
+- Migration: `V29__sales_fulfilment.sql`.
+- Screens (ENABLE_FLEET=true): confirmed sales order 50 t from the yard → Fulfilment panel → *Create delivery order* →
+  Fleet delivery order DO-… with 50 t → plan loads (30 t payload) → assign a transporter → put the sales order on hold
+  → *Dispatch* refused ("on hold") → release → dispatch trip 1 → order shows dispatched 30, reserved 20, status In
+  fulfilment. POD 29.5 with reason, approve the discrepancy as a dispatch manager → accepted / billable 29.5. Override
+  billable to 30 with a reason (pencil) → "*" marks the manual decision. Dispatch + deliver trip 2 → delivered fully,
+  invoicing "To invoice".
+- Expected GL: stock issue Dr COGS / Cr inventory at each dispatch (fleet, unchanged).
+
+## Phase S6 — Billing, deposits, mobile money (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesBillingIT'`.
+- Migration: `V30__sales_billing_deposits.sql`.
+- Screens: confirmed order of 100 × 1 000 000 (product invoice policy "ordered") → Billing panel → *Record deposit*
+  30 000 000 by bank → Accounting: Dr Bank / Cr 2350 Customer Deposits. *Create invoice* → draft invoice 100 000 000
+  → post it in Invoicing → back on the order *Apply to…* the invoice → invoice open 70 000 000, deposit closed.
+  *Down payment invoice* 30 % → post → a deposit appears (source down payment); pay it; final invoice; apply.
+  *Record deposit* → "Mobile money — request on phone" (mock provider) → succeeded; a phone ending in 0 is declined.
+  Sales settings: deposit application "oldest_first" applies deposits automatically when an order invoice posts.
+- Expected GL: P2, P3, P8, P9, P10 of `docs/spec/sales-postings.md`; trial balance stays zero.
+
+## Phase S7 — Returns, complaints (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesReturnIT'`.
+- Migration: `V31__sales_returns.sql`.
+- Screens: delivered + invoiced order → *Return / claim* → 5 blocks "Wrong grade" → Returns → approve → *Receive
+  goods* (stock +5 at the yard) → *Record inspection* (restock) → *Close return* with "Credit note" → credit note
+  posted against the order invoice; order line: invoiced 20, credited 5, returned 5.
+  Scrap disposition: stock unchanged after receive + scrap; refund outcome creates a customer refund.
+  Claim without goods on an uninvoiced order → billable drops by the claim with a "Returned on RMA-…" decision.
+  Complaints: create one, link it to a return; it is resolved when the return closes.
+- Expected GL: P12 (credit note), P13 (Dr inventory / Cr COGS), scrap as waste expense, refund Dr AR / Cr bank.
+
+## Phase S8 — Collections (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesCollectionsIT'`.
+- Migration: `V32__sales_collections.sql`.
+- Screens: Sales → Collections → Dunning levels: L1 from 1 day e-mail, L2 from 30 days letter + fee 5 000, L3 from
+  60 days letter + credit hold. *Run dunning now* → customers reach their level; L2 raises a draft late-fee invoice;
+  L3 puts the customer on credit hold; a customer with an open promise is skipped; a second run does not repeat.
+  Worklist: filter 90+. Promises: record, then receipts by the date make it kept, otherwise broken.
+- Expected GL: none until the late-fee invoice is posted (Dr AR / Cr 4290).
+
+## Phase S9 — Agreements, rebates, commissions, targets (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAgreementIT'`.
+- Migration: `V33__sales_agreements_rebates_commissions.sql`. Licence key `salesAgreements` (trial grants it).
+- Screens: Sales → Agreements & rebates → *New agreement* for a contractor: aggregate 100 t at 800 (list 1 000) →
+  *Activate*. New sales order for that customer → pick the agreement → line priced 800 (source agreement) → confirm
+  60 t → agreement shows released 60 / balance 40. A second order of 50 t → *Confirm* goes to approval ("exceeds the
+  agreement balance of 40"). Order for another customer with the agreement → refused.
+- Rebates: programme for the customer, monthly, quantity tiers ≥100 → 50/unit, ≥200 → 80/unit; post invoices of
+  120 t last month → *Accrue now* (or the 05:30 job) → accrual 6 000; more sales → only the difference posts; after the
+  month ends *Settle* → credit note to the customer, accrual settled.
+- Commissions & targets: rule "5 % of revenue" for a salesperson (user linked to an HR employee) whose customer is
+  invoiced 10 000 and credited 2 000 → *Generate statements* for the month → 400 → *Approve* (as someone else) → HR
+  payroll input "Sales commission COM-…" of 400. Target 16 000 for the month → achievement 50 %.
+- Expected GL: accrual Dr 4190 Sales Rebates / Cr 2360 Rebate Accrual (difference only); settlement credit note Dr 2360
+  / Cr AR; commission expense when payroll posts (Dr 6150 Sales Commissions).

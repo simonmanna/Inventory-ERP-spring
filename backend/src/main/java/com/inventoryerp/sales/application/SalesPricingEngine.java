@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Sales pricing policy (ADR-S011 phase S2, sales.md §6). Resolution order for one product line:
  * <ol>
+ *   <li>the sales agreement the document releases against ({@code agreementId}, active on the date, S9);</li>
  *   <li>customer-specific pricelist rules (rule bound to the customer or its category, any active pricelist);</li>
  *   <li>CRM customer price rules (ADR-S010, honoured as the {@code rule} tier);</li>
  *   <li>the customer's pricelist;</li>
@@ -32,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  * </ol>
  * Inside a pricelist the best rule wins by priority, then product &gt; category &gt; all, then the highest minimum
  * quantity. Rules can be bound to a unit, a minimum quantity, a delivery zone, a branch and dates. Every result carries
- * the margin floor (minimum price) that drives approvals. Contract prices (agreements, S9) will enter as tier 0.
+ * the margin floor (minimum price) that drives approvals.
  */
 @Service
 @Primary
@@ -50,7 +51,13 @@ public class SalesPricingEngine implements QuotationPricingPort {
 
     /** Pricing context of one line. */
     public record Context(String partnerId, String productId, BigDecimal quantity, String uomId, String siteId,
-            String branchId, String currencyCode, LocalDate on) {}
+            String branchId, String currencyCode, LocalDate on, String agreementId) {
+
+        public Context(String partnerId, String productId, BigDecimal quantity, String uomId, String siteId,
+                String branchId, String currencyCode, LocalDate on) {
+            this(partnerId, productId, quantity, uomId, siteId, branchId, currencyCode, on, null);
+        }
+    }
 
     /** Resolved price with provenance and margin information. */
     public record Result(String productId, BigDecimal quantity, BigDecimal listPrice, BigDecimal unitPrice,
@@ -141,6 +148,20 @@ public class SalesPricingEngine implements QuotationPricingPort {
         String name = str(product.get("name"));
         Floor floor = floor(c, product, partnerCat, cost, on);
 
+        // 0. agreement price
+        if (!blank(c.agreementId())) {
+            Map<String, Object> a = db.row("SELECT l.id, l.\"uomId\", l.\"unitPrice\", l.\"discountPercent\", a.name FROM"
+                    + " \"SalesAgreementLine\" l JOIN \"SalesAgreement\" a ON a.id = l.\"agreementId\" WHERE a.id = ? AND"
+                    + " a.\"organizationId\" = ? AND a.status = 'active' AND a.\"startDate\" <= ? AND a.\"endDate\" >= ? AND"
+                    + " l.\"productId\" = ?", c.agreementId(), org(), on, on, c.productId());
+            if (a != null) {
+                BigDecimal agreed = blank(str(a.get("uomId"))) ? BigDecimal.ONE
+                        : uoms.factorToBase(c.productId(), str(a.get("uomId")));
+                BigDecimal unit = dec(a.get("unitPrice")).multiply(factor).divide(agreed, 6, RoundingMode.HALF_UP);
+                return new Result(c.productId(), c.quantity(), list, unit, dec(a.get("discountPercent")), "agreement",
+                        null, str(a.get("name")), str(a.get("id")), taxId, incl, name, cost, floor.min, floor.price);
+            }
+        }
         // 1. customer-specific pricelist rules
         if (c.partnerId() != null) {
             Map<String, Object> item = bestItem(line, null, true);

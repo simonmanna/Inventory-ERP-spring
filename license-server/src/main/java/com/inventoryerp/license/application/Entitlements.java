@@ -24,7 +24,7 @@ public record Entitlements(Set<String> features, Integer maxDevices, Integer max
     public static final Set<String> KNOWN_FEATURES = Set.of(
             // sidebar sections, gated by OrganizationModule / FeatureFlag on the install
             "crm", "rental", "manufacturing", "repair", "communication", "assets", "taskBoard",
-            "accounting", "expense", "hr", "beverage", "fleet",
+            "accounting", "expense", "hr", "beverage", "fleet", "salesAgreements",
             // add-ons that are not sidebar sections
             "multiOrg", "androidPos", "apiAccess", "webhooks", "advancedReports", "backupOffsite");
 

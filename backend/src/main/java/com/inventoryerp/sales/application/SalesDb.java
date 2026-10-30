@@ -241,6 +241,18 @@ public class SalesDb {
         return MAPPER.writeValueAsString(v);
     }
 
+    /** A {@code jsonb} parameter of a value (insert / patch maps). */
+    static Object jsonb(Object v) {
+        try {
+            org.postgresql.util.PGobject o = new org.postgresql.util.PGobject();
+            o.setType("jsonb");
+            o.setValue(toJson(v));
+            return o;
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     static int parseInt(String v, int fallback) {
         try {
             return blank(v) ? fallback : Integer.parseInt(v);

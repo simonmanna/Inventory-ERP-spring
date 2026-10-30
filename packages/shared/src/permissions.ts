@@ -619,6 +619,15 @@ export const PERMISSIONS = {
     /// Collections worklist, dunning runs, promises to pay (ADR-S011 S8).
     collectionsRead: 'sales:collections:read',
     collectionsManage: 'sales:collections:manage',
+    /// Blanket / contract agreements (licence salesAgreements, ADR-S011 S9).
+    agreementRead: 'sales:agreement:read',
+    agreementManage: 'sales:agreement:manage',
+    /// Rebate programmes, accrual runs and settlement credit notes.
+    rebateManage: 'sales:rebate:manage',
+    commissionRead: 'sales:commission:read',
+    /// Commission rules, statements and their approval into payroll.
+    commissionManage: 'sales:commission:manage',
+    targetManage: 'sales:target:manage',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import { Copy, FileSignature, FileText, History, Pause, Play, Plus, Scissors, Trash2, Truck, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { useAuthStore } from '@/stores/auth.store';
+import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -45,6 +47,7 @@ export function SalesOrderPage() {
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
   const [customerRef, setCustomerRef] = useState('');
+  const [agreementId, setAgreementId] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'collect'>('delivery');
   const [deliveryAddress, setDeliveryAddress] = useState('');
@@ -57,19 +60,25 @@ export function SalesOrderPage() {
 
   useEffect(() => {
     if (o) {
-      setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? '');
+      setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? ''); setDeliveryMethod(o.deliveryMethod); setDeliveryAddress(o.deliveryAddress ?? '');
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
 
   const editable = isNew || (o?.status === 'draft' && has(P.orderWrite));
+  const agreements = useQuery({
+    queryKey: ['sales', 'agreements', 'active', partnerId],
+    queryFn: async () => (await api.get<Array<{ id: string; number: string; name: string }>>('/sales/agreements', { params: { partnerId, status: 'active' } })).data,
+    enabled: !!partnerId && editable && has(P.agreementRead), retry: false,
+  });
   const productOpts = useMemo(() => (products.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined })), [products.data]);
   const patchLine = (i: number, p: Partial<SalesOrderLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true); };
 
   const save = useSalesMutation(async () => {
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, deliveryMethod, deliveryAddress, notes,
+      agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
         productId: l.productId || undefined, description: l.description || undefined, quantity: n(l.quantity),
         unitPrice: l.id || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
@@ -156,6 +165,15 @@ export function SalesOrderPage() {
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{o?.partnerName}</p>}
             </Field>
             <Field label={tx('Customer PO')}><Input disabled={!editable} value={customerRef} onChange={(e) => { setCustomerRef(e.target.value); setDirty(true); }} /></Field>
+            {(agreementId || (agreements.data?.length ?? 0) > 0) && (
+              <Field label={tx('Agreement')}>
+                <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
+                  <option value="">{tx('None')}</option>
+                  {agreementId && !agreements.data?.some((a) => a.id === agreementId) && <option value={agreementId}>{o?.relations?.agreement?.number ?? agreementId}</option>}
+                  {(agreements.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.number} · {a.name}</option>)}
+                </select>
+              </Field>
+            )}
             <Field label={tx('Requested date')}><Input type="date" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
             <Field label={tx('Delivery method')}>
               <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={deliveryMethod} onChange={(e) => { setDeliveryMethod(e.target.value as 'delivery' | 'collect'); setDirty(true); }}>

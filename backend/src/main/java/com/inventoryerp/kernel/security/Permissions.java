@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (485 permissions). Constant name = GROUP__ACTION.
+ * exactly (491 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -404,6 +404,12 @@ public final class Permissions {
     public static final String SALES__COMPLAINT_WRITE = "sales:complaint:write";
     public static final String SALES__COLLECTIONS_READ = "sales:collections:read";
     public static final String SALES__COLLECTIONS_MANAGE = "sales:collections:manage";
+    public static final String SALES__AGREEMENT_READ = "sales:agreement:read";
+    public static final String SALES__AGREEMENT_MANAGE = "sales:agreement:manage";
+    public static final String SALES__REBATE_MANAGE = "sales:rebate:manage";
+    public static final String SALES__COMMISSION_READ = "sales:commission:read";
+    public static final String SALES__COMMISSION_MANAGE = "sales:commission:manage";
+    public static final String SALES__TARGET_MANAGE = "sales:target:manage";
     public static final String CREDIT__READ = "credit:read";
     public static final String CREDIT__MANAGE = "credit:manage";
     public static final String CREDIT__OVERRIDE = "credit:override";
@@ -892,6 +898,12 @@ public final class Permissions {
             "sales:complaint:write",
             "sales:collections:read",
             "sales:collections:manage",
+            "sales:agreement:read",
+            "sales:agreement:manage",
+            "sales:rebate:manage",
+            "sales:commission:read",
+            "sales:commission:manage",
+            "sales:target:manage",
             "credit:read",
             "credit:manage",
             "credit:override",

@@ -35,6 +35,7 @@ Tax treatment (VAT tax point on advances, deliveries) must be confirmed for Ugan
 | `sales_returns` | contra-income | **new** | optional: credit notes for returns |
 | `sales_rebates` | contra-income | **new** | rebate accrual (S9) |
 | `rebate_accrual` | liability | **new** | rebates owed (S9) |
+| `sales_commission_expense` | expense | **new** | commissions queued into payroll (S9; code 6150) |
 | `inventory_quarantine` | asset | **new** | returned stock under inspection (or location-based valuation) |
 | `stock_writeoff` | expense | **new** | scrapped returns |
 
@@ -109,6 +110,8 @@ Open questions for the accountant (block S6):
 3. Whether returns use `sales_returns` contra-income or reduce `sales_revenue`.
 4. Revenue recognition policy for credit contractors (at delivery vs at invoice).
 5. Treatment of weighbridge excess over ordered quantity (bill or absorb).
+6. (S9, Q-S9-1) Rebate settlement credit notes are issued without VAT; confirm whether a volume rebate must reduce
+   output VAT (tax credit note) and whether accruals should be net of VAT.
 
 ## 6. Worked example — contractor, 100 t aggregate, policy A (default)
 

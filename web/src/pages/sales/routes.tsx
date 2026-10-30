@@ -11,6 +11,7 @@ import { CreditPage } from './CreditPage';
 import { BackordersPage } from './BackordersPage';
 import { ComplaintsPage, ReturnDetailPage, ReturnsPage } from './ReturnsPages';
 import { CollectionsPage } from './CollectionsPage';
+import { AgreementsPage, CommissionsPage } from './AgreementsPages';
 
 const P = PERMISSIONS.sales;
 
@@ -24,6 +25,8 @@ export const salesRoutes = (
     <Route path="/sales/pricelists" element={<RequirePermission permission={P.pricingRead}><PricelistsPage /></RequirePermission>} />
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />
     <Route path="/sales/collections" element={<RequirePermission permission={P.collectionsRead}><CollectionsPage /></RequirePermission>} />
+    <Route path="/sales/agreements" element={<RequirePermission permission={P.agreementRead}><AgreementsPage /></RequirePermission>} />
+    <Route path="/sales/commissions" element={<RequirePermission permission={P.commissionRead}><CommissionsPage /></RequirePermission>} />
     <Route path="/sales/returns" element={<RequirePermission permission={P.returnRead}><ReturnsPage /></RequirePermission>} />
     <Route path="/sales/returns/:id" element={<RequirePermission permission={P.returnRead}><ReturnDetailPage /></RequirePermission>} />
     <Route path="/sales/complaints" element={<RequirePermission permission={P.complaintRead}><ComplaintsPage /></RequirePermission>} />

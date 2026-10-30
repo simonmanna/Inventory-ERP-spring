@@ -68,6 +68,7 @@ public class SalesOrderService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private SalesAgreementService agreements;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
@@ -189,8 +190,10 @@ public class SalesOrderService {
                 + " \"organizationId\" = ?", List.of(id, org()));
         long revisions = db.count("SELECT count(*) FROM \"SalesOrderRevision\" WHERE \"orderId\" = ? AND"
                 + " \"organizationId\" = ?", List.of(id, org()));
-        return Obj.of("quotation", quote, "deliveries", deliveries, "invoices", invoices, "changeRequests", changes,
-                "revisions", revisions);
+        Map<String, Object> agreement = o.get("agreementId") == null ? null : db.row("SELECT id, number, name, status"
+                + " FROM \"SalesAgreement\" WHERE id = ? AND \"organizationId\" = ?", o.get("agreementId"), org());
+        return Obj.of("quotation", quote, "agreement", agreement, "deliveries", deliveries, "invoices", invoices,
+                "changeRequests", changes, "revisions", revisions);
     }
 
     /** Revision snapshots, newest first. */
@@ -204,6 +207,11 @@ public class SalesOrderService {
 
     // ------------------------------------------------------------------ create / edit (draft)
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAgreements(SalesAgreementService agreements) {
+        this.agreements = agreements;
+    }
+
     /** New draft order (direct order flow). */
     @Transactional
     public Map<String, Object> create(Map<String, Object> in) {
@@ -214,13 +222,15 @@ public class SalesOrderService {
         requirePartner(partnerId);
         Map<String, Object> header = header(in, true);
         header.put("partnerId", partnerId);
+        agreement(header, partnerId);
         header.put("number", nextNumber());
         header.putIfAbsent("currencyCode", orgCurrency());
         header.putIfAbsent("ownerId", user());
         header.put("createdById", user());
         Map<String, Object> row = db.insert("SalesOrder", header);
         String id = str(row.get("id"));
-        writeLines(id, partnerId, LocalDate.now(), in.get("lines"), str(header.get("locationId")));
+        writeLines(id, partnerId, str(header.get("agreementId")), LocalDate.now(), in.get("lines"),
+                str(header.get("locationId")));
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"))));
         return get(id);
     }
@@ -265,7 +275,7 @@ public class SalesOrderService {
             m.put("quotationLineId", l.get("id"));
             lines.add(m);
         }
-        writeLines(id, str(q.get("partnerId")), LocalDate.now(), lines, str(header.get("locationId")));
+        writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")));
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"), "quotationId",
                 q.get("id"))));
         return get(id);
@@ -284,11 +294,18 @@ public class SalesOrderService {
             requirePartner(p);
             d.put("partnerId", p);
         }
+        if (d.containsKey("agreementId") || d.containsKey("partnerId") && o.get("agreementId") != null) {
+            if (!d.containsKey("agreementId")) {
+                d.put("agreementId", o.get("agreementId"));
+            }
+            agreement(d, str(d.getOrDefault("partnerId", o.get("partnerId"))));
+        }
         d.put("version", ((Number) o.get("version")).intValue() + 1);
         db.patch("SalesOrder", id, d, true);
         if (in.containsKey("lines")) {
-            writeLines(id, str(d.getOrDefault("partnerId", o.get("partnerId"))), LocalDate.now(), in.get("lines"),
-                    str(d.getOrDefault("locationId", o.get("locationId"))));
+            writeLines(id, str(d.getOrDefault("partnerId", o.get("partnerId"))), str(d.getOrDefault("agreementId",
+                    o.get("agreementId"))), LocalDate.now(), in.get("lines"), str(d.getOrDefault("locationId",
+                            o.get("locationId"))));
         }
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("fields", d.keySet(), "lines",
                 in.containsKey("lines"))));
@@ -314,7 +331,7 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         Map<String, Object> in = new LinkedHashMap<>();
         for (String k : List.of("partnerId", "contactId", "branchId", "locationId", "siteId", "deliveryAddress",
-                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms")) {
+                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId")) {
             in.put(k, o.get(k));
         }
         List<Map<String, Object>> lines = new ArrayList<>();
@@ -330,7 +347,7 @@ public class SalesOrderService {
     private Map<String, Object> header(Map<String, Object> in, boolean create) {
         Map<String, Object> d = new LinkedHashMap<>();
         for (String k : List.of("contactId", "branchId", "locationId", "siteId", "deliveryAddress", "paymentTermId",
-                "customerRef", "incoterm", "notes", "terms", "teamId")) {
+                "customerRef", "incoterm", "notes", "terms", "teamId", "agreementId")) {
             if (in.containsKey(k)) {
                 d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
             }
@@ -380,28 +397,42 @@ public class SalesOrderService {
         return d;
     }
 
+    /** Validate the header's agreement for {@code partnerId}; its payment term applies when none is given. */
+    private void agreement(Map<String, Object> header, String partnerId) {
+        String agreementId = str(header.get("agreementId"));
+        if (agreementId == null) {
+            return;
+        }
+        Map<String, Object> a = agreements.requireReleasable(agreementId, partnerId);
+        if (header.get("paymentTermId") == null && a.get("paymentTermId") != null) {
+            header.put("paymentTermId", a.get("paymentTermId"));
+        }
+    }
+
     /** Replace the lines of a draft order (price resolved for product lines without an explicit price). */
     @SuppressWarnings("unchecked")
-    void writeLines(String orderId, String partnerId, LocalDate on, Object raw, String defaultLocation) {
+    void writeLines(String orderId, String partnerId, String agreementId, LocalDate on, Object raw,
+            String defaultLocation) {
         db.update("DELETE FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?", orderId, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> l : lines) {
-            rows.add(line(partnerId, on, l, defaultLocation));
+            rows.add(line(partnerId, agreementId, on, l, defaultLocation));
         }
         insertLines(orderId, rows, 0);
         retotal(orderId);
     }
 
     /** Validated, priced line values (not yet taxed). */
-    Map<String, Object> line(String partnerId, LocalDate on, Map<String, Object> l, String defaultLocation) {
+    Map<String, Object> line(String partnerId, String agreementId, LocalDate on, Map<String, Object> l,
+            String defaultLocation) {
         String productId = blank(str(l.get("productId"))) ? null : str(l.get("productId"));
         BigDecimal qty = dec(l.get("quantity"));
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("quantity must be greater than 0");
         }
         QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, qty,
-                blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on);
+                blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on, agreementId);
         BigDecimal unit;
         BigDecimal disc;
         String source;
@@ -561,8 +592,10 @@ public class SalesOrderService {
     List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
         Map<String, Object> s = settings.settings();
         List<String> reasons = new ArrayList<>(engine.breaches(str(o.get("partnerId")), str(o.get("branchId")),
-                LocalDate.now(), lines.stream().filter(l -> !"quotation".equals(l.get("priceSource"))).toList(),
-                dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get("marginCheck"))));
+                LocalDate.now(), lines.stream().filter(l -> !Set.of("quotation", "agreement").contains(str(l.get(
+                        "priceSource")))).toList(), dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get(
+                                "marginCheck"))));
+        reasons.addAll(agreements.releaseReasons(o, lines));
         BigDecimal amount = dec(s.get("orderApprovalAmount"));
         if (amount.signum() > 0 && dec(o.get("total")).compareTo(amount) > 0) {
             reasons.add("Total exceeds the approval amount of " + amount.stripTrailingZeros().toPlainString());

@@ -548,7 +548,13 @@
     "complaintRead": "sales:complaint:read",
     "complaintWrite": "sales:complaint:write",
     "collectionsRead": "sales:collections:read",
-    "collectionsManage": "sales:collections:manage"
+    "collectionsManage": "sales:collections:manage",
+    "agreementRead": "sales:agreement:read",
+    "agreementManage": "sales:agreement:manage",
+    "rebateManage": "sales:rebate:manage",
+    "commissionRead": "sales:commission:read",
+    "commissionManage": "sales:commission:manage",
+    "targetManage": "sales:target:manage"
   },
   "credit": {
     "read": "credit:read",
