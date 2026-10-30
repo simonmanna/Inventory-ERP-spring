@@ -44,7 +44,10 @@ export interface BudgetVsActualRow {
   variancePct: string | null;
   utilizationPct: string | null;
   favorable: boolean;
-  months: { period: string; budget: string; actual: string }[];
+  /** Open purchase commitments (memo) and what is left after actuals and commitments. */
+  committed?: string;
+  available?: string;
+  months: { period: string; budget: string; actual: string; committed?: string }[];
 }
 
 export interface BudgetVsActual {
@@ -52,7 +55,7 @@ export interface BudgetVsActual {
   to: string;
   months: string[];
   rows: BudgetVsActualRow[];
-  totals: Record<'income' | 'expense' | 'net', { budget: string; actual: string; variance: string }>;
+  totals: Record<'income' | 'expense' | 'net', { budget: string; actual: string; variance: string; committed?: string; available?: string }>;
 }
 
 export function useBudgets(params: { page?: number; pageSize?: number; search?: string; status?: string }) {

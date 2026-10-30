@@ -101,12 +101,14 @@ public class PurchaseOrdersService {
     private final UomConversionService units;
     private final SupplierService suppliers;
     private final ProcurementPolicyService policies;
+    private final PurchaseCommitments commitments;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
-            SupplierService suppliers, ProcurementPolicyService policies) {
+            SupplierService suppliers, ProcurementPolicyService policies, PurchaseCommitments commitments) {
         this.jdbc = jdbc;
+        this.commitments = commitments;
         this.suppliers = suppliers;
         this.policies = policies;
         this.units = units;
@@ -195,6 +197,15 @@ public class PurchaseOrdersService {
             }
         }
 
+        // W5 budget control (policy budget.control; off by default).
+        List<PurchaseCommitments.Draft> drafts = new ArrayList<>();
+        for (int i = 0; i < dto.lines().size(); i++) {
+            LineInput ln = dto.lines().get(i);
+            drafts.add(new PurchaseCommitments.Draft("new-" + i, ln.productId(), ln.quantity(), ln.unitPrice(), null));
+        }
+        List<String> budgetWarnings = commitments.checkBudget(null, dto.branchId(),
+                dto.currencyCode() != null ? dto.currencyCode() : "USD", dto.exchangeRate(), drafts);
+
         // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : dto.lines()) {
@@ -239,6 +250,7 @@ public class PurchaseOrdersService {
                 jdbc.sql("UPDATE \"PurchaseOrder\" SET status = 'active', \"updatedAt\" = " + NOW + " WHERE id = ?"
                         + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, orgId).update();
                 created.put("status", "active");
+                commitments.sync(id);
             } else {
                 audit.recordInTx(AuditInput.of("PurchaseOrder", id, "create", null, Obj.of("orderNumber", orderNumber,
                         "totalAmount", JsNumbers.js(total), "approvalRequestId", approvalResult.get("id"),
@@ -254,8 +266,10 @@ public class PurchaseOrdersService {
             suppliers.recordPrice(dto.partnerId(), ln.productId(), ln.unitOfMeasureId(), (String) order.get("currencyCode"),
                     ln.unitPrice(), ln.quantity(), null, null, "purchase_order", (String) order.get("id"));
         }
-        if (!eligibility.warnings().isEmpty()) {
-            order.put("warnings", eligibility.warnings());
+        if (!eligibility.warnings().isEmpty() || !budgetWarnings.isEmpty()) {
+            List<String> warnings = new ArrayList<>(eligibility.warnings());
+            warnings.addAll(budgetWarnings);
+            order.put("warnings", warnings);
         }
         events.publish("purchase_order.created", defined("organizationId", orgId, "orderId", order.get("id"),
                 "orderNumber", orderNumber, "partnerId", dto.partnerId()));
@@ -442,6 +456,7 @@ public class PurchaseOrdersService {
         if (updatedPo == 0) {
             throw ApiException.badRequest("Purchase order was modified by another user. Please refresh and try again.");
         }
+        commitments.sync(purchaseOrderId);
         return newStatus;
     }
 
@@ -928,6 +943,7 @@ public class PurchaseOrdersService {
                 throw ApiException.badRequest(
                         "Purchase order was modified by another user. Please refresh and try again.");
             }
+            commitments.sync(id);
             Map<String, Object> cancelled = SqlRows.one(PurchaseOrder.class, jdbc.sql("SELECT * FROM \"PurchaseOrder\""
                     + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, orgId));
             audit.recordInTx(AuditInput.of("PurchaseOrder", id, "cancel", Obj.of("status", po.get("status")),
@@ -1022,6 +1038,7 @@ public class PurchaseOrdersService {
         if (updated == null) {
             throw new IllegalStateException("No record was found for an update.");
         }
+        commitments.sync(id);
         audit.record(AuditInput.of("PurchaseOrder", id, "approve", null, Obj.of("status", "active")));
         events.publish("purchase_order.activated", Obj.of("organizationId", org(), "orderId", id, "orderNumber",
                 po.get("orderNumber")));
@@ -1040,11 +1057,17 @@ public class PurchaseOrdersService {
         if (updated == null) {
             return false;
         }
+        commitments.sync(id);
         audit.record(AuditInput.of("PurchaseOrder", id, "approve", Obj.of("status", "draft"), Obj.of("status", "active",
                 "via", "approval")));
         events.publish("purchase_order.approved", Obj.of("organizationId", org(), "orderId", id, "orderNumber",
                 updated.get("orderNumber"), "approverId", approverId == null ? "" : approverId));
         return true;
+    }
+
+    /** Re-state an order's budget commitments after another service changed its quantities (GRN reverse). */
+    void commitmentsChanged(String purchaseOrderId) {
+        commitments.sync(purchaseOrderId);
     }
 
     private Map<String, Object> requireOwned(String id) {

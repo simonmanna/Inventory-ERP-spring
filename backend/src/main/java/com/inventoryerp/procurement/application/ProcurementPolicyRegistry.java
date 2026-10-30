@@ -49,6 +49,12 @@ public final class ProcurementPolicyRegistry {
     public static final String SUPPLIER_CERTIFICATES_REQUIRED = "supplier.certificatesRequired";
     public static final String ROUTE_REQUISITION_REQUIRED_ABOVE = "route.requisitionRequiredAbove";
     public static final String RECEIVING_OVER_RECEIPT_TOLERANCE = "receiving.overReceiptTolerancePct";
+    public static final String BUDGET_CONTROL = "budget.control";
+    public static final String MATCH_MODE = "match.mode";
+    public static final String MATCH_PRICE_TOLERANCE = "match.priceTolerancePct";
+    public static final String MATCH_QTY_TOLERANCE = "match.qtyTolerancePct";
+    public static final String BILL_DUPLICATE_CHECK = "bill.duplicateCheck";
+    public static final String CHANGE_REAPPROVAL_ABOVE = "change.reapprovalAbovePct";
 
     static {
         def(new Definition(SUPPLIER_APPROVED_REQUIRED, "supplier", "Approved supplier required",
@@ -68,6 +74,30 @@ public final class ProcurementPolicyRegistry {
                 "How much more than ordered may be received on a line, as a percentage of the ordered quantity"
                         + " (0 = never over-receive). Typical for bulk material weighed at the gate.",
                 Kind.NUMBER, F.numberNode(0), null, 0d, 100d));
+        def(new Definition(BUDGET_CONTROL, "budget", "Budget control",
+                "Check approved budgets when an order is raised: off, warn (the order shows the overrun), block, or"
+                        + " block_with_override (only a user with budget:override may raise it). Available budget ="
+                        + " budget − posted actuals − open purchase commitments.",
+                Kind.ENUM, F.stringNode("off"), List.of("off", "warn", "block", "block_with_override"), null, null));
+        def(new Definition(MATCH_MODE, "matching", "Bill matching",
+                "three_way compares the bill with what was received; two_way compares it with what was ordered (for"
+                        + " services and direct deliveries). Empty = the organisation-wide match setting.",
+                Kind.ENUM, F.stringNode("three_way"), List.of("three_way", "two_way"), null, null));
+        def(new Definition(MATCH_PRICE_TOLERANCE, "matching", "Price tolerance (%)",
+                "How far a billed unit price may differ from the order price before the bill line is held. Empty ="
+                        + " the organisation-wide match setting (2 %).",
+                Kind.OPTIONAL_NUMBER, F.nullNode(), null, 0d, 100d));
+        def(new Definition(MATCH_QTY_TOLERANCE, "matching", "Quantity tolerance (%)",
+                "How much more than received (or ordered, in two-way mode) may be billed before the line is held.",
+                Kind.NUMBER, F.numberNode(0), null, 0d, 100d));
+        def(new Definition(BILL_DUPLICATE_CHECK, "matching", "Duplicate bill check",
+                "Before a supplier bill is posted, look for another bill from the same supplier with the same"
+                        + " reference, or the same amount within 7 days: off, warn (posted, flagged) or block.",
+                Kind.ENUM, F.stringNode("off"), List.of("off", "warn", "block"), null, null));
+        def(new Definition(CHANGE_REAPPROVAL_ABOVE, "change", "Re-approval for order changes above (%)",
+                "An order change that raises the order total by more than this percentage needs a second person"
+                        + " (po_change:approve) before it applies. 0 = every increase; decreases never need approval.",
+                Kind.NUMBER, F.numberNode(0), null, 0d, 1000d));
     }
 
     private ProcurementPolicyRegistry() {}

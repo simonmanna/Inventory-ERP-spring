@@ -512,6 +512,7 @@ public class GoodsReceiptsService {
                                         + " AND \"deletedAt\" IS NULL")
                                 .params(status, poId, orgId).update();
                     }
+                    purchaseOrders.commitmentsChanged((String) poId);
                 }
             }
             audit.recordInTx(AuditInput.of("GoodsReceiptNote", id, "update", null, Obj.of("status", "reversed",

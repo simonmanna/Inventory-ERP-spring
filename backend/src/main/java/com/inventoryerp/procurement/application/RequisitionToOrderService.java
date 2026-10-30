@@ -58,9 +58,12 @@ public class RequisitionToOrderService {
     private final EventBus events;
     private final TransactionTemplate tx;
 
+    private final PurchaseCommitments commitments;
+
     public RequisitionToOrderService(JdbcClient jdbc, PurchaseOrdersService orders, SupplierService suppliers,
-            AuditService audit, EventBus events, PlatformTransactionManager txm) {
+            AuditService audit, EventBus events, PlatformTransactionManager txm, PurchaseCommitments commitments) {
         this.jdbc = jdbc;
+        this.commitments = commitments;
         this.orders = orders;
         this.suppliers = suppliers;
         this.audit = audit;
@@ -216,6 +219,7 @@ public class RequisitionToOrderService {
                     }
                 }
             }
+            commitments.sync((String) po.get("id"));
             audit.recordInTx(AuditInput.of("PurchaseOrder", (String) po.get("id"), "update", null,
                     Obj.of("fromRequestLines", ids)));
             return po;
@@ -305,6 +309,7 @@ public class RequisitionToOrderService {
             jdbc.sql("UPDATE \"PurchaseOrder\" SET status = ?::\"PurchaseOrderStatus\", \"closedAt\" = " + NOW
                     + ", \"closedById\" = ?, \"closeReason\" = ?, version = version + 1, \"updatedAt\" = " + NOW
                     + " WHERE id = ? AND \"organizationId\" = ?").params(to, user(), reason.trim(), poId, orgId).update();
+            commitments.sync(poId);
             audit.recordInTx(AuditInput.of("PurchaseOrder", poId, "update", Obj.of("status", po.get("status")),
                     Obj.of("status", to, "reason", reason.trim())));
         });

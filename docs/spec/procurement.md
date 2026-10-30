@@ -474,3 +474,58 @@ daily procurement job. Events: `rfq.sent`, `rfq.awarded`, `agreement.activated`,
 `purchase_order.closed`. Tests: `SourcingIT`. Web: RFQ list and detail (supplier invitations, quote entry, side-by-side
 comparison, award per line, create orders), "Request quotations" on the sourcing workbench, purchase agreement list and
 detail (release with remaining-quantity bars, hold / resume / terminate).
+
+### Built — wave 5 (enterprise controls; `V30__procurement_controls.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/commitments?sourceType&sourceId&accountId&status&page&limit` (open purchase commitments per line, `{data, meta}`) | `commitment:read` |
+| GET | `/procurement/purchase-orders/{id}/changes` (change requests, current revision, revision snapshots) | `purchase_order:read` |
+| POST | `/procurement/purchase-orders/{id}/changes` (Idempotency-Key required; `reason`, line `quantity` / `unitPrice`, `expectedDeliveryDate`) | `po_change:request` |
+| GET | `/procurement/po-changes/pending` | `po_change:approve` |
+| POST | `/procurement/po-changes/{id}/approve` (Idempotency-Key required; not the requester) · `/{id}/reject` (note) | `po_change:approve` |
+| POST | `/procurement/po-changes/{id}/cancel` (requester withdraws) | `po_change:request` |
+| GET | `/procurement/bills/{billId}/duplicates` | `expense:read` |
+| GET | `/procurement/claims?status&partnerId&purchaseOrderId&page&limit` · `/claims/{id}` | `supplier_claim:read` |
+| POST | `/procurement/claims` · `/{id}/submit` · `/{id}/accept` (agreed `amount`) · `/{id}/reject` (`response`) · `/{id}/cancel` | `supplier_claim:manage` |
+| POST | `/procurement/claims/{id}/settle` (Idempotency-Key required; creates the draft outbound debit note) | `supplier_claim:manage` |
+
+**Commitments** (accounting `CommitmentService`, memo table `Commitment`, never GL): an order commits open
+quantity × unit price × functional rate per line once it is approved (`active`); receipts relieve it, cancel /
+short-close release it, a goods-receipt reversal re-commits it, and an applied change re-states it. Budget account per
+line: the stock account for stocked products (stock accounts cannot carry budgets, so stock purchases are not budget
+controlled), otherwise the category expense account or `default_expense`. Cost centre / project come from the sourcing
+request line. `GET /budgets/{id}/vs-actual` rows and the expense total gain `committed` and `available` (additive).
+
+**Policies** (all default to the previous behaviour):
+- `budget.control`: `off` / `warn` / `block` / `block_with_override` (`budget:override`). It runs when an order is
+  raised. Available = budget − posted actuals − other open commitments. Warnings are returned in the order's
+  `warnings`.
+- `match.mode` (`three_way` / `two_way`), `match.priceTolerancePct` (empty = the `procurement.match_tolerance` flag) and
+  `match.qtyTolerancePct` feed `ThreeWayMatchService` through the kernel `MatchToleranceProvider` SPI.
+- `bill.duplicateCheck`: `off` / `warn` / `block`. A duplicate is the same supplier with the same reference (ignoring
+  case and spaces), or the same total within 7 days. `block` answers 409. `warn` adds `warnings` to the posted bill
+  and emits `bill.duplicate_suspected`. It is wired through the invoicing `VendorBillPostGuard` SPI.
+- `change.reapprovalAbovePct`: a change that raises the total beyond this percentage waits for `po_change:approve`.
+  With 0, every increase waits. Decreases apply at once.
+
+**Order changes**:
+- One open change per order.
+- Quantity cannot go below received + short-closed.
+- A line with receipts keeps its price; raise a price claim instead.
+- Lines released from an agreement change on the agreement.
+- Applying a change writes revision 0 (the original) once and then revision n. It updates the request lines' ordered
+  quantity, clears the supplier confirmation and emits `purchase_order.changed`.
+
+**Supplier claims**: shortage, damage, quality, price, late delivery or other. They can be linked to an order, receipt
+or bill of the same supplier, and are settled by a draft outbound debit note that posts through the normal flow. A
+bill priced below the vouchered receipt is settled the same way, with a price claim.
+
+Tests: `ProcurementControlsIT`. Web:
+- An order-changes card on the PO page: request dialog, approve or reject, and a revision diff.
+- An order changes inbox, a supplier claims page and a budget commitments register.
+- Committed and available columns on budget versus actual.
+- New policy groups on the purchasing policies page.
+
+Not built in this wave: the `goods_in_transit` invoice-before-receipt mode. It is deferred to the landed-cost work,
+because it needs a transit-stock account design.

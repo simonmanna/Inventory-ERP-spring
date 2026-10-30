@@ -7,6 +7,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PoLifecycleCard } from './s2p/PoLifecycleCard';
+import { PoChangesCard } from './s2p/PoChangesCard';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -184,6 +185,7 @@ export function PurchaseOrderDetailPage() {
       </div>
 
       {id && <PoLifecycleCard id={id} />}
+      {id && <PoChangesCard id={id} />}
 
       {/* Main content */}
       <div className="grid gap-4 md:grid-cols-3">

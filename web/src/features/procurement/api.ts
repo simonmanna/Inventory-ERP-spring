@@ -479,3 +479,150 @@ export const agreementApi = {
   release: (id: string, body: { warehouseId: string; expectedDeliveryDate?: string; lines: Array<{ agreementLineId: string; quantity: number }> }) =>
     idempotentPost<{ id: string; orderNumber: string }>(`/procurement/agreements/${id}/releases`, body),
 };
+
+// ------------------------------------------------------------------ wave 5: controls
+
+export type ChangeStatus = 'pending' | 'approved' | 'applied' | 'rejected' | 'cancelled';
+
+export interface PoChange {
+  id: string;
+  purchaseOrderId: string;
+  changeNumber: number;
+  status: ChangeStatus;
+  reason: string;
+  changes: { expectedDeliveryDate: string | null; lines: Array<{ lineId: string; quantity: string | null; unitPrice: string | null }> };
+  oldTotal: string;
+  newTotal: string;
+  needsApproval: boolean;
+  requestedBy: string | null;
+  decidedBy: string | null;
+  decisionNote: string | null;
+  createdAt: string;
+  orderNumber?: string;
+  partnerName?: string;
+}
+
+export interface PoRevisionSnapshot {
+  orderNumber: string;
+  expectedDeliveryDate: string | null;
+  totalAmount: string;
+  lines: Array<{ id: string; description: string; quantity: string; unitPrice: string; subtotal: string }>;
+}
+
+export interface PoChangeHistory {
+  purchaseOrderId: string;
+  revision: number;
+  changes: PoChange[];
+  revisions: Array<{ id: string; revision: number; changeRequestId: string | null; createdAt: string; snapshot: PoRevisionSnapshot }>;
+}
+
+export function usePoChanges(poId?: string) {
+  return useQuery({ queryKey: ['po-changes', poId], enabled: !!poId, queryFn: async () => (await api.get<PoChangeHistory>(`/procurement/purchase-orders/${poId}/changes`)).data });
+}
+
+export function usePendingPoChanges(enabled = true) {
+  return useQuery({ queryKey: ['po-changes', 'pending'], enabled, queryFn: async () => (await api.get<PoChange[]>('/procurement/po-changes/pending')).data });
+}
+
+export function usePoChangeMutation<TBody = unknown>(fn: (body: TBody) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['po-changes'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['purchase-order'] });
+    },
+  });
+}
+
+export const poChangeApi = {
+  request: (poId: string, body: { reason: string; expectedDeliveryDate?: string; lines?: Array<{ lineId: string; quantity?: number; unitPrice?: number }> }) =>
+    idempotentPost<PoChange>(`/procurement/purchase-orders/${poId}/changes`, body),
+  approve: (id: string, note?: string) => idempotentPost<PoChange>(`/procurement/po-changes/${id}/approve`, { note }),
+  reject: (id: string, note: string) => api.post<PoChange>(`/procurement/po-changes/${id}/reject`, { note }).then((r) => r.data),
+  cancel: (id: string) => api.post<PoChange>(`/procurement/po-changes/${id}/cancel`).then((r) => r.data),
+};
+
+export type ClaimStatus = 'open' | 'submitted' | 'accepted' | 'rejected' | 'settled' | 'cancelled';
+export type ClaimType = 'shortage' | 'damage' | 'quality' | 'price' | 'late_delivery' | 'other';
+
+export interface SupplierClaim {
+  id: string;
+  claimNumber: string;
+  partnerId: string;
+  partnerName: string | null;
+  purchaseOrderId: string | null;
+  orderNumber: string | null;
+  goodsReceiptId: string | null;
+  receiptNumber: string | null;
+  vendorBillId: string | null;
+  billNumber: string | null;
+  type: ClaimType;
+  status: ClaimStatus;
+  amount: string;
+  settledAmount: string;
+  description: string;
+  supplierResponse: string | null;
+  debitNoteId: string | null;
+  debitNoteNumber: string | null;
+  debitNoteStatus: string | null;
+  createdAt: string;
+}
+
+export const CLAIM_STATUS_TONE: Record<ClaimStatus, 'neutral' | 'info' | 'success' | 'warning' | 'danger'> = {
+  open: 'warning',
+  submitted: 'info',
+  accepted: 'info',
+  rejected: 'danger',
+  settled: 'success',
+  cancelled: 'neutral',
+};
+
+export function useClaims(params: { status?: string; partnerId?: string; purchaseOrderId?: string; page?: number }) {
+  return useQuery({
+    queryKey: ['supplier-claims', params],
+    queryFn: async () => (await api.get<{ data: SupplierClaim[]; meta: { total: number; page: number; pageSize: number } }>('/procurement/claims', {
+      params: { status: params.status || undefined, partnerId: params.partnerId || undefined, purchaseOrderId: params.purchaseOrderId || undefined, page: params.page ?? 1 },
+    })).data,
+  });
+}
+
+export function useClaimMutation<TBody = unknown>(fn: (body: TBody) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries({ queryKey: ['supplier-claims'] }) });
+}
+
+export const claimApi = {
+  create: (body: { partnerId: string; type: ClaimType; amount: number; description: string; purchaseOrderId?: string; goodsReceiptId?: string; vendorBillId?: string }) =>
+    api.post<SupplierClaim>('/procurement/claims', body).then((r) => r.data),
+  action: (id: string, action: 'submit' | 'cancel') => api.post<SupplierClaim>(`/procurement/claims/${id}/${action}`).then((r) => r.data),
+  accept: (id: string, amount?: number, response?: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/accept`, { amount, response }).then((r) => r.data),
+  reject: (id: string, response: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/reject`, { response }).then((r) => r.data),
+  settle: (id: string) => idempotentPost<SupplierClaim>(`/procurement/claims/${id}/settle`, {}),
+};
+
+export interface CommitmentRow {
+  id: string;
+  sourceType: string;
+  sourceId: string;
+  sourceNumber: string | null;
+  accountId: string;
+  accountCode: string | null;
+  accountName: string | null;
+  branchId: string | null;
+  period: string;
+  amount: string;
+  openAmount: string;
+  status: 'open' | 'closed';
+  updatedAt: string;
+}
+
+export function useCommitments(params: { status?: string; page?: number }) {
+  return useQuery({
+    queryKey: ['commitments', params],
+    queryFn: async () => (await api.get<{ data: CommitmentRow[]; meta: { total: number; page: number; pageSize: number } }>('/procurement/commitments', {
+      params: { status: params.status || undefined, page: params.page ?? 1 },
+    })).data,
+  });
+}

@@ -33,9 +33,13 @@ public class ThreeWayMatchService {
     private final JdbcClient jdbc;
     private final EventBus events;
 
-    public ThreeWayMatchService(JdbcClient jdbc, EventBus events) {
+    private final org.springframework.beans.factory.ObjectProvider<MatchToleranceProvider> tolerances;
+
+    public ThreeWayMatchService(JdbcClient jdbc, EventBus events,
+            org.springframework.beans.factory.ObjectProvider<MatchToleranceProvider> tolerances) {
         this.jdbc = jdbc;
         this.events = events;
+        this.tolerances = tolerances;
     }
 
     private static BigDecimal n(Object v) {
@@ -97,7 +101,12 @@ public class ThreeWayMatchService {
                 productlessOrdered = productlessOrdered.add(n(l.get("quantity")).multiply(n(l.get("unitPrice"))));
             }
         }
-        BigDecimal tolerancePct = BigDecimal.valueOf(priceTolerancePct(org));
+        MatchToleranceProvider provider = tolerances.getIfAvailable();
+        MatchToleranceProvider.Tolerance rule = provider == null ? null : provider.forOrder(purchaseOrderId);
+        BigDecimal tolerancePct = rule != null && rule.priceFraction() != null ? rule.priceFraction()
+                : BigDecimal.valueOf(priceTolerancePct(org));
+        BigDecimal qtyFraction = rule != null && rule.qtyFraction() != null ? rule.qtyFraction() : BigDecimal.ZERO;
+        boolean twoWay = rule != null && "two_way".equals(rule.mode());
         List<Map<String, Object>> results = new ArrayList<>();
         for (Map<String, Object> line : lines) {
             BigDecimal receivedQty = n(jdbc.sql("SELECT COALESCE(SUM(l.quantity), 0) FROM \"GoodsReceiptLine\" l JOIN"
@@ -133,20 +142,23 @@ public class ThreeWayMatchService {
                 billedQty = unitPrice.signum() > 0 ? billedAmount.divide(unitPrice, 6, RoundingMode.HALF_UP)
                         : BigDecimal.ZERO;
             }
-            BigDecimal qtyVariance = billedQty.subtract(receivedQty);
+            // Two-way matching (services, direct deliveries) compares the bill with the order, not the receipt.
+            BigDecimal referenceQty = twoWay ? orderedQty : receivedQty;
+            BigDecimal qtyVariance = billedQty.subtract(referenceQty);
             BigDecimal billedUnitPrice = billedQty.signum() > 0 ? billedAmount.divide(billedQty, 6, RoundingMode.HALF_UP)
                     : unitPrice;
             BigDecimal priceVariance = billedUnitPrice.subtract(unitPrice);
             BigDecimal priceLimit = unitPrice.multiply(tolerancePct);
-            boolean qtyOk = qtyVariance.abs().compareTo(EPS) < 0;
+            boolean qtyOk = qtyVariance.abs().compareTo(EPS) < 0 || qtyVariance.signum() > 0
+                    && qtyVariance.compareTo(referenceQty.multiply(qtyFraction)) <= 0;
             boolean priceOk = priceVariance.abs().compareTo(priceLimit) <= 0 || priceVariance.abs().compareTo(EPS) < 0;
             boolean exceeded = !qtyOk || !priceOk;
             String status;
-            if (receivedQty.signum() == 0 && billedQty.signum() == 0) {
+            if (referenceQty.signum() == 0 && billedQty.signum() == 0 || twoWay && billedQty.signum() == 0) {
                 status = "pending";
             } else if (qtyOk && priceOk) {
                 status = "matched";
-            } else if (billedQty.signum() == 0 || billedQty.compareTo(receivedQty) < 0 && priceOk) {
+            } else if (billedQty.signum() == 0 || billedQty.compareTo(referenceQty) < 0 && priceOk) {
                 // Received but not (fully) billed yet: still in progress, not an exception.
                 status = "partial";
                 exceeded = false;

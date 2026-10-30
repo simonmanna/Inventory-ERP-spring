@@ -67,6 +67,11 @@ public final class DomainEvents {
     public static final String AGREEMENT_ACTIVATED = "agreement.activated";
     public static final String AGREEMENT_EXHAUSTED = "agreement.exhausted";
     public static final String PURCHASE_ORDER_CLOSED = "purchase_order.closed";
+    public static final String PURCHASE_ORDER_CHANGED = "purchase_order.changed";
+    public static final String BUDGET_EXCEEDED = "budget.exceeded";
+    public static final String SUPPLIER_CLAIM_RAISED = "supplier_claim.raised";
+    public static final String SUPPLIER_CLAIM_SETTLED = "supplier_claim.settled";
+    public static final String BILL_DUPLICATE_SUSPECTED = "bill.duplicate_suspected";
     public static final String DOCUMENT_CREATED = "document.created";
     public static final String DOCUMENT_SUBMITTED = "document.submitted";
     public static final String DOCUMENT_APPROVED = "document.approved";

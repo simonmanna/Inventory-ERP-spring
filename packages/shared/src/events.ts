@@ -76,6 +76,11 @@ export const EVENTS = {
   AgreementActivated: 'agreement.activated',
   AgreementExhausted: 'agreement.exhausted',
   PurchaseOrderClosed: 'purchase_order.closed',
+  PurchaseOrderChanged: 'purchase_order.changed',
+  BudgetExceeded: 'budget.exceeded',
+  SupplierClaimRaised: 'supplier_claim.raised',
+  SupplierClaimSettled: 'supplier_claim.settled',
+  BillDuplicateSuspected: 'bill.duplicate_suspected',
   // DMS — generic document lifecycle (Phase 2 engine facts; one event per engine
   // action so posting/reversal/notification hooks can subscribe generically).
   DocumentCreated: 'document.created',
@@ -389,6 +394,11 @@ export interface DomainEventMap {
   'agreement.activated': { organizationId: string; agreementId: string };
   'agreement.exhausted': { organizationId: string; agreementId: string };
   'purchase_order.closed': { organizationId: string; orderId: string; reason: string };
+  'purchase_order.changed': { organizationId: string; orderId: string; changeRequestId: string; revision: number };
+  'budget.exceeded': { organizationId: string; sourceType: string; sourceId: string; accountId: string; overBy: string; mode: string };
+  'supplier_claim.raised': { organizationId: string; claimId: string; partnerId: string; amount: string };
+  'supplier_claim.settled': { organizationId: string; claimId: string; debitNoteId: string };
+  'bill.duplicate_suspected': { organizationId: string; billId: string; duplicateOfIds: string[] };
   // DMS — generic document lifecycle facts (Phase 2 engine). Every engine action
   // emits `document.<action>`; subscribers (posting/reversal/notification hooks)
   // filter on `action`/`documentTypeCode` as needed.
@@ -764,6 +774,9 @@ export const EVENT_SUBJECT: Partial<Record<DomainEventName, { entityType: string
   'supplier.status_changed': { entityType: 'supplier', idField: 'partnerId' },
   'supplier.bank_account_added': { entityType: 'supplier', idField: 'partnerId' },
   'supplier.bank_account_verified': { entityType: 'supplier', idField: 'partnerId' },
+  'purchase_order.changed': { entityType: 'purchase_order', idField: 'orderId' },
+  'supplier_claim.raised': { entityType: 'supplier_claim', idField: 'claimId' },
+  'supplier_claim.settled': { entityType: 'supplier_claim', idField: 'claimId' },
   'order.confirmed': { entityType: 'order', idField: 'orderId' },
   'order.fulfillment_started': { entityType: 'order', idField: 'orderId' },
   'order.completed': { entityType: 'order', idField: 'orderId' },

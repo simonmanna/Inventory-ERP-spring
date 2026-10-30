@@ -132,6 +132,18 @@ export const PERMISSIONS = {
     manage: 'purchase_agreement:manage',
     approve: 'purchase_agreement:approve',
   },
+  budgetControl: {
+    override: 'budget:override',
+    commitments: 'commitment:read',
+  },
+  poChange: {
+    request: 'po_change:request',
+    approve: 'po_change:approve',
+  },
+  supplierClaim: {
+    read: 'supplier_claim:read',
+    manage: 'supplier_claim:manage',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',

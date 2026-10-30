@@ -25,6 +25,7 @@ import { OpenOrdersPage } from './s2p/OpenOrdersPage';
 import { PurchaseOrderPrintPage } from './s2p/PurchaseOrderPrintPage';
 import { RfqDetailPage, RfqListPage } from './s2p/RfqPages';
 import { AgreementDetailPage, AgreementsPage } from './s2p/AgreementPages';
+import { CommitmentsPage, PoChangeApprovalsPage, SupplierClaimsPage } from './s2p/ControlsPages';
 
 const P = PERMISSIONS.procurement;
 
@@ -61,6 +62,9 @@ export const procurementRoutes = (
     <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.rfq.read}><RfqDetailPage /></RequirePermission>} />
     <Route path="/procurement/agreements" element={<RequirePermission permission={PERMISSIONS.purchaseAgreement.read}><AgreementsPage /></RequirePermission>} />
     <Route path="/procurement/agreements/:id" element={<RequirePermission permission={PERMISSIONS.purchaseAgreement.read}><AgreementDetailPage /></RequirePermission>} />
+    <Route path="/procurement/claims" element={<RequirePermission permission={PERMISSIONS.supplierClaim.read}><SupplierClaimsPage /></RequirePermission>} />
+    <Route path="/procurement/po-changes" element={<RequirePermission permission={PERMISSIONS.poChange.approve}><PoChangeApprovalsPage /></RequirePermission>} />
+    <Route path="/procurement/commitments" element={<RequirePermission permission={PERMISSIONS.budgetControl.commitments}><CommitmentsPage /></RequirePermission>} />
     <Route path="/procurement/policies" element={<RequirePermission permission={PERMISSIONS.procurementPolicy.read}><PurchasingPoliciesPage /></RequirePermission>} />
   </>
 );

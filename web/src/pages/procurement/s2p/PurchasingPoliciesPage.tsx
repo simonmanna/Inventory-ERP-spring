@@ -24,6 +24,7 @@ const GROUP_LABEL: Record<string, string> = {
   receiving: tx('Receiving'),
   matching: tx('Invoice matching'),
   budget: tx('Budget control'),
+  change: tx('Order changes'),
   landed: tx('Landed cost'),
 };
 
@@ -134,7 +135,7 @@ export function PurchasingPoliciesPage() {
     <div className="space-y-6 p-6">
       <ListPageHeader
         title={tx('Purchasing policies')}
-        description={tx('Tune the purchasing workflow without code: who you may buy from, when a requisition is needed, receiving tolerances. Changes are approved by a second person and take effect on their date.')}
+        description={tx('Tune the purchasing workflow without code: who you may buy from, when a requisition is needed, receiving and matching tolerances, budget control, duplicate bills. Changes are approved by a second person and take effect on their date.')}
         icon={SlidersHorizontal}
       />
 

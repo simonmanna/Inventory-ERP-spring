@@ -67,11 +67,13 @@ public class VendorBillService {
     private final AuditService audit;
     private final TransactionTemplate newTx;
     private final AccountDeterminationService determination;
+    private final List<VendorBillPostGuard> guards;
 
     public VendorBillService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ThreeWayMatchService twm, ApprovalsService approvals, AuditService audit, PlatformTransactionManager txm,
-            AccountDeterminationService determination) {
+            AccountDeterminationService determination, List<VendorBillPostGuard> guards) {
         this.jdbc = jdbc;
+        this.guards = guards;
         this.determination = determination;
         this.events = events;
         this.workflow = workflow;
@@ -310,6 +312,10 @@ public class VendorBillService {
                     + " WHERE id = ?").param(pending).update();
             audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));
         }
+        List<String> warnings = new ArrayList<>();
+        for (VendorBillPostGuard g : guards) {
+            warnings.addAll(g.beforePost(id, doc));
+        }
         workflow.transition("vendor_bill", id, "post", null, doc);
         for (String po : links) {
             twm.recomputeForOrder(po);
@@ -322,6 +328,9 @@ public class VendorBillService {
         Map<String, Object> out = builder.document(id);
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
+        if (!warnings.isEmpty()) {
+            out.put("warnings", warnings);
+        }
         return out;
     }
 
