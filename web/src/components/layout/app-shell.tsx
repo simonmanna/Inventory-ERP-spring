@@ -98,6 +98,13 @@ import {
   CalendarRange,
   Route as RouteIcon,
   Navigation,
+  // quality (ADR-S013)
+  FlaskConical,
+  Microscope,
+  AlertOctagon,
+  ListTodo,
+  FlaskRound,
+  GitFork,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -501,6 +508,22 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/weighbridge/exceptions', label: tx('Weighbridge Exceptions'), icon: AlertTriangle, permission: PERMISSIONS.weighbridge.read },
       { to: '/fleet/weighbridge/reports', label: tx('Weighbridge Discrepancies'), icon: BarChart3, permission: PERMISSIONS.weighbridge.read },
       { to: '/fleet/weighbridge/settings', label: tx('Weighbridge Settings'), icon: Settings2, permission: PERMISSIONS.weighbridge.configure },
+    ],
+  },
+  {
+    // Quality management (ADR-S013): core-available, no module flag — items gated by quality:read.
+    title: 'Quality',
+    icon: ShieldCheck,
+    items: [
+      { to: '/quality', label: tx('Quality Overview'), icon: LayoutDashboard, permission: PERMISSIONS.quality.read },
+      { to: '/quality/lots', label: tx('Inspection Lots'), icon: Microscope, permission: PERMISSIONS.quality.read },
+      { to: '/quality/specifications', label: tx('Specifications'), icon: FlaskConical, permission: PERMISSIONS.quality.read },
+      { to: '/quality/plans', label: tx('Inspection Plans'), icon: ClipboardList, permission: PERMISSIONS.quality.read },
+      { to: '/quality/ncrs', label: tx('Nonconformance Reports'), icon: AlertOctagon, permission: PERMISSIONS.quality.read },
+      { to: '/quality/capas', label: tx('Corrective & Preventive Actions'), icon: ListTodo, permission: PERMISSIONS.quality.read },
+      { to: '/quality/lab', label: tx('Laboratory Results'), icon: FlaskRound, permission: PERMISSIONS.quality.read },
+      { to: '/quality/traceability', label: tx('Batch Traceability'), icon: GitFork, permission: PERMISSIONS.quality.read },
+      { to: '/quality/reports', label: tx('Quality Reports'), icon: BarChart3, permission: PERMISSIONS.quality.read },
     ],
   },
   {
