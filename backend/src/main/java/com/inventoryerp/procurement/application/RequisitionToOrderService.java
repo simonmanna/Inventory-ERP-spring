@@ -350,7 +350,8 @@ public class RequisitionToOrderService {
         Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT o.id, o.\"orderNumber\", o.status::text AS status,"
                 + " o.\"partnerId\", p.name AS \"partnerName\", o.\"orderDate\", o.\"expectedDeliveryDate\", o.\"promisedDate\","
                 + " o.\"sentAt\", o.\"acknowledgedAt\", o.\"supplierReference\", o.\"approvedAt\", o.\"closedAt\","
-                + " o.\"closeReason\", o.\"requestId\", o.\"currencyCode\", o.\"totalAmount\", o.\"totalPaid\" FROM"
+                + " o.\"closeReason\", o.\"requestId\", o.\"currencyCode\", o.\"totalAmount\", o.\"totalPaid\","
+                + " o.\"isEmergency\", o.\"emergencyReason\", o.\"emergencyReviewedAt\" FROM"
                 + " \"PurchaseOrder\" o LEFT JOIN \"Partner\" p ON p.id = o.\"partnerId\" WHERE o.id = ? AND"
                 + " o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL").params(poId, org()));
         if (po == null) {

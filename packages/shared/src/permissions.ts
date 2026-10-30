@@ -144,6 +144,16 @@ export const PERMISSIONS = {
     read: 'supplier_claim:read',
     manage: 'supplier_claim:manage',
   },
+  inspection: {
+    read: 'inspection:read',
+    manage: 'inspection:manage',
+  },
+  emergencyPurchase: {
+    review: 'emergency_purchase:review',
+  },
+  receiving: {
+    overrideEvidence: 'receiving:override_evidence',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',

@@ -62,13 +62,16 @@ public class GoodsReceiptsService {
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final PurchaseOrdersService purchaseOrders;
+    private final ReceivingControls receiving;
     private final StockReversalService reversals;
     private final TransactionTemplate tx;
 
     public GoodsReceiptsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
-            PurchaseOrdersService purchaseOrders, StockReversalService reversals, PlatformTransactionManager txm) {
+            PurchaseOrdersService purchaseOrders, StockReversalService reversals, PlatformTransactionManager txm,
+            ReceivingControls receiving) {
         this.jdbc = jdbc;
+        this.receiving = receiving;
         this.sequence = sequence;
         this.events = events;
         this.audit = audit;
@@ -289,6 +292,10 @@ public class GoodsReceiptsService {
                 throw ApiException.notFound("Product(s) not found: " + String.join(", ", missing));
             }
         }
+        // ADR-PROCUREMENT-001 W6: weighbridge evidence for bulk material (policy; off by default).
+        receiving.requireEvidence(id, (String) grn.get("branchId"), ((List<Map<String, Object>>) grn.get("lines"))
+                .stream().map(l -> new ReceivingControls.Line((String) l.get("id"), (String) l.get("productId"),
+                        (String) l.get("description"))).toList());
 
         Map<String, Object> result = tx.execute(st -> {
             // Atomic draft→posted claim: only one concurrent post can match.
@@ -368,6 +375,7 @@ public class GoodsReceiptsService {
             }
             return updated;
         });
+        receiving.afterPost(id);
 
         audit.record(AuditInput.of("GoodsReceiptNote", (String) result.get("id"), "post", null,
                 Obj.of("receiptNumber", grn.get("receiptNumber"), "status", "posted")));

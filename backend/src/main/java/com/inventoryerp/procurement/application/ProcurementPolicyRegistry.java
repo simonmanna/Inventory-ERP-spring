@@ -55,6 +55,8 @@ public final class ProcurementPolicyRegistry {
     public static final String MATCH_QTY_TOLERANCE = "match.qtyTolerancePct";
     public static final String BILL_DUPLICATE_CHECK = "bill.duplicateCheck";
     public static final String CHANGE_REAPPROVAL_ABOVE = "change.reapprovalAbovePct";
+    public static final String RECEIVING_WEIGHBRIDGE_REQUIRED = "receiving.weighbridgeRequired";
+    public static final String RECEIVING_INSPECTION_REQUIRED = "receiving.inspectionRequired";
 
     static {
         def(new Definition(SUPPLIER_APPROVED_REQUIRED, "supplier", "Approved supplier required",
@@ -98,6 +100,14 @@ public final class ProcurementPolicyRegistry {
                 "An order change that raises the order total by more than this percentage needs a second person"
                         + " (po_change:approve) before it applies. 0 = every increase; decreases never need approval.",
                 Kind.NUMBER, F.numberNode(0), null, 0d, 1000d));
+        def(new Definition(RECEIVING_WEIGHBRIDGE_REQUIRED, "receiving", "Weighbridge ticket required",
+                "Goods receipts of these products (set it per category: aggregates, cement, sand) post only with a"
+                        + " completed weighbridge ticket on the line. receiving:override_evidence may override (audited).",
+                Kind.BOOLEAN, F.booleanNode(false), null, null, null));
+        def(new Definition(RECEIVING_INSPECTION_REQUIRED, "receiving", "Incoming inspection required",
+                "Posting a receipt of these products opens a quality inspection; the supplier bill waits until it is"
+                        + " completed, and rejected goods become a quality claim.",
+                Kind.BOOLEAN, F.booleanNode(false), null, null, null));
     }
 
     private ProcurementPolicyRegistry() {}

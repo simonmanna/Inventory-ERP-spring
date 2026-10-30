@@ -529,3 +529,36 @@ Tests: `ProcurementControlsIT`. Web:
 
 Not built in this wave: the `goods_in_transit` invoice-before-receipt mode. It is deferred to the landed-cost work,
 because it needs a transit-stock account design.
+
+### Built — wave 6 (receiving quality and industry controls; `V31__procurement_industry.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/inspections?status&goodsReceiptId&purchaseOrderId` · `/inspections/{id}` | `inspection:read` |
+| POST | `/procurement/goods-receipts/{id}/inspection` (open; idempotent per receipt) | `inspection:manage` |
+| POST | `/procurement/inspections/{id}/results` (line accepted / rejected qty, defect notes, evidence `fileIds`) · `/{id}/cancel` | `inspection:manage` |
+| POST | `/procurement/inspections/{id}/complete` (Idempotency-Key required; rejected value → quality claim) | `inspection:manage` |
+| POST | `/procurement/purchase-orders/{id}/emergency` (`reason`) | `purchase_order:update` |
+| POST | `/procurement/purchase-orders/{id}/emergency-review` (`note`; not the buyer) · GET `/procurement/reports/emergency?reviewed` | `emergency_purchase:review` |
+
+**Policies** (default off; set per branch or product category):
+- `receiving.weighbridgeRequired`: a goods receipt of those products posts only with a completed weighbridge ticket on
+  the line. Evidence comes from the `ReceiptEvidenceProvider` SPI, which fleet implements from `WeighbridgeTicket`.
+  Direct PO receipts are refused, because they can carry no ticket. `receiving:override_evidence` may override, and
+  the override is audited.
+- `receiving.inspectionRequired`: posting the receipt opens an inspection. A supplier bill linked to the order is held
+  ("Incoming inspection … is still open") until the inspection completes. Completing it raises a quality claim for
+  rejected qty × order price.
+
+The PO lifecycle view now also returns `isEmergency`, `emergencyReason` and `emergencyReviewedAt`. Tests:
+`ReceivingQualityIT`. Web: an incoming-inspection queue with a result dialog, the emergency purchases review page, and
+an emergency flag on the PO page.
+
+**Deferred** (the plan's other P4 items):
+- Landed-cost gaps G1–G8 beyond what V12–V25 already provide.
+- Direct-to-site project acceptance.
+- `asset.acquired` hand-off to fixed assets.
+- Density-based t ↔ m³ conversion.
+- `goods_in_transit`.
+
+They are tracked in `docs/roadmap/procurement-roadmap.md`.

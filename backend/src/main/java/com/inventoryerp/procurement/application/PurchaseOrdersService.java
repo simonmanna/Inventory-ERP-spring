@@ -102,12 +102,15 @@ public class PurchaseOrdersService {
     private final SupplierService suppliers;
     private final ProcurementPolicyService policies;
     private final PurchaseCommitments commitments;
+    private final ReceivingControls receiving;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
-            SupplierService suppliers, ProcurementPolicyService policies, PurchaseCommitments commitments) {
+            SupplierService suppliers, ProcurementPolicyService policies, PurchaseCommitments commitments,
+            ReceivingControls receiving) {
         this.jdbc = jdbc;
+        this.receiving = receiving;
         this.commitments = commitments;
         this.suppliers = suppliers;
         this.policies = policies;
@@ -597,6 +600,9 @@ public class PurchaseOrdersService {
         if (!List.of("active", "partially_received").contains(status)) {
             throw ApiException.badRequest("PO is in status \"" + status + "\" — cannot receive");
         }
+        // ADR-PROCUREMENT-001 W6: a direct receipt has no weighbridge ticket (policy; off by default).
+        receiving.requireEvidence(null, (String) po.get("branchId"), dto.lines().stream()
+                .map(l -> new ReceivingControls.Line(null, l.productId(), l.description())).toList());
         Map<String, Map<String, Object>> poLines = new LinkedHashMap<>();
         Map<String, Map<String, Object>> poLinesByProduct = new HashMap<>();
         for (Map<String, Object> l : poLines(id)) {
@@ -699,6 +705,11 @@ public class PurchaseOrdersService {
                     "status", newStatus, "linesReceived", dto.lines().size())));
             return Obj.of("grn", grn, "status", newStatus);
         });
+        @SuppressWarnings("unchecked")
+        Map<String, Object> postedGrn = (Map<String, Object>) result.get("grn");
+        if (postedGrn != null && postedGrn.get("id") != null) {
+            receiving.afterPost((String) postedGrn.get("id"));
+        }
         events.publish("purchase_order.received", Obj.of("organizationId", orgId, "orderId", id, "receiptNumber",
                 receiptNumber, "status", result.get("status")));
         return result;

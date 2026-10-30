@@ -36,6 +36,15 @@ public class BillControls implements VendorBillPostGuard, MatchToleranceProvider
 
     @Override
     public List<String> beforePost(String billId, Map<String, Object> bill) {
+        // W6: goods still under incoming inspection are not billed yet (only when an inspection exists).
+        String pending = jdbc.sql("SELECT string_agg(DISTINCT i.\"inspectionNumber\", ', ') FROM \"IncomingInspection\" i"
+                + " JOIN \"VendorBillLink\" k ON k.\"purchaseOrderId\" = i.\"purchaseOrderId\" WHERE k.\"vendorBillId\" = ?"
+                + " AND i.\"organizationId\" = ? AND i.status = 'pending'").params(billId, org()).query(String.class)
+                .list().stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
+        if (pending != null) {
+            throw ApiException.badRequest("Incoming inspection " + pending + " is still open for goods on this bill —"
+                    + " complete it before posting the bill");
+        }
         String mode = policies.text(ProcurementPolicyRegistry.BILL_DUPLICATE_CHECK,
                 ProcurementPolicyService.PolicyContext.branch((String) bill.get("branchId")));
         if (mode == null || "off".equals(mode)) {

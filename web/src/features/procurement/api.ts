@@ -314,6 +314,9 @@ export interface PoLifecycle {
   currencyCode: string;
   totalAmount: string;
   totalPaid: string;
+  isEmergency?: boolean;
+  emergencyReason?: string | null;
+  emergencyReviewedAt?: string | null;
   lines: Array<{ id: string; description: string; quantity: string; receivedQuantity: string; billedQuantity: string; cancelledQuantity: string; openQuantity: string; unitPrice: string }>;
   receipts: Array<{ id: string; receiptNumber: string; status: string; receivedAt: string }>;
   bills: Array<{ id: string; documentNumber: string; status: string; totalAmount: string; amountResidual: string }>;
@@ -626,3 +629,77 @@ export function useCommitments(params: { status?: string; page?: number }) {
     })).data,
   });
 }
+
+// ------------------------------------------------------------------ wave 6: receiving quality, emergencies
+
+export type InspectionStatus = 'pending' | 'passed' | 'failed' | 'partial' | 'cancelled';
+
+export interface Inspection {
+  id: string;
+  inspectionNumber: string;
+  goodsReceiptId: string;
+  receiptNumber: string | null;
+  purchaseOrderId: string | null;
+  orderNumber: string | null;
+  partnerName: string | null;
+  status: InspectionStatus;
+  notes: string | null;
+  fileIds: string[];
+  claimId: string | null;
+  claimNumber: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  lines?: Array<{ id: string; description: string; receivedQuantity: string; acceptedQuantity: string | null; rejectedQuantity: string; unitPrice: string; result: 'pass' | 'fail' | 'partial' | null; defectNotes: string | null }>;
+}
+
+export function useInspections(status?: string) {
+  return useQuery({ queryKey: ['inspections', status ?? ''], queryFn: async () => (await api.get<Inspection[]>('/procurement/inspections', { params: { status: status || undefined } })).data });
+}
+
+export function useInspection(id?: string) {
+  return useQuery({ queryKey: ['inspections', 'detail', id], enabled: !!id, queryFn: async () => (await api.get<Inspection>(`/procurement/inspections/${id}`)).data });
+}
+
+export function useInspectionMutation<TBody = unknown>(fn: (body: TBody) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inspections'] });
+      qc.invalidateQueries({ queryKey: ['supplier-claims'] });
+    },
+  });
+}
+
+export const inspectionApi = {
+  open: (goodsReceiptId: string) => api.post<Inspection>(`/procurement/goods-receipts/${goodsReceiptId}/inspection`).then((r) => r.data),
+  record: (id: string, body: { lines: Array<{ lineId: string; acceptedQuantity?: number; rejectedQuantity?: number; defectNotes?: string }>; notes?: string; fileIds?: string[] }) =>
+    api.post<Inspection>(`/procurement/inspections/${id}/results`, body).then((r) => r.data),
+  complete: (id: string) => idempotentPost<Inspection>(`/procurement/inspections/${id}/complete`, {}),
+  cancel: (id: string) => api.post<Inspection>(`/procurement/inspections/${id}/cancel`).then((r) => r.data),
+};
+
+export interface EmergencyRow {
+  id: string;
+  orderNumber: string;
+  status: string;
+  orderDate: string;
+  totalAmount: string;
+  currencyCode: string;
+  emergencyReason: string;
+  emergencyReviewedAt: string | null;
+  emergencyReviewNote: string | null;
+  partnerName: string | null;
+}
+
+export function useEmergencyReport(reviewed?: boolean) {
+  return useQuery({
+    queryKey: ['emergency-purchases', reviewed ?? 'all'],
+    queryFn: async () => (await api.get<EmergencyRow[]>('/procurement/reports/emergency', { params: { reviewed } })).data,
+  });
+}
+
+export const emergencyApi = {
+  mark: (poId: string, reason: string) => api.post(`/procurement/purchase-orders/${poId}/emergency`, { reason }).then((r) => r.data),
+  review: (poId: string, note: string) => api.post(`/procurement/purchase-orders/${poId}/emergency-review`, { note }).then((r) => r.data),
+};

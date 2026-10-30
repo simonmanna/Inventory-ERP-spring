@@ -102,6 +102,7 @@ import {
   Navigation,
   FileQuestion,
   FileSignature,
+  Siren,
   MessageSquareWarning,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
@@ -368,6 +369,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/procurement/landed-cost-vouchers', label: tx('Landed Costs'), icon: Calculator, permission: PERMISSIONS.landedCost.read },
       { to: '/procurement/landed-cost-reports', label: tx('Landed Cost Reports'), icon: BarChart3, permission: PERMISSIONS.landedCost.read },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Banknote, permission: 'payment:read' },
+      { to: '/procurement/inspections', label: tx('Incoming Inspection'), icon: ShieldCheck, permission: PERMISSIONS.inspection.read },
+      { to: '/procurement/reports/emergency', label: tx('Emergency Purchases'), icon: Siren, permission: PERMISSIONS.emergencyPurchase.review },
       { to: '/procurement/claims', label: tx('Supplier Claims'), icon: MessageSquareWarning, permission: PERMISSIONS.supplierClaim.read },
       { to: '/procurement/po-changes', label: tx('Order Changes'), icon: ClipboardCheck, permission: PERMISSIONS.poChange.approve },
       { to: '/procurement/commitments', label: tx('Budget Commitments'), icon: Landmark, permission: PERMISSIONS.budgetControl.commitments },
