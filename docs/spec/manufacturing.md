@@ -165,3 +165,63 @@ all 100 routes + tenant isolation), `ManufacturingHardeningIT`, `MrpPlanningIT`,
 | GET | `/manufacturing/process-costing/reports/cost-of-production?from&to` |
 
 Tests: `ProcessCostCalculatorTest`, `StandardProcessCostingIT`. Web: Manufacturing → Standard Costs, Process Costing.
+
+## ADR-S011 — 2.1 multi-stage production & WIP between stages
+
+Design: [ADR-S011](../adr/ADR-S011-advanced-multistage-manufacturing.md) (covers all of Phase 2). Migration
+`V971__manufacturing_multistage.sql` (placeholder). Additive: orders without stages keep every Nest / ADR-S006 / S008
+behaviour; the single-leg `start`, `complete`, `qc` and `reverse` answer 400 `Order <code> is a multi-stage order; use
+its stage routes.` for a staged order, `cancel` only while it has no open stage posting. `ProductionOutput` gains
+`outputRole`; `GET /reports/wip-reconciliation` counts a staged order at its stage WIP.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/manufacturing/routings/:id/stage-setup` | `routing:read` |
+| PUT | `/api/v1/manufacturing/routings/:id/stage-setup` | `routing:create` |
+| GET | `/api/v1/manufacturing/boms/:id/stage-setup` | `bom:read` |
+| PUT | `/api/v1/manufacturing/boms/:id/stage-setup` | `bom:update` |
+| GET | `/api/v1/manufacturing/cost-allocation-rules` | `bom:read` |
+| PUT | `/api/v1/manufacturing/cost-allocation-rules/default` | `bom:update` |
+| POST | `/api/v1/manufacturing/multistage-orders` | `production_order:create` |
+| POST | `/api/v1/manufacturing/production-orders/:id/stages/initialize` | `production_order:create` |
+| GET | `/api/v1/manufacturing/production-orders/:id/stages` | `production_order:read` |
+| POST | `/api/v1/manufacturing/production-orders/:id/stages/reverse` (Idempotency-Key) | `production_order:cancel` |
+| POST | `/api/v1/manufacturing/production-orders/:id/child-orders` | `production_order:create` |
+| GET | `/api/v1/manufacturing/production-orders/:id/order-tree` | `production_order:read` |
+| POST | `/api/v1/manufacturing/production-stages/:id/issue` (Idempotency-Key) | `production_order:start` |
+| POST | `/api/v1/manufacturing/production-stages/:id/output` (Idempotency-Key) | `production_order:complete` |
+| POST | `/api/v1/manufacturing/production-stages/:id/conversion-costs` (Idempotency-Key) | `production_order:complete` |
+| POST | `/api/v1/manufacturing/production-stages/:id/qc-decision` (Idempotency-Key) | `production_order:qc` |
+| POST | `/api/v1/manufacturing/stage-postings/:id/reverse` (Idempotency-Key) | `production_order:cancel` |
+| GET | `/api/v1/manufacturing/reports/stage-wip` | `production:report` |
+
+Behaviour notes:
+
+- **Stages** = routing operations with an optional `RoutingStageSetup` (issue mode backflush / manual, intermediate
+  product + quantity per order unit, stage location, expected yield %, QC gate + checkpoint code, materials consumed).
+  Unassigned BOM components are consumed at the first stage; the last stage produces the order output.
+- **Postings** (`ProductionStagePosting` + lines) carry `sourceType = production_stage`, `sourceId = posting id` on
+  every stock move and journal; totals are recomputed from the non-reversed lines. Output postings may be partial;
+  `complete: true` closes the stage (earlier stages must be complete) and relieves all its WIP.
+- **Backflush** issues `qtyPlanned × processed ÷ planned gross` per posting (the rest at completion); manual issues and
+  intermediates are strict (never below zero). A posting relieves its own backflushed value plus the carried WIP pro
+  rata to planned gross units; normal loss (1 − expected yield) is absorbed, abnormal scrap written off.
+- **Intermediates** land in the stage location (or `QC-QUARANTINE` when gated) as stock; pass-through stages move cost
+  in the WIP sub-ledger. **Co-/by-products / waste** from `BomCoProduct` (per stage) valued by `JointCostAllocator`
+  (NRV / zero / legacy % carve-outs, then quantity / weight / market value / fixed %; sums exact).
+- **QC gate**: later stages blocked until `qc-decision` passed (or `StageCheckpointResults.recordResult` from the
+  quality module); `StageQcCheckpointHook` beans are told when a gated lot waits.
+- **Multi-level**: `child-orders` creates pegged child orders (recursive, net of stock optional) delivering into the
+  parent's production location; `order-tree` rolls status / progress up.
+- **Reversal**: last in, first out per order; `stages/reverse` reverses all and cancels the order.
+
+Web: order detail → Stages panel (timeline, per-stage Issue / Output / Cost / Pass-Fail QC, postings with reversal,
+child-order tree), BOM detail → stage set-up + co-products + allocation rule, Manufacturing → Stage WIP
+(`/manufacturing/stage-wip`: WIP per stage vs GL, intermediate stock, default allocation rule).
+
+Tests: `JointCostAllocatorTest`, `StageYieldCalculatorTest`, `OrderRollupTest`, `MultiStageProductionIT` (3-stage
+order with intermediate + co-products + GL, partial completion, LIFO reversal, stage gate + idempotent replay,
+multi-level pegging, concurrency on stage issue, allocation settings, tenant isolation, authz matrix of the 18 routes).
+
+Status (2.1): done. Gaps: per-lot gate release, curing-day hold (2.4), MRP awareness of stages / co-products (2.5),
+standard-governed outputs of a staged order post their difference to 5950 without per-element variances (2.8).

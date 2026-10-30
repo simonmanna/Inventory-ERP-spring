@@ -210,3 +210,15 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   deductions. No posting from reports or reminders.
 - Doubts: account codes 6460 / 2169 / 2186 are proposals; own-fleet trip cost is analytic only; reports are computed on
   the fly (consider a monthly snapshot for very large fleets).
+
+## Phase 2.1 — Multi-stage production & WIP between stages (ADR-S011)
+
+- `cd backend && ./gradlew test --tests 'com.inventoryerp.manufacturing.*'` (new: `MultiStageProductionIT`,
+  `JointCostAllocatorTest`, `StageYieldCalculatorTest`, `OrderRollupTest`; `ManufacturingIT` matrix now 131 routes).
+- Migration `V971__manufacturing_multistage.sql` (placeholder; renumbered at merge).
+- Recipes (BOM) → a BOM with a routing → "Stages (routing set-up)": set an intermediate + stage location on stage 1,
+  manual issue on stage 2, QC gate where needed; "Co-products, by-products & waste": add a co-product and a by-product.
+- Orders → new order for that BOM → "Run in stages" → Confirm → per stage: Output (partial, then "completes"), Issue
+  on manual stages, Cost; gated stage: Pass / Fail QC. Expect WIP per stage to return to 0, finished goods in stock.
+- Manufacturing → Stage WIP: stage rows of the open order, GL WIP balance vs expected, default allocation setting.
+- Reverse the latest posting, then "Reverse all stages": stock and WIP return to where they were.
