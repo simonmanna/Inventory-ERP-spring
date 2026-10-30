@@ -163,3 +163,23 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   Set 33 000 on another ticket → exception; approve as a different user in Weighbridge Exceptions (the operator sees "Your own ticket").
   Inbound ticket against a PO → completed ticket shows a draft goods receipt in Purchases → Goods receipts.
 - Expected GL: none from the weighbridge (GRN posting is procurement's).
+
+## Phase 1.4b — Fleet: weighbridge ↔ dispatch + Phase 1 exit E2E
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.fleet.FleetWeighbridgeDispatchIT' --tests 'com.inventoryerp.fleet.FleetPhase1EndToEndIT'`; web `pnpm web:typecheck`, `pnpm web:i18n`.
+- Migration: `V951__fleet_weighbridge_dispatch.sql` (placeholder, renumbered at merge): ticket FKs to delivery order / trip, one live ticket per trip, `FleetWeighbridgeRequirement`.
+- Click-through (ENABLE_FLEET=true, ENABLE_ORDERS=true, admin + a second user with `weighbridge:approve_exception`):
+  1. Weighbridge Settings → *Dispatch rule* → add a rule for the branch (or whole organization): *Bulk products*.
+  2. Sales order 20 t of a TON product (with the branch) → Delivery order from the sales order → plan loads on a 30 t
+     tipper + driver. The trip says "Weighbridge required for dispatch"; *Dispatch* is refused, *Loaded quantity* is hidden.
+  3. Trip → *Weigh* → ticket form pre-filled (truck, driver, customer, product, 20 TON, DO) → register → simulator 12 000 →
+     first weight → 32 050 → second weight → completed, "Fed the trip"; the trip is *weighed* with 20.05 t and lists the
+     ticket (net, variance, link).
+  4. *Dispatch* → stock −20.05 t (Dr COGS / Cr stock balanced) → POD 20.05 → close (end odometer) → Delivery order →
+     *Create invoice* with the transport charge → post: AR / revenue / 4250 balanced, stock unchanged.
+  5. Void the ticket of the dispatched trip → refused ("its stock is issued").
+  6. Another trip: weigh 18 800 kg for 20 t → exception, trip stays unfed and cannot be dispatched; the operator cannot
+     approve; the second user approves → trip weighed 18.8 → dispatch issues 18.8.
+  7. Another trip: weigh → void the ticket → trip back to *loading* with no loaded quantity; weigh again → void with
+     reissue → reissued ticket feeds the trip.
+- Expected GL: only the 1.3 postings (dispatch issue at the weighed quantity, invoice posting); the weighbridge itself posts nothing.
