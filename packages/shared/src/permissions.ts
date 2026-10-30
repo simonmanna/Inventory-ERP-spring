@@ -616,6 +616,9 @@ export const PERMISSIONS = {
     returnApprove: 'sales:return:approve',
     complaintRead: 'sales:complaint:read',
     complaintWrite: 'sales:complaint:write',
+    /// Collections worklist, dunning runs, promises to pay (ADR-S011 S8).
+    collectionsRead: 'sales:collections:read',
+    collectionsManage: 'sales:collections:manage',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {

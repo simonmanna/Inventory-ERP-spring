@@ -97,7 +97,8 @@ public class SalesSettingsService {
             sets.add("\"quoteValidityDays\" = ?");
             params.add(v);
         }
-        for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck")) {
+        for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
+                "monthlyStatements")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

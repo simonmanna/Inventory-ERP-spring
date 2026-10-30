@@ -396,6 +396,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
+      { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
       { to: '/sales/returns', label: tx('Returns'), icon: Undo2, permission: PERMISSIONS.sales.returnRead },
       { to: '/sales/complaints', label: tx('Complaints'), icon: MessageSquareWarning, permission: PERMISSIONS.sales.complaintRead },
       { to: '/sales/backorders', label: tx('Backorders'), icon: PackageX, permission: PERMISSIONS.sales.reportRead },

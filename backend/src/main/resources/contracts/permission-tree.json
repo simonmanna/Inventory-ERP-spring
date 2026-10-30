@@ -546,7 +546,9 @@
     "returnWrite": "sales:return:write",
     "returnApprove": "sales:return:approve",
     "complaintRead": "sales:complaint:read",
-    "complaintWrite": "sales:complaint:write"
+    "complaintWrite": "sales:complaint:write",
+    "collectionsRead": "sales:collections:read",
+    "collectionsManage": "sales:collections:manage"
   },
   "credit": {
     "read": "credit:read",

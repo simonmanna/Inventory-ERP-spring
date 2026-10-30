@@ -20,7 +20,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | done (partial, see deviations) | S4, fleet 1.4b |
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | done (defaults pending accountant) | S5, accountant answers |
 | S7 | Returns / RMA, claims, quality certificates | R2 | done | S6 |
-| S8 | Collections: dunning, promise-to-pay, statement runs | R3 | todo | S3, S6 |
+| S8 | Collections: dunning, promise-to-pay, statement runs | R3 | done | S3, S6 |
 | S9 | Agreements, rebates, commissions, targets | R3 | todo | S2, S6 |
 | S10 | Analytics, dashboard, portal, AI assist | R3 | todo | all |
 
@@ -274,6 +274,22 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Note: when the invoice is already fully paid, the credit note leaves a customer credit that the existing invoicing
   model does not keep as an open credit-note residual (pre-existing behaviour); use the refund outcome then.
 
+## S8 — as built
+- `V32__sales_collections.sql`: `DunningLevel`, `DunningRun`, `DunningEntry`, `PromiseToPay`, settings
+  `dunningAutoRun` / `monthlyStatements`, permissions `sales:collections:read|manage`.
+- `SalesCollectionsService`: levels (sequence, from days overdue, channel e-mail with the statement PDF / letter /
+  record only, template with {{customer}} {{amount}} {{days}}, late fee, credit hold); run = per customer the oldest
+  overdue invoice picks the highest reached level, skipped when an open promise covers today or that level was already
+  sent since the oldest current overdue invoice fell due (a settled customer restarts at level 1); fee → draft
+  invoice on "Late Payment Fees" (4290, mapping `dunning_fee_income`); hold → credit module. Promises settle kept /
+  broken from receipts since the promise. Worklist by aging bucket (current, 1–30, 31–60, 61–90, 90+) with last level
+  and open promise. Statement run e-mails AR statements to customers with an open balance.
+- `SalesCollectionsJob`: 06:00 daily promises + scheduled dunning; 07:00 on the 1st monthly statements.
+- Routes: `/sales/collections/*` (13). Web: Collections page (worklist, runs, levels, promises).
+- Tests: `SalesCollectionsIT` (3).
+- Deviation: WhatsApp / SMS reminders are not sent yet (channel options e-mail / letter / record only); the
+  communication module can be wired later.
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
@@ -325,3 +341,13 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   Claim without goods on an uninvoiced order → billable drops by the claim with a "Returned on RMA-…" decision.
   Complaints: create one, link it to a return; it is resolved when the return closes.
 - Expected GL: P12 (credit note), P13 (Dr inventory / Cr COGS), scrap as waste expense, refund Dr AR / Cr bank.
+
+## Phase S8 — Collections (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesCollectionsIT'`.
+- Migration: `V32__sales_collections.sql`.
+- Screens: Sales → Collections → Dunning levels: L1 from 1 day e-mail, L2 from 30 days letter + fee 5 000, L3 from
+  60 days letter + credit hold. *Run dunning now* → customers reach their level; L2 raises a draft late-fee invoice;
+  L3 puts the customer on credit hold; a customer with an open promise is skipped; a second run does not repeat.
+  Worklist: filter 90+. Promises: record, then receipts by the date make it kept, otherwise broken.
+- Expected GL: none until the late-fee invoice is posted (Dr AR / Cr 4290).
