@@ -226,3 +226,68 @@ multi-level pegging, concurrency on stage issue, allocation settings, tenant iso
 
 Status (2.1): done. Gaps: per-lot gate release, curing-day hold (2.4), MRP awareness of stages / co-products (2.5),
 standard-governed outputs of a staged order post their difference to 5950 without per-element variances (2.8).
+
+## ADR-S014 — 2.4 Concrete block / precast manufacturing
+
+Design: [ADR-S014](../adr/ADR-S014-precast.md). Migration `V972__manufacturing_blocks_precast.sql` (placeholder).
+Additive: no existing route changes; the 2.1 engine gains a minimum-curing-days hold on QC gates
+(`RoutingStageSetup.minCuringDays`, `ProductionOrderStage.minCuringDays` / `qcPassDueAt`, `qcStatus = curing`) and an
+in-module `StageGateListener`. No new permission keys; `ManufacturingIT` matrix now 157 routes.
+
+| Method | Path (`/api/v1/manufacturing/precast`) | Permission |
+|---|---|---|
+| GET | `/product-specs` (`search, page, pageSize`) | `bom:read` |
+| PUT | `/product-specs/:productId` | `bom:update` |
+| GET | `/curing-areas` (`active`) | `bom:read` |
+| POST | `/curing-areas` | `bom:update` |
+| PATCH | `/curing-areas/:id` | `bom:update` |
+| GET | `/mix-designs` (`search, productId, status, page, pageSize`) | `bom:read` |
+| GET | `/mix-designs/:id` | `bom:read` |
+| POST | `/mix-designs` | `bom:create` |
+| PATCH | `/mix-designs/:id` (draft only) | `bom:update` |
+| POST | `/mix-designs/:id/activate` | `bom:activate` |
+| POST | `/mix-designs/:id/revise` | `bom:create` |
+| GET | `/mix-designs/:id/scale` (`basis = units / batches / cement_bags / volume_m3 / cycles / pallets, value, wholeBatches`) | `bom:read` |
+| GET | `/orders` (`status, productId, search, page, pageSize`) | `production_order:read` |
+| POST | `/orders` (mix design + basis + value → staged, confirmed order) | `production_order:create` |
+| GET | `/orders/:id` (stages, curing batches, costing, variance) | `production_order:read` |
+| POST | `/orders/:id/pressing-runs` (**Idempotency-Key**) | `production_order:complete` |
+| GET | `/curing-batches` (`status, curingAreaId, orderId, ready, search, page, pageSize`) | `production_order:read` |
+| GET | `/curing-batches/:id` | `production_order:read` |
+| POST | `/curing-batches/:id/readings` | `production_order:complete` |
+| POST | `/curing-batches/:id/move` | `production_order:complete` |
+| POST | `/curing-batches/:id/cube` (**Idempotency-Key**) | `production_order:complete` |
+| POST | `/curing-batches/:id/gate-decision` (**Idempotency-Key**) | `production_order:qc` |
+| POST | `/curing-batches/:id/final-inspection` | `production_order:qc` |
+| GET | `/curing-batches/:id/labels` | `production_order:read` |
+| GET | `/reports/cost-per-block` (`from, to, productId`) | `production:report` |
+| GET | `/reports/breakage` (`from, to, productId`) | `production:report` |
+
+Data model (V972): `PrecastProductSpec` (product 1:1 — block type, L × W × H mm, strength class / MPa, weight,
+units per pallet / per machine cycle, second-grade product), `PrecastCuringArea` (code, chamber / yard / shed,
+capacity in pallets, optional inventory location), `PrecastMixDesign` (BOM 1:1 — cement product + units per bag,
+batch m³, w/c ratio, minimum curing days, checkpoint code, default area, maturity target / datum),
+`PrecastCuringBatch` (`<order>-C01`; order, curing stage, pressing / cubing postings, batch number, quantity, broken at
+press, cycles, pallets, area, bay, shift, started / curing until, status `curing → cubed → released | failed`,
+`cancelled` when the pressing posting is reversed, maturity, good / second grade / broken, final lot),
+`PrecastCuringReading` (temperature readings and pallet moves). Every table has `organizationId` + RLS.
+
+Flow: mix design (draft → activate, BOM approvals apply) → `POST /orders` scales it (`BatchScaler`) and creates the
+staged order (pressing stage pass-through, curing stage gated with the mix design's checkpoint and minimum days) →
+pressing runs (stage output: backflush of the batch materials, breakage as scrap; one curing batch each; the last run
+completes pressing) → readings / moves → cubing after the minimum days (good → QC quarantine, second grade → NRV
+by-product, broken → scrap) → strength gate: quality lot release (bridge) or manual decision; a pass before curing
+ends waits as `curing` until `PrecastCuringJob` passes it → released blocks in finished goods → optional final lot
+(`final` plan, e.g. 28-day) → reports. Order status, WIP and GL are the 2.1 engine's.
+
+Tests: `BatchScalerTest`, `MaturityCalculatorTest` (incl. `CuringHold`), `PrecastManufacturingIT` (end to end with
+quality lot, GL balanced, WIP back to zero, cost per acceptable block, variance, labels, reports; curing hold +
+deferred gate + job; mix design versions and validation; idempotent replay, key required, contended cubing; tenant
+isolation; authorization matrix of the 26 routes).
+
+Web: Manufacturing → Precast: curing board (`/manufacturing/precast/curing`, phone layout: readings, moves, cube,
+gate, labels), precast orders (`/manufacturing/precast/orders`, pressing-run form, costing), mix designs with the
+scaling calculator (`/manufacturing/precast/mix-designs`), set-up (specs, curing areas), reports.
+
+Status (2.4): done. Gaps: per-batch (rather than per-stage) strength gate; maturity-based early release; seed data
+(Phase 7); reversing only a gate release leaves the batch `released`.
