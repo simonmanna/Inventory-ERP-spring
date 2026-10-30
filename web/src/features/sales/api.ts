@@ -55,6 +55,7 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   onHold: boolean;
   holdReason: string | null;
+  holdKind: 'manual' | 'credit' | 'customer' | null;
   approvalReasons: string[];
   deliveryStatus: DeliveryStatus;
   invoiceStatus: InvoiceStatus;

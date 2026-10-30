@@ -540,6 +540,11 @@
     "reportRead": "sales:report:read",
     "configure": "sales:configure"
   },
+  "credit": {
+    "read": "credit:read",
+    "manage": "credit:manage",
+    "override": "credit:override"
+  },
   "document": {
     "create": "document:create",
     "read": "document:read",

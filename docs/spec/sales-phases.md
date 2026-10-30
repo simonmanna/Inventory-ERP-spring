@@ -15,7 +15,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S0 | Foundation: module, quotation migration, master-data fields, settings, ledger harness | R1 | done | Step 0 |
 | S1 | Quotations API in sales + Sales Orders core + amendments + R1 reports + web | R1 | done | S0 |
 | S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | done | S1 |
-| S3 | Credit module (limits, exposure, decisions, holds) | R2 | todo | S1 |
+| S3 | Credit module (limits, exposure, decisions, holds) | R2 | done | S1 |
 | S4 | ATP, reservations, backorders, supply pegs | R2 | todo | S1 |
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | todo | S4, fleet 1.4b |
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | todo | S5, accountant answers |
@@ -170,6 +170,24 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Tests: `SalesPricingIT` (4).
 - Deviation: CRM price rules are not migrated into pricelists; they stay editable under CRM → Price Rules and are the
   engine's second tier (avoids a translation layer; one engine decides all prices).
+
+## S3 — as built
+- `V27__credit.sql`: `CreditLimit` (customer × branch × currency, risk category, review date, validity),
+  `CreditPolicy` (overdue days / action none-approval-hard, deposits reduce exposure, group limits, check points,
+  auto-hold), immutable `CreditDecision` (trigger), `Partner.parentId` (customer groups), `SalesOrder.holdKind`,
+  permissions `credit:read|manage|override`.
+- Module `com.inventoryerp.credit` (depends on no business module): `CreditService` (exposure, check, override,
+  limits, policy, hard hold, review queue, decisions, auto-hold), `CreditAutoHoldJob` (02:15 daily, ShedLock),
+  SPI `CreditExposureContributor` implemented by sales (undelivered, delivered-not-invoiced), invoicing (receivables +
+  overdue, draft non-SO invoices, unapplied credit notes / on-account payments) and pos (credit sales).
+- Check points: quotation submit (reasons), order confirm (pass / credit hold / customer block), amendment value
+  increase, fleet trip dispatch (blocked → refused; hold → refused unless `credit:override`, which records an override).
+  Credit holds on orders are released only with `credit:override` (override decision linked to the hold decision).
+- Web: Sales → Credit Control (review queue, limits, decisions, policy); credit panel on the order form.
+- Tests: `CreditIT` (7) incl. worked example (buckets through confirm → deliver → invoice → pay → close short, AR
+  tie-out), group limits, overdue policy, immutability, authorization matrix.
+- Deviations: `undeliveredBasis = net` is stored but exposure is always gross (VAT-inclusive) for now; the POS
+  checkout keeps its own `CreditStatus` check (frozen POS path) and only contributes its exposure; deposits join S6.
 
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to

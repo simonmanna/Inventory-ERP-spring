@@ -22,6 +22,7 @@ import {
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
+import { CreditPanel } from './CreditPage';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -131,7 +132,7 @@ export function SalesOrderPage() {
 
       {o?.status === 'pending_approval' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
       {o?.status === 'draft' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.approvalReasons.join(' · ')}</div>}
-      {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{tx('On hold')}: {o.holdReason}</div>}
+      {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.holdKind === 'credit' ? tx('Credit hold') : o.holdKind === 'customer' ? tx('Customer blocked') : tx('On hold')}: {o.holdReason}{o.holdKind === 'credit' && <span className="block text-xs">{tx('Release needs the credit override permission.')}</span>}</div>}
 
       {o?.relations && (
         <div className="flex flex-wrap gap-2">
@@ -217,6 +218,7 @@ export function SalesOrderPage() {
               {o.cancelledAt && <p>{tx('Cancelled')} {date(o.cancelledAt)} — {o.cancelReason}</p>}
             </div>
           )}
+          {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
           {o && <ChangeRequestsPanel orderId={o.id} />}
         </div>
       </div>

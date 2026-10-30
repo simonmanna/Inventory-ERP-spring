@@ -605,6 +605,14 @@ export const PERMISSIONS = {
     reportRead: 'sales:report:read',
     configure: 'sales:configure',
   },
+  // ---- Credit management (ADR-S011 §3) ----
+  credit: {
+    read: 'credit:read',
+    /// Limits, policy, customer hard hold.
+    manage: 'credit:manage',
+    /// Release a document held by a credit check.
+    override: 'credit:override',
+  },
   document: {
     create: 'document:create',
     read: 'document:read',

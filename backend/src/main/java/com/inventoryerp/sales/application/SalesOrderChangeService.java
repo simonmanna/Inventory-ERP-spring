@@ -6,6 +6,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -49,9 +50,11 @@ public class SalesOrderChangeService {
     private final DocumentBuilderService builder;
     private final SequenceService sequence;
     private final AuditService audit;
+    private final CreditService credit;
 
     public SalesOrderChangeService(SalesDb db, SalesOrderService orders, DocumentBuilderService builder,
-            SequenceService sequence, AuditService audit) {
+            SequenceService sequence, AuditService audit, CreditService credit) {
+        this.credit = credit;
         this.db = db;
         this.orders = orders;
         this.builder = builder;
@@ -143,6 +146,16 @@ public class SalesOrderChangeService {
         audit.record(AuditInput.of("SalesOrder", orderId, "update", before, Obj.of("changeRequest", cr.get("number"),
                 "revision", revision)));
         orders.publish(DomainEvents.SALES_ORDER_AMENDED, orderId, Map.of("revision", revision, "changeRequestId", id));
+        BigDecimal delta = dec(after.get("total")).subtract(dec(before.get("total")));
+        if (delta.signum() > 0) {
+            CreditService.Decision c = credit.check("amendment", str(o.get("partnerId")), "sales_order", orderId,
+                    str(o.get("number")), delta, str(o.get("branchId")));
+            if (!c.passed()) {
+                db.patch("SalesOrder", orderId, Obj.of("onHold", true, "holdReason", String.join("; ", c.reasons()),
+                        "holdKind", "blocked".equals(c.result()) ? "customer" : "credit"), true);
+                orders.publish(DomainEvents.SALES_ORDER_HELD, orderId, Map.of("reason", String.join("; ", c.reasons())));
+            }
+        }
         orders.refreshStatus(orderId);
         return get(id);
     }

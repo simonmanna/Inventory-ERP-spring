@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
@@ -61,14 +62,16 @@ public class SalesOrderService {
     private final SalesLinePricing pricing;
     private final SalesPricingEngine engine;
     private final ApprovalsService approvals;
+    private final CreditService credit;
     private final DocumentBuilderService builder;
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
-            SalesPricingEngine engine, ApprovalsService approvals, DocumentBuilderService builder,
-            SequenceService sequence, AuditService audit, EventBus events) {
+            SalesPricingEngine engine, ApprovalsService approvals, CreditService credit,
+            DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events) {
+        this.credit = credit;
         this.engine = engine;
         this.approvals = approvals;
         this.db = db;
@@ -610,20 +613,23 @@ public class SalesOrderService {
 
     private Map<String, Object> finishConfirm(String id) {
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? FOR UPDATE", id);
-        Map<String, Object> partner = db.row("SELECT \"creditHold\" FROM \"Partner\" WHERE id = ? AND"
-                + " \"organizationId\" = ?", o.get("partnerId"), org());
-        boolean hold = partner != null && Boolean.TRUE.equals(partner.get("creditHold"));
+        CreditService.Decision c = credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id,
+                str(o.get("number")), dec(o.get("total")), str(o.get("branchId")));
+        boolean hold = !c.passed();
+        String reason = String.join("; ", c.reasons());
         Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
                 "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1);
         if (hold) {
             d.put("onHold", true);
-            d.put("holdReason", "Customer is on credit hold");
+            d.put("holdReason", reason);
+            d.put("holdKind", "blocked".equals(c.result()) ? "customer" : "credit");
         }
         db.patch("SalesOrder", id, d, true);
-        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "onHold", hold)));
+        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "onHold", hold,
+                "creditDecision", c.id())));
         publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
         if (hold) {
-            publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", "Customer is on credit hold"));
+            publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
         }
         return get(id);
     }
@@ -638,7 +644,7 @@ public class SalesOrderService {
         if (blank(reason)) {
             throw ApiException.badRequest("reason should not be empty");
         }
-        db.patch("SalesOrder", id, Obj.of("onHold", true, "holdReason", reason, "version",
+        db.patch("SalesOrder", id, Obj.of("onHold", true, "holdReason", reason, "holdKind", "manual", "version",
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("onHold", true, "reason", reason)));
         publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
@@ -656,7 +662,10 @@ public class SalesOrderService {
         if (partner != null && Boolean.TRUE.equals(partner.get("creditHold"))) {
             throw ApiException.badRequest("Customer is on credit hold; lift the hold on the customer first");
         }
-        db.patch("SalesOrder", id, Obj.of("onHold", false, "holdReason", null, "version",
+        if (!"manual".equals(o.get("holdKind")) && o.get("holdKind") != null) {
+            credit.override(str(o.get("partnerId")), "sales_order", id, str(o.get("number")), null);
+        }
+        db.patch("SalesOrder", id, Obj.of("onHold", false, "holdReason", null, "holdKind", null, "version",
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("onHold", false)));
         publish(DomainEvents.SALES_ORDER_RELEASED, id, Map.of());

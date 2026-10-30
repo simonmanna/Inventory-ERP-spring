@@ -201,3 +201,16 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   Sales order with 30 % discount → *Confirm order* → "Sent for approval"; another user with
   `sales:quotation:approve` approves → Confirmed; *Reject* returns it to draft with the reason.
 - Expected GL: none.
+
+## Phase S3 — Credit control (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.credit.CreditIT'`.
+- Migration: `V27__credit.sql`.
+- Screens: Sales → Credit Control → Credit limits: customer limit 50 000 000. Sales order of 60 000 000 → *Confirm
+  order* → Confirmed but **Credit hold** ("credit limit would be exceeded"); a sales rep's *Release* is refused; a user
+  with `credit:override` releases it → Decisions tab shows hold then override.
+  Order form right panel: limit, open orders, delivered-not-invoiced, receivables, exposure, headroom.
+  Policy: overdue after 30 days → hold / block; customer with a 45-day overdue invoice shows in the Review queue and
+  new orders are held (or blocked).
+  Fleet: dispatching a trip for a blocked customer is refused with the credit reasons.
+- Expected GL: none.

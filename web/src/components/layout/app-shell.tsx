@@ -22,6 +22,7 @@ import {
   Settings as SettingsIcon,
   LogOut,
   Menu,
+  ShieldAlert,
   ShoppingCart,
   Truck,
   FilePlus2,
@@ -396,6 +397,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/pricelists', label: tx('Pricelists'), icon: Tags, permission: PERMISSIONS.sales.pricingRead },
       { to: '/sales/margin-floors', label: tx('Margin floors'), icon: Percent, permission: PERMISSIONS.sales.pricingRead },
+      { to: '/sales/credit', label: tx('Credit Control'), icon: ShieldAlert, permission: PERMISSIONS.credit.read },
     ],
   },
   {
