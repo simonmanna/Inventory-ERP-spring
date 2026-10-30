@@ -62,6 +62,7 @@ public class SalesQuotationService {
     private final ObjectProvider<QuotationPricingPort> pricing;
     private final ObjectProvider<QuotationOpportunityPort> opportunities;
     private final ObjectProvider<SalesOrderService> salesOrders;
+    private final SalesPricingEngine engine;
     private final DocumentBuilderService builder;
     private final OrdersService orders;
     private final ApprovalsService approvals;
@@ -71,13 +72,14 @@ public class SalesQuotationService {
 
     public SalesQuotationService(SalesDb db, SalesSettingsService config, ObjectProvider<QuotationPricingPort> pricing,
             ObjectProvider<QuotationOpportunityPort> opportunities, DocumentBuilderService builder,
-            OrdersService orders, ObjectProvider<SalesOrderService> salesOrders,
+            OrdersService orders, ObjectProvider<SalesOrderService> salesOrders, SalesPricingEngine engine,
             ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events) {
         this.db = db;
         this.config = config;
         this.pricing = pricing;
         this.opportunities = opportunities;
         this.salesOrders = salesOrders;
+        this.engine = engine;
         this.builder = builder;
         this.orders = orders;
         this.approvals = approvals;
@@ -424,6 +426,11 @@ public class SalesQuotationService {
         }
         if (maxDisc.signum() < 0) {
             reasons.add("Invalid discount");
+        }
+        if (Boolean.TRUE.equals(s.get("marginCheck"))) {
+            reasons.addAll(engine.breaches(str(q.get("partnerId")), str(q.get("branchId")), (LocalDate) q.get(
+                    "issueDate"), db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ?", str(q.get(
+                    "id"))), HUNDRED, true));
         }
         return reasons;
     }

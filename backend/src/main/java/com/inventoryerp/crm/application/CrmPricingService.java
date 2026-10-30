@@ -35,8 +35,11 @@ public class CrmPricingService {
 
     private final CrmDb db;
     private final AuditService audit;
+    private final com.inventoryerp.sales.application.SalesPricingEngine engine;
 
-    public CrmPricingService(CrmDb db, AuditService audit) {
+    public CrmPricingService(CrmDb db, AuditService audit,
+            com.inventoryerp.sales.application.SalesPricingEngine engine) {
+        this.engine = engine;
         this.db = db;
         this.audit = audit;
     }
@@ -182,19 +185,9 @@ public class CrmPricingService {
 
     /** {@code POST /crm/pricing/resolve}: price {@code lines [{productId, quantity}]} for {@code partnerId}. */
     @Transactional(readOnly = true)
-    @SuppressWarnings("unchecked")
     public Map<String, Object> resolve(Map<String, Object> in) {
-        String partnerId = str(in.get("partnerId"));
-        LocalDate on = in.get("date") == null ? LocalDate.now() : CrmDb.date(str(in.get("date")));
-        List<Map<String, Object>> out = new ArrayList<>();
-        if (in.get("lines") instanceof List<?> lines) {
-            for (Object o : lines) {
-                Map<String, Object> l = (Map<String, Object>) o;
-                BigDecimal qty = l.get("quantity") == null ? BigDecimal.ONE : dec(l.get("quantity"));
-                out.add(price(partnerId, str(l.get("productId")), qty, on).json());
-            }
-        }
-        return Obj.of("partnerId", partnerId, "lines", out);
+        // ADR-S011 S2: one pricing policy — the sales engine (it applies these CRM rules as one of its tiers).
+        return engine.resolve(in);
     }
 
     /** Price one product for one customer. */

@@ -11,6 +11,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -58,13 +59,18 @@ public class SalesOrderService {
     private final SalesDb db;
     private final SalesSettingsService settings;
     private final SalesLinePricing pricing;
+    private final SalesPricingEngine engine;
+    private final ApprovalsService approvals;
     private final DocumentBuilderService builder;
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
-            DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events) {
+            SalesPricingEngine engine, ApprovalsService approvals, DocumentBuilderService builder,
+            SequenceService sequence, AuditService audit, EventBus events) {
+        this.engine = engine;
+        this.approvals = approvals;
         this.db = db;
         this.settings = settings;
         this.pricing = pricing;
@@ -386,7 +392,8 @@ public class SalesOrderService {
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("quantity must be greater than 0");
         }
-        QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, qty, on);
+        QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, qty,
+                blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on);
         BigDecimal unit;
         BigDecimal disc;
         String source;
@@ -507,9 +514,13 @@ public class SalesOrderService {
 
     // ------------------------------------------------------------------ lifecycle
 
+    /** Approval entity of sales orders (kernel approval engine). */
+    public static final String APPROVAL_ENTITY = "sales_order";
+
     /**
-     * Confirm a draft order. The exchange rate is locked; a customer on credit hold puts the order on hold (credit
-     * exposure checks arrive with the credit module, phase S3).
+     * Confirm a draft order. Commercial policy (extra discount beyond the authorised price, order amount, margin floor)
+     * sends it to approval first ({@code pending_approval}); otherwise it is confirmed at once. On confirmation the
+     * exchange rate is locked and a customer on credit hold puts the order on hold (credit exposure checks: S3).
      */
     @Transactional
     public Map<String, Object> confirm(String id) {
@@ -517,14 +528,93 @@ public class SalesOrderService {
         if (!"draft".equals(o.get("status"))) {
             throw ApiException.badRequest("Only draft orders can be confirmed");
         }
-        if (db.count("SELECT count(*) FROM \"SalesOrderLine\" WHERE \"orderId\" = ?", List.of(id)) == 0) {
+        List<Map<String, Object>> lines = db.rows("SELECT * FROM \"SalesOrderLine\" WHERE \"orderId\" = ? ORDER BY"
+                + " \"sortOrder\"", id);
+        if (lines.isEmpty()) {
             throw ApiException.badRequest("Add at least one line before confirming");
         }
+        List<String> reasons = approvalReasons(o, lines);
+        if (!reasons.isEmpty()) {
+            Map<String, Object> snapshot = Obj.of("number", o.get("number"), "partnerId", o.get("partnerId"), "total",
+                    o.get("total"), "amount", o.get("total"), "maxDiscountPercent", o.get("maxDiscountPercent"), "reasons",
+                    reasons);
+            Map<String, Object> req = approvals.requestApproval(APPROVAL_ENTITY, id, snapshot, null);
+            db.patch("SalesOrder", id, Obj.of("status", "pending_approval", "approvalReasons", reasons,
+                    "approvalRequestId", req == null ? null : req.get("id"), "version",
+                    ((Number) o.get("version")).intValue() + 1), true);
+            audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("status", "pending_approval", "reasons",
+                    reasons)));
+            return get(id);
+        }
+        return finishConfirm(id);
+    }
+
+    /** Why this order needs commercial approval (empty = within policy). */
+    List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
+        Map<String, Object> s = settings.settings();
+        List<String> reasons = new ArrayList<>(engine.breaches(str(o.get("partnerId")), str(o.get("branchId")),
+                LocalDate.now(), lines.stream().filter(l -> !"quotation".equals(l.get("priceSource"))).toList(),
+                dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get("marginCheck"))));
+        BigDecimal amount = dec(s.get("orderApprovalAmount"));
+        if (amount.signum() > 0 && dec(o.get("total")).compareTo(amount) > 0) {
+            reasons.add("Total exceeds the approval amount of " + amount.stripTrailingZeros().toPlainString());
+        }
+        return reasons;
+    }
+
+    /** Approve a pending order (commercial approver, not the requester) and confirm it. */
+    @Transactional
+    public Map<String, Object> approve(String id, String comment) {
+        Map<String, Object> o = lock(id);
+        if (!"pending_approval".equals(o.get("status"))) {
+            throw ApiException.badRequest("Order is not awaiting approval");
+        }
+        if (user() != null && user().equals(o.get("createdById")) && !TenantContext.has(Permissions.SALES__CONFIGURE)) {
+            throw ApiException.forbidden("You cannot approve your own order");
+        }
+        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("comment", comment)));
+        return finishConfirm(id);
+    }
+
+    /** Reject a pending order: back to draft with the reason. */
+    @Transactional
+    public Map<String, Object> reject(String id, String reason) {
+        Map<String, Object> o = lock(id);
+        if (!"pending_approval".equals(o.get("status"))) {
+            throw ApiException.badRequest("Order is not awaiting approval");
+        }
+        db.patch("SalesOrder", id, Obj.of("status", "draft", "approvalReasons", List.of("Rejected: " + (blank(reason)
+                ? "no reason given" : reason)), "approvalRequestId", null, "version", ((Number) o.get("version"))
+                .intValue() + 1), true);
+        audit.record(AuditInput.of("SalesOrder", id, "reject", null, Obj.of("reason", reason)));
+        return get(id);
+    }
+
+    /** Apply a kernel approval-engine decision (idempotent: ignored unless still pending). */
+    @Transactional
+    public void applyDecision(String id, boolean approved, String comment) {
+        Map<String, Object> o = db.row("SELECT status FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", id,
+                org());
+        if (o == null || !"pending_approval".equals(o.get("status"))) {
+            return;
+        }
+        if (approved) {
+            finishConfirm(id);
+        } else {
+            db.patch("SalesOrder", id, Obj.of("status", "draft", "approvalReasons", List.of("Rejected: " + (blank(comment)
+                    ? "rejected in approval workflow" : comment)), "approvalRequestId", null), true);
+        }
+        audit.record(AuditInput.of("SalesOrder", id, approved ? "approve" : "reject", null, Obj.of("via",
+                "approval_engine")));
+    }
+
+    private Map<String, Object> finishConfirm(String id) {
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? FOR UPDATE", id);
         Map<String, Object> partner = db.row("SELECT \"creditHold\" FROM \"Partner\" WHERE id = ? AND"
                 + " \"organizationId\" = ?", o.get("partnerId"), org());
         boolean hold = partner != null && Boolean.TRUE.equals(partner.get("creditHold"));
         Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
-                "version", ((Number) o.get("version")).intValue() + 1);
+                "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1);
         if (hold) {
             d.put("onHold", true);
             d.put("holdReason", "Customer is on credit hold");

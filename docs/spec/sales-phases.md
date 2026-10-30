@@ -14,7 +14,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | Step 0 | Design docs | — | done (5c42014) | — |
 | S0 | Foundation: module, quotation migration, master-data fields, settings, ledger harness | R1 | done | Step 0 |
 | S1 | Quotations API in sales + Sales Orders core + amendments + R1 reports + web | R1 | done | S0 |
-| S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | todo | S1 |
+| S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | done | S1 |
 | S3 | Credit module (limits, exposure, decisions, holds) | R2 | todo | S1 |
 | S4 | ATP, reservations, backorders, supply pegs | R2 | todo | S1 |
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | todo | S4, fleet 1.4b |
@@ -151,6 +151,25 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Tests: `SalesOrderIT` (8) incl. authorization matrix of all `/sales` routes and tenant isolation.
 - Deviation: order state machine lives in `SalesOrderService` (like quotations), not in the kernel `WorkflowRegistry`
   (that registry drives JPA document statuses); `branchId` optional until branch-scoped access lands.
+
+## S2 — as built
+- `V26__sales_pricing.sql`: `Pricelist`, `PricelistItem` (product / category / all × customer / customer category ×
+  min qty × unit × delivery zone × branch × dates; fixed / % discount / % surcharge / cost + %; priority),
+  `MarginFloor`, `PartnerCategory.pricelistId`, order thresholds in `SalesSettings`.
+- `SalesPricingEngine` (the single pricing policy, `@Primary` `QuotationPricingPort`): customer-bound rules → CRM
+  price rules → customer pricelist → category pricelist → branch / organization default → standing discount → list;
+  unit-aware, base-pricelist chaining (depth 3), zone from the delivery site; margin floor → floor price + margin %.
+  `breaches()` = extra discount beyond the authorised price and prices below the floor.
+- Quotation submit adds margin-floor reasons; sales-order confirm goes to `pending_approval` on discount / amount /
+  margin breaches (kernel approval engine entity `sales_order`, approve / reject routes, subscriber), else confirms.
+- `/crm/pricing/resolve` answers from the engine (same fields + floor / margin); CRM rule CRUD unchanged.
+- Routes: `/sales/pricelists*` (8), `/sales/margin-floors*` (4), `/sales/pricing/resolve`, `/sales/orders/{id}/approve`
+  and `/reject`.
+- Web: Pricelists (list, simulator), pricelist editor (rules, customer / category assignment), Margin floors; order
+  form shows approval reasons and Approve / Reject.
+- Tests: `SalesPricingIT` (4).
+- Deviation: CRM price rules are not migrated into pricelists; they stay editable under CRM → Price Rules and are the
+  engine's second tier (avoids a translation layer; one engine decides all prices).
 
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to

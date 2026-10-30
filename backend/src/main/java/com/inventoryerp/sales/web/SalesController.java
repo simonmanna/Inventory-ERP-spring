@@ -204,6 +204,19 @@ public final class SalesController {
             return svc.confirm(id);
         }
 
+        @PostMapping("/{id}/approve")
+        @Idempotent
+        @RequirePermissions(Permissions.SALES__QUOTATION_APPROVE)
+        public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.approve(id, text(b, "comment"));
+        }
+
+        @PostMapping("/{id}/reject")
+        @RequirePermissions(Permissions.SALES__QUOTATION_APPROVE)
+        public Map<String, Object> reject(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.reject(id, text(b, "reason"));
+        }
+
         @PostMapping("/{id}/hold")
         @RequirePermissions(Permissions.SALES__ORDER_HOLD_RELEASE)
         public Map<String, Object> hold(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {

@@ -84,9 +84,9 @@ export function SalesOrderPage() {
       onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save'))),
     });
   };
-  const run = (a: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate', body?: Record<string, unknown>) =>
+  const run = (a: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject', body?: Record<string, unknown>) =>
     action.mutate({ id: o!.id, action: a, body }, {
-      onSuccess: (r) => { if (a === 'duplicate') navigate(`/sales/orders/${r.id}`); else toast.success(a === 'confirm' && r.onHold ? tx('Confirmed — on hold: ') + (r.holdReason ?? '') : tx('Done')); },
+      onSuccess: (r) => { if (a === 'duplicate') navigate(`/sales/orders/${r.id}`); else toast.success(r.status === 'pending_approval' ? tx('Sent for approval') : a === 'confirm' && r.onHold ? tx('Confirmed — on hold: ') + (r.holdReason ?? '') : tx('Done')); },
       onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))),
     });
 
@@ -115,6 +115,10 @@ export function SalesOrderPage() {
       <div className="flex flex-wrap gap-2">
         {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
         {o?.status === 'draft' && has(P.orderConfirm) && <Button variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
+        {o?.status === 'pending_approval' && has(P.quotationApprove) && <>
+          <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
+          <Button variant="destructive" onClick={() => { const r = prompt(tx('Reason')); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
+        </>}
         {o && open && !o.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => { setReason(''); setDialog('hold'); }}><Pause className="mr-1.5 h-4 w-4" />{tx('Hold')}</Button>}
         {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
         {o && open && has(P.orderAmend) && <Button variant="outline" onClick={() => setDialog('change')}><FileSignature className="mr-1.5 h-4 w-4" />{tx('Request change')}</Button>}
@@ -125,6 +129,8 @@ export function SalesOrderPage() {
         )}
       </div>
 
+      {o?.status === 'pending_approval' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
+      {o?.status === 'draft' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.approvalReasons.join(' · ')}</div>}
       {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{tx('On hold')}: {o.holdReason}</div>}
 
       {o?.relations && (

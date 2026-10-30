@@ -187,3 +187,17 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   Sales → Sales Dashboard: open quotations, open orders, to deliver, waiting for approval, on hold, conversion.
 - Expected GL: none (orders do not post).
 - Doubts: delivered / invoiced columns stay 0 until S5 / S6 wire the projections.
+
+## Phase S2 — Pricing and commercial approvals (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesPricingIT'`.
+- Migration: `V26__sales_pricing.sql`.
+- Screens: Sales → Pricelists → *New pricelist* "CONTRACTOR" → *Add rule* all products 5 % discount → assign the
+  customer category "Contractors". *Price simulator*: a contractor customer pays list − 5 %, a walk-in pays list.
+  Second pricelist for one customer: aggregate fixed 46 000, from 500 t 44 000, zone "Far" 48 000 → simulator shows
+  each price; a delivery site in zone "Far" picks 48 000.
+  Sales → Margin floors: sand 20 % → a quotation for sand below cost / 0.8 goes to *Waiting for approval* with
+  "below the 20% margin floor".
+  Sales order with 30 % discount → *Confirm order* → "Sent for approval"; another user with
+  `sales:quotation:approve` approves → Confirmed; *Reject* returns it to draft with the reason.
+- Expected GL: none.

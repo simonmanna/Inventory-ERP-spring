@@ -3,27 +3,22 @@ package com.inventoryerp.crm.application;
 import static com.inventoryerp.crm.application.CrmDb.org;
 
 import com.inventoryerp.sales.application.QuotationOpportunityPort;
-import com.inventoryerp.sales.application.QuotationPricingPort;
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * CRM side of the sales quotation ports (ADR-S011): opportunity visibility / win, and price resolution over the CRM
- * customer price rules until the sales pricelist engine (phase S2) takes over.
+ * CRM side of the sales quotation opportunity port (ADR-S011): opportunity visibility and win on conversion. Prices
+ * come from the sales pricing engine since phase S2 (it honours the CRM price rules as a tier).
  */
 @Component
-public class CrmQuotationPorts implements QuotationOpportunityPort, QuotationPricingPort {
+public class CrmQuotationPorts implements QuotationOpportunityPort {
 
     private final CrmDb db;
     private final CrmPipelineService pipeline;
-    private final CrmPricingService pricing;
 
-    public CrmQuotationPorts(CrmDb db, CrmPipelineService pipeline, CrmPricingService pricing) {
+    public CrmQuotationPorts(CrmDb db, CrmPipelineService pipeline) {
         this.db = db;
         this.pipeline = pipeline;
-        this.pricing = pricing;
     }
 
     @Override
@@ -38,12 +33,5 @@ public class CrmQuotationPorts implements QuotationOpportunityPort, QuotationPri
         if (deal != null && "open".equals(deal.get("status")) && "opportunity".equals(deal.get("kind"))) {
             pipeline.won(dealId);
         }
-    }
-
-    @Override
-    public Price price(String partnerId, String productId, BigDecimal qty, LocalDate on) {
-        CrmPricingService.Price p = pricing.price(partnerId, productId, qty, on);
-        return new Price(p.listPrice(), p.unitPrice(), p.discountPercent(), p.source(), p.ruleId(), p.taxId(),
-                p.taxInclusive(), p.description());
     }
 }

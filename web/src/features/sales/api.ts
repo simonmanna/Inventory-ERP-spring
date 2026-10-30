@@ -55,6 +55,7 @@ export interface SalesOrder {
   status: SalesOrderStatus;
   onHold: boolean;
   holdReason: string | null;
+  approvalReasons: string[];
   deliveryStatus: DeliveryStatus;
   invoiceStatus: InvoiceStatus;
   partnerId: string;
@@ -125,7 +126,7 @@ export const salesApi = {
   createOrder: async (body: Record<string, unknown>) => (await api.post<SalesOrder>('/sales/orders', body)).data,
   updateOrder: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<SalesOrder>(`/sales/orders/${id}`, body)).data,
   deleteOrder: async (id: string) => (await api.delete(`/sales/orders/${id}`)).data,
-  orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate'; body?: Record<string, unknown> }) =>
+  orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject'; body?: Record<string, unknown> }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/${action}`, body ?? {}, action === 'confirm' ? idem() : undefined)).data,
   closeShort: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/close-short`, { reason })).data,
@@ -290,4 +291,90 @@ export function usePricelist(id: string | undefined) {
 
 export function useMarginFloors() {
   return useQuery({ queryKey: ['sales', 'floors'], queryFn: async () => (await api.get<MarginFloor[]>('/sales/margin-floors')).data });
+}
+
+// ---- Credit (phase S3) ----
+
+export interface CreditExposure {
+  partnerId: string;
+  currencyCode: string;
+  limit: number;
+  limitSource: 'credit_limit' | 'partner' | 'group' | 'none';
+  components: { undelivered: number; deliveredUninvoiced: number; receivables: number; other: number; deposits: number; credits: number };
+  exposure: number;
+  headroom: number | null;
+  overdue: { amount: number; maxDays: number };
+  creditHold: boolean;
+  riskCategory: string | null;
+  group: { parentId: string; limit: number; exposure: number } | null;
+}
+
+export interface CreditDecision {
+  id: string;
+  partnerId: string;
+  partnerName?: string;
+  checkpoint: string;
+  documentType: string | null;
+  documentNumber: string | null;
+  amount: number;
+  limitAmount: number;
+  result: 'pass' | 'hold' | 'blocked' | 'override';
+  reasons: string[];
+  exposure: CreditExposure;
+  decidedByName?: string | null;
+  createdAt: string;
+}
+
+export interface CreditLimit {
+  id?: string;
+  partnerId: string;
+  partnerName?: string;
+  branchId: string | null;
+  currencyCode: string | null;
+  amount: number;
+  riskCategory: string | null;
+  reviewDate: string | null;
+  periodDays: number | null;
+  validFrom: string | null;
+  validTo: string | null;
+  notes: string | null;
+}
+
+export const creditApi = {
+  saveLimit: async ({ id, ...body }: CreditLimit) =>
+    (id ? await api.put<CreditLimit>(`/credit/limits/${id}`, body) : await api.post<CreditLimit>('/credit/limits', body)).data,
+  deleteLimit: async (id: string) => (await api.delete(`/credit/limits/${id}`)).data,
+  setHold: async ({ partnerId, hold, reason }: { partnerId: string; hold: boolean; reason: string }) =>
+    (await api.post(`/credit/partners/${partnerId}/hold`, { hold, reason })).data,
+  updatePolicy: async (body: Record<string, unknown>) => (await api.put('/credit/policy', body)).data,
+};
+
+export function useCreditExposure(partnerId: string | undefined) {
+  return useQuery({
+    queryKey: ['sales', 'credit', partnerId],
+    queryFn: async () => (await api.get<CreditExposure>(`/credit/partners/${partnerId}/exposure`)).data,
+    enabled: !!partnerId,
+  });
+}
+
+export function useCreditReview() {
+  return useQuery({
+    queryKey: ['sales', 'credit-review'],
+    queryFn: async () => (await api.get<Array<CreditExposure & { partnerName: string }>>('/credit/review-queue')).data,
+  });
+}
+
+export function useCreditDecisions(params: Record<string, string | undefined>) {
+  return useQuery({
+    queryKey: ['sales', 'credit-decisions', params],
+    queryFn: async () => (await api.get<CreditDecision[]>('/credit/decisions', { params: clean(params) })).data,
+  });
+}
+
+export function useCreditLimits() {
+  return useQuery({ queryKey: ['sales', 'credit-limits'], queryFn: async () => (await api.get<CreditLimit[]>('/credit/limits')).data });
+}
+
+export function useCreditPolicy() {
+  return useQuery({ queryKey: ['sales', 'credit-policy'], queryFn: async () => (await api.get<Record<string, unknown>>('/credit/policy')).data });
 }

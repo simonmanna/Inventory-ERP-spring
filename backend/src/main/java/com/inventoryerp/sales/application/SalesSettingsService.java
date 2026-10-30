@@ -71,6 +71,22 @@ public class SalesSettingsService {
             sets.add("\"quoteApprovalAmount\" = ?");
             params.add(v);
         }
+        if (in.containsKey("orderMaxDiscountPercent")) {
+            BigDecimal v = dec(in.get("orderMaxDiscountPercent"));
+            if (v.signum() < 0 || v.compareTo(BigDecimal.valueOf(100)) > 0) {
+                throw ApiException.badRequest("orderMaxDiscountPercent is out of range");
+            }
+            sets.add("\"orderMaxDiscountPercent\" = ?");
+            params.add(v);
+        }
+        if (in.containsKey("orderApprovalAmount")) {
+            BigDecimal v = dec(in.get("orderApprovalAmount"));
+            if (v.signum() < 0) {
+                throw ApiException.badRequest("orderApprovalAmount is out of range");
+            }
+            sets.add("\"orderApprovalAmount\" = ?");
+            params.add(v);
+        }
         if (in.containsKey("quoteValidityDays")) {
             int v = in.get("quoteValidityDays") instanceof Number n ? n.intValue() : 0;
             if (v <= 0) {
@@ -79,7 +95,7 @@ public class SalesSettingsService {
             sets.add("\"quoteValidityDays\" = ?");
             params.add(v);
         }
-        for (String k : List.of("creditCheck", "autoWinOnConversion")) {
+        for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

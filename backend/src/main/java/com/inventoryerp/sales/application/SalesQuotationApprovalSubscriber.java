@@ -24,8 +24,11 @@ public class SalesQuotationApprovalSubscriber {
     private final EventBus events;
     private final JdbcClient jdbc;
     private final SalesQuotationService quotations;
+    private final SalesOrderService orders;
 
-    public SalesQuotationApprovalSubscriber(EventBus events, JdbcClient jdbc, SalesQuotationService quotations) {
+    public SalesQuotationApprovalSubscriber(EventBus events, JdbcClient jdbc, SalesQuotationService quotations,
+            SalesOrderService orders) {
+        this.orders = orders;
         this.events = events;
         this.jdbc = jdbc;
         this.quotations = quotations;
@@ -38,7 +41,8 @@ public class SalesQuotationApprovalSubscriber {
 
     void onDecided(JsonNode p) {
         String entity = p.path("entityType").asString("");
-        if (!SalesQuotationService.APPROVAL_ENTITY.equals(entity)
+        boolean order = SalesOrderService.APPROVAL_ENTITY.equals(entity);
+        if (!order && !SalesQuotationService.APPROVAL_ENTITY.equals(entity)
                 && !SalesQuotationService.SALES_APPROVAL_ENTITY.equals(entity)) {
             return;
         }
@@ -54,7 +58,11 @@ public class SalesQuotationApprovalSubscriber {
         String comment = jdbc.sql("SELECT comment FROM \"ApprovalDecision\" WHERE \"requestId\" = ? ORDER BY"
                 + " \"decidedAt\" DESC LIMIT 1").param(requestId).query(String.class).optional().orElse(null);
         TenantContext.run(TenantStore.user(orgId, decider), () -> {
-            quotations.applyDecision(quotationId, approved, comment);
+            if (order) {
+                orders.applyDecision(quotationId, approved, comment);
+            } else {
+                quotations.applyDecision(quotationId, approved, comment);
+            }
             log.info("Quotation {} {} by approval request {}", quotationId, approved ? "approved" : "rejected",
                     requestId);
         });
