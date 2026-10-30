@@ -726,6 +726,15 @@ export const PERMISSIONS = {
     /// Charge a fine to a driver (payroll deduction) or to the company.
     charge: 'fleet_incident:charge',
   },
+  fleetFreight: {
+    /// Transporter freight bills (fleet 1.9): list and detail.
+    read: 'fleet_freight:read',
+    /// Generate bills from closed transporter trips, match the supplier invoice (AP bill + accrual), cancel,
+    /// capitalise inbound freight as landed cost.
+    bill: 'fleet_freight:bill',
+    /// Accept a supplier invoice outside the match tolerance.
+    approveVariance: 'fleet_freight:approve_variance',
+  },
   weighbridge: {
     read: 'weighbridge:read',
     /// Operator: register trucks, capture first / second weights, print tickets.

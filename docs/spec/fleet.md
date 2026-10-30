@@ -9,6 +9,7 @@
 | Feature flag | `ENABLE_FLEET` → `app.modules.fleet` (controllers + module manifest only when `true`), licence feature `fleet`, module name `fleet`, web feature key `fleet` |
 | Java package | `com.inventoryerp.fleet` (`domain`, `application` are named interfaces) |
 | Migrations | `V15__fleet_vehicle_registry.sql`, `V16__fleet_drivers_operators.sql` (1.2 + hr `HrPayrollInput`), `V22__fleet_dispatch.sql` (1.3), `V23__fleet_weighbridge.sql` (1.4a), `V24__fleet_weighbridge_dispatch.sql` (1.4b, placeholder number) |
+| Migrations | `V15__fleet_vehicle_registry.sql`, `V16__fleet_drivers_operators.sql` (1.2 + hr `HrPayrollInput`), `V22__fleet_dispatch.sql` (1.3, placeholder number), `V25__fleet_costing.sql` (1.9, placeholder number) |
 
 ## Purpose
 
@@ -24,12 +25,12 @@ and trips with proof of delivery (1.3), the weighbridge (1.4), fuel (1.5), maint
 | 1.1 | Vehicle & equipment registry | **done** | configurable classes, vehicle master, status machine + history, odometer / hour-meter readings with the monotonic rule, approval-gated corrections, compliance documents + expiry query, photos / documents, linked fixed asset (read-only), lookups, overview |
 | 1.2 | Drivers & operators | **done** | driver / operator profile → hr employee (licence number / classes / issue / expiry, medical, operator permit), qualified classes, expiring-documents query, eligibility policy, assignments (primary / temporary), check-out / check-in (meters, fuel, condition, damage, photos), allowance rules, claims → approval → paid via expenses or exported to hr payroll, reversal |
 | 1.3 | Trips, delivery planning & dispatch | **done** | customer sites, delivery orders from sales orders / invoices / manual, dispatch board, loads within payload / volume, own fleet or transporter, trip lifecycle, delivery note, POD, stock issue once per load, discrepancies → approval → credit-note request, transport charges — see "1.3 Trips, delivery planning & dispatch" |
-| 1.4 | Weighbridge | **1.4a done; 1.4b outbound wiring pending** | stations, devices (`WeighbridgeAdapter` SPI: ASCII TCP / serial + simulator), stored tare with expiry, ticket workflow, tolerance exceptions with SoD approval, immutable tickets (void + reissue), inbound weighing → GRN |
+| 1.4 | Weighbridge | **done** (1.4a + 1.4b) | stations, devices (`WeighbridgeAdapter` SPI: ASCII TCP / serial + simulator), stored tare with expiry, ticket workflow, tolerance exceptions with SoD approval, immutable tickets (void + reissue), inbound weighing → GRN |
 | 1.5 | Fuel & energy | done | fuel logs, cards, efficiency + anomaly flags, site tanks / bowsers (GRN in, stock issue out, dips, reconciliation), GL |
 | 1.6 | Maintenance | done | service templates / schedules (km / hours / calendar), fleet-owned work orders (parts, labour, external bills), downtime, availability, MTBF / MTTR, inspections (DVIR) → defects → work orders, dispatch block |
 | 1.7 | Tyres, incidents, fines | done | tyre positions / fitment / rotation / tread, cost per km; incidents, claims; fines charged to driver (payroll deduction) or company |
 | 1.8 | Telematics SPI | done | `TelematicsProvider` (positions, meters, events) + mock; positions feed trip distance and POD location |
-| 1.9 | Costing, profitability & reports | planned | cost per vehicle / km / hour / tonne / trip, TCO, delivery profitability, transporter freight bills, utilisation, renewals / services due, exports; ShedLock reminder jobs |
+| 1.9 | Costing, profitability & reports | **done** | cost per vehicle / km / hour / tonne / trip, TCO, delivery profitability, transporter freight bills (AP + accrual, inbound landed cost), utilisation, fuel, deliveries / tonnes, renewals / services due, CSV / XLSX / PDF exports, KPI tiles; ShedLock reminder job; driver fines → payroll deductions; opt-in demo seed — see "1.9 Costing, profitability & reports" |
 
 ## Routes (1.1)
 
@@ -79,7 +80,7 @@ Meter corrections are decided in the approvals inbox (`POST /approvals/{requestI
 |---|---|---|
 | 1.2 | built — see "Routes (1.2)" | `fleet_driver:*`, `fleet:settings` |
 | 1.3 | built — see "1.3 Trips, delivery planning & dispatch" (`/fleet/customer-sites`, `/fleet/delivery-orders`, `/fleet/dispatch-board`, `/fleet/trips`, `/fleet/delivery-discrepancies`, `/fleet/transporter-rates`, `/fleet/delivery-charge-rules`, `/fleet/product-load-factors`) | `fleet_dispatch:*`, `fleet_trip:*`, `fleet:settings` |
-| 1.4 | built (1.4a) — see "1.4 Weighbridge" | `weighbridge:*` |
+| 1.4 | built (1.4a + 1.4b) — see "1.4 Weighbridge" | `weighbridge:*` |
 | 1.5 | `/fleet/fuel-cards`, `/fleet/fuel-logs` (+ `/post`, `/reverse` — idempotent), `/fleet/fuel-tanks`, `/dips`, `/reconciliation` | `fleet_fuel:*` |
 | 1.6 | `/fleet/service-templates`, `/fleet/service-schedules`, `/fleet/work-orders` (+ lines, start, complete — idempotent), `/fleet/downtime`, `/fleet/inspection-templates`, `/fleet/inspections`, `/fleet/defects` | `fleet_maintenance:*` |
 | 1.7 | `/fleet/tyres`, `/fleet/incidents`, `/fleet/insurance-claims`, `/fleet/fines` (+ `/charge`) | `fleet_maintenance:tyre`, `fleet_incident:*` |
@@ -282,8 +283,9 @@ Consumed: `approval.decided` (entity types `fleet_meter_correction`, `fleet_driv
 
 ## Scheduled jobs
 
-None in 1.1 / 1.2. 1.9 adds `fleet-reminders` (ShedLock, daily) over `FleetComplianceService.dueForOrganization`
-and `FleetDriverService.documentsDueForOrganization` (licences, medical certificates, permits).
+None in 1.1 / 1.2. 1.9 adds `fleet-reminders` (ShedLock, daily) over `FleetComplianceService.dueForOrganization`,
+`FleetDriverService.documentsDueForOrganization` (licences, medical certificates, permits), stored tares and services
+due — see "1.9".
 
 ## GL postings
 
@@ -353,7 +355,7 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | 1.3 trips, delivery planning & dispatch | done (55 routes) | `DispatchPoliciesTest` (unit: load splitting by payload / volume / whole units, freight, delivery-charge rule choice + amounts, trip state machine); `FleetDispatchIT` (9: sales order → DO → loads → eligibility / capacity blocks → weighed → dispatch once with replay → delivery note → POD shortage → SoD approval → close → invoice + transport charge without a second stock issue; posted-invoice source → credit-note request + transporter freight + draft-invoice hand-over; returns; concurrent dispatch; weighbridge API; settings / validation / trip FK; tenant isolation; authorization matrix 55 routes) |
 | 1.4a weighbridge core | done (36 routes) | `WeighbridgePoliciesTest`, `FleetWeighbridgeIT` — see "1.4 Weighbridge" |
 | 1.4b weighbridge ↔ dispatch | done (6 routes) | `WeighbridgeDispatchRulesTest` (unit), `FleetWeighbridgeDispatchIT` (7), `FleetPhase1EndToEndIT` (3, Phase 1 exit) — see "1.4b" |
-| 1.9 | planned | — |
+| 1.9 costing, profitability & reports | done (22 routes) | `FleetCostingPoliciesTest`, `FleetCostingIT`, `FleetRemindersPayrollIT`, `FleetDemoSeedIT` — see "1.9" |
 
 ## 1.6 Maintenance — fleet, mobile plant and (Phase 4) fixed plant
 
@@ -810,7 +812,8 @@ matrix).
 
 ### Known gaps (1.7 / 1.8)
 
-- hr payroll does not consume `fleet.fine.deduction_requested` yet (wired at merge with 1.2's hr integration).
+- ~~hr payroll does not consume `fleet.fine.deduction_requested` yet~~ — wired in 1.9 (fleet queues an hr payroll
+  deduction input when the fine is charged; see "1.9 → Driver fines → hr payroll").
 - `FleetIncident.workOrderId` is a free id until 1.6 work orders are merged (then validate / link).
 - No provider push webhook (pull only); no vendor adapter beyond the mock; no geofence editor (geofence events come
   from the provider).
@@ -992,7 +995,7 @@ Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load f
   stock: invoice delivered sales orders from the delivery order (`/invoice`) instead; documented for the owner.
 - An approved **excess** on invoiced goods adjusts the billable quantity only (no automatic supplementary invoice).
 - Editing a draft source invoice after its DO exists does not re-sync the DO lines.
-- Transporter freight is computed on the trip; posting it (vendor bill / accrual, Dr 6460 outbound freight) is 1.9.
+- Transporter freight is computed on the trip; 1.9 freight bills post it (AP vendor bill + accrual, Dr 6460).
 - Load factors are a stop-gap until Phase 4 UoM / density work.
 ## 1.4 Weighbridge — done (1.4a core + 1.4b dispatch wiring)
 
@@ -1244,3 +1247,180 @@ trip ids (real FKs now).
 **Known gaps.** A ticket covers one trip (a truck weighed once for two trips needs two tickets). Trip lines snapshot the
 load factor at planning, so after adding a load factor only the weighbridge kg-per-unit conversion helps a re-feed.
 After dispatch, weight corrections go through POD / discrepancies, not the ticket.
+## 1.9 Costing, profitability & reports
+
+Status: **done** (Track C, worktree `wt/c-costing`, 2026-10-29). Design: ADR-S009 §3 (1.9 read models), §6 (freight GL),
+§9 (reminder jobs). Migration `V25__fleet_costing.sql` (placeholder number, renumbered at merge). Code:
+`FleetCostCalculator` (formulas), `FleetCostingService` (TCO aggregation), `FleetReportService` (delivery reports,
+utilisation, fuel, renewals, KPIs), `FleetReportExporter` + `FleetReportExportService` (CSV / XLSX / PDF),
+`FleetFreightBillService`, `FleetReminderService` + `FleetReminderJob`, `FleetPayrollSubscriber`,
+`FleetDemoSeedContributor`; controllers in `fleet.web.costing`. Permissions added: `fleet_freight:read`,
+`fleet_freight:bill`, `fleet_freight:approve_variance` (reports use the existing `fleet:report`).
+
+### Routes (1.9) — 22, all under `/api/v1`, `@RequiresModule("fleet")`
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/fleet/reports/kpis` | `fleet:report` | month to date (or `from, to`): deliveries, on time %, tonnes, transport cost / t, delivery margin, availability / utilisation, fuel, TCO, cost / km, renewals / services, freight to bill |
+| GET | `/fleet/reports/vehicle-costs` | `fleet:report` | TCO per `groupBy` vehicle (default) / category / branch / month; `vehicleId, categoryId, branchId, from, to` |
+| GET | `/fleet/vehicles/{id}/cost-summary` | `fleet:report` | one unit, default last 12 months by month (404 unknown unit) |
+| GET | `/fleet/reports/delivery-profitability` | `fleet:report` | `groupBy` trip (default) / delivery_order / customer / site / day / month; `partnerId, siteId, vehicleId, carrier, transporterPartnerId, deliveryOrderId` |
+| GET | `/fleet/reports/deliveries` | `fleet:report` | completed / on time per day (default) / month / customer / site / vehicle / driver / transporter / carrier; `returnedTrips` in the totals |
+| GET | `/fleet/reports/tonnes` | `fleet:report` | tonnes per vehicle (default) / driver / customer / site / transporter / product / month / day |
+| GET | `/fleet/reports/transport-cost` | `fleet:report` | cost per tonne / km, charges billed, recovery % per carrier (default) / vehicle / transporter / customer / site / month / driver |
+| GET | `/fleet/reports/utilisation` | `fleet:report` | active days, utilisation %, availability %, downtime, trips, km, hours, tonnes per vehicle / class + `downtimeByReason` |
+| GET | `/fleet/reports/fuel` | `fleet:report` | litres (station / tank), cost, L/100 km, L/h, cost / km / L, open anomalies per vehicle / class / month |
+| GET | `/fleet/reports/renewals` | `fleet:report` | `asOf, days (0–365, default 30), kind` (compliance, driver, tare, service): expired / due items, soonest first, with counts |
+| GET | `/fleet/reports/{report}/export` | `fleet:report` | `format` csv / xlsx / pdf + the report's filters; `report` = vehicle-costs, delivery-profitability, deliveries, tonnes, transport-cost, utilisation, fuel, renewals (404 other) |
+| GET | `/fleet/freight-bills` | `fleet_freight:read` | `{data, meta}`; `status, direction, transporterPartnerId, search, page, pageSize` |
+| GET | `/fleet/freight-bills/lookups` | `fleet_freight:read` | transporters (suppliers), latest posted goods receipts, tolerance |
+| GET | `/fleet/freight-bills/candidates` | `fleet_freight:read` | unbilled closed transporter trips per transporter (`from, to` closing day) |
+| GET | `/fleet/freight-bills/{id}` | `fleet_freight:read` | lines with trip / DO / customer, AP bill, journal entries, landed cost, tolerance |
+| POST | `/fleet/freight-bills/generate` | `fleet_freight:bill` | 201 `{transporterPartnerId?, from, to, notes?}` → one draft bill per transporter |
+| DELETE | `/fleet/freight-bills/{id}/lines/{lineId}` | `fleet_freight:bill` | take a trip off a draft / disputed bill |
+| POST | `/fleet/freight-bills/{id}/match` | `fleet_freight:bill` (+ `approve_variance` to accept) | **Idempotency-Key**; `{supplierReference, supplierInvoiceDate, supplierAmount, dueDate?, acceptVariance?, notes?}` |
+| POST | `/fleet/freight-bills/{id}/cancel` | `fleet_freight:bill` | **Idempotency-Key**; `{reason}` |
+| POST | `/fleet/freight-bills/inbound` | `fleet_freight:bill` | **Idempotency-Key**; `{goodsReceiptId, transporterPartnerId, supplierReference, invoiceDate, amount, allocationMethod?, costCenterId?, dueDate?, notes?}` |
+| GET | `/fleet/reminders` | `fleet:report` | reminder log; `itemType, from, to, page, pageSize` |
+| POST | `/fleet/reminders/run` | `fleet:settings` | 201 `{asOf?}` — the job's pass for the caller's organization now |
+
+### Data model (V961)
+
+| Table / column | Purpose |
+|---|---|
+| `FleetComplianceDocument."costAmount"` | premium / fee of the document (insurance, road licence, permits …) — spread over its validity in TCO; editable on the compliance dialog |
+| `FleetFreightBill` | `code` FB-00001, `direction` outbound / inbound, transporter, period, `status` draft → disputed / billed → cancelled, totals, supplier invoice (reference, date, amount), variance + % + allowed, `varianceAccepted(By)`, `vendorBillId/Number`, `journalEntryId`, `postingKey`, `reversalEntryId`, inbound `goodsReceiptId` + `landedCostId` (one live per receipt + supplier invoice) |
+| `FleetFreightBillLine` | trip, delivery order, basis / rate / tonnes / km, amount, cost centre, `status` active / cancelled — **one active line per trip** (partial unique index): a trip is billed once |
+| `FleetReminderLog` | one row per organization + item type + item key + business day (unique): dedupe of the reminder job; state, due day, title / body, notification id |
+| `FleetFineDeduction."payrollInputId"` | the hr payroll input that deducts the fine |
+| `HrPayrollInput.kind` | widened to `earning` / `deduction` (CHECK replaced); `"creditAccountId"` — account a deduction credits |
+
+Org settings (SettingRegistry, group `fleet`): `fleet.tripCostBasis` (km / tonne / trip, default km),
+`fleet.freightMatchTolerancePct` (1), `fleet.freightMatchToleranceAmount` (0), `fleet.tareReminderDays` (3).
+
+### Cost formulas and sources (`FleetCostCalculator`, `FleetCostingService`)
+
+TCO of a unit over a period = depreciation + fuel + maintenance + tyres + insurance + licences / permits + incidents +
+driver allowances + fines:
+
+| Bucket | Source (org-scoped, read-only) |
+|---|---|
+| Depreciation | posted `AssetDepreciation` of the linked fixed asset (fixedasset domain); a monthly line pro rata by its days in the period |
+| Fuel | posted fuel logs by fuelling time: station purchases at their amount, tank issues at their stock issue value |
+| Maintenance | posted work-order lines (parts net of returns, labour memo cost, external bills) by work / bill date, else posting day |
+| Tyres | purchase (or stock issue) cost on a tyre's **first** fitment to the unit; retread costs on the unit it last ran on |
+| Insurance / licences | `costAmount` of compliance documents spread per day over issued → expires (no expiry: whole amount on its day) |
+| Incidents | repair cost of incidents not repaired through a fleet work order − insurance received on claims settled in the period |
+| Driver allowances | approved / paid / exported claims of the unit by claim date |
+| Fines | fines charged to the **company** (driver-charged fines are recovered from pay) |
+
+Use: km and engine hours = last lifetime reading in the period − last reading before it (else the first in the
+period), the trips' distance when the unit has no odometer readings; tonnes and trips from its delivered / closed
+own-fleet trips. Unit rates (cost / km, / hour, / tonne, / trip) = TCO / use, 4 decimals; unknown use → no rate.
+
+**Own-fleet trip cost** = the unit's cost pool of the report period (TCO − allowances already claimed for a trip) per
+allocation basis (`fleet.tripCostBasis`, fallback km → tonne → trip) × the trip's km / tonnes / 1, **plus** the
+allowances claimed for that trip. **Transporter trip cost** = the amount on its active freight-bill line, else the
+trip's `freightAmount`.
+
+**Delivery profitability** per trip = goods revenue (billable quantity × order price net of discount) + transport
+charge (the delivery order's `FleetDeliveryCharge`s shared over its finished trips by tonnes) − product cost (stock
+issue value net of returns; for stock mode `invoiced` estimated at the product's cost price and flagged) − trip cost;
+margin % of revenue + charge. Groups re-sum their trips.
+
+**On time** = POD on or before the requested day, and on that day not after the window end. **Utilisation** = active
+days (a trip dispatched or a check-out that day) / days of the period; **availability** from recorded downtime (1.6
+`AvailabilityCalculator`).
+
+### Freight bills (`FleetFreightBillService`)
+
+1. `generate` takes an organization advisory lock, collects closed transporter trips with freight closed in the
+   period and not on an active line, and creates one **draft** bill per transporter (re-running finds nothing new).
+2. `match` compares the supplier invoice with the bill total: allowed variance = max(absolute, total × % / 100). Within
+   it (or when a `fleet_freight:approve_variance` holder accepts it): a **draft AP vendor bill** via
+   `VendorBillService.create` (one line on clearing **2169** "Transport Freight Bills to Receive" at the supplier
+   amount, supplier reference = invoice number) and the accrual, key `fleet:freight:<billId>`:
+   Dr **6460** Outbound Freight & Transport per trip (trip / order cost centre; dimensions `freightBillId`, `tripId`,
+   `deliveryOrderId`) ± the variance on 6460 / Cr 2169 at the supplier amount. AP posts the bill: Dr 2169 / Cr supplier.
+   Outside the tolerance the bill becomes `disputed` (no GL).
+3. `cancel`: draft / disputed → lines released; billed → refused while the AP bill is posted, else the accrual is
+   reversed (`PostingService.reverse`) and the trips can be billed again (a draft AP bill is left for AP to discard, as
+   in 1.6).
+4. **Inbound** (ADR-S007): `inbound` creates, approves and posts a landed cost voucher on the posted goods receipt with
+   one capitalised `freight` charge of the transporter (bill mode generate → procurement raises and posts the supplier
+   bill; value allocation by default) — Dr inventory (consumed share COGS) / Cr landed-cost clearing, the bill Dr
+   clearing / Cr supplier. One live charge per receipt + supplier invoice (replay returns it). Cancel reverses the
+   voucher (which cancels its generated bill). Trips (`FleetLoad`) are outbound deliveries only, so inbound freight is
+   entered per receipt (e.g. sand / cement / fuel brought in by a haulier); a future inbound-haulage trip type can call
+   the same method.
+
+Event `fleet.freight_bill.matched` (`organizationId, freightBillId, code, direction, transporterPartnerId, amount,
+varianceAmount, vendorBillId, journalEntryId, tripCount`).
+
+### Reminder job (`fleet-reminders`, ShedLock, `app.jobs.enabled` + `app.modules.fleet`, cron `FLEET_REMINDERS_CRON`, default 06:00)
+
+Per organization with fleet units / drivers: compliance documents due (each document's lead days), driver licences /
+medicals / permits (each driver's lead days), active stored tares expiring within `fleet.tareReminderDays`, services
+due / overdue. Each item claims its `FleetReminderLog` row for the day (`ON CONFLICT DO NOTHING`); only a claimed row
+sends the in-app notification (kernel `NotificationsService`, category `fleet`, payload with a link) and publishes
+`fleet.reminder.due` (communication rules can route it to email / WhatsApp). Counters `fleet.reminders.sent` /
+`fleet.reminders.skipped` (tag `type`). Re-runs the same day send nothing new; `POST /fleet/reminders/run` runs it
+for the caller's organization.
+
+### Driver fines → hr payroll (wiring of 1.7)
+
+Charging a fine to an **active** driver queues `HrPayrollInputService.addDeduction` (source `fleet_fine_deduction`,
+id = the deduction request; credit account **2186** "Traffic Fines Withheld from Drivers",
+`fleet_fine_deductions_payable`). The payroll calculation subtracts pending deductions of the employee from the net
+pay left after statutory deductions, loans and advances (a deduction that does not fit waits for a later run); the
+approved run's journal credits 2186 for them (balanced: gross = net + every deduction). Approval marks the inputs
+`included` and publishes `hr.payroll.inputs_included`; `FleetPayrollSubscriber` settles the request and the fine.
+Reversing the approved run publishes `hr.payroll.inputs_reopened` (request pending, fine charged again). Reversing the
+charge, or marking the request exported / settled by hand, withdraws the queued input (refused once a run holds it).
+An inactive employee gets no input (request stays pending for manual handling). Without deduction inputs the payroll
+engine, its routes and its journal are unchanged (HrIT green).
+
+### Web (1.9)
+
+Fleet → **Fleet Reports** `/fleet/reports` (tabs: cost of ownership, delivery profitability, deliveries & on time,
+tonnes, transport cost per tonne, utilisation & availability, fuel, renewals & services; period / grouping / carrier
+filters in the URL; Export → CSV / Excel / PDF from the server; link to the weighbridge discrepancy report),
+**Freight Bills** `/fleet/freight-bills` (+ `/:id`: trips, match form with the tolerance, accept variance, remove trip,
+cancel, AP bill, journal entries; dialogs "Bill closed trips" with the candidates and "Inbound freight → landed
+cost"), **Fleet Reminders** `/fleet/reminders` (log + run now). Fleet Overview `/fleet` shows month-to-date KPI tiles
+for `fleet:report` holders; vehicle detail tab **Costs** (12 months by month, unit rates); compliance dialog field
+"Premium / fee paid". Hooks in `web/src/features/fleet/costing-api.ts`, pages in `web/src/pages/fleet/costing/`.
+
+### Demo seed (opt-in)
+
+`SEED_FLEET_DEMO=true` with the `seed` profile: `ConstructionDemoSeedContributor` (core: 2 customers, a transporter,
+aggregate / sand / blocks / engine oil), `HrDemoSeedContributor` (5 employees) and `FleetDemoSeedContributor` (3 tippers
++ a wheel loader, 3 drivers, 2 sites, rate card, transport charge, insurance / road-licence documents with premiums,
+opening yard stock, 24 trips over the last 7 days — 3 own trucks a day, the transporter every third day — one
+invoiced delivery order, 6 fuel-card logs, a completed loader service with oil + labour, the week's draft freight bill).
+All through the module services (stock and GL by their engines, every entry balanced); skipped when `TRK-01` exists.
+
+### Tests (1.9)
+
+`FleetCostingPoliciesTest` (unit: TCO buckets, unit rates, amortisation, depreciation pro rata, meter use, allocation
+with fallbacks, margin / shares / line revenue / delivered cost, on time, tolerance, CSV guard, XLSX parts, PDF);
+`FleetCostingIT` (8: exact TCO + rates on a seeded day, grouping, vehicle summary; profitability per trip / customer /
+order; deliveries on time, tonnes by truck / product, transport cost per tonne, utilisation, fuel, renewals, KPIs;
+CSV / XLSX / PDF of every report; freight bill once per trip, match within tolerance → AP draft + balanced accrual +
+Idempotency-Key replay + event, disputed → variance permission 403 / accepted, cancel → reversal + trip re-billable,
+line removal; inbound landed cost raises the AVCO cost, replay, cancel reverses; tenant isolation; 22-route matrix);
+`FleetRemindersPayrollIT` (reminders for documents / licences / tares / services, log + notification + event +
+metric, same-day dedupe through the route and the job, next day again; fine → payroll deduction in the run, net pay,
+balanced journal crediting 2186, settled by event, re-opened on run reversal, too-large deduction waits, charge
+reversal withdraws; inactive driver); `FleetDemoSeedIT` (fresh organization: counts, 7 days, every entry balanced,
+idempotent, reports). `FleetIncidentsIT` / `HrIT` unchanged and green.
+
+### Known gaps / owner decisions (1.9)
+
+- Account codes 6460 / 2169 / 2186 are proposals (remap via the mapping keys).
+- Own-fleet trip cost is analytic (no GL allocation run); the ADR-S007 cost allocation engine can move it between cost
+  centres if the owner wants it in the ledger.
+- Reports compute on the fly (no `FleetCostSnapshot`): fine for a fleet of tens to a few hundred units; a monthly
+  snapshot can be added for very large fleets.
+- Export headers are English (server-rendered); the screens are translated.
+- Demo trips are dated over the last week in fleet's tables; their stock / GL entries carry the seeding day.

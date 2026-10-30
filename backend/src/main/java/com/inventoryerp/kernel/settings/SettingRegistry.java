@@ -150,6 +150,22 @@ public final class SettingRegistry {
                 "When on, labour booked on fleet work orders is posted Dr fleet maintenance (vehicle cost centre) / "
                         + "Cr workshop labour absorbed. Off: labour is a memo cost (payroll already expenses wages).",
                 false, null, false, ORG_ONLY);
+        // Fleet 1.9 — costing, freight bills, reminders.
+        def("fleet.tripCostBasis", "fleet", "enum", "Own-fleet Trip Cost Basis",
+                "How a unit's cost of the period is allocated to its trips in delivery profitability and transport "
+                        + "cost reports: km = cost per km x trip distance (default), tonne = cost per tonne x tonnes "
+                        + "delivered, trip = cost per trip. Falls back km, tonne, trip when a figure is missing.",
+                "km", List.of("km", "tonne", "trip"), false, ORG_ONLY);
+        def("fleet.freightMatchTolerancePct", "fleet", "number", "Freight Bill Match Tolerance (%)",
+                "A transporter invoice within this % of the trips' freight (or the absolute tolerance, whichever is "
+                        + "larger) is matched at once; above it the freight bill is disputed until a manager accepts.",
+                1, null, false, ORG_ONLY);
+        def("fleet.freightMatchToleranceAmount", "fleet", "number", "Freight Bill Match Tolerance (amount)",
+                "Absolute amount a transporter invoice may differ from the trips' freight and still match.", 0, null,
+                false, ORG_ONLY);
+        def("fleet.tareReminderDays", "fleet", "number", "Stored Tare Reminder Lead (days)",
+                "Days before a stored weighbridge tare expires that the daily reminder job warns about it.", 3, null,
+                false, ORG_ONLY);
 
         // ---- Purchasing ----
         def("purchasing.editProductPriceFromPurchaseScreen", "purchasing", "bool",

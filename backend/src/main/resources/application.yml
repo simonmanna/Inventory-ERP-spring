@@ -120,6 +120,8 @@ app:
   # Fleet 1.6: daily preventive-maintenance run (raises work orders for due service schedules; ShedLock).
   fleet:
     maintenance-due-cron: ${FLEET_MAINTENANCE_DUE_CRON:0 30 5 * * *}
+    # Fleet 1.9: daily expiry / service-due reminders (deduplicated per item per day; ShedLock).
+    reminders-cron: ${FLEET_REMINDERS_CRON:0 0 6 * * *}
     # Fleet 1.4 weighbridge: upper bound of any indicator read (each device has its own readTimeoutMs).
     weighbridge:
       max-read-timeout-ms: ${FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS:15000}

@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DataTable, type Column } from '@/components/data-table';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, apiMessage } from '@/lib/notify';
-import { date } from '@/lib/format';
+import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
   DOC_TYPE_LABEL, useCreateCompliance, useDeleteCompliance, useRenewCompliance, useUpdateCompliance,
@@ -60,6 +60,7 @@ export function VehicleComplianceTab({ vehicle }: { vehicle: Vehicle }) {
     { key: 'issuer', header: tx('Issuer'), render: (d) => d.issuer ?? '—' },
     { key: 'issuedOn', header: tx('Issued'), render: (d) => (d.issuedOn ? date(d.issuedOn) : '—') },
     { key: 'expiresOn', header: tx('Expires'), render: (d) => (d.expiresOn ? date(d.expiresOn) : '—') },
+    { key: 'cost', header: tx('Premium / fee'), className: 'text-right tabular-nums', render: (d) => (d.costAmount ? money(d.costAmount) : '—') },
     {
       key: 'state', header: tx('Status'),
       render: (d) => (
@@ -124,20 +125,23 @@ function ComplianceDialog({ vehicleId, doc, onClose }: { vehicleId: string; doc:
   const [expiresOn, setExpiresOn] = useState(doc?.expiresOn ?? '');
   const [lead, setLead] = useState(doc ? String(doc.reminderLeadDays) : '');
   const [notes, setNotes] = useState(doc?.notes ?? '');
+  const [cost, setCost] = useState(doc?.costAmount ?? '');
   const create = useCreateCompliance();
   const update = useUpdateCompliance();
   const datesOk = !issuedOn || !expiresOn || expiresOn >= issuedOn;
   const leadOk = lead === '' || (Number.isInteger(Number(lead)) && Number(lead) >= 0 && Number(lead) <= 365);
+  const costOk = cost === '' || (Number.isFinite(Number(cost)) && Number(cost) >= 0);
 
   const submit = async () => {
     const body: Record<string, unknown> = {
       docType, documentNumber: number.trim() || undefined, issuer: issuer.trim() || undefined,
       issuedOn: issuedOn || undefined, expiresOn: expiresOn || undefined,
       reminderLeadDays: lead === '' ? undefined : Number(lead), notes: notes.trim() || undefined,
+      costAmount: cost === '' ? undefined : Number(cost),
     };
     try {
       if (doc) {
-        const clear = ([['documentNumber', number], ['issuer', issuer], ['issuedOn', issuedOn], ['expiresOn', expiresOn], ['notes', notes]] as const)
+        const clear = ([['documentNumber', number], ['issuer', issuer], ['issuedOn', issuedOn], ['expiresOn', expiresOn], ['notes', notes], ['costAmount', cost]] as const)
           .filter(([k, v]) => !v.trim() && doc[k]).map(([k]) => k);
         await update.mutateAsync({ id: doc.id, body: { ...body, clear: clear.length ? clear : undefined } });
         notify.success(tx('Document updated'));
@@ -171,11 +175,14 @@ function ComplianceDialog({ vehicleId, doc, onClose }: { vehicleId: string; doc:
           <Field label={tx('Reminder lead (days)')} error={leadOk ? undefined : tx('Enter 0 to 365 days')}>
             <Input inputMode="numeric" value={lead} onChange={(e) => setLead(e.target.value)} />
           </Field>
+          <Field label={tx('Premium / fee paid')} error={costOk ? undefined : tx('Enter an amount of 0 or more')}>
+            <Input inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} />
+          </Field>
           <Field label={tx('Notes')} className="sm:col-span-2"><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
-          <Button onClick={submit} disabled={!docType || !datesOk || !leadOk || create.isPending || update.isPending}>{tx('Save')}</Button>
+          <Button onClick={submit} disabled={!docType || !datesOk || !leadOk || !costOk || create.isPending || update.isPending}>{tx('Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
