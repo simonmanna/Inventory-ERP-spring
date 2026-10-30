@@ -160,6 +160,7 @@ import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
+import { crushingRoutes } from '@/pages/crushing/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -372,6 +373,8 @@ export function App() {
           <Route path="/manufacturing/standard-costs" element={<StandardCostsPage />} />
           <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
           <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
+          {/* Crushing & screening (ADR-S016) — screens in pages/crushing/routes.tsx */}
+          {crushingRoutes}
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />

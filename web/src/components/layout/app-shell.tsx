@@ -431,6 +431,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read },
       { to: '/manufacturing/process-costing', label: tx('Process Costing'), icon: Layers, permission: PERMISSIONS.processCosting.read },
       { to: '/manufacturing/stage-wip', label: tx('Stage WIP'), icon: Layers, permission: PERMISSIONS.production.report },
+      // crushing & screening 2.3 (ADR-S016)
+      { to: '/manufacturing/crushing', label: tx('Crushing Runs'), icon: Factory, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/plants', label: tx('Crushing Plants'), icon: Boxes, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/stockpiles', label: tx('Aggregate Stockpiles'), icon: Layers, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/reports', label: tx('Crushing Reports'), icon: BarChart3, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/resources', label: tx('Work Centres'), icon: Boxes },
       { to: '/manufacturing/reports', label: tx('Reports'), icon: BarChart3, reportId: 'manufacturing.reports' },
     ],
