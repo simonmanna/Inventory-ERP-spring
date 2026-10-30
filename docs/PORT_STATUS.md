@@ -547,6 +547,9 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## procurement
 
+> 2026-10-30 S2P audit: [`docs/audit/procurement-current-state-audit.md`](audit/procurement-current-state-audit.md) — parity routes ticked below are ported; see its defect register (P0-1…P0-6) before building on them.
+
+
 - [x] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
 - [x] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
 - [x] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill

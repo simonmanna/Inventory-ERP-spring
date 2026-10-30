@@ -63,6 +63,7 @@ Follow `AGENTS.md` §6; parity rules apply in full.
 | 1.6 | Dunning & collections | P2 | S (2 EW) | Reminder levels, letters/e-mail, interest/fees, promise-to-pay |
 | 1.7 | Year-end close | P2 | S (2 EW) | Retained-earnings rollover, closing entries, period-close checklist with blockers |
 | 1.8 | Landed costing & cost centres — **built 2026-10-28 (ADR-S007)** | P1 | M (7 EW) | Client requirement (Tally-style). Configurable costing policy (AVCO or FIFO, effective-dated, controlled migration); landed-cost vouchers across shipments/receipts/suppliers with quantity/value/weight/volume/manual allocation and late-cost revaluation; hierarchical cost centres as a first-class GL dimension with allocations, budgets and reports. Detailed scope: §1.8 below |
+| 1.9 | Enterprise Source-to-Pay (procurement modernization) — **proposed 2026-10-30 (ADR-PROCUREMENT-001)** | P1 | XL (~47 EW, phased P0–P5) | Client requirement (construction materials). P0 integrity fixes first, then supplier qualification, requisitions, RFQ / quotations / awards, agreements, PO change control, commitment budgets, 2/3/4-way match, landed-cost estimates, weighbridge / inspection, MRP demand port. Audit: `docs/audit/procurement-current-state-audit.md`; plan: `docs/roadmap/procurement-roadmap.md` |
 
 **Exit:** a non-hospitality SMB in one target country can run quote-to-cash, procure-to-pay, statutory tax
 
