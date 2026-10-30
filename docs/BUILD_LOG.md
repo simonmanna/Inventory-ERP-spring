@@ -92,6 +92,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 2.8 manufacturing costing & analytics | todo | | manufacturing-advanced-complete | |
 | 3 requirements verification | todo | | requirements-verified | |
 | 4.x gaps (one row per module, added in phase 3) | todo | | gaps-closed | |
+| 4.x sales O2C (ADR-S011) | in-progress (owner session) | | | Step 0 docs on `phase/S0-sales-docs` (ADR-S011, `PRODUCT_ARCHITECTURE.md`, `spec/sales.md`, `spec/sales-postings.md`, `spec/credit.md`); S0 code waits for owner review; each phase S0–S10 gated by owner go-ahead. Covers ROADMAP 1.5 / 1.6. Do not touch `manufacturing/**` |
 | 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
