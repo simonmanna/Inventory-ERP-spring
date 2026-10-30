@@ -10,6 +10,8 @@ import {
   Receipt,
   FileMinus,
   HandCoins,
+  Globe,
+  LineChart,
   BadgePercent,
   FileSignature,
   FileText,
@@ -396,6 +398,7 @@ const NAV_SECTIONS: NavSection[] = [
     icon: ShoppingCart,
     items: [
       { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
+      { to: '/sales/analytics', label: tx('Sales analytics'), icon: LineChart, permission: PERMISSIONS.sales.reportRead },
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
@@ -407,6 +410,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/pricelists', label: tx('Pricelists'), icon: Tags, permission: PERMISSIONS.sales.pricingRead },
       { to: '/sales/margin-floors', label: tx('Margin floors'), icon: Percent, permission: PERMISSIONS.sales.pricingRead },
       { to: '/sales/credit', label: tx('Credit Control'), icon: ShieldAlert, permission: PERMISSIONS.credit.read },
+      { to: '/sales/portal-access', label: tx('Customer portal'), icon: Globe, permission: PERMISSIONS.sales.portalManage },
     ],
   },
   {

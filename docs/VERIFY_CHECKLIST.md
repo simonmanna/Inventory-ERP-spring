@@ -287,3 +287,16 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   payroll input "Sales commission COM-…" of 400. Target 16 000 for the month → achievement 50 %.
 - Expected GL: accrual Dr 4190 Sales Rebates / Cr 2360 Rebate Accrual (difference only); settlement credit note Dr 2360
   / Cr AR; commission expense when payroll posts (Dr 6150 Sales Commissions).
+
+## Phase S10 — Analytics, advisor, customer portal (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesInsightsIT'`.
+- Migration: `V34__sales_customer_portal.sql`. Licence key `customerPortal` (trial grants it).
+- Screens: Sales → Sales analytics → Overview tiles + 12-month chart + Advisor list (post an invoice below cost →
+  "Sold below cost"); Analysis by product / customer / month with margin %; Customer profitability (freight from
+  transporter trips, rebates, commissions); Forecast 3 / 6 / 12 months with a confirmed order dated next month.
+- Portal: Sales → Customer portal → *New portal link* for a customer → copy the link → open it in a private window:
+  the customer sees only their quotations (accept / decline a sent one), orders with deliveries and trips, invoices,
+  statement PDF, complaints; *Pay* offers only configured MTN / Airtel providers (never the test gateway). Revoke →
+  the link answers "invalid or has expired".
+- Expected GL: none, except a portal mobile-money payment (receipt Dr mobile-money account / Cr AR, as in S6).

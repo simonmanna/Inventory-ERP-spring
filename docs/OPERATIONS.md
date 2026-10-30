@@ -30,6 +30,10 @@ Beverage control (bar bottle weighing) organization settings, all optional:
 | `beverage.varianceToleranceG` | `5` | Grams of variance per line before it is flagged (product `varianceToleranceG` wins). |
 | `beverage.requireAllBottlesWeighed` | `false` | `true`: a count with unweighed bottles that hold stock can only be submitted with a reason and manager approval (ADR-S004). |
 
+Customer portal (ADR-S011 S10, licence `customerPortal`): `APP_PORTAL_BASE_URL` (e.g. `https://erp.example.com`)
+is the web address put in e-mailed portal links when staff do not supply one. Never set
+`APP_PORTAL_ALLOW_TEST_PAYMENTS=true` in production — it lets customers "pay" with the mock mobile-money gateway.
+
 Grant `beverage:approve` only to supervisors: they approve flagged counts and unweighed exceptions and cannot
 approve a count they started.
 

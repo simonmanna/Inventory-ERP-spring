@@ -22,7 +22,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S7 | Returns / RMA, claims, quality certificates | R2 | done | S6 |
 | S8 | Collections: dunning, promise-to-pay, statement runs | R3 | done | S3, S6 |
 | S9 | Agreements, rebates, commissions, targets | R3 | done | S2, S6 |
-| S10 | Analytics, dashboard, portal, AI assist | R3 | todo | all |
+| S10 | Analytics, dashboard, portal, AI assist | R3 | done | all |
 
 Gates for every phase (from ADR-S011 / plan): `./gradlew build` green (Testcontainers) incl. `ModularityTests` and
 `ArchitectureTests`; permission (403) and tenant tests for new routes; idempotency on money routes; reconciliation
@@ -329,6 +329,39 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Deviations: amounts are in document currency (no FX conversion); commission margin uses the product's current cost,
   not the issue cost; agreement delivery schedules and sites are stored but not enforced; rebate settlement credit
   notes carry no VAT (accountant question Q-S9-1).
+
+## S10 — as built
+- `V34__sales_customer_portal.sql`: `CustomerPortalAccess` (token SHA-256, expiry, revoke, last used; no row policy —
+  it is looked up by token before the organization is known), permission `sales:portal:manage`. Licence key
+  `customerPortal` (install + licence server) gates portal administration and the portal itself.
+- `SalesAnalyticsService` (`/sales/analytics/*`, `sales:report:read`): dashboard (revenue this vs last month,
+  quotations pending, orders to deliver / invoice, overdue receivables, 12-month revenue + margin chart, top
+  customers); analysis by product, product category, customer, customer category, branch, salesperson or month
+  (revenue, qty, cost, margin, margin %); customer profitability = revenue − cost − transporter freight of the
+  customer's sales-order trips − rebates accrued − commissions; forecast per month = max(run rate of the last three
+  months, open order value by commitment date + open quotations × 90-day conversion rate + agreement balances spread
+  to their end date), components shown separately.
+- `SalesAdvisorService` (`/sales/advisor`): read-only, explainable rules — churn risk (last 90 days < half of the 90
+  before), sold below cost (30 days), discount outliers (> mean + 2σ of the product's 180-day history), quotations
+  expiring in 7 days, 30+ days overdue customers with undelivered orders, agreements ending within 30 days with
+  > 20 % unreleased. It never posts, approves or changes data.
+- `SalesPortalService`: staff issue (`POST /sales/portal/access`, optional e-mail, 1–365 days) and revoke links; the
+  public `/portal/*` routes (`@Public`, header `X-Portal-Token`, throttled) run in the token's organization scoped to
+  its customer: me (open / overdue balance), quotations (list, detail without internal fields, accept, decline),
+  orders with lines and delivery trips, invoices / credit notes, statement PDF, mobile-money payment of an open
+  invoice (a repeat within 10 minutes returns the running request), payment status, complaints.
+  The `mock` gateway is never offered or accepted on the portal unless `app.portal.allow-test-payments=true`
+  (tests only).
+- Routes: `/sales/analytics/*` (4), `/sales/advisor`, `/sales/portal/access*` (3), `/portal/*` (12).
+  Web: Sales analytics page (overview + advisor, analysis, profitability, forecast), Customer portal links page,
+  public `/portal` page (token kept in session storage, removed from the address bar).
+- Tests: `SalesInsightsIT` (3) — analysis / profitability / forecast numbers, advisor rules, portal scope (other
+  customer's quotation 404), accept, payment booked, PDF, complaint, revoke → 401. Browser-checked locally:
+  analytics tabs, portal link, portal page.
+- Deviations: the "AI" assist is deterministic rules, not a language model, and does not draft quotations; costs
+  are current product cost; own-fleet running cost is not in profitability until fleet trip costing (1.9); the
+  forecast is not yet fed to MRP (manufacturing integration); the portal has no e-signature (acceptance is recorded
+  with the token's audit trail) and no per-contact users — one link per customer contact e-mail.
 
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to

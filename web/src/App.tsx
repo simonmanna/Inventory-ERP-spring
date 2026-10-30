@@ -199,6 +199,7 @@ import KitchenStationsPage from '@/pages/pos/KitchenStationsPage';
 import KdsReportsPage from '@/pages/pos/KdsReportsPage';
 import CashRegistersPage from '@/pages/pos/cash/CashRegistersPage';
 import DigitalMenuPage from '@/pages/pos/DigitalMenuPage';
+import CustomerPortalPage from '@/pages/portal/CustomerPortalPage';
 import TablesPage from '@/pages/tables/TablesPage';
 import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
@@ -219,6 +220,8 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       {/* Digital Menu — customer-facing public route (no auth, no shell). */}
       <Route path="/menu/:branchId/:tableId" element={<DigitalMenuPage />} />
+      {/* Customer portal — magic-link token, no staff login (ADR-S011 S10). */}
+      <Route path="/portal" element={<CustomerPortalPage />} />
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />

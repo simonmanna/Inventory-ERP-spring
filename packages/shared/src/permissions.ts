@@ -628,6 +628,8 @@ export const PERMISSIONS = {
     /// Commission rules, statements and their approval into payroll.
     commissionManage: 'sales:commission:manage',
     targetManage: 'sales:target:manage',
+    /// Issue / revoke customer portal links (licence customerPortal, ADR-S011 S10).
+    portalManage: 'sales:portal:manage',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {
