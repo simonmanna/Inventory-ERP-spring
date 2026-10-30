@@ -173,4 +173,5 @@ public final class DomainEvents {
     public static final String WEIGHBRIDGE_TICKET_COMPLETED = "weighbridge.ticket.completed";
     public static final String WEIGHBRIDGE_EXCEPTION_RAISED = "weighbridge.exception.raised";
     public static final String WEIGHBRIDGE_TICKET_VOIDED = "weighbridge.ticket.voided";
+    public static final String QUARRY_EXTRACTION_POSTED = "quarry.extraction.posted";
 }

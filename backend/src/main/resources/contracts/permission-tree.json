@@ -637,5 +637,32 @@
     "approveException": "weighbridge:approve_exception",
     "void": "weighbridge:void",
     "configure": "weighbridge:configure"
+  },
+  "quarry": {
+    "report": "quarry:report",
+    "settings": "quarry:settings"
+  },
+  "quarrySite": {
+    "read": "quarry_site:read",
+    "create": "quarry_site:create",
+    "update": "quarry_site:update",
+    "delete": "quarry_site:delete"
+  },
+  "quarryExtraction": {
+    "read": "quarry_extraction:read",
+    "create": "quarry_extraction:create",
+    "update": "quarry_extraction:update",
+    "post": "quarry_extraction:post",
+    "plan": "quarry_extraction:plan",
+    "haul": "quarry_extraction:haul"
+  },
+  "quarryBlasting": {
+    "read": "quarry_blasting:read",
+    "create": "quarry_blasting:create",
+    "update": "quarry_blasting:update",
+    "requestExplosive": "quarry_blasting:request_explosive",
+    "approveExplosive": "quarry_blasting:approve_explosive",
+    "issueExplosive": "quarry_blasting:issue_explosive",
+    "magazine": "quarry_blasting:magazine"
   }
 }
