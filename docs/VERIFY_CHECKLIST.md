@@ -238,3 +238,27 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   approve it as another user in Approvals → Issue from magazine as the keeper (the requester is refused) → Record
   firing → Reconcile return → Close blast; an extraction log linked to the blast picks up its cost per tonne.
 - Reports: Quarry Reports → extraction vs target, cost per tonne (by month / week / day / site), losses, royalties.
+
+## Phase 2.4 — Concrete block / precast manufacturing (ADR-S014)
+
+- `cd backend && ./gradlew test --tests 'com.inventoryerp.manufacturing.PrecastManufacturingIT' --tests
+  'com.inventoryerp.manufacturing.application.BatchScalerTest' --tests
+  'com.inventoryerp.manufacturing.application.MaturityCalculatorTest'`; `ManufacturingIT` matrix now 157 routes.
+- Migration `V29__manufacturing_blocks_precast.sql` (placeholder; renumbered at merge) — adds `minCuringDays` to
+  `RoutingStageSetup` / `ProductionOrderStage`, `qcPassDueAt`, and five `Precast*` tables.
+- Config: `PRECAST_CURING_CRON` (default every 15 minutes) for the curing tick.
+- Manufacturing → Precast set-up: a block spec (units per pallet 100, second-grade product) and a curing yard.
+- Mix designs → new mix (100 blocks / batch: cement 50 kg, sand, aggregate; cement 50 kg / bag; 7 curing days) →
+  scaling calculator: 1,000 blocks → 10 batches, 10 bags, 10 pallets → Activate.
+- Precast orders → new order (basis units 1,000) → status confirmed, two stages (pressing, curing gated).
+- Order → Pressing run (good + broken, last run) → a curing batch appears; cement / sand stock drops by the recipe.
+- Curing board (phone width): batch card, reading, move; Cube is refused before the curing end date. For a quick test
+  set the pressing date 8+ days back. Cube (good + second grade + broken = batch quantity) → good blocks wait in
+  QC-QUARANTINE, second grade in the output location.
+- With a quality in-process plan on the mix design's checkpoint code: Quality → lot → enter the 7-day strength →
+  Release → batch `released`, blocks in finished goods; without a plan use Gate → Passed.
+- Order → costing: cost per acceptable block = FG value ÷ good blocks; FG + second grade + abnormal scrap = total cost;
+  Stage WIP report back to zero; journals with `sourceType = production_stage` balanced.
+- Labels: one per pallet with a scannable QR. Reports: cost per block by product, breakage by reason.
+- Doubts: the stage-level gate means a later pressing run of the same order delays the gate hold of earlier batches
+  (recommend one order per day / shift); reversing only a gate release leaves the batch `released`.

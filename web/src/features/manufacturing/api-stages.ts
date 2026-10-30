@@ -10,7 +10,7 @@ import type { ProductionMaterial, ProductionOrder, ProductionOutput } from './ty
  */
 
 export type StageStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-export type QcStatus = 'not_required' | 'pending' | 'passed' | 'failed';
+export type QcStatus = 'not_required' | 'pending' | 'passed' | 'failed' | 'curing';
 export type OutputRole = 'main' | 'co_product' | 'by_product' | 'waste';
 
 export interface StagePostingLine {

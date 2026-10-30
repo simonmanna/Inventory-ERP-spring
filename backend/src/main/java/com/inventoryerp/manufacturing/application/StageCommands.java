@@ -4,6 +4,8 @@ import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -36,7 +38,10 @@ public final class StageCommands {
             @DecimalMax(value = "100", message = "expectedYieldPct " + PCT) BigDecimal expectedYieldPct,
             Boolean qcGate,
             String qcCheckpointCode,
-            List<@NotNull String> materialProductIds) {}
+            List<@NotNull String> materialProductIds,
+            /** ADR-S014 (2.4): days a gated output must cure before the gate can pass; null keeps the saved value. */
+            @Min(value = 0, message = "minCuringDays " + MIN0)
+            @Max(value = 365, message = "minCuringDays must not be greater than 365") Integer minCuringDays) {}
 
     /** {@code PUT /routings/{id}/stage-setup}. */
     public record RoutingStageSetup(@NotNull(message = "stages must be an array") List<@Valid @NotNull StageSetupInput> stages) {}

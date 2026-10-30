@@ -66,6 +66,14 @@ public class ProductionOrderStage {
     @Column(name = "qcCheckpointCode")
     private String qcCheckpointCode;
 
+    /** ADR-S014 (2.4): minimum curing days before the QC gate can pass. */
+    @Column(name = "minCuringDays", nullable = false)
+    private Integer minCuringDays;
+
+    /** ADR-S014 (2.4): a pass recorded while curing (qcStatus curing) takes effect at this time. */
+    @Column(name = "qcPassDueAt")
+    private Instant qcPassDueAt;
+
     @Column(name = "status", nullable = false)
     private String status;
 

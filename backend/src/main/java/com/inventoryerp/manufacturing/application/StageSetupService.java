@@ -95,6 +95,9 @@ public class StageSetupService {
             data.put("qcCheckpointCode", s.qcCheckpointCode());
             data.put("materialProductIds", new MfgDb.Json(materials));
             Map<String, Object> existing = setupFor(s.operationId());
+            if (s.minCuringDays() != null || existing == null) {
+                data.put("minCuringDays", s.minCuringDays() != null ? s.minCuringDays() : 0);
+            }
             if (existing == null) {
                 data.put("routingOperationId", s.operationId());
                 db.insert(com.inventoryerp.manufacturing.domain.RoutingStageSetup.class, data);
