@@ -19,7 +19,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S4 | ATP, reservations, backorders, supply pegs | R2 | done | S1 |
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | done (partial, see deviations) | S4, fleet 1.4b |
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | done (defaults pending accountant) | S5, accountant answers |
-| S7 | Returns / RMA, claims, quality certificates | R2 | todo | S6 |
+| S7 | Returns / RMA, claims, quality certificates | R2 | done | S6 |
 | S8 | Collections: dunning, promise-to-pay, statement runs | R3 | todo | S3, S6 |
 | S9 | Agreements, rebates, commissions, targets | R3 | todo | S2, S6 |
 | S10 | Analytics, dashboard, portal, AI assist | R3 | todo | all |
@@ -254,6 +254,26 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Pending accountant (defaults shipped, configurable): VAT tax point of advances, application rule, freight on
   sales-order invoices (still invoiced from the fleet delivery order as a charges-only invoice).
 
+## S7 — as built
+- `V31__sales_returns.sql`: `SalesReturn` (RMA-, reason, physical return or claim, outcome, links to credit note /
+  refund / replacement / complaint / discrepancy), `SalesReturnLine` (claimed, received, disposition, credited),
+  `CustomerComplaint` (CMP-), `SalesQualityCertificate`, `Product.qualitySpec`, permissions
+  `sales:return:read|write|approve`, `sales:complaint:read|write`; events `sales.return.received|closed`.
+- `SalesReturnService`: request (quantity ≤ delivered − already claimed) → approve → receive into a location (inventory
+  return receipt: Dr inventory / Cr COGS) → inspect per line (restock / quarantine transfer / scrap issued as waste)
+  → close: credit note against the order invoice for the invoiced part (gross invoiced untouched, credited grows,
+  via `SalesInvoiceLink` kind credit_note), not-yet-invoiced part lowers billable by a recorded decision; outcomes
+  credit_note / refund (credit note + customer refund payment) / replacement (draft order at no charge) / none.
+  Claims without goods skip receive / inspect. Returned quantity projection on order lines.
+- `SalesComplaintService`: complaints (manual; automatic from approved fleet discrepancies on sales-order deliveries,
+  idempotent), link to a return (resolved when the return closes), quality certificates with results JSON and file.
+- Routes: `/sales/returns*` (8), `/sales/complaints*` (3), `/sales/quality-certificates` (2).
+- Web: Returns list + detail (approve, reject, receive, inspect with dispositions, close with outcome), "Return /
+  claim" from the order, Complaints page.
+- Tests: `SalesReturnIT` (4).
+- Note: when the invoice is already fully paid, the credit note leaves a customer credit that the existing invoicing
+  model does not keep as an open credit-note residual (pre-existing behaviour); use the refund outcome then.
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
@@ -293,3 +313,15 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   *Record deposit* → "Mobile money — request on phone" (mock provider) → succeeded; a phone ending in 0 is declined.
   Sales settings: deposit application "oldest_first" applies deposits automatically when an order invoice posts.
 - Expected GL: P2, P3, P8, P9, P10 of `docs/spec/sales-postings.md`; trial balance stays zero.
+
+## Phase S7 — Returns, complaints (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesReturnIT'`.
+- Migration: `V31__sales_returns.sql`.
+- Screens: delivered + invoiced order → *Return / claim* → 5 blocks "Wrong grade" → Returns → approve → *Receive
+  goods* (stock +5 at the yard) → *Record inspection* (restock) → *Close return* with "Credit note" → credit note
+  posted against the order invoice; order line: invoiced 20, credited 5, returned 5.
+  Scrap disposition: stock unchanged after receive + scrap; refund outcome creates a customer refund.
+  Claim without goods on an uninvoiced order → billable drops by the claim with a "Returned on RMA-…" decision.
+  Complaints: create one, link it to a return; it is resolved when the return closes.
+- Expected GL: P12 (credit note), P13 (Dr inventory / Cr COGS), scrap as waste expense, refund Dr AR / Cr bank.

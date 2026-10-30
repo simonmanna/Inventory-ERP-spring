@@ -202,6 +202,8 @@ export const EVENTS = {
   SalesOrderCancelled: 'sales.order.cancelled',
   SalesOrderLineClosedShort: 'sales.order.line_closed_short',
   SalesOrderDone: 'sales.order.done',
+  SalesReturnReceived: 'sales.return.received',
+  SalesReturnClosed: 'sales.return.closed',
   // Fleet 1.2 — drivers & operators: vehicle check-out / check-in and settled driver allowance claims.
   FleetVehicleCheckedOut: 'fleet.vehicle.checked_out',
   FleetVehicleCheckedIn: 'fleet.vehicle.checked_in',
@@ -497,6 +499,8 @@ export interface DomainEventMap {
   'sales.order.cancelled': SalesOrderEventPayload & { reason: string | null };
   'sales.order.line_closed_short': SalesOrderEventPayload & { lineId: string; quantity: number };
   'sales.order.done': SalesOrderEventPayload;
+  'sales.return.received': { v: 1; organizationId: string; returnId: string; number: string; orderId: string };
+  'sales.return.closed': { v: 1; organizationId: string; returnId: string; number: string; orderId: string; outcome: string };
   'fleet.vehicle.checked_out': FleetCheckoutEventPayload;
   'fleet.vehicle.checked_in': FleetCheckoutEventPayload;
   'fleet.claim.settled': FleetClaimSettledPayload;

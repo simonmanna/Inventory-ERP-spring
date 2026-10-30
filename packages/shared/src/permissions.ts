@@ -609,6 +609,13 @@ export const PERMISSIONS = {
     /// Record customer deposits (advances) and apply them to invoices.
     depositRecord: 'sales:deposit:record',
     depositRefund: 'sales:deposit:refund',
+    /// Returns (RMA) and customer complaints (ADR-S011 S7).
+    returnRead: 'sales:return:read',
+    returnWrite: 'sales:return:write',
+    /// Approve a return and settle it (credit note, refund, replacement).
+    returnApprove: 'sales:return:approve',
+    complaintRead: 'sales:complaint:read',
+    complaintWrite: 'sales:complaint:write',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {

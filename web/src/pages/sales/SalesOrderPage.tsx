@@ -26,6 +26,7 @@ import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
 import { BillingPanel } from './BillingPanel';
+import { NewReturnDialog } from './ReturnsPages';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -50,7 +51,7 @@ export function SalesOrderPage() {
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
-  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | null>(null);
+  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | null>(null);
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
 
@@ -127,6 +128,7 @@ export function SalesOrderPage() {
         {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
         {o && open && has(P.orderAmend) && <Button variant="outline" onClick={() => setDialog('change')}><FileSignature className="mr-1.5 h-4 w-4" />{tx('Request change')}</Button>}
         {o && !['cancelled', 'done'].includes(status) && has(P.orderCancel) && <Button variant="ghost" onClick={() => { setReason(''); setDialog('cancel'); }}><XCircle className="mr-1.5 h-4 w-4" />{tx('Cancel order')}</Button>}
+        {o && ['in_fulfilment', 'done'].includes(status) && has(P.returnWrite) && <Button variant="outline" onClick={() => setDialog('return')}>{tx('Return / claim')}</Button>}
         {o && has(P.orderWrite) && <Button variant="ghost" onClick={() => run('duplicate')}><Copy className="mr-1.5 h-4 w-4" />{tx('Duplicate')}</Button>}
         {o?.status === 'draft' && has(P.orderWrite) && (
           <Button variant="ghost" className="text-destructive" onClick={() => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); }}><Trash2 className="h-4 w-4" /></Button>
@@ -246,6 +248,7 @@ export function SalesOrderPage() {
 
       {o && dialog === 'change' && <ChangeDialog order={o} onClose={() => setDialog(null)} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
+      {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
     </div>
   );
 }

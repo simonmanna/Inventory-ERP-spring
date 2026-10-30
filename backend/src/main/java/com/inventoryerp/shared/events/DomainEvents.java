@@ -157,6 +157,8 @@ public final class DomainEvents {
     public static final String SALES_ORDER_CANCELLED = "sales.order.cancelled";
     public static final String SALES_ORDER_LINE_CLOSED_SHORT = "sales.order.line_closed_short";
     public static final String SALES_ORDER_DONE = "sales.order.done";
+    public static final String SALES_RETURN_RECEIVED = "sales.return.received";
+    public static final String SALES_RETURN_CLOSED = "sales.return.closed";
     public static final String FLEET_VEHICLE_CHECKED_OUT = "fleet.vehicle.checked_out";
     public static final String FLEET_VEHICLE_CHECKED_IN = "fleet.vehicle.checked_in";
     public static final String FLEET_CLAIM_SETTLED = "fleet.claim.settled";

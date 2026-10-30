@@ -541,7 +541,12 @@
     "configure": "sales:configure",
     "invoiceCreate": "sales:invoice:create",
     "depositRecord": "sales:deposit:record",
-    "depositRefund": "sales:deposit:refund"
+    "depositRefund": "sales:deposit:refund",
+    "returnRead": "sales:return:read",
+    "returnWrite": "sales:return:write",
+    "returnApprove": "sales:return:approve",
+    "complaintRead": "sales:complaint:read",
+    "complaintWrite": "sales:complaint:write"
   },
   "credit": {
     "read": "credit:read",
