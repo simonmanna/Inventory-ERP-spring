@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (455 permissions). Constant name = GROUP__ACTION.
+ * exactly (463 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -466,6 +466,14 @@ public final class Permissions {
     public static final String WEIGHBRIDGE__APPROVE_EXCEPTION = "weighbridge:approve_exception";
     public static final String WEIGHBRIDGE__VOID = "weighbridge:void";
     public static final String WEIGHBRIDGE__CONFIGURE = "weighbridge:configure";
+    public static final String QUALITY__READ = "quality:read";
+    public static final String QUALITY__CONFIGURE = "quality:configure";
+    public static final String QUALITY__INSPECT = "quality:inspect";
+    public static final String QUALITY__HOLD = "quality:hold";
+    public static final String QUALITY__RELEASE = "quality:release";
+    public static final String QUALITY__DISPOSE = "quality:dispose";
+    public static final String QUALITY__NCR = "quality:ncr";
+    public static final String QUALITY__CAPA = "quality:capa";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -923,7 +931,15 @@ public final class Permissions {
             "weighbridge:manual_entry",
             "weighbridge:approve_exception",
             "weighbridge:void",
-            "weighbridge:configure");
+            "weighbridge:configure",
+            "quality:read",
+            "quality:configure",
+            "quality:inspect",
+            "quality:hold",
+            "quality:release",
+            "quality:dispose",
+            "quality:ncr",
+            "quality:capa");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

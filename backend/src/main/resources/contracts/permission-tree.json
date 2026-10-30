@@ -637,5 +637,15 @@
     "approveException": "weighbridge:approve_exception",
     "void": "weighbridge:void",
     "configure": "weighbridge:configure"
+  },
+  "quality": {
+    "read": "quality:read",
+    "configure": "quality:configure",
+    "inspect": "quality:inspect",
+    "hold": "quality:hold",
+    "release": "quality:release",
+    "dispose": "quality:dispose",
+    "ncr": "quality:ncr",
+    "capa": "quality:capa"
   }
 }
