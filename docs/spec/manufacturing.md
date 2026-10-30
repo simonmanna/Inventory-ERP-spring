@@ -226,3 +226,73 @@ multi-level pegging, concurrency on stage issue, allocation settings, tenant iso
 
 Status (2.1): done. Gaps: per-lot gate release, curing-day hold (2.4), MRP awareness of stages / co-products (2.5),
 standard-governed outputs of a staged order post their difference to 5950 without per-element variances (2.8).
+
+## ADR-S015 — 2.7 shop-floor execution & data capture
+
+Design: [ADR-S015](../adr/ADR-S015-shop-floor.md) (final form of ADR-S011 §11). Migration
+`V982__manufacturing_shop_floor.sql` (placeholder). Additive: new tables `ShopFloorShift`, `ShopFloorDowntimeReason`,
+`ShopFloorWorkCenterProfile`, `ShopFloorShiftReport`, `ShopFloorClockEntry`, `ShopFloorDowntime`,
+`ShopFloorProductionReport`, `ShopFloorMeterReading`, `ShopFloorMachineEvent` (RLS, `organizationId` on every row). No
+existing route or table changes; the terminal calls `WorkOrderService` and `StageExecutionService`.
+
+All routes under `/api/v1/manufacturing/shop-floor`, flag `ENABLE_MANUFACTURING`:
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/dashboard` (live board) | `work_order:read` |
+| GET | `/work-centers/:id/queue` (terminal) | `work_order:read` |
+| POST | `/work-orders/:id/start` (start / resume; ends the pause stop) | `work_order:manage` |
+| POST | `/work-orders/:id/pause` (`reasonCode` → opens downtime) | `work_order:manage` |
+| POST | `/work-orders/:id/complete` (Idempotency-Key; labour costed) | `work_order:manage` |
+| GET / POST | `/clock-entries` (clock on; closes the person's open entry) | `work_order:read` / `work_order:manage` |
+| POST | `/clock-entries/:id/clock-off` | `work_order:manage` |
+| GET | `/production-reports` | `work_order:read` |
+| POST | `/production-reports` (Idempotency-Key; staged order → stage output posting) | `production_order:complete` |
+| POST | `/production-reports/:id/confirm` (Idempotency-Key; machine draft) | `production_order:complete` |
+| POST | `/production-reports/:id/reject` | `production_order:complete` |
+| GET / POST | `/downtime` (log open or closed stop) | `work_order:read` / `work_order:manage` |
+| POST | `/downtime/:id/end`, `/downtime/:id/confirm`, `/downtime/:id/reject` | `work_order:manage` |
+| GET / POST | `/meter-readings` (monotonic unless `isReset`) | `work_order:read` / `work_order:manage` |
+| GET | `/shift-reports`, `/shift-reports/:id` | `work_order:read` |
+| POST | `/shift-reports` (open for work centre + shift + date) | `work_order:manage` |
+| POST | `/shift-reports/:id/submit` | `work_order:manage` |
+| POST | `/shift-reports/:id/approve`, `/shift-reports/:id/reject` (approver ≠ submitter) | `shop_floor:approve` |
+| GET | `/oee?from&to&workCenterId` (≤ 93 days) | `production:report` |
+| GET | `/machine-adapters` | `work_center:read` |
+| GET | `/machine-events` | `work_order:read` |
+| POST | `/machine-data/poll` (`simulator` / `rest`), `/machine-data/push`, `/machine-data/csv` | `shop_floor:machine_data` |
+| GET / POST | `/shifts`; PATCH `/shifts/:id`; POST `/shifts/defaults` | `work_order:read` / `work_center:update` |
+| GET / POST | `/downtime-reasons`; PATCH `/downtime-reasons/:id`; POST `/downtime-reasons/defaults` | `work_order:read` / `work_center:update` |
+| GET / PUT | `/work-center-profiles`, `/work-center-profiles/:workCenterId` | `work_center:read` / `work_center:update` |
+
+Behaviour notes:
+
+- **Shift report** per work centre × shift × date (org time zone), created on first record; records are refused once
+  it is submitted ("… is submitted; reject it to reopen before changing its records.") or approved ("… is approved and
+  locked."). Submission needs no pending machine draft; approval by another user than the submitter.
+- **Production report**: multi-stage work order (its routing operation = a stage) → `StageExecutionService.output`
+  (`completesStage`, co-product `outputs` passed through; posting id kept); single-leg → `WorkOrder.qtyGood/qtyScrap`
+  incremented, scrap reason validated against the ADR-S006 scrap reasons. Stock / GL only in the stage engine.
+- **Machine data**: events unique per `(adapter, externalId)`; count → draft production report (single running work
+  order, else unassigned), `downtime` / `downtime_start` → draft machine stop (one open per work centre),
+  `downtime_stop` closes it; unknown machine / locked shift → event `error`. Confirming a count posts like an operator
+  report (row lock, idempotent).
+- **OEE**: `OeeCalculator` + `ShiftClock` (see ADR-S015 §10); snapshot stored on submit / approve; live for open
+  reports (elapsed part of the window).
+
+Web (tablet-first, large touch targets): Manufacturing → **Operator Terminal** (`/manufacturing/terminal`: pick work
+centre, clock on/off, start / stop with reason grid / resume / finish, report output + scrap, issue material on manual
+stages, log downtime, meter reading, confirm / reject machine drafts), **Shop-floor Live** (`/manufacturing/floor-board`,
+30 s refresh), **Shift Reports** (`/manufacturing/shift-reports`, list with filters + pagination, detail with OEE,
+output, downtime, crew, meters, submit / approve / reject), **OEE** (`/manufacturing/oee`), **Shop-floor Setup**
+(`/manufacturing/floor-setup`: shifts, reasons, work-centre profiles, machine data poll / CSV / events).
+
+Tests: `OeeCalculatorTest`, `ShiftClockTest`, `MachineEventParserTest`, `MachineAdaptersTest` (simulator, REST against
+a local HTTP server), `ShopFloorExecutionIT` (single-leg terminal flow with downtime, clock, idempotent output replay,
+meters, shift report four-eyes approval + locking, OEE; multi-stage output through the stage engine with GL balanced;
+simulator / push / CSV drafts, concurrent confirmation, rejection; set-up rules; tenant isolation; authz matrix of the
+41 routes); `ManufacturingIT` matrix now 172 routes.
+
+Status (2.7): done. Gaps / next: MQTT client not embedded (bridge to the push route); scheduled polling of the REST
+adapter (manual poll / gateway push for now); crew ↔ HR attendance linkage (Phase 4); OEE excludes shifts without any
+record; 2.8 can read run / down / output per shift from these tables.

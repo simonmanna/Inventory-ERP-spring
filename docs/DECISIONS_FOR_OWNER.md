@@ -86,3 +86,19 @@ says how. Significant ones also have an ADR.
 - Manufacturing calls quality (not the reverse): the stage gate hook opens a quality lot only when an active
   in-process plan matches the stage's checkpoint code; otherwise the manual pass/fail route applies. Full release
   passes the gate; reject/downgrade fails it. Change if you want quality to be mandatory for every gated stage.
+
+### 2.7 shop-floor execution & data capture (worktree c-shopfloor, 2026-10-30)
+
+| date | phase.item | question | decision taken | alternatives | how to change later |
+|---|---|---|---|---|---|
+| 2026-10-30 | 2.7 | Where does shop-floor execution live? | Inside `manufacturing` under `/manufacturing/shop-floor/...`, same module flag; terminal drives `WorkOrderService` and the 2.1 stage engine (no own stock logic) | Separate `mes` module | ADR-S015 §1–2 |
+| 2026-10-30 | 2.7 | What does "stop with a reason" do? | Pausing a running work order requires a downtime reason and opens an operator stop; resume / finish closes it; one open operator and one open machine stop per work centre | Pause without reason; several parallel stops | `ShopFloorExecutionService.pause` |
+| 2026-10-30 | 2.7 | Output on a single-leg order | Adds to the work order's good / scrap counts only; stock moves at the order's complete leg (unchanged) | Post partial receipts from the terminal | Use multi-stage orders for progressive receipts |
+| 2026-10-30 | 2.7 | Production shifts | Own table, organization time zone, standard 06–14 / 14–22 / 22–06 with 30 min breaks offered, active shifts must not overlap | Reuse HR shifts (HR module optional, models people) | Shop-floor Setup → Shifts |
+| 2026-10-30 | 2.7 | Supervisor approval of shift reports | Permission `shop_floor:approve`, approver must differ from submitter, reject returns to open with a reason; submitted / approved reports lock their window; no approval-workflow engine | Engine with thresholds; allow self-approval | `ShopFloorReportService.approve` |
+| 2026-10-30 | 2.7 | Machine data posting | Never automatic: every count / stop is a draft an operator confirms (counts may be corrected); confirm is idempotent and row-locked | Auto-post trusted machines | ADR-S015 §8 |
+| 2026-10-30 | 2.7 | Which work order gets a machine count? | The single in-progress work order of the machine's work centre; none (operator chooses) when zero or several run | Split by planned share | `MachineDataService.runningWorkOrder` |
+| 2026-10-30 | 2.7 | Push authentication | Device user JWT holding only `shop_floor:machine_data` (replaces ADR-S011's HMAC idea); MQTT via a bridge to the push route (no MQTT library) | HMAC shared secret; embedded MQTT client (new dependency) | ADR-S015 §9 |
+| 2026-10-30 | 2.7 | OEE definition | A = run ÷ (window − break − planned stops), P = ideal minutes ÷ run (capped 100 %, flagged), Q = good ÷ total; aggregates from summed minutes / counts; shifts without any record are not reported | Exclude idle time without a "no orders" stop; average ratios | `OeeCalculator`; log `NO_ORDERS` (planned) when the plant has no work |
+| 2026-10-30 | 2.7 | Operator clock entries | Attendance by work centre / work order, one open entry per person, not costed (labour = work-order run time × resource rate) | Cost clocked time | Phase 4 HR attendance linkage |
+| 2026-10-30 | 2.7 | Meter readings | Monotonic per work centre + meter unless marked reset; only the profile's meters when a list is configured | Free meters always | Shop-floor Setup → Work centres |
