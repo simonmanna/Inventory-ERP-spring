@@ -41,6 +41,7 @@ const MODULE_META: Record<string, { label: string; description: string }> = {
   manufacturing: { label: tx('Manufacturing'), description: tx('Bills of materials, production and work orders, MRP') },
   rental: { label: tx('Rental'), description: tx('Rentable units, reservations, agreements, returns, deposits') },
   fleet: { label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance') },
+  quarry: { label: tx('Quarry & Extraction'), description: tx('Quarry sites, extraction logs into ROM stock, drilling and blasting, controlled explosives') },
   repair: { label: tx('Repair'), description: tx('Repair orders, diagnosis, jobs, parts, warranties, contracts') },
   hr: { label: tx('HR & Payroll'), description: tx('Employees, attendance, timesheets, leave, payroll runs') },
   'fixed-asset': { label: tx('Fixed Assets'), description: tx('Asset register, depreciation, transfers, disposals') },

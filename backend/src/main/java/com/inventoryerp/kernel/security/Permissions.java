@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (463 permissions). Constant name = GROUP__ACTION.
+ * exactly (482 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -474,6 +474,25 @@ public final class Permissions {
     public static final String QUALITY__DISPOSE = "quality:dispose";
     public static final String QUALITY__NCR = "quality:ncr";
     public static final String QUALITY__CAPA = "quality:capa";
+    public static final String QUARRY__REPORT = "quarry:report";
+    public static final String QUARRY__SETTINGS = "quarry:settings";
+    public static final String QUARRY_SITE__READ = "quarry_site:read";
+    public static final String QUARRY_SITE__CREATE = "quarry_site:create";
+    public static final String QUARRY_SITE__UPDATE = "quarry_site:update";
+    public static final String QUARRY_SITE__DELETE = "quarry_site:delete";
+    public static final String QUARRY_EXTRACTION__READ = "quarry_extraction:read";
+    public static final String QUARRY_EXTRACTION__CREATE = "quarry_extraction:create";
+    public static final String QUARRY_EXTRACTION__UPDATE = "quarry_extraction:update";
+    public static final String QUARRY_EXTRACTION__POST = "quarry_extraction:post";
+    public static final String QUARRY_EXTRACTION__PLAN = "quarry_extraction:plan";
+    public static final String QUARRY_EXTRACTION__HAUL = "quarry_extraction:haul";
+    public static final String QUARRY_BLASTING__READ = "quarry_blasting:read";
+    public static final String QUARRY_BLASTING__CREATE = "quarry_blasting:create";
+    public static final String QUARRY_BLASTING__UPDATE = "quarry_blasting:update";
+    public static final String QUARRY_BLASTING__REQUEST_EXPLOSIVE = "quarry_blasting:request_explosive";
+    public static final String QUARRY_BLASTING__APPROVE_EXPLOSIVE = "quarry_blasting:approve_explosive";
+    public static final String QUARRY_BLASTING__ISSUE_EXPLOSIVE = "quarry_blasting:issue_explosive";
+    public static final String QUARRY_BLASTING__MAGAZINE = "quarry_blasting:magazine";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -939,7 +958,26 @@ public final class Permissions {
             "quality:release",
             "quality:dispose",
             "quality:ncr",
-            "quality:capa");
+            "quality:capa",
+            "quarry:report",
+            "quarry:settings",
+            "quarry_site:read",
+            "quarry_site:create",
+            "quarry_site:update",
+            "quarry_site:delete",
+            "quarry_extraction:read",
+            "quarry_extraction:create",
+            "quarry_extraction:update",
+            "quarry_extraction:post",
+            "quarry_extraction:plan",
+            "quarry_extraction:haul",
+            "quarry_blasting:read",
+            "quarry_blasting:create",
+            "quarry_blasting:update",
+            "quarry_blasting:request_explosive",
+            "quarry_blasting:approve_explosive",
+            "quarry_blasting:issue_explosive",
+            "quarry_blasting:magazine");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

@@ -235,6 +235,9 @@ export const EVENTS = {
   QualityLotDecided: 'quality.lot.decided',
   QualityNcrRaised: 'quality.ncr.raised',
   QualityCapaClosed: 'quality.capa.closed',
+  // Quarry 2.2 (ADR-S012): an extraction log was posted — net tonnes received into a ROM stockpile at the cost per
+  // tonne (crushing 2.3, dashboards and alerts react to it).
+  QuarryExtractionPosted: 'quarry.extraction.posted',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */

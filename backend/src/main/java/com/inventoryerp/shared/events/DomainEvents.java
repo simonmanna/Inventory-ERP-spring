@@ -178,4 +178,5 @@ public final class DomainEvents {
     public static final String QUALITY_LOT_DECIDED = "quality.lot.decided";
     public static final String QUALITY_NCR_RAISED = "quality.ncr.raised";
     public static final String QUALITY_CAPA_CLOSED = "quality.capa.closed";
+    public static final String QUARRY_EXTRACTION_POSTED = "quarry.extraction.posted";
 }

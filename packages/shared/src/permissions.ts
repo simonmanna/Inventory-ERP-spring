@@ -768,6 +768,48 @@ export const PERMISSIONS = {
     /// Corrective / preventive actions.
     capa: 'quality:capa',
   },
+  // ---- Quarry & extraction (module quarry, ADR-S012, construction-materials Track C Phase 2.2) ----
+  // Route ↔ permission matrix: docs/spec/quarry.md §Routes. Every quarry role needs quarry_site:read (form lookups).
+  quarry: {
+    /// Extraction vs target, cost per tonne, losses and royalties reports.
+    report: 'quarry:report',
+    /// Cost-allocation rule, fallback rates, equipment rates, royalty / levy rates.
+    settings: 'quarry:settings',
+  },
+  quarrySite: {
+    /// Sites, zones / benches / faces, materials, stockpiles (and the quarry form lookups).
+    read: 'quarry_site:read',
+    create: 'quarry_site:create',
+    update: 'quarry_site:update',
+    delete: 'quarry_site:delete',
+  },
+  quarryExtraction: {
+    /// Daily extraction logs, losses, haulage, plans and the ROM stockpile view.
+    read: 'quarry_extraction:read',
+    create: 'quarry_extraction:create',
+    update: 'quarry_extraction:update',
+    /// Post / reverse an extraction log: raw stone into ROM stock with its cost, GL capitalisation.
+    post: 'quarry_extraction:post',
+    /// Extraction plans and production targets.
+    plan: 'quarry_extraction:plan',
+    /// Record haulage from the face to the ROM stockpile / crusher.
+    haul: 'quarry_extraction:haul',
+  },
+  quarryBlasting: {
+    /// Drilling & blasting records, magazines, explosive registry and issues.
+    read: 'quarry_blasting:read',
+    create: 'quarry_blasting:create',
+    /// Edit, fire, close or cancel a blast.
+    update: 'quarry_blasting:update',
+    /// Request explosives for a blast (goes to approval).
+    requestExplosive: 'quarry_blasting:request_explosive',
+    /// Approver permission of the default explosive-issue approval workflow (never the requester).
+    approveExplosive: 'quarry_blasting:approve_explosive',
+    /// Explosive issue authorisation: issue an approved request from the magazine and reconcile the unused return.
+    issueExplosive: 'quarry_blasting:issue_explosive',
+    /// Magazines (licence, keeper) and the controlled-explosive product registry.
+    magazine: 'quarry_blasting:magazine',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

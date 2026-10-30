@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phase 2 — 2.1 + 2.6 merged; 2.2 quarry, 2.4 precast, 2.7 shop floor in-progress (C, parallel worktrees)
-Next action: merge 2.2 quarry when it finishes; wave B: 2.4 blocks + 2.7 shop floor now, 2.3 crushing after 2.2.
+Current: Phase 2 — 2.1, 2.2, 2.6 merged; 2.3 crushing, 2.4 precast, 2.7 shop floor in-progress (C, parallel worktrees)
+Next action: merge 2.3 / 2.4 / 2.7 as they finish, then wave C (2.5 planning, 2.8 costing + Phase 2 E2E ITs + demo seed).
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -83,8 +83,8 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 1.8 telematics SPI | done | a1c77e0 | | V21, mock provider, positions/distance API for 1.3 |
 | 1.9 fleet costing & reports | done | 0c4b8e3 37ba653 a538e61 | fleet-complete | V25, 22 routes, TCO / delivery profitability / freight bills (once, GL balanced) / 8 reports with CSV-XLSX-PDF / ShedLock reminders / fine → payroll deduction / opt-in demo seed (`SEED_FLEET_DEMO`) |
 | 2.1 multi-stage production & WIP | done (C) | 8052424, dc2be71, 23b4c96 | | V26, ADR-S011; 18 routes, stage QC SPI for 2.6; branch build 894 tests green |
-| 2.2 quarry & extraction | in-progress (C, worktree) | | | |
-| 2.3 crushing & screening | claimed (C) | | | |
+| 2.2 quarry & extraction | done (C) | 91d1c52, 779bc31, 4e7c775 | | V28 + licence V4, ADR-S012; 80 routes, 19 permissions, ROM stockpile API for 2.3; main build 937 tests green (licence-server ITs need Docker) |
+| 2.3 crushing & screening | in-progress (C, worktree) | | | |
 | 2.4 block / precast manufacturing | in-progress (C, worktree) | | | |
 | 2.5 advanced planning & scheduling | claimed (C) | | | |
 | 2.6 quality management | done (C) | c6b3f68, 608208a, 554c872 | | V27, ADR-S013; 45 routes; wired to 2.1 stage gates (QualityStageGateBridge); main build 917 tests green |

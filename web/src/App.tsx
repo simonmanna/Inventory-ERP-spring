@@ -159,6 +159,7 @@ import { RentalReturnsPage } from '@/pages/rental/RentalReturnsPage';
 import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
+import { quarryRoutes } from '@/pages/quarry/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -399,6 +400,8 @@ export function App() {
           {fleetRoutes}
           {/* Quality management (ADR-S013) — core-available, quality:* permissions */}
           {qualityRoutes}
+          {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
+          {quarryRoutes}
           {/* Repair & Maintenance — static segments before /repair/orders/:id */}
           <Route path="/repair" element={<RepairDashboardPage />} />
           <Route path="/repair/orders" element={<RepairOrdersPage />} />

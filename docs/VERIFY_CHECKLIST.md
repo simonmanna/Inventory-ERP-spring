@@ -222,3 +222,19 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   on manual stages, Cost; gated stage: Pass / Fail QC. Expect WIP per stage to return to 0, finished goods in stock.
 - Manufacturing → Stage WIP: stage rows of the open order, GL WIP balance vs expected, default allocation setting.
 - Reverse the latest posting, then "Reverse all stages": stock and WIP return to where they were.
+## Phase 2.2 — Quarry & extraction (ADR-S012)
+
+- Migrations: `V28__quarry.sql` (placeholder; 19 tables + 19 permissions), licence server `V4__quarry_feature.sql`.
+- Env: `ENABLE_QUARRY=true` (backend) and the `quarry` licence feature; switch the module on in Settings → Modules.
+- Tests: `g.py --db c_quarry test --tests 'com.inventoryerp.quarry.*'` (QuarryIT, QuarryCalculatorsTest,
+  QuarryModuleGateTest) and `--tests 'com.inventoryerp.kernel.licensing.LicensingIT'`.
+- Click through: Quarry → Quarry Sites → add a site, a zone + bench, a ROM stockpile (location auto-created);
+  Materials & Grades → map a granite product (AVCO); Quarry Settings → fuel / labour rates, an EXCAVATOR class rate,
+  a royalty per net tonne. New extraction log (on a phone): 10 loads of a 20 t tipper, an excavator 8 h + 100 L,
+  15 t overburden → Save & post → the log shows net tonnes, cost per tonne and a balanced entry (Dr 1400 / Cr 5361 +
+  2177); Quarry → ROM Stockpiles shows the tonnes at that cost. Reverse it → stock back to zero.
+- Explosives: Magazines & Explosives → add a magazine, register an explosive product, receive it with a goods receipt
+  into the magazine location; Drilling & Blasting → plan a blast (pattern → estimated tonnes), Request explosives →
+  approve it as another user in Approvals → Issue from magazine as the keeper (the requester is refused) → Record
+  firing → Reconcile return → Close blast; an extraction log linked to the blast picks up its cost per tonne.
+- Reports: Quarry Reports → extraction vs target, cost per tonne (by month / week / day / site), losses, royalties.
