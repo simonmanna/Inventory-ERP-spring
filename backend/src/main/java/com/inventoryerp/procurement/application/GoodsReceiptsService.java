@@ -151,6 +151,10 @@ public class GoodsReceiptsService {
         if (wh == 0) {
             throw ApiException.notFound("Warehouse not found");
         }
+        // P0-6: referenced documents must belong to this organisation.
+        assertOwned("PurchaseOrder", input.get("purchaseOrderId"), "Purchase order not found", orgId);
+        assertOwned("Partner", input.get("partnerId"), "Supplier not found", orgId);
+        assertOwned("Branch", input.get("branchId"), "Branch not found", orgId);
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String receiptNumber = sequence.next("grn:" + year, "GRN-" + year + "-", 5);
         Map<String, Object> grn = tx.execute(st -> {
@@ -205,6 +209,13 @@ public class GoodsReceiptsService {
         audit.record(AuditInput.of("GoodsReceiptNote", (String) grn.get("id"), "create", null,
                 Obj.of("receiptNumber", receiptNumber, "lines", lines.size(), "status", "draft")));
         return grn;
+    }
+
+    private void assertOwned(String table, Object id, String message, String orgId) {
+        if (id instanceof String s && !s.isEmpty() && jdbc.sql("SELECT count(*) FROM \"" + table + "\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(s, orgId).query(Long.class).single() == 0) {
+            throw ApiException.notFound(message);
+        }
     }
 
     private static String stringOrNull(Object v) {
@@ -297,7 +308,7 @@ public class GoodsReceiptsService {
                 List<PurchaseOrdersService.ReceiptLine> applied = new ArrayList<>();
                 for (Map<String, Object> l : updatedLines) {
                     applied.add(new PurchaseOrdersService.ReceiptLine((String) l.get("purchaseOrderLineId"),
-                            (String) l.get("productId"), Money.dec(l.get("quantity")).doubleValue(),
+                            (String) l.get("productId"), Money.dec(l.get("quantity")),
                             (String) l.get("description")));
                 }
                 purchaseOrders.applyReceiptToPO((String) grn.get("purchaseOrderId"), applied);
@@ -315,19 +326,20 @@ public class GoodsReceiptsService {
                     : Instant.now().truncatedTo(ChronoUnit.MILLIS);
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
+            // P0-5: a PO-backed receipt is priced in the PO currency; stock / GRNI / AP carry the functional value.
+            BigDecimal rate = po != null ? purchaseOrders.functionalRate(po) : BigDecimal.ONE;
             for (Map<String, Object> ln : updatedLines) {
                 if (ln.get("productId") == null || ((String) ln.get("productId")).isEmpty()) {
                     continue;
                 }
                 Map<String, Object> product = purchaseOrders.product((String) ln.get("productId"), orgId);
-                if (product == null) {
+                if (product == null || !PurchaseOrdersService.stocked(product)) {
                     continue;
                 }
                 BigDecimal unitCost = Money.dec(ln.get("unitCost"));
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
                                 Money.dec(ln.get("quantity")))
-                        .unitCost(unitCost.doubleValue() > 0 ? unitCost
-                                : ProcurementSql.num(Money.dec(product.get("costPrice")).doubleValue()))
+                        .unitCost(unitCost.signum() > 0 ? unitCost.multiply(rate) : Money.dec(product.get("costPrice")))
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
@@ -335,7 +347,7 @@ public class GoodsReceiptsService {
                         .expiry(ln.get("expiryDate") == null ? null : ln.get("expiryDate").toString())
                         .reference("GRN " + grn.get("receiptNumber"));
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", id, date));
-                BigDecimal lineNet = Money.dec(received.totalValue());
+                BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);
                 if (po != null) {
                     Map<String, Object> poLine = ln.get("purchaseOrderLineId") == null ? null
@@ -403,8 +415,6 @@ public class GoodsReceiptsService {
             throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " has posted landed cost — the"
                     + " capitalised freight/duty would be stranded; return the goods with a debit note instead");
         }
-        jdbc.sql("UPDATE \"LandedCost\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ?"
-                + " AND \"goodsReceiptId\" = ? AND status = 'draft'").params(orgId, id).update();
         List<Map<String, Object>> grnLines = (List<Map<String, Object>>) grn.get("lines");
         List<String> lineIds = grnLines.stream().map(l -> (String) l.get("id")).toList();
         long matched = jdbc.sql("SELECT count(*) FROM \"VendorBillReceiptMatch\" WHERE \"organizationId\" = ?"
@@ -427,6 +437,21 @@ public class GoodsReceiptsService {
         }
 
         return tx.execute(st -> {
+            // P1-6: lock the receipt, then re-check landed cost inside the transaction so a concurrent landed-cost
+            // post cannot slip in between the check and the reversal.
+            jdbc.sql("SELECT id FROM \"GoodsReceiptNote\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                    .params(id, orgId).query().listOfRows();
+            long landedNow = jdbc.sql("SELECT count(*) FROM \"LandedCost\" WHERE \"organizationId\" = ? AND status IN"
+                    + " ('posted', 'approved') AND (\"goodsReceiptId\" = ? OR id IN (SELECT \"landedCostId\" FROM"
+                    + " \"LandedCostReceipt\" WHERE \"organizationId\" = ? AND \"goodsReceiptId\" = ?))")
+                    .params(orgId, id, orgId, id).query(Long.class).single();
+            if (landedNow > 0) {
+                throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " has posted landed cost —"
+                        + " the capitalised freight/duty would be stranded; return the goods with a debit note instead");
+            }
+            // B7 (post-parity): draft landed costs are cancelled only once the reversal is certain.
+            jdbc.sql("UPDATE \"LandedCost\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE"
+                    + " \"organizationId\" = ? AND \"goodsReceiptId\" = ? AND status = 'draft'").params(orgId, id).update();
             int claim = jdbc.sql("UPDATE \"GoodsReceiptNote\" SET status = 'reversed', \"reversedAt\" = " + NOW + ","
                             + " \"reversedById\" = ?, \"reversalReason\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
                             + " AND \"organizationId\" = ? AND status = 'posted' AND \"reversedAt\" IS NULL"
@@ -442,8 +467,8 @@ public class GoodsReceiptsService {
                         List.of("goods_receipt"), "Reversal of GRN " + grn.get("receiptNumber") + ": " + why, null));
             }
             if (poId != null) {
-                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ?"
-                        + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(poId, orgId));
+                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT id, status::text AS status FROM \"PurchaseOrder\""
+                        + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL FOR UPDATE").params(poId, orgId));
                 if (po != null) {
                     List<Map<String, Object>> poLines = SqlRows.list(jdbc.sql("SELECT * FROM \"PurchaseOrderLine\" WHERE"
                             + " \"purchaseOrderId\" = ?").param(poId));
@@ -462,8 +487,8 @@ public class GoodsReceiptsService {
                         if (poLineId == null) {
                             continue;
                         }
-                        jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"receivedQuantity\" = \"receivedQuantity\" - ?,"
-                                        + " version = version + 1 WHERE id = ? AND \"organizationId\" = ?")
+                        jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"receivedQuantity\" = GREATEST(0, \"receivedQuantity\""
+                                        + " - ?), version = version + 1 WHERE id = ? AND \"organizationId\" = ?")
                                 .params(ln.get("quantity"), poLineId, orgId).update();
                     }
                     boolean anyReceived = false;
@@ -471,19 +496,22 @@ public class GoodsReceiptsService {
                     for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT quantity, \"receivedQuantity\" FROM"
                             + " \"PurchaseOrderLine\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?")
                             .params(poId, orgId))) {
-                        double received = Money.dec(l.get("receivedQuantity")).doubleValue();
-                        if (received > 0) {
+                        BigDecimal received = Money.dec(l.get("receivedQuantity"));
+                        if (received.signum() > 0) {
                             anyReceived = true;
                         }
-                        if (!(received >= Money.dec(l.get("quantity")).doubleValue())) {
+                        if (received.compareTo(Money.dec(l.get("quantity"))) < 0) {
                             allReceived = false;
                         }
                     }
-                    String status = allReceived ? "received" : anyReceived ? "partially_received" : "active";
-                    jdbc.sql("UPDATE \"PurchaseOrder\" SET status = ?::\"PurchaseOrderStatus\", version = version + 1,"
-                                    + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
-                                    + " AND \"deletedAt\" IS NULL")
-                            .params(status, poId, orgId).update();
+                    // P1-3: only the receipt statuses are recomputed; a cancelled / closed order stays that way.
+                    if (List.of("active", "partially_received", "received").contains(po.get("status"))) {
+                        String status = allReceived ? "received" : anyReceived ? "partially_received" : "active";
+                        jdbc.sql("UPDATE \"PurchaseOrder\" SET status = ?::\"PurchaseOrderStatus\", version = version + 1,"
+                                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
+                                        + " AND \"deletedAt\" IS NULL")
+                                .params(status, poId, orgId).update();
+                    }
                 }
             }
             audit.recordInTx(AuditInput.of("GoodsReceiptNote", id, "update", null, Obj.of("status", "reversed",
@@ -517,7 +545,7 @@ public class GoodsReceiptsService {
             g.put("lines", SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
                     + " \"goodsReceiptId\" = ?").param(g.get("id"))));
             g.put("order", g.get("purchaseOrderId") == null ? null : SqlRows.one(jdbc.sql("SELECT \"orderNumber\" FROM"
-                    + " \"PurchaseOrder\" WHERE id = ?").param(g.get("purchaseOrderId"))));
+                    + " \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?").params(g.get("purchaseOrderId"), orgId)));
         }
         long total = jdbc.sql("SELECT count(*) FROM \"GoodsReceiptNote\" g WHERE" + where).params(params)
                 .query(Long.class).single();
@@ -567,9 +595,10 @@ public class GoodsReceiptsService {
                 + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ? ORDER BY \"lineNumber\" ASC").param(id));
         grn.put("lines", lines);
         grn.put("order", grn.get("purchaseOrderId") == null ? null : SqlRows.one(PurchaseOrder.class,
-                jdbc.sql("SELECT * FROM \"PurchaseOrder\" WHERE id = ?").param(grn.get("purchaseOrderId"))));
+                jdbc.sql("SELECT * FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(grn.get("purchaseOrderId"), orgId)));
         grn.put("warehouse", grn.get("warehouseId") == null ? null : SqlRows.one(jdbc.sql("SELECT id, code, name FROM"
-                + " \"InventoryLocation\" WHERE id = ?").param(grn.get("warehouseId"))));
+                + " \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?").params(grn.get("warehouseId"), orgId)));
         List<String> productIds = lines.stream().map(l -> (String) l.get("productId"))
                 .filter(p -> p != null && !p.isEmpty()).toList();
         Map<String, Map<String, Object>> products = new HashMap<>();

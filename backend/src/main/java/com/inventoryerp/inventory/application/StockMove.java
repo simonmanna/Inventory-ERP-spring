@@ -149,9 +149,13 @@ public final class StockMove {
         return this;
     }
 
-    /** Result of a receipt: {@code quantity} echoes the caller's unit; values are per base unit. */
+    /**
+     * Result of a receipt: {@code quantity} echoes the caller's unit; values are per base unit. {@code totalValue} is
+     * the value the stock entered at (the standard for STANDARD-costed products); {@code actualValue} is what the
+     * supplier charged (quantity × actual unit cost), which is what GRNI and AP carry (ADR-PROCUREMENT-001, P0-1).
+     */
     public record Received(String ledgerCode, BigDecimal quantity, BigDecimal unitCost, BigDecimal totalValue,
-            BigDecimal runningAverageCost) {}
+            BigDecimal runningAverageCost, BigDecimal actualValue) {}
 
     /** Result of an issue: {@code baseQuantity}/{@code baseUomId} are what actually left stock. */
     public record Issued(String ledgerCode, BigDecimal quantity, BigDecimal baseQuantity, String baseUomId,

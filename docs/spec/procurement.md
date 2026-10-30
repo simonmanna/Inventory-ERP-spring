@@ -78,16 +78,31 @@ Pending owner approval:
    `Unit <code> is not enabled for purchasing on product <name>`, `Unit <code> is not active for product
    <name>`.
 
+Post-parity fixes (ADR-PROCUREMENT-001 wave 1, `fix(procurement)!`, 2026-10-30; tests:
+`ProcurementIntegrityIT`, `ProcurementIT`, `InvoicingIT`):
+
+| # | Route / behaviour | Nest | Spring now |
+|---|---|---|---|
+| P0-1 | PO receive / GRN post of a STANDARD-costed product | voucher debits GRNI at the standard; GRNI keeps the PPV, AP understated | voucher at the actual (supplier) value; GRNI nets to 0, AP = supplier price |
+| P0-2 | `DELETE /purchase-orders/:id` | deletes an order that has receipts (GRN FK set null → AP raised again by the bill) | `400 Cannot delete a purchase order that has goods receipts, payments or bills — cancel it instead` |
+| P0-3 | `PATCH /debit-notes/:id/post` | draft check outside the transaction; concurrent posts ship stock twice | atomic `draft → posted` claim first; the loser gets `409 Debit note was already posted by another request`; route takes an `Idempotency-Key` |
+| P0-4 | `POST /purchase-orders/:id/pay` | pays draft orders and up to the ordered total before anything is received (AP in debit) | refuses draft (`Cannot pay a purchase order that is not approved yet`) and pays at most what posted receipts vouchered (`Nothing has been received on this purchase order yet — …`; the existing `exceeds remaining balance` message uses the vouchered remainder) |
+| P0-5 | receipt / voucher / PO payment of a foreign-currency PO | posted the PO-currency amount as functional currency | converted with the PO exchange rate when the PO currency differs from the organisation's |
+| P0-6 | `POST /purchase-orders` (`branchId`, `requestId`), `POST /goods-receipts` (`purchaseOrderId`, `partnerId`, `branchId`), detail includes | ids stored / read without an organisation check | `404 Branch / Purchase request / Purchase order / Supplier not found`; every include filtered by organisation |
+| B1 | inbound non-RTV debit note | always `400 Unbalanced entry` | posts Dr expense / Cr AP (AP line tagged with the supplier) |
+| B2 | `GET /vendor-bills/suppliers/:id/ledger` | drafts / cancelled bills counted, paid bills dropped → negative balance | the supplier's AP sub-ledger (all posted journal lines on payable accounts tagged with the supplier); closing balance = GL = AP ageing |
+| B6 | `GET /purchase-orders?search=` | 500 | searches order number, description, notes and supplier name |
+| B7 | `PATCH /goods-receipts/:id/reverse` | cancels draft landed costs before the refusal checks | cancels them only inside the reversal transaction, after the checks; the receipt row is locked and landed cost re-checked in the transaction |
+| P1-1 | three-way match | sums draft / reversed receipts; billed = tax-inclusive even split of the bill total; double math; an unbilled receipt is `blocked`; write routes need only `:read` | posted receipts only; billed = net bill lines per product; BigDecimal; unbilled receipt = `partial`; `recompute` / `validate-bill` need `three_way_match:approve` |
+| P1-2 | `POST /purchase-orders/:id/activate` | activates an order whose approval was rejected | `403 This purchase order's approval was rejected — it cannot be activated`; an approved request now activates the order automatically (`PurchaseOrderApprovalSubscriber`) |
+| P1-3 | GRN reverse of a cancelled PO | set the PO back to active | cancelled / closed orders keep their status; received quantity floored at 0 |
+| P1-7 | vendor bill priced above a vouchered receipt | difference silently dropped (AP at receipt value) | Dr PPV / Cr AP for the difference; bill residual carries it; receipt lines locked `FOR UPDATE` while matching |
+| P1-12 | receiving a service / non-tracked product | put into stock and vouchered — and the bill expensed it again (AP twice) | not stocked, not vouchered; billed as an expense |
+
 Same as Nest, kept on purpose:
 
-- `GET /procurement/purchase-orders?search=…` answers **500**: Nest builds `contains` filters on the
-  `paymentType` / `paymentStatus` / `status` enum columns, which Prisma rejects at validation time.
-- Posting an **inbound** debit note that is not a return-to-vendor always fails with `400 Unbalanced entry…`:
-  Nest credits AP *and* the expense line. Outbound notes and RTV (`inbound` + `returned_goods`) post normally.
 - `GET /procurement/landed-costs/:id` answers 404 when missing, while the other detail routes answer 200 with an
   empty body (Nest returns `null`).
-- `PATCH /goods-receipts/:id/reverse` cancels the receipt's draft landed costs (autocommit) *before* the bill /
-  payment checks, so a refused reversal still leaves them cancelled.
 - Approval gates Nest calls outside `$transaction` (`checkOrRequestApproval` on GRN / debit-note post and PO
   receive; `requestApproval` during PO create) run in their own transaction (`REQUIRES_NEW` for PO create), so the
   approval request survives a later failure.

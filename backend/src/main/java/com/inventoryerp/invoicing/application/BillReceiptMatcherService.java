@@ -53,8 +53,9 @@ public class BillReceiptMatcherService {
                         + " l.\"billedQuantity\", l.\"unitCost\", l.\"uomFactor\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
                         + " JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE l.\"organizationId\" = ?"
                         + " AND l.\"productId\" = ? AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
-                        + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC")
+                        + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC, l.id ASC FOR UPDATE OF l")
                 .params(organizationId, productId, organizationId, partnerId));
+        // P1-7: the open receipt lines are locked, so two bills posting at once cannot both consume the same quantity.
         BigDecimal remaining = wanted;
         BigDecimal vouchered = Money.ZERO;
         BigDecimal accrued = Money.ZERO;

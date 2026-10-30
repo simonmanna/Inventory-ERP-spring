@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
+import { idempotentPatch } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
@@ -86,7 +87,7 @@ export function GoodsReceiptCreatePage() {
     })).data,
     onSuccess: async (data: any) => {
       // Immediately post it (commits the stock-in).
-      await api.patch(`/procurement/goods-receipts/${data.id}/post`);
+      await idempotentPatch(`/procurement/goods-receipts/${data.id}/post`);
       notify.success(tx('GRN {{receiptNumber}} posted', { receiptNumber: data.receiptNumber }));
       qc.invalidateQueries({ queryKey: ['goods-receipts'] });
       navigate('/procurement/goods-receipts');

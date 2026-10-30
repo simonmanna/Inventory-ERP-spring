@@ -98,7 +98,7 @@ Realized FX = (payment rate − bill rate) × allocated foreign amount, posted i
 | Event | Debit | Credit | Notes |
 |---|---|---|---|
 | Return to vendor (stock) | `accounts_payable` (or `grni_accrued` if not yet vouchered) | stock at **current cost** (AVCO) or the layer cost (FIFO); the difference against the purchase value goes to `purchase_price_variance` | Exists (`StockPostingService.postReturnToSupplier`). Add the input-tax reversal: Cr `tax_receivable`. |
-| Inbound debit note, no goods **(fix B1)** | `accounts_payable` | expense or the original line account; `tax_receivable` (tax part) | today it is unbalanced |
+| Inbound debit note, no goods **(fix B1, built)** — the supplier charges more | expense (product category expense account, else `default_expense`) | `accounts_payable` (tagged with the supplier) | Nest was unbalanced |
 | Supplier credit note (from supplier) | `accounts_payable` | as above; reduces the bill residual through allocation | new; invoicing owns it (`documentType='vendor_credit_note'`) |
 | Claim settled by credit note | as supplier credit note | | `SupplierClaim.status=settled` |
 

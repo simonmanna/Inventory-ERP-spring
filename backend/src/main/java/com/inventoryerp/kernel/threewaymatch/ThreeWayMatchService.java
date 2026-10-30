@@ -5,6 +5,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -19,9 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Three-way match (port of {@code three-way-match.service.ts}): per PO line compares ordered vs received vs billed
- * quantities and prices; variances beyond the org tolerance (FeatureFlag {@code procurement.match_tolerance},
- * default 2 % price / 0 qty) are {@code blocked}. A read model: never mutates the order.
+ * Three-way match (port of {@code three-way-match.service.ts}, corrected post-parity — P1-1): per PO line compares
+ * ordered vs received (posted receipts) vs billed (net bill lines) quantities and prices in BigDecimal; variances beyond
+ * the org tolerance (FeatureFlag {@code procurement.match_tolerance}, default 2 % price / 0 qty) are {@code blocked}.
+ * A read model: never mutates the order.
  */
 @Service
 public class ThreeWayMatchService {
@@ -36,13 +38,26 @@ public class ThreeWayMatchService {
         this.events = events;
     }
 
-    private static double n(Object v) {
-        return v == null ? 0 : ((BigDecimal) v).doubleValue();
+    private static BigDecimal n(Object v) {
+        return v == null ? BigDecimal.ZERO : v instanceof BigDecimal b ? b : new BigDecimal(v.toString());
     }
+
+    private static final BigDecimal EPS = new BigDecimal("0.0001");
 
     /** Recompute every line of a PO; returns the upserted match rows. */
     @Transactional
     public List<Map<String, Object>> recomputeForOrder(String purchaseOrderId) {
+        return recomputeForOrder(purchaseOrderId, null);
+    }
+
+    /**
+     * Recompute every line of a PO (P1-1, post-parity): received = posted (not reversed / draft) receipt lines; billed =
+     * the net (ex-tax) lines of the PO's posted or paid bills, plus {@code includeBillId} when a draft bill is being
+     * validated before posting. Product lines match bill lines of the same product (spread over the PO lines of that
+     * product in line order); lines without a product share the bills' product-less net amount by ordered value.
+     */
+    @Transactional
+    public List<Map<String, Object>> recomputeForOrder(String purchaseOrderId, String includeBillId) {
         String org = TenantContext.organizationId();
         long exists = jdbc.sql("SELECT count(*) FROM \"PurchaseOrder\" WHERE \"organizationId\" = ? AND id = ?")
                 .params(org, purchaseOrderId).query(Long.class).single();
@@ -56,42 +71,87 @@ public class ThreeWayMatchService {
         if (lines.isEmpty()) {
             return List.of();
         }
-        double orderedValue = 0;
-        for (Map<String, Object> l : lines) {
-            orderedValue += n(l.get("quantity")) * n(l.get("unitPrice"));
+        // Bill lines (net) of the bills linked to this order.
+        List<Map<String, Object>> billLines = SqlRows.list(jdbc.sql("SELECT dl.\"productId\", dl.quantity, dl.subtotal,"
+                + " dl.\"uomFactor\" FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\" WHERE"
+                + " d.\"organizationId\" = ? AND d.\"documentType\" = 'vendor_bill'"
+                + " AND (d.status IN ('posted', 'paid') OR d.id = ?::text) AND d.id IN (SELECT \"vendorBillId\" FROM"
+                + " \"VendorBillLink\" WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)")
+                .params(org, includeBillId, org, purchaseOrderId));
+        Map<String, BigDecimal[]> billedByProduct = new HashMap<>(); // productId -> {qty, net}
+        BigDecimal unlinkedNet = BigDecimal.ZERO;
+        for (Map<String, Object> bl : billLines) {
+            Object pid = bl.get("productId");
+            if (pid == null) {
+                unlinkedNet = unlinkedNet.add(n(bl.get("subtotal")));
+                continue;
+            }
+            BigDecimal[] acc = billedByProduct.computeIfAbsent((String) pid, k -> new BigDecimal[] {BigDecimal.ZERO,
+                    BigDecimal.ZERO});
+            acc[0] = acc[0].add(n(bl.get("quantity")));
+            acc[1] = acc[1].add(n(bl.get("subtotal")));
         }
-        List<Map<String, Object>> links = SqlRows.list(jdbc.sql("SELECT amount FROM \"VendorBillLink\" WHERE"
-                + " \"organizationId\" = ? AND \"purchaseOrderId\" = ?").params(org, purchaseOrderId));
-        double tolerancePct = priceTolerancePct(org);
+        BigDecimal productlessOrdered = BigDecimal.ZERO;
+        for (Map<String, Object> l : lines) {
+            if (l.get("productId") == null) {
+                productlessOrdered = productlessOrdered.add(n(l.get("quantity")).multiply(n(l.get("unitPrice"))));
+            }
+        }
+        BigDecimal tolerancePct = BigDecimal.valueOf(priceTolerancePct(org));
         List<Map<String, Object>> results = new ArrayList<>();
         for (Map<String, Object> line : lines) {
-            double receivedQty = n(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"GoodsReceiptLine\" WHERE"
-                    + " \"organizationId\" = ? AND \"purchaseOrderLineId\" = ?").params(org, line.get("id"))
-                    .query(BigDecimal.class).single());
-            double billedAmount = 0;
-            for (Map<String, Object> link : links) {
-                if (orderedValue <= 0) {
-                    continue;
+            BigDecimal receivedQty = n(jdbc.sql("SELECT COALESCE(SUM(l.quantity), 0) FROM \"GoodsReceiptLine\" l JOIN"
+                    + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" WHERE l.\"organizationId\" = ?"
+                    + " AND l.\"purchaseOrderLineId\" = ? AND g.status = 'posted' AND g.\"deletedAt\" IS NULL")
+                    .params(org, line.get("id")).query(BigDecimal.class).single());
+            BigDecimal unitPrice = n(line.get("unitPrice"));
+            BigDecimal orderedQty = n(line.get("quantity"));
+            BigDecimal billedQty;
+            BigDecimal billedAmount;
+            Object pid = line.get("productId");
+            if (pid != null) {
+                BigDecimal[] acc = billedByProduct.get((String) pid);
+                if (acc == null || acc[0].signum() <= 0) {
+                    billedQty = BigDecimal.ZERO;
+                    billedAmount = BigDecimal.ZERO;
+                } else {
+                    // Consume the product's billed quantity line by line, up to each line's ordered quantity; the
+                    // last line of the product takes any excess (an over-bill is a variance, not lost).
+                    boolean lastOfProduct = lines.stream().filter(o -> pid.equals(o.get("productId")))
+                            .reduce((a, b) -> b).orElse(line) == line;
+                    BigDecimal take = lastOfProduct ? acc[0] : acc[0].min(orderedQty);
+                    BigDecimal unit = acc[1].divide(acc[0], 6, RoundingMode.HALF_UP);
+                    billedQty = take;
+                    billedAmount = unit.multiply(take);
+                    acc[1] = acc[1].subtract(billedAmount);
+                    acc[0] = acc[0].subtract(take);
                 }
-                double lineValue = n(line.get("quantity")) * n(line.get("unitPrice"));
-                billedAmount += (lineValue / orderedValue) * n(link.get("amount"));
-            }
-            double unitPrice = n(line.get("unitPrice"));
-            double billedQty = unitPrice > 0 ? billedAmount / unitPrice : 0;
-            double orderedQty = n(line.get("quantity"));
-            double qtyVariance = billedQty - receivedQty;
-            double billedUnitPrice = billedQty > 0 ? billedAmount / billedQty : unitPrice;
-            double priceVariance = billedUnitPrice - unitPrice;
-            boolean exceeded = Math.abs(qtyVariance) > 0.0001 || Math.abs(priceVariance) > unitPrice * tolerancePct;
-            String status;
-            if (receivedQty == 0 && billedQty == 0) {
-                status = "pending";
-            } else if (Math.abs(qtyVariance) < 0.0001 && Math.abs(priceVariance) < unitPrice * tolerancePct) {
-                status = "matched";
-            } else if (exceeded) {
-                status = "blocked";
             } else {
+                BigDecimal value = orderedQty.multiply(unitPrice);
+                billedAmount = productlessOrdered.signum() > 0
+                        ? unlinkedNet.multiply(value).divide(productlessOrdered, 6, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+                billedQty = unitPrice.signum() > 0 ? billedAmount.divide(unitPrice, 6, RoundingMode.HALF_UP)
+                        : BigDecimal.ZERO;
+            }
+            BigDecimal qtyVariance = billedQty.subtract(receivedQty);
+            BigDecimal billedUnitPrice = billedQty.signum() > 0 ? billedAmount.divide(billedQty, 6, RoundingMode.HALF_UP)
+                    : unitPrice;
+            BigDecimal priceVariance = billedUnitPrice.subtract(unitPrice);
+            BigDecimal priceLimit = unitPrice.multiply(tolerancePct);
+            boolean qtyOk = qtyVariance.abs().compareTo(EPS) < 0;
+            boolean priceOk = priceVariance.abs().compareTo(priceLimit) <= 0 || priceVariance.abs().compareTo(EPS) < 0;
+            boolean exceeded = !qtyOk || !priceOk;
+            String status;
+            if (receivedQty.signum() == 0 && billedQty.signum() == 0) {
+                status = "pending";
+            } else if (qtyOk && priceOk) {
+                status = "matched";
+            } else if (billedQty.signum() == 0 || billedQty.compareTo(receivedQty) < 0 && priceOk) {
+                // Received but not (fully) billed yet: still in progress, not an exception.
                 status = "partial";
+                exceeded = false;
+            } else {
+                status = "blocked";
             }
             Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ThreeWayMatch\" (id, \"organizationId\","
                             + " \"purchaseOrderId\", \"purchaseOrderLineId\", \"productId\", \"orderedQuantity\","
@@ -105,8 +165,8 @@ public class ThreeWayMatchService {
                             + " status = EXCLUDED.status, \"thresholdExceeded\" = EXCLUDED.\"thresholdExceeded\","
                             + " \"lastCheckedAt\" = now(), \"updatedAt\" = now() RETURNING *")
                     .params(UUID.randomUUID().toString(), org, purchaseOrderId, line.get("id"), line.get("productId"),
-                            dec(orderedQty), dec(receivedQty), dec(billedQty), dec(unitPrice), dec(billedUnitPrice),
-                            dec(qtyVariance), dec(priceVariance), status, exceeded));
+                            scale(orderedQty), scale(receivedQty), scale(billedQty), scale(unitPrice),
+                            scale(billedUnitPrice), scale(qtyVariance), scale(priceVariance), status, exceeded));
             results.add(row);
         }
         long blocked = results.stream().filter(r -> "blocked".equals(r.get("status"))).count();
@@ -121,8 +181,8 @@ public class ThreeWayMatchService {
         return results;
     }
 
-    private static BigDecimal dec(double v) {
-        return new BigDecimal(JsNumbers.toJsString(v));
+    private static BigDecimal scale(BigDecimal v) {
+        return v.setScale(6, RoundingMode.HALF_UP);
     }
 
     /** Match rows (latest first, max 200) with the order's number and partner. */
@@ -141,8 +201,8 @@ public class ThreeWayMatchService {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT * FROM \"ThreeWayMatch\" WHERE" + where
                 + " ORDER BY \"lastCheckedAt\" DESC LIMIT 200").params(params));
         for (Map<String, Object> r : rows) {
-            r.put("order", SqlRows.one(jdbc.sql("SELECT \"orderNumber\", \"partnerId\" FROM \"PurchaseOrder\" WHERE id = ?")
-                    .param(r.get("purchaseOrderId"))));
+            r.put("order", SqlRows.one(jdbc.sql("SELECT \"orderNumber\", \"partnerId\" FROM \"PurchaseOrder\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(r.get("purchaseOrderId"), TenantContext.organizationId())));
         }
         return rows;
     }
@@ -156,7 +216,7 @@ public class ThreeWayMatchService {
         List<Map<String, Object>> matches = new ArrayList<>();
         boolean ok = true;
         for (String po : orders) {
-            recomputeForOrder(po);
+            recomputeForOrder(po, vendorBillId);
             for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT * FROM \"ThreeWayMatch\" WHERE \"organizationId\" = ?"
                     + " AND \"purchaseOrderId\" = ?").params(org, po))) {
                 matches.add(r);

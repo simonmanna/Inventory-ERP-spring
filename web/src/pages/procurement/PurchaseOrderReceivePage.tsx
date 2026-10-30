@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
@@ -50,7 +51,7 @@ export function PurchaseOrderReceivePage() {
 
   const receiveMut = useMutation({
     mutationFn: async () =>
-      (await api.post(`/procurement/purchase-orders/${id}/receive`, {
+      (await idempotentPost(`/procurement/purchase-orders/${id}/receive`, {
         warehouseId,
         notes,
         lines: po.data?.lines

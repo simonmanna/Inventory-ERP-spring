@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { idempotentPatch } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { formatMoney } from '@/lib/format';
@@ -33,7 +34,7 @@ export function DebitNotesPage() {
   });
   const act = useMutation({
     mutationFn: async (vars: { id: string; action: 'post' | 'cancel' }) =>
-      (await api.patch(`/procurement/debit-notes/${vars.id}/${vars.action}`)).data,
+      (await idempotentPatch(`/procurement/debit-notes/${vars.id}/${vars.action}`)).data,
     onSuccess: () => {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['debit-notes'] });

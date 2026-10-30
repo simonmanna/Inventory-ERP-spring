@@ -82,7 +82,7 @@ public class PurchaseOrdersService {
     public record UpdateInput(String description, String expectedDeliveryDate, String notes, String terms) {}
 
     /** A receipt line applied to a PO ({@link #applyReceiptToPO}). */
-    record ReceiptLine(String purchaseOrderLineId, String productId, double quantity, String description) {}
+    record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {}
 
     /** A receive line after PO-line resolution ({@code _resolvedLineId} / {@code _unitCost}). */
     private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit) {}
@@ -145,20 +145,32 @@ public class PurchaseOrdersService {
                         orgId)) {
             throw ApiException.notFound("Supplier not found");
         }
+        // P0-6: foreign ids from the body must belong to this organisation.
+        if (dto.branchId() != null && !dto.branchId().isEmpty()
+                && !exists("SELECT count(*) FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ?", dto.branchId(),
+                        orgId)) {
+            throw ApiException.notFound("Branch not found");
+        }
+        if (dto.requestId() != null && !dto.requestId().isEmpty()
+                && !exists("SELECT count(*) FROM \"PurchaseRequest\" WHERE id = ? AND \"organizationId\" = ?",
+                        dto.requestId(), orgId)) {
+            throw ApiException.notFound("Purchase request not found");
+        }
         int year = year();
         String orderNumber = sequence.next("po:" + year, "PO-" + year + "-", 5);
 
-        double subtotal = 0;
-        double taxAmount = 0;
+        BigDecimal subtotal = Money.ZERO;
+        BigDecimal taxAmount = Money.ZERO;
         for (LineInput ln : dto.lines()) {
-            double lineSubtotal = ln.quantity().doubleValue() * ln.unitPrice().doubleValue();
-            double lineTax = lineSubtotal * ((ln.taxRate() == null ? 0 : ln.taxRate().doubleValue()) / 100);
-            subtotal += lineSubtotal;
-            taxAmount += lineTax;
+            BigDecimal lineSubtotal = ln.quantity().multiply(ln.unitPrice());
+            BigDecimal lineTax = Money.div(lineSubtotal.multiply(ln.taxRate() == null ? Money.ZERO : ln.taxRate()),
+                    BigDecimal.valueOf(100));
+            subtotal = subtotal.add(lineSubtotal);
+            taxAmount = taxAmount.add(lineTax);
         }
-        double total = subtotal + taxAmount;
-        double sub = subtotal;
-        double taxes = taxAmount;
+        BigDecimal total = subtotal.add(taxAmount);
+        BigDecimal sub = subtotal;
+        BigDecimal taxes = taxAmount;
 
         // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
         List<LineUnit> lineUnits = new ArrayList<>();
@@ -178,8 +190,7 @@ public class PurchaseOrdersService {
                     .params(id, orgId, orderNumber, dto.partnerId(), dto.branchId(), dto.description(),
                             SqlRows.ts(ProcurementSql.date(dto.expectedDeliveryDate())),
                             dto.currencyCode() != null ? dto.currencyCode() : "USD",
-                            dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE, num(sub), num(taxes),
-                            num(total), dto.paymentType() != null ? dto.paymentType() : "cash",
+                            dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE, sub, taxes, total, dto.paymentType() != null ? dto.paymentType() : "cash",
                             "credit".equals(dto.paymentType()) ? "not_paid" : null, dto.notes(), dto.terms(),
                             dto.requestId(), user()));
             List<Map<String, Object>> lines = new ArrayList<>();
@@ -193,7 +204,7 @@ public class PurchaseOrdersService {
                         .params(UUID.randomUUID().toString(), orgId, id, ln.productId(), ln.description(), ln.quantity(),
                                 unit.uomId(), unit.factor(), ln.unitPrice(), ln.taxId(),
                                 ln.taxRate() != null ? ln.taxRate() : BigDecimal.ZERO,
-                                num(ln.quantity().doubleValue() * ln.unitPrice().doubleValue()), ++idx, ln.notes())));
+                                ln.quantity().multiply(ln.unitPrice()), ++idx, ln.notes())));
             }
             created.put("lines", lines);
 
@@ -254,10 +265,12 @@ public class PurchaseOrdersService {
             params.add(q.partnerId());
         }
         if (notBlank(q.search())) {
-            // Nest builds `contains` filters on the paymentType / paymentStatus / status enums, which Prisma rejects
-            // at validation time: every search answers 500. Kept for parity (docs/spec/procurement.md).
-            throw new IllegalStateException("Invalid prisma.purchaseOrder.findMany() invocation: enum fields do not"
-                    + " support `contains`");
+            // B6 (post-parity): Nest answered 500 here (`contains` on enum columns). Search the text columns and the
+            // supplier name instead; enum columns have their own equality filters.
+            String like = "%" + q.search().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+            where.append(" AND (\"orderNumber\" ILIKE ? OR description ILIKE ? OR notes ILIKE ? OR EXISTS (SELECT 1"
+                    + " FROM \"Partner\" sp WHERE sp.id = \"PurchaseOrder\".\"partnerId\" AND sp.name ILIKE ?))");
+            params.addAll(List.of(like, like, like, like));
         }
         if (notBlank(q.dateFrom())) {
             where.append(" AND \"orderDate\" >= ?");
@@ -271,8 +284,8 @@ public class PurchaseOrdersService {
                 + " WHERE" + where + " ORDER BY \"orderDate\" DESC LIMIT " + pageSize + " OFFSET "
                 + (page - 1) * pageSize).params(params));
         for (Map<String, Object> po : data) {
-            po.put("partner", SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id = ?")
-                    .param(po.get("partnerId"))));
+            po.put("partner", SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(po.get("partnerId"), org())));
         }
         long total = jdbc.sql("SELECT count(*) FROM \"PurchaseOrder\" WHERE" + where).params(params).query(Long.class)
                 .single();
@@ -294,16 +307,17 @@ public class PurchaseOrdersService {
         }
         po.put("lines", poLines(id));
         List<Map<String, Object>> receipts = SqlRows.list(GoodsReceiptNote.class, jdbc.sql("SELECT * FROM"
-                + " \"GoodsReceiptNote\" WHERE \"purchaseOrderId\" = ?").param(id));
+                + " \"GoodsReceiptNote\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?").params(id, org()));
         for (Map<String, Object> r : receipts) {
             r.put("lines", SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
                     + " \"goodsReceiptId\" = ?").param(r.get("id"))));
         }
         po.put("receipts", receipts);
         po.put("payments", SqlRows.list(PurchasePayment.class, jdbc.sql("SELECT * FROM \"PurchasePayment\" WHERE"
-                + " \"purchaseOrderId\" = ?").param(id)));
+                + " \"purchaseOrderId\" = ? AND \"organizationId\" = ?").params(id, org())));
         po.put("request", po.get("requestId") == null ? null : SqlRows.one(PurchaseRequest.class,
-                jdbc.sql("SELECT * FROM \"PurchaseRequest\" WHERE id = ?").param(po.get("requestId"))));
+                jdbc.sql("SELECT * FROM \"PurchaseRequest\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(po.get("requestId"), org())));
         return po;
     }
 
@@ -346,31 +360,31 @@ public class PurchaseOrdersService {
             }
         }
         // Aggregate by PO line: two receipt lines can map to one PO line, and each line is version-locked once.
-        Map<String, Double> addByLine = new LinkedHashMap<>();
+        Map<String, BigDecimal> addByLine = new LinkedHashMap<>();
         for (ReceiptLine ln : lines) {
             String lineId = resolve(ln, byId, byProduct, po);
             if (lineId == null) {
                 continue;
             }
-            addByLine.merge(lineId, ln.quantity(), Double::sum);
+            addByLine.merge(lineId, ln.quantity(), BigDecimal::add);
         }
         // Over-receipt is a hard block (no tolerance) — check every affected line first.
-        for (Map.Entry<String, Double> e : addByLine.entrySet()) {
+        for (Map.Entry<String, BigDecimal> e : addByLine.entrySet()) {
             Map<String, Object> poLine = byId.get(e.getKey());
-            double ordered = Money.dec(poLine.get("quantity")).doubleValue();
-            double already = Money.dec(poLine.get("receivedQuantity")).doubleValue();
-            double adding = e.getValue();
-            if (already + adding > ordered) {
+            BigDecimal ordered = Money.dec(poLine.get("quantity"));
+            BigDecimal already = Money.dec(poLine.get("receivedQuantity"));
+            BigDecimal adding = e.getValue();
+            if (already.add(adding).compareTo(ordered) > 0) {
                 throw ApiException.badRequest("Over-receiving PO line \"" + poLine.get("description") + "\": ordered "
-                        + JsNumbers.toJsString(ordered) + ", already received " + JsNumbers.toJsString(already)
-                        + ", trying to receive " + JsNumbers.toJsString(adding));
+                        + JsNumbers.dec(ordered) + ", already received " + JsNumbers.dec(already)
+                        + ", trying to receive " + JsNumbers.dec(adding));
             }
         }
-        for (Map.Entry<String, Double> e : addByLine.entrySet()) {
+        for (Map.Entry<String, BigDecimal> e : addByLine.entrySet()) {
             Map<String, Object> poLine = byId.get(e.getKey());
             int updated = jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"receivedQuantity\" = \"receivedQuantity\" + ?,"
                             + " version = version + 1 WHERE id = ? AND version = ? AND \"organizationId\" = ?")
-                    .params(num(e.getValue()), e.getKey(), poLine.get("version"), orgId).update();
+                    .params(e.getValue(), e.getKey(), poLine.get("version"), orgId).update();
             if (updated == 0) {
                 throw ApiException.badRequest("PO line \"" + poLine.get("description")
                         + "\" was modified by another user. Please refresh and try again.");
@@ -380,7 +394,7 @@ public class PurchaseOrdersService {
         for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT quantity, \"receivedQuantity\" FROM"
                 + " \"PurchaseOrderLine\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?")
                 .params(purchaseOrderId, orgId))) {
-            if (!(Money.dec(l.get("receivedQuantity")).doubleValue() >= Money.dec(l.get("quantity")).doubleValue())) {
+            if (Money.dec(l.get("receivedQuantity")).compareTo(Money.dec(l.get("quantity"))) < 0) {
                 fullyReceived = false;
             }
         }
@@ -476,7 +490,9 @@ public class PurchaseOrdersService {
         if (po == null || !"cash".equals(po.get("paymentType"))) {
             return;
         }
-        BigDecimal newTotalPaid = Money.dec(po.get("totalPaid")).add(settleAmount);
+        BigDecimal rate = functionalRate(po);
+        BigDecimal poAmount = rate.compareTo(BigDecimal.ONE) == 0 ? settleAmount : Money.div(settleAmount, rate);
+        BigDecimal newTotalPaid = Money.dec(po.get("totalPaid")).add(poAmount);
         jdbc.sql("UPDATE \"PurchaseOrder\" SET \"totalPaid\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", \"updatedAt\" = "
                         + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                 .params(newTotalPaid, newTotalPaid.compareTo(Money.dec(po.get("totalAmount"))) >= 0 ? "paid" : "partial",
@@ -485,7 +501,7 @@ public class PurchaseOrdersService {
         jdbc.sql("INSERT INTO \"PurchasePayment\" (id, \"organizationId\", \"purchaseOrderId\", amount, \"paidAt\","
                         + " \"paidById\", reference, \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, " + NOW + ", ?, ?, "
                         + NOW + ", " + NOW + ")")
-                .params(UUID.randomUUID().toString(), orgId, purchaseOrderId, settleAmount, user(),
+                .params(UUID.randomUUID().toString(), orgId, purchaseOrderId, poAmount, user(),
                         "auto:GRN " + receiptNumber)
                 .update();
         // GL: Dr AP / Cr Cash — relieve the payable the voucher just raised.
@@ -552,7 +568,7 @@ public class PurchaseOrdersService {
             }
             Map<String, Object> poLine = lineId == null ? null : poLines.get(lineId);
             BigDecimal unitCost = rln.unitCost() != null ? rln.unitCost()
-                    : poLine != null ? num(Money.dec(poLine.get("unitPrice")).doubleValue()) : null;
+                    : poLine != null ? Money.dec(poLine.get("unitPrice")) : null;
             resolved.add(new Resolved(rln, lineId, unitCost, receiptUnit(poLine, rln.productId(), null)));
         }
 
@@ -585,7 +601,7 @@ public class PurchaseOrdersService {
             // 2. Advance the PO under optimistic locks (shared with the goods-receipt post).
             List<ReceiptLine> applied = new ArrayList<>();
             for (Resolved r : resolved) {
-                applied.add(new ReceiptLine(r.resolvedLineId(), r.line().productId(), r.line().quantity().doubleValue(),
+                applied.add(new ReceiptLine(r.resolvedLineId(), r.line().productId(), r.line().quantity(),
                         r.line().description()));
             }
             String newStatus = applyReceiptToPO(id, applied);
@@ -596,23 +612,25 @@ public class PurchaseOrdersService {
             // 4. Stock-in per stockable line: Dr Stock Valuation / Cr GRNI, accumulating the capitalised value + tax.
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
+            BigDecimal rate = functionalRate(po);
             for (Resolved r : resolved) {
                 ReceiveLineInput rln = r.line();
                 if (rln.productId() == null) {
                     continue;
                 }
                 Map<String, Object> product = product(rln.productId(), orgId);
-                if (product == null) {
+                if (product == null || !stocked(product)) {
                     continue;
                 }
-                BigDecimal unitCost = r.unitCost() != null ? r.unitCost()
-                        : num(Money.dec(product.get("costPrice")).doubleValue());
+                // P0-5: a foreign-currency PO prices in its own currency; stock and GRNI carry the functional value.
+                BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
+                        : Money.dec(product.get("costPrice"));
                 StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), rln.quantity()).unitCost(unitCost)
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())
                         .reference("GRN " + receiptNumber);
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", grnId, date));
-                BigDecimal lineNet = Money.dec(received.totalValue());
+                BigDecimal lineNet = Money.dec(received.actualValue());
                 Map<String, Object> poLine = r.resolvedLineId() == null ? null : poLines.get(r.resolvedLineId());
                 BigDecimal taxRate = poLine != null ? Money.dec(poLine.get("taxRate")) : Money.ZERO;
                 receiptNet = receiptNet.add(lineNet);
@@ -653,9 +671,36 @@ public class PurchaseOrdersService {
         return units.resolveLineUnit(productId, requestedUomId, UnitRole.PURCHASE);
     }
 
+    /**
+     * Multiplier from the PO's currency to the organisation's functional currency: the PO exchange rate when the PO is
+     * in another currency, else 1 (P0-5). POs written without a currency default to the functional currency.
+     */
+    BigDecimal functionalRate(Map<String, Object> po) {
+        Object code = po.get("currencyCode");
+        if (code == null) {
+            return BigDecimal.ONE;
+        }
+        String functional = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
+                .query(String.class).optional().orElse(null);
+        if (functional == null || functional.equalsIgnoreCase(String.valueOf(code))) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal rate = Money.dec(po.get("exchangeRate"));
+        return rate.signum() > 0 ? rate : BigDecimal.ONE;
+    }
+
     /** Unit handed to the stock engine: the snapshot unit, or the product's purchase unit for legacy lines. */
     static String stockUnit(LineUnit unit, Map<String, Object> product) {
         return unit.factor() != null ? unit.uomId() : (String) product.get("purchaseUomId");
+    }
+
+    /**
+     * P1-12: only inventory-tracked goods enter stock and are vouchered at receipt. Services and non-tracked items
+     * are expensed by their vendor bill (which treats them as non-stockable) — receiving them into stock as well
+     * would raise AP twice.
+     */
+    static boolean stocked(Map<String, Object> product) {
+        return Boolean.TRUE.equals(product.get("trackInventory")) && !"service".equals(String.valueOf(product.get("productType")));
     }
 
     /** Product row scoped like {@code tx.product.findFirst} (org + not deleted). */
@@ -670,7 +715,7 @@ public class PurchaseOrdersService {
     public Map<String, Object> pay(String id, PayInput dto) {
         String orgId = org();
         requireOwned(id);
-        double[] amount = {0};
+        BigDecimal[] amount = {Money.ZERO};
         Map<String, Object> result = tx.execute(st -> {
             // Lock the PO BEFORE reading its balance so concurrent full-balance payments serialise.
             jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
@@ -686,11 +731,21 @@ public class PurchaseOrdersService {
             if ("cancelled".equals(po.get("status"))) {
                 throw ApiException.badRequest("Cannot pay a cancelled PO");
             }
+            if ("draft".equals(po.get("status"))) {
+                throw ApiException.badRequest("Cannot pay a purchase order that is not approved yet");
+            }
             // Paid-to-date from the immutable payment rows, not the cached aggregate.
             BigDecimal paidSum = jdbc.sql("SELECT sum(amount) FROM \"PurchasePayment\" WHERE \"organizationId\" = ?"
                     + " AND \"purchaseOrderId\" = ?").params(orgId, id).query(BigDecimal.class).optional().orElse(null);
             BigDecimal paidToDate = Money.max(Money.dec(paidSum), Money.dec(po.get("totalPaid")));
-            BigDecimal remaining = Money.dec(po.get("totalAmount")).subtract(paidToDate);
+            // P0-4: the PO route settles the payable its receipts raised (receipt vouchers), never more — paying ahead
+            // of a receipt would leave AP in debit. Lines without a receipt voucher are billed and paid as bills.
+            BigDecimal payable = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
+            BigDecimal remaining = payable.subtract(paidToDate);
+            if (payable.signum() <= 0) {
+                throw ApiException.badRequest("Nothing has been received on this purchase order yet — receive the goods"
+                        + " (or post the supplier bill) before paying");
+            }
             BigDecimal payAmount = dto.amount() != null ? dto.amount() : remaining;
             if (payAmount.signum() <= 0) {
                 throw ApiException.badRequest(remaining.signum() <= 0 ? "This purchase order is already fully paid"
@@ -700,8 +755,9 @@ public class PurchaseOrdersService {
                 throw ApiException.badRequest("Payment of " + JsNumbers.dec(payAmount) + " exceeds remaining balance of "
                         + JsNumbers.dec(remaining));
             }
-            amount[0] = payAmount.doubleValue();
-            BigDecimal amountDec = num(amount[0]);
+            amount[0] = payAmount;
+            BigDecimal amountDec = payAmount;
+            BigDecimal functionalAmount = payAmount.multiply(functionalRate(po)).setScale(6, java.math.RoundingMode.HALF_UP);
             BigDecimal newTotalPaid = paidToDate.add(payAmount);
             String newPaymentStatus = newTotalPaid.compareTo(Money.dec(po.get("totalAmount"))) >= 0 ? "paid" : "partial";
             Instant paidAt = dto.paidAt() != null ? ProcurementSql.date(dto.paidAt()) : null;
@@ -722,13 +778,14 @@ public class PurchaseOrdersService {
                 throw ApiException.badRequest("Select an open register for this cash payment");
             }
             Map<String, Object> paymentJournal = stockPosting.postPurchasePayment(
-                    session == null ? null : (String) session.get("id"), (String) po.get("partnerId"), amountDec, method,
+                    session == null ? null : (String) session.get("id"), (String) po.get("partnerId"), functionalAmount,
+                    method,
                     paidAt != null ? paidAt : nowMs(), "purchase_order", id,
                     "Payment PO " + po.get("orderNumber") + (dto.reference() != null && !dto.reference().isEmpty()
                             ? " · " + dto.reference() : ""),
                     "purchase_payment:" + payment.get("id"));
             if ("cash".equals(method)) {
-                cashSession.recordExternalPayOut((String) session.get("id"), amountDec,
+                cashSession.recordExternalPayOut((String) session.get("id"), functionalAmount,
                         "Payment PO " + po.get("orderNumber"), (String) paymentJournal.get("id"));
             }
             audit.recordInTx(AuditInput.of("PurchaseOrder", id, "update", null, Obj.of("paymentStatus",
@@ -738,6 +795,18 @@ public class PurchaseOrdersService {
         events.publish("purchase_order.paid", Obj.of("organizationId", orgId, "orderId", id, "amount",
                 JsNumbers.js(amount[0])));
         return result;
+    }
+
+    /**
+     * What this PO's posted receipts vouchered to AP, in the PO currency: Σ received stock-line value incl. the PO
+     * line's tax (the same base {@code postReceiptVoucher} used). Reversed receipts no longer count.
+     */
+    private BigDecimal vouchered(String poId, String orgId) {
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)),"
+                + " 0) FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+                + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
+                + " AND g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND g.\"deletedAt\" IS NULL"
+                + " AND l.\"productId\" IS NOT NULL").params(orgId, poId).query(BigDecimal.class).single());
     }
 
     private static Object[] paymentParams(String orgId, String id, BigDecimal amount, Instant paidAt, PayInput dto) {
@@ -838,6 +907,17 @@ public class PurchaseOrdersService {
         if ("received".equals(po.get("status")) || "cancelled".equals(po.get("status"))) {
             throw ApiException.badRequest("Cannot delete a received or cancelled PO");
         }
+        // P0-2: a PO with receipts, payments or bills is evidence for posted GL — deleting it would orphan vouchered
+        // receipts (FK SET NULL) and let a later bill raise AP a second time. Cancel it instead.
+        long evidence = jdbc.sql("SELECT (SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ?"
+                + " AND \"purchaseOrderId\" = ? AND status <> 'cancelled') + (SELECT count(*) FROM \"PurchasePayment\""
+                + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?) + (SELECT count(*) FROM \"VendorBillLink\""
+                + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)").params(org(), id, org(), id, org(), id)
+                .query(Long.class).single();
+        if (evidence > 0) {
+            throw ApiException.badRequest("Cannot delete a purchase order that has goods receipts, payments or bills"
+                    + " — cancel it instead");
+        }
         tx.executeWithoutResult(st -> {
             int deleted = jdbc.sql("DELETE FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?"
                     + " AND \"deletedAt\" IS NULL").params(id, org()).update();
@@ -863,6 +943,13 @@ public class PurchaseOrdersService {
             throw ApiException.forbidden(
                     "This purchase order is awaiting approval. Approve or reject the request first.");
         }
+        // P1-2: the latest decision counts — a rejected order is not activated by skipping the approver.
+        String latest = jdbc.sql("SELECT status::text FROM \"ApprovalRequest\" WHERE \"organizationId\" = ?"
+                        + " AND \"entityType\" = 'purchase_order' AND \"entityId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1")
+                .params(org(), id).query(String.class).optional().orElse(null);
+        if ("rejected".equals(latest)) {
+            throw ApiException.forbidden("This purchase order's approval was rejected — it cannot be activated");
+        }
         Map<String, Object> updated = SqlRows.one(PurchaseOrder.class, jdbc.sql("UPDATE \"PurchaseOrder\" SET status ="
                         + " 'active', \"approvedAt\" = " + NOW + ", \"approvedById\" = ?, \"updatedAt\" = " + NOW
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL RETURNING *")
@@ -876,6 +963,25 @@ public class PurchaseOrdersService {
         return updated;
     }
 
+    /**
+     * Activate a draft order whose approval was granted (called by {@link PurchaseOrderApprovalSubscriber}). Returns
+     * {@code false} when the order is gone or no longer draft (already activated / cancelled), so replays are no-ops.
+     */
+    public boolean activateApproved(String id, String approverId) {
+        Map<String, Object> updated = SqlRows.one(PurchaseOrder.class, jdbc.sql("UPDATE \"PurchaseOrder\" SET status ="
+                        + " 'active', \"approvedAt\" = " + NOW + ", \"approvedById\" = ?, version = version + 1, \"updatedAt\" = "
+                        + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft' AND \"deletedAt\" IS NULL"
+                        + " RETURNING *").params(approverId, id, org()));
+        if (updated == null) {
+            return false;
+        }
+        audit.record(AuditInput.of("PurchaseOrder", id, "approve", Obj.of("status", "draft"), Obj.of("status", "active",
+                "via", "approval")));
+        events.publish("purchase_order.approved", Obj.of("organizationId", org(), "orderId", id, "orderNumber",
+                updated.get("orderNumber"), "approverId", approverId == null ? "" : approverId));
+        return true;
+    }
+
     private Map<String, Object> requireOwned(String id) {
         Map<String, Object> order = SqlRows.one(PurchaseOrder.class, jdbc.sql("SELECT * FROM \"PurchaseOrder\" WHERE"
                 + " id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, org()));
@@ -887,7 +993,7 @@ public class PurchaseOrdersService {
 
     /** Partner row for the debit-note / GRN readers (unfiltered include). */
     Map<String, Object> partner(Object partnerId) {
-        return partnerId == null ? null : SqlRows.one(Partner.class, jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?")
-                .param(partnerId));
+        return partnerId == null ? null : SqlRows.one(Partner.class, jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(partnerId, org()));
     }
 }
