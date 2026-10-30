@@ -89,12 +89,13 @@ public class FleetDispatchService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private final FleetWeighbridgeRuleService weighRules;
 
     public FleetDispatchService(FleetDb db, FleetDeliveryOrderService orders, FleetDiscrepancyService discrepancies,
             FleetVehicleService vehicles, FleetDriverService drivers, FleetDispatchEligibilityService eligibility,
             FleetMeterService meters, FleetTelematicsService telematics, FleetLoadFactors factors, StockService stock,
             PosStockLocation stockLocations, FilesService files, SequenceService sequence, AuditService audit,
-            EventBus events) {
+            EventBus events, FleetWeighbridgeRuleService weighRules) {
         this.db = db;
         this.orders = orders;
         this.discrepancies = discrepancies;
@@ -110,6 +111,7 @@ public class FleetDispatchService {
         this.sequence = sequence;
         this.audit = audit;
         this.events = events;
+        this.weighRules = weighRules;
     }
 
     // ------------------------------------------------------------------ queries
@@ -201,6 +203,12 @@ public class FleetDispatchService {
         t.put("discrepancies", SqlRows.list(db.jdbc().sql("SELECT x.*, pr.name AS \"productName\" FROM"
                 + " \"FleetDeliveryDiscrepancy\" x JOIN \"Product\" pr ON pr.id = x.\"productId\" WHERE"
                 + " x.\"organizationId\" = ? AND x.\"loadId\" = ? ORDER BY x.\"createdAt\"").params(FleetDb.org(), id)));
+        t.put("weighbridgeTickets", FleetWeighbridgeRuleService.linkedTickets(db, "tripId", id));
+        Map<String, Object> wb = weighRules.forTrip(t).toMap();
+        Map<String, Object> live = weighRules.liveTicket(id);
+        wb.put("liveTicket", live);
+        wb.put("fedByTicket", weighRules.fedByCompletedTicket(t));
+        t.put("weighbridge", wb);
         return t;
     }
 
@@ -678,12 +686,42 @@ public class FleetDispatchService {
         return get(tripId);
     }
 
+    /**
+     * Undo the loaded quantity a weighing document gave (1.4b: its weighbridge ticket was voided before dispatch): the
+     * lines lose their loaded quantity, the trip goes back to {@code loading} and its weigh source is cleared. Only
+     * when ({@code sourceType}, {@code sourceId}) is still the trip's weigh source and the trip is open; returns
+     * whether anything changed. The caller refuses the void once the trip left (its stock is issued).
+     */
+    @Transactional
+    public boolean clearWeighedQuantity(String tripId, String sourceType, String sourceId, String reason) {
+        Locked k = lockTrip(tripId);
+        Map<String, Object> t = k.trip();
+        if (sourceId == null || !sourceId.equals(t.get("weighSourceId")) || !java.util.Objects.equals(sourceType,
+                t.get("weighSourceType")) || !TripStatusPolicy.isOpen((String) t.get("status"))) {
+            return false;
+        }
+        for (Map<String, Object> l : lines(tripId)) {
+            db.update(FleetLoadLine.class, (String) l.get("id"), Obj.of("loadedQty", null));
+        }
+        Map<String, Object> data = Obj.of("status", "loading", "weighedAt", null, "loadedTonnes", null,
+                "weighSourceType", null, "weighSourceId", null, "weighedNetQty", null, "weighedUom", null,
+                "updatedBy", TenantContext.userId());
+        if (t.get("loadingStartedAt") == null) {
+            data.put("loadingStartedAt", Instant.now());
+        }
+        db.update(FleetLoad.class, tripId, data);
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, tripId, "measure", Obj.of("status", t.get("status"),
+                "weighSourceId", sourceId), Obj.of("status", "loading", "reason", reason)));
+        return true;
+    }
+
     /** Manual loaded quantity per line (no weighbridge ticket). */
     @Transactional
     public Map<String, Object> recordLoadedQuantity(String tripId, List<LoadedLineInput> in) {
         Locked k = lockTrip(tripId);
         Map<String, Object> t = k.trip();
         assertWeighable(t);
+        weighRules.assertManualLoadAllowed(t);
         List<Map<String, Object>> lines = lines(tripId);
         Map<String, BigDecimal> qty = new LinkedHashMap<>();
         Map<String, String> batches = new HashMap<>();
@@ -751,6 +789,7 @@ public class FleetDispatchService {
             throw ApiException.conflict("Trip " + code + " already issued its stock");
         }
         assertAssigned(t);
+        weighRules.assertDispatchable(t);
         recheckOwn(t);
         Instant now = Instant.now();
         boolean moveStock = "dispatch".equals(order.get("stockMode"));

@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -170,6 +171,17 @@ public final class WeighbridgeCommands {
     public record TicketQuery(String queue, String stationId, String subjectType, String partnerId, String productId,
             String vehicleId, String search, Boolean manual, Boolean outOfTolerance, LocalDate from, LocalDate to,
             Integer page, Integer pageSize) {}
+
+    /**
+     * "Weighbridge required for dispatch" of the organization ({@code branchId} empty) or one branch (fleet 1.4b):
+     * {@code off}, {@code all} products, {@code bulk} products (sold by weight / volume, or with weighbridge product
+     * settings) or the listed product {@code categories} (and their sub-categories).
+     */
+    public record DispatchRequirementInput(
+            String branchId,
+            @NotBlank @OneOf({"off", "all", "bulk", "categories"}) String mode,
+            @Size(max = 200) List<@NotBlank String> categoryIds,
+            @Size(max = 1000) String notes) {}
 
     public record ReportQuery(String groupBy, String stationId, String subjectType, String partnerId,
             String productId, LocalDate from, LocalDate to) {}

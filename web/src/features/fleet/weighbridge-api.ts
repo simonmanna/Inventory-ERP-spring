@@ -172,6 +172,9 @@ export interface Ticket {
   reissuedFromId: string | null;
   replacedById: string | null;
   goodsReceiptId: string | null;
+  tripFeedStatus: 'fed' | 'skipped' | 'failed' | 'cleared' | null;
+  tripFeedMessage: string | null;
+  tripFedAt: string | null;
   notes: string | null;
   createdAt: string;
   station: { id: string; code: string; name: string };
@@ -183,6 +186,8 @@ export interface Ticket {
   purchaseOrder: { id: string; orderNumber: string } | null;
   orderedUomCode: string | null;
   netUomCode: string | null;
+  trip: { id: string; code: string; status: string } | null;
+  deliveryOrder: { id: string; code: string } | null;
   // detail only
   exceptions?: WeighbridgeException[];
   reissuedFrom?: { id: string; ticketNumber: string } | null;
@@ -191,6 +196,93 @@ export interface Ticket {
   users?: Record<string, string>;
   devices?: Record<string, string>;
 }
+
+/** An open trip the weighbridge can weigh (fleet 1.4b trip picker). */
+export interface WeighTripOption {
+  id: string;
+  code: string;
+  status: string;
+  plannedDate: string;
+  deliveryOrderId: string;
+  deliveryOrderCode: string;
+  partnerName: string | null;
+  vehicleCode: string | null;
+  vehiclePlate: string | null;
+  transporterPlate: string | null;
+  driverName: string | null;
+  plannedTonnes: string | null;
+  liveTicket: { id: string; ticketNumber: string; status: string } | null;
+  products: Array<{ productId: string; productName: string; plannedQty: string; uomCode: string | null }>;
+}
+
+/** Ticket header pre-filled from a trip. */
+export interface TripPrefill {
+  tripId: string;
+  tripCode: string;
+  tripStatus: string;
+  open: boolean;
+  subjectType: SubjectType;
+  deliveryOrderId: string;
+  deliveryOrderCode: string | null;
+  vehicleId?: string;
+  vehicleCode: string | null;
+  vehiclePlate: string | null;
+  registrationPlate?: string;
+  trailerPlate?: string;
+  driverId?: string;
+  driverName?: string;
+  driverDisplayName: string | null;
+  transporterPartnerId?: string;
+  transporterName: string | null;
+  partnerId?: string;
+  partnerName: string | null;
+  salesOrderId?: string;
+  referenceNumber?: string;
+  productId?: string;
+  productName: string | null;
+  orderedQty?: string;
+  orderedUomId?: string;
+  orderedUomCode: string | null;
+  locationId?: string;
+  plannedTonnes: string | null;
+  liveTicket: { id: string; ticketNumber: string; status: string } | null;
+  weighbridge: { required: boolean; reason: string | null };
+}
+
+export type RequirementMode = 'off' | 'all' | 'bulk' | 'categories';
+
+/** "Weighbridge required for dispatch" rule of the organization (no branch) or a branch. */
+export interface DispatchRequirement {
+  id: string;
+  branchId: string | null;
+  branchCode: string | null;
+  branchName: string | null;
+  mode: RequirementMode;
+  categoryIds: string[];
+  categories: Array<{ id: string; name: string }>;
+  notes: string | null;
+  updatedAt: string;
+}
+
+export interface DispatchRequirementOverview {
+  rules: DispatchRequirement[];
+  branches: Array<{ id: string; code: string; name: string }>;
+  categories: Array<{ id: string; name: string; parentId: string | null }>;
+}
+
+export const REQUIREMENT_MODE_LABEL: Record<RequirementMode, string> = {
+  off: tx('Not required'),
+  all: tx('All products'),
+  bulk: tx('Bulk products (sold by weight / volume)'),
+  categories: tx('Selected product categories'),
+};
+
+export const TRIP_FEED_LABEL: Record<'fed' | 'skipped' | 'failed' | 'cleared', string> = {
+  fed: tx('Fed the trip'),
+  skipped: tx('Trip not changed'),
+  failed: tx('Could not feed the trip'),
+  cleared: tx('Trip weight cleared'),
+};
 
 export interface StoredTare {
   id: string;
@@ -336,6 +428,29 @@ export function usePurchaseOrderOptions(search: string, enabled = true) {
   });
 }
 
+export function useWeighTripOptions(search: string, enabled = true) {
+  return useQuery({
+    queryKey: [...KEY, 'trips', search],
+    enabled,
+    queryFn: async () => (await api.get<WeighTripOption[]>('/fleet/weighbridge/lookups/trips', { params: { search } })).data,
+  });
+}
+
+export function useTripPrefill(tripId: string | undefined) {
+  return useQuery({
+    queryKey: [...KEY, 'trip-prefill', tripId],
+    enabled: !!tripId,
+    queryFn: async () => (await api.get<TripPrefill>(`/fleet/weighbridge/lookups/trips/${tripId}`)).data,
+  });
+}
+
+export function useDispatchRequirements() {
+  return useQuery({
+    queryKey: [...KEY, 'dispatch-requirements'],
+    queryFn: async () => (await api.get<DispatchRequirementOverview>('/fleet/weighbridge/dispatch-requirements')).data,
+  });
+}
+
 export interface TicketListParams {
   page: number;
   pageSize: number;
@@ -457,6 +572,19 @@ export const useCreateTare = () =>
 export const useRevokeTare = () =>
   useWbMutation(async ({ id, reason }: { id: string; reason: string }) =>
     (await api.post<StoredTare>(`/fleet/weighbridge/tares/${id}/revoke`, { reason })).data);
+/** Feeding a trip changes dispatch data too: refresh both. */
+export function useFeedTrip() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.post<Ticket>(`/fleet/weighbridge/tickets/${id}/feed-trip`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['fleet'] }),
+  });
+}
+export const usePutDispatchRequirement = () =>
+  useWbMutation(async (body: { branchId?: string; mode: RequirementMode; categoryIds?: string[]; notes?: string }) =>
+    (await api.put<DispatchRequirement>('/fleet/weighbridge/dispatch-requirements', body)).data);
+export const useDeleteDispatchRequirement = () =>
+  useWbMutation(async (id: string) => (await api.delete(`/fleet/weighbridge/dispatch-requirements/${id}`)).data);
 export const useDecideException = () =>
   useWbMutation(async ({ id, approve, notes }: { id: string; approve: boolean; notes?: string }) =>
     (await api.post<Ticket>(`/fleet/weighbridge/exceptions/${id}/${approve ? 'approve' : 'reject'}`, { notes: notes || undefined })).data);

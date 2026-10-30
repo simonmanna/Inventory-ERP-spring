@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Plus, Settings2 } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -16,6 +18,7 @@ import {
 } from '@/features/fleet/weighbridge-api';
 import { Field, OptionalSelect, RemotePicker } from '../fleet-ui';
 import { kg } from './weighbridge-format';
+import { DispatchRequirementsTab } from './DispatchRequirementsTab';
 
 const ADAPTER_LABEL: Record<string, string> = {
   simulator: tx('Simulator (demo / tests)'),
@@ -25,6 +28,7 @@ const ADAPTER_LABEL: Record<string, string> = {
 
 /** Weighbridge settings (fleet 1.4): stations, indicator devices (test read, simulator weight), product settings. */
 export function WeighbridgeSettingsPage() {
+  const has = useAuthStore((s) => s.hasPermission);
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Settings2} title={tx('Weighbridge Settings')}
@@ -34,10 +38,12 @@ export function WeighbridgeSettingsPage() {
           <TabsTrigger value="stations">{tx('Stations')}</TabsTrigger>
           <TabsTrigger value="devices">{tx('Indicators')}</TabsTrigger>
           <TabsTrigger value="products">{tx('Products')}</TabsTrigger>
+          {has(PERMISSIONS.fleetDispatch.read) && <TabsTrigger value="dispatch">{tx('Dispatch rule')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="stations"><StationsTab /></TabsContent>
         <TabsContent value="devices"><DevicesTab /></TabsContent>
         <TabsContent value="products"><ProductsTab /></TabsContent>
+        {has(PERMISSIONS.fleetDispatch.read) && <TabsContent value="dispatch"><DispatchRequirementsTab /></TabsContent>}
       </Tabs>
     </div>
   );

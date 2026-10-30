@@ -22,6 +22,7 @@ import { num } from '../fleet-format';
 import { AssignDialog } from './AssignDialog';
 import { DeliveryOrderStatusPill, DiscrepancyStatusPill, Item, ReasonDialog, TripStatusPill } from './dispatch-ui';
 import { carrierText } from './dispatch-format';
+import { WeighTicketsCard } from './WeighTicketsCard';
 
 /** Delivery order detail (fleet 1.3): lines and progress, trips, planning, charges, invoice, discrepancies. */
 export function DeliveryOrderDetailPage() {
@@ -185,6 +186,8 @@ export function DeliveryOrderDetailPage() {
             emptyMessage={tx('No trips yet: plan the loads.')} />
         </CardContent>
       </Card>
+
+      <WeighTicketsCard tickets={o.weighbridgeTickets ?? []} showTrip />
 
       {o.discrepancies.length > 0 && (
         <Card>
