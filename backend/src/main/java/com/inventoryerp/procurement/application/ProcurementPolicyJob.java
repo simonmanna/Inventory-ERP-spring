@@ -16,7 +16,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * Daily purchasing housekeeping (ADR-PROCUREMENT-001): activates approved policy versions whose effective date has
- * arrived, expires purchase agreements past their end date and announces supplier certificates that expire within 30 days ({@code supplier.certificate_expiring}, once
+ * arrived, expires purchase agreements past their end date, raises replenishment requests for auto-raise reorder
+ * rules and announces supplier certificates that expire within 30 days ({@code supplier.certificate_expiring}, once
  * per certificate per day) so communication rules can e-mail the buyer.
  */
 @Component
@@ -28,11 +29,14 @@ public class ProcurementPolicyJob {
     private final ProcurementPolicyService policies;
     private final EventBus events;
     private final PurchaseAgreementService agreements;
+    private final ReplenishmentService replenishment;
     private final boolean enabled;
 
     public ProcurementPolicyJob(JdbcClient jdbc, ProcurementPolicyService policies, EventBus events,
-            PurchaseAgreementService agreements, @Value("${app.jobs.enabled:true}") boolean enabled) {
+            PurchaseAgreementService agreements, ReplenishmentService replenishment,
+            @Value("${app.jobs.enabled:true}") boolean enabled) {
         this.agreements = agreements;
+        this.replenishment = replenishment;
         this.enabled = enabled;
         this.jdbc = jdbc;
         this.policies = policies;
@@ -61,6 +65,12 @@ public class ProcurementPolicyJob {
         return TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
             int activated = policies.activateDue();
             int expired = agreements.expireDue();
+            // Wave 7: reorder rules marked autoRaise get a draft purchase request when stock runs low.
+            Map<String, Object> raised = replenishment.raise(null, true);
+            if (raised != null) {
+                events.publish("replenishment.raised", Obj.of("organizationId", orgId, "requestId", raised.get("id"),
+                        "lines", ((List<?>) raised.getOrDefault("lines", List.of())).size()));
+            }
             List<Map<String, Object>> expiring = SqlRows.list(jdbc.sql("SELECT id, \"partnerId\", type, \"validTo\" FROM"
                     + " \"SupplierCertificate\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"validTo\""
                     + " BETWEEN CURRENT_DATE AND CURRENT_DATE + 30").param(orgId));
@@ -70,7 +80,7 @@ public class ProcurementPolicyJob {
                         String.valueOf(c.get("validTo"))));
             }
             return Obj.of("policiesActivated", activated, "agreementsExpired", expired, "certificatesExpiring",
-                    expiring.size());
+                    expiring.size(), "replenishmentRequestId", raised == null ? null : raised.get("id"));
         });
     }
 }

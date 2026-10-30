@@ -703,3 +703,98 @@ export const emergencyApi = {
   mark: (poId: string, reason: string) => api.post(`/procurement/purchase-orders/${poId}/emergency`, { reason }).then((r) => r.data),
   review: (poId: string, note: string) => api.post(`/procurement/purchase-orders/${poId}/emergency-review`, { note }).then((r) => r.data),
 };
+
+// ------------------------------------------------------------------ wave 7: planning, analytics, portal
+
+export interface ReplenishmentSuggestion {
+  ruleId: string;
+  productId: string;
+  productName: string;
+  productCode: string | null;
+  locationId: string;
+  locationName: string;
+  method: 'min_max' | 'reorder_point';
+  onHand: string;
+  onOrder: string;
+  openRequests: string;
+  position: string;
+  averageDailyUse: string;
+  reorderPoint: string;
+  target: string;
+  suggestedQuantity: string;
+  daysOfCover: string | null;
+  needed: boolean;
+  preferredSupplierName: string | null;
+  lastPrice: string | null;
+  autoRaise: boolean;
+}
+
+export interface ReorderRule {
+  id: string;
+  productId: string;
+  productName: string;
+  locationId: string;
+  locationName: string;
+  method: 'min_max' | 'reorder_point';
+  minQuantity: string;
+  maxQuantity: string;
+  safetyStock: string;
+  leadTimeDays: number;
+  orderMultiple: string | null;
+  preferredSupplierId: string | null;
+  supplierName: string | null;
+  autoRaise: boolean;
+  isActive: boolean;
+}
+
+export function useReplenishment(all: boolean) {
+  return useQuery({ queryKey: ['replenishment', 'suggestions', all], queryFn: async () => (await api.get<ReplenishmentSuggestion[]>('/procurement/replenishment/suggestions', { params: { all } })).data });
+}
+
+export function useReorderRules() {
+  return useQuery({ queryKey: ['replenishment', 'rules'], queryFn: async () => (await api.get<ReorderRule[]>('/procurement/replenishment/rules')).data });
+}
+
+export const replenishmentApi = {
+  upsert: (body: Record<string, unknown>) => api.put<ReorderRule>('/procurement/replenishment/rules', body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/procurement/replenishment/rules/${id}`),
+  raise: (ruleIds: string[]) => api.post<{ id?: string; requestNumber?: string; raised?: boolean; message?: string }>('/procurement/replenishment/raise', { ruleIds }).then((r) => r.data),
+};
+
+export interface Scorecard {
+  partnerId: string;
+  partnerName: string;
+  orders: number;
+  spend: string;
+  onTimePct: string | null;
+  inFullPct: string | null;
+  rejectPct: string | null;
+  claims: number;
+  claimValue: string;
+  averageLeadDays: string | null;
+  score: number;
+  grade: 'A' | 'B' | 'C' | 'D';
+}
+
+export interface SpendRow { label: string; orders: number; value: string; received: string; sharePct: string | null }
+export interface ProcurementAlert { type: string; severity: 'info' | 'warning' | 'danger'; message: string; link: string }
+
+export function useScorecards() {
+  return useQuery({ queryKey: ['procurement-analytics', 'scorecards'], queryFn: async () => (await api.get<Scorecard[]>('/procurement/analytics/scorecards')).data });
+}
+
+export function useSpend(groupBy: 'supplier' | 'category' | 'branch' | 'month') {
+  return useQuery({
+    queryKey: ['procurement-analytics', 'spend', groupBy],
+    queryFn: async () => (await api.get<{ total: string; rows: SpendRow[] }>('/procurement/analytics/spend', { params: { groupBy } })).data,
+  });
+}
+
+export function useProcurementAlerts() {
+  return useQuery({ queryKey: ['procurement-analytics', 'alerts'], queryFn: async () => (await api.get<ProcurementAlert[]>('/procurement/analytics/alerts')).data });
+}
+
+export const portalApi = {
+  issue: (body: { documentType: 'rfq' | 'purchase_order'; documentId: string; partnerId?: string; days?: number }) =>
+    api.post<{ id: string; token: string; path: string; expiresAt: string }>('/procurement/portal-links', body).then((r) => r.data),
+};

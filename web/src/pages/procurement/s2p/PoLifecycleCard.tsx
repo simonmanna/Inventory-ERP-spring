@@ -13,6 +13,7 @@ import { errMsg, usePoLifecycle, usePoLifecycleAction } from '@/features/procure
 import { notify } from '@/lib/notify';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { PortalLinkButton } from './PlanningPages';
 
 const STEPS: Array<{ key: string; label: string }> = [
   { key: 'awaiting_approval', label: tx('Approval') },
@@ -67,6 +68,7 @@ export function PoLifecycleCard({ id }: { id: string }) {
           <Button size="sm" variant="outline" asChild>
             <Link to={`/procurement/purchase-orders/${id}/print`} target="_blank"><Printer className="mr-1 h-4 w-4" />{tx('Print')}</Link>
           </Button>
+          {open && !data.acknowledgedAt && <PortalLinkButton documentType="purchase_order" documentId={id} />}
           {canSend && open && !data.sentAt && (
             <Button size="sm" onClick={() => run('send', undefined, tx('Marked as sent to the supplier'))}><Send className="mr-1 h-4 w-4" />{tx('Mark as sent')}</Button>
           )}

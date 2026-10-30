@@ -18,6 +18,7 @@ import {
 import { notify } from '@/lib/notify';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { PortalLinkButton } from './PlanningPages';
 
 const STATUS_TONE: Record<RfqStatus, 'neutral' | 'info' | 'success' | 'warning' | 'danger'> = {
   draft: 'neutral', sent: 'info', closed: 'warning', awarded: 'success', cancelled: 'danger',
@@ -169,6 +170,9 @@ export function RfqDetailPage() {
                 </div>
                 {canManage && rfq.status === 'sent' && s.status !== 'declined' && (
                   <Button size="sm" variant="outline" onClick={() => setQuoteFor(s.partnerId)}>{s.status === 'responded' ? tx('Revise quote') : tx('Enter quote')}</Button>
+                )}
+                {['draft', 'sent'].includes(rfq.status) && s.status !== 'declined' && (
+                  <PortalLinkButton documentType="rfq" documentId={rfq.id} partnerId={s.partnerId} label={tx('Link')} />
                 )}
                 {canManage && rfq.status === 'draft' && (
                   <Button size="sm" variant="ghost" onClick={() => exec(() => rfqApi.removeSupplier(rfq.id, s.partnerId), tx('Supplier removed'))}>{tx('Remove')}</Button>

@@ -27,6 +27,8 @@ import { RfqDetailPage, RfqListPage } from './s2p/RfqPages';
 import { AgreementDetailPage, AgreementsPage } from './s2p/AgreementPages';
 import { CommitmentsPage, PoChangeApprovalsPage, SupplierClaimsPage } from './s2p/ControlsPages';
 import { EmergencyPurchasesPage, InspectionsPage } from './s2p/QualityPages';
+import { ProcurementDashboardPage, ReplenishmentPage } from './s2p/PlanningPages';
+import { SupplierPortalPage } from './s2p/SupplierPortalPage';
 
 const P = PERMISSIONS.procurement;
 
@@ -68,6 +70,8 @@ export const procurementRoutes = (
     <Route path="/procurement/commitments" element={<RequirePermission permission={PERMISSIONS.budgetControl.commitments}><CommitmentsPage /></RequirePermission>} />
     <Route path="/procurement/inspections" element={<RequirePermission permission={PERMISSIONS.inspection.read}><InspectionsPage /></RequirePermission>} />
     <Route path="/procurement/reports/emergency" element={<RequirePermission permission={PERMISSIONS.emergencyPurchase.review}><EmergencyPurchasesPage /></RequirePermission>} />
+    <Route path="/procurement/analytics" element={<RequirePermission permission={PERMISSIONS.procurementAnalytics.read}><ProcurementDashboardPage /></RequirePermission>} />
+    <Route path="/procurement/replenishment" element={<RequirePermission permission={PERMISSIONS.replenishment.read}><ReplenishmentPage /></RequirePermission>} />
     <Route path="/procurement/policies" element={<RequirePermission permission={PERMISSIONS.procurementPolicy.read}><PurchasingPoliciesPage /></RequirePermission>} />
   </>
 );
@@ -76,3 +80,6 @@ export const procurementRoutes = (
 export const procurementPrintRoutes = (
   <Route path="/procurement/purchase-orders/:id/print" element={<RequirePermission permission={P.purchaseOrder.read}><PurchaseOrderPrintPage /></RequirePermission>} />
 );
+
+/** Public supplier portal (no login; the link token is the credential). Mounted outside ProtectedRoute. */
+export const procurementPublicRoutes = <Route path="/supplier-portal/:token" element={<SupplierPortalPage />} />;

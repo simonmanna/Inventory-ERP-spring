@@ -154,6 +154,16 @@ export const PERMISSIONS = {
   receiving: {
     overrideEvidence: 'receiving:override_evidence',
   },
+  replenishment: {
+    read: 'replenishment:read',
+    manage: 'replenishment:manage',
+  },
+  procurementAnalytics: {
+    read: 'procurement_analytics:read',
+  },
+  supplierPortal: {
+    manage: 'supplier_portal:manage',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',

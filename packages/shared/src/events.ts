@@ -81,6 +81,8 @@ export const EVENTS = {
   SupplierClaimRaised: 'supplier_claim.raised',
   SupplierClaimSettled: 'supplier_claim.settled',
   BillDuplicateSuspected: 'bill.duplicate_suspected',
+  SupplierPortalUsed: 'supplier_portal.used',
+  ReplenishmentRaised: 'replenishment.raised',
   // DMS — generic document lifecycle (Phase 2 engine facts; one event per engine
   // action so posting/reversal/notification hooks can subscribe generically).
   DocumentCreated: 'document.created',
@@ -399,6 +401,8 @@ export interface DomainEventMap {
   'supplier_claim.raised': { organizationId: string; claimId: string; partnerId: string; amount: string };
   'supplier_claim.settled': { organizationId: string; claimId: string; debitNoteId: string };
   'bill.duplicate_suspected': { organizationId: string; billId: string; duplicateOfIds: string[] };
+  'supplier_portal.used': { organizationId: string; tokenId: string; documentType: string; documentId: string; action: string };
+  'replenishment.raised': { organizationId: string; requestId: string; lines: number };
   // DMS — generic document lifecycle facts (Phase 2 engine). Every engine action
   // emits `document.<action>`; subscribers (posting/reversal/notification hooks)
   // filter on `action`/`documentTypeCode` as needed.

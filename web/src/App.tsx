@@ -31,7 +31,7 @@ import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
 import { ModulesPage } from '@/pages/modules';
 import { crmRoutes } from '@/pages/crm/routes';
-import { procurementPrintRoutes, procurementRoutes } from '@/pages/procurement/routes';
+import { procurementPrintRoutes, procurementPublicRoutes, procurementRoutes } from '@/pages/procurement/routes';
 import { BackupPage } from '@/pages/settings/BackupPage';
 import { AssetDashboardPage } from '@/pages/fixed-asset/AssetDashboardPage';
 import { AssetCategoriesPage } from '@/pages/fixed-asset/AssetCategoriesPage';
@@ -202,6 +202,7 @@ export function App() {
   return (
     <Routes key={lang}>
       <Route path="/login" element={<LoginPage />} />
+      {procurementPublicRoutes}
       {/* Digital Menu — customer-facing public route (no auth, no shell). */}
       <Route path="/menu/:branchId/:tableId" element={<DigitalMenuPage />} />
       <Route element={<ProtectedRoute />}>

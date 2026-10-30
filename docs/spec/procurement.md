@@ -562,3 +562,50 @@ an emergency flag on the PO page.
 - `goods_in_transit`.
 
 They are tracked in `docs/roadmap/procurement-roadmap.md`.
+
+### Built — wave 7 (planning, supplier portal, analytics; `V32__procurement_planning.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET / PUT | `/procurement/replenishment/rules` (upsert per product + store) · DELETE `/rules/{id}` | `replenishment:read` / `:manage` |
+| GET | `/procurement/replenishment/suggestions?all` | `replenishment:read` |
+| POST | `/procurement/replenishment/raise` (`ruleIds`; one draft purchase request, demand source `reorder`) | `replenishment:manage` |
+| GET | `/procurement/analytics/scorecards` · `/scorecards/{partnerId}` · `/spend?groupBy=supplier\|category\|branch\|month` · `/forecast?productId&locationId` · `/alerts` (`from`, `to` default to the last 12 months) | `procurement_analytics:read` |
+| GET | `/procurement/analytics/price-check?productId&partnerId&unitPrice` | `purchase_order:read` |
+| POST / GET | `/procurement/portal-links` (`documentType` rfq / purchase_order, `documentId`, `partnerId`, `days` 1–90) · POST `/portal-links/{id}/revoke` | `supplier_portal:manage` |
+| GET | `/supplier-portal/{token}` · POST `/{token}/quotation` · `/{token}/decline` · `/{token}/confirm` | **public** (token only; 30 / 10 requests a minute per IP) |
+
+**Replenishment.**
+- Position = on hand at the store + open order quantity + open request quantity.
+- Daily use = the last 90 days of outflows (issues, consumption, waste), excluding transfers and reversals, ÷ 90.
+- `min_max` orders up to max when the position is below min.
+- `reorder_point` orders when the position is at or below daily use × lead time + safety stock.
+- Quantities round up to the order multiple.
+- Rules marked `autoRaise` are raised nightly by `ProcurementPolicyJob`, which emits `replenishment.raised`.
+
+**Analytics** (statistics only, no external service).
+- Scorecard: on-time %, in-full %, inspection reject %, claims, lead time, spend, and a score = 35 on-time + 25 in-full
+  + 25 quality + 15 claims, graded A–D. Missing data counts as neutral.
+- Price check: z-score against 12 months of `SupplierPrice` for the supplier, falling back to all suppliers when the
+  supplier has fewer than 5 points. A price is flagged when |z| > 2 with at least 5 observations.
+- Forecast: simple exponential smoothing (α 0.3) of monthly consumption.
+- Alerts:
+  - late deliveries
+  - inspection reject rate above 10 %
+  - single-source items (one supplier, 3 or more orders in 12 months)
+  - certificates expiring within 30 days
+
+**Supplier portal.**
+- A random 256-bit token is issued once. Only its SHA-256 hash is stored.
+- Each token is scoped to one document and one supplier, expires, can be revoked, and has its use counted.
+- Every action is audited and emits `supplier_portal.used`.
+- Through the token the supplier can only view the document and answer it:
+  - quote or revise, which feeds the RFQ comparison and price history
+  - decline the RFQ
+  - confirm the PO with a reference and promised date, which becomes the order acknowledgement
+
+Tests: `PlanningIT`. Web:
+- A purchasing dashboard: KPI tiles, alerts, spend by supplier and by month, and a scorecard table.
+- A replenishment page with a rule dialog.
+- A public `/supplier-portal/:token` page, outside the login.
+- "Supplier link" buttons on RFQ suppliers and on the PO progress card.

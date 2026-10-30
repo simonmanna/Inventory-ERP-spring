@@ -102,6 +102,7 @@ import {
   Navigation,
   FileQuestion,
   FileSignature,
+  PackagePlus,
   Siren,
   MessageSquareWarning,
 } from 'lucide-react';
@@ -356,6 +357,8 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
+      { to: '/procurement/analytics', label: tx('Purchasing Dashboard'), icon: BarChart3, permission: PERMISSIONS.procurementAnalytics.read },
+      { to: '/procurement/replenishment', label: tx('Replenishment'), icon: PackagePlus, permission: PERMISSIONS.replenishment.read },
       { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ClipboardList, permission: PERMISSIONS.procurement.purchaseRequest.read },
       { to: '/procurement/sourcing', label: tx('Sourcing Workbench'), icon: PackageSearch, permission: PERMISSIONS.procurement.purchaseOrder.create },
       { to: '/procurement/rfqs', label: tx('RFQs'), icon: FileQuestion, permission: PERMISSIONS.rfq.read },

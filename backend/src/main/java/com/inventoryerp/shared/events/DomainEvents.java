@@ -72,6 +72,8 @@ public final class DomainEvents {
     public static final String SUPPLIER_CLAIM_RAISED = "supplier_claim.raised";
     public static final String SUPPLIER_CLAIM_SETTLED = "supplier_claim.settled";
     public static final String BILL_DUPLICATE_SUSPECTED = "bill.duplicate_suspected";
+    public static final String SUPPLIER_PORTAL_USED = "supplier_portal.used";
+    public static final String REPLENISHMENT_RAISED = "replenishment.raised";
     public static final String DOCUMENT_CREATED = "document.created";
     public static final String DOCUMENT_SUBMITTED = "document.submitted";
     public static final String DOCUMENT_APPROVED = "document.approved";
