@@ -14,6 +14,7 @@ import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { useBom } from '@/features/manufacturing/api';
 import { useProductOptions } from '@/features/manufacturing/options';
+import { BomStageSetupCard } from './BomStageSetupCard';
 import {
   useBomCost,
   useBomSubstitutes,
@@ -156,6 +157,8 @@ export function BomDetailPage() {
           ))}
         </CardContent>
       </Card>
+
+      <BomStageSetupCard bom={b} />
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>

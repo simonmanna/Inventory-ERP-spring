@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { OrderAdvancedPanel } from './OrderAdvancedPanel';
+import { OrderStagesPanel } from './OrderStagesPanel';
+import { useOrderStages } from '@/features/manufacturing/api-stages';
 import { ArrowLeft, Play, PackageCheck, XCircle, ClipboardCheck, ShieldCheck, Undo2, Hammer, Pause } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -26,6 +28,9 @@ export function ProductionOrderDetailPage() {
   const { id = '' } = useParams();
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const { data: order, isLoading } = useProductionOrder(id);
+  // ADR-S011: a multi-stage order runs through its stage actions instead of start / complete / QC / reverse.
+  const { data: staged } = useOrderStages(id);
+  const multiStage = !!staged?.multiStage;
 
   const confirm = useProductionAction('confirm');
   const start = useProductionAction('start');
@@ -79,11 +84,11 @@ export function ProductionOrderDetailPage() {
   };
 
   const canConfirm = hasPermission(PERMISSIONS.productionOrder.create) && order.status === 'draft';
-  const canStart = hasPermission(PERMISSIONS.productionOrder.start) && order.status === 'confirmed';
-  const canComplete = hasPermission(PERMISSIONS.productionOrder.complete) && order.status === 'in_progress';
-  const canQc = hasPermission(PERMISSIONS.productionOrder.qc) && order.status === 'qc_hold';
-  const canReverse = hasPermission(PERMISSIONS.productionOrder.cancel) && order.status === 'completed' && Number(order.producedQty) > 0;
-  const canCancel = hasPermission(PERMISSIONS.productionOrder.cancel) && ['draft', 'confirmed', 'in_progress'].includes(order.status);
+  const canStart = !multiStage && hasPermission(PERMISSIONS.productionOrder.start) && order.status === 'confirmed';
+  const canComplete = !multiStage && hasPermission(PERMISSIONS.productionOrder.complete) && order.status === 'in_progress';
+  const canQc = !multiStage && hasPermission(PERMISSIONS.productionOrder.qc) && order.status === 'qc_hold';
+  const canReverse = !multiStage && hasPermission(PERMISSIONS.productionOrder.cancel) && order.status === 'completed' && Number(order.producedQty) > 0;
+  const canCancel = hasPermission(PERMISSIONS.productionOrder.cancel) && (multiStage ? ['draft', 'confirmed'].includes(order.status) : ['draft', 'confirmed', 'in_progress'].includes(order.status));
 
   return (
     <div className="space-y-6 p-6">
@@ -111,6 +116,8 @@ export function ProductionOrderDetailPage() {
         <Stat label={tx('Unit cost')} value={order.status === 'completed' ? Number(order.outputUnitCost).toFixed(2) : '—'} />
         <Stat label={tx('Yield variance')} value={Number(order.yieldVariance).toFixed(2)} />
       </div>
+
+      <OrderStagesPanel orderId={id} />
 
       <OrderAdvancedPanel order={order as any} />
 
