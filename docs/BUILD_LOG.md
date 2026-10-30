@@ -62,7 +62,7 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
 Current: Phase 2 wave A — 2.1 multi-stage, 2.2 quarry, 2.6 quality — in-progress (C, parallel worktrees)
-Next action: merge 1.5 (worktree `wt/c-fuel`) into main (1.2 is committed on main), then start 1.3 dispatch + 1.6 maintenance.
+Next action: merge 2.2 quarry and 2.6 quality as they finish (wire 2.6 lots to the 2.1 stage QC hook), then wave B (2.3, 2.4, 2.7).
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -82,7 +82,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 1.7 tyres, incidents, fines | done | a1c77e0 78da0fe f75e013 | | V20, tyres/incidents/insurance claims/fines; driver fine deductions = events + manual status until wired to hr in 1.9 |
 | 1.8 telematics SPI | done | a1c77e0 | | V21, mock provider, positions/distance API for 1.3 |
 | 1.9 fleet costing & reports | done | 0c4b8e3 37ba653 a538e61 | fleet-complete | V25, 22 routes, TCO / delivery profitability / freight bills (once, GL balanced) / 8 reports with CSV-XLSX-PDF / ShedLock reminders / fine → payroll deduction / opt-in demo seed (`SEED_FLEET_DEMO`) |
-| 2.1 multi-stage production & WIP | in-progress (C, worktree) | | | |
+| 2.1 multi-stage production & WIP | done (C) | 8052424, dc2be71, 23b4c96 | | V26, ADR-S011; 18 routes, stage QC SPI for 2.6; branch build 894 tests green |
 | 2.2 quarry & extraction | in-progress (C, worktree) | | | |
 | 2.3 crushing & screening | claimed (C) | | | |
 | 2.4 block / precast manufacturing | claimed (C) | | | |

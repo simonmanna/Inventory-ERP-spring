@@ -61,10 +61,18 @@ public class ProductionReportService {
         List<Map<String, Object>> open = SqlRows.list(db.jdbc().sql("SELECT id, \"orderCode\", status,"
                 + " \"materialCost\", \"overheadCost\" FROM \"ProductionOrder\" WHERE \"organizationId\" = ?"
                 + " AND status IN ('in_progress', 'qc_hold')").param(MfgDb.org()));
+        // ADR-S011: a multi-stage order's WIP is the sum of its stages' WIP (intermediates already left WIP).
+        Map<String, BigDecimal> staged = new java.util.HashMap<>();
+        db.jdbc().sql("SELECT \"orderId\", sum(\"materialCost\" + \"transferredInCost\" + \"conversionCost\""
+                        + " - \"outputCost\" - \"scrapCost\") AS wip FROM \"ProductionOrderStage\""
+                        + " WHERE \"organizationId\" = ? GROUP BY \"orderId\"")
+                .param(MfgDb.org()).query().listOfRows()
+                .forEach(r -> staged.put(String.valueOf(r.get("orderId")), (BigDecimal) r.get("wip")));
         BigDecimal openWip = BigDecimal.ZERO;
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> o : open) {
-            BigDecimal wip = dec(o, "materialCost").add(dec(o, "overheadCost"));
+            BigDecimal wip = staged.containsKey(str(o, "id")) ? staged.get(str(o, "id"))
+                    : dec(o, "materialCost").add(dec(o, "overheadCost"));
             openWip = openWip.add(wip);
             Map<String, Object> r = new LinkedHashMap<>(o);
             r.put("wip", JsNumbers.dec(wip));
