@@ -78,6 +78,7 @@ import {
   Target,
   FileInput,
   ReceiptText,
+  BellRing,
   Network,
   Inbox,
   CalendarCheck,
@@ -458,8 +459,11 @@ const NAV_SECTIONS: NavSection[] = [
     icon: Truck,
     items: [
       { to: '/fleet', label: tx('Fleet Overview'), icon: LayoutDashboard, permission: PERMISSIONS.fleetVehicle.read },
+      // fleet 1.9 costing & reports
+      { to: '/fleet/reports', label: tx('Fleet Reports'), icon: BarChart3, permission: PERMISSIONS.fleet.report },
       { to: '/fleet/vehicles', label: tx('Vehicles & Equipment'), icon: Truck, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/compliance', label: tx('Compliance & Renewals'), icon: ShieldCheck, permission: PERMISSIONS.fleetVehicle.read },
+      { to: '/fleet/reminders', label: tx('Fleet Reminders'), icon: BellRing, permission: PERMISSIONS.fleet.report },
       { to: '/fleet/drivers', label: tx('Drivers & Operators'), icon: IdCard, permission: PERMISSIONS.fleetDriver.read },
       { to: '/fleet/checkout', label: tx('Check-out / Check-in'), icon: LogOut, permission: PERMISSIONS.fleetDriver.checkout },
       { to: '/fleet/claims', label: tx('Driver Claims'), icon: Receipt, permission: PERMISSIONS.fleetDriver.read },
@@ -470,6 +474,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/customer-sites', label: tx('Customer Sites'), icon: MapPin, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/delivery-discrepancies', label: tx('Delivery Discrepancies'), icon: Scale, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/settings/dispatch', label: tx('Dispatch Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
+      { to: '/fleet/freight-bills', label: tx('Freight Bills'), icon: ReceiptText, permission: PERMISSIONS.fleetFreight.read },
       // 1.6 maintenance
       { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },

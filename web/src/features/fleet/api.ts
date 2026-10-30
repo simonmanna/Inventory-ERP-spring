@@ -136,6 +136,8 @@ export interface ComplianceDocument {
   issuedOn: string | null;
   expiresOn: string | null;
   reminderLeadDays: number;
+  /** Premium / fee paid (fleet 1.9 cost of ownership, spread over the validity). */
+  costAmount?: string | null;
   status: 'active' | 'renewed';
   renewedById: string | null;
   notes: string | null;
