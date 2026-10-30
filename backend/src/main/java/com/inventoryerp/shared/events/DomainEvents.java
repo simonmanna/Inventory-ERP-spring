@@ -62,6 +62,11 @@ public final class DomainEvents {
     public static final String SUPPLIER_BANK_ACCOUNT_ADDED = "supplier.bank_account_added";
     public static final String SUPPLIER_BANK_ACCOUNT_VERIFIED = "supplier.bank_account_verified";
     public static final String SUPPLIER_CERTIFICATE_EXPIRING = "supplier.certificate_expiring";
+    public static final String RFQ_SENT = "rfq.sent";
+    public static final String RFQ_AWARDED = "rfq.awarded";
+    public static final String AGREEMENT_ACTIVATED = "agreement.activated";
+    public static final String AGREEMENT_EXHAUSTED = "agreement.exhausted";
+    public static final String PURCHASE_ORDER_CLOSED = "purchase_order.closed";
     public static final String DOCUMENT_CREATED = "document.created";
     public static final String DOCUMENT_SUBMITTED = "document.submitted";
     public static final String DOCUMENT_APPROVED = "document.approved";

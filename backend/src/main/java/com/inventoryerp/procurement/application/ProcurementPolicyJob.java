@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Daily purchasing housekeeping (ADR-PROCUREMENT-001): activates approved policy versions whose effective date has
- * arrived and announces supplier certificates that expire within 30 days ({@code supplier.certificate_expiring}, once
+ * arrived, expires purchase agreements past their end date and announces supplier certificates that expire within 30 days ({@code supplier.certificate_expiring}, once
  * per certificate per day) so communication rules can e-mail the buyer.
  */
 @Component
@@ -27,11 +27,12 @@ public class ProcurementPolicyJob {
     private final JdbcClient jdbc;
     private final ProcurementPolicyService policies;
     private final EventBus events;
-
+    private final PurchaseAgreementService agreements;
     private final boolean enabled;
 
     public ProcurementPolicyJob(JdbcClient jdbc, ProcurementPolicyService policies, EventBus events,
-            @Value("${app.jobs.enabled:true}") boolean enabled) {
+            PurchaseAgreementService agreements, @Value("${app.jobs.enabled:true}") boolean enabled) {
+        this.agreements = agreements;
         this.enabled = enabled;
         this.jdbc = jdbc;
         this.policies = policies;
@@ -59,6 +60,7 @@ public class ProcurementPolicyJob {
     public Map<String, Object> runForOrg(String orgId) {
         return TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
             int activated = policies.activateDue();
+            int expired = agreements.expireDue();
             List<Map<String, Object>> expiring = SqlRows.list(jdbc.sql("SELECT id, \"partnerId\", type, \"validTo\" FROM"
                     + " \"SupplierCertificate\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"validTo\""
                     + " BETWEEN CURRENT_DATE AND CURRENT_DATE + 30").param(orgId));
@@ -67,7 +69,8 @@ public class ProcurementPolicyJob {
                         c.get("partnerId"), "certificateId", c.get("id"), "type", c.get("type"), "validTo",
                         String.valueOf(c.get("validTo"))));
             }
-            return Obj.of("policiesActivated", activated, "certificatesExpiring", expiring.size());
+            return Obj.of("policiesActivated", activated, "agreementsExpired", expired, "certificatesExpiring",
+                    expiring.size());
         });
     }
 }

@@ -83,6 +83,13 @@ public class SupplierController {
         return suppliers.list(search, status, page, pageSize);
     }
 
+    /** Supplier picker for order entry (buyers need not see supplier master data). */
+    @GetMapping("/options")
+    @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_ORDER__READ)
+    public List<Map<String, Object>> options(@RequestParam(required = false) String search) {
+        return suppliers.options(search);
+    }
+
     @GetMapping("/certificates/expiring")
     @RequirePermissions(Permissions.SUPPLIER__READ)
     public List<Map<String, Object>> expiring(@RequestParam(defaultValue = "30") @Min(0) @Max(3650) int days) {

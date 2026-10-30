@@ -19,6 +19,12 @@ import { DebitNoteCreatePage } from './debit-note-create';
 import { SuppliersPage } from './s2p/SuppliersPage';
 import { SupplierDetailPage } from './s2p/SupplierDetailPage';
 import { PurchasingPoliciesPage } from './s2p/PurchasingPoliciesPage';
+import { PurchaseRequestCreatePage } from './s2p/PurchaseRequestCreatePage';
+import { SourcingWorkbenchPage } from './s2p/SourcingWorkbenchPage';
+import { OpenOrdersPage } from './s2p/OpenOrdersPage';
+import { PurchaseOrderPrintPage } from './s2p/PurchaseOrderPrintPage';
+import { RfqDetailPage, RfqListPage } from './s2p/RfqPages';
+import { AgreementDetailPage, AgreementsPage } from './s2p/AgreementPages';
 
 const P = PERMISSIONS.procurement;
 
@@ -29,6 +35,9 @@ const P = PERMISSIONS.procurement;
 export const procurementRoutes = (
   <>
     <Route path="/procurement/purchase-requests" element={<RequirePermission permission={P.purchaseRequest.read}><PurchaseRequestsPage /></RequirePermission>} />
+    <Route path="/procurement/purchase-requests/new" element={<RequirePermission permission={P.purchaseRequest.create}><PurchaseRequestCreatePage /></RequirePermission>} />
+    <Route path="/procurement/sourcing" element={<RequirePermission permission={P.purchaseOrder.create}><SourcingWorkbenchPage /></RequirePermission>} />
+    <Route path="/procurement/reports/open-orders" element={<RequirePermission permission={P.purchaseOrder.read}><OpenOrdersPage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders" element={<RequirePermission permission={P.purchaseOrder.read}><PurchaseOrdersPage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders/new" element={<RequirePermission permission={P.purchaseOrder.create}><PurchaseOrderCreatePage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders/:id/receive" element={<RequirePermission permission={P.purchaseOrder.receive}><PurchaseOrderReceivePage /></RequirePermission>} />
@@ -48,6 +57,15 @@ export const procurementRoutes = (
     <Route path="/procurement/debit-notes/new" element={<RequirePermission permission={PERMISSIONS.debitNote.create}><DebitNoteCreatePage /></RequirePermission>} />
     <Route path="/procurement/suppliers" element={<RequirePermission permission={PERMISSIONS.supplier.read}><SuppliersPage /></RequirePermission>} />
     <Route path="/procurement/suppliers/:partnerId" element={<RequirePermission permission={PERMISSIONS.supplier.read}><SupplierDetailPage /></RequirePermission>} />
+    <Route path="/procurement/rfqs" element={<RequirePermission permission={PERMISSIONS.rfq.read}><RfqListPage /></RequirePermission>} />
+    <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.rfq.read}><RfqDetailPage /></RequirePermission>} />
+    <Route path="/procurement/agreements" element={<RequirePermission permission={PERMISSIONS.purchaseAgreement.read}><AgreementsPage /></RequirePermission>} />
+    <Route path="/procurement/agreements/:id" element={<RequirePermission permission={PERMISSIONS.purchaseAgreement.read}><AgreementDetailPage /></RequirePermission>} />
     <Route path="/procurement/policies" element={<RequirePermission permission={PERMISSIONS.procurementPolicy.read}><PurchasingPoliciesPage /></RequirePermission>} />
   </>
+);
+
+/** Full-page print views (outside the app shell so only the document prints). */
+export const procurementPrintRoutes = (
+  <Route path="/procurement/purchase-orders/:id/print" element={<RequirePermission permission={P.purchaseOrder.read}><PurchaseOrderPrintPage /></RequirePermission>} />
 );

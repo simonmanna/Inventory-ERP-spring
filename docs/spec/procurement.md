@@ -428,3 +428,49 @@ the same entity opens a new request (`ApprovalsService.checkOrRequestApproval`);
 by posting with `overrideApproval`. Every PO line is recorded in the supplier price history. Tests:
 `ProcurementSupplierPolicyIT`. Web: Supplier Register, Supplier 360, Purchasing Policies (Purchases menu); every
 procurement route is now permission-guarded (`web/src/pages/procurement/routes.tsx`).
+
+### Built — wave 3 (requisition to order, order lifecycle; `V28__procurement_core.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/sourcing/open-lines?requestId&productId` (approved request lines still to order, suggested supplier, last price) | `purchase_order:create` |
+| POST | `/procurement/sourcing/orders` (Idempotency-Key required; request lines locked, never ordered twice; a fully ordered request becomes `converted`) | `purchase_order:create` |
+| POST | `/procurement/purchase-requests/{id}/cancel` (no orders yet) | `purchase_request:update` |
+| GET | `/procurement/purchase-orders/{id}/lifecycle` (stage, lines with open / cancelled qty, receipts, bills, approvals) | `purchase_order:read` |
+| POST | `/procurement/purchase-orders/{id}/send` · `/{id}/acknowledge` (`supplierReference`, `promisedDate`) | `purchase_order:send` |
+| POST | `/procurement/purchase-orders/{id}/short-close` (reason; undelivered balance cancelled and returned to the request) · `/{id}/close` (fully received) | `purchase_order:cancel` |
+| GET | `/procurement/reports/open-orders?partnerId&overdueOnly` | `purchase_order:read` |
+| GET | `/procurement/suppliers/options?search` (supplier picker for buyers) | `purchase_order:read` |
+
+Parity create request lines additionally accept `requiredDate`, `deliveryLocationId`, `preferredSupplierId`,
+`costCenterId`, `projectId` (additive). Order statuses stay parity values: short-close ends in `closed` (anything
+received) or `cancelled`; `closed` orders refuse receipts. Service acceptance uses the goods receipt of service lines
+(no stock, no voucher — wave 1 P1-12); a separate service entry sheet was not needed. Tests: `RequisitionToOrderIT`.
+Web: New Purchase Request form (fixes the dead link), Sourcing Workbench, Order progress card on the PO page (send /
+confirmation / short-close / close / print), printable PO, Open Orders report; the PO form's supplier picker lists
+suppliers only.
+
+### Built — wave 4 (strategic sourcing; `V29__procurement_sourcing.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/rfqs?status&search&page&limit` · `/rfqs/{id}` | `rfq:read` |
+| GET | `/procurement/rfqs/{id}/comparison` (delivered cost per supplier and line — price + freight spread by value, converted to functional currency — weighted score, recommended supplier) | `rfq:read` |
+| POST | `/procurement/rfqs` (`title`, `requestLineIds` and/or free `lines`, `supplierIds`, `weights`) | `rfq:manage` |
+| POST / DELETE | `/procurement/rfqs/{id}/suppliers` · `/{id}/suppliers/{partnerId}` | `rfq:manage` |
+| POST | `/procurement/rfqs/{id}/send` · `/close` · `/cancel` · `/quotations` (each new quote is a revision) · `/decline` | `rfq:manage` |
+| POST | `/procurement/rfqs/{id}/award` (per line, split quantities allowed; `justification` required when not the lowest delivered cost; `rfq_award` approval workflow when configured) | `rfq:award` |
+| POST | `/procurement/rfqs/{id}/orders` (Idempotency-Key required; one PO per awarded supplier, request lines locked) | `purchase_order:create` |
+| GET | `/procurement/agreements?status&partnerId` · `/agreements/{id}` | `purchase_agreement:read` |
+| POST | `/procurement/agreements` (blanket or rate contract, validity, quantity / value caps) | `purchase_agreement:manage` |
+| POST | `/procurement/agreements/{id}/activate` (maker ≠ checker; agreed prices recorded in the supplier price list) | `purchase_agreement:approve` |
+| POST | `/procurement/agreements/{id}/hold` · `/resume` · `/terminate` (reason) | `purchase_agreement:manage` / `:approve` |
+| POST | `/procurement/agreements/{id}/releases` (Idempotency-Key required; agreement lines locked, quantity and value caps enforced, `exhausted` when used up) | `purchase_order:create` |
+
+Request lines on an open RFQ are hidden from the sourcing workbench and cannot be ordered directly ("award the RFQ
+instead"). Cancelling or short-closing an order returns its open balance to the request lines and to the agreement
+(quantity and value), reopening a converted request or an exhausted agreement. Expired agreements are closed by the
+daily procurement job. Events: `rfq.sent`, `rfq.awarded`, `agreement.activated`, `agreement.exhausted`,
+`purchase_order.closed`. Tests: `SourcingIT`. Web: RFQ list and detail (supplier invitations, quote entry, side-by-side
+comparison, award per line, create orders), "Request quotations" on the sourcing workbench, purchase agreement list and
+detail (release with remaining-quantity bars, hold / resume / terminate).

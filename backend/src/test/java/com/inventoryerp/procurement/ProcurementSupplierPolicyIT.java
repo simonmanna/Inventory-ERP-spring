@@ -393,6 +393,6 @@ class ProcurementSupplierPolicyIT extends ApiTestSupport {
         assertThat(call("GET", "/procurement/suppliers", null, otherToken).body().get("data").findValuesAsString("id"))
                 .doesNotContain(partner);
         assertThat(assertAuthorizationMatrix(SupplierController.class, ProcurementPolicyController.class))
-                .isEqualTo(24);
+                .isEqualTo(25);
     }
 }

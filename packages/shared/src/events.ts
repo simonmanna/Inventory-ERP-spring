@@ -71,6 +71,11 @@ export const EVENTS = {
   SupplierBankAccountAdded: 'supplier.bank_account_added',
   SupplierBankAccountVerified: 'supplier.bank_account_verified',
   SupplierCertificateExpiring: 'supplier.certificate_expiring',
+  RfqSent: 'rfq.sent',
+  RfqAwarded: 'rfq.awarded',
+  AgreementActivated: 'agreement.activated',
+  AgreementExhausted: 'agreement.exhausted',
+  PurchaseOrderClosed: 'purchase_order.closed',
   // DMS — generic document lifecycle (Phase 2 engine facts; one event per engine
   // action so posting/reversal/notification hooks can subscribe generically).
   DocumentCreated: 'document.created',
@@ -379,6 +384,11 @@ export interface DomainEventMap {
   'supplier.bank_account_added': { organizationId: string; partnerId: string; bankAccountId: string };
   'supplier.bank_account_verified': { organizationId: string; partnerId: string; bankAccountId: string };
   'supplier.certificate_expiring': { organizationId: string; partnerId: string; certificateId: string; type: string; validTo: string };
+  'rfq.sent': { organizationId: string; rfqId: string };
+  'rfq.awarded': { organizationId: string; rfqId: string };
+  'agreement.activated': { organizationId: string; agreementId: string };
+  'agreement.exhausted': { organizationId: string; agreementId: string };
+  'purchase_order.closed': { organizationId: string; orderId: string; reason: string };
   // DMS — generic document lifecycle facts (Phase 2 engine). Every engine action
   // emits `document.<action>`; subscribers (posting/reversal/notification hooks)
   // filter on `action`/`documentTypeCode` as needed.

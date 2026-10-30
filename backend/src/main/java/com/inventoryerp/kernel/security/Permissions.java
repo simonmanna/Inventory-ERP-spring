@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (462 permissions). Constant name = GROUP__ACTION.
+ * exactly (468 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -84,6 +84,12 @@ public final class Permissions {
     public static final String PROCUREMENT_POLICY__READ = "procurement_policy:read";
     public static final String PROCUREMENT_POLICY__MANAGE = "procurement_policy:manage";
     public static final String PROCUREMENT_POLICY__APPROVE = "procurement_policy:approve";
+    public static final String RFQ__READ = "rfq:read";
+    public static final String RFQ__MANAGE = "rfq:manage";
+    public static final String RFQ__AWARD = "rfq:award";
+    public static final String PURCHASE_AGREEMENT__READ = "purchase_agreement:read";
+    public static final String PURCHASE_AGREEMENT__MANAGE = "purchase_agreement:manage";
+    public static final String PURCHASE_AGREEMENT__APPROVE = "purchase_agreement:approve";
     public static final String LANDED_COST__READ = "landed_cost:read";
     public static final String LANDED_COST__CREATE = "landed_cost:create";
     public static final String LANDED_COST__APPROVE = "landed_cost:approve";
@@ -549,6 +555,12 @@ public final class Permissions {
             "procurement_policy:read",
             "procurement_policy:manage",
             "procurement_policy:approve",
+            "rfq:read",
+            "rfq:manage",
+            "rfq:award",
+            "purchase_agreement:read",
+            "purchase_agreement:manage",
+            "purchase_agreement:approve",
             "landed_cost:read",
             "landed_cost:create",
             "landed_cost:approve",

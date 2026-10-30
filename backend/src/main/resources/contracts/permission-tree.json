@@ -112,6 +112,16 @@
     "manage": "procurement_policy:manage",
     "approve": "procurement_policy:approve"
   },
+  "rfq": {
+    "read": "rfq:read",
+    "manage": "rfq:manage",
+    "award": "rfq:award"
+  },
+  "purchaseAgreement": {
+    "read": "purchase_agreement:read",
+    "manage": "purchase_agreement:manage",
+    "approve": "purchase_agreement:approve"
+  },
   "landedCost": {
     "read": "landed_cost:read",
     "create": "landed_cost:create",

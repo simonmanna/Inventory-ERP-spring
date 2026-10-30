@@ -229,3 +229,253 @@ export const SUPPLIER_STATUS_TONE: Record<SupplierStatus | 'none', 'neutral' | '
   suspended: 'warning',
   blacklisted: 'danger',
 };
+
+// ------------------------------------------------------------------ requisition → order (wave 3)
+
+export interface SupplierOption { id: string; code: string | null; name: string; lifecycleStatus: SupplierStatus | null }
+
+export function useSupplierOptions(search?: string) {
+  return useQuery({
+    queryKey: ['procurement-suppliers', 'options', search ?? ''],
+    queryFn: async () => (await api.get<SupplierOption[]>('/procurement/suppliers/options', { params: { search: search || undefined } })).data,
+    staleTime: 60_000,
+  });
+}
+
+export interface OpenRequestLine {
+  id: string;
+  purchaseRequestId: string;
+  requestNumber: string;
+  branchId: string | null;
+  productId: string | null;
+  productCode: string | null;
+  productName: string | null;
+  description: string;
+  quantity: string;
+  orderedQuantity: string;
+  openQuantity: string;
+  unitOfMeasureId: string | null;
+  estimatedUnitPrice: string | null;
+  requiredDate: string | null;
+  neededBy: string | null;
+  demandSource: string;
+  suggestedSupplierId: string | null;
+  suggestedSupplier: { id: string; name: string } | null;
+  lastPrice: { unitPrice: string; currencyCode: string; validFrom: string; partnerName: string } | null;
+}
+
+export function useOpenRequestLines(requestId?: string) {
+  return useQuery({
+    queryKey: ['sourcing', 'open-lines', requestId ?? ''],
+    queryFn: async () => (await api.get<OpenRequestLine[]>('/procurement/sourcing/open-lines', { params: { requestId: requestId || undefined } })).data,
+  });
+}
+
+export interface OrderFromRequestBody {
+  partnerId: string;
+  warehouseId: string;
+  branchId?: string;
+  paymentType?: 'cash' | 'credit';
+  currencyCode?: string;
+  expectedDeliveryDate?: string;
+  notes?: string;
+  lines: Array<{ requestLineId: string; quantity?: number; unitPrice?: number; taxRate?: number }>;
+}
+
+export function useOrderFromRequests() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: OrderFromRequestBody) => idempotentPost<{ id: string; orderNumber: string; status: string; warnings?: string[] }>('/procurement/sourcing/orders', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sourcing'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['purchase-requests'] });
+    },
+  });
+}
+
+export interface PoLifecycle {
+  id: string;
+  orderNumber: string;
+  status: string;
+  stage: 'awaiting_approval' | 'approved' | 'sent' | 'confirmed' | 'partially_received' | 'received' | 'closed' | 'cancelled' | string;
+  partnerId: string | null;
+  partnerName: string | null;
+  orderDate: string;
+  expectedDeliveryDate: string | null;
+  promisedDate: string | null;
+  sentAt: string | null;
+  acknowledgedAt: string | null;
+  supplierReference: string | null;
+  approvedAt: string | null;
+  closedAt: string | null;
+  closeReason: string | null;
+  requestId: string | null;
+  currencyCode: string;
+  totalAmount: string;
+  totalPaid: string;
+  lines: Array<{ id: string; description: string; quantity: string; receivedQuantity: string; billedQuantity: string; cancelledQuantity: string; openQuantity: string; unitPrice: string }>;
+  receipts: Array<{ id: string; receiptNumber: string; status: string; receivedAt: string }>;
+  bills: Array<{ id: string; documentNumber: string; status: string; totalAmount: string; amountResidual: string }>;
+  approvals: Array<{ id: string; status: string; createdAt: string; decidedAt: string | null }>;
+}
+
+export function usePoLifecycle(id?: string) {
+  return useQuery({
+    queryKey: ['purchase-order', id, 'lifecycle'],
+    enabled: !!id,
+    queryFn: async () => (await api.get<PoLifecycle>(`/procurement/purchase-orders/${id}/lifecycle`)).data,
+  });
+}
+
+export function usePoLifecycleAction(id?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ action, body }: { action: 'send' | 'acknowledge' | 'short-close' | 'close'; body?: Record<string, unknown> }) =>
+      idempotentPost<PoLifecycle>(`/procurement/purchase-orders/${id}/${action}`, body ?? {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['purchase-order', id] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+    },
+  });
+}
+
+export interface OpenOrderLine {
+  purchaseOrderId: string;
+  orderNumber: string;
+  partnerId: string;
+  partnerName: string;
+  lineId: string;
+  description: string;
+  quantity: string;
+  receivedQuantity: string;
+  openQuantity: string;
+  unitPrice: string;
+  openValue: string;
+  currencyCode: string;
+  dueDate: string | null;
+  daysLate: number | null;
+  sentAt: string | null;
+  acknowledgedAt: string | null;
+}
+
+export function useOpenOrders(params: { partnerId?: string; overdueOnly?: boolean }) {
+  return useQuery({
+    queryKey: ['procurement-reports', 'open-orders', params],
+    queryFn: async () => (await api.get<OpenOrderLine[]>('/procurement/reports/open-orders', { params })).data,
+  });
+}
+
+// ------------------------------------------------------------------ strategic sourcing (wave 4)
+
+export type RfqStatus = 'draft' | 'sent' | 'closed' | 'awarded' | 'cancelled';
+
+export interface RfqRow { id: string; rfqNumber: string; title: string; status: RfqStatus; deadline: string | null; createdAt: string; lines: number; invited: number; responded: number }
+
+export interface Rfq {
+  id: string;
+  rfqNumber: string;
+  title: string;
+  status: RfqStatus;
+  deadline: string | null;
+  weights: Record<string, number>;
+  notes: string | null;
+  lines: Array<{ id: string; lineNumber: number; productId: string | null; description: string; quantity: string; requiredDate: string | null; requestLineId: string | null }>;
+  suppliers: Array<{ partnerId: string; partnerName: string; status: 'invited' | 'responded' | 'declined'; lastRevision: number | null; declineReason: string | null }>;
+  awards: Array<{ id: string; rfqLineId: string; partnerId: string; partnerName: string; quantity: string; unitPrice: string; lowestPrice: boolean; justification: string | null; purchaseOrderId: string | null; orderNumber: string | null }>;
+}
+
+export interface RfqComparison {
+  functionalCurrency: string;
+  weights: Record<string, number>;
+  recommendedPartnerId: string | null;
+  lines: Array<Rfq['lines'][number] & {
+    bestPartnerId: string | null;
+    offers: Array<{ quotationId: string; partnerId: string; unitPrice: string; quantity: string; deliveredUnitCost: string; deliveredTotal: string; leadTimeDays: number | null; lowest: boolean; alternative: string | null }>;
+  }>;
+  suppliers: Array<{ quotationId: string; partnerId: string; partnerName: string; revision: number; currencyCode: string; deliveredTotal: string; leadTimeDays: number; paymentTermsDays: number | null; coveragePct: number; weightedScore: number; scores: Record<string, number> }>;
+}
+
+export function useRfqs(status?: string) {
+  return useQuery({ queryKey: ['rfqs', status ?? ''], queryFn: async () => (await api.get<RfqRow[]>('/procurement/rfqs', { params: { status: status || undefined } })).data });
+}
+
+export function useRfq(id?: string) {
+  return useQuery({ queryKey: ['rfqs', 'detail', id], enabled: !!id, queryFn: async () => (await api.get<Rfq>(`/procurement/rfqs/${id}`)).data });
+}
+
+export function useRfqComparison(id?: string, enabled = true) {
+  return useQuery({ queryKey: ['rfqs', 'comparison', id], enabled: !!id && enabled, queryFn: async () => (await api.get<RfqComparison>(`/procurement/rfqs/${id}/comparison`)).data });
+}
+
+/** Any RFQ write; invalidates RFQ, workbench and order caches. */
+export function useRfqMutation<TBody = unknown>(fn: (body: TBody) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['rfqs'] });
+      qc.invalidateQueries({ queryKey: ['sourcing'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+    },
+  });
+}
+
+export const rfqApi = {
+  create: (body: Record<string, unknown>) => api.post<Rfq>('/procurement/rfqs', body).then((r) => r.data),
+  addSupplier: (id: string, partnerId: string) => api.post(`/procurement/rfqs/${id}/suppliers`, { partnerId }),
+  removeSupplier: (id: string, partnerId: string) => api.delete(`/procurement/rfqs/${id}/suppliers/${partnerId}`),
+  action: (id: string, action: 'send' | 'close' | 'cancel') => api.post(`/procurement/rfqs/${id}/${action}`),
+  quote: (id: string, body: Record<string, unknown>) => idempotentPost(`/procurement/rfqs/${id}/quotations`, body),
+  decline: (id: string, partnerId: string, reason?: string) => api.post(`/procurement/rfqs/${id}/decline`, { partnerId, reason }),
+  award: (id: string, lines: Array<{ rfqLineId: string; partnerId: string; quantity?: number; justification?: string }>) =>
+    idempotentPost<Rfq & { approvalRequired?: boolean }>(`/procurement/rfqs/${id}/award`, { lines }),
+  orders: (id: string, body: { warehouseId: string; paymentType?: string; expectedDeliveryDate?: string }) =>
+    idempotentPost<{ orders: Array<{ id: string; orderNumber: string; partnerId: string }> }>(`/procurement/rfqs/${id}/orders`, body),
+};
+
+export interface Agreement {
+  id: string;
+  agreementNumber: string;
+  partnerId: string;
+  partnerName?: string;
+  partner?: { id: string; name: string };
+  type: 'blanket' | 'rate';
+  title: string;
+  status: 'draft' | 'active' | 'on_hold' | 'exhausted' | 'expired' | 'terminated';
+  validFrom: string;
+  validTo: string;
+  currencyCode: string;
+  committedValue: string | null;
+  releasedValue: string;
+  statusReason: string | null;
+  createdBy: string | null;
+  lines?: Array<{ id: string; description: string; productId: string | null; unitPrice: string; committedQuantity: string | null; releasedQuantity: string; remainingQuantity: string | null }>;
+  releases?: Array<{ id: string; orderNumber: string; status: string; orderDate: string; totalAmount: string }>;
+}
+
+export function useAgreements(status?: string) {
+  return useQuery({ queryKey: ['agreements', status ?? ''], queryFn: async () => (await api.get<Agreement[]>('/procurement/agreements', { params: { status: status || undefined } })).data });
+}
+
+export function useAgreement(id?: string) {
+  return useQuery({ queryKey: ['agreements', 'detail', id], enabled: !!id, queryFn: async () => (await api.get<Agreement>(`/procurement/agreements/${id}`)).data });
+}
+
+export function useAgreementMutation<TBody = unknown>(fn: (body: TBody) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['agreements'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+    },
+  });
+}
+
+export const agreementApi = {
+  create: (body: Record<string, unknown>) => api.post<Agreement>('/procurement/agreements', body).then((r) => r.data),
+  action: (id: string, action: 'activate' | 'hold' | 'resume' | 'terminate', reason?: string) => api.post(`/procurement/agreements/${id}/${action}`, { reason }),
+  release: (id: string, body: { warehouseId: string; expectedDeliveryDate?: string; lines: Array<{ agreementLineId: string; quantity: number }> }) =>
+    idempotentPost<{ id: string; orderNumber: string }>(`/procurement/agreements/${id}/releases`, body),
+};

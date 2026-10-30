@@ -43,7 +43,13 @@ public class PurchaseRequestsController {
             @NotNull(message = NUM) BigDecimal quantity,
             String unitOfMeasureId,
             BigDecimal estimatedUnitPrice,
-            String notes) {}
+            String notes,
+            // ADR-PROCUREMENT-001 (additive): when / where / for whom the line is needed, and a suggested supplier.
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String requiredDate,
+            String deliveryLocationId,
+            String preferredSupplierId,
+            String costCenterId,
+            String projectId) {}
 
     /** {@code CreatePRDto}. */
     public record CreatePRRequest(
@@ -77,7 +83,9 @@ public class PurchaseRequestsController {
     public Map<String, Object> create(@Valid @RequestBody CreatePRRequest dto) {
         return svc.create(new CreateInput(dto.partnerId(), dto.branchId(), dto.description(), dto.neededBy(),
                 dto.lines().stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
-                        l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes())).toList()));
+                        l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes(), l.requiredDate(),
+                        l.deliveryLocationId(), l.preferredSupplierId(), l.costCenterId(), l.projectId(), null, null))
+                        .toList()));
     }
 
     @PatchMapping("/{id}/submit")

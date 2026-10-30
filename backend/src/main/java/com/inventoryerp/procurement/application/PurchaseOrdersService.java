@@ -919,6 +919,7 @@ public class PurchaseOrdersService {
             if (List.of("received", "cancelled", "billed", "closed").contains(po.get("status"))) {
                 throw ApiException.badRequest("Cannot cancel PO in status " + po.get("status"));
             }
+            returnOpenBalance(id);
             int updated = jdbc.sql("UPDATE \"PurchaseOrder\" SET status = 'cancelled', notes = ?, version = version + 1,"
                             + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND version = ?"
                             + " AND \"deletedAt\" IS NULL")
@@ -935,6 +936,34 @@ public class PurchaseOrdersService {
                     reason != null ? reason : ""));
             return cancelled;
         });
+    }
+
+    /**
+     * Give a closing order's undelivered balance back to where it was sourced from (ADR-PROCUREMENT-001): request lines
+     * get it back as quantity still to order (a fully ordered request returns to {@code approved}), agreement lines
+     * get it back as quantity / value still to release (an exhausted agreement becomes active again). Runs in the
+     * caller's transaction, before the order lines record the cancelled quantity.
+     */
+    void returnOpenBalance(String purchaseOrderId) {
+        String orgId = org();
+        jdbc.sql("UPDATE \"PurchaseRequestLine\" rl SET \"orderedQuantity\" = GREATEST(0, rl.\"orderedQuantity\" -"
+                + " GREATEST(0, pl.quantity - pl.\"receivedQuantity\" - pl.\"cancelledQuantity\")) FROM \"PurchaseOrderLine\" pl"
+                + " WHERE pl.\"purchaseOrderId\" = ? AND pl.\"organizationId\" = ? AND pl.\"requestLineId\" = rl.id")
+                .params(purchaseOrderId, orgId).update();
+        jdbc.sql("UPDATE \"PurchaseRequest\" SET status = 'approved', \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ?"
+                + " AND status = 'converted' AND id IN (SELECT rl.\"purchaseRequestId\" FROM \"PurchaseRequestLine\" rl JOIN"
+                + " \"PurchaseOrderLine\" pl ON pl.\"requestLineId\" = rl.id WHERE pl.\"purchaseOrderId\" = ? AND rl.quantity"
+                + " > rl.\"orderedQuantity\")").params(orgId, purchaseOrderId).update();
+        jdbc.sql("UPDATE \"PurchaseAgreement\" a SET \"releasedValue\" = GREATEST(0, a.\"releasedValue\" - x.v), status ="
+                + " CASE WHEN a.status = 'exhausted' THEN 'active' ELSE a.status END, \"updatedAt\" = " + NOW + " FROM"
+                + " (SELECT al.\"agreementId\", SUM(GREATEST(0, pl.quantity - pl.\"receivedQuantity\" - pl.\"cancelledQuantity\")"
+                + " * pl.\"unitPrice\") AS v FROM \"PurchaseOrderLine\" pl JOIN \"PurchaseAgreementLine\" al ON al.id ="
+                + " pl.\"agreementLineId\" WHERE pl.\"purchaseOrderId\" = ? AND pl.\"organizationId\" = ? GROUP BY"
+                + " al.\"agreementId\") x WHERE a.id = x.\"agreementId\"").params(purchaseOrderId, orgId).update();
+        jdbc.sql("UPDATE \"PurchaseAgreementLine\" al SET \"releasedQuantity\" = GREATEST(0, al.\"releasedQuantity\" -"
+                + " GREATEST(0, pl.quantity - pl.\"receivedQuantity\" - pl.\"cancelledQuantity\")) FROM \"PurchaseOrderLine\" pl"
+                + " WHERE pl.\"purchaseOrderId\" = ? AND pl.\"organizationId\" = ? AND pl.\"agreementLineId\" = al.id")
+                .params(purchaseOrderId, orgId).update();
     }
 
     /** Hard delete (not received / cancelled). */

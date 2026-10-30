@@ -33,6 +33,7 @@ import {
   ShieldCheck,
   ClipboardList,
   SlidersHorizontal,
+  PackageSearch,
   ClipboardCheck,
   PanelLeftClose,
   PanelLeft,
@@ -99,6 +100,8 @@ import {
   CalendarRange,
   Route as RouteIcon,
   Navigation,
+  FileQuestion,
+  FileSignature,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -352,7 +355,11 @@ const NAV_SECTIONS: NavSection[] = [
     icon: Truck,
     items: [
       { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ClipboardList, permission: PERMISSIONS.procurement.purchaseRequest.read },
+      { to: '/procurement/sourcing', label: tx('Sourcing Workbench'), icon: PackageSearch, permission: PERMISSIONS.procurement.purchaseOrder.create },
+      { to: '/procurement/rfqs', label: tx('RFQs'), icon: FileQuestion, permission: PERMISSIONS.rfq.read },
+      { to: '/procurement/agreements', label: tx('Purchase Agreements'), icon: FileSignature, permission: PERMISSIONS.purchaseAgreement.read },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
+      { to: '/procurement/reports/open-orders', label: tx('Open Orders'), icon: Clock, permission: PERMISSIONS.procurement.purchaseOrder.read },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },

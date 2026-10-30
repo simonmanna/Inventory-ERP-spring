@@ -134,6 +134,22 @@ public class SupplierService {
         return PageResult.of(rows, page, pageSize, total);
     }
 
+    /** Picker options for buyers: active supplier partners with their qualification status (max 50). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> options(String search) {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String extra = "";
+        if (search != null && !search.isBlank()) {
+            String like = "%" + BaseCrudService.escapeLike(search.trim()) + "%";
+            extra = " AND (p.name ILIKE ? OR p.code ILIKE ?)";
+            params.addAll(List.of(like, like));
+        }
+        return SqlRows.list(jdbc.sql("SELECT p.id, p.code, p.name, s.\"lifecycleStatus\" FROM \"Partner\" p LEFT JOIN"
+                + " \"SupplierProfile\" s ON s.\"partnerId\" = p.id AND s.\"organizationId\" = p.\"organizationId\" WHERE"
+                + " p.\"organizationId\" = ? AND p.\"isSupplier\" = true AND p.\"deletedAt\" IS NULL AND p.status::text ="
+                + " 'active'" + extra + " ORDER BY p.name LIMIT 50").params(params));
+    }
+
     /** Supplier 360: partner, profile, bank accounts (masked), certificates, catalogue and eligibility. */
     @Transactional(readOnly = true)
     public Map<String, Object> get(String partnerId) {
