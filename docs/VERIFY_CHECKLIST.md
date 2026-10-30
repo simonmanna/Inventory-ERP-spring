@@ -238,3 +238,22 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   approve it as another user in Approvals → Issue from magazine as the keeper (the requester is refused) → Record
   firing → Reconcile return → Close blast; an extraction log linked to the blast picks up its cost per tonne.
 - Reports: Quarry Reports → extraction vs target, cost per tonne (by month / week / day / site), losses, royalties.
+## Phase 2.3 — Crushing, screening & aggregate processing (ADR-S016)
+
+- Migration `V973__manufacturing_crushing.sql` (placeholder; 10 tables + 6 permissions).
+- Tests: `g.py --db c_crush test --tests 'com.inventoryerp.manufacturing.CrushingIT' --tests
+  'com.inventoryerp.manufacturing.application.CrushingCalculatorTest'`; `ManufacturingIT` matrix now 167 routes.
+- Prerequisites: Quarry → a site with a ROM stockpile holding ROM stone, and product stockpiles (kind *product*) for
+  20 mm / 10 mm / dust; products for each fraction (AVCO, stock-tracked).
+- Production → Crushing Plants → New plant: site, default feed stockpile, 150 t/h, diesel / kWh / labour rates; stages
+  Primary (jaw, engine hours + kWh), Secondary (cone, kWh), Screening (screen, conveyor) → Save: units appear as work
+  centres `<PLANT>-<UNIT>`, a routing "Crushing circuit … v1" exists. New grading profile: 20 mm main 40 % → its pile,
+  10 mm co-product 25 %, dust by-product 20 % at NRV, scalpings waste 8 % stage 1 not stocked → Activate (BOM
+  "… (system)" active, expected recovery 93 %).
+- Crushing Runs → New crushing run on a phone: feed 1000 t, outputs 390 / 250 / 200 / 80, meters, crew 16 h, wear
+  parts → Save draft → detail shows yield 92 % vs 93 %, estimated cost → Post run: ROM −1000 t, piles +390 / +250 /
+  +200, GL entries balanced, cost per tonne per fraction; Reverse → stock back.
+- Aggregate Stockpiles → Survey a pile (volume × density) → Submit → approve as another user (the submitter is refused)
+  → stock adjusted, GL entry; Reverse restores it.
+- Crushing Reports: yield and loss, cost per tonne (product, plant, by kind), plant hours / throughput / utilisation.
+- Doubts: normal loss is measured on the last stage's input; system BOMs are active without the BOM approval gate.

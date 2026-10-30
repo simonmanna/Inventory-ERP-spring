@@ -226,3 +226,69 @@ multi-level pegging, concurrency on stage issue, allocation settings, tenant iso
 
 Status (2.1): done. Gaps: per-lot gate release, curing-day hold (2.4), MRP awareness of stages / co-products (2.5),
 standard-governed outputs of a staged order post their difference to 5950 without per-element variances (2.8).
+
+## ADR-S016 — 2.3 Crushing, screening & aggregate processing
+
+Design: [ADR-S016](../adr/ADR-S016-crushing.md). Migration `V973__manufacturing_crushing.sql` (placeholder; 10 tables +
+6 permissions granted to Administrator). Additive: no change to the 2.1 engine or any existing route. A posted crushing
+run **is** a multi-stage production order of the grading profile's system-managed BOM (feed issued from the feed
+stockpile, conversion per stage, sized fractions into their stockpiles at joint cost).
+
+Routes (36, all under `/api/v1/manufacturing/crushing`; **I** = `Idempotency-Key` required, *i* = accepted):
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/lookups`, `/lookups/products?search` | `crushing:read` |
+| GET | `/plants?includeInactive`, `/plants/:id` | `crushing:read` |
+| POST, PUT, DELETE | `/plants`, `/plants/:id` (whole form incl. circuit stages + units) | `crushing:setup` |
+| GET | `/grading-profiles?plantId&status`, `/grading-profiles/:id` | `crushing:read` |
+| POST, PUT, DELETE | `/grading-profiles`, `/grading-profiles/:id` (drafts) | `crushing:setup` |
+| POST | `/grading-profiles/:id/activate`, `/new-version`, `/archive` | `crushing:setup` |
+| GET | `/runs?plantId&status&shift&from&to&search&page&pageSize`, `/runs/:id`, `/runs/:id/preview` | `crushing:read` |
+| POST *i*, PUT, DELETE | `/runs`, `/runs/:id` (drafts) | `crushing_run:record` |
+| POST **I** | `/runs/:id/post`, `/runs/:id/reverse` (`{reason}`) | `crushing_run:post` |
+| GET | `/stockpiles?kind`, `/stockpile-surveys?stockpileId&status&page&pageSize`, `/stockpile-surveys/:id` | `crushing:read` |
+| POST *i*, PUT, DELETE | `/stockpile-surveys`, `/stockpile-surveys/:id` (drafts) | `crushing_survey:record` |
+| POST | `/stockpile-surveys/:id/submit` | `crushing_survey:record` |
+| POST **I** / POST / POST **I** | `/stockpile-surveys/:id/approve`, `/reject` (`{reason}`), `/reverse` (`{reason}`) | `crushing_survey:approve` |
+| GET | `/reports/yield`, `/reports/cost-per-tonne`, `/reports/plant-hours` (`from&to&plantId`, default month to date) | `production:report` |
+
+Data model: `CrushingPlant` (site, default feed stockpile, design t/h, diesel / kWh / labour rates, routing + circuit
+version), `CrushingPlantStage` (sequence → routing operation), `CrushingPlantUnit` (kind, work centre, t/h, kW, meter
+kind), `CrushingGradingProfile` (plant × feed, version, draft → active → archived, allocation method, expected recovery,
+BOM) + `CrushingGradingLine` (product, size label, role, stage, expected %, stocked, stockpile, valuation / NRV),
+`CrushingRun` (date, shift, operator, feed stockpile + tonnes + method, output method, recirculated t, hours, downtime,
+crew hours, draft → posted → reversed, production order, posted snapshot of yield / loss / cost) + `CrushingRunOutput`
+(expected vs actual t / %, value, unit cost) + `CrushingRunMeter` (engine hours / kWh start-end, diesel) +
+`CrushingRunCost` (manual + derived lines, stage posting), `CrushingStockpileSurvey` (volume × density, book snapshot,
+variance, draft → submitted → posted / rejected → reversed). All org-scoped with the `tenant_isolation` RLS policy.
+
+Business rules: a profile has exactly one main fraction (stocked, last stage, allocated), distinct products none the
+feed, Σ expected % ≤ 100 (rest = normal loss), a stocked line needs a stockpile at activation, co-products share the
+joint cost; one active profile per plant × feed. A run needs an active plant and the active profile version, a date not
+in the future, units of its own plant, meters that do not run backwards; on post the per-stage mass balance must hold
+(fractions of a stage ≤ what it receives) and the feed must be on hand (engine strict issue). Survey approval: never the
+submitter; the adjustment applies (surveyed − book at submission) to today's stock and is refused below zero.
+
+GL (posting engine): run → stage engine journals (`production_stage`): Dr WIP / Cr ROM stock (feed), Dr WIP / Cr overhead
+absorbed (diesel, electricity, labour, wear parts, maintenance), Dr stock / Cr WIP per stocked fraction, Dr scrap / Cr WIP
+for abnormal loss; reversal mirrors them. Survey → Dr stock / Cr stock adjustment income (gain) or Dr stock adjustment
+expense / Cr stock (loss), source `crushing_survey` / `crushing_survey_reversal`. Event `crushing.run.posted`. Quality:
+each stocked fraction of a posted run opens a final inspection lot (batch = run code, `stockControl = source`) when an
+active final plan exists for the product (sieve-analysis specification).
+
+Web: Production → Crushing Runs (`/manufacturing/crushing`, list + filters + pagination; `/runs/new`, `/runs/:id/edit`
+phone / tablet operator entry with sticky output / loss / yield totals; `/runs/:id` detail with post / reverse, GL),
+Crushing Plants (`/plants`, `/plants/:id` circuit editor + profiles), grading profile (`/profiles/new?plantId`,
+`/profiles/:id`: lines, activate, new version, archive), Aggregate Stockpiles (`/stockpiles`: stock per pile, surveys
+with submit / approve / reject / reverse), Crushing Reports (`/reports`). i18n for ti / lg / sw.
+
+Tests: `CrushingCalculatorTest` (split, meters, per-stage balance, yield, performance, survey variance, cost kinds),
+`CrushingIT` (circuit → routing / work centres / new routing version; profile rules, versioning, system BOM; run draft →
+preview → post with NRV by-product, unstocked waste, abnormal loss, GL balanced, idempotent replay, reports, reversal;
+validation; concurrent posts on scarce feed; survey with SoD, adjustment + GL, reversal, reject; tenant isolation; authz
+matrix of the 36 routes + operator cannot post). `ManufacturingIT` matrix now 167 routes.
+
+Status (2.3): done (2026-10-30). Gaps: no automatic feed from `quarry.extraction.posted`; belt-scale / PLC capture via
+2.7's SPI; fleet cost per hour / payroll actuals per run (2.8); normal loss is measured at the last stage's input (fractions
+leaving at an earlier stage are excluded from it); the quality lot of a reversed run is not cancelled automatically.
