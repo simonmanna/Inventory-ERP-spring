@@ -48,6 +48,7 @@ import { ShopFloorPage } from '@/pages/manufacturing/ShopFloorPage';
 import { BomDetailPage } from '@/pages/manufacturing/BomDetailPage';
 import { EngineeringChangesPage } from '@/pages/manufacturing/EngineeringChangesPage';
 import { StageWipReportPage } from '@/pages/manufacturing/StageWipReportPage';
+import { precastRoutes } from '@/pages/manufacturing/precast/routes';
 import { ChartOfAccountsPage } from '@/pages/accounting/chart-of-accounts';
 import { AccountDetailPage } from '@/pages/accounting/AccountDetailPage';
 import { CashFlowReportPage } from '@/pages/accounting/cash-flow-report';
@@ -371,6 +372,8 @@ export function App() {
           <Route path="/manufacturing/standard-costs" element={<StandardCostsPage />} />
           <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
           <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
+          {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}
+          {precastRoutes}
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />
