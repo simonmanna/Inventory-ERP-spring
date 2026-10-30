@@ -163,3 +163,31 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   Set 33 000 on another ticket → exception; approve as a different user in Weighbridge Exceptions (the operator sees "Your own ticket").
   Inbound ticket against a PO → completed ticket shows a draft goods receipt in Purchases → Goods receipts.
 - Expected GL: none from the weighbridge (GRN posting is procurement's).
+
+## Phase 1.9 — Fleet: costing, profitability, reports, freight bills, reminders (ADR-S009)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.fleet.application.FleetCostingPoliciesTest' --tests 'com.inventoryerp.fleet.FleetCostingIT' --tests 'com.inventoryerp.fleet.FleetRemindersPayrollIT' --tests 'com.inventoryerp.fleet.FleetDemoSeedIT' --tests 'com.inventoryerp.fleet.FleetIncidentsIT' --tests 'com.inventoryerp.hr.*'`; web `pnpm web:typecheck`, `pnpm web:i18n`.
+- Migration: `V961__fleet_costing.sql` (placeholder, renumbered at merge) — also widens `HrPayrollInput.kind`.
+- Demo: `SEED_FLEET_DEMO=true SPRING_PROFILES_ACTIVE=seed` on an empty database, `ENABLE_FLEET=true ENABLE_HR=true` →
+  Fleet Overview shows the month's KPI tiles (≈ 24 deliveries, on time 100 %, transport cost / t, availability).
+- Click-through (admin):
+  1. Fleet Reports → Cost of ownership (last 7 days): TRK-01..03 with fuel, insurance and licence fees, tyres; LDR-01
+     with maintenance (oil + labour). By class / month. Export → CSV, Excel, PDF open.
+  2. Delivery profitability → by trip: revenue, transport charge on the invoiced order, product cost, trip cost (per
+     km), margin; by customer. Deliveries & on time, Tonnes (by product), Transport cost per tonne (own vs
+     transporters), Utilisation, Fuel (L/100 km), Renewals (road licences due in 10 / 30 / 50 days).
+  3. Freight Bills → the week's draft bill of Lakeside Haulage (3 trips × 87,500) → Match with invoice "LH-001" for
+     262,500 → billed, AP draft bill in Vendor Bills, journal Dr 6460 / Cr 2169 balanced. Match another bill 20 % over →
+     disputed; a user with `fleet_freight:approve_variance` accepts. Cancel a billed bill → reversal; trips billable again.
+  4. Freight Bills → Inbound freight: pick a posted goods receipt + transporter, invoice 150,000 → landed cost voucher
+     posted, the product's average cost rises; cancel reverses it.
+  5. Fleet Reminders → Run now: one reminder per expiring document / licence / tare / due service; Run now again → 0
+     sent, all "already sent today"; notifications bell shows them.
+  6. Traffic Fines → charge a fine to a driver (active employee) → HR → payroll run: the fine is a deduction line, net
+     pay reduced; approve → journal credits 2186; the fine shows settled (after the event is processed). Reverse the
+     run → fine charged again.
+- Expected GL: freight accrual Dr 6460 / Cr 2169 (+ variance on 6460); AP bill Dr 2169 / Cr supplier when posted;
+  inbound landed cost Dr inventory / Cr clearing, generated bill Dr clearing / Cr supplier; payroll Cr 2186 for fine
+  deductions. No posting from reports or reminders.
+- Doubts: account codes 6460 / 2169 / 2186 are proposals; own-fleet trip cost is analytic only; reports are computed on
+  the fly (consider a monthly snapshot for very large fleets).
