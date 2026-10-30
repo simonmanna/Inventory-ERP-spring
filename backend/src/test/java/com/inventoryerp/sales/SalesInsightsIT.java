@@ -103,6 +103,37 @@ class SalesInsightsIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("presentation: period KPIs vs previous period, categories, trend, validation")
+    void presentation() {
+        String c = customer(null);
+        LocalDate to = LocalDate.now();
+        // Large amounts keep the customer / product in the top-N lists when other tests share the database.
+        postedInvoice(c, 4, 50_000_000, to.toString());
+        postedInvoice(c, 2, 50_000_000, to.minusDays(7).toString());
+        String from = to.minusDays(6).toString();
+        JsonNode deck = ok(200, "GET", "/sales/analytics/presentation?from=" + from + "&to=" + to, null);
+        assertThat(deck.at("/period/days").asInt()).isEqualTo(7);
+        assertThat(deck.at("/previousPeriod/to").asString()).isEqualTo(to.minusDays(7).toString());
+        assertThat(deck.at("/kpis/revenue/current").asDouble()).isGreaterThanOrEqualTo(200_000_000);
+        assertThat(deck.at("/kpis/revenue/previous").asDouble()).isGreaterThanOrEqualTo(100_000_000);
+        assertThat(deck.get("trend").get("buckets").size()).isEqualTo(6);
+        assertThat(deck.get("trend").get("buckets").get(5).get("to").asString()).isEqualTo(to.toString());
+        boolean found = false;
+        for (JsonNode cat : deck.get("categories")) {
+            found |= row(cat.get("products"), "key", product) != null;
+        }
+        assertThat(found).isTrue();
+        assertThat(row(deck.get("topCustomers"), "partnerId", c).get("revenue").asDouble()).isEqualTo(200_000_000);
+        assertThat(deck.at("/receivables/aging").size()).isEqualTo(5);
+        assertThat(deck.at("/forecast/months").size()).isEqualTo(3);
+        assertThat(ok(200, "GET", "/sales/analytics/presentation?from=2025-01-01&to=2025-12-31", null).at(
+                "/trend/granularity").asString()).isEqualTo("month");
+        assertThat(as("GET", "/sales/analytics/presentation?from=" + to + "&to=" + from, null).status()).isEqualTo(400);
+        assertThat(as("GET", "/sales/analytics/presentation?from=2020-01-01&to=2025-01-01", null).status())
+                .isEqualTo(400);
+    }
+
+    @Test
     @DisplayName("advisor: negative margin and churn risk, read-only")
     void advisor() {
         String cheap = customer(null);

@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.security.Throttle;
 import com.inventoryerp.sales.application.SalesAdvisorService;
 import com.inventoryerp.sales.application.SalesAnalyticsService;
 import com.inventoryerp.sales.application.SalesPortalService;
+import com.inventoryerp.sales.application.SalesPresentationService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,10 +44,13 @@ public final class SalesInsightsController {
 
         private final SalesAnalyticsService analytics;
         private final SalesAdvisorService advisor;
+        private final SalesPresentationService presentation;
 
-        public Analytics(SalesAnalyticsService analytics, SalesAdvisorService advisor) {
+        public Analytics(SalesAnalyticsService analytics, SalesAdvisorService advisor,
+                SalesPresentationService presentation) {
             this.analytics = analytics;
             this.advisor = advisor;
+            this.presentation = presentation;
         }
 
         @GetMapping("/analytics/dashboard")
@@ -73,6 +77,14 @@ public final class SalesInsightsController {
         @RequirePermissions(Permissions.SALES__REPORT_READ)
         public Map<String, Object> forecast(@RequestParam(required = false, defaultValue = "3") int months) {
             return analytics.forecast(months);
+        }
+
+        /** Data set of the stakeholder sales presentation (the web client renders the PPTX). */
+        @GetMapping("/analytics/presentation")
+        @RequirePermissions(Permissions.SALES__REPORT_READ)
+        public Map<String, Object> presentation(@RequestParam(required = false) String from,
+                @RequestParam(required = false) String to) {
+            return presentation.snapshot(from, to);
         }
 
         @GetMapping("/advisor")

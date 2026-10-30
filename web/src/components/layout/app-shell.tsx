@@ -12,6 +12,7 @@ import {
   HandCoins,
   Globe,
   LineChart,
+  Presentation,
   BadgePercent,
   FileSignature,
   FileText,
@@ -399,6 +400,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
       { to: '/sales/analytics', label: tx('Sales analytics'), icon: LineChart, permission: PERMISSIONS.sales.reportRead },
+      { to: '/sales/presentation', label: tx('Generate presentation'), icon: Presentation, permission: PERMISSIONS.sales.reportRead },
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
@@ -619,13 +621,28 @@ export function AppShell() {
   const { t } = useTranslation();
   const { theme: sb } = useSidebarTheme();
   const user = useAuthStore((s) => s.user);
-  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // Subscribe to the list so the menu re-renders when permissions are refreshed.
+  const permissions = useAuthStore((s) => s.permissions);
+  const hasPermission = (p: string) => permissions.includes(p);
   // Report visibility is configurable per role (Settings → Report Permissions).
   const canViewReport = useCanViewReport();
   const clear = useAuthStore((s) => s.clear);
   const org = useAuthStore((s) => s.organization);
   const setOrganization = useAuthStore((s) => s.setOrganization);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Permissions are cached at sign-in; refresh them so role changes (and permissions added by
+  // upgrades) apply to an open session without signing out and back in.
+  const setPermissions = useAuthStore((s) => s.setPermissions);
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    api.get<{ permissions?: string[] }>('/auth/me')
+      .then(({ data }) => { if (!cancelled && Array.isArray(data.permissions)) setPermissions(data.permissions); })
+      .catch(() => { /* offline or signed out: keep the cached list */ });
+    return () => { cancelled = true; };
+  }, [userId, setPermissions]);
   const [searchOpen, setSearchOpen] = useState(false);
   const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed } = useSidebarStore();
 

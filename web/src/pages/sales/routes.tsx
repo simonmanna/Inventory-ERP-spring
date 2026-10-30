@@ -13,6 +13,7 @@ import { ComplaintsPage, ReturnDetailPage, ReturnsPage } from './ReturnsPages';
 import { CollectionsPage } from './CollectionsPage';
 import { AgreementsPage, CommissionsPage } from './AgreementsPages';
 import { AnalyticsPage } from './AnalyticsPage';
+import { PresentationPage } from './PresentationPage';
 import { PortalAccessPage } from './PortalAccessPage';
 
 const P = PERMISSIONS.sales;
@@ -28,6 +29,7 @@ export const salesRoutes = (
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />
     <Route path="/sales/collections" element={<RequirePermission permission={P.collectionsRead}><CollectionsPage /></RequirePermission>} />
     <Route path="/sales/analytics" element={<RequirePermission permission={P.reportRead}><AnalyticsPage /></RequirePermission>} />
+    <Route path="/sales/presentation" element={<RequirePermission permission={P.reportRead}><PresentationPage /></RequirePermission>} />
     <Route path="/sales/portal-access" element={<RequirePermission permission={P.portalManage}><PortalAccessPage /></RequirePermission>} />
     <Route path="/sales/agreements" element={<RequirePermission permission={P.agreementRead}><AgreementsPage /></RequirePermission>} />
     <Route path="/sales/commissions" element={<RequirePermission permission={P.commissionRead}><CommissionsPage /></RequirePermission>} />

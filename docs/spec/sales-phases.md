@@ -358,6 +358,21 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Tests: `SalesInsightsIT` (3) — analysis / profitability / forecast numbers, advisor rules, portal scope (other
   customer's quotation 404), accept, payment booked, PDF, complaint, revoke → 401. Browser-checked locally:
   analytics tabs, portal link, portal page.
+
+## Post-S10 — stakeholder presentation (as built)
+- `SalesPresentationService` (`GET /sales/analytics/presentation?from&to`, `sales:report:read`, default the last 7
+  days, max 366 days, `from` after `to` → 400): one read-only snapshot of the period against the previous period of
+  equal length — KPIs (net invoiced revenue / margin, invoices, active and new customers, quotations issued and
+  converted, orders confirmed, orders cancelled + quotations rejected/expired, cash collected), revenue by product
+  category with top products (volume in the product's sales unit, revenue, share), trend (six equal periods up to 45
+  days, else calendar months; top four categories stacked), top customers, salespeople, CRM pipeline (open / weighted,
+  won, lost, by stage, lost reasons, top open), lost business, receivables ageing, completed / upcoming CRM
+  activities, the 3-month forecast and the advisor's advisories.
+- Web: Sales → Generate presentation (`/sales/presentation`). Date presets, four themes, cover fields and free-text
+  highlights / marketing update / next actions (kept in local storage), slide toggles; the PPTX (16:9, native
+  editable charts, speaker notes) is built in the browser with `pptxgenjs` — the server only serves data.
+- Tests: `SalesInsightsIT.presentation` — period / previous period, revenue vs previous, 6 trend buckets, product in
+  its category, monthly granularity for a year, 400 on reversed and over-long ranges.
 - Deviations: the "AI" assist is deterministic rules, not a language model, and does not draft quotations; costs
   are current product cost; own-fleet running cost is not in profitability until fleet trip costing (1.9); the
   forecast is not yet fed to MRP (manufacturing integration); the portal has no e-signature (acceptance is recorded
