@@ -23,9 +23,10 @@ public class QualityCertificateService {
         Map<String, Object> lot = lots.get(lotId);
         String company = db.jdbc().sql("SELECT name FROM \"Organization\" WHERE id = ?").param(QualityDb.org())
                 .query(String.class).optional().orElse("");
-        String standard = lot.get("specificationId") == null ? null : db.jdbc().sql("SELECT standard FROM"
-                + " \"QualitySpecification\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(lot.get("specificationId"), QualityDb.org()).query(String.class).optional().orElse(null);
+        java.util.List<String> standards = lot.get("specificationId") == null ? java.util.List.of()
+                : db.jdbc().sql("SELECT standard FROM \"QualitySpecification\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(lot.get("specificationId"), QualityDb.org()).query(String.class).list();
+        String standard = standards.isEmpty() ? null : standards.getFirst();
         return new Certificate("CoA-" + lot.get("lotNumber") + ".pdf",
                 CertificateOfAnalysisPdf.render(lot, company, standard));
     }
