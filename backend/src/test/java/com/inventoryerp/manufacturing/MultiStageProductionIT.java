@@ -2,6 +2,7 @@ package com.inventoryerp.manufacturing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.inventoryerp.kernel.events.OutboxWorker;
 import com.inventoryerp.manufacturing.web.MultiStageController;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -26,6 +28,16 @@ import tools.jackson.databind.JsonNode;
  * legacy-route guards, tenant isolation and the authorization matrix of the new routes.
  */
 class MultiStageProductionIT extends MfgTestSupport {
+
+    @Autowired
+    OutboxWorker outbox;
+
+    void drainOutbox() {
+        for (int i = 0; i < 5; i++) {
+            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
+            outbox.tick();
+        }
+    }
 
     Map<String, String> key() {
         Map<String, String> h = new LinkedHashMap<>();
@@ -398,6 +410,77 @@ class MultiStageProductionIT extends MfgTestSupport {
         assertThat(onHand(green, curing)).isEqualByComparingTo("0");
         assertThat(onHand(cured, warehouse)).isEqualByComparingTo("10");
         assertThat(num(done.get("outputUnitCost"))).isEqualByComparingTo("3");
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
+    @DisplayName("stage gate + quality (2.6): gated output opens an in-process lot; reject fails, release passes the gate")
+    void stageGateWithQualityLot() {
+        String sand = product("SAND");
+        String green = product("GREEN");
+        String cured = product("CURED");
+        String curing = location("production");
+        stockIn(bakery, sand, 20, 3);
+        String checkpoint = "CURE-" + suffix();
+        String routingId = routing("QC line", "Mould", "Cure");
+        List<String> ops = opIds(routingId);
+        ok(200, "PUT", "/manufacturing/routings/" + routingId + "/stage-setup", Map.of("stages", List.of(
+                stage(ops.get(0), "outputProductId", green, "stageLocationId", curing, "qcGate", true,
+                        "qcCheckpointCode", checkpoint))));
+        JsonNode spec = ok(201, "POST", "/quality/specifications", Map.of("code", "SPEC-" + suffix(), "name",
+                "Green strength", "productId", green, "parameters", List.of(Map.of("code", "STR", "name", "Strength",
+                        "kind", "numeric", "unit", "MPa", "minValue", 3))));
+        ok(200, "POST", "/quality/specifications/" + spec.get("id").asString() + "/activate", null);
+        ok(201, "POST", "/quality/inspection-plans", Map.of("code", "PLAN-" + suffix(), "name", "Curing plan",
+                "stage", "in_process", "productId", green, "specificationId", spec.get("id").asString(), "stageKey",
+                checkpoint, "independentRelease", false, "samplingMethod", "fixed", "sampleSize", 1));
+        String bomId = activeBom(cured, 10, List.of(line(sand, 10)), routingId);
+
+        // Order 1: the lot is rejected → the stage gate fails and the output stays in quarantine.
+        String o1 = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "plannedQty", 10,
+                "locationId", bakery, "outputLocationId", warehouse)).get("id").asString();
+        JsonNode v1 = ok(201, "POST", "/manufacturing/production-orders/" + o1 + "/stages/initialize", Map.of());
+        ok(201, "POST", "/manufacturing/production-orders/" + o1 + "/confirm", null);
+        String s1 = stageId(v1, 0);
+        keyed("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 10, "complete", true));
+        JsonNode lots1 = ok(200, "GET", "/quality/inspection-lots?sourceType=production_order&sourceId=" + o1, null)
+                .get("data");
+        assertThat(lots1).hasSize(1);
+        JsonNode lot1 = lots1.get(0);
+        assertThat(lot1.get("stage").asString()).isEqualTo("in_process");
+        assertThat(lot1.get("stockControl").asString()).isEqualTo("source");
+        assertThat(num(lot1.get("quantity"))).isEqualByComparingTo("10");
+        String quarantine = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
+                + " AND code = 'QC-QUARANTINE' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).single();
+        assertThat(onHand(green, quarantine)).isEqualByComparingTo("10");
+        Res rej = call("POST", "/quality/inspection-lots/" + lot1.get("id").asString() + "/reject", Map.of(
+                "quantity", 10, "disposition", "scrap", "reason", "Cracked"), key());
+        assertThat(rej.status()).as(rej.raw().body()).isEqualTo(200);
+        drainOutbox();
+        JsonNode st1 = stages(o1).get("stages").get(0);
+        assertThat(st1.get("qcStatus").asString()).isEqualTo("failed");
+        assertThat(st1.get("qcReference").asString()).isEqualTo(lot1.get("lotNumber").asString());
+
+        // Order 2: results pass and the lot is released → the gate passes, the output moves to the stage location.
+        String o2 = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "plannedQty", 10,
+                "locationId", bakery, "outputLocationId", warehouse)).get("id").asString();
+        JsonNode v2 = ok(201, "POST", "/manufacturing/production-orders/" + o2 + "/stages/initialize", Map.of());
+        ok(201, "POST", "/manufacturing/production-orders/" + o2 + "/confirm", null);
+        String s21 = stageId(v2, 0);
+        keyed("/manufacturing/production-stages/" + s21 + "/output", Map.of("qtyGood", 10, "complete", true));
+        String lot2 = ok(200, "GET", "/quality/inspection-lots?sourceType=production_order&sourceId=" + o2, null)
+                .get("data").get(0).get("id").asString();
+        ok(200, "POST", "/quality/inspection-lots/" + lot2 + "/results", Map.of("results", List.of(Map.of(
+                "parameterCode", "STR", "sampleNo", 1, "numericValue", 4.5))));
+        Res rel = call("POST", "/quality/inspection-lots/" + lot2 + "/release", Map.of(), key());
+        assertThat(rel.status()).as(rel.raw().body()).isEqualTo(200);
+        assertThat(rel.body().get("status").asString()).isEqualTo("closed");
+        drainOutbox();
+        assertThat(stages(o2).get("stages").get(0).get("qcStatus").asString()).isEqualTo("passed");
+        assertThat(onHand(green, curing)).isEqualByComparingTo("10");
+        JsonNode done = keyed("/manufacturing/production-stages/" + stageId(v2, 1) + "/output", Map.of("qtyGood", 10,
+                "complete", true));
+        assertThat(done.get("status").asString()).isEqualTo("completed");
         assertThat(unbalancedEntries()).isZero();
     }
 

@@ -748,6 +748,26 @@ export const PERMISSIONS = {
     /// Stations, indicator devices, tolerances, tare validity.
     configure: 'weighbridge:configure',
   },
+  // ---- Quality management (module quality, ADR-S013, construction-materials Track C Phase 2.6) ----
+  // Core-available (no module flag). Route ↔ permission matrix: docs/spec/quality.md §Permissions.
+  quality: {
+    /// Specifications, plans, lots, results, NCR / CAPA, traceability, reports, CoA print.
+    read: 'quality:read',
+    /// Specifications (versions, parameters, sieve envelopes) and inspection plans (sampling, hold policy).
+    configure: 'quality:configure',
+    /// Open lots, record test results, import laboratory results.
+    inspect: 'quality:inspect',
+    /// Put a lot on hold or move it into QC quarantine.
+    hold: 'quality:hold',
+    /// Release a lot (back to stock / next stage); a failed lot needs a concession reason.
+    release: 'quality:release',
+    /// Reject (scrap / return to supplier), downgrade to a second-grade product, cancel a lot.
+    dispose: 'quality:dispose',
+    /// Nonconformance reports.
+    ncr: 'quality:ncr',
+    /// Corrective / preventive actions.
+    capa: 'quality:capa',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

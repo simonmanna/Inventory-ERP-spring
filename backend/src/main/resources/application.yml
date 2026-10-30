@@ -125,6 +125,13 @@ app:
     # Fleet 1.4 weighbridge: upper bound of any indicator read (each device has its own readTimeoutMs).
     weighbridge:
       max-read-timeout-ms: ${FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS:15000}
+  # Quality management (ADR-S013): REST laboratory adapter (LabResultAdapter "rest"); blank URL = not configured.
+  quality:
+    lab:
+      rest:
+        base-url: ${QUALITY_LAB_REST_URL:}
+        token: ${QUALITY_LAB_REST_TOKEN:}
+        timeout-ms: ${QUALITY_LAB_REST_TIMEOUT_MS:10000}
 
 logging:
   level:

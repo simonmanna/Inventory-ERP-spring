@@ -228,6 +228,13 @@ export const EVENTS = {
   WeighbridgeTicketCompleted: 'weighbridge.ticket.completed',
   WeighbridgeExceptionRaised: 'weighbridge.exception.raised',
   WeighbridgeTicketVoided: 'weighbridge.ticket.voided',
+  // Quality management (ADR-S013): a lot opened, its results evaluated (pass / fail), a decision taken (2.1 / 2.4
+  // subscribe for stockControl = source lots), an NCR raised, a CAPA closed.
+  QualityLotCreated: 'quality.lot.created',
+  QualityLotEvaluated: 'quality.lot.evaluated',
+  QualityLotDecided: 'quality.lot.decided',
+  QualityNcrRaised: 'quality.ncr.raised',
+  QualityCapaClosed: 'quality.capa.closed',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */

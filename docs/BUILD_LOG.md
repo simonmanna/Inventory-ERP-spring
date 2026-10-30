@@ -62,7 +62,7 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
 Current: Phase 2 wave A — 2.1 multi-stage, 2.2 quarry, 2.6 quality — in-progress (C, parallel worktrees)
-Next action: merge 2.2 quarry and 2.6 quality as they finish (wire 2.6 lots to the 2.1 stage QC hook), then wave B (2.3, 2.4, 2.7).
+Next action: merge 2.2 quarry when it finishes; wave B: 2.4 blocks + 2.7 shop floor now, 2.3 crushing after 2.2.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -87,7 +87,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 2.3 crushing & screening | claimed (C) | | | |
 | 2.4 block / precast manufacturing | claimed (C) | | | |
 | 2.5 advanced planning & scheduling | claimed (C) | | | |
-| 2.6 quality management | in-progress (C, worktree) | | | |
+| 2.6 quality management | done (C) | c6b3f68, 608208a, 554c872 | | V27, ADR-S013; 45 routes; wired to 2.1 stage gates (QualityStageGateBridge); main build 917 tests green |
 | 2.7 shop-floor execution & data capture | claimed (C) | | | |
 | 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
 | 3 requirements verification | todo | | requirements-verified | |

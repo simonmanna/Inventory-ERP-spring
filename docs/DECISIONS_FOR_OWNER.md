@@ -81,3 +81,8 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | 2.1 | Reversal of stage postings | Last in, first out per order (posting route) or the whole order (cancels it); receipts must still be on hand | Reverse any posting with re-costing of later ones | ADR-S011 §5 |
 | 2026-10-30 | 2.1 | Intermediates between stages | Real stock in the stage location (Dr stock / Cr WIP, then Dr WIP / Cr stock at the next stage); stages without an intermediate pass their cost on in the WIP sub-ledger | Keep intermediates in GL WIP (no stock) | ADR-S011 §1 |
 | 2026-10-30 | 2.2 | Quarry: own module or inside manufacturing | Recommended separate module `quarry` (own flag), seam = ROM stockpile receipt into inventory | Inside manufacturing | ADR-S011 §6 — the 2.2 agent decides |
+
+### 2.1 ↔ 2.6 stage gates (coordinator, 2026-10-30)
+- Manufacturing calls quality (not the reverse): the stage gate hook opens a quality lot only when an active
+  in-process plan matches the stage's checkpoint code; otherwise the manual pass/fail route applies. Full release
+  passes the gate; reject/downgrade fails it. Change if you want quality to be mandatory for every gated stage.
