@@ -325,6 +325,7 @@ public class ProductionService {
     public Map<String, Object> startOrder(String id, StartOrder dto) {
         StartOrder d = dto != null ? dto : new StartOrder(null, null, null);
         Map<String, Object> pre = getOrThrow(id, true, false);
+        refuseIfMultiStage(pre, false);
         if (!"confirmed".equals(pre.get("status")) || pre.get("consumedAt") != null) {
             throw ApiException.badRequest("Order " + pre.get("orderCode") + " is not in a startable state (status "
                     + pre.get("status") + ").");
@@ -416,6 +417,7 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> completeOrder(String id, CompleteOrder dto) {
         Map<String, Object> pre = getOrThrow(id, false, true);
+        refuseIfMultiStage(pre, false);
         if (!"in_progress".equals(pre.get("status")) || pre.get("postedAt") != null) {
             throw ApiException.badRequest("Order " + pre.get("orderCode") + " is not completable (status "
                     + pre.get("status") + ").");
@@ -561,6 +563,7 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> recordQc(String id, RecordQc dto) {
         Map<String, Object> pre = getOrThrow(id, false, false);
+        refuseIfMultiStage(pre, false);
         if (!"qc_hold".equals(pre.get("status"))) {
             throw ApiException.badRequest("Order " + pre.get("orderCode") + " is not awaiting QC (status "
                     + pre.get("status") + ").");
@@ -627,6 +630,7 @@ public class ProductionService {
     public Map<String, Object> cancelOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
         Map<String, Object> pre = getOrThrow(id, true, false);
+        refuseIfMultiStage(pre, true);
         if ("completed".equals(pre.get("status"))) {
             throw ApiException.badRequest("A completed order cannot be cancelled — reverse it (Phase 3).");
         }
@@ -677,6 +681,7 @@ public class ProductionService {
     public Map<String, Object> reverseOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
         Map<String, Object> pre = getOrThrow(id, true, false);
+        refuseIfMultiStage(pre, false);
         // ADR-S006 A5: a QC-held order can be reversed too (its finished goods sit in quarantine).
         boolean held = "qc_hold".equals(pre.get("status"));
         if ((!"completed".equals(pre.get("status")) && !held) || pre.get("postedAt") == null) {
@@ -831,6 +836,21 @@ public class ProductionService {
                     .source(sourceType, code));
             stockPosting.postProductionOutput(str(line, "productId"), dec(line, "totalCost"), date, sourceType, code,
                     description);
+        }
+    }
+
+    /**
+     * ADR-S011: a multi-stage order (one with {@code ProductionOrderStage} rows) runs through the stage routes; the
+     * single-leg start / complete / QC / reverse refuse it, cancel only while no stage posting exists.
+     */
+    private void refuseIfMultiStage(Map<String, Object> order, boolean onlyWithPostings) {
+        String table = onlyWithPostings ? "ProductionStagePosting" : "ProductionOrderStage";
+        boolean staged = db.jdbc().sql("SELECT count(*) FROM \"" + table + "\" WHERE \"organizationId\" = ?"
+                + " AND \"orderId\" = ?" + (onlyWithPostings ? " AND \"reversedAt\" IS NULL" : ""))
+                .params(MfgDb.org(), order.get("id")).query(Long.class).single() > 0;
+        if (staged) {
+            throw ApiException.badRequest("Order " + order.get("orderCode") + " is a multi-stage order; use its stage"
+                    + " routes" + (onlyWithPostings ? " (reverse its stage postings to cancel it)." : "."));
         }
     }
 

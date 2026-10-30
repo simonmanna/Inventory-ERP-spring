@@ -404,6 +404,6 @@ class ManufacturingIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without token, 403 without permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(113);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(131);
     }
 }

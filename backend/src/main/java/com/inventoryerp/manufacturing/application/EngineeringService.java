@@ -82,6 +82,20 @@ public class EngineeringService {
                         s.get("notes")));
             }
         }
+        // ADR-S011: the revision keeps the BOM's co-products / by-products / waste and its allocation override.
+        db.jdbc().sql("INSERT INTO \"BomCoProduct\" (id, \"organizationId\", \"bomId\", \"routingOperationId\","
+                + " \"productId\", role, quantity, \"uomId\", valuation, \"nrvUnitValue\", \"marketValue\","
+                + " \"weightPerUnit\", \"fixedPct\", stocked, \"locationId\", sequence, notes) SELECT"
+                + " gen_random_uuid()::text, \"organizationId\", ?, \"routingOperationId\", \"productId\", role,"
+                + " quantity, \"uomId\", valuation, \"nrvUnitValue\", \"marketValue\", \"weightPerUnit\","
+                + " \"fixedPct\", stocked, \"locationId\", sequence, notes FROM \"BomCoProduct\""
+                + " WHERE \"organizationId\" = ? AND \"bomId\" = ?").params(copy.get("id"), MfgDb.org(), bomId)
+                .update();
+        db.jdbc().sql("INSERT INTO \"MfgCostAllocationRule\" (id, \"organizationId\", \"bomId\", method,"
+                + " \"mainWeightPerUnit\", \"mainMarketValue\", notes) SELECT gen_random_uuid()::text,"
+                + " \"organizationId\", ?, method, \"mainWeightPerUnit\", \"mainMarketValue\", notes FROM"
+                + " \"MfgCostAllocationRule\" WHERE \"organizationId\" = ? AND \"bomId\" = ?")
+                .params(copy.get("id"), MfgDb.org(), bomId).update();
         Map<String, Object> eco = db.insert(EngineeringChange.class, Obj.of("number", seq.next("engineering_change",
                 "ECO-", 5), "title", dto != null && dto.title() != null ? dto.title() : "Revision of " + src.get("code"),
                 "reason", dto == null ? null : dto.reason(), "bomId", bomId, "newBomId", copy.get("id"), "status",
