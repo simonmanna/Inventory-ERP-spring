@@ -61,6 +61,7 @@ public class SalesQuotationService {
     private final SalesSettingsService config;
     private final ObjectProvider<QuotationPricingPort> pricing;
     private final ObjectProvider<QuotationOpportunityPort> opportunities;
+    private final ObjectProvider<SalesOrderService> salesOrders;
     private final DocumentBuilderService builder;
     private final OrdersService orders;
     private final ApprovalsService approvals;
@@ -70,12 +71,13 @@ public class SalesQuotationService {
 
     public SalesQuotationService(SalesDb db, SalesSettingsService config, ObjectProvider<QuotationPricingPort> pricing,
             ObjectProvider<QuotationOpportunityPort> opportunities, DocumentBuilderService builder,
-            OrdersService orders,
+            OrdersService orders, ObjectProvider<SalesOrderService> salesOrders,
             ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events) {
         this.db = db;
         this.config = config;
         this.pricing = pricing;
         this.opportunities = opportunities;
+        this.salesOrders = salesOrders;
         this.builder = builder;
         this.orders = orders;
         this.approvals = approvals;
@@ -580,8 +582,8 @@ public class SalesQuotationService {
     public Map<String, Object> convert(String id, Map<String, Object> in) {
         Map<String, Object> q = lock(id);
         String target = blank(str(in.get("target"))) ? "order" : str(in.get("target"));
-        if (!Set.of("order", "proforma").contains(target)) {
-            throw ApiException.badRequest("target must be one of: order, proforma");
+        if (!Set.of("order", "proforma", "sales_order").contains(target)) {
+            throw ApiException.badRequest("target must be one of: order, proforma, sales_order");
         }
         if (!Set.of("approved", "sent", "accepted").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved, sent or accepted quotations can be converted");
@@ -599,7 +601,11 @@ public class SalesQuotationService {
         }
         String convertedId;
         String convertedNumber;
-        if ("order".equals(target)) {
+        if ("sales_order".equals(target)) {
+            Map<String, Object> so = salesOrders.getObject().createFromQuotation(q, lines, in);
+            convertedId = str(so.get("id"));
+            convertedNumber = str(so.get("number"));
+        } else if ("order".equals(target)) {
             List<Map<String, Object>> orderLines = new ArrayList<>();
             for (Map<String, Object> l : lines) {
                 Map<String, Object> ol = new LinkedHashMap<>();

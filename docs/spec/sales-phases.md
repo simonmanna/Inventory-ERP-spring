@@ -13,7 +13,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 |---|---|---|---|---|
 | Step 0 | Design docs | — | done (5c42014) | — |
 | S0 | Foundation: module, quotation migration, master-data fields, settings, ledger harness | R1 | done | Step 0 |
-| S1 | Quotations API in sales + Sales Orders core + amendments + R1 reports + web | R1 | todo | S0 |
+| S1 | Quotations API in sales + Sales Orders core + amendments + R1 reports + web | R1 | done | S0 |
 | S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | todo | S1 |
 | S3 | Credit module (limits, exposure, decisions, holds) | R2 | todo | S1 |
 | S4 | ATP, reservations, backorders, supply pegs | R2 | todo | S1 |
@@ -134,6 +134,23 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - `OrdersIT` / POS ITs green; `/orders` unchanged.
 - Fleet `FleetDispatchIT` green (legacy `from-sales-order`).
 - No change under `manufacturing/**`, `pos/**` billing path, `android/`.
+
+## S1 — as built
+- `V25__sales_orders.sql`: `SalesOrder`, `SalesOrderLine` (ordered / closed-short + projection columns reserved,
+  delivered, billable, invoiced, credited, returned), `SalesOrderRevision`, `SalesOrderChangeRequest`.
+- Services: `SalesOrderService` (draft CRUD, confirm with rate lock + customer credit-hold → on hold, hold / release,
+  cancel only without deliveries / invoices / live DOs, close short to `max(delivered, billable, net invoiced)`,
+  duplicate, derived delivery / invoice status, `in_fulfilment` / `done`), `SalesOrderChangeService` (request →
+  impact → approve / reject / withdraw; stale-revision guard; quantity floor; price / product change on a moved line
+  splits it; immutable revision + diff), `SalesReportService` (R1 summary), `SalesLinePricing`.
+- Quotation convert target `sales_order` (default on `/sales/quotations/{id}/convert` and in the editor).
+- Routes: `/sales/quotations*` (14), `/sales/orders*` (14), `/sales/change-requests/*` (4), `/sales/reports/summary`,
+  `/sales/settings` (GET / PUT). Events `sales.order.*` (payload `v: 1`).
+- Web: Sales nav group, Sales dashboard, Sales Orders list (tabs: drafts / open / to deliver / on hold / done),
+  order form with status ribbon, smart buttons, change-request dialog + approval panel, revisions, close short.
+- Tests: `SalesOrderIT` (8) incl. authorization matrix of all `/sales` routes and tenant isolation.
+- Deviation: order state machine lives in `SalesOrderService` (like quotations), not in the kernel `WorkflowRegistry`
+  (that registry drives JPA document statuses); `branchId` optional until branch-scoped access lands.
 
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to

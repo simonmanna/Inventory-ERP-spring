@@ -245,7 +245,7 @@ export interface Quotation {
   approvedAt: string | null;
   sentAt: string | null;
   acceptedAt: string | null;
-  convertedType: 'order' | 'proforma' | null;
+  convertedType: 'sales_order' | 'order' | 'proforma' | null;
   convertedId: string | null;
   convertedNumber: string | null;
   createdById: string | null;
@@ -443,7 +443,7 @@ export const crmApi = {
   updateQuote: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<Quotation>(`/crm/quotations/${id}`, body)).data,
   quoteAction: async ({ id, action, body }: { id: string; action: 'submit' | 'approve' | 'reject' | 'send' | 'accept' | 'decline' | 'cancel' | 'revise'; body?: Record<string, unknown> }) =>
     (await api.post<Quotation>(`/crm/quotations/${id}/${action}`, body ?? {})).data,
-  convertQuote: async ({ id, target, allowBackorder }: { id: string; target: 'order' | 'proforma'; allowBackorder?: boolean }) =>
+  convertQuote: async ({ id, target, allowBackorder }: { id: string; target: 'sales_order' | 'order' | 'proforma'; allowBackorder?: boolean }) =>
     (await api.post<Quotation & { converted: { type: string; id: string; number: string } }>(`/crm/quotations/${id}/convert`, { target, allowBackorder },
       { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
   deleteQuote: async (id: string) => (await api.delete(`/crm/quotations/${id}`)).data,

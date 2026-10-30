@@ -31,6 +31,7 @@ import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
 import { ModulesPage } from '@/pages/modules';
 import { crmRoutes } from '@/pages/crm/routes';
+import { salesRoutes } from '@/pages/sales/routes';
 import { BackupPage } from '@/pages/settings/BackupPage';
 import { AssetDashboardPage } from '@/pages/fixed-asset/AssetDashboardPage';
 import { AssetCategoriesPage } from '@/pages/fixed-asset/AssetCategoriesPage';
@@ -456,6 +457,8 @@ export function App() {
           <Route path="/tasks/:id/edit" element={<TaskEditPage />} />
           {/* CRM sales suite (ADR-S010) — pages/crm/routes.tsx; /crm/deals links redirect */}
           {crmRoutes}
+          {/* Sales / order-to-cash (ADR-S011) — pages/sales/routes.tsx */}
+          {salesRoutes}
 
                   </Route>
                 </Route>

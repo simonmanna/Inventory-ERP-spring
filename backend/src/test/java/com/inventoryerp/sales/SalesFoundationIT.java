@@ -108,6 +108,7 @@ class SalesFoundationIT extends ApiTestSupport {
     @Test
     @DisplayName("policy combination 'direct + ownership after dispatch' is rejected by the database")
     void invalidPolicyCombination() {
+        ok(200, "GET", "/crm/config/settings", null);
         assertThatThrownBy(() -> jdbc.sql("UPDATE \"SalesSettings\" SET \"ownershipTransfer\" = 'at_acceptance' WHERE"
                 + " \"organizationId\" = ? AND \"physicalMovement\" = 'direct'").param(demoOrg).update())
                 .hasMessageContaining("check");

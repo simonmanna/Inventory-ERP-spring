@@ -150,6 +150,13 @@ public final class DomainEvents {
     public static final String CRM_DEAL_LOST = "crm.deal.lost";
     public static final String CRM_QUOTATION_APPROVED = "crm.quotation.approved";
     public static final String CRM_QUOTATION_CONVERTED = "crm.quotation.converted";
+    public static final String SALES_ORDER_CONFIRMED = "sales.order.confirmed";
+    public static final String SALES_ORDER_HELD = "sales.order.held";
+    public static final String SALES_ORDER_RELEASED = "sales.order.released";
+    public static final String SALES_ORDER_AMENDED = "sales.order.amended";
+    public static final String SALES_ORDER_CANCELLED = "sales.order.cancelled";
+    public static final String SALES_ORDER_LINE_CLOSED_SHORT = "sales.order.line_closed_short";
+    public static final String SALES_ORDER_DONE = "sales.order.done";
     public static final String FLEET_VEHICLE_CHECKED_OUT = "fleet.vehicle.checked_out";
     public static final String FLEET_VEHICLE_CHECKED_IN = "fleet.vehicle.checked_in";
     public static final String FLEET_CLAIM_SETTLED = "fleet.claim.settled";

@@ -172,3 +172,18 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   CRM → Settings: change quote validity days → saved (now stored in `SalesSettings`).
 - Expected GL: none.
 - Doubts: audit history before the upgrade is under entity `CrmQuotation`, after it `SalesQuotation`.
+
+## Phase S1 — Sales orders (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.*'`; web `pnpm web:typecheck`.
+- Migration: `V25__sales_orders.sql`.
+- Screens: Sales → Sales Orders → *New order*: customer, customer PO, requested date, 2 lines → Save → totals; *Confirm
+  order* → status Confirmed, ribbon on "Sales order". A customer on credit hold → confirmed but *On hold*; *Release*
+  refused until the customer hold is lifted.
+  CRM → Quotations → submit → *Convert* → "Sales order" (default) → banner links to the new SO with the agreed prices.
+  On a confirmed SO: *Request change* (qty 100 → 150, requested date) → change request pending; another user with
+  `sales:order:amend_approve` → *Approve & apply* → revision r1, *Revisions* shows r0 snapshot.
+  Close a line short (scissors) with a reason → remaining quantity cancelled, history kept.
+  Sales → Sales Dashboard: open quotations, open orders, to deliver, waiting for approval, on hold, conversion.
+- Expected GL: none (orders do not post).
+- Doubts: delivered / invoiced columns stay 0 until S5 / S6 wire the projections.
