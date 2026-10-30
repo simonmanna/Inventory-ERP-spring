@@ -379,3 +379,45 @@ export function useCreditLimits() {
 export function useCreditPolicy() {
   return useQuery({ queryKey: ['sales', 'credit-policy'], queryFn: async () => (await api.get<Record<string, unknown>>('/credit/policy')).data });
 }
+
+// ---- ATP / reservations (phase S4) ----
+
+export interface LineAtp {
+  lineId?: string;
+  productId: string;
+  quantity: number;
+  availableNow: number;
+  canPromiseToday: boolean;
+  fullFillLocation: string | null;
+  bestLocation: string | null;
+  earliestDate: string | null;
+  shortage: number;
+  reserved?: number;
+  promisedDate?: string | null;
+  promiseAtRisk?: boolean;
+  locations: Array<{ locationId: string; name: string; onHand: number; reserved: number; available: number }>;
+  supply: Array<{ type: string; number: string; expectedDate: string | null; available: number }>;
+  split: Array<{ locationId: string; name: string; quantity: number }>;
+  pegs?: Array<{ supplyType: string; supplyNumber: string; quantity: number; expectedDate: string | null }>;
+}
+
+export interface BackorderRow {
+  orderId: string; number: string; priority: number; partnerName: string; lineId: string; description: string;
+  open: number; reserved: number; backorder: number; promisedDate: string | null; promiseAtRisk: boolean; nextSupply: string | null;
+}
+
+export function useOrderAtp(orderId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['sales', 'atp', orderId],
+    queryFn: async () => (await api.get<{ lines: LineAtp[]; production: { connected: boolean } }>(`/sales/orders/${orderId}/atp`)).data,
+    enabled: !!orderId && enabled,
+  });
+}
+
+export function useBackorders() {
+  return useQuery({ queryKey: ['sales', 'backorders'], queryFn: async () => (await api.get<BackorderRow[]>('/sales/reports/backorders')).data });
+}
+
+export const atpApi = {
+  reserve: async (orderId: string) => (await api.post<{ reserved: number; backorder: number }>(`/sales/orders/${orderId}/reserve`, {})).data,
+};

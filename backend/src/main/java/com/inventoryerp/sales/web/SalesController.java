@@ -3,6 +3,7 @@ package com.inventoryerp.sales.web;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.sales.application.SalesAtpService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
 import com.inventoryerp.sales.application.SalesOrderService;
 import com.inventoryerp.sales.application.SalesQuotationService;
@@ -154,10 +155,12 @@ public final class SalesController {
 
         private final SalesOrderService svc;
         private final SalesOrderChangeService changes;
+        private final SalesAtpService atp;
 
-        public OrderController(SalesOrderService svc, SalesOrderChangeService changes) {
+        public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp) {
             this.svc = svc;
             this.changes = changes;
+            this.atp = atp;
         }
 
         @GetMapping
@@ -249,6 +252,27 @@ public final class SalesController {
             return svc.closeShort(id, lineId, text(b, "reason"));
         }
 
+        @GetMapping("/{id}/atp")
+        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        public Map<String, Object> atp(@PathVariable String id) {
+            svc.require(id);
+            return atp.forOrder(id);
+        }
+
+        @GetMapping("/{id}/reservations")
+        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        public Map<String, Object> reservations(@PathVariable String id) {
+            svc.require(id);
+            return atp.reservationsOf(id);
+        }
+
+        @PostMapping("/{id}/reserve")
+        @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
+        public Map<String, Object> reserve(@PathVariable String id) {
+            svc.require(id);
+            return atp.reserveOrder(id);
+        }
+
         @GetMapping("/{id}/change-requests")
         @RequirePermissions(Permissions.SALES__ORDER_READ)
         public List<Map<String, Object>> changeRequests(@PathVariable String id) {
@@ -307,10 +331,24 @@ public final class SalesController {
 
         private final SalesReportService reports;
         private final SalesSettingsService settings;
+        private final SalesAtpService atp;
 
-        public AdminController(SalesReportService reports, SalesSettingsService settings) {
+        public AdminController(SalesReportService reports, SalesSettingsService settings, SalesAtpService atp) {
             this.reports = reports;
             this.settings = settings;
+            this.atp = atp;
+        }
+
+        @PostMapping("/atp")
+        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        public Map<String, Object> atp(@RequestBody Map<String, Object> b) {
+            return atp.check(body(b));
+        }
+
+        @GetMapping("/reports/backorders")
+        @RequirePermissions(Permissions.SALES__REPORT_READ)
+        public List<Map<String, Object>> backorders() {
+            return atp.backorders();
         }
 
         @GetMapping("/reports/summary")

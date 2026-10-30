@@ -16,7 +16,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S1 | Quotations API in sales + Sales Orders core + amendments + R1 reports + web | R1 | done | S0 |
 | S2 | Pricelists, pricing policy, margin floors, commercial approvals | R1 | done | S1 |
 | S3 | Credit module (limits, exposure, decisions, holds) | R2 | done | S1 |
-| S4 | ATP, reservations, backorders, supply pegs | R2 | todo | S1 |
+| S4 | ATP, reservations, backorders, supply pegs | R2 | done | S1 |
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | todo | S4, fleet 1.4b |
 | S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | todo | S5, accountant answers |
 | S7 | Returns / RMA, claims, quality certificates | R2 | todo | S6 |
@@ -189,8 +189,34 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Deviations: `undeliveredBasis = net` is stored but exposure is always gross (VAT-inclusive) for now; the POS
   checkout keeps its own `CreditStatus` check (frozen POS path) and only contributes its exposure; deposits join S6.
 
+## S4 — as built
+- `V28__sales_atp.sql`: `SalesOrder.priority`, `SalesOrderLine.reservedLocationId` / `promiseAtRisk`,
+  `SalesSupplyPeg` (soft pegs of unreserved demand to expected supply).
+- `SalesAtpService`: ATP per product (per yard on hand / reserved / free, free purchase supply after other lines'
+  pegs, earliest full-fill date, best / full-fill location, split proposal; production reported "not connected");
+  firm reservations on confirm (`StockReservation` sourceType `sales_order_line`) inside the `StockItem` row lock;
+  backorder = unreservable remainder pegged to purchase supply by date; promise-at-risk flag; release on cancel /
+  done; re-plan on close short, amendment and manual "re-plan"; `SalesBackorderJob` every 15 min by priority.
+- SPI `SupplyProvider` (`PurchaseSupplyProvider` now; a production provider from the manufacturing integration).
+- Routes: `POST /sales/atp`, `GET /sales/orders/{id}/atp`, `GET /sales/orders/{id}/reservations`,
+  `POST /sales/orders/{id}/reserve`, `GET /sales/reports/backorders`.
+- Web: Availability panel on the order (reserved / free / short / full-by date / pegs / re-plan), Backorders page.
+- Tests: `SalesAtpIT` (4) incl. two concurrent confirmations against 150 → exactly 150 reserved.
+- Deviations: purchase orders carry no receiving location, so purchase supply is organization-wide (not per yard);
+  stock transfers in transit are not yet counted as supply; variants are not reserved (aggregates / blocks have none).
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
 - S0: rollback is a runbook (copy rows back + drop trigger + revert release) instead of a runtime source flag; a
   dual code path would keep two quotation engines alive, which ADR-S011 §4 forbids.
+
+## Phase S4 — ATP and reservations (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAtpIT'`.
+- Migration: `V28__sales_atp.sql`.
+- Screens: product with 150 t in Yard A and 50 t in Yard B, PO of 300 t due in 10 days. Order 100 t from Yard A →
+  *Confirm* → Availability panel: reserved 100. Second order 100 t from Yard A → reserved 50, short 50, pegged to the
+  PO, "full by" the PO date. Sales → Backorders lists it. Raise Yard A stock → *Re-plan* → fully reserved.
+  Cancel an order → its reservation disappears (Inventory → reservations).
+- Expected GL: none.

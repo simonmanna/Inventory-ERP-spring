@@ -63,15 +63,17 @@ public class SalesOrderService {
     private final SalesPricingEngine engine;
     private final ApprovalsService approvals;
     private final CreditService credit;
+    private final SalesAtpService atp;
     private final DocumentBuilderService builder;
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
-            SalesPricingEngine engine, ApprovalsService approvals, CreditService credit,
+            SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
             DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events) {
         this.credit = credit;
+        this.atp = atp;
         this.engine = engine;
         this.approvals = approvals;
         this.db = db;
@@ -338,6 +340,9 @@ public class SalesOrderService {
         }
         if (in.containsKey("currencyCode") && !blank(str(in.get("currencyCode")))) {
             d.put("currencyCode", str(in.get("currencyCode")));
+        }
+        if (in.containsKey("priority")) {
+            d.put("priority", in.get("priority") instanceof Number n ? n.intValue() : 0);
         }
         for (String k : List.of("requestedDate", "commitmentDate")) {
             if (in.containsKey(k)) {
@@ -627,6 +632,9 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, d, true);
         audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "onHold", hold,
                 "creditDecision", c.id())));
+        if ("confirm".equals(settings.settings().get("reservationTrigger"))) {
+            atp.reserveOrder(id);
+        }
         publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
         if (hold) {
             publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
@@ -692,6 +700,7 @@ public class SalesOrderService {
                 "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "cancel", null, Obj.of("reason", reason)));
+        atp.releaseOrder(id);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("reason", blank(reason) ? null : reason);
         publish(DomainEvents.SALES_ORDER_CANCELLED, id, extra);
@@ -732,6 +741,7 @@ public class SalesOrderService {
         publish(DomainEvents.SALES_ORDER_LINE_CLOSED_SHORT, id, Map.of("lineId", lineId, "quantity",
                 JsNumbers.js(cancel)));
         refreshStatus(id);
+        atp.reserveOrder(id);
         return get(id);
     }
 
@@ -774,6 +784,7 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, d, true);
         if ("done".equals(status)) {
             publish(DomainEvents.SALES_ORDER_DONE, id, Map.of());
+            atp.releaseOrder(id);
         }
     }
 
@@ -801,7 +812,7 @@ public class SalesOrderService {
         params.add(user());
     }
 
-    Map<String, Object> require(String id) {
+    public Map<String, Object> require(String id) {
         StringBuilder where = new StringBuilder(" WHERE o.id = ? AND o.\"organizationId\" = ? AND o.\"deletedAt\" IS"
                 + " NULL");
         List<Object> params = new ArrayList<>(List.of(id, org()));

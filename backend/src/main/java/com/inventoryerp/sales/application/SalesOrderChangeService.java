@@ -51,9 +51,11 @@ public class SalesOrderChangeService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final CreditService credit;
+    private final SalesAtpService atp;
 
     public SalesOrderChangeService(SalesDb db, SalesOrderService orders, DocumentBuilderService builder,
-            SequenceService sequence, AuditService audit, CreditService credit) {
+            SequenceService sequence, AuditService audit, CreditService credit, SalesAtpService atp) {
+        this.atp = atp;
         this.credit = credit;
         this.db = db;
         this.orders = orders;
@@ -146,6 +148,7 @@ public class SalesOrderChangeService {
         audit.record(AuditInput.of("SalesOrder", orderId, "update", before, Obj.of("changeRequest", cr.get("number"),
                 "revision", revision)));
         orders.publish(DomainEvents.SALES_ORDER_AMENDED, orderId, Map.of("revision", revision, "changeRequestId", id));
+        atp.reserveOrder(orderId);
         BigDecimal delta = dec(after.get("total")).subtract(dec(before.get("total")));
         if (delta.signum() > 0) {
             CreditService.Decision c = credit.check("amendment", str(o.get("partnerId")), "sales_order", orderId,
