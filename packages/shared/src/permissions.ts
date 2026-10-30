@@ -110,6 +110,18 @@ export const PERMISSIONS = {
     manage: 'process_costing:manage',
     close: 'process_costing:close',
   },
+  // ---- ADR-PROCUREMENT-001 — Source-to-Pay ----
+  supplier: {
+    read: 'supplier:read',
+    manage: 'supplier:manage',
+    approve: 'supplier:approve',
+    verifyBank: 'supplier:verify_bank',
+  },
+  procurementPolicy: {
+    read: 'procurement_policy:read',
+    manage: 'procurement_policy:manage',
+    approve: 'procurement_policy:approve',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',

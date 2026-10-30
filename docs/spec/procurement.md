@@ -403,3 +403,28 @@ is run. The migration grants them to Administrator, following the ADR-S007 / V12
   `fixedasset`, which creates the asset from `AssetAcquisition` (integration contracts §4).
 - **Equipment spares.** `SupplierProduct` plus a product attribute `compatibleEquipment[]`, so a maintenance work order
   (fleet) can raise a PR with `demandSource=maintenance`.
+
+### Built — wave 2 (policies, suppliers, approvals; `V27__procurement_policy_supplier.sql`)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/procurement/policies/definitions` · `/resolve?key&branchId&categoryId&…` · `/` · `/{id}` | `procurement_policy:read` |
+| POST / PATCH | `/procurement/policies` (draft) · `/{id}` (draft edit) | `procurement_policy:manage` |
+| POST | `/procurement/policies/{id}/approve` (not by the author) | `procurement_policy:approve` |
+| POST | `/procurement/policies/{id}/activate` · `/{id}/cancel` | `procurement_policy:manage` |
+| GET | `/procurement/suppliers` (paged, `search`, `status` incl. `unqualified`) · `/{partnerId}` · `/{partnerId}/eligibility` · `/certificates/expiring?days` · `/price-history?productId&partnerId` | `supplier:read` |
+| PUT | `/procurement/suppliers/{partnerId}/profile` · `/{partnerId}/products` | `supplier:manage` |
+| POST | `/procurement/suppliers/{partnerId}/profile/{approve,provisional,suspend,blacklist,reinstate}` | `supplier:approve` |
+| POST | `/procurement/suppliers/{partnerId}/bank-accounts` · `/bank-accounts/{id}/revoke` · `/{partnerId}/certificates` · `/{partnerId}/prices` | `supplier:manage` |
+| POST | `/procurement/suppliers/bank-accounts/{id}/verify` (not by the person who entered it) | `supplier:verify_bank` |
+| DELETE | `/procurement/suppliers/certificates/{id}` · `/products/{id}` | `supplier:manage` |
+
+Policy keys enforced: `supplier.approvedRequired` (off / warn / block, PO create; suspended / blacklisted suppliers are
+always refused), `supplier.certificatesRequired` (per category, PO create), `route.requisitionRequiredAbove` (PO create
+needs an approved request above the amount), `receiving.overReceiptTolerancePct` (receipt limit). Daily job
+`ProcurementPolicyJob` (`app.procurement.daily-cron`, ShedLock) activates due policies and emits
+`supplier.certificate_expiring`. Approvals: an approval covers the amount it was granted for — a larger amount on
+the same entity opens a new request (`ApprovalsService.checkOrRequestApproval`); a bill's creator cannot approve it
+by posting with `overrideApproval`. Every PO line is recorded in the supplier price history. Tests:
+`ProcurementSupplierPolicyIT`. Web: Supplier Register, Supplier 360, Purchasing Policies (Purchases menu); every
+procurement route is now permission-guarded (`web/src/pages/procurement/routes.tsx`).

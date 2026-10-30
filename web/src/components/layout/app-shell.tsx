@@ -32,6 +32,7 @@ import {
   Shield,
   ShieldCheck,
   ClipboardList,
+  SlidersHorizontal,
   ClipboardCheck,
   PanelLeftClose,
   PanelLeft,
@@ -350,6 +351,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
+      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ClipboardList, permission: PERMISSIONS.procurement.purchaseRequest.read },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
@@ -358,6 +360,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/procurement/landed-cost-vouchers', label: tx('Landed Costs'), icon: Calculator, permission: PERMISSIONS.landedCost.read },
       { to: '/procurement/landed-cost-reports', label: tx('Landed Cost Reports'), icon: BarChart3, permission: PERMISSIONS.landedCost.read },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Banknote, permission: 'payment:read' },
+      { to: '/procurement/suppliers', label: tx('Supplier Register'), icon: Building2, permission: PERMISSIONS.supplier.read },
+      { to: '/procurement/policies', label: tx('Purchasing Policies'), icon: SlidersHorizontal, permission: PERMISSIONS.procurementPolicy.read },
     ],
   },
   {

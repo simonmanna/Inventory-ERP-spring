@@ -1,4 +1,16 @@
 {
+  "supplier.status_changed": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
+  "supplier.bank_account_added": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
+  "supplier.bank_account_verified": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
   "order.confirmed": {
     "entityType": "order",
     "idField": "orderId"

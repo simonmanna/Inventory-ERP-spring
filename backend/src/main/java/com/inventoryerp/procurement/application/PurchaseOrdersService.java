@@ -99,11 +99,16 @@ public class PurchaseOrdersService {
     private final TransactionTemplate newTx;
 
     private final UomConversionService units;
+    private final SupplierService suppliers;
+    private final ProcurementPolicyService policies;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
-            CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units) {
+            CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
+            SupplierService suppliers, ProcurementPolicyService policies) {
         this.jdbc = jdbc;
+        this.suppliers = suppliers;
+        this.policies = policies;
         this.units = units;
         this.sequence = sequence;
         this.events = events;
@@ -172,6 +177,24 @@ public class PurchaseOrdersService {
         BigDecimal sub = subtotal;
         BigDecimal taxes = taxAmount;
 
+        // ADR-PROCUREMENT-001 policies (no active policy = the behaviour before policies existed).
+        SupplierService.Eligibility eligibility = suppliers.eligibilityForProducts(dto.partnerId(), dto.branchId(),
+                dto.lines().stream().map(LineInput::productId).toList(), java.time.LocalDate.now());
+        if (!eligibility.eligible()) {
+            throw ApiException.badRequest("Cannot order from this supplier: " + String.join("; ", eligibility.blocked()));
+        }
+        BigDecimal requisitionAbove = policies.number(ProcurementPolicyRegistry.ROUTE_REQUISITION_REQUIRED_ABOVE,
+                ProcurementPolicyService.PolicyContext.branch(dto.branchId()));
+        if (requisitionAbove != null && total.compareTo(requisitionAbove) > 0) {
+            String prStatus = dto.requestId() == null || dto.requestId().isEmpty() ? null : jdbc.sql("SELECT"
+                    + " status::text FROM \"PurchaseRequest\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(dto.requestId(), orgId).query(String.class).optional().orElse(null);
+            if (!"approved".equals(prStatus) && !"converted".equals(prStatus)) {
+                throw ApiException.badRequest("Orders above " + JsNumbers.dec(requisitionAbove) + " must be raised from"
+                        + " an approved purchase request");
+            }
+        }
+
         // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : dto.lines()) {
@@ -226,6 +249,14 @@ public class PurchaseOrdersService {
 
         audit.record(AuditInput.of("PurchaseOrder", (String) order.get("id"), "create", null,
                 defined("orderNumber", orderNumber, "totalAmount", JsNumbers.js(total), "paymentType", dto.paymentType())));
+        // Price history (one observation per order line product; ignored on replay).
+        for (LineInput ln : dto.lines()) {
+            suppliers.recordPrice(dto.partnerId(), ln.productId(), ln.unitOfMeasureId(), (String) order.get("currencyCode"),
+                    ln.unitPrice(), ln.quantity(), null, null, "purchase_order", (String) order.get("id"));
+        }
+        if (!eligibility.warnings().isEmpty()) {
+            order.put("warnings", eligibility.warnings());
+        }
         events.publish("purchase_order.created", defined("organizationId", orgId, "orderId", order.get("id"),
                 "orderNumber", orderNumber, "partnerId", dto.partnerId()));
         return order;
@@ -368,16 +399,21 @@ public class PurchaseOrdersService {
             }
             addByLine.merge(lineId, ln.quantity(), BigDecimal::add);
         }
-        // Over-receipt is a hard block (no tolerance) — check every affected line first.
+        // Over-receipt beyond the tolerance (policy receiving.overReceiptTolerancePct, default 0 = hard block) is
+        // refused — check every affected line first.
+        BigDecimal tolerancePct = Money.dec(policies.number(ProcurementPolicyRegistry.RECEIVING_OVER_RECEIPT_TOLERANCE,
+                ProcurementPolicyService.PolicyContext.branch((String) po.get("branchId"))));
         for (Map.Entry<String, BigDecimal> e : addByLine.entrySet()) {
             Map<String, Object> poLine = byId.get(e.getKey());
             BigDecimal ordered = Money.dec(poLine.get("quantity"));
             BigDecimal already = Money.dec(poLine.get("receivedQuantity"));
             BigDecimal adding = e.getValue();
-            if (already.add(adding).compareTo(ordered) > 0) {
+            BigDecimal limit = ordered.add(Money.div(ordered.multiply(tolerancePct), BigDecimal.valueOf(100)));
+            if (already.add(adding).compareTo(limit) > 0) {
                 throw ApiException.badRequest("Over-receiving PO line \"" + poLine.get("description") + "\": ordered "
                         + JsNumbers.dec(ordered) + ", already received " + JsNumbers.dec(already)
-                        + ", trying to receive " + JsNumbers.dec(adding));
+                        + ", trying to receive " + JsNumbers.dec(adding)
+                        + (tolerancePct.signum() > 0 ? " (tolerance " + JsNumbers.dec(tolerancePct) + "%)" : ""));
             }
         }
         for (Map.Entry<String, BigDecimal> e : addByLine.entrySet()) {

@@ -33,10 +33,10 @@ export function PurchaseOrderPayPage() {
 
   const payMut = useMutation({
     mutationFn: async () =>
-      (await idempotentPost(`/procurement/purchase-orders/${id}/pay`, {
+      await idempotentPost(`/procurement/purchase-orders/${id}/pay`, {
         amount: amount ? Number(amount) : undefined,
         reference: reference || undefined,
-      })).data,
+      }),
     onSuccess: () => {
       notify.success(tx('Payment recorded'));
       qc.invalidateQueries({ queryKey: ['purchase-order', id] });

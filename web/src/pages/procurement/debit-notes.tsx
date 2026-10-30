@@ -34,7 +34,7 @@ export function DebitNotesPage() {
   });
   const act = useMutation({
     mutationFn: async (vars: { id: string; action: 'post' | 'cancel' }) =>
-      (await idempotentPatch(`/procurement/debit-notes/${vars.id}/${vars.action}`)).data,
+      await idempotentPatch(`/procurement/debit-notes/${vars.id}/${vars.action}`),
     onSuccess: () => {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['debit-notes'] });

@@ -31,6 +31,7 @@ import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
 import { ModulesPage } from '@/pages/modules';
 import { crmRoutes } from '@/pages/crm/routes';
+import { procurementRoutes } from '@/pages/procurement/routes';
 import { BackupPage } from '@/pages/settings/BackupPage';
 import { AssetDashboardPage } from '@/pages/fixed-asset/AssetDashboardPage';
 import { AssetCategoriesPage } from '@/pages/fixed-asset/AssetCategoriesPage';
@@ -120,25 +121,10 @@ import { JournalEntryCreatePage } from '@/pages/accounting/journal-entry-create'
 import { JournalEntryDetailPage } from '@/pages/accounting/journal-entry-detail';
 import { InventoryPostingRulesPage } from '@/pages/accounting/inventory-posting-rules';
 import { ProductEditPage } from '@/pages/products/ProductEditPage';
-import { PurchaseRequestsPage } from '@/pages/procurement/purchase-requests';
-import { PurchaseOrdersPage } from '@/pages/procurement/purchase-orders';
-import { PurchaseOrderCreatePage } from '@/pages/procurement/purchase-order-create';
-import { PurchaseOrderDetailPage } from '@/pages/procurement/PurchaseOrderDetailPage';
-import { PurchaseOrderReceivePage } from '@/pages/procurement/PurchaseOrderReceivePage';
-import { PurchaseOrderPayPage } from '@/pages/procurement/PurchaseOrderPayPage';
-import { GoodsReceiptsPage } from '@/pages/procurement/goods-receipts';
 import { CostPoliciesPage } from '@/pages/costing/CostPoliciesPage';
 import { StandardCostsPage } from '@/pages/costing/StandardCostsPage';
 import { ProcessCostingPage } from '@/pages/costing/ProcessCostingPage';
 import { CostCenterAccountingPage } from '@/pages/costing/CostCenterAccountingPage';
-import { LandedCostVouchersPage, LandedCostVoucherEditPage, LandedCostVoucherDetailPage } from '@/pages/costing/LandedCostVouchersPage';
-import { ShipmentsPage } from '@/pages/costing/ShipmentsPage';
-import { LandedCostReportsPage } from '@/pages/costing/LandedCostReportsPage';
-import { GoodsReceiptCreatePage } from '@/pages/procurement/goods-receipt-create';
-import GoodsReceiptDetailPage from '@/pages/procurement/goods-receipt-detail';
-import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
-import { DebitNotesPage } from '@/pages/procurement/debit-notes';
-import { DebitNoteCreatePage } from '@/pages/procurement/debit-note-create';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -432,30 +418,13 @@ export function App() {
           <Route path="/inventory/ledger" element={<StockLedgerPage />} />
           <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
           <Route path="/inventory/locations" element={<LocationsPage />} />
-          <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
-          <Route path="/procurement/purchase-orders" element={<PurchaseOrdersPage />} />
-          <Route path="/procurement/purchase-orders/new" element={<PurchaseOrderCreatePage />} />
-          <Route path="/procurement/purchase-orders/:id/receive" element={<PurchaseOrderReceivePage />} />
-          <Route path="/procurement/purchase-orders/:id/pay" element={<PurchaseOrderPayPage />} />
-          <Route path="/procurement/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
-          <Route path="/procurement/goods-receipts" element={<GoodsReceiptsPage />} />
-          <Route path="/procurement/goods-receipts/new" element={<GoodsReceiptCreatePage />} />
-          <Route path="/procurement/goods-receipts/:id" element={<GoodsReceiptDetailPage />} />
-          <Route path="/procurement/landed-cost-vouchers" element={<LandedCostVouchersPage />} />
-          <Route path="/procurement/landed-cost-vouchers/new" element={<LandedCostVoucherEditPage />} />
-          <Route path="/procurement/landed-cost-vouchers/:id" element={<LandedCostVoucherDetailPage />} />
-          <Route path="/procurement/landed-cost-vouchers/:id/edit" element={<LandedCostVoucherEditPage />} />
-          <Route path="/procurement/shipments" element={<ShipmentsPage />} />
-          <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
           <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
-          <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
-          <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
-          <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/new" element={<TaskEditPage />} />
           <Route path="/tasks/:id/edit" element={<TaskEditPage />} />
           {/* CRM sales suite (ADR-S010) — pages/crm/routes.tsx; /crm/deals links redirect */}
           {crmRoutes}
+          {procurementRoutes}
 
                   </Route>
                 </Route>

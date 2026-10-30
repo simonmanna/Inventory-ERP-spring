@@ -299,6 +299,13 @@ public class VendorBillService {
             if (!TenantContext.permissions().contains("approvals:decide")) {
                 throw ApiException.forbidden("You do not have approvals:decide permission");
             }
+            // P1-5 (ADR-PROCUREMENT-001): segregation of duties — whoever raised the bill / its approval request cannot
+            // also approve it by posting with override.
+            String requester = jdbc.sql("SELECT \"createdById\" FROM \"ApprovalRequest\" WHERE id = ?").param(pending)
+                    .query(String.class).optional().orElse(null);
+            if (userId != null && (userId.equals(requester) || userId.equals(doc.get("createdBy")))) {
+                throw ApiException.forbidden("You cannot approve a bill you created — another approver must decide");
+            }
             jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'approved', \"decidedAt\" = now(), \"updatedAt\" = now()"
                     + " WHERE id = ?").param(pending).update();
             audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));

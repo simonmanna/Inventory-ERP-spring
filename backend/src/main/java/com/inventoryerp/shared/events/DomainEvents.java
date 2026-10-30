@@ -58,6 +58,10 @@ public final class DomainEvents {
     public static final String THREE_WAY_MATCH_COMPUTED = "three_way_match.computed";
     public static final String DEBIT_NOTE_CREATED = "debit_note.created";
     public static final String DEBIT_NOTE_POSTED = "debit_note.posted";
+    public static final String SUPPLIER_STATUS_CHANGED = "supplier.status_changed";
+    public static final String SUPPLIER_BANK_ACCOUNT_ADDED = "supplier.bank_account_added";
+    public static final String SUPPLIER_BANK_ACCOUNT_VERIFIED = "supplier.bank_account_verified";
+    public static final String SUPPLIER_CERTIFICATE_EXPIRING = "supplier.certificate_expiring";
     public static final String DOCUMENT_CREATED = "document.created";
     public static final String DOCUMENT_SUBMITTED = "document.submitted";
     public static final String DOCUMENT_APPROVED = "document.approved";

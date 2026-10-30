@@ -51,7 +51,7 @@ export function PurchaseOrderReceivePage() {
 
   const receiveMut = useMutation({
     mutationFn: async () =>
-      (await idempotentPost(`/procurement/purchase-orders/${id}/receive`, {
+      idempotentPost(`/procurement/purchase-orders/${id}/receive`, {
         warehouseId,
         notes,
         lines: po.data?.lines
@@ -63,7 +63,7 @@ export function PurchaseOrderReceivePage() {
             quantity: receivedQtys[l.id] ?? l.quantity,
             unitCost: l.unitPrice,
           })) ?? [],
-      })).data,
+      }),
     onSuccess: (res: any) => {
       if (res?.approvalRequired) {
         notify.success(tx('Receipt {{v1}} saved as a draft — awaiting goods-receipt approval before stock is posted', { v1: res.grn?.receiptNumber ?? '' }));

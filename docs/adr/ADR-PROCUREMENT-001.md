@@ -1,7 +1,7 @@
 # ADR-PROCUREMENT-001: Enterprise Source-to-Pay architecture
 
-- Status: **Proposed**. Owner approval is needed before the first P1 build. P0 fixes may proceed under the existing
-  post-parity fix rule.
+- Status: **Accepted** (owner instruction 2026-10-30: build P0–P5 with the proposed defaults; decisions in
+  `docs/DECISIONS_FOR_OWNER.md`).
 - Brief: Enterprise Procurement & Source-to-Pay Architecture Audit (2026-10-30)
 - Evidence: [`docs/audit/procurement-current-state-audit.md`](../audit/procurement-current-state-audit.md)
 - Specs: [`spec/procurement.md`](../spec/procurement.md#target-source-to-pay-design-adr-procurement-001),
@@ -43,7 +43,11 @@ duplicate inventory, AP, payment or GL engine may be introduced.
 | MRP demand | **manufacturing** | calls a new procurement port `PurchaseDemandPort.raise(...)` instead of inserting rows |
 | Capital purchases | **fixedasset** | receives an `asset.acquired` hand-off from GRN or bill |
 
-### 2. Payments: a single engine
+### 2. Payments: a single engine (revised in wave 1)
+
+**Revision (2026-10-30):** the audit's P0-4 correction showed the two paths settle different liabilities (receipt
+vouchers vs. bill residuals), so merging them would be unsafe. The PO `pay` route is kept, refuses unapproved orders
+and is capped at what posted receipts vouchered; bills keep `PaymentService`. The original text follows for history.
 
 `PurchasePayment` stops being written for new transactions once owner decision OD-3 is approved. The parity routes
 change as follows:
