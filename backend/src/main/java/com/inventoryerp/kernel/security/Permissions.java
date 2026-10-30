@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (452 permissions). Constant name = GROUP__ACTION.
+ * exactly (455 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -457,6 +457,9 @@ public final class Permissions {
     public static final String FLEET_INCIDENT__CREATE = "fleet_incident:create";
     public static final String FLEET_INCIDENT__UPDATE = "fleet_incident:update";
     public static final String FLEET_INCIDENT__CHARGE = "fleet_incident:charge";
+    public static final String FLEET_FREIGHT__READ = "fleet_freight:read";
+    public static final String FLEET_FREIGHT__BILL = "fleet_freight:bill";
+    public static final String FLEET_FREIGHT__APPROVE_VARIANCE = "fleet_freight:approve_variance";
     public static final String WEIGHBRIDGE__READ = "weighbridge:read";
     public static final String WEIGHBRIDGE__WEIGH = "weighbridge:weigh";
     public static final String WEIGHBRIDGE__MANUAL_ENTRY = "weighbridge:manual_entry";
@@ -912,6 +915,9 @@ public final class Permissions {
             "fleet_incident:create",
             "fleet_incident:update",
             "fleet_incident:charge",
+            "fleet_freight:read",
+            "fleet_freight:bill",
+            "fleet_freight:approve_variance",
             "weighbridge:read",
             "weighbridge:weigh",
             "weighbridge:manual_entry",

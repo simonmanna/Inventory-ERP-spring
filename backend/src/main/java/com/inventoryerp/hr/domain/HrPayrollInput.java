@@ -50,6 +50,9 @@ public class HrPayrollInput {
     @Column(name = "debitAccountId")
     private String debitAccountId;
 
+    @Column(name = "creditAccountId")
+    private String creditAccountId;
+
     @Column(name = "source", nullable = false)
     private String source;
 

@@ -625,6 +625,11 @@
     "update": "fleet_incident:update",
     "charge": "fleet_incident:charge"
   },
+  "fleetFreight": {
+    "read": "fleet_freight:read",
+    "bill": "fleet_freight:bill",
+    "approveVariance": "fleet_freight:approve_variance"
+  },
   "weighbridge": {
     "read": "weighbridge:read",
     "weigh": "weighbridge:weigh",

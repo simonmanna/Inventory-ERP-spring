@@ -139,11 +139,13 @@ public final class FleetCommands {
             LocalDate issuedOn,
             LocalDate expiresOn,
             @Min(0) @Max(365) Integer reminderLeadDays,
+            @DecimalMin("0") @DecimalMax("9999999999999999.99") @Digits(integer = 16, fraction = 2)
+            BigDecimal costAmount,
             @Size(max = 2000) String notes) {}
 
     /** Fields of a compliance document that a PATCH may clear. */
     public static final List<String> COMPLIANCE_CLEARABLE = List.of("documentNumber", "issuer", "issuedOn",
-            "expiresOn", "notes");
+            "expiresOn", "notes", "costAmount");
 
     /** Edit a compliance document. */
     public record CompliancePatch(
@@ -154,6 +156,8 @@ public final class FleetCommands {
             LocalDate issuedOn,
             LocalDate expiresOn,
             @Min(0) @Max(365) Integer reminderLeadDays,
+            @DecimalMin("0") @DecimalMax("9999999999999999.99") @Digits(integer = 16, fraction = 2)
+            BigDecimal costAmount,
             @Size(max = 2000) String notes,
             List<String> clear) {}
 
@@ -164,6 +168,8 @@ public final class FleetCommands {
             LocalDate issuedOn,
             @NotNull LocalDate expiresOn,
             @Min(0) @Max(365) Integer reminderLeadDays,
+            @DecimalMin("0") @DecimalMax("9999999999999999.99") @Digits(integer = 16, fraction = 2)
+            BigDecimal costAmount,
             @Size(max = 2000) String notes) {}
 
     /** Vehicle list filters. */

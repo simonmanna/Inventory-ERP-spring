@@ -166,6 +166,10 @@ public final class DomainEvents {
     public static final String FLEET_TRIP_CLOSED = "fleet.trip.closed";
     public static final String FLEET_TRIP_RETURNED = "fleet.trip.returned";
     public static final String FLEET_DELIVERY_DISCREPANCY_DECIDED = "fleet.delivery.discrepancy_decided";
+    public static final String FLEET_FREIGHT_BILL_MATCHED = "fleet.freight_bill.matched";
+    public static final String FLEET_REMINDER_DUE = "fleet.reminder.due";
+    public static final String HR_PAYROLL_INPUTS_INCLUDED = "hr.payroll.inputs_included";
+    public static final String HR_PAYROLL_INPUTS_REOPENED = "hr.payroll.inputs_reopened";
     public static final String WEIGHBRIDGE_TICKET_COMPLETED = "weighbridge.ticket.completed";
     public static final String WEIGHBRIDGE_EXCEPTION_RAISED = "weighbridge.exception.raised";
     public static final String WEIGHBRIDGE_TICKET_VOIDED = "weighbridge.ticket.voided";

@@ -13,6 +13,7 @@ import com.inventoryerp.fleet.application.FleetIncidentCommands.ReverseChargeInp
 import com.inventoryerp.fleet.domain.FleetFine;
 import com.inventoryerp.fleet.domain.FleetFineDeduction;
 import com.inventoryerp.fleet.domain.FleetIncident;
+import com.inventoryerp.hr.application.HrPayrollInputService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.BusinessZone;
@@ -65,10 +66,15 @@ public class FleetFineService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private final HrPayrollInputService payrollInputs;
+
+    /** Source of the hr payroll deduction input of a fine deduction (fleet 1.9 wiring). */
+    static final String PAYROLL_SOURCE = "fleet_fine_deduction";
 
     public FleetFineService(FleetDb db, FleetVehicleService vehicles, FleetEmployeeLookup employees,
             ExpensesService expenses, AccountResolverService accounts, SequenceService sequence, AuditService audit,
-            EventBus events) {
+            EventBus events, HrPayrollInputService payrollInputs) {
+        this.payrollInputs = payrollInputs;
         this.db = db;
         this.vehicles = vehicles;
         this.employees = employees;
@@ -311,6 +317,7 @@ public class FleetFineService {
             Map<String, Object> d = db.insert(FleetFineDeduction.class, Obj.of("fineId", id, "employeeId", employeeId,
                     "amount", amount, "status", "pending", "requestedAt", now, "requestedBy", TenantContext.userId()));
             deductionId = (String) d.get("id");
+            queuePayrollDeduction(d, number, (String) f.get("offence"));
             data.put("deductionId", deductionId);
             data.put("expenseId", null);
             if (f.get("driverEmployeeId") == null) {
@@ -356,6 +363,7 @@ public class FleetFineService {
                         + " was already settled through payroll; refund it in payroll instead");
             }
             if (d != null && !"cancelled".equals(d.get("status"))) {
+                releasePayrollDeduction(d, "Fine " + number + " charge reversed: " + reason);
                 Map<String, Object> cancelled = db.update(FleetFineDeduction.class, (String) d.get("id"),
                         Obj.of("status", "cancelled", "cancelledAt", Instant.now(), "cancelReason", reason));
                 Map<String, Object> payload = deductionPayload(f, cancelled);
@@ -416,6 +424,9 @@ public class FleetFineService {
         Map<String, Object> data = "exported".equals(in.status())
                 ? Obj.of("status", "exported", "exportedAt", now, "exportReference", ref)
                 : Obj.of("status", "settled", "settledAt", now, "settledReference", ref);
+        // Handled outside the in-app payroll: its queued deduction input is withdrawn (refused once in a run).
+        releasePayrollDeduction(d, "Fine deduction marked " + in.status() + " manually");
+        data.put("payrollInputId", null);
         Map<String, Object> after = db.update(FleetFineDeduction.class, deductionId, data);
         if ("settled".equals(in.status())) {
             db.jdbc().sql("UPDATE \"FleetFine\" SET status = 'settled', \"settledAt\" = ?, \"updatedAt\" = "
@@ -425,6 +436,79 @@ public class FleetFineService {
         audit.recordInTx(AuditInput.of("FleetFineDeduction", deductionId, "update", Obj.of("status", d.get("status")),
                 Obj.of("status", in.status(), "reference", ref)));
         return after;
+    }
+
+    // ------------------------------------------------------------------ hr payroll (fleet 1.9)
+
+    /**
+     * Liability the payroll journal credits for a fine withheld from a driver's pay (2186, mapping key
+     * {@code fleet_fine_deductions_payable}); the company settles the authority from it.
+     */
+    public String fineDeductionsPayableAccount() {
+        return accounts.ensureByCode("2186", "Traffic Fines Withheld from Drivers", "current_liability",
+                "fleet_fine_deductions_payable");
+    }
+
+    /**
+     * Queue the deduction in hr payroll (the employee's next run subtracts it from net pay). An inactive employee
+     * cannot be paid through payroll: the request then stays pending for manual settlement.
+     */
+    private void queuePayrollDeduction(Map<String, Object> d, String fineNumber, String offence) {
+        Boolean active = db.jdbc().sql("SELECT \"isActive\" FROM \"HrEmployee\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"deletedAt\" IS NULL").params(d.get("employeeId"), FleetDb.org()).query(Boolean.class)
+                .optional().orElse(false);
+        if (!Boolean.TRUE.equals(active)) {
+            return;
+        }
+        String name = "Traffic fine " + fineNumber + (offence == null ? "" : " · " + offence);
+        Map<String, Object> input = payrollInputs.addDeduction((String) d.get("employeeId"),
+                name.length() > 120 ? name.substring(0, 120) : name, SqlRows.dec(d, "amount"),
+                LocalDate.now(BusinessZone.get()), fineDeductionsPayableAccount(), PAYROLL_SOURCE, (String) d.get("id"));
+        db.update(FleetFineDeduction.class, (String) d.get("id"), Obj.of("payrollInputId", input.get("id")));
+    }
+
+    /** Withdraw the queued hr deduction of a request (no-op when none); hr refuses once a run holds it. */
+    private void releasePayrollDeduction(Map<String, Object> d, String reason) {
+        if (d.get("payrollInputId") == null || payrollInputs.find(PAYROLL_SOURCE, (String) d.get("id")) == null) {
+            return;
+        }
+        payrollInputs.cancel(PAYROLL_SOURCE, (String) d.get("id"), reason);
+    }
+
+    /**
+     * hr included the deduction in an approved payroll run: the request and its fine are settled (subscriber of
+     * {@code hr.payroll.inputs_included}; idempotent).
+     */
+    @Transactional
+    public void payrollIncluded(String deductionId, String runNumber) {
+        Map<String, Object> d = db.byId(FleetFineDeduction.class, deductionId, true);
+        if (d == null || !List.of("pending", "exported").contains(d.get("status"))) {
+            return;
+        }
+        Instant now = Instant.now();
+        db.update(FleetFineDeduction.class, deductionId, Obj.of("status", "settled", "settledAt", now,
+                "settledReference", runNumber == null ? "Payroll" : "Payroll " + runNumber));
+        db.jdbc().sql("UPDATE \"FleetFine\" SET status = 'settled', \"settledAt\" = ?, \"updatedAt\" = "
+                + FleetDb.NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deductionId\" = ? AND status ="
+                + " 'charged'").params(SqlRows.ts(now), d.get("fineId"), FleetDb.org(), deductionId).update();
+        audit.recordInTx(AuditInput.of("FleetFineDeduction", deductionId, "update", Obj.of("status", d.get("status")),
+                Obj.of("status", "settled", "reference", runNumber)));
+    }
+
+    /** The approved payroll run was reversed: the deduction waits for the next run again (idempotent). */
+    @Transactional
+    public void payrollReopened(String deductionId) {
+        Map<String, Object> d = db.byId(FleetFineDeduction.class, deductionId, true);
+        if (d == null || !"settled".equals(d.get("status")) || d.get("payrollInputId") == null) {
+            return;
+        }
+        db.update(FleetFineDeduction.class, deductionId, Obj.of("status", "pending", "settledAt", null,
+                "settledReference", null));
+        db.jdbc().sql("UPDATE \"FleetFine\" SET status = 'charged', \"settledAt\" = NULL, \"updatedAt\" = "
+                + FleetDb.NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deductionId\" = ? AND status ="
+                + " 'settled'").params(d.get("fineId"), FleetDb.org(), deductionId).update();
+        audit.recordInTx(AuditInput.of("FleetFineDeduction", deductionId, "update", Obj.of("status", "settled"),
+                Obj.of("status", "pending", "reason", "payroll run reversed")));
     }
 
     // ------------------------------------------------------------------ expense outcome (subscriber)
