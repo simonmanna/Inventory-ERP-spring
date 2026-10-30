@@ -108,12 +108,13 @@ public class StageExecutionService implements StageCheckpointResults {
     private final QualityService quality;
     private final AuditService audit;
     private final ObjectProvider<StageQcCheckpointHook> hooks;
+    private final ObjectProvider<StageGateListener> gateListeners;
 
     public StageExecutionService(MfgDb db, ProductionService production, StageSetupService setup, StockService stock,
             StockPostingService stockPosting, StockReversalService stockReversal,
             StockReservationService reservations, StandardCostService standards, PostingService posting,
             AccountResolverService accounts, UomConversionService uom, QualityService quality, AuditService audit,
-            ObjectProvider<StageQcCheckpointHook> hooks) {
+            ObjectProvider<StageQcCheckpointHook> hooks, ObjectProvider<StageGateListener> gateListeners) {
         this.db = db;
         this.production = production;
         this.setup = setup;
@@ -128,6 +129,7 @@ public class StageExecutionService implements StageCheckpointResults {
         this.quality = quality;
         this.audit = audit;
         this.hooks = hooks;
+        this.gateListeners = gateListeners;
     }
 
     // ================================================================== initialize
@@ -191,6 +193,7 @@ public class StageExecutionService implements StageCheckpointResults {
             row.put("isLast", last);
             row.put("qcGate", gate);
             row.put("qcCheckpointCode", s == null ? null : s.get("qcCheckpointCode"));
+            row.put("minCuringDays", s == null || s.get("minCuringDays") == null ? 0 : s.get("minCuringDays"));
             row.put("status", "pending");
             row.put("qcStatus", gate ? "pending" : "not_required");
             db.insert(ProductionOrderStage.class, row);
@@ -580,12 +583,25 @@ public class StageExecutionService implements StageCheckpointResults {
         if (decision.passed() && "passed".equals(s.get("qcStatus")) && held.signum() <= 0) {
             return view(str(s, "orderId"));
         }
+        if (decision.passed()) {
+            // ADR-S014 (2.4): a pass before the minimum curing time is over waits (qcStatus curing) until it is due.
+            Instant due = CuringHold.passDueAt(s, curingStart(s));
+            if (due != null && Instant.now().isBefore(due)) {
+                db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "curing", "qcPassDueAt", due,
+                        "qcReference", decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(),
+                        "qcDecidedBy", TenantContext.userId()));
+                audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "update", null, Obj.of("orderCode",
+                        order.get("orderCode"), "curingUntil", due.toString(), "reference", decision.reference())));
+                return view(str(s, "orderId"));
+            }
+        }
         if (!decision.passed()) {
-            db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "failed", "qcReference",
+            db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "failed", "qcPassDueAt", null, "qcReference",
                     decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(), "qcDecidedBy",
                     TenantContext.userId()));
             audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "reject", null, Obj.of("orderCode",
                     order.get("orderCode"), "reference", decision.reference())));
+            gateListeners.orderedStream().forEach(l -> l.gateDecided(stageId, "failed"));
             return view(str(s, "orderId"));
         }
         Ctx c = ctx(s, order);
@@ -600,13 +616,38 @@ public class StageExecutionService implements StageCheckpointResults {
             line(pid, s, "qc_release", str(s, "outputProductId"), held, BigDecimal.ZERO, dest, null, null, null, null,
                     decision.reference());
         }
-        db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "passed", "qcReference",
+        db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "passed", "qcPassDueAt", null, "qcReference",
                 decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(), "qcDecidedBy",
                 TenantContext.userId()));
         refresh(str(s, "orderId"));
         audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "approve", null, Obj.of("orderCode",
                 order.get("orderCode"), "released", JsNumbers.dec(held), "reference", decision.reference())));
+        gateListeners.orderedStream().forEach(l -> l.gateDecided(stageId, "passed"));
         return view(str(s, "orderId"));
+    }
+
+    /**
+     * Start of the curing clock of a gated stage (ADR-S014): the latest output of the stage before it (the units
+     * that entered curing), else the stage's own latest output; null when nothing was posted.
+     */
+    Instant curingStart(Map<String, Object> stage) {
+        List<Map<String, Object>> all = stages(str(stage, "orderId"));
+        String prevId = null;
+        for (Map<String, Object> e : all) {
+            if (num(e) < num(stage)) {
+                prevId = str(e, "id");
+            }
+        }
+        String sql = "SELECT max(\"postedAt\") FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ?"
+                + " AND \"stageId\" = ? AND kind = 'output' AND \"reversedAt\" IS NULL";
+        Instant start = prevId == null ? null : maxPostedAt(sql, prevId);
+        return start != null ? start : maxPostedAt(sql, str(stage, "id"));
+    }
+
+    private Instant maxPostedAt(String sql, String stageId) {
+        java.time.LocalDateTime at = db.jdbc().sql(sql).params(MfgDb.org(), stageId)
+                .query(java.time.LocalDateTime.class).optional().orElse(null);
+        return at == null ? null : at.toInstant(java.time.ZoneOffset.UTC);
     }
 
     // ================================================================== reversal

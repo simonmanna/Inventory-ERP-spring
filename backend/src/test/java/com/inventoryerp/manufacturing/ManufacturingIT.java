@@ -404,6 +404,7 @@ class ManufacturingIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without token, 403 without permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(131);
+        // 131 + 26 precast routes (ADR-S014, 2.4).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(157);
     }
 }

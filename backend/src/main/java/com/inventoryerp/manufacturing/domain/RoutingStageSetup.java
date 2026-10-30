@@ -53,6 +53,10 @@ public class RoutingStageSetup {
     @Column(name = "qcCheckpointCode")
     private String qcCheckpointCode;
 
+    /** ADR-S014 (2.4): days the gated output must cure before the gate can pass. */
+    @Column(name = "minCuringDays", nullable = false)
+    private Integer minCuringDays;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "materialProductIds", nullable = false)
     private String materialProductIds;
