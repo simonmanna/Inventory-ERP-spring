@@ -96,10 +96,12 @@ public class WeighbridgeTicketService {
     private final AuditService audit;
     private final EventBus events;
     private final TransactionTemplate tx;
+    private final WeighbridgeTripFeed tripFeed;
 
     public WeighbridgeTicketService(FleetDb db, WeighbridgeStationService stations, WeighbridgeUnits units,
             ApprovalsService approvals, ApprovalAdminService approvalAdmin, GoodsReceiptsService goodsReceipts,
-            SequenceService sequence, AuditService audit, EventBus events, PlatformTransactionManager txm) {
+            SequenceService sequence, AuditService audit, EventBus events, PlatformTransactionManager txm,
+            WeighbridgeTripFeed tripFeed) {
         this.db = db;
         this.stations = stations;
         this.units = units;
@@ -110,13 +112,15 @@ public class WeighbridgeTicketService {
         this.audit = audit;
         this.events = events;
         this.tx = new TransactionTemplate(txm);
+        this.tripFeed = tripFeed;
     }
 
     // ================================================================== queries
 
     private static final String SELECT = "SELECT t.*, s.code AS \"s_code\", s.name AS \"s_name\", pa.name AS"
             + " \"pa_name\", tp.name AS \"tp_name\", p.code AS \"p_code\", p.name AS \"p_name\", v.code AS \"v_code\","
-            + " d.code AS \"d_code\", ou.code AS \"ou_code\", nu.code AS \"nu_code\", po.\"orderNumber\" AS \"po_number\""
+            + " d.code AS \"d_code\", ou.code AS \"ou_code\", nu.code AS \"nu_code\", po.\"orderNumber\" AS \"po_number\","
+            + " fl.code AS \"fl_code\", fl.status AS \"fl_status\", fo.code AS \"fo_code\""
             + " FROM \"WeighbridgeTicket\" t JOIN \"WeighbridgeStation\" s ON s.id = t.\"stationId\""
             + " LEFT JOIN \"Partner\" pa ON pa.id = t.\"partnerId\" AND pa.\"organizationId\" = t.\"organizationId\""
             + " LEFT JOIN \"Partner\" tp ON tp.id = t.\"transporterPartnerId\" AND tp.\"organizationId\" ="
@@ -125,7 +129,9 @@ public class WeighbridgeTicketService {
             + " LEFT JOIN \"FleetDriver\" d ON d.id = t.\"driverId\""
             + " LEFT JOIN \"UnitOfMeasure\" ou ON ou.id = t.\"orderedUomId\" LEFT JOIN \"UnitOfMeasure\" nu ON nu.id ="
             + " t.\"netUomId\" LEFT JOIN \"PurchaseOrder\" po ON po.id = t.\"purchaseOrderId\" AND po.\"organizationId\""
-            + " = t.\"organizationId\"";
+            + " = t.\"organizationId\" LEFT JOIN \"FleetLoad\" fl ON fl.id = t.\"tripId\" AND fl.\"organizationId\" ="
+            + " t.\"organizationId\" LEFT JOIN \"FleetDeliveryOrder\" fo ON fo.id = t.\"deliveryOrderId\" AND"
+            + " fo.\"organizationId\" = t.\"organizationId\"";
 
     /** The ticket queue: filters, search, newest first, {@code {data, meta}}. */
     @Transactional(readOnly = true)
@@ -259,6 +265,10 @@ public class WeighbridgeTicketService {
         t.put("driver", r.get("driverId") == null ? null : Obj.of("id", r.get("driverId"), "code", r.get("d_code")));
         t.put("purchaseOrder", r.get("purchaseOrderId") == null ? null : Obj.of("id", r.get("purchaseOrderId"),
                 "orderNumber", r.get("po_number")));
+        t.put("trip", r.get("tripId") == null ? null : Obj.of("id", r.get("tripId"), "code", r.get("fl_code"), "status",
+                r.get("fl_status")));
+        t.put("deliveryOrder", r.get("deliveryOrderId") == null ? null : Obj.of("id", r.get("deliveryOrderId"), "code",
+                r.get("fo_code")));
         t.put("orderedUomCode", r.get("ou_code"));
         t.put("netUomCode", r.get("nu_code"));
         return t;
@@ -330,7 +340,8 @@ public class WeighbridgeTicketService {
         header.put("orderedUomId", in.orderedUomId());
         header.put("locationId", in.locationId());
         header.put("notes", in.notes());
-        Map<String, Object> data = resolveHeader(header, station);
+        tripFeed.applyTripDefaults(header);
+        Map<String, Object> data = resolveHeader(header, station, null);
         return insertTicket(station, data, null);
     }
 
@@ -363,7 +374,7 @@ public class WeighbridgeTicketService {
         assertEditable(t);
         Map<String, Object> station = stations.requireStation((String) t.get("stationId"), false);
         Map<String, Object> merged = merge(t, in);
-        Map<String, Object> data = resolveHeader(merged, station);
+        Map<String, Object> data = resolveHeader(merged, station, id);
         if (!Objects.equals(data.get("registrationPlate"), t.get("registrationPlate"))) {
             assertTruckFree(id, (String) data.get("registrationPlate"));
         }
@@ -431,7 +442,7 @@ public class WeighbridgeTicketService {
      * Validates and normalises a ticket header against the referenced documents; returns the columns to store
      * (direction, plate, defaults from the purchase order, expected kg).
      */
-    private Map<String, Object> resolveHeader(Map<String, Object> h, Map<String, Object> station) {
+    private Map<String, Object> resolveHeader(Map<String, Object> h, Map<String, Object> station, String ticketId) {
         String subject = str(h.get("subjectType"));
         if (subject == null || !WeighbridgeStationService.SUBJECT_TYPES.contains(subject)) {
             throw ApiException.badRequest("Subject type must be one of: "
@@ -490,7 +501,8 @@ public class WeighbridgeTicketService {
         String productId = str(h.get("productId"));
         String uomId = str(h.get("orderedUomId"));
         BigDecimal orderedQty = (BigDecimal) h.get("orderedQty");
-        if (!"sale_delivery".equals(subject) && (salesOrderId != null || deliveryOrderId != null)) {
+        if (!"sale_delivery".equals(subject) && (salesOrderId != null || deliveryOrderId != null
+                || str(h.get("tripId")) != null)) {
             throw ApiException.badRequest("Only sale deliveries reference a sales order or delivery order");
         }
         if (salesOrderId != null && !db.exists("Order", salesOrderId, false)) {
@@ -591,6 +603,7 @@ public class WeighbridgeTicketService {
         }
         d.put("locationId", locationId);
         d.put("notes", FleetVehicleService.trim(str(h.get("notes"))));
+        tripFeed.validateLink(d, ticketId);
         return d;
     }
 
@@ -861,6 +874,7 @@ public class WeighbridgeTicketService {
         if ("purchase_receipt".equals(after.get("subjectType")) && after.get("locationId") != null) {
             after = feedGoodsReceipt(after, (String) after.get("locationId"));
         }
+        after = tripFeed.onCompleted(after);
         events.publish(DomainEvents.WEIGHBRIDGE_TICKET_COMPLETED, completedPayload(after));
     }
 
@@ -889,6 +903,7 @@ public class WeighbridgeTicketService {
         p.put("manual", Boolean.TRUE.equals(t.get("isManual")));
         p.put("reissuedFromId", t.get("reissuedFromId"));
         p.put("goodsReceiptId", t.get("goodsReceiptId"));
+        p.put("tripFeedStatus", t.get("tripFeedStatus"));
         return p;
     }
 
@@ -1162,6 +1177,7 @@ public class WeighbridgeTicketService {
                         "ticketNumber") + " voided: " + reason);
             }
         }
+        tripFeed.onVoiding(t, reason);
         Map<String, Object> voided = db.update(WeighbridgeTicket.class, id, Obj.of("status", "void", "voidedAt",
                 Instant.now(), "voidedBy", TenantContext.userId(), "voidReason", reason, "updatedBy",
                 TenantContext.userId()));
@@ -1169,7 +1185,7 @@ public class WeighbridgeTicketService {
         String replacementId = null;
         if (Boolean.TRUE.equals(in.reissue())) {
             Map<String, Object> station = stations.requireStation((String) t.get("stationId"), false);
-            Map<String, Object> data = resolveHeader(merge(t, in.corrections()), station);
+            Map<String, Object> data = resolveHeader(merge(t, in.corrections()), station, null);
             Map<String, Object> created = insertTicket(station, data, id);
             replacementId = (String) created.get("id");
             if (!Boolean.FALSE.equals(in.copyWeights())) {
@@ -1204,6 +1220,17 @@ public class WeighbridgeTicketService {
         out.put("voided", get(id));
         out.put("reissued", replacementId == null ? null : get(replacementId));
         return out;
+    }
+
+    /**
+     * Feed the ticket's trip (again) — e.g. after its product got a load factor; 400 with the reason when the trip
+     * cannot take the weight (already dispatched, no weight factor). Idempotent.
+     */
+    @Transactional
+    public Map<String, Object> feedTrip(String id) {
+        Map<String, Object> t = lock(id);
+        tripFeed.feedTrip(t);
+        return get(id);
     }
 
     // ================================================================== inbound → goods receipt
