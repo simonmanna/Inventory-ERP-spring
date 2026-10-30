@@ -265,6 +265,10 @@
     "read": "work_order:read",
     "manage": "work_order:manage"
   },
+  "shopFloor": {
+    "approve": "shop_floor:approve",
+    "machineData": "shop_floor:machine_data"
+  },
   "inventoryPostingRule": {
     "read": "inventory_posting_rule:read",
     "update": "inventory_posting_rule:update",
