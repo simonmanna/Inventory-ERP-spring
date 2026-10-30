@@ -163,3 +163,12 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   Set 33 000 on another ticket → exception; approve as a different user in Weighbridge Exceptions (the operator sees "Your own ticket").
   Inbound ticket against a PO → completed ticket shows a draft goods receipt in Purchases → Goods receipts.
 - Expected GL: none from the weighbridge (GRN posting is procurement's).
+## Phase S0 — Sales foundation (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFoundationIT' --tests 'com.inventoryerp.crm.CrmSuiteIT'`.
+- Migration: `V24__sales_foundation.sql`; verification queries + rollback in `docs/runbooks/sales-quote-migration.md`.
+- Screens (CRM → Quotations, unchanged UI): open a quotation created before the upgrade → same number, lines, status.
+  Create a quote, submit, *Revise* → revision 1 in draft; the previous revision is kept (table `SalesQuotationRevision`).
+  CRM → Settings: change quote validity days → saved (now stored in `SalesSettings`).
+- Expected GL: none.
+- Doubts: audit history before the upgrade is under entity `CrmQuotation`, after it `SalesQuotation`.

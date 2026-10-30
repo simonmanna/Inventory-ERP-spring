@@ -577,6 +577,34 @@ export const PERMISSIONS = {
     reportRead: 'crm:report:read',
     configure: 'crm:configure',
   },
+  // ---- Sales / order-to-cash (ADR-S011) ----
+  sales: {
+    quotationRead: 'sales:quotation:read',
+    quotationWrite: 'sales:quotation:write',
+    quotationApprove: 'sales:quotation:approve',
+    quotationSend: 'sales:quotation:send',
+    quotationConvert: 'sales:quotation:convert',
+    orderRead: 'sales:order:read',
+    /// See every salesperson's quotations / orders (without it: own, unassigned and led team).
+    orderReadAll: 'sales:order:read_all',
+    orderWrite: 'sales:order:write',
+    orderConfirm: 'sales:order:confirm',
+    orderCancel: 'sales:order:cancel',
+    orderCloseShort: 'sales:order:close_short',
+    orderHoldRelease: 'sales:order:hold_release',
+    /// Request a change to a confirmed order.
+    orderAmend: 'sales:order:amend',
+    /// Approve / apply a change request.
+    orderAmendApprove: 'sales:order:amend_approve',
+    pricingRead: 'sales:pricing:read',
+    pricingManage: 'sales:pricing:manage',
+    /// Override the billable quantity decided by the billing basis.
+    billingOverride: 'sales:billing:override',
+    /// Override fulfilment / recognition policies on an order.
+    policyOverride: 'sales:policy:override',
+    reportRead: 'sales:report:read',
+    configure: 'sales:configure',
+  },
   document: {
     create: 'document:create',
     read: 'document:read',

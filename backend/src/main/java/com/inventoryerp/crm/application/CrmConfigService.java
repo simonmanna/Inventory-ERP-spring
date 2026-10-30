@@ -9,6 +9,7 @@ import static com.inventoryerp.crm.application.CrmDb.strings;
 import static com.inventoryerp.crm.application.CrmDb.user;
 
 import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.sales.application.SalesSettingsService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.shared.web.ApiException;
@@ -39,11 +40,17 @@ public class CrmConfigService {
 
     private final CrmDb db;
     private final AuditService audit;
+    private final SalesSettingsService sales;
 
-    public CrmConfigService(CrmDb db, AuditService audit) {
+    public CrmConfigService(CrmDb db, AuditService audit, SalesSettingsService sales) {
         this.db = db;
         this.audit = audit;
+        this.sales = sales;
     }
+
+    /** Quotation policy keys owned by the sales settings since ADR-S011 (shown and edited here unchanged). */
+    static final List<String> QUOTE_KEYS = List.of("quoteMaxDiscountPercent", "quoteApprovalAmount", "creditCheck",
+            "quoteValidityDays", "defaultQuoteTerms", "autoWinOnConversion");
 
     // ------------------------------------------------------------------ defaults
 
@@ -385,7 +392,12 @@ public class CrmConfigService {
     @Transactional
     public Map<String, Object> settings() {
         db.update("INSERT INTO \"CrmSettings\" (\"organizationId\") VALUES (?) ON CONFLICT DO NOTHING", org());
-        return db.row("SELECT * FROM \"CrmSettings\" WHERE \"organizationId\" = ?", org());
+        Map<String, Object> out = db.row("SELECT * FROM \"CrmSettings\" WHERE \"organizationId\" = ?", org());
+        Map<String, Object> quote = sales.settings();
+        for (String k : QUOTE_KEYS) {
+            out.put(k, quote.get(k));
+        }
+        return out;
     }
 
     @Transactional
@@ -436,6 +448,15 @@ public class CrmConfigService {
             pool.forEach(this::requireUser);
             sets.add("\"assignmentPool\" = ?");
             params.add(pool.toArray(String[]::new));
+        }
+        Map<String, Object> quote = new java.util.LinkedHashMap<>();
+        for (String k : QUOTE_KEYS) {
+            if (in.containsKey(k)) {
+                quote.put(k, in.get(k));
+            }
+        }
+        if (!quote.isEmpty()) {
+            sales.update(quote);
         }
         if (!sets.isEmpty()) {
             params.add(org());

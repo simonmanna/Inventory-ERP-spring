@@ -193,7 +193,7 @@ public class CrmPipelineService {
         }
         r.put("partner", partner);
         r.put("quotations", db.rows("SELECT id, number, status, total, \"currencyCode\", \"issueDate\", \"validUntil\""
-                + " FROM \"CrmQuotation\" WHERE \"dealId\" = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
+                + " FROM \"SalesQuotation\" WHERE \"dealId\" = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
                 + " ORDER BY \"createdAt\" DESC", id, org()));
         r.put("plannedActivities", db.rows("SELECT a.*, COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\","
                 + " u.\"lastName\")), ''), u.email) AS \"assignedToName\" FROM \"Activity\" a LEFT JOIN \"User\" u ON"

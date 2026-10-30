@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (452 permissions). Constant name = GROUP__ACTION.
+ * exactly (472 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -374,6 +374,26 @@ public final class Permissions {
     public static final String CRM__PRICING_MANAGE = "crm:pricing:manage";
     public static final String CRM__REPORT_READ = "crm:report:read";
     public static final String CRM__CONFIGURE = "crm:configure";
+    public static final String SALES__QUOTATION_READ = "sales:quotation:read";
+    public static final String SALES__QUOTATION_WRITE = "sales:quotation:write";
+    public static final String SALES__QUOTATION_APPROVE = "sales:quotation:approve";
+    public static final String SALES__QUOTATION_SEND = "sales:quotation:send";
+    public static final String SALES__QUOTATION_CONVERT = "sales:quotation:convert";
+    public static final String SALES__ORDER_READ = "sales:order:read";
+    public static final String SALES__ORDER_READ_ALL = "sales:order:read_all";
+    public static final String SALES__ORDER_WRITE = "sales:order:write";
+    public static final String SALES__ORDER_CONFIRM = "sales:order:confirm";
+    public static final String SALES__ORDER_CANCEL = "sales:order:cancel";
+    public static final String SALES__ORDER_CLOSE_SHORT = "sales:order:close_short";
+    public static final String SALES__ORDER_HOLD_RELEASE = "sales:order:hold_release";
+    public static final String SALES__ORDER_AMEND = "sales:order:amend";
+    public static final String SALES__ORDER_AMEND_APPROVE = "sales:order:amend_approve";
+    public static final String SALES__PRICING_READ = "sales:pricing:read";
+    public static final String SALES__PRICING_MANAGE = "sales:pricing:manage";
+    public static final String SALES__BILLING_OVERRIDE = "sales:billing:override";
+    public static final String SALES__POLICY_OVERRIDE = "sales:policy:override";
+    public static final String SALES__REPORT_READ = "sales:report:read";
+    public static final String SALES__CONFIGURE = "sales:configure";
     public static final String DOCUMENT__CREATE = "document:create";
     public static final String DOCUMENT__READ = "document:read";
     public static final String DOCUMENT__UPDATE = "document:update";
@@ -829,6 +849,26 @@ public final class Permissions {
             "crm:pricing:manage",
             "crm:report:read",
             "crm:configure",
+            "sales:quotation:read",
+            "sales:quotation:write",
+            "sales:quotation:approve",
+            "sales:quotation:send",
+            "sales:quotation:convert",
+            "sales:order:read",
+            "sales:order:read_all",
+            "sales:order:write",
+            "sales:order:confirm",
+            "sales:order:cancel",
+            "sales:order:close_short",
+            "sales:order:hold_release",
+            "sales:order:amend",
+            "sales:order:amend_approve",
+            "sales:pricing:read",
+            "sales:pricing:manage",
+            "sales:billing:override",
+            "sales:policy:override",
+            "sales:report:read",
+            "sales:configure",
             "document:create",
             "document:read",
             "document:update",

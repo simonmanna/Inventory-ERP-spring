@@ -518,6 +518,28 @@
     "reportRead": "crm:report:read",
     "configure": "crm:configure"
   },
+  "sales": {
+    "quotationRead": "sales:quotation:read",
+    "quotationWrite": "sales:quotation:write",
+    "quotationApprove": "sales:quotation:approve",
+    "quotationSend": "sales:quotation:send",
+    "quotationConvert": "sales:quotation:convert",
+    "orderRead": "sales:order:read",
+    "orderReadAll": "sales:order:read_all",
+    "orderWrite": "sales:order:write",
+    "orderConfirm": "sales:order:confirm",
+    "orderCancel": "sales:order:cancel",
+    "orderCloseShort": "sales:order:close_short",
+    "orderHoldRelease": "sales:order:hold_release",
+    "orderAmend": "sales:order:amend",
+    "orderAmendApprove": "sales:order:amend_approve",
+    "pricingRead": "sales:pricing:read",
+    "pricingManage": "sales:pricing:manage",
+    "billingOverride": "sales:billing:override",
+    "policyOverride": "sales:policy:override",
+    "reportRead": "sales:report:read",
+    "configure": "sales:configure"
+  },
   "document": {
     "create": "document:create",
     "read": "document:read",

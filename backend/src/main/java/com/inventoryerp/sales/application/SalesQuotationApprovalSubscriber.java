@@ -1,4 +1,4 @@
-package com.inventoryerp.crm.application;
+package com.inventoryerp.sales.application;
 
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -11,20 +11,21 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Applies kernel approval-engine decisions on {@value CrmQuotationService#APPROVAL_ENTITY} requests
+ * Applies kernel approval-engine decisions on quotation requests ({@value SalesQuotationService#APPROVAL_ENTITY},
+ * legacy CRM name, and {@value SalesQuotationService#SALES_APPROVAL_ENTITY})
  * ({@code approval.decided}, at-least-once): the quotation becomes approved or rejected. Runs without a request
  * tenant, so it enters the payload's organization as the deciding approver; idempotent.
  */
 @Component
-public class CrmApprovalSubscriber {
+public class SalesQuotationApprovalSubscriber {
 
-    private static final Logger log = LoggerFactory.getLogger(CrmApprovalSubscriber.class);
+    private static final Logger log = LoggerFactory.getLogger(SalesQuotationApprovalSubscriber.class);
 
     private final EventBus events;
     private final JdbcClient jdbc;
-    private final CrmQuotationService quotations;
+    private final SalesQuotationService quotations;
 
-    public CrmApprovalSubscriber(EventBus events, JdbcClient jdbc, CrmQuotationService quotations) {
+    public SalesQuotationApprovalSubscriber(EventBus events, JdbcClient jdbc, SalesQuotationService quotations) {
         this.events = events;
         this.jdbc = jdbc;
         this.quotations = quotations;
@@ -36,7 +37,9 @@ public class CrmApprovalSubscriber {
     }
 
     void onDecided(JsonNode p) {
-        if (!CrmQuotationService.APPROVAL_ENTITY.equals(p.path("entityType").asString(""))) {
+        String entity = p.path("entityType").asString("");
+        if (!SalesQuotationService.APPROVAL_ENTITY.equals(entity)
+                && !SalesQuotationService.SALES_APPROVAL_ENTITY.equals(entity)) {
             return;
         }
         String orgId = p.path("organizationId").asString("");

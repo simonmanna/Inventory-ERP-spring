@@ -1,3 +1,7 @@
+
+> **ADR-S011 (phase S0):** quotations and the quote policy settings are owned by the `sales` module since V24
+> (`SalesQuotation*`, `SalesSettings`). `/crm/quotations*` keeps its routes and JSON and delegates to
+> `SalesQuotationService`; CRM price rules serve quotation pricing through `QuotationPricingPort` until phase S2.
 # CRM — `crm`
 
 | | |
