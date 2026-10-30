@@ -25,6 +25,7 @@ import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, SmartButton, StatusRibb
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
+import { BillingPanel } from './BillingPanel';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -222,6 +223,7 @@ export function SalesOrderPage() {
           )}
           {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
           {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <FulfilmentPanel order={o} />}
+          {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <BillingPanel order={o} />}
           {o && o.status !== 'draft' && <AvailabilityPanel order={o} />}
           {o && <ChangeRequestsPanel orderId={o.id} />}
         </div>

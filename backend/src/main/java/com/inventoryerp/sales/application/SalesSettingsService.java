@@ -32,7 +32,9 @@ public class SalesSettingsService {
             "ownershipTransfer", Set.of("at_dispatch", "at_delivery", "at_acceptance"),
             "cogsRecognition", Set.of("at_ownership_transfer", "at_revenue_recognition"),
             "revenueRecognition", Set.of("at_ownership_transfer", "at_invoice"),
-            "billingPolicy", Set.of("ordered", "delivered"));
+            "billingPolicy", Set.of("ordered", "delivered"),
+            "depositApplication", Set.of("manual", "oldest_first"),
+            "depositTaxPoint", Set.of("delivery", "receipt"));
 
     private final SalesDb db;
     private final AuditService audit;

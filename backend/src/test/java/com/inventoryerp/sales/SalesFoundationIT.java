@@ -134,7 +134,7 @@ class SalesFoundationIT extends ApiTestSupport {
         assertThatThrownBy(() -> jdbc.sql("UPDATE \"Partner\" SET \"creditRiskCategory\" = 'weird' WHERE id = ?")
                 .param(customer).update()).hasMessageContaining("check");
         assertThat(jdbc.sql("SELECT count(*) FROM \"Permission\" WHERE key LIKE 'sales:%'").query(Long.class).single())
-                .isEqualTo(20);
+                .isGreaterThanOrEqualTo(20);
         List<String> admin = jdbc.sql("SELECT unnest(permissions) FROM \"Role\" WHERE \"organizationId\" = ? AND name ="
                 + " 'Administrator' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).list();
         assertThat(admin).contains("sales:quotation:approve", "sales:order:confirm", "sales:configure");

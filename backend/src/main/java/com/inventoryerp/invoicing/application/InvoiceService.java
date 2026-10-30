@@ -441,6 +441,22 @@ public class InvoiceService {
         }
     }
 
+    /**
+     * Record the commercial source of a draft sales invoice (ADR-S011: a sales order) and, for a down-payment
+     * invoice, the order it is an advance for ({@code data.downPaymentFor}).
+     */
+    @Transactional
+    public void linkSource(String id, String sourceType, String sourceId, boolean downPayment) {
+        int n = jdbc.sql("UPDATE \"Document\" SET \"sourceType\" = ?, \"sourceId\" = ?, data = CASE WHEN ? THEN"
+                        + " COALESCE(data, '{}'::jsonb) || jsonb_build_object('downPaymentFor', ?::text) ELSE data END,"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\" ="
+                        + " 'sales_invoice' AND status = 'draft'")
+                .params(sourceType, sourceId, downPayment, sourceId, id, org()).update();
+        if (n == 0) {
+            throw ApiException.badRequest("Only a draft sales invoice can be linked to its source");
+        }
+    }
+
     /** Cancel a posted, unpaid invoice (reversal), behind the {@code invoice_cancel} approval gate. */
     @Transactional
     public Map<String, Object> cancel(String id) {

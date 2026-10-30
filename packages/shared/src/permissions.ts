@@ -604,6 +604,11 @@ export const PERMISSIONS = {
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
     configure: 'sales:configure',
+    /// Raise invoices / down-payment invoices from sales orders.
+    invoiceCreate: 'sales:invoice:create',
+    /// Record customer deposits (advances) and apply them to invoices.
+    depositRecord: 'sales:deposit:record',
+    depositRefund: 'sales:deposit:refund',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {

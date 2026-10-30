@@ -18,7 +18,7 @@ Status legend: `todo` · `in-progress` · `done` · `blocked`.
 | S3 | Credit module (limits, exposure, decisions, holds) | R2 | done | S1 |
 | S4 | ATP, reservations, backorders, supply pegs | R2 | done | S1 |
 | S5 | Fulfilment orchestration (fleet DO, weighbridge, collect, quantity read model, policies) | R2 | done (partial, see deviations) | S4, fleet 1.4b |
-| S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | todo | S5, accountant answers |
+| S6 | Billing, deposits, down payments, payment gateway SPI + mobile money | R2 | done (defaults pending accountant) | S5, accountant answers |
 | S7 | Returns / RMA, claims, quality certificates | R2 | todo | S6 |
 | S8 | Collections: dunning, promise-to-pay, statement runs | R3 | todo | S3, S6 |
 | S9 | Agreements, rebates, commissions, targets | R3 | todo | S2, S6 |
@@ -229,6 +229,31 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   collect-at-yard through the weighbridge waits for fleet 1.4b (ticket ↔ trip); transit / ownership policies
   deferred (accountant).
 
+## S6 — as built
+- `V30__sales_billing_deposits.sql`: `CustomerDeposit`, `DepositApplication`, `SalesInvoiceLink`,
+  `MobileMoneyRequest`, settings `depositApplication` (manual | oldest_first) and `depositTaxPoint` (delivery |
+  receipt), permissions `sales:invoice:create`, `sales:deposit:record|refund`.
+- Invoicing (owner of payments): `CustomerDepositService` — receipt P2 (Dr tender / Cr Customer Deposits 2350,
+  mapping `customer_deposit`), down-payment registration P3 on `invoice.posted`, application P9 through
+  `PaymentService.createDepositApplication` (a deposit-backed receipt allocated like cash; only callable internally;
+  not voidable from `/payments`), refund P10, void; `PaymentGateway` SPI with `mock`, `mtn_momo`, `airtel_money`
+  (unconfigured until credentials) and `MobileMoneyService` (deposit / invoice / on-account, booked once on success);
+  credit exposure now subtracts unapplied deposits.
+- Sales: `SalesBillingService` — invoiceable quantity per line (order override, else product `invoicePolicy`;
+  ordered → ordered − closed short, delivered → billable; minus quantities already on non-cancelled invoices),
+  regular invoice (never re-issues stock: `stockIssuedBy`; fleet DOs marked goods-invoiced), down-payment invoice
+  (line on the deposit account, VAT only with tax point "receipt"), batch per customer, gross-invoiced projection on
+  `invoice.posted` / `invoice.cancelled`, oldest-first auto application.
+- Routes: `GET /sales/orders/{id}/billing`, `POST /{id}/invoices`, `/{id}/deposits`, `/{id}/apply-deposits`,
+  `POST /sales/invoices/batch`; `/customer-deposits` (list, get, receive, apply, refund, void);
+  `/payments/mobile-money` (providers, initiate, get, refresh).
+- Web: Billing panel on the order (to invoice, create invoice, down-payment invoice, record deposit incl. mobile-money
+  request, apply deposit to an invoice, invoices and deposits list).
+- Tests: `SalesBillingIT` (4): D1 / D4 / D6, D5 partial + auto apply, D2 down payment, mobile money; AR and deposit
+  subledgers tie out to the ledger; trial balance zero.
+- Pending accountant (defaults shipped, configurable): VAT tax point of advances, application rule, freight on
+  sales-order invoices (still invoiced from the fleet delivery order as a charges-only invoice).
+
 ## Known deviations from the approved plan (owner to confirm)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
@@ -256,3 +281,15 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   billable to 30 with a reason (pencil) → "*" marks the manual decision. Dispatch + deliver trip 2 → delivered fully,
   invoicing "To invoice".
 - Expected GL: stock issue Dr COGS / Cr inventory at each dispatch (fleet, unchanged).
+
+## Phase S6 — Billing, deposits, mobile money (ADR-S011)
+
+- Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesBillingIT'`.
+- Migration: `V30__sales_billing_deposits.sql`.
+- Screens: confirmed order of 100 × 1 000 000 (product invoice policy "ordered") → Billing panel → *Record deposit*
+  30 000 000 by bank → Accounting: Dr Bank / Cr 2350 Customer Deposits. *Create invoice* → draft invoice 100 000 000
+  → post it in Invoicing → back on the order *Apply to…* the invoice → invoice open 70 000 000, deposit closed.
+  *Down payment invoice* 30 % → post → a deposit appears (source down payment); pay it; final invoice; apply.
+  *Record deposit* → "Mobile money — request on phone" (mock provider) → succeeded; a phone ending in 0 is declined.
+  Sales settings: deposit application "oldest_first" applies deposits automatically when an order invoice posts.
+- Expected GL: P2, P3, P8, P9, P10 of `docs/spec/sales-postings.md`; trial balance stays zero.

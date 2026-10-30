@@ -538,7 +538,10 @@
     "billingOverride": "sales:billing:override",
     "policyOverride": "sales:policy:override",
     "reportRead": "sales:report:read",
-    "configure": "sales:configure"
+    "configure": "sales:configure",
+    "invoiceCreate": "sales:invoice:create",
+    "depositRecord": "sales:deposit:record",
+    "depositRefund": "sales:deposit:refund"
   },
   "credit": {
     "read": "credit:read",

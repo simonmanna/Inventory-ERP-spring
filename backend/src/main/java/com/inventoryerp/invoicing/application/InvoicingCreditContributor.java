@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 /**
  * Invoicing share of credit exposure (credit.md §2): open residual of posted sales invoices and debit notes
  * (receivables, with the oldest overdue day count), draft invoices not raised from a sales order (other), and
- * unapplied credit notes and on-account payments (credits). Customer deposits join in phase S6.
+ * unapplied credit notes and on-account payments (credits), and unapplied customer deposits (deposits, S6).
  */
 @Component
 public class InvoicingCreditContributor implements CreditExposureContributor {
@@ -43,8 +43,11 @@ public class InvoicingCreditContributor implements CreditExposureContributor {
         BigDecimal onAccount = jdbc.sql("SELECT COALESCE(sum(\"unallocatedAmount\"), 0) FROM \"Payment\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND direction::text = 'inbound' AND status::text ="
                 + " 'posted'").params(org, partnerId).query(BigDecimal.class).single();
+        BigDecimal deposits = jdbc.sql("SELECT COALESCE(sum(amount - \"appliedAmount\" - \"refundedAmount\"), 0) FROM"
+                + " \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'open'")
+                .params(org, partnerId).query(BigDecimal.class).single();
         return new Contribution(BigDecimal.ZERO, BigDecimal.ZERO, d(r.get("receivables")), d(r.get("other")),
-                BigDecimal.ZERO, d(r.get("credits")).add(d(onAccount)), d(r.get("overdue")),
+                d(deposits), d(r.get("credits")).add(d(onAccount)), d(r.get("overdue")),
                 d(r.get("days")).intValue());
     }
 

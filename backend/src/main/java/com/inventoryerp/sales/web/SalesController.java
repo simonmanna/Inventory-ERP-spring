@@ -3,7 +3,9 @@ package com.inventoryerp.sales.web;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.sales.application.SalesAtpService;
+import com.inventoryerp.sales.application.SalesBillingService;
 import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
 import com.inventoryerp.sales.application.SalesOrderService;
@@ -158,9 +160,13 @@ public final class SalesController {
         private final SalesOrderChangeService changes;
         private final SalesAtpService atp;
         private final SalesFulfilmentService fulfilment;
+        private final SalesBillingService billing;
+        private final CustomerDepositService deposits;
 
         public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp,
-                SalesFulfilmentService fulfilment) {
+                SalesFulfilmentService fulfilment, SalesBillingService billing, CustomerDepositService deposits) {
+            this.billing = billing;
+            this.deposits = deposits;
             this.svc = svc;
             this.changes = changes;
             this.atp = atp;
@@ -304,6 +310,39 @@ public final class SalesController {
             return fulfilment.overrideBillable(id, lineId, body(b));
         }
 
+        @GetMapping("/{id}/billing")
+        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        public Map<String, Object> billing(@PathVariable String id) {
+            return billing.preview(id);
+        }
+
+        @PostMapping("/{id}/invoices")
+        @Idempotent
+        @RequirePermissions(Permissions.SALES__INVOICE_CREATE)
+        public Map<String, Object> invoice(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return billing.createInvoice(id, body(b));
+        }
+
+        @PostMapping("/{id}/deposits")
+        @Idempotent
+        @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
+        public Map<String, Object> deposit(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            Map<String, Object> o = svc.require(id);
+            Map<String, Object> in = body(b);
+            Object amount = in.get("amount");
+            return deposits.receive(new CustomerDepositService.DepositInput(String.valueOf(o.get("partnerId")), id,
+                    amount == null ? null : new java.math.BigDecimal(amount.toString()), text(b, "paymentMethod"),
+                    text(b, "accountId"), text(b, "receivedDate"), text(b, "reference"), text(b, "notes")));
+        }
+
+        @PostMapping("/{id}/apply-deposits")
+        @Idempotent
+        @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
+        public List<Map<String, Object>> applyDeposits(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            svc.require(id);
+            return billing.applyDeposits(id, text(b, "documentId"));
+        }
+
         @GetMapping("/{id}/change-requests")
         @RequirePermissions(Permissions.SALES__ORDER_READ)
         public List<Map<String, Object>> changeRequests(@PathVariable String id) {
@@ -363,8 +402,11 @@ public final class SalesController {
         private final SalesReportService reports;
         private final SalesSettingsService settings;
         private final SalesAtpService atp;
+        private final SalesBillingService billing;
 
-        public AdminController(SalesReportService reports, SalesSettingsService settings, SalesAtpService atp) {
+        public AdminController(SalesReportService reports, SalesSettingsService settings, SalesAtpService atp,
+                SalesBillingService billing) {
+            this.billing = billing;
             this.reports = reports;
             this.settings = settings;
             this.atp = atp;
@@ -374,6 +416,13 @@ public final class SalesController {
         @RequirePermissions(Permissions.SALES__ORDER_READ)
         public Map<String, Object> atp(@RequestBody Map<String, Object> b) {
             return atp.check(body(b));
+        }
+
+        @PostMapping("/invoices/batch")
+        @Idempotent
+        @RequirePermissions(Permissions.SALES__INVOICE_CREATE)
+        public List<Map<String, Object>> batch(@RequestBody Map<String, Object> b) {
+            return billing.batch(body(b));
         }
 
         @GetMapping("/reports/backorders")
