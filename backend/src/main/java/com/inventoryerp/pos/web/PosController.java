@@ -33,7 +33,11 @@ public class PosController {
             @OneOf({"cafe", "retail", "rental"}) String posMode,
             Boolean sharedDrawer,
             @OneOf({"offline", "online"}) String connectionMode,
-            Boolean showClosingAmounts) {}
+            Boolean showClosingAmounts,
+            // Sidebar visibility of optional Point of Sale pages (web only; absent = shown).
+            Boolean showDashboard,
+            Boolean showKitchenDisplay,
+            Boolean showKitchenReports) {}
 
     public record OperationApprovalRequest(
             @NotNull(message = STR) String managerId,

@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { usePosSettings, useUpdatePosSettings } from '@/features/pos/api';
+import { usePosSettings, useUpdatePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
@@ -19,16 +19,26 @@ export function PosSettingsPage() {
   const [posMode, setPosMode] = useState('cafe');
   const [sharedDrawer, setSharedDrawer] = useState(false);
   const [showClosingAmounts, setShowClosingAmounts] = useState(true);
+  const [nav, setNav] = useState<Required<PosNavVisibility>>({
+    showDashboard: true,
+    showKitchenDisplay: true,
+    showKitchenReports: true,
+  });
 
   useEffect(() => {
     if (settings?.posMode) setPosMode(settings.posMode);
     setSharedDrawer(settings?.sharedDrawer === true);
     setShowClosingAmounts(settings?.showClosingAmounts !== false);
+    setNav({
+      showDashboard: settings?.showDashboard !== false,
+      showKitchenDisplay: settings?.showKitchenDisplay !== false,
+      showKitchenReports: settings?.showKitchenReports !== false,
+    });
   }, [settings]);
 
   const handleSave = async () => {
     try {
-      await update.mutateAsync({ posMode, sharedDrawer, showClosingAmounts });
+      await update.mutateAsync({ posMode, sharedDrawer, showClosingAmounts, ...nav });
       notify.success(tx('POS settings saved'));
     } catch {
       notify.error(tx('Failed to save POS settings'));
@@ -107,6 +117,31 @@ export function PosSettingsPage() {
               />
               {tx('Show the expected closing amounts while closing a shift')}
             </label>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{tx('Point of Sale navigation')}</CardTitle>
+            <CardDescription>
+              {tx('Choose which optional pages appear under Point of Sale in the sidebar. Hidden pages stay reachable by URL for users with permission.')}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {([
+              ['showDashboard', tx('POS Dashboard visible')],
+              ['showKitchenDisplay', tx('Kitchen Display visible')],
+              ['showKitchenReports', tx('Kitchen Reports visible')],
+            ] as const).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={nav[key]}
+                  onChange={(e) => setNav({ ...nav, [key]: e.target.checked })}
+                />
+                {label}
+              </label>
+            ))}
           </CardContent>
         </Card>
         <Button onClick={handleSave} disabled={update.isPending}>

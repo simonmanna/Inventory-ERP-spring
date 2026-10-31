@@ -21,11 +21,11 @@ export interface ModuleFeature {
 }
 
 export const MODULE_FEATURES: ModuleFeature[] = [
-  { key: 'pos', label: 'POS', description: tx('Point of sale terminal, menus, and tables'), sections: ['POS', 'Menus', 'Tables'], core: true },
+  { key: 'pos', label: 'POS', description: tx('Point of sale terminal, menus, and tables'), sections: ['POS'], core: true },
   { key: 'crm', label: 'CRM', description: tx('Customers, leads, opportunities, and pipeline tracking'), sections: ['CRM'] },
   { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
   { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
-  { key: 'fleet', label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance'), sections: ['Fleet'] },
+  { key: 'fleet', label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance'), sections: ['Fleet', 'Logistics'] },
   { key: 'quarry', label: tx('Quarry & Extraction'), description: tx('Quarry sites, extraction logs into ROM stock, drilling and blasting, controlled explosives'), sections: ['Quarry'] },
   { key: 'repair', label: tx('Repair & Maintenance'), description: tx('Repair jobs, work tickets, and maintenance scheduling'), sections: ['Repair & Maintenance'] },
   { key: 'communication', label: tx('Communication'), description: tx('Unified inbox, channels, and messaging automation'), sections: ['Communication'] },
@@ -42,14 +42,16 @@ const SECTION_FEATURE_KEY: Record<string, string> = Object.fromEntries(
 
 const CORE_FEATURE_KEYS = new Set(MODULE_FEATURES.filter((f) => f.core).map((f) => f.key));
 
+/** Sections that only make sense in some POS modes (none today; items gate themselves via `posModeAllows`). */
+const SECTION_POS_MODES: Record<string, string[]> = {};
+
 /**
- * Sections that only make sense in some POS modes. Menus and tables belong to
- * the cafe/restaurant flow; retail and rental terminals never use them.
+ * Does the POS mode allow a nav entry limited to `modes`? Menus and tables belong
+ * to the cafe/restaurant flow; retail and rental terminals never use them. An
+ * unknown mode (settings still loading or unreadable) hides nothing.
  */
-const SECTION_POS_MODES: Record<string, string[]> = {
-  Menus: ['cafe'],
-  Tables: ['cafe'],
-};
+export const posModeAllows = (modes: string[] | undefined, posMode?: string): boolean =>
+  !modes || !posMode || modes.includes(posMode);
 
 /** A feature is on unless it has been explicitly switched off. */
 export const featureEnabled = (
@@ -95,6 +97,5 @@ export const sectionEnabled = (
   if (!title) return true;
   const key = SECTION_FEATURE_KEY[title];
   if (key && !featureAvailable(features, licensed, key)) return false;
-  const modes = SECTION_POS_MODES[title];
-  return !modes || !posMode || modes.includes(posMode);
+  return posModeAllows(SECTION_POS_MODES[title], posMode);
 };

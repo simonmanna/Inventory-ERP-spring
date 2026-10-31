@@ -125,6 +125,7 @@ import { ReturnsPage } from '@/pages/returns/ReturnsPage';
 import { NewReturnPage } from '@/pages/returns/NewReturnPage';
 import { ReturnDetailPage } from '@/pages/returns/ReturnDetailPage';
 import { ReceivablesPage } from '@/pages/pos/ReceivablesPage';
+import { PosSettingsPage } from '@/pages/pos/SettingsPage';
 import { ExpensesPage } from '@/pages/expenses/ExpensesPage';
 import ExpensesReportPage from '@/pages/expenses/ExpensesReportPage';
 import ExpenseCategoriesPage from '@/pages/expenses/ExpenseCategoriesPage';
@@ -262,6 +263,9 @@ export function App() {
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
           <Route path="/pos/terminal" element={<TerminalWorkspace><TerminalPage /></TerminalWorkspace>} />
           <Route path="/pos/reports" element={<ReportsPage />} />
+          {/* POS Dashboard — the sales/KPI dashboard, reachable from the Point of Sale menu. */}
+          <Route path="/pos/dashboard" element={<DashboardPage />} />
+          <Route path="/pos/settings" element={<RequirePermission permission={PERMISSIONS.setting.update}><PosSettingsPage /></RequirePermission>} />
           {/* POS customer display — second monitor / pole display, no shell. */}
           <Route path="/pos/display" element={<DisplayPage />} />
           {/* KDS station configuration (admin, inside the shell). */}
