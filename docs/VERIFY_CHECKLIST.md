@@ -309,3 +309,47 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
   → stock adjusted, GL entry; Reverse restores it.
 - Crushing Reports: yield and loss, cost per tonne (product, plant, by kind), plant hours / throughput / utilisation.
 - Doubts: normal loss is measured on the last stage's input; system BOMs are active without the BOM approval gate.
+
+## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
+
+Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use
+this list to confirm the `present-verified` screens of the core ERP. Fleet, quarry, crushing, precast, shop-floor and
+quality screens have their own sections above.
+
+**Commands**: none added. No migrations, no new tests.
+
+**Click-through** (as an administrator)
+
+- Finance
+  - Accounts and Journal Entries: create a journal, post it as a second user; `/trial-balance` stays balanced.
+  - `/budgets` → New budget with lines → `/budgets/:id` shows budget vs actual and variance; Approve locks the lines.
+  - `/fiscal-periods` → Close a period: later postings into it are refused; Reopen reverses the closing entry.
+  - `/consolidated-report` shows one column per branch; `/cost-center-accounting` shows the cost centre matrix.
+  - `/fixed-assets/register` → register, depreciate and dispose of an asset.
+- Procurement
+  - `/procurement/purchase-orders/new` → receive → `/procurement/goods-receipts` → `/procurement/three-way-match`.
+  - `/procurement/debit-notes/new` → post a supplier return; `/procurement/landed-cost-vouchers/new` → allocate
+    freight, insurance and duty and check the unit cost.
+- Inventory
+  - `/inventory/locations`, `/inventory/adjustments`, `/inventory/transfers` (approve → dispatch → receive),
+    `/inventory/count`, `/inventory/waste`, `/inventory/ledger`.
+  - `/inventory/reports`: reorder and stock health (aging, slow and dead stock); `/inventory-valuation` agrees with
+    `/inventory-gl-tieout`.
+  - `/uom`: product with a pack unit, then sell in that unit.
+- Sales
+  - `/crm/quotations/new` → submit → revise → convert; a discount above policy goes to approval.
+  - `/invoices/new` → post → `/payments` allocate part of the invoice → residual updates; `/credit-notes/new`.
+  - `/returns/new`, `/ar-aging`, `/statements`.
+- HR
+  - `/hr/employees` → add; `/hr/shifts`, `/hr/attendance`, `/hr/leave`.
+  - `/hr/payroll/settings` → components and tax table; `/hr/payroll` → run, calculate, approve → `/hr/payslips`.
+  - `/hr/advances-loans`: a loan deducts in the run.
+- CRM: `/crm/leads` → convert → `/crm/pipeline` → won; `/crm/activities`; `/crm/customers/:id` shows purchase history.
+- Reports and control
+  - `/reports`: export a tab as CSV and PDF; `/settings/report-permissions` hides a report from a role.
+  - `/approvals`: the requester cannot approve their own request; `/audit-log` shows the change.
+  - `/settings/backup`: run a backup, then a restore drill.
+
+**Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
+enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
+POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
