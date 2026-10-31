@@ -61,7 +61,7 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phase 5 — dashboards, KPIs, alerts, integrations. Everything after bd3f34b is unverified until a full build is run
+Current: Phases 6 and 7 — hardening review, demo data and guides. Everything after bd3f34b is unverified until a full build is run
 Next action: merge Phase 5, then Phases 6 and 7; run a full build and only then create the held tags.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
@@ -98,7 +98,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | merged, unverified (C) | f757092..fbec71a | | V80–V82; ADR-S050; 38 routes; never compiled or run. Portal read-only; mobile money mock only |
 | 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | merged, unverified (C) | c84fc26..810f3f7 | | V90–V97; 73 routes; never compiled or run |
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
-| 5 dashboards, KPIs, alerts, integrations | alerts, forecast, BI export merged, unverified; KPIs in progress (C) | 9968efc..4d36fda | tag bi-complete held until a full build passes | V110–V111; ADR-S021 |
+| 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
 

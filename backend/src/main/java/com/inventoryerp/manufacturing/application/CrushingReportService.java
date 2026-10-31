@@ -32,21 +32,38 @@ public class CrushingReportService {
 
     private record Range(LocalDate from, LocalDate to) {}
 
+    /**
+     * Narrowing of the run reports for analytics (ADR-S020): {@code plantIds} null means every plant; {@code productId}
+     * keeps the runs that fed or produced that product.
+     */
+    public record RunScope(String[] plantIds, String productId) {
+
+        static RunScope ofPlant(String plantId) {
+            return new RunScope(CrushingSupport.text(plantId) == null ? null : new String[] {plantId}, null);
+        }
+    }
+
     private static Range range(String from, String to) {
         LocalDate t = CrushingSupport.date(to) != null ? CrushingSupport.date(to) : LocalDate.now(BusinessZone.get());
         LocalDate f = CrushingSupport.date(from) != null ? CrushingSupport.date(from) : t.withDayOfMonth(1);
         return new Range(f, t);
     }
 
-    private static String runWhere(String plantId, List<Object> params, Range r) {
+    private static String runWhere(RunScope s, List<Object> params, Range r) {
         params.add(MfgDb.org());
         params.add(java.sql.Date.valueOf(r.from()));
         params.add(java.sql.Date.valueOf(r.to()));
         String w = " r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"deletedAt\" IS NULL AND r.\"runDate\" >= ?"
                 + " AND r.\"runDate\" <= ?";
-        if (CrushingSupport.text(plantId) != null) {
-            w += " AND r.\"plantId\" = ?";
-            params.add(plantId);
+        if (s.plantIds() != null) {
+            w += " AND r.\"plantId\" = ANY(?::text[])";
+            params.add(s.plantIds());
+        }
+        if (CrushingSupport.text(s.productId()) != null) {
+            w += " AND (r.\"feedProductId\" = ? OR EXISTS (SELECT 1 FROM \"CrushingRunOutput\" fo WHERE"
+                    + " fo.\"runId\" = r.id AND fo.\"productId\" = ?))";
+            params.add(s.productId());
+            params.add(s.productId());
         }
         return w;
     }
@@ -54,9 +71,15 @@ public class CrushingReportService {
     /** Expected vs actual yield and loss per plant, and per product (tonnes and % of feed). */
     @Transactional(readOnly = true)
     public Map<String, Object> yieldReport(String from, String to, String plantId) {
+        return yieldReport(from, to, RunScope.ofPlant(plantId));
+    }
+
+    /** {@link #yieldReport(String, String, String)} over a {@link RunScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> yieldReport(String from, String to, RunScope scope) {
         Range r = range(from, to);
         List<Object> p1 = new ArrayList<>();
-        String w1 = runWhere(plantId, p1, r);
+        String w1 = runWhere(scope, p1, r);
         List<Map<String, Object>> plants = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT p.id AS \"plantId\", p.code AS \"plantCode\","
                 + " p.name AS \"plantName\", count(*) AS runs, SUM(r.\"feedTonnes\") AS \"feedTonnes\","
@@ -78,7 +101,7 @@ public class CrushingReportService {
             plants.add(m);
         }
         List<Object> p2 = new ArrayList<>();
-        String w2 = runWhere(plantId, p2, r);
+        String w2 = runWhere(scope, p2, r);
         List<Map<String, Object>> products = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT pr.id AS \"productId\", pr.code AS"
                 + " \"productCode\", pr.name AS \"productName\", o.role, SUM(o.\"expectedTonnes\") AS \"expectedTonnes\","
@@ -97,9 +120,15 @@ public class CrushingReportService {
     /** Cost per tonne per product (valued output ÷ tonnes) and per plant (feed + conversion by kind). */
     @Transactional(readOnly = true)
     public Map<String, Object> costPerTonne(String from, String to, String plantId) {
+        return costPerTonne(from, to, RunScope.ofPlant(plantId));
+    }
+
+    /** {@link #costPerTonne(String, String, String)} over a {@link RunScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> costPerTonne(String from, String to, RunScope scope) {
         Range r = range(from, to);
         List<Object> p1 = new ArrayList<>();
-        String w1 = runWhere(plantId, p1, r);
+        String w1 = runWhere(scope, p1, r);
         List<Map<String, Object>> products = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT pr.id AS \"productId\", pr.code AS"
                 + " \"productCode\", pr.name AS \"productName\", SUM(o.\"actualTonnes\") AS tonnes,"
@@ -113,7 +142,7 @@ public class CrushingReportService {
             products.add(m);
         }
         List<Object> p2 = new ArrayList<>();
-        String w2 = runWhere(plantId, p2, r);
+        String w2 = runWhere(scope, p2, r);
         List<Map<String, Object>> plants = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT p.id AS \"plantId\", p.code AS \"plantCode\","
                 + " p.name AS \"plantName\", count(*) AS runs, SUM(r.\"feedTonnes\") AS \"feedTonnes\","
@@ -125,7 +154,7 @@ public class CrushingReportService {
             BigDecimal out = dec(row, "outputTonnes");
             m.put("costPerTonne", out.signum() > 0 ? dec(row, "totalCost").divide(out, 4, RoundingMode.HALF_UP) : null);
             List<Object> p3 = new ArrayList<>();
-            String w3 = runWhere(null, p3, r) + " AND r.\"plantId\" = ?";
+            String w3 = runWhere(new RunScope(null, scope.productId()), p3, r) + " AND r.\"plantId\" = ?";
             p3.add(row.get("plantId"));
             m.put("byKind", SqlRows.list(db.jdbc().sql("SELECT c.kind, SUM(c.amount) AS amount FROM \"CrushingRunCost\" c"
                     + " JOIN \"CrushingRun\" r ON r.id = c.\"runId\" WHERE" + w3 + " GROUP BY c.kind ORDER BY c.kind")
@@ -138,9 +167,15 @@ public class CrushingReportService {
     /** Operating / downtime hours, availability, throughput vs design capacity per plant, and per-unit meters. */
     @Transactional(readOnly = true)
     public Map<String, Object> plantHours(String from, String to, String plantId) {
+        return plantHours(from, to, RunScope.ofPlant(plantId));
+    }
+
+    /** {@link #plantHours(String, String, String)} over a {@link RunScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> plantHours(String from, String to, RunScope scope) {
         Range r = range(from, to);
         List<Object> p1 = new ArrayList<>();
-        String w1 = runWhere(plantId, p1, r);
+        String w1 = runWhere(scope, p1, r);
         List<Map<String, Object>> plants = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT p.id AS \"plantId\", p.code AS \"plantCode\","
                 + " p.name AS \"plantName\", p.\"designCapacityTph\", count(*) AS runs,"
@@ -159,7 +194,7 @@ public class CrushingReportService {
             plants.add(m);
         }
         List<Object> p2 = new ArrayList<>();
-        String w2 = runWhere(plantId, p2, r);
+        String w2 = runWhere(scope, p2, r);
         List<Map<String, Object>> units = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(db.jdbc().sql("SELECT u.id AS \"unitId\", u.code AS \"unitCode\","
                 + " u.name AS \"unitName\", u.kind, u.\"capacityTph\", p.code AS \"plantCode\", count(*) AS runs,"
@@ -179,6 +214,18 @@ public class CrushingReportService {
             units.add(m);
         }
         return Obj.of("from", r.from().toString(), "to", r.to().toString(), "plants", plants, "units", units);
+    }
+
+    /** Feed, output and loss per month of posted runs, for the analytics trend (ADR-S020). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> monthlyTrend(String from, String to, RunScope scope) {
+        Range r = range(from, to);
+        List<Object> params = new ArrayList<>();
+        String w = runWhere(scope, params, r);
+        return SqlRows.list(db.jdbc().sql("SELECT to_char(r.\"runDate\", 'YYYY-MM') AS period, count(*) AS runs,"
+                + " SUM(r.\"feedTonnes\") AS \"feedTonnes\", SUM(r.\"outputTonnes\") AS \"outputTonnes\","
+                + " SUM(r.\"lossTonnes\") AS \"lossTonnes\" FROM \"CrushingRun\" r WHERE" + w
+                + " GROUP BY 1 ORDER BY 1").params(params));
     }
 
     /** Stockpiles (product kind first) with on-hand per product, value and the last survey of each. */

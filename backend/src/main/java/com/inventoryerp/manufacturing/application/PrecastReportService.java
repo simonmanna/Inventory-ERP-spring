@@ -149,8 +149,14 @@ public class PrecastReportService {
     /** Cost per acceptable block per precast order created in the period, with product totals. */
     @Transactional(readOnly = true)
     public Map<String, Object> costPerBlock(String from, String to, String productId) {
+        return costPerBlock(from, to, productId, null);
+    }
+
+    /** {@link #costPerBlock(String, String, String)} limited to orders at locations of branches; null = all. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> costPerBlock(String from, String to, String productId, String[] branchIds) {
         List<Object> params = new ArrayList<>(List.of(MfgDb.org()));
-        String where = period(from, to, productId, params);
+        String where = period(from, to, productId, branchIds, params);
         List<Map<String, Object>> orders = SqlRows.list(db.jdbc().sql("SELECT o.id, o.\"orderCode\", o.status,"
                 + " o.\"createdAt\", o.\"outputProductId\", p.name AS \"productName\", m.\"bomId\","
                 + " b.\"outputQuantity\" AS \"unitsPerBatch\" FROM \"ProductionOrder\" o JOIN \"PrecastMixDesign\" m"
@@ -209,8 +215,14 @@ public class PrecastReportService {
     /** Broken blocks by reason and stage (pressing / cubing) plus second grade, per product, in the period. */
     @Transactional(readOnly = true)
     public Map<String, Object> breakage(String from, String to, String productId) {
+        return breakage(from, to, productId, null);
+    }
+
+    /** {@link #breakage(String, String, String)} limited to orders at locations of {@code branchIds}; null = all. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> breakage(String from, String to, String productId, String[] branchIds) {
         List<Object> params = new ArrayList<>(List.of(MfgDb.org()));
-        String where = period(from, to, productId, params);
+        String where = period(from, to, productId, branchIds, params);
         List<Map<String, Object>> rows = SqlRows.list(db.jdbc().sql("SELECT o.\"outputProductId\" AS \"productId\","
                 + " p.name AS \"productName\", CASE WHEN s.\"isLast\" THEN 'cubing' ELSE 'pressing' END AS stage,"
                 + " coalesce(ps.\"scrapReasonCode\", '') AS \"reasonCode\", sr.name AS \"reasonName\","
@@ -223,7 +235,7 @@ public class PrecastReportService {
                 + " AND ps.kind = 'output' AND ps.\"qtyScrap\" > 0" + where + " GROUP BY o.\"outputProductId\", p.name,"
                 + " s.\"isLast\", ps.\"scrapReasonCode\", sr.name ORDER BY p.name, stage, quantity DESC").params(params));
         List<Object> p2 = new ArrayList<>(List.of(MfgDb.org()));
-        String where2 = period(from, to, productId, p2);
+        String where2 = period(from, to, productId, branchIds, p2);
         List<Map<String, Object>> second = SqlRows.list(db.jdbc().sql("SELECT o.\"outputProductId\" AS \"productId\","
                 + " p.name AS \"productName\", sum(b.\"qtySecondGrade\") AS \"secondGrade\", sum(b.\"qtyGood\")"
                 + " AS \"goodBlocks\", sum(b.quantity) AS \"cured\" FROM \"PrecastCuringBatch\" b JOIN"
@@ -238,7 +250,7 @@ public class PrecastReportService {
         return res;
     }
 
-    private static String period(String from, String to, String productId, List<Object> params) {
+    private static String period(String from, String to, String productId, String[] branchIds, List<Object> params) {
         StringBuilder w = new StringBuilder();
         if (from != null && !from.isBlank()) {
             w.append(" AND o.\"createdAt\" >= ?");
@@ -251,6 +263,11 @@ public class PrecastReportService {
         if (productId != null && !productId.isBlank()) {
             w.append(" AND o.\"outputProductId\" = ?");
             params.add(productId);
+        }
+        if (branchIds != null) {
+            w.append(" AND o.\"locationId\" IN (SELECT bl.id FROM \"InventoryLocation\" bl WHERE"
+                    + " bl.\"organizationId\" = o.\"organizationId\" AND bl.\"branchId\" = ANY(?::text[]))");
+            params.add(branchIds);
         }
         return w.toString();
     }

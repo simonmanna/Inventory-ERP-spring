@@ -592,6 +592,24 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Management dashboards (ADR-S020, Track C Phase 5): each dashboard has its own permission.
+    title: 'Analytics',
+    icon: BarChart3,
+    items: [
+      { to: '/analytics', label: tx('Dashboards Overview'), icon: LayoutDashboard, permission: PERMISSIONS.analytics.view },
+      { to: '/analytics/quarry', label: tx('Quarry Operations'), icon: Mountain, permission: PERMISSIONS.analytics.quarry },
+      { to: '/analytics/aggregates', label: tx('Aggregate Processing'), icon: Factory, permission: PERMISSIONS.analytics.aggregates },
+      { to: '/analytics/blocks', label: tx('Block Manufacturing'), icon: Layers, permission: PERMISSIONS.analytics.blocks },
+      { to: '/analytics/inventory', label: tx('Inventory KPIs'), icon: Boxes, permission: PERMISSIONS.analytics.inventory },
+      { to: '/analytics/procurement', label: tx('Procurement KPIs'), icon: ShoppingCart, permission: PERMISSIONS.analytics.procurement },
+      { to: '/analytics/sales', label: tx('Sales KPIs'), icon: ReceiptText, permission: PERMISSIONS.analytics.sales },
+      { to: '/analytics/fleet', label: tx('Fleet & Delivery KPIs'), icon: Truck, permission: PERMISSIONS.analytics.fleet },
+      { to: '/analytics/maintenance', label: tx('Maintenance KPIs'), icon: Wrench, permission: PERMISSIONS.analytics.maintenance },
+      { to: '/analytics/finance', label: tx('Finance KPIs'), icon: Landmark, permission: PERMISSIONS.analytics.finance },
+      { to: '/analytics/branches', label: tx('Branch KPIs'), icon: Network, permission: PERMISSIONS.analytics.branch },
+    ],
+  },
+  {
     // Quarry & extraction (ADR-S012, Track C 2.2): sites, extraction into ROM stock, blasting, controlled explosives.
     title: 'Quarry',
     icon: Mountain,

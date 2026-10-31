@@ -32,6 +32,33 @@ public class QuarryReportService {
 
     record Window(LocalDate from, LocalDate to) {}
 
+    /**
+     * Narrowing of a period report for analytics (ADR-S020): {@code siteIds} null means every site; {@code productId}
+     * keeps the materials stocked as that product.
+     */
+    public record ReportScope(String[] siteIds, String productId) {
+
+        static ReportScope ofSite(String siteId) {
+            return new ReportScope(QuarryDb.blank(siteId) ? null : new String[] {siteId}, null);
+        }
+    }
+
+    /** Appends the scope to a query over {@code alias} (a table with siteId, materialId and organizationId). */
+    private static String narrow(ReportScope s, String alias, List<Object> params) {
+        StringBuilder w = new StringBuilder();
+        if (s.siteIds() != null) {
+            w.append(" AND ").append(alias).append(".\"siteId\" = ANY(?::text[])");
+            params.add(s.siteIds());
+        }
+        if (!QuarryDb.blank(s.productId())) {
+            w.append(" AND ").append(alias).append(".\"materialId\" IN (SELECT qm.id FROM \"QuarryMaterial\" qm WHERE"
+                    + " qm.\"organizationId\" = ").append(alias)
+                    .append(".\"organizationId\" AND qm.\"productId\" = ?)");
+            params.add(s.productId());
+        }
+        return w.toString();
+    }
+
     static Window window(LocalDate from, LocalDate to) {
         LocalDate today = LocalDate.now(BusinessZone.get());
         LocalDate f = from == null ? today.withDayOfMonth(1) : from;
@@ -45,13 +72,15 @@ public class QuarryReportService {
     /** Plans overlapping the window (not drafts) with actual tonnes, cost per tonne vs budget and the variance. */
     @Transactional(readOnly = true)
     public Map<String, Object> extractionVsTarget(LocalDate from, LocalDate to, String siteId) {
+        return extractionVsTarget(from, to, ReportScope.ofSite(siteId));
+    }
+
+    /** {@link #extractionVsTarget(LocalDate, LocalDate, String)} over a {@link ReportScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> extractionVsTarget(LocalDate from, LocalDate to, ReportScope scope) {
         Window w = window(from, to);
         List<Object> params = new ArrayList<>(List.of(QuarryDb.org(), date(w.to()), date(w.from())));
-        String site = "";
-        if (!QuarryDb.blank(siteId)) {
-            site = " AND p.\"siteId\" = ?";
-            params.add(siteId);
-        }
+        String site = narrow(scope, "p", params);
         List<Map<String, Object>> rows = new ArrayList<>();
         BigDecimal target = BigDecimal.ZERO;
         BigDecimal actual = BigDecimal.ZERO;
@@ -78,6 +107,12 @@ public class QuarryReportService {
     /** Cost per tonne by site and period ({@code groupBy} day / week / month / site) with the build-up. */
     @Transactional(readOnly = true)
     public Map<String, Object> costPerTonne(LocalDate from, LocalDate to, String siteId, String groupBy) {
+        return costPerTonne(from, to, ReportScope.ofSite(siteId), groupBy);
+    }
+
+    /** {@link #costPerTonne(LocalDate, LocalDate, String, String)} over a {@link ReportScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> costPerTonne(LocalDate from, LocalDate to, ReportScope scope, String groupBy) {
         Window w = window(from, to);
         String g = groupBy == null ? "month" : groupBy;
         String period = switch (g) {
@@ -87,11 +122,7 @@ public class QuarryReportService {
             default -> "date_trunc('month', l.\"extractedOn\")::date";
         };
         List<Object> params = new ArrayList<>(List.of(QuarryDb.org(), date(w.from()), date(w.to())));
-        String site = "";
-        if (!QuarryDb.blank(siteId)) {
-            site = " AND l.\"siteId\" = ?";
-            params.add(siteId);
-        }
+        String site = narrow(scope, "l", params);
         String sums = """
                 count(*) AS logs, SUM(l."grossTonnes") AS "grossTonnes", SUM(l."lossTonnes") AS "lossTonnes",
                 SUM(l."netTonnes") AS "netTonnes", SUM(l."fuelCost") AS "fuelCost", SUM(l."labourCost") AS "labourCost",
@@ -131,13 +162,15 @@ public class QuarryReportService {
     /** Losses by site and kind (log losses of posted logs and standalone losses), with the loss share of gross. */
     @Transactional(readOnly = true)
     public Map<String, Object> losses(LocalDate from, LocalDate to, String siteId) {
+        return losses(from, to, ReportScope.ofSite(siteId));
+    }
+
+    /** {@link #losses(LocalDate, LocalDate, String)} over a {@link ReportScope}. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> losses(LocalDate from, LocalDate to, ReportScope scope) {
         Window w = window(from, to);
         List<Object> params = new ArrayList<>(List.of(QuarryDb.org(), date(w.from()), date(w.to())));
-        String site = "";
-        if (!QuarryDb.blank(siteId)) {
-            site = " AND x.\"siteId\" = ?";
-            params.add(siteId);
-        }
+        String site = narrow(scope, "x", params);
         List<Map<String, Object>> rows = SqlRows.list(db.jdbc().sql("""
                 SELECT x."siteId", s.code AS "siteCode", s.name AS "siteName", x.kind,
                        SUM(x.tonnes) FILTER (WHERE x."logId" IS NOT NULL) AS "extractionTonnes",
@@ -158,11 +191,7 @@ public class QuarryReportService {
             out.add(m);
         }
         List<Object> sp = new ArrayList<>(List.of(QuarryDb.org(), date(w.from()), date(w.to())));
-        String site2 = "";
-        if (!QuarryDb.blank(siteId)) {
-            site2 = " AND l.\"siteId\" = ?";
-            sp.add(siteId);
-        }
+        String site2 = narrow(scope, "l", sp);
         List<Map<String, Object>> sites = new ArrayList<>();
         for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"siteId\", s.code AS \"siteCode\","
                 + " SUM(l.\"grossTonnes\") AS \"grossTonnes\", SUM(l.\"lossTonnes\") AS \"lossTonnes\","

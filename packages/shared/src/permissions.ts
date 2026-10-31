@@ -903,6 +903,22 @@ export const PERMISSIONS = {
     /// Staff: open, disable and reset customer portal accounts.
     manage: 'portal:manage',
   },
+  // ---- Management dashboards (Track C Phase 5, ADR-S020) ----
+  // Route ↔ permission matrix: docs/spec/analytics-kpis.md §Routes. A viewer holds analytics:view plus one per dashboard.
+  analytics: {
+    /// Open the analytics screens and their filter lists; shows nothing without a dashboard permission below.
+    view: 'analytics:view',
+    quarry: 'analytics:quarry',
+    aggregates: 'analytics:aggregates',
+    blocks: 'analytics:blocks',
+    inventory: 'analytics:inventory',
+    procurement: 'analytics:procurement',
+    sales: 'analytics:sales',
+    fleet: 'analytics:fleet',
+    maintenance: 'analytics:maintenance',
+    finance: 'analytics:finance',
+    branch: 'analytics:branch',
+  },
   // ---- Label printing (INT-3) ----
   label: {
     /// Print product, stockpile and weighbridge ticket labels (PDF or ZPL).
