@@ -4,7 +4,7 @@
 --
 -- Plain CREATE INDEX, inside the Flyway transaction, blocks writes to each table while it builds. The tables below are
 -- small on a first install; on a large copy, build them beforehand with CREATE INDEX CONCURRENTLY under the same names.
--- "Order" and "Invoice" need two more indexes but take POS writes, so they are a manual step: docs/OPERATIONS.md 5a.
+-- "Order" and "Invoice" need two more indexes but take POS writes, so they are a manual step: docs/OPERATIONS.md 4a.
 
 CREATE INDEX IF NOT EXISTS "ProductionOrder_org_completedAt_idx" ON "ProductionOrder" ("organizationId", "completedAt");
 CREATE INDEX IF NOT EXISTS "WorkOrder_org_plannedStartAt_idx" ON "WorkOrder" ("organizationId", "plannedStartAt");

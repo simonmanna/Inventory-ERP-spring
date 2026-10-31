@@ -83,6 +83,22 @@ groups:
         annotations:
           summary: "Domain events are not being delivered"
 
+      - alert: ScheduledJobFailing
+        expr: sum by (task) (increase(erp_job_failures_total{job="inventory-erp-api"}[1h])) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Scheduled job {{ $labels.task }} failed for an organization in the last hour"
+          description: "The job goes on with the other organizations. The API log names the organization and the error."
+
+      - alert: ExternalProviderFailing
+        expr: sum by (provider) (increase(erp_provider_failures_total{job="inventory-erp-api"}[15m])) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Calls to {{ $labels.provider }} keep failing"
+          description: "Collections stay pending and are retried by the poll job. Check the provider and its credentials."
+
   - name: inventory-erp-backups
     rules:
       - alert: BackupCritical
