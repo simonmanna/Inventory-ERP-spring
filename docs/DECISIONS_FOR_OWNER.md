@@ -148,4 +148,9 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | SALES-3 | When does a list apply? | Only to a line with no price. A typed price wins. Web screens that prefill a price send it, so on those screens clear the price to use the list | Always reprice | Have the screens call `/price-lists/resolve` when customer or quantity changes |
 | 2026-10-30 | SALES-3 | Which list wins? | Customer > category > default; then priority; then branch list, site over zone, product over category, exact unit, biggest quantity break | Lowest price | `PriceListService.resolve` |
 | 2026-10-30 | SALES-3 | Currency | Lists are in the organization currency | One list per currency | Add a column |
+| 2026-10-30 | SALES-4 | When is commission earned? | When the invoice is posted, on its net line value, whether or not the customer has paid | On payment | Filter `CrmCommissionService.calculate` on `paid` |
+| 2026-10-30 | SALES-4 | Who is the salesperson? | `Document.salespersonId` (the invoice form field). POS sales earn nothing here | Order creator | Add a source in `calculate` |
+| 2026-10-30 | SALES-4 | How is it paid? | Approved entries become one taxable earning per employee through hr payroll inputs; payroll posts the expense. No separate accrual journal | Accrue at approval | Add an accrual account and pass it as `debitAccountId` |
+| 2026-10-30 | SALES-4 | Clawback | A cancelled invoice cancels entries not yet sent to payroll. Credit notes and entries already sent are not reversed automatically | Negative entries | Add a clawback step |
+| 2026-10-30 | SALES-4 | Who approves? | `commission:approve`, never the salesperson's own linked user | Manager only | `CrmCommissionService.approve` |
 

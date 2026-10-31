@@ -29,6 +29,7 @@ import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { resolveListPrice } from '@/features/invoicing/price-list-api';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-sky-200 bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400';
@@ -278,6 +279,14 @@ export function InvoiceCreatePage() {
       setValue(`lines.${index}.description`, p.name);
       setValue(`lines.${index}.uomId`, defaultUnitId(p, 'sales'));
       if (p.salesPrice != null) setValue(`lines.${index}.unitPrice`, Number(p.salesPrice));
+      // SALES-3: the customer's price list replaces the catalogue price when one applies.
+      void resolveListPrice({
+        partnerId: getValues('partnerId'), productId, quantity: Number(getValues(`lines.${index}.quantity`)) || 1,
+        uomId: defaultUnitId(p, 'sales'),
+      }).then((listed) => {
+        if (listed?.unitPrice != null) setValue(`lines.${index}.unitPrice`, listed.unitPrice);
+        if (listed && listed.discountPercent > 0) setValue(`lines.${index}.discountPercent`, listed.discountPercent);
+      });
     }
   };
 

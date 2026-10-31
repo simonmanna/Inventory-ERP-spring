@@ -10676,5 +10676,17 @@
   "Default for all customers": "Chaguomsingi kwa wateja wote",
   "customer(s) on this list": "wateja kwenye orodha hii",
   "From qty": "Kuanzia kiasi",
-  "Sales unit": "Kipimo cha mauzo"
+  "Sales unit": "Kipimo cha mauzo",
+  "Select": "Chagua",
+  "Rate %": "Kiwango %",
+  "Sales Commissions": "Kamisheni za Mauzo",
+  "Earned on posted invoices that name a salesperson. Approved commissions go to payroll as a taxable earning.": "Hupatikana kwenye ankara zilizochapishwa zenye muuzaji. Kamisheni zilizoidhinishwa huenda kwenye mishahara kama mapato yanayotozwa kodi.",
+  "Sent to payroll": "Imetumwa kwa mishahara",
+  "Entries created": "Maingizo yaliyoundwa",
+  "Lines without a rule": "Mistari bila kanuni",
+  "Approve selected": "Idhinisha vilivyochaguliwa",
+  "Send approved to payroll": "Tuma zilizoidhinishwa kwa mishahara",
+  "No commission entries.": "Hakuna maingizo ya kamisheni.",
+  "Commission rules": "Kanuni za kamisheni",
+  "No commission rules yet.": "Bado hakuna kanuni za kamisheni."
 }

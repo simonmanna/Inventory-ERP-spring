@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { usePartners, type Partner } from '@/features/partners/api';
 import { useCreateOrder, useOrderSettings } from '@/features/orders/api';
 import { usePaymentTerms } from '@/features/accounting/api';
+import { resolveListPrice } from '@/features/invoicing/price-list-api';
 import { useProducts } from '@/features/products/api';
 import { unitPrice as suggestedUnitPrice } from '@/features/products/units';
 import { UnitSelect } from '@/components/unit-select';
@@ -88,7 +89,19 @@ export function OrderCreatePage() {
   }, [lines]);
 
   const addLine = (line: OrderLineInput) => {
-    setLines((prev) => [...prev, { ...line, _key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }]);
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setLines((prev) => [...prev, { ...line, _key: key }]);
+    // SALES-3: the customer's price list replaces the catalogue price when one applies.
+    if (line.productId) {
+      void resolveListPrice({ partnerId, productId: line.productId, quantity: line.quantity }).then((listed) => {
+        if (listed) {
+          updateLine(key, {
+            ...(listed.unitPrice != null ? { unitPrice: listed.unitPrice } : {}),
+            ...(listed.discountPercent > 0 ? { discountPercent: listed.discountPercent } : {}),
+          });
+        }
+      });
+    }
   };
 
   const updateLine = (key: string, patch: Partial<OrderLineInput>) => {

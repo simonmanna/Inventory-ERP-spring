@@ -384,4 +384,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/invoices/new`: leave the price empty (API or a cleared field): the list price appears after save; a typed price stays.
   - `/orders/new`, delivery order and quotation for the same customer take the same price.
   - Another customer keeps the catalogue price.
+- SALES-4
+  - `/commissions`: add a 5% rule. Post an invoice with a salesperson; Calculate shows the entry; calculate again adds nothing.
+  - Approve, send to payroll; run payroll for the employee: the commission appears as an allowance line.
+  - Cancel a posted invoice and calculate: its entry is cancelled.
 

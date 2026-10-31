@@ -247,6 +247,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/credit-notes', label: tx('Credit Notes'), icon: FileMinus, permission: PERMISSIONS.creditNote.read },
       { to: '/credit-control', label: tx('Credit Control'), icon: HandCoins, permission: PERMISSIONS.creditControl.read },
       { to: '/price-lists', label: tx('Price Lists'), icon: Tags, permission: PERMISSIONS.priceList.read },
+      { to: '/commissions', label: tx('Sales Commissions'), icon: HandCoins, permission: PERMISSIONS.commission.read },
       { to: '/payments', label: tx('Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
       { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar },

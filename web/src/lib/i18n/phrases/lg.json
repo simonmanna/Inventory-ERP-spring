@@ -10676,5 +10676,17 @@
   "Default for all customers": "Ekya bulijjo eri bakasitoma bonna",
   "customer(s) on this list": "bakasitoma ku lukalala luno",
   "From qty": "Okuva ku bungi",
-  "Sales unit": "Ekipimo eky'okutunda"
+  "Sales unit": "Ekipimo eky'okutunda",
+  "Select": "Londa",
+  "Rate %": "Omuwendo %",
+  "Sales Commissions": "Kamisoni z'okutunda",
+  "Earned on posted invoices that name a salesperson. Approved commissions go to payroll as a taxable earning.": "Efunibwa ku invoyisi eziwandiikiddwa ezirina omutunzi. Kamisoni ezikkiriziddwa zigenda mu musaala ng'ensimbi ezisasulwako omusolo.",
+  "Sent to payroll": "Ezisindikiddwa mu musaala",
+  "Entries created": "Ebiwandiiko ebikoleddwa",
+  "Lines without a rule": "Layini ezitalina tteeka",
+  "Approve selected": "Kkiriza ebirondeddwa",
+  "Send approved to payroll": "Sindika ezikkiriziddwa mu musaala",
+  "No commission entries.": "Tewali biwandiiko bya kamisoni.",
+  "Commission rules": "Amateeka ga kamisoni",
+  "No commission rules yet.": "Tewali mateeka ga kamisoni."
 }

@@ -10676,5 +10676,17 @@
   "Default for all customers": "ንኹሎም ዓማዊል ነባሪ",
   "customer(s) on this list": "ኣብዚ ዝርዝር ዘለዉ ዓማዊል",
   "From qty": "ካብ ብዝሒ",
-  "Sales unit": "መሸጢ መዐቀኒ"
+  "Sales unit": "መሸጢ መዐቀኒ",
+  "Select": "ምረጽ",
+  "Rate %": "መጠን %",
+  "Sales Commissions": "ኮሚሽን መሸጣ",
+  "Earned on posted invoices that name a salesperson. Approved commissions go to payroll as a taxable earning.": "ሸያጢ ኣብ ዝጠቐሱ ዝተመዝገቡ ፋክቱራታት ይርከብ። ዝጸደቐ ኮሚሽን ከም ግብሪ ዝኸፈል እቶት ናብ ደሞዝ ይኸይድ።",
+  "Sent to payroll": "ናብ ደሞዝ ዝተላእከ",
+  "Entries created": "ዝተፈጥሩ መእተዊታት",
+  "Lines without a rule": "ሕጊ ዘይብሎም መስመራት",
+  "Approve selected": "ዝተመረጹ ኣጽድቕ",
+  "Send approved to payroll": "ዝጸደቑ ናብ ደሞዝ ስደድ",
+  "No commission entries.": "መእተዊ ኮሚሽን የለን።",
+  "Commission rules": "ሕግታት ኮሚሽን",
+  "No commission rules yet.": "ገና ሕጊ ኮሚሽን የለን።"
 }

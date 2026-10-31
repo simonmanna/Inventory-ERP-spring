@@ -103,6 +103,7 @@ import { OrderDetailPage } from '@/pages/orders/order-detail';
 import { ArAgingPage } from '@/pages/invoicing/ar-aging';
 import { CreditControlPage } from '@/pages/invoicing/credit-control';
 import { PriceListsPage } from '@/pages/invoicing/price-lists';
+import { CommissionsPage } from '@/pages/crm/CommissionsPage';
 import { CreditNotesPage } from '@/pages/invoicing/credit-notes';
 import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
@@ -275,6 +276,7 @@ export function App() {
                     <Route path="/communication" element={<CommunicationInboxPage />} />
                     <Route path="/communication/rules" element={<CommunicationRulesPage />} />
                     <Route path="/communication/channels" element={<CommunicationChannelsPage />} />
+          <Route path="/commissions" element={<RequirePermission permission={PERMISSIONS.commission.read}><CommissionsPage /></RequirePermission>} />
           <Route path="/price-lists" element={<RequirePermission permission={PERMISSIONS.priceList.read}><PriceListsPage /></RequirePermission>} />
           <Route path="/credit-control" element={<RequirePermission permission={PERMISSIONS.creditControl.read}><CreditControlPage /></RequirePermission>} />
           <Route path="/credit-notes" element={<CreditNotesPage />} />

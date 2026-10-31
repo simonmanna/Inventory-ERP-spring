@@ -85,3 +85,10 @@ Tests: `CrmSuiteIT` (stages config, lead conversion, kanban / grouped / list, wo
 planned activities + reminders, price rules, quotation approval / credit / conversion to Order and proforma, reports,
 visibility, tenant isolation). Web: `web/src/pages/crm/*` (pipeline kanban, opportunity form, leads, quotations,
 activities, customers, price rules, reports, configuration).
+
+## Commissions (SALES-4)
+
+Status: built, not compiled or run. `/commissions/*` (`commission:read|manage|approve`, `CrmCommissionController`),
+tables `CommissionRule`, `CommissionEntry` (V64), screen `/commissions`. Uses `HrPayrollInputService.addEarning`
+(source `sales_commission`). Tests: `CrmCommissionTest`, `CrmCommissionIT`.
+
