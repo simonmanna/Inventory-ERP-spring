@@ -1424,3 +1424,12 @@ idempotent, reports). `FleetIncidentsIT` / `HrIT` unchanged and green.
   snapshot can be added for very large fleets.
 - Export headers are English (server-rendered); the screens are translated.
 - Demo trips are dated over the last week in fleet's tables; their stock / GL entries carry the seeding day.
+
+## Phase 4 lane C touch points (not compiled or run)
+
+- `WeighbridgeUnits` and `FleetLoadFactors` now take `UomConversionService` and fall back to the product's density and
+  unit profile (UOM-1).
+- `FleetDeliveryOrderService.create` checks credit and fills unpriced lines from price lists by site and zone
+  (SALES-1, SALES-3); list and detail follow the user's location scope (BR-1).
+- `FleetDispatchService.dispatch` refuses a customer on hold when fleet issues the stock (SALES-1).
+
