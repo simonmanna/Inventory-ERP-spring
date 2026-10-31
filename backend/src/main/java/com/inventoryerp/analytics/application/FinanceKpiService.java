@@ -23,9 +23,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Finance: profit from {@link ConsolidatedReportService}, which is the one ledger report that can be cut by branch, cash
- * flow from {@link FinancialReportsService} (unlimited views only, because cash has no reliable branch) and open
- * balances from {@link OpenItems}.
+ * Finance: profit from {@link ConsolidatedReportService}, the one ledger report that can be cut by branch, cash flow
+ * from {@link FinancialReportsService} (unlimited views only, because cash has no reliable branch) and open balances
+ * from {@link OpenItems}.
  */
 @Service
 @Transactional(readOnly = true)

@@ -188,6 +188,7 @@ import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
+import { analyticsRoutes } from '@/pages/analytics/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
 import { driverRoutes } from '@/pages/driver/routes';
 import { portalRoutes } from '@/pages/portal/routes';
@@ -475,6 +476,8 @@ export function App() {
           {qualityRoutes}
           {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
           {quarryRoutes}
+          {/* Management dashboards (ADR-S020) — screens in pages/analytics/routes.tsx */}
+          {analyticsRoutes}
           {/* Repair & Maintenance — static segments before /repair/orders/:id */}
           <Route path="/repair" element={<RepairDashboardPage />} />
           <Route path="/repair/orders" element={<RepairOrdersPage />} />

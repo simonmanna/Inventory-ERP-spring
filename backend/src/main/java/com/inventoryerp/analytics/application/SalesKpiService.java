@@ -102,7 +102,7 @@ public class SalesKpiService {
     }
 
     /** Posted sales documents, or every open one whatever its date. */
-    PageResult<Map<String, Object>> salesDocuments(AnalyticsView v, boolean open, Paging paging) {
+    public PageResult<Map<String, Object>> salesDocuments(AnalyticsView v, boolean open, Paging paging) {
         String org = TenantContext.organizationId();
         String product = v.filter().productId();
         List<Object> params = new ArrayList<>(List.of(org));
