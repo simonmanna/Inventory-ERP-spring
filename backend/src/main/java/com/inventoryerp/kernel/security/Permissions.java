@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (518 permissions). Constant name = GROUP__ACTION.
+ * exactly (529 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -528,6 +528,17 @@ public final class Permissions {
     public static final String QUARRY_BLASTING__MAGAZINE = "quarry_blasting:magazine";
     public static final String PORTAL__CUSTOMER = "portal:customer";
     public static final String PORTAL__MANAGE = "portal:manage";
+    public static final String ANALYTICS__VIEW = "analytics:view";
+    public static final String ANALYTICS__QUARRY = "analytics:quarry";
+    public static final String ANALYTICS__AGGREGATES = "analytics:aggregates";
+    public static final String ANALYTICS__BLOCKS = "analytics:blocks";
+    public static final String ANALYTICS__INVENTORY = "analytics:inventory";
+    public static final String ANALYTICS__PROCUREMENT = "analytics:procurement";
+    public static final String ANALYTICS__SALES = "analytics:sales";
+    public static final String ANALYTICS__FLEET = "analytics:fleet";
+    public static final String ANALYTICS__MAINTENANCE = "analytics:maintenance";
+    public static final String ANALYTICS__FINANCE = "analytics:finance";
+    public static final String ANALYTICS__BRANCH = "analytics:branch";
     public static final String LABEL__PRINT = "label:print";
 
     /** Every permission (Administrator role). */
@@ -1049,6 +1060,17 @@ public final class Permissions {
             "quarry_blasting:magazine",
             "portal:customer",
             "portal:manage",
+            "analytics:view",
+            "analytics:quarry",
+            "analytics:aggregates",
+            "analytics:blocks",
+            "analytics:inventory",
+            "analytics:procurement",
+            "analytics:sales",
+            "analytics:fleet",
+            "analytics:maintenance",
+            "analytics:finance",
+            "analytics:branch",
             "label:print");
 
     /** Operational manager role (cash management, no system administration). */
