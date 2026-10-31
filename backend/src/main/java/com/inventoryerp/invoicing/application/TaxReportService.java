@@ -123,6 +123,53 @@ public class TaxReportService {
                 "gl", gl(from, to, branchId, taxes.values()));
     }
 
+    /**
+     * Generic tax return pack (FIN-3): the summary laid out as numbered boxes by VAT category, with the rate detail and
+     * the GL cross-check. It names no jurisdiction; a country form maps these boxes onto its own lines.
+     */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> pack(String fromRaw, String toRaw, String branchId) {
+        Map<String, Object> summary = summary(fromRaw, toRaw, branchId);
+        Map<String, Object> output = (Map<String, Object>) summary.get("output");
+        Map<String, Object> input = (Map<String, Object>) summary.get("input");
+        Map<String, Object> outCat = (Map<String, Object>) output.get("byCategory");
+        Map<String, Object> inCat = (Map<String, Object>) input.get("byCategory");
+        BigDecimal net = new BigDecimal((String) summary.get("netTaxPayable"));
+        BigDecimal glNet = new BigDecimal((String) ((Map<String, Object>) summary.get("gl")).get("net"));
+        List<Map<String, Object>> boxes = new ArrayList<>();
+        addBox(boxes, "Standard-rated sales", amount(outCat, "standard"));
+        addBox(boxes, "Zero-rated sales", amount(outCat, "zero_rated"));
+        addBox(boxes, "Exempt sales", amount(outCat, "exempt"));
+        addBox(boxes, "Out-of-scope and untaxed sales",
+                amount(outCat, "out_of_scope").add(amount(outCat, "no_tax")));
+        addBox(boxes, "Total sales", new BigDecimal((String) output.get("taxableTotal")));
+        addBox(boxes, "Output tax", new BigDecimal((String) output.get("taxTotal")));
+        addBox(boxes, "Standard-rated purchases", amount(inCat, "standard"));
+        addBox(boxes, "Zero-rated purchases", amount(inCat, "zero_rated"));
+        addBox(boxes, "Exempt purchases", amount(inCat, "exempt"));
+        addBox(boxes, "Out-of-scope and untaxed purchases",
+                amount(inCat, "out_of_scope").add(amount(inCat, "no_tax")));
+        addBox(boxes, "Total purchases", new BigDecimal((String) input.get("taxableTotal")));
+        addBox(boxes, "Input tax", new BigDecimal((String) input.get("taxTotal")));
+        addBox(boxes, "Net tax payable (refundable if negative)", net);
+        BigDecimal difference = net.subtract(glNet);
+        return Obj.of("from", fromRaw, "to", toRaw, "branchId", branchId, "boxes", boxes, "position",
+                summary.get("position"), "glNet", StatementService.plain(glNet), "glDifference",
+                StatementService.plain(difference), "reconciled",
+                        difference.abs().compareTo(new BigDecimal("0.01")) <= 0,
+                "output", output.get("lines"), "input", input.get("lines"));
+    }
+
+    private static BigDecimal amount(Map<String, Object> byCategory, String category) {
+        Object v = byCategory.get(category);
+        return v == null ? BigDecimal.ZERO : new BigDecimal((String) v);
+    }
+
+    private static void addBox(List<Map<String, Object>> boxes, String label, BigDecimal value) {
+        boxes.add(Obj.of("box", boxes.size() + 1, "label", label, "amount", StatementService.plain(value)));
+    }
+
     private static void range(StringBuilder sql, List<Object> params, String column, Instant from, Instant to) {
         if (from != null) {
             sql.append(" AND ").append(column).append(" >= ?");

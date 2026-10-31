@@ -142,3 +142,13 @@ inventory and stock-posting flows and are ported with P3–P5. Parity scenarios 
 
 Tests: `CostCenterAccountingIT`. Web: Cost Centers (hierarchy fields), Cost Centre Accounting (P&L, matrix,
 hierarchy, allocation rules / runs, defaults & account rules).
+
+## Phase 4 bank reconciliation (built, unverified)
+
+FIN-1: `GET /bank-reconciliation/{lines,runs,summary}`, `GET /bank-reconciliation/lines/{id}/candidates` (`bank_account:read`), `POST /bank-reconciliation/lines/{id}/{match,exclude}` (`bank_account:update`). `POST /bank-reconciliation/match` takes an optional `signed` flag; without it the behaviour is unchanged.
+`bankAccountId` on these routes is the GL account id. Screen `/bank-reconciliation`. Test: `BankReconciliationIT`. Nothing was compiled or run.
+
+## Phase 4 period-close checklist (built, unverified)
+
+FIN-3: `GET /fiscal-periods/{id}/close-checklist` (`fiscal_period:read`), `PUT /fiscal-periods/{id}/close-checklist/{key}` (`fiscal_period:update`), table `PeriodCloseSignOff` (V72). The checklist does not gate `close`.
+Screen `/fiscal-periods/:id/checklist`. Tests: `PeriodCloseChecklistIT`, `FinancialStatementsIT`, `core/TaxesIT`. Nothing was compiled or run.

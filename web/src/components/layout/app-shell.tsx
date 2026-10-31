@@ -308,6 +308,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/accounts/cash-accounts/accounts', label: tx('Accounts'), icon: Wallet, permission: PERMISSIONS.account.read },
       { to: '/accounts/cash-accounts/activity', label: tx('Money Activity'), icon: ArrowRightLeft, permission: PERMISSIONS.account.read },
       { to: '/accounts/cash-accounts/settlements', label: tx('Settlements'), icon: Landmark, permission: PERMISSIONS.cashSession.reconcile },
+      { to: '/bank-reconciliation', label: tx('Bank Reconciliation'), icon: Landmark, permission: PERMISSIONS.bankAccount.read },
       // Cash Registers lives under POS only; Overview links to it from "Open registers".
       { to: '/payments', label: tx('Customer Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Truck, permission: PERMISSIONS.payment.read },
@@ -364,8 +365,15 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
+      { to: '/procurement/rfqs', label: tx('Requests for Quotation'), icon: FileText, permission: PERMISSIONS.procurement.rfq.read },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
+      { to: '/vendor-bills', label: tx('Vendor Bills'), icon: ReceiptText, permission: PERMISSIONS.expense.read },
+      { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar },
+      { to: '/payment-schedule', label: tx('Payment Schedule'), icon: CalendarClock, permission: PERMISSIONS.expense.read },
+      { to: '/procurement/supplier-performance', label: tx('Supplier Performance'), icon: BarChart3, permission: 'purchase_order:read' },
+      { to: '/procurement/price-agreements', label: tx('Price Agreements'), icon: Tags, permission: PERMISSIONS.procurement.priceAgreement.read },
+      { to: '/procurement/price-history', label: tx('Price History'), icon: TrendingUp, permission: PERMISSIONS.procurement.priceAgreement.read },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },
       { to: '/procurement/shipments', label: tx('Import Shipments'), icon: Boxes, permission: PERMISSIONS.landedCost.read },

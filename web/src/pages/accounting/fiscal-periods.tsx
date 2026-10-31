@@ -190,6 +190,14 @@ function FiscalPeriodsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px]"
+                            onClick={() => navigate(`/fiscal-periods/${p.id}/checklist`)}
+                          >
+                            {tx('Checklist')}
+                          </Button>
                           {p.status === 'open' && (
                             <Button
                               variant="outline"

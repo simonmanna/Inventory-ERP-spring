@@ -448,6 +448,27 @@ class LandedCostVoucherIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("HANDLING (loading and unloading): capitalized, spread by quantity by default, balanced journal")
+    void handlingByQuantity() {
+        String heavy = product("AVCO", false, null);
+        String light = product("AVCO", false, null);
+        // Equal value, unequal quantity: by value each line would take 200; by quantity they take 100 and 300.
+        String grn = receive(List.of(rline(heavy, 10, 300), rline(light, 30, 100))).get("id").asString();
+        BigDecimal stock0 = balance(mapped("stock_valuation"));
+
+        String id = voucher(List.of(grn), List.of(charge("costComponentId", component("HANDLING"), "amount", 400)))
+                .get("id").asString();
+        JsonNode posted = approveAndPost(id);
+
+        assertThat(posted.get("capitalizedAmount").asString()).isEqualTo("400");
+        assertThat(posted.get("expensedAmount").asString()).isEqualTo("0");
+        assertThat(avg(heavy)).isEqualByComparingTo("310");
+        assertThat(avg(light)).isEqualByComparingTo("110");
+        assertThat(balance(mapped("stock_valuation")).subtract(stock0)).isEqualByComparingTo("400");
+        assertBalanced(posted.get("journalEntryId").asString());
+    }
+
+    @Test
     @DisplayName("manual, selected lines, expense with cost centre, recoverable tax, duplicate supplier invoice")
     void chargeTreatments() {
         String a = product("AVCO", false, null);

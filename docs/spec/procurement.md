@@ -161,3 +161,22 @@ FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isola
 two goods vendors, generated + linked supplier bills, supplier-scoped charge, paid-bill reversal guard; bill-mode
 validation and one bill per invoice). Web: Landed Costs, Import
 Shipments, Landed Cost Reports (incl. cost components) under Purchases.
+
+## Phase 4 additions (built, unverified)
+
+PROC-4: `GET /procurement/reports/supplier-performance?from&to&partnerId` (`purchase_order:read`), default the last 90 days.
+Screen `/procurement/supplier-performance`. Tests: `SupplierPerformanceIT`, `SupplierPerformanceServiceTest`. Nothing was compiled or run.
+
+## Phase 4 RFQ (built, unverified)
+
+PROC-1: `/procurement/rfqs`: list, get, create, patch, send, cancel, quotations, comparison, award (`rfq:read|manage|award`). Award needs an Idempotency-Key and raises the PO through `PurchaseOrdersService.create`. Tables V73.
+Screens `/procurement/rfqs`, `/procurement/rfqs/new`, `/procurement/rfqs/:id`, `/procurement/rfqs/:id/edit`. Test: `RfqIT`. Nothing was compiled or run.
+
+## Phase 4 price agreements (built, unverified)
+
+PROC-2: `/procurement/price-agreements` (list, get, lookup, create, patch, cancel) and `/procurement/reports/price-history` (`price_agreement:read|manage`). Table `SupplierPriceAgreement` (V74).
+Screens `/procurement/price-agreements`, `/procurement/price-history`. Test: `PriceAgreementIT`. Nothing was compiled or run.
+
+## Phase 4 handling test (added, not run)
+
+PROC-6: `LandedCostVoucherIT.handlingByQuantity` asserts the seeded HANDLING component capitalizes, spreads by quantity and balances. No production code changed. The test was not run.

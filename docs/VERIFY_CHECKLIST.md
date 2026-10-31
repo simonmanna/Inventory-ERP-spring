@@ -353,3 +353,35 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane D: finance and procurement (nothing here was compiled or run)
+
+- FIN-2 Vendor bills
+  - `/vendor-bills` → New vendor bill: one product line and one service line with a GL account → Save draft → Edit → Post.
+  - Filter by status and supplier; search by number. A draft of a PO-linked bill with a mismatch shows the hold banner.
+  - Pay supplier from the bill (bank + named account), then `/ap-aging` falls by that amount; as-of date changes buckets.
+  - Void a posted, unpaid bill: the journal entry reverses.
+- PROC-4 Payments and suppliers
+  - `/payment-schedule`: a posted bill due in 3 days shows under Next 7 days; Plan it for +20 days and it moves to Next 30 days; Hold moves it out of the total.
+  - `/procurement/supplier-performance`: receive one PO on time and one late, check on-time 50 %; a failed incoming lot lowers Quality pass.
+  - `/reports` → Purchases tab: orders in the date range match `/procurement/purchase-orders`.
+- FIN-1 Bank reconciliation
+  - `/bank-reconciliation`: choose the bank account, import a CSV (date, reference, description, amount; money out negative); importing it again adds nothing.
+  - Auto-match pairs a -70 line with a supplier payment of 70 and a +90 line with a receipt of 90, within the tolerance.
+  - Match by hand from the candidates; Exclude a bank charge with a reason; Undo returns either to unmatched.
+  - Payments not on a statement falls as lines match. Check the book balance against `/accounts/cash-accounts/accounts`.
+- FIN-3 Statements, tax and close
+  - `/profit-and-loss` and `/cash-flow` for a month with known journals: figures match a hand calculation; cash flow closing equals the ledger.
+  - `/taxes`: add, edit and delete a rate.
+  - `/tax-report`: Tax return pack shows 13 boxes, says whether it agrees with the ledger, and Download CSV works.
+  - `/fiscal-periods` → Checklist: a draft journal shows as a warning; sign off a step, remove it; a closed period is read-only.
+- PROC-1 RFQ
+  - `/procurement/rfqs` → New RFQ with two lines and two suppliers → Mark as sent → Record quotation for each supplier, one in another currency with a rate.
+  - Comparison marks the cheapest per line and Best on the cheapest complete quote; an expired quote cannot be awarded.
+  - Award: choose a warehouse; the PO opens at the quoted prices and terms; the RFQ shows Awarded.
+- PROC-2 Price agreements
+  - `/procurement/price-agreements`: add an agreement; a second one overlapping the same dates is refused; End the first, then add the new price.
+  - Quantity breaks: two agreements with From quantity 0 and 50; `GET /procurement/price-agreements/lookup` picks by quantity.
+  - `/procurement/price-history?product=<id>`: lowest, highest, weighted average, latest; variance shows when PO and agreement share a currency.
+- PROC-6 Handling
+  - `/procurement/landed-cost-vouchers/new`: add a Loading & handling charge on a two-line receipt; it spreads by quantity and raises the stock cost.

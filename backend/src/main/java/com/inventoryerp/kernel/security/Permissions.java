@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (490 permissions). Constant name = GROUP__ACTION.
+ * exactly (495 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -303,6 +303,11 @@ public final class Permissions {
     public static final String PROCUREMENT__THREE_WAY_MATCH__READ = "three_way_match:read";
     public static final String PROCUREMENT__THREE_WAY_MATCH__APPROVE = "three_way_match:approve";
     public static final String PROCUREMENT__THREE_WAY_MATCH__OVERRIDE = "three_way_match:override";
+    public static final String PROCUREMENT__RFQ__READ = "rfq:read";
+    public static final String PROCUREMENT__RFQ__MANAGE = "rfq:manage";
+    public static final String PROCUREMENT__RFQ__AWARD = "rfq:award";
+    public static final String PROCUREMENT__PRICE_AGREEMENT__READ = "price_agreement:read";
+    public static final String PROCUREMENT__PRICE_AGREEMENT__MANAGE = "price_agreement:manage";
     public static final String DEBIT_NOTE__CREATE = "debit_note:create";
     public static final String DEBIT_NOTE__READ = "debit_note:read";
     public static final String DEBIT_NOTE__POST = "debit_note:post";
@@ -796,6 +801,11 @@ public final class Permissions {
             "three_way_match:read",
             "three_way_match:approve",
             "three_way_match:override",
+            "rfq:read",
+            "rfq:manage",
+            "rfq:award",
+            "price_agreement:read",
+            "price_agreement:manage",
             "debit_note:create",
             "debit_note:read",
             "debit_note:post",

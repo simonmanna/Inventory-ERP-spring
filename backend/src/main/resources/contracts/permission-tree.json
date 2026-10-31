@@ -421,6 +421,15 @@
       "read": "three_way_match:read",
       "approve": "three_way_match:approve",
       "override": "three_way_match:override"
+    },
+    "rfq": {
+      "read": "rfq:read",
+      "manage": "rfq:manage",
+      "award": "rfq:award"
+    },
+    "priceAgreement": {
+      "read": "price_agreement:read",
+      "manage": "price_agreement:manage"
     }
   },
   "debitNote": {

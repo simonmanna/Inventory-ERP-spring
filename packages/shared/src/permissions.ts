@@ -485,6 +485,16 @@ export const PERMISSIONS = {
       approve: 'three_way_match:approve',
       override: 'three_way_match:override',
     },
+    /// Requests for quotation: read, draft / send / record quotes, award to a purchase order.
+    rfq: {
+      read: 'rfq:read',
+      manage: 'rfq:manage',
+      award: 'rfq:award',
+    },
+    priceAgreement: {
+      read: 'price_agreement:read',
+      manage: 'price_agreement:manage',
+    },
   },
   debitNote: {
     create: 'debit_note:create',

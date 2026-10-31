@@ -99,3 +99,18 @@ receipts with allocations + Idempotency-Key requirement + replay + void restorin
 vendor bills with stock-in + PURCH journal + supplier payment with withholding (2160) + supplier ledger + AP
 aging, AR reports, tenant isolation, authorization matrix = 30 routes), `TaxCalculationServiceTest` (port of
 `tax-calculation.service.spec.ts`). Parity scenario: `contract-tests/scenarios/invoicing-ar-ap.json`.
+
+## Phase 4 additions (built, unverified)
+
+FIN-2: `GET /vendor-bills` also takes `status` and `partnerId` (additive; other unknown parameters still answer 400).
+Screens: `/vendor-bills`, `/vendor-bills/new`, `/vendor-bills/:id`, `/vendor-bills/:id/edit`, `/ap-aging`.
+Test: `VendorBillListIT`. Nothing was compiled or run.
+
+## Phase 4 supplier payment schedule (built, unverified)
+
+PROC-4: `GET /vendor-bills/payment-schedule?partnerId&from&to` (`expense:read`), `PUT /vendor-bills/{id}/payment-schedule` (`expense:update`), table `SupplierPaymentSchedule` (V70). A plan moves no money.
+Screen `/payment-schedule`. Test: `SupplierPaymentScheduleIT`. Nothing was compiled or run.
+
+## Phase 4 tax pack (built, unverified)
+
+FIN-3: `GET /reports/tax/pack?from&to&branchId` (`report:accounting`): 13 numbered boxes by VAT category plus a GL cross-check. Test: `TaxPackIT`. Nothing was compiled or run.

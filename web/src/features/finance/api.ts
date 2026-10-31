@@ -201,6 +201,23 @@ export function useTaxSummary(params: { from?: string; to?: string; branchId?: s
   });
 }
 
+export interface TaxPack {
+  from?: string;
+  to?: string;
+  boxes: { box: number; label: string; amount: string }[];
+  position: 'payable' | 'refundable';
+  glNet: string;
+  glDifference: string;
+  reconciled: boolean;
+}
+
+export function useTaxPack(params: { from?: string; to?: string; branchId?: string }) {
+  return useQuery({
+    queryKey: ['tax-pack', params],
+    queryFn: async () => (await api.get<TaxPack>('/reports/tax/pack', { params })).data,
+  });
+}
+
 // ---------------------------------------------------------------- statements
 
 export interface Statement {
