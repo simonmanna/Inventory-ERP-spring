@@ -299,4 +299,4 @@ Nothing in this lane was compiled or run.
 | 2026-10-31 | 5 forecast | History source | Posted sales invoices less credit notes plus POS sales. Deliveries not yet invoiced do not count as sales | Delivered quantities | `ForecastService.weeklySales` |
 | 2026-10-31 | 5 forecast | Aggregates without a BOM | Shown as demand and shortfall, skipped by plan-from-demand. Crushing is not planned through production plans | Crushing plan lines | `PlanningDemandService.planFromDemand` |
 | 2026-10-31 | 5 BI | Tenancy of the views | Views filter on `app.org_id`. A session can change that setting, so a direct BI login is only for a database with one owner; shared databases use the CSV route | Views per organization | `docs/integrations.md` |
-| 2026-10-31 | 5 BI | Licence and module gate | Permission `bi:export` only; not tied to the `advanced_reports` licence feature | Licence gate | `@RequiresFeature` on `BiExportController` |
+| 2026-10-31 | 5 BI | Licence and module gate | Permission `bi:export` only; not tied to the `advancedReports` licence feature | Licence gate | `@RequiresFeature` on `BiExportController` |
