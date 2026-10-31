@@ -11,6 +11,7 @@ import com.inventoryerp.fleet.domain.FleetDeliveryOrder;
 import com.inventoryerp.fleet.domain.FleetDeliveryOrderLine;
 import com.inventoryerp.fleet.domain.FleetLoad;
 import com.inventoryerp.inventory.application.PosStockLocation;
+import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.invoicing.application.InvoiceService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -89,10 +90,11 @@ public class FleetDeliveryOrderService {
     private final OrdersService orders;
     private final InvoiceService invoices;
     private final FleetLoadFactors factors;
+    private final CreditControlService credit;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
-            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors) {
+            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, CreditControlService credit) {
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -102,6 +104,7 @@ public class FleetDeliveryOrderService {
         this.orders = orders;
         this.invoices = invoices;
         this.factors = factors;
+        this.credit = credit;
     }
 
     // ------------------------------------------------------------------ queries
@@ -238,6 +241,11 @@ public class FleetDeliveryOrderService {
                     null, blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
                     FleetVehicleService.trim(l.notes())));
         }
+        BigDecimal value = BigDecimal.ZERO;
+        for (Line l : lines) {
+            value = value.add(l.qty().multiply(l.unitPrice() == null ? BigDecimal.ZERO : l.unitPrice()));
+        }
+        credit.assertCanSell(in.partnerId(), value, null, null);
         Header h = new Header(in.partnerId(), blank(in.siteId()), blank(in.locationId()), in.requestedDate(),
                 in.windowFrom(), in.windowTo(), in.priority(), in.contactName(), in.contactPhone(),
                 blank(in.costCenterId()), blank(in.branchId()), in.notes());

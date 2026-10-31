@@ -363,4 +363,11 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/orders/new`: line in TRUCK; detail shows "Entered as 2 TRUCK"; bill it; stock falls by the tonnes.
   - Inventory item detail: on hand shows the equivalents line.
   - Weighbridge ticket for a delivery line in m³: tonnes convert with the density.
+- SALES-1
+  - `/credit-control`: search any customer, open it, set a limit of 1000.
+  - `/orders/new`: 600 passes, a second 600 is refused with "Credit limit exceeded".
+  - `/invoices`: posting past the limit is refused.
+  - Put on hold: credit order refused, cash order accepted.
+  - Grant an override as user A: user A's sale is still refused, user B's passes.
+  - POS credit sale behaves as before.
 

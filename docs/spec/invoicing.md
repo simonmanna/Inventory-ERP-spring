@@ -99,3 +99,11 @@ receipts with allocations + Idempotency-Key requirement + replay + void restorin
 vendor bills with stock-in + PURCH journal + supplier payment with withholding (2160) + supplier ledger + AP
 aging, AR reports, tenant isolation, authorization matrix = 30 routes), `TaxCalculationServiceTest` (port of
 `tax-calculation.service.spec.ts`). Parity scenario: `contract-tests/scenarios/invoicing-ar-ap.json`.
+
+## Credit control (SALES-1)
+
+Status: built, not compiled or run. `CreditControlService` (exposure, `assertCanSell`, `assertNotOnHold`, overrides),
+`CreditControlController` at `/credit-control` (`credit_control:read|manage|override`), table `PartnerCreditOverride`
+(V61). `POST /invoices/:id/post` calls `InvoiceService.postChecked`; `InvoiceService.post` is unchanged for opening
+balances. Screen: `/credit-control`. Test: `CreditControlIT`.
+

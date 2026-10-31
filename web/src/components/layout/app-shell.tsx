@@ -245,6 +245,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/returns', label: tx('Returns Register'), icon: ListRestart, permission: PERMISSIONS.pos.read },
       { to: '/returns/new', label: tx('New Return'), icon: Undo2, permission: PERMISSIONS.pos.refund },
       { to: '/credit-notes', label: tx('Credit Notes'), icon: FileMinus, permission: PERMISSIONS.creditNote.read },
+      { to: '/credit-control', label: tx('Credit Control'), icon: HandCoins, permission: PERMISSIONS.creditControl.read },
       { to: '/payments', label: tx('Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
       { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar },

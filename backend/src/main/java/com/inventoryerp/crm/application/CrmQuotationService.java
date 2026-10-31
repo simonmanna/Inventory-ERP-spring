@@ -22,6 +22,7 @@ import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.orders.application.OrdersService;
 import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.ApiException;
@@ -63,10 +64,13 @@ public class CrmQuotationService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private final CreditControlService creditControl;
 
     public CrmQuotationService(CrmDb db, CrmConfigService config, CrmPricingService pricing,
             CrmPipelineService pipeline, DocumentBuilderService builder, OrdersService orders,
-            ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events) {
+            ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events,
+            CreditControlService creditControl) {
+        this.creditControl = creditControl;
         this.db = db;
         this.config = config;
         this.pricing = pricing;
@@ -189,17 +193,15 @@ public class CrmQuotationService {
         if (p == null) {
             return null;
         }
-        Map<String, Object> ar = db.row("SELECT COALESCE(sum(\"amountResidual\"), 0) AS open, COALESCE(sum("
-                + "\"amountResidual\") FILTER (WHERE \"dueDate\" < now()), 0) AS overdue FROM \"Document\" WHERE"
-                + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"documentType\"::text = 'sales_invoice' AND"
-                + " status::text NOT IN ('draft', 'cancelled', 'rejected') AND \"amountResidual\" > 0", org(), partnerId);
+        CreditControlService.Exposure e = creditControl.exposure(partnerId);
         BigDecimal limit = dec(p.get("creditLimit"));
-        BigDecimal open = dec(ar.get("open"));
-        BigDecimal exposure = open.add(extra);
-        boolean exceeded = limit.signum() > 0 && exposure.compareTo(limit) > 0;
+        BigDecimal after = e.total().add(extra);
+        boolean exceeded = limit.signum() > 0 && after.compareTo(e.effectiveLimit()) > 0;
         return Obj.of("creditLimit", JsNumbers.js(limit), "creditHold", Boolean.TRUE.equals(p.get("creditHold")),
-                "openReceivables", JsNumbers.js(open), "overdueReceivables", ar.get("overdue"), "headroom",
-                limit.signum() > 0 ? JsNumbers.js(limit.subtract(open)) : null, "exceeded", exceeded);
+                "openReceivables", JsNumbers.js(e.openReceivables()), "overdueReceivables",
+                JsNumbers.js(e.overdueReceivables()), "unbilledOrders", JsNumbers.js(e.unbilledOrders()),
+                "uninvoicedDeliveries", JsNumbers.js(e.uninvoicedDeliveries()), "exposure", JsNumbers.js(e.total()),
+                "headroom", e.headroom() == null ? null : JsNumbers.js(e.headroom()), "exceeded", exceeded);
     }
 
     // ------------------------------------------------------------------ create / edit
@@ -611,6 +613,8 @@ public class CrmQuotationService {
             dto.put("orderType", "delivery");
             dto.put("notes", "From quotation " + q.get("number") + (q.get("notes") == null ? "" : " — " + q.get("notes")));
             dto.put("lines", orderLines);
+            // With the credit check on, a breach already went through the quotation approval.
+            dto.put("creditApproved", Boolean.TRUE.equals(config.settings().get("creditCheck")));
             Map<String, Object> order = orders.createOrder(dto);
             convertedId = str(order.get("id"));
             convertedNumber = str(order.get("orderNumber"));

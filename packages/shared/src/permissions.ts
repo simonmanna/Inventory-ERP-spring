@@ -185,6 +185,11 @@ export const PERMISSIONS = {
     delete: 'invoice:delete',
     send: 'invoice:send',
   },
+  creditControl: {
+    read: 'credit_control:read',
+    manage: 'credit_control:manage',
+    override: 'credit_control:override',
+  },
   creditNote: {
     read: 'credit_note:read',
     create: 'credit_note:create',

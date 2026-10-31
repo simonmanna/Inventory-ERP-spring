@@ -70,10 +70,11 @@ public class InvoiceService {
     private final ApprovalsService approvals;
     private final PaymentTermService terms;
     private final JournalService journals;
+    private final CreditControlService credit;
     private final TransactionTemplate newTx;
 
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
-            ApprovalsService approvals, PaymentTermService terms, JournalService journals,
+            ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
             PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.events = events;
@@ -82,6 +83,7 @@ public class InvoiceService {
         this.approvals = approvals;
         this.terms = terms;
         this.journals = journals;
+        this.credit = credit;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -421,6 +423,27 @@ public class InvoiceService {
         workflow.transition("invoice", id, "post", null, doc);
         publish("invoice.posted", doc);
         return withLinesAndPartner(id);
+    }
+
+    /**
+     * {@code POST /invoices/:id/post}: {@link #post} behind the credit check (SALES-1). Other callers of {@link #post}
+     * (opening balances) are not sales and stay unchecked. An invoice for goods a delivery already took out of the yard
+     * is not checked either: refusing it would only hide a debt that exists.
+     */
+    @Transactional
+    public Map<String, Object> postChecked(String id) {
+        Map<String, Object> doc = builder.document(id, "sales_invoice");
+        if (doc != null && "draft".equals(String.valueOf(doc.get("status")))) {
+            boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
+                    .orElse(false));
+            if (!delivered) {
+                Object mode = doc.get("paymentMode");
+                credit.assertCanSell((String) doc.get("partnerId"), Money.dec(doc.get("totalAmount")), null,
+                        mode == null ? null : String.valueOf(mode));
+            }
+        }
+        return post(id);
     }
 
     /**

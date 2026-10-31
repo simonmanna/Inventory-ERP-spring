@@ -112,7 +112,7 @@ public class InvoiceController {
     @Idempotent
     @RequirePermissions(Permissions.INVOICE__POST)
     public Map<String, Object> post(@PathVariable String id) {
-        return invoices.post(id);
+        return invoices.postChecked(id);
     }
 
     @PostMapping("/{id}/cancel")

@@ -7,6 +7,7 @@ import static com.inventoryerp.pos.application.PosSql.user;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
+import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
@@ -51,7 +52,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Generic back-office Orders (port of {@code orders/orders.service.ts}): a plain operational order document over the
  * shared {@code Order} aggregate, no terminal coupling (no tables/KDS/cash sessions/merge-split). Pricing runs through
  * the DocumentBuilder tax engine so menu-item and product lines price identically; numbering, cancel/reopen and billing
- * reuse the POS spines. Line inputs are JS-shaped maps ({@code OrderLineInputDto}).
+ * reuse the POS spines. Line inputs are JS-shaped maps ({@code OrderLineInputDto}). Every save passes the customer's
+ * credit check (SALES-1); the internal key {@code creditApproved} on {@link #createOrder} is set only by a caller that
+ * already put the sale through an approval (it cannot arrive over HTTP: the request record has no such field).
  */
 @Service
 public class OrdersService {
@@ -66,11 +69,13 @@ public class OrdersService {
     private final PosInvoiceService billing;
     private final PosOrdersService posOrders;
     private final UomConversionService units;
+    private final CreditControlService credit;
     private final TransactionTemplate tx;
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
-            PosOrdersService posOrders, UomConversionService units, PlatformTransactionManager txm) {
+            PosOrdersService posOrders, UomConversionService units, CreditControlService credit,
+            PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -81,6 +86,7 @@ public class OrdersService {
         this.billing = billing;
         this.posOrders = posOrders;
         this.units = units;
+        this.credit = credit;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -251,6 +257,9 @@ public class OrdersService {
                 writeItems(id, resolved, false, false);
             }
             Map<String, Object> fresh = reload(id);
+            if (!Boolean.TRUE.equals(dto.get("creditApproved"))) {
+                assertCredit(fresh);
+            }
             events.publish(DomainEvents.POS_ORDER_CREATED, Obj.of("organizationId", orgId, "orderId", id,
                     "orderNumber", orderNumber));
             audit.recordInTx(AuditInput.of("Order", id, "create", null, Obj.of("orderNumber", orderNumber,
@@ -266,6 +275,13 @@ public class OrdersService {
             throw ApiException.notFound("Order not found");
         }
         assertEditable(existing);
+        Map<String, Object> checked = new LinkedHashMap<>(existing);
+        for (String k : List.of("partnerId", "paymentMethod")) {
+            if (dto.containsKey(k)) {
+                checked.put(k, dto.get(k));
+            }
+        }
+        assertCredit(checked);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("orderType", dto.get("orderType") != null ? dto.get("orderType") : existing.get("orderType"));
         for (String k : List.of("partnerId", "guestCount", "notes", "paymentTermId", "paymentMethod")) {
@@ -297,6 +313,7 @@ public class OrdersService {
             }
             writeItems(orderId, lines, true, false);
             Map<String, Object> fresh = reload(orderId);
+            assertCredit(fresh);
             events.publish(DomainEvents.POS_ORDER_UPDATED, Obj.of("organizationId", orgId, "orderId", orderId,
                     "version", fresh.get("version")));
             audit.recordInTx(AuditInput.of("Order", orderId, "update", null, Obj.of("kind", "save_items",
@@ -320,6 +337,7 @@ public class OrdersService {
             }
             writeItems(orderId, lines, false, true);
             Map<String, Object> fresh = reload(orderId);
+            assertCredit(fresh);
             events.publish(DomainEvents.POS_ORDER_UPDATED, Obj.of("organizationId", orgId, "orderId", orderId,
                     "version", fresh.get("version")));
             return decorate(fresh);
@@ -670,6 +688,16 @@ public class OrdersService {
             throw ApiException.notFound("Order not found");
         }
         return order;
+    }
+
+    /** SALES-1: this order's total on top of everything else the customer owes or has on order. */
+    private void assertCredit(Map<String, Object> order) {
+        if (!"sale".equals(String.valueOf(order.get("transactionKind")))) {
+            return;
+        }
+        Object method = order.get("paymentMethod");
+        credit.assertCanSell((String) order.get("partnerId"), PosSql.dec(order.get("totalAmount")),
+                (String) order.get("id"), method == null ? null : String.valueOf(method));
     }
 
     private static void assertEditable(Map<String, Object> order) {
