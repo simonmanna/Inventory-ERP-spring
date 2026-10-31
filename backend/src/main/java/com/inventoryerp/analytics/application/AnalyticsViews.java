@@ -70,9 +70,9 @@ public class AnalyticsViews {
         if (sites == null) {
             return null;
         }
-        return jdbc.sql("SELECT p.id FROM \"CrushingPlant\" p WHERE p.\"organizationId\" = ? AND p.\"deletedAt\" IS NULL"
-                + " AND p.\"siteId\" = ANY(?::text[])").params(TenantContext.organizationId(), sites)
-                .query(String.class).list().toArray(String[]::new);
+        return jdbc.sql("SELECT p.id FROM \"CrushingPlant\" p WHERE p.\"organizationId\" = ? AND"
+                + " p.\"deletedAt\" IS NULL AND p.\"siteId\" = ANY(?::text[])")
+                .params(TenantContext.organizationId(), sites).query(String.class).list().toArray(String[]::new);
     }
 
     /**

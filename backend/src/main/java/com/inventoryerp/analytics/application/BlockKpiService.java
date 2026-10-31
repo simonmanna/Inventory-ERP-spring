@@ -108,12 +108,12 @@ public class BlockKpiService {
                 Timestamp.valueOf(v.from().atStartOfDay()), Timestamp.valueOf(v.to().plusDays(1).atStartOfDay())));
         AnalyticsView.equal(from, params, "o.\"outputProductId\"", f.productId());
         if (v.limited()) {
-            from.append(" AND o.\"locationId\" IN (SELECT l.id FROM \"InventoryLocation\" l WHERE l.\"organizationId\" ="
-                    + " o.\"organizationId\" AND l.\"branchId\" = ANY(?::text[]))");
+            from.append(" AND o.\"locationId\" IN (SELECT l.id FROM \"InventoryLocation\" l WHERE"
+                    + " l.\"organizationId\" = o.\"organizationId\" AND l.\"branchId\" = ANY(?::text[]))");
             params.add(v.branchIds());
         }
         return documents.page("'precast_order' AS type, o.id, o.\"orderCode\" AS number, o.\"createdAt\" AS date,"
-                + " p.name AS party, o.status::text AS status, o.\"producedQty\" AS quantity, o.\"totalCost\" AS amount",
-                from, "o.\"createdAt\" DESC", params, paging);
+                + " p.name AS party, o.status::text AS status, o.\"producedQty\" AS quantity,"
+                + " o.\"totalCost\" AS amount", from, "o.\"createdAt\" DESC", params, paging);
     }
 }
