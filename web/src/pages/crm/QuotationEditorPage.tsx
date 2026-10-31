@@ -52,7 +52,7 @@ export function QuotationEditorPage() {
   const [dirty, setDirty] = useState(false);
   const [dialog, setDialog] = useState<'reject' | 'decline' | 'convert' | null>(null);
   const [reason, setReason] = useState('');
-  const [target, setTarget] = useState<'order' | 'proforma'>('order');
+  const [target, setTarget] = useState<'sales_order' | 'order' | 'proforma'>('sales_order');
   const [backorder, setBackorder] = useState(false);
   const [shortages, setShortages] = useState<string[] | null>(null);
 
@@ -179,8 +179,8 @@ export function QuotationEditorPage() {
       )}
       {q?.status === 'rejected' && <Banner tone="danger" title={tx('Rejected')} items={[q.rejectionReason ?? '']} />}
       {q?.status === 'converted' && (
-        <Banner tone="success" title={q.convertedType === 'order' ? tx('Converted to order') : tx('Converted to proforma invoice')}
-          items={[q.convertedNumber ?? '']} link={q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/invoices/${q.convertedId}`} />
+        <Banner tone="success" title={q.convertedType === 'proforma' ? tx('Converted to proforma invoice') : tx('Converted to order')}
+          items={[q.convertedNumber ?? '']} link={q.convertedType === 'sales_order' ? `/sales/orders/${q.convertedId}` : q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/invoices/${q.convertedId}`} />
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -296,8 +296,10 @@ export function QuotationEditorPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{tx('Convert quotation')}</DialogTitle></DialogHeader>
           <div className="space-y-2 text-sm">
+            <label className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'sales_order'} onChange={() => setTarget('sales_order')} />
+              <span><strong>{tx('Sales order')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates a B2B sales order with the agreed prices: delivery, invoicing and changes are tracked on it.')}</span></span></label>
             <label className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'order'} onChange={() => setTarget('order')} />
-              <span><strong>{tx('Sales order')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates an order; stock is checked and the order is invoiced from Orders.')}</span></span></label>
+              <span><strong>{tx('Counter order')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates an order; stock is checked and the order is invoiced from Orders.')}</span></span></label>
             <label className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'proforma'} onChange={() => setTarget('proforma')} />
               <span><strong>{tx('Proforma invoice')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates a draft proforma invoice for advance payment.')}</span></span></label>
             {shortages && (

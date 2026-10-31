@@ -10,9 +10,10 @@ import { tx } from '@/lib/i18n/tx';
  * `permission` may be a list — any one of them is enough.
  */
 export function RequirePermission({ permission, children }: { permission: string | string[]; children: ReactNode }) {
-  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // Subscribe to the list (not the stable hasPermission function) so a permission refresh re-renders.
+  const permissions = useAuthStore((s) => s.permissions);
   const needed = Array.isArray(permission) ? permission : [permission];
-  if (needed.some((p) => hasPermission(p))) return <>{children}</>;
+  if (needed.some((p) => permissions.includes(p))) return <>{children}</>;
   return (
     <div className="mx-auto flex max-w-lg flex-col items-center gap-3 p-10 text-center">
       <ShieldAlert className="h-8 w-8 text-muted-foreground" aria-hidden />

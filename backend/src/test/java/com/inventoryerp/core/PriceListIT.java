@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.core.web.PriceListController;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -88,11 +89,11 @@ class PriceListIT extends ApiTestSupport {
         JsonNode inv = ok(200, "POST", "/invoices", Map.of("partnerId", c, "issueDate", LocalDate.now().toString(),
                 "lines", List.of(Map.of("productId", sand, "quantity", 2), Map.of("productId", sand, "quantity", 2,
                         "unitPrice", 95))));
-        assertThat(inv.get("lines").get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("70");
-        assertThat(inv.get("lines").get(1).get("unitPrice").decimalValue()).isEqualByComparingTo("95");
+        assertThat(new BigDecimal(inv.get("lines").get(0).get("unitPrice").asString())).isEqualByComparingTo("70");
+        assertThat(new BigDecimal(inv.get("lines").get(1).get("unitPrice").asString())).isEqualByComparingTo("95");
         JsonNode order = ok(200, "POST", "/orders", Map.of("partnerId", c, "lines", List.of(Map.of("productId", sand,
                 "quantity", 2))));
-        assertThat(order.get("items").get(0).get("unitPrice").decimalValue()).isEqualByComparingTo("70");
+        assertThat(new BigDecimal(order.get("items").get(0).get("unitPrice").asString())).isEqualByComparingTo("70");
         ok(200, "POST", "/orders/" + order.get("id").asString() + "/cancel", Map.of("reason", "test"));
     }
 

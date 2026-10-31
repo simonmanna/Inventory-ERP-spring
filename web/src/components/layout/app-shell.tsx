@@ -10,6 +10,11 @@ import {
   Receipt,
   FileMinus,
   HandCoins,
+  Globe,
+  LineChart,
+  Presentation,
+  BadgePercent,
+  FileSignature,
   FileText,
   GraduationCap,
   UserCircle,
@@ -22,6 +27,8 @@ import {
   Settings as SettingsIcon,
   LogOut,
   Menu,
+  MessageSquareWarning,
+  ShieldAlert,
   ShoppingCart,
   Truck,
   FilePlus2,
@@ -32,6 +39,8 @@ import {
   Shield,
   ShieldCheck,
   ClipboardList,
+  SlidersHorizontal,
+  PackageSearch,
   ClipboardCheck,
   PanelLeftClose,
   PanelLeft,
@@ -111,8 +120,10 @@ import {
   Gem,
   MapPinned,
   Mountain,
-  ShieldAlert,
   Warehouse,
+  FileQuestion,
+  PackagePlus,
+  Siren,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -253,7 +264,6 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/credit-notes', label: tx('Credit Notes'), icon: FileMinus, permission: PERMISSIONS.creditNote.read },
       { to: '/credit-control', label: tx('Credit Control'), icon: HandCoins, permission: PERMISSIONS.creditControl.read },
       { to: '/price-lists', label: tx('Price Lists'), icon: Tags, permission: PERMISSIONS.priceList.read },
-      { to: '/commissions', label: tx('Sales Commissions'), icon: HandCoins, permission: PERMISSIONS.commission.read },
       { to: '/reports/sales-analysis', label: tx('Sales Analysis'), icon: BarChart3, permission: PERMISSIONS.report.ar },
       { to: '/payments', label: tx('Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
@@ -383,9 +393,14 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
-      { to: '/procurement/rfqs', label: tx('Requests for Quotation'), icon: FileText, permission: PERMISSIONS.procurement.rfq.read },
-      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ShoppingCart, permission: 'purchase_request:read' },
+      { to: '/procurement/analytics', label: tx('Purchasing Dashboard'), icon: BarChart3, permission: PERMISSIONS.procurementAnalytics.read },
+      { to: '/procurement/replenishment', label: tx('Replenishment'), icon: PackagePlus, permission: PERMISSIONS.replenishment.read },
+      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ClipboardList, permission: PERMISSIONS.procurement.purchaseRequest.read },
+      { to: '/procurement/sourcing', label: tx('Sourcing Workbench'), icon: PackageSearch, permission: PERMISSIONS.procurement.purchaseOrder.create },
+      { to: '/procurement/rfqs', label: tx('RFQs'), icon: FileQuestion, permission: PERMISSIONS.rfq.read },
+      { to: '/procurement/agreements', label: tx('Purchase Agreements'), icon: FileSignature, permission: PERMISSIONS.purchaseAgreement.read },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
+      { to: '/procurement/reports/open-orders', label: tx('Open Orders'), icon: Clock, permission: PERMISSIONS.procurement.purchaseOrder.read },
       { to: '/procurement/budgets', label: tx('Procurement Budgets'), icon: Calculator, permission: 'procurement_budget:read' },
       { to: '/procurement/delegations', label: tx('Purchasing Delegation'), icon: UserCog, permission: 'procurement_delegation:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
@@ -393,14 +408,19 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar },
       { to: '/payment-schedule', label: tx('Payment Schedule'), icon: CalendarClock, permission: PERMISSIONS.expense.read },
       { to: '/procurement/supplier-performance', label: tx('Supplier Performance'), icon: BarChart3, permission: 'purchase_order:read' },
-      { to: '/procurement/price-agreements', label: tx('Price Agreements'), icon: Tags, permission: PERMISSIONS.procurement.priceAgreement.read },
-      { to: '/procurement/price-history', label: tx('Price History'), icon: TrendingUp, permission: PERMISSIONS.procurement.priceAgreement.read },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },
       { to: '/procurement/shipments', label: tx('Import Shipments'), icon: Boxes, permission: PERMISSIONS.landedCost.read },
       { to: '/procurement/landed-cost-vouchers', label: tx('Landed Costs'), icon: Calculator, permission: PERMISSIONS.landedCost.read },
       { to: '/procurement/landed-cost-reports', label: tx('Landed Cost Reports'), icon: BarChart3, permission: PERMISSIONS.landedCost.read },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Banknote, permission: 'payment:read' },
+      { to: '/procurement/inspections', label: tx('Incoming Inspection'), icon: ShieldCheck, permission: PERMISSIONS.inspection.read },
+      { to: '/procurement/reports/emergency', label: tx('Emergency Purchases'), icon: Siren, permission: PERMISSIONS.emergencyPurchase.review },
+      { to: '/procurement/claims', label: tx('Supplier Claims'), icon: MessageSquareWarning, permission: PERMISSIONS.supplierClaim.read },
+      { to: '/procurement/po-changes', label: tx('Order Changes'), icon: ClipboardCheck, permission: PERMISSIONS.poChange.approve },
+      { to: '/procurement/commitments', label: tx('Budget Commitments'), icon: Landmark, permission: PERMISSIONS.budgetControl.commitments },
+      { to: '/procurement/suppliers', label: tx('Supplier Register'), icon: Building2, permission: PERMISSIONS.supplier.read },
+      { to: '/procurement/policies', label: tx('Purchasing Policies'), icon: SlidersHorizontal, permission: PERMISSIONS.procurementPolicy.read },
     ],
   },
   {
@@ -433,6 +453,27 @@ const NAV_SECTIONS: NavSection[] = [
       // the staff directory just to let them see their own payslip.
       { to: '/hr/me', label: tx('My HR'), icon: UserCircle },
       { to: '/hr/team', label: tx('My Team'), icon: Users2 },
+    ],
+  },
+  {
+    title: 'Sales',
+    icon: ShoppingCart,
+    items: [
+      { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
+      { to: '/sales/analytics', label: tx('Sales analytics'), icon: LineChart, permission: PERMISSIONS.sales.reportRead },
+      { to: '/sales/presentation', label: tx('Generate presentation'), icon: Presentation, permission: PERMISSIONS.sales.reportRead },
+      { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
+      { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
+      { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
+      { to: '/sales/agreements', label: tx('Agreements & rebates'), icon: FileSignature, permission: PERMISSIONS.sales.agreementRead },
+      { to: '/sales/commissions', label: tx('Commissions & targets'), icon: BadgePercent, permission: PERMISSIONS.sales.commissionRead },
+      { to: '/sales/returns', label: tx('Returns'), icon: Undo2, permission: PERMISSIONS.sales.returnRead },
+      { to: '/sales/complaints', label: tx('Complaints'), icon: MessageSquareWarning, permission: PERMISSIONS.sales.complaintRead },
+      { to: '/sales/backorders', label: tx('Backorders'), icon: PackageX, permission: PERMISSIONS.sales.reportRead },
+      { to: '/sales/pricelists', label: tx('Pricelists'), icon: Tags, permission: PERMISSIONS.sales.pricingRead },
+      { to: '/sales/margin-floors', label: tx('Margin floors'), icon: Percent, permission: PERMISSIONS.sales.pricingRead },
+      { to: '/sales/credit', label: tx('Credit Control'), icon: ShieldAlert, permission: PERMISSIONS.credit.read },
+      { to: '/sales/portal-access', label: tx('Customer portal'), icon: Globe, permission: PERMISSIONS.sales.portalManage },
     ],
   },
   {
@@ -728,13 +769,28 @@ export function AppShell() {
   const { t } = useTranslation();
   const { theme: sb } = useSidebarTheme();
   const user = useAuthStore((s) => s.user);
-  const hasPermission = useAuthStore((s) => s.hasPermission);
+  // Subscribe to the list so the menu re-renders when permissions are refreshed.
+  const permissions = useAuthStore((s) => s.permissions);
+  const hasPermission = (p: string) => permissions.includes(p);
   // Report visibility is configurable per role (Settings → Report Permissions).
   const canViewReport = useCanViewReport();
   const clear = useAuthStore((s) => s.clear);
   const org = useAuthStore((s) => s.organization);
   const setOrganization = useAuthStore((s) => s.setOrganization);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Permissions are cached at sign-in; refresh them so role changes (and permissions added by
+  // upgrades) apply to an open session without signing out and back in.
+  const setPermissions = useAuthStore((s) => s.setPermissions);
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    api.get<{ permissions?: string[] }>('/auth/me')
+      .then(({ data }) => { if (!cancelled && Array.isArray(data.permissions)) setPermissions(data.permissions); })
+      .catch(() => { /* offline or signed out: keep the cached list */ });
+    return () => { cancelled = true; };
+  }, [userId, setPermissions]);
   const [searchOpen, setSearchOpen] = useState(false);
   const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed } = useSidebarStore();
 

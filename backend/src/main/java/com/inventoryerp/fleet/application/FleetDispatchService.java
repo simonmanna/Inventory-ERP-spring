@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.fleet.application.DispatchCommands.AssignInput;
 import com.inventoryerp.fleet.application.DispatchCommands.CloseTripInput;
 import com.inventoryerp.fleet.application.DispatchCommands.LoadInput;
@@ -29,6 +30,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.files.FilesService;
 import com.inventoryerp.kernel.sequence.SequenceService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.ApiException;
@@ -91,13 +93,17 @@ public class FleetDispatchService {
     private final AuditService audit;
     private final EventBus events;
     private final FleetWeighbridgeRuleService weighRules;
-    private final CreditControlService credit;
+    private final CreditControlService creditControl;
+
+    private final CreditService credit;
 
     public FleetDispatchService(FleetDb db, FleetDeliveryOrderService orders, FleetDiscrepancyService discrepancies,
             FleetVehicleService vehicles, FleetDriverService drivers, FleetDispatchEligibilityService eligibility,
             FleetMeterService meters, FleetTelematicsService telematics, FleetLoadFactors factors, StockService stock,
             PosStockLocation stockLocations, FilesService files, SequenceService sequence, AuditService audit,
-            EventBus events, FleetWeighbridgeRuleService weighRules, CreditControlService credit) {
+            EventBus events, FleetWeighbridgeRuleService weighRules, CreditService credit,
+            CreditControlService creditControl) {
+        this.creditControl = creditControl;
         this.credit = credit;
         this.db = db;
         this.orders = orders;
@@ -797,6 +803,13 @@ public class FleetDispatchService {
         Map<String, Object> order = k.order();
         String code = (String) t.get("code");
         TripStatusPolicy.assertMove(code, (String) t.get("status"), "dispatched");
+        if ("sales_order".equals(order.get("sourceType"))) {
+            DeliverySourcePort port = orders.sourcePort("sales_order", (String) order.get("sourceId"));
+            if (port != null) {
+                port.assertDeliverable((String) order.get("sourceId"));
+            }
+        }
+        creditGate(order, t);
         if (t.get("stockIssuedAt") != null) {
             throw ApiException.conflict("Trip " + code + " already issued its stock");
         }
@@ -806,7 +819,7 @@ public class FleetDispatchService {
         Instant now = at;
         boolean moveStock = "dispatch".equals(order.get("stockMode"));
         if (moveStock) {
-            credit.assertNotOnHold((String) order.get("partnerId"));
+            creditControl.assertNotOnHold((String) order.get("partnerId"));
         }
         BigDecimal tonnes = BigDecimal.ZERO;
         boolean knownT = false;
@@ -1146,6 +1159,26 @@ public class FleetDispatchService {
     // ------------------------------------------------------------------ helpers
 
     private record Locked(Map<String, Object> trip, Map<String, Object> order) {}
+
+    /**
+     * Credit check point {@code trip_dispatch} (ADR-S011 S3): a customer blocked by credit (hard hold) cannot be
+     * delivered; a credit hold (limit / overdue) needs a {@code credit:override} holder, whose dispatch records the
+     * override.
+     */
+    private void creditGate(Map<String, Object> order, Map<String, Object> trip) {
+        String partnerId = (String) order.get("partnerId");
+        CreditService.Decision c = credit.check("trip_dispatch", partnerId, "fleet_trip", (String) trip.get("id"),
+                (String) trip.get("code"), BigDecimal.ZERO, null);
+        if (c.passed()) {
+            return;
+        }
+        if ("blocked".equals(c.result()) || !TenantContext.has(Permissions.CREDIT__OVERRIDE)) {
+            throw ApiException.badRequest("Credit check failed for this customer: " + String.join("; ", c.reasons())
+                    + ("blocked".equals(c.result()) ? "" : " — a credit override is needed to dispatch"));
+        }
+        credit.override(partnerId, "fleet_trip", (String) trip.get("id"), (String) trip.get("code"),
+                "Dispatched with credit override");
+    }
 
     /** Lock order: delivery order, then the trip. */
     private Locked lockTrip(String id) {

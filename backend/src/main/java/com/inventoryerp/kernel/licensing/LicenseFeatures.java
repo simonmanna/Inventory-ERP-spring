@@ -30,6 +30,10 @@ public final class LicenseFeatures {
     public static final String BEVERAGE = "beverage";
     /** Fleet & logistics (vehicles, dispatch, weighbridge — ADR-S009). */
     public static final String FLEET = "fleet";
+    /** Sales agreements and rebate programmes (ADR-S011 S9). */
+    public static final String SALES_AGREEMENTS = "salesAgreements";
+    /** Customer self-service portal (ADR-S011 S10). */
+    public static final String CUSTOMER_PORTAL = "customerPortal";
     /** Quarry &amp; extraction management (sites, extraction, blasting, ROM stockpiles — ADR-S012). */
     public static final String QUARRY = "quarry";
 
@@ -44,7 +48,8 @@ public final class LicenseFeatures {
     /** Everything, which is what a trial grants. */
     public static final Set<String> ALL = Set.of(
             CRM, RENTAL, MANUFACTURING, REPAIR, COMMUNICATION, ASSETS, TASK_BOARD, ACCOUNTING, EXPENSE, HR,
-            BEVERAGE, FLEET, QUARRY, MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS, ADVANCED_REPORTS, BACKUP_OFFSITE);
+            BEVERAGE, FLEET, SALES_AGREEMENTS, CUSTOMER_PORTAL, QUARRY, MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS,
+            ADVANCED_REPORTS, BACKUP_OFFSITE);
 
     /**
      * Feature key for each {@code @RequiresModule} manifest name, where the two spellings differ.

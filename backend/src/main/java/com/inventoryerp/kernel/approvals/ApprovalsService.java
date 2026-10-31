@@ -377,7 +377,24 @@ public class ApprovalsService {
         Map<String, Object> out = new LinkedHashMap<>();
         if (!existing.isEmpty()) {
             if (existing.getFirst().getStatus() == ApprovalStatus.APPROVED) {
-                out.put("needsApproval", false);
+                // P1-4 (ADR-PROCUREMENT-001): an approval covers the amount it was granted for. A larger amount on
+                // the same entity (an edited order, a second supplier payment keyed by the partner) needs a new
+                // decision — the earlier one is superseded, never stretched.
+                double approved = amountOf(snapshot(existing.getFirst()));
+                double now = amountOf(snapshot);
+                if (now <= approved + 0.005) {
+                    out.put("needsApproval", false);
+                    return out;
+                }
+                existing.getFirst().setStatus(ApprovalStatus.CANCELLED);
+                em.flush();
+                Map<String, Object> again = requestApproval(entityType, entityId, snapshot, null);
+                if (again == null) {
+                    out.put("needsApproval", false);
+                    return out;
+                }
+                out.put("needsApproval", true);
+                out.put("requestId", again.get("id"));
                 return out;
             }
             out.put("needsApproval", true);

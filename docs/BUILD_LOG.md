@@ -97,6 +97,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | merged, unverified (C) | d43915d..d280613 | | V70–V74; 27 routes; never compiled or run. Do not migrate a shared DB until every lane is merged: lanes use number blocks V40–V99 that merge out of order |
 | 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | merged, unverified (C) | f757092..fbec71a | | V80–V82; ADR-S050; 38 routes; never compiled or run. Portal read-only; mobile money mock only |
 | 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | merged, unverified (C) | c84fc26..810f3f7 | | V90–V97; 73 routes; never compiled or run |
+| 4.x sales O2C (ADR-S011) | S0–S10 built; merged with PR #7 (migrations V200–V210) | | | Step 0 docs on `phase/S0-sales-docs` (ADR-S011, `PRODUCT_ARCHITECTURE.md`, `spec/sales.md`, `spec/sales-postings.md`, `spec/credit.md`); S0 code waits for owner review; each phase S0–S10 gated by owner go-ahead. Covers ROADMAP 1.5 / 1.6. Do not touch `manufacturing/**` |
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
 | 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
 | 6 production hardening | code review merged, unverified (C) | 6326250..7eec4c7 | tag v2.1.0-rc held: release.yml publishes images on v*.*.* | V120; 7 defects fixed; critical open finding: routes with no permission check, see DECISIONS_FOR_OWNER |
@@ -117,3 +118,37 @@ balanced GL. Full build: 867 tests / 0 failed. Owner review: GL account proposal
 own-fleet trip cost analytic only, telematics mock only, no vendor-binary weighbridge protocols.
 
 STATUS: CODE WRITTEN, NOT COMPILED OR RUN. Held until a full build passes: tags manufacturing-advanced-complete, gaps-closed, bi-complete, v2.1.0-rc, v2.1.0.
+
+### Source-to-Pay build (ADR-PROCUREMENT-001, 2026-10-30)
+
+Owner instruction: build P0–P5 of `docs/roadmap/procurement-roadmap.md` as one production-ready purchasing system.
+Supplier portal = secure link per document; AI = built-in statistics; open decisions = proposed defaults. With no
+policy configured, behaviour stays as before.
+
+| Wave | Status | Commit | Tests (full build) | Notes |
+|---|---|---|---|---|
+| W0 baseline | done | — | 867 | local Postgres 16, `IT_EXTERNAL_DB=true` |
+| W1 P0 integrity (V150) | done | (see git log) | 877 | receipt voucher at actual value, delete / pay guards, debit-note claim, BigDecimal three-way match, FX, org checks |
+| W2 policies + suppliers (V151) | done | | 885 | maker-checker effective-dated policies, supplier lifecycle, dual-control bank accounts, certificates, price history |
+| W3 requisition → order (V152) | done | eddd37c | 892 | workbench, PO lifecycle, short-close, print |
+| W4 sourcing (V153) | done | eddd37c | 892 | RFQ, quotations, comparison, split award, agreements and releases |
+| W5 controls (V154) | done | 2d6a87b | 898 | commitments and budget control, PO change requests and revisions, match tolerances, duplicate bills, claims |
+| W6 receiving quality (V155) | done | d0b34c3 | 902 | inspection, weighbridge evidence SPI, emergency purchases |
+| W7 planning (V156) | done | 7a7663a | 906 | replenishment, scorecards, statistics, supplier portal, dashboard |
+| W8 hardening | done | (this branch) | 907 | end-to-end IT, docs, guide, self-review |
+
+Deferred (tracked in the roadmap):
+- landed-cost gaps G1–G8 beyond V12–V25
+- `goods_in_transit`
+- direct-to-site project acceptance
+- `asset.acquired` hand-off
+- density-based t ↔ m³ conversion
+- parity scenario JSON for the new routes (extension routes have no Nest counterpart to diff)
+
+Known limits after W8 (self-review):
+- The portal throttle is per client IP. Behind a reverse proxy, configure forwarded-IP handling, or all suppliers
+  share one bucket.
+- `POST /procurement/replenishment/raise` has no idempotency key. A double submit raises two draft requests, which
+  are visible and cancellable.
+- An order activated outside a transaction re-states its commitments right after the status change. Every later
+  change re-syncs them.

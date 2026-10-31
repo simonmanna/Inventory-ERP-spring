@@ -105,11 +105,11 @@ public class DebitNotesService {
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String prefix = "outbound".equals(input.direction()) ? "DBN-OUT-" + year + "-" : "DBN-IN-" + year + "-";
         String noteNumber = sequence.next("debitnote:" + year, prefix, 5);
-        double subtotal = 0;
+        BigDecimal subtotal = Money.ZERO;
         for (LineInput ln : input.lines()) {
-            subtotal += ln.quantity().doubleValue() * ln.unitPrice().doubleValue();
+            subtotal = subtotal.add(ln.quantity().multiply(ln.unitPrice()));
         }
-        double sub = subtotal;
+        BigDecimal sub = subtotal;
         // Returned quantities are in the line unit (default: the product's purchase unit), frozen with its factor.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : input.lines()) {
@@ -127,8 +127,8 @@ public class DebitNotesService {
             }
             params.add(input.currencyCode() != null ? input.currencyCode() : "USD");
             params.add(input.exchangeRate() != null ? input.exchangeRate() : BigDecimal.ONE);
-            params.add(num(sub));
-            params.add(num(sub));
+            params.add(sub);
+            params.add(sub);
             params.add(input.notes());
             params.add(input.locationId() != null && !input.locationId().isEmpty()
                     ? JsonNodeText.of("locationId", input.locationId()) : "{}");
@@ -143,7 +143,7 @@ public class DebitNotesService {
             List<Map<String, Object>> lines = new ArrayList<>();
             int idx = 0;
             for (LineInput ln : input.lines()) {
-                BigDecimal lineSub = num(ln.quantity().doubleValue() * ln.unitPrice().doubleValue());
+                BigDecimal lineSub = ln.quantity().multiply(ln.unitPrice());
                 LineUnit unit = lineUnits.get(idx);
                 lines.add(SqlRows.one(DebitNoteLine.class, jdbc.sql("INSERT INTO \"DebitNoteLine\" (id, \"organizationId\","
                                 + " \"debitNoteId\", \"productId\", description, quantity, \"unitPrice\", \"taxId\", subtotal,"
@@ -179,8 +179,8 @@ public class DebitNotesService {
             return null;
         }
         note.put("lines", lines(id));
-        note.put("partner", SqlRows.one(Partner.class, jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?")
-                .param(note.get("partnerId"))));
+        note.put("partner", SqlRows.one(Partner.class, jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(note.get("partnerId"), orgId)));
         return note;
     }
 
@@ -207,9 +207,9 @@ public class DebitNotesService {
             throw ApiException.badRequest("Cannot post debit note in status " + note.get("status"));
         }
         List<Map<String, Object>> noteLines = (List<Map<String, Object>>) note.get("lines");
-        double amount = 0;
+        BigDecimal amount = Money.ZERO;
         for (Map<String, Object> ln : noteLines) {
-            amount += Money.dec(ln.get("subtotal")).doubleValue();
+            amount = amount.add(Money.dec(ln.get("subtotal")));
         }
         Map<String, Object> gate = approvals.checkOrRequestApproval("debit_note", id, Obj.of("amount",
                 JsNumbers.js(amount), "direction", note.get("direction"), "reason", note.get("reason")));
@@ -227,9 +227,11 @@ public class DebitNotesService {
                 : determination.payableAccount(partnerCol(note, "payableAccountId"));
         List<Line> postingLines = new ArrayList<>();
         for (Map<String, Object> ln : noteLines) {
-            Number amt = JsNumbers.js(Money.dec(ln.get("subtotal")));
-            // Dr AR (outbound) / Cr AP (inbound) per line; the partner tag is not carried onto the posting line.
-            postingLines.add(outbound ? Line.debit(counterAccount, amt, null) : Line.credit(counterAccount, amt, null));
+            // Dr AR (outbound) / Cr AP (inbound) per line, tagged with the partner so the sub-ledger and ageing see it.
+            String v = JsNumbers.dec(Money.dec(ln.get("subtotal")));
+            String partnerId = (String) note.get("partnerId");
+            postingLines.add(outbound ? new Line(counterAccount, v, null, partnerId, null, null, null, null)
+                    : new Line(counterAccount, null, v, partnerId, null, null, null, null));
         }
         for (Map<String, Object> ln : noteLines) {
             String accountId = null;
@@ -249,29 +251,33 @@ public class DebitNotesService {
             if (accountId == null) {
                 accountId = outbound ? determination.mapped("sales_revenue") : determination.mapped("default_expense");
             }
-            postingLines.add(Line.credit(accountId, JsNumbers.js(Money.dec(ln.get("subtotal"))), null));
+            // B1 (post-parity): Nest credited the expense leg too, so an inbound note never balanced. A supplier's
+            // debit note raises what we owe: Dr expense / Cr AP.
+            Number amt = JsNumbers.js(Money.dec(ln.get("subtotal")));
+            postingLines.add(outbound ? Line.credit(accountId, amt, null) : Line.debit(accountId, amt, null));
         }
-        // The journal and the status flip land together.
+        // The status claim, the journal and the flip land together; the claim serialises concurrent posts (P0-3).
         Map<String, Object> updated = tx.execute(st -> {
+            Map<String, Object> row = markPosted(id, orgId);
             posting.post(PostingRequest.of(journalCode, (Instant) note.get("issueDate"),
                     (outbound ? "Debit note to customer" : "Debit note from supplier") + " " + note.get("noteNumber"),
                     "debit_note", id, "debit_note:" + id, postingLines));
-            Map<String, Object> row = markPosted(id, orgId);
             audit.recordInTx(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted")));
             return row;
         });
         events.publish("debit_note.posted", Obj.of("organizationId", orgId, "noteId", id, "direction",
-                note.get("direction"), "amount", JsNumbers.toJsString(Money.dec(note.get("totalAmount")).doubleValue())));
+                note.get("direction"), "amount", JsNumbers.dec(Money.dec(note.get("totalAmount")))));
         return updated;
     }
 
     private Map<String, Object> markPosted(String id, String orgId) {
         Map<String, Object> row = SqlRows.one(DebitNote.class, jdbc.sql("UPDATE \"DebitNote\" SET status = 'posted',"
                         + " \"postedAt\" = " + NOW + ", \"postedById\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                        + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL RETURNING *")
+                        + " AND \"organizationId\" = ? AND status = 'draft' AND \"deletedAt\" IS NULL RETURNING *")
                 .params(user(), id, orgId));
         if (row == null) {
-            throw new IllegalStateException("No record was found for an update.");
+            // P0-3: only one concurrent post can claim the draft; the loser must not move stock or post again.
+            throw ApiException.conflict("Debit note was already posted by another request");
         }
         return row;
     }
@@ -285,6 +291,7 @@ public class DebitNotesService {
         String orgId = org();
         String id = (String) note.get("id");
         Map<String, Object> updated = tx.execute(st -> {
+            Map<String, Object> claimed = markPosted(id, orgId);
             Map<String, Object> location = resolveReturnLocation(note, orgId);
             String apAccount = determination.payableAccount(partnerCol(note, "payableAccountId"));
             String stockValAccount = determination.mapped("stock_valuation");
@@ -300,7 +307,7 @@ public class DebitNotesService {
                         && ("stockable".equals(product.get("productType"))
                                 || "consumable".equals(product.get("productType")));
                 totalAp = totalAp.add(price);
-                if (isStock && qty.doubleValue() > 0 && location != null) {
+                if (isStock && qty.signum() > 0 && location != null) {
                     StockMove move = StockMove.of((String) ln.get("productId"), (String) location.get("id"), qty)
                             .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                     : Money.dec(ln.get("uomFactor")))
@@ -331,12 +338,12 @@ public class DebitNotesService {
             }
             posting.post(PostingRequest.of("PURCH", (Instant) note.get("issueDate"), "Return to vendor "
                     + note.get("noteNumber"), "debit_note", id, "debit_note_rtv:" + id, postingLines));
-            return markPosted(id, orgId);
+            return claimed;
         });
         audit.record(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted", "kind",
                 "return_to_vendor")));
         events.publish("debit_note.posted", Obj.of("organizationId", orgId, "noteId", id, "direction",
-                note.get("direction"), "amount", JsNumbers.toJsString(Money.dec(note.get("totalAmount")).doubleValue())));
+                note.get("direction"), "amount", JsNumbers.dec(Money.dec(note.get("totalAmount")))));
         return updated;
     }
 
@@ -397,7 +404,8 @@ public class DebitNotesService {
                 + where + " ORDER BY \"issueDate\" DESC LIMIT 200").params(params));
         for (Map<String, Object> r : rows) {
             r.put("lines", lines(r.get("id")));
-            r.put("partner", SqlRows.one(jdbc.sql("SELECT name FROM \"Partner\" WHERE id = ?").param(r.get("partnerId"))));
+            r.put("partner", SqlRows.one(jdbc.sql("SELECT name FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(r.get("partnerId"), org())));
         }
         return rows;
     }

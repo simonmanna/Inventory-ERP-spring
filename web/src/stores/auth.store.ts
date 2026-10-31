@@ -36,6 +36,8 @@ interface AuthState {
   setSession: (payload: LoginResponse) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
   setOrganization: (org: SessionOrganization) => void;
+  /** Replace the cached permission list (role edits made after sign-in). */
+  setPermissions: (permissions: string[]) => void;
   setCurrentBranch: (id: string | null) => void;
   clear: () => void;
   hasPermission: (permission: string) => boolean;
@@ -60,6 +62,7 @@ export const useAuthStore = create<AuthState>()(
         }),
       setTokens: (accessToken, refreshToken) => set({ accessToken, refreshToken }),
       setOrganization: (organization) => set({ organization }),
+      setPermissions: (permissions) => set({ permissions }),
       setCurrentBranch: (currentBranchId) => set({ currentBranchId }),
       clear: () =>
         set({

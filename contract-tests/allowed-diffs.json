@@ -11,5 +11,17 @@
   { "path": "$.body.doublePourMl", "reason": "ADR-S004 (approved): additive Product.doublePourMl (V7) on every product response." },
   { "path": "$.body.data.*.doublePourMl", "reason": "ADR-S004 (approved): additive Product.doublePourMl (V7) in product lists." },
   { "scenario": "beverage-", "path": "$.body.*.doublesPerBottle", "reason": "ADR-S004 (approved): additive doubles-per-bottle in the yield report." },
-  { "scenario": "beverage-", "step": "bottle product", "path": "$.body.units", "reason": "ADR-S003: Spring product responses carry per-product units (V5); Nest has none." }
+  { "scenario": "beverage-", "step": "bottle product", "path": "$.body.units", "reason": "ADR-S003: Spring product responses carry per-product units (V5); Nest has none." },
+  {"scenario": "procurement-", "path": "$.body.message", "reason": "ADR-PROCUREMENT-001 wave 1 (post-parity): PO delete / pay / activate guards, debit-note post claim and tenancy checks answer new 400/403/404/409 messages."},
+  {"scenario": "procurement-", "path": "$.status", "reason": "ADR-PROCUREMENT-001 wave 1 (post-parity): PO search no longer 500 (B6), inbound debit note posts (B1), guarded routes refuse with 400/403/404/409."},
+  {"scenario": "procurement-", "path": "$.body.*.status", "reason": "ADR-PROCUREMENT-001 P1-1: three-way match reports an unbilled receipt as partial (Nest: blocked)."},
+  {"scenario": "procurement-", "path": "$.body.*.receivedQuantity", "reason": "ADR-PROCUREMENT-001 P1-1: three-way match counts posted receipts only."},
+  {"scenario": "procurement-", "path": "$.body.*.billedQuantity", "reason": "ADR-PROCUREMENT-001 P1-1: three-way match bills from net bill lines (Nest: tax-inclusive split of the bill total)."},
+  {"scenario": "procurement-", "path": "$.body.*.billedUnitPrice", "reason": "ADR-PROCUREMENT-001 P1-1: as above."},
+  {"scenario": "procurement-", "path": "$.body.*.priceVariance", "reason": "ADR-PROCUREMENT-001 P1-1: as above."},
+  {"scenario": "procurement-", "path": "$.body.*.quantityVariance", "reason": "ADR-PROCUREMENT-001 P1-1: as above."},
+  {"scenario": "procurement-", "path": "$.body.*.thresholdExceeded", "reason": "ADR-PROCUREMENT-001 P1-1: as above."},
+  {"scenario": "invoicing-", "path": "$.body.transactions", "reason": "ADR-PROCUREMENT-001 B2: supplier ledger is the AP sub-ledger (Nest dropped paid bills)."},
+  {"scenario": "invoicing-", "path": "$.body.closingBalance", "reason": "ADR-PROCUREMENT-001 B2: supplier ledger closing balance equals the GL."},
+  {"scenario": "invoicing-", "path": "$.body.amountResidual", "reason": "ADR-PROCUREMENT-001 P1-7: a bill priced above a vouchered receipt carries the price difference."}
 ]

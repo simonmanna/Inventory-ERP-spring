@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (532 permissions). Constant name = GROUP__ACTION.
+ * exactly (591 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -77,6 +77,33 @@ public final class Permissions {
     public static final String PROCESS_COSTING__READ = "process_costing:read";
     public static final String PROCESS_COSTING__MANAGE = "process_costing:manage";
     public static final String PROCESS_COSTING__CLOSE = "process_costing:close";
+    public static final String SUPPLIER__READ = "supplier:read";
+    public static final String SUPPLIER__MANAGE = "supplier:manage";
+    public static final String SUPPLIER__APPROVE = "supplier:approve";
+    public static final String SUPPLIER__VERIFY_BANK = "supplier:verify_bank";
+    public static final String PROCUREMENT_POLICY__READ = "procurement_policy:read";
+    public static final String PROCUREMENT_POLICY__MANAGE = "procurement_policy:manage";
+    public static final String PROCUREMENT_POLICY__APPROVE = "procurement_policy:approve";
+    public static final String RFQ__READ = "rfq:read";
+    public static final String RFQ__MANAGE = "rfq:manage";
+    public static final String RFQ__AWARD = "rfq:award";
+    public static final String PURCHASE_AGREEMENT__READ = "purchase_agreement:read";
+    public static final String PURCHASE_AGREEMENT__MANAGE = "purchase_agreement:manage";
+    public static final String PURCHASE_AGREEMENT__APPROVE = "purchase_agreement:approve";
+    public static final String BUDGET_CONTROL__OVERRIDE = "budget:override";
+    public static final String BUDGET_CONTROL__COMMITMENTS = "commitment:read";
+    public static final String PO_CHANGE__REQUEST = "po_change:request";
+    public static final String PO_CHANGE__APPROVE = "po_change:approve";
+    public static final String SUPPLIER_CLAIM__READ = "supplier_claim:read";
+    public static final String SUPPLIER_CLAIM__MANAGE = "supplier_claim:manage";
+    public static final String INSPECTION__READ = "inspection:read";
+    public static final String INSPECTION__MANAGE = "inspection:manage";
+    public static final String EMERGENCY_PURCHASE__REVIEW = "emergency_purchase:review";
+    public static final String RECEIVING__OVERRIDE_EVIDENCE = "receiving:override_evidence";
+    public static final String REPLENISHMENT__READ = "replenishment:read";
+    public static final String REPLENISHMENT__MANAGE = "replenishment:manage";
+    public static final String PROCUREMENT_ANALYTICS__READ = "procurement_analytics:read";
+    public static final String SUPPLIER_PORTAL__MANAGE = "supplier_portal:manage";
     public static final String LANDED_COST__READ = "landed_cost:read";
     public static final String LANDED_COST__CREATE = "landed_cost:create";
     public static final String LANDED_COST__APPROVE = "landed_cost:approve";
@@ -121,9 +148,6 @@ public final class Permissions {
     public static final String INVOICE__CANCEL = "invoice:cancel";
     public static final String INVOICE__DELETE = "invoice:delete";
     public static final String INVOICE__SEND = "invoice:send";
-    public static final String COMMISSION__READ = "commission:read";
-    public static final String COMMISSION__MANAGE = "commission:manage";
-    public static final String COMMISSION__APPROVE = "commission:approve";
     public static final String PRICE_LIST__READ = "price_list:read";
     public static final String PRICE_LIST__MANAGE = "price_list:manage";
     public static final String CREDIT_CONTROL__READ = "credit_control:read";
@@ -320,11 +344,6 @@ public final class Permissions {
     public static final String PROCUREMENT__THREE_WAY_MATCH__READ = "three_way_match:read";
     public static final String PROCUREMENT__THREE_WAY_MATCH__APPROVE = "three_way_match:approve";
     public static final String PROCUREMENT__THREE_WAY_MATCH__OVERRIDE = "three_way_match:override";
-    public static final String PROCUREMENT__RFQ__READ = "rfq:read";
-    public static final String PROCUREMENT__RFQ__MANAGE = "rfq:manage";
-    public static final String PROCUREMENT__RFQ__AWARD = "rfq:award";
-    public static final String PROCUREMENT__PRICE_AGREEMENT__READ = "price_agreement:read";
-    public static final String PROCUREMENT__PRICE_AGREEMENT__MANAGE = "price_agreement:manage";
     public static final String DEBIT_NOTE__CREATE = "debit_note:create";
     public static final String DEBIT_NOTE__READ = "debit_note:read";
     public static final String DEBIT_NOTE__POST = "debit_note:post";
@@ -408,6 +427,46 @@ public final class Permissions {
     public static final String CRM__CONFIGURE = "crm:configure";
     public static final String CRM__CASE_READ = "crm:case:read";
     public static final String CRM__CASE_WRITE = "crm:case:write";
+    public static final String SALES__QUOTATION_READ = "sales:quotation:read";
+    public static final String SALES__QUOTATION_WRITE = "sales:quotation:write";
+    public static final String SALES__QUOTATION_APPROVE = "sales:quotation:approve";
+    public static final String SALES__QUOTATION_SEND = "sales:quotation:send";
+    public static final String SALES__QUOTATION_CONVERT = "sales:quotation:convert";
+    public static final String SALES__ORDER_READ = "sales:order:read";
+    public static final String SALES__ORDER_READ_ALL = "sales:order:read_all";
+    public static final String SALES__ORDER_WRITE = "sales:order:write";
+    public static final String SALES__ORDER_CONFIRM = "sales:order:confirm";
+    public static final String SALES__ORDER_CANCEL = "sales:order:cancel";
+    public static final String SALES__ORDER_CLOSE_SHORT = "sales:order:close_short";
+    public static final String SALES__ORDER_HOLD_RELEASE = "sales:order:hold_release";
+    public static final String SALES__ORDER_AMEND = "sales:order:amend";
+    public static final String SALES__ORDER_AMEND_APPROVE = "sales:order:amend_approve";
+    public static final String SALES__PRICING_READ = "sales:pricing:read";
+    public static final String SALES__PRICING_MANAGE = "sales:pricing:manage";
+    public static final String SALES__BILLING_OVERRIDE = "sales:billing:override";
+    public static final String SALES__POLICY_OVERRIDE = "sales:policy:override";
+    public static final String SALES__REPORT_READ = "sales:report:read";
+    public static final String SALES__CONFIGURE = "sales:configure";
+    public static final String SALES__INVOICE_CREATE = "sales:invoice:create";
+    public static final String SALES__DEPOSIT_RECORD = "sales:deposit:record";
+    public static final String SALES__DEPOSIT_REFUND = "sales:deposit:refund";
+    public static final String SALES__RETURN_READ = "sales:return:read";
+    public static final String SALES__RETURN_WRITE = "sales:return:write";
+    public static final String SALES__RETURN_APPROVE = "sales:return:approve";
+    public static final String SALES__COMPLAINT_READ = "sales:complaint:read";
+    public static final String SALES__COMPLAINT_WRITE = "sales:complaint:write";
+    public static final String SALES__COLLECTIONS_READ = "sales:collections:read";
+    public static final String SALES__COLLECTIONS_MANAGE = "sales:collections:manage";
+    public static final String SALES__AGREEMENT_READ = "sales:agreement:read";
+    public static final String SALES__AGREEMENT_MANAGE = "sales:agreement:manage";
+    public static final String SALES__REBATE_MANAGE = "sales:rebate:manage";
+    public static final String SALES__COMMISSION_READ = "sales:commission:read";
+    public static final String SALES__COMMISSION_MANAGE = "sales:commission:manage";
+    public static final String SALES__TARGET_MANAGE = "sales:target:manage";
+    public static final String SALES__PORTAL_MANAGE = "sales:portal:manage";
+    public static final String CREDIT__READ = "credit:read";
+    public static final String CREDIT__MANAGE = "credit:manage";
+    public static final String CREDIT__OVERRIDE = "credit:override";
     public static final String DOCUMENT__CREATE = "document:create";
     public static final String DOCUMENT__READ = "document:read";
     public static final String DOCUMENT__UPDATE = "document:update";
@@ -612,6 +671,33 @@ public final class Permissions {
             "process_costing:read",
             "process_costing:manage",
             "process_costing:close",
+            "supplier:read",
+            "supplier:manage",
+            "supplier:approve",
+            "supplier:verify_bank",
+            "procurement_policy:read",
+            "procurement_policy:manage",
+            "procurement_policy:approve",
+            "rfq:read",
+            "rfq:manage",
+            "rfq:award",
+            "purchase_agreement:read",
+            "purchase_agreement:manage",
+            "purchase_agreement:approve",
+            "budget:override",
+            "commitment:read",
+            "po_change:request",
+            "po_change:approve",
+            "supplier_claim:read",
+            "supplier_claim:manage",
+            "inspection:read",
+            "inspection:manage",
+            "emergency_purchase:review",
+            "receiving:override_evidence",
+            "replenishment:read",
+            "replenishment:manage",
+            "procurement_analytics:read",
+            "supplier_portal:manage",
             "landed_cost:read",
             "landed_cost:create",
             "landed_cost:approve",
@@ -656,9 +742,6 @@ public final class Permissions {
             "invoice:cancel",
             "invoice:delete",
             "invoice:send",
-            "commission:read",
-            "commission:manage",
-            "commission:approve",
             "price_list:read",
             "price_list:manage",
             "credit_control:read",
@@ -855,11 +938,6 @@ public final class Permissions {
             "three_way_match:read",
             "three_way_match:approve",
             "three_way_match:override",
-            "rfq:read",
-            "rfq:manage",
-            "rfq:award",
-            "price_agreement:read",
-            "price_agreement:manage",
             "debit_note:create",
             "debit_note:read",
             "debit_note:post",
@@ -943,6 +1021,46 @@ public final class Permissions {
             "crm:configure",
             "crm:case:read",
             "crm:case:write",
+            "sales:quotation:read",
+            "sales:quotation:write",
+            "sales:quotation:approve",
+            "sales:quotation:send",
+            "sales:quotation:convert",
+            "sales:order:read",
+            "sales:order:read_all",
+            "sales:order:write",
+            "sales:order:confirm",
+            "sales:order:cancel",
+            "sales:order:close_short",
+            "sales:order:hold_release",
+            "sales:order:amend",
+            "sales:order:amend_approve",
+            "sales:pricing:read",
+            "sales:pricing:manage",
+            "sales:billing:override",
+            "sales:policy:override",
+            "sales:report:read",
+            "sales:configure",
+            "sales:invoice:create",
+            "sales:deposit:record",
+            "sales:deposit:refund",
+            "sales:return:read",
+            "sales:return:write",
+            "sales:return:approve",
+            "sales:complaint:read",
+            "sales:complaint:write",
+            "sales:collections:read",
+            "sales:collections:manage",
+            "sales:agreement:read",
+            "sales:agreement:manage",
+            "sales:rebate:manage",
+            "sales:commission:read",
+            "sales:commission:manage",
+            "sales:target:manage",
+            "sales:portal:manage",
+            "credit:read",
+            "credit:manage",
+            "credit:override",
             "document:create",
             "document:read",
             "document:update",

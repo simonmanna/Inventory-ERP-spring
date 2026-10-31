@@ -62,6 +62,18 @@ public class FleetDeliveryInvoiceService {
         return accounts.ensureByCode("4250", "Transport & Delivery Revenue", "revenue", "fleet_transport_revenue");
     }
 
+    /**
+     * The goods of the delivery orders of a source document were invoiced by the source (ADR-S011 S6: a sales-order
+     * invoice): record it so a delivery-order invoice only carries the transport charge.
+     */
+    @Transactional
+    public void markGoodsInvoiced(String sourceType, String sourceId, String invoiceId, String invoiceNumber) {
+        db.jdbc().sql("UPDATE \"FleetDeliveryOrder\" SET \"goodsInvoiceId\" = ?, \"goodsInvoiceNumber\" = ?,"
+                + " \"goodsInvoiceKind\" = 'document', \"updatedAt\" = " + FleetDb.NOW + " WHERE \"organizationId\" = ? AND"
+                + " \"sourceType\" = ? AND \"sourceId\" = ? AND \"goodsInvoiceId\" IS NULL AND status <> 'cancelled'")
+                .params(invoiceId, invoiceNumber, FleetDb.org(), sourceType, sourceId).update();
+    }
+
     /** The charge the delivery order would carry now: {@code {facts, rule, charge}} ({@code charge} null = no rule). */
     @Transactional(readOnly = true)
     public Map<String, Object> preview(String deliveryOrderId) {

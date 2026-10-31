@@ -58,7 +58,7 @@ final class CrmDealQuery {
             d."convertedAt", d."sequenceInStage", d.notes,
             na.id AS "nextActivityId", na.title AS "nextActivityTitle", na.type::text AS "nextActivityType",
             na."dueAt" AS "nextActivityDueAt",
-            (SELECT count(*) FROM "CrmQuotation" cq WHERE cq."dealId" = d.id AND cq."deletedAt" IS NULL)
+            (SELECT count(*) FROM "SalesQuotation" cq WHERE cq."dealId" = d.id AND cq."deletedAt" IS NULL)
                 AS "quotationCount",
             COALESCE(s."rottingDays", cs."rottingDays", 14) AS "rottingDays"
             """;

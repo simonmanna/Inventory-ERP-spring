@@ -110,6 +110,60 @@ export const PERMISSIONS = {
     manage: 'process_costing:manage',
     close: 'process_costing:close',
   },
+  // ---- ADR-PROCUREMENT-001 — Source-to-Pay ----
+  supplier: {
+    read: 'supplier:read',
+    manage: 'supplier:manage',
+    approve: 'supplier:approve',
+    verifyBank: 'supplier:verify_bank',
+  },
+  procurementPolicy: {
+    read: 'procurement_policy:read',
+    manage: 'procurement_policy:manage',
+    approve: 'procurement_policy:approve',
+  },
+  rfq: {
+    read: 'rfq:read',
+    manage: 'rfq:manage',
+    award: 'rfq:award',
+  },
+  purchaseAgreement: {
+    read: 'purchase_agreement:read',
+    manage: 'purchase_agreement:manage',
+    approve: 'purchase_agreement:approve',
+  },
+  budgetControl: {
+    override: 'budget:override',
+    commitments: 'commitment:read',
+  },
+  poChange: {
+    request: 'po_change:request',
+    approve: 'po_change:approve',
+  },
+  supplierClaim: {
+    read: 'supplier_claim:read',
+    manage: 'supplier_claim:manage',
+  },
+  inspection: {
+    read: 'inspection:read',
+    manage: 'inspection:manage',
+  },
+  emergencyPurchase: {
+    review: 'emergency_purchase:review',
+  },
+  receiving: {
+    overrideEvidence: 'receiving:override_evidence',
+  },
+  replenishment: {
+    read: 'replenishment:read',
+    manage: 'replenishment:manage',
+  },
+  procurementAnalytics: {
+    read: 'procurement_analytics:read',
+  },
+  supplierPortal: {
+    manage: 'supplier_portal:manage',
+  },
   landedCost: {
     read: 'landed_cost:read',
     create: 'landed_cost:create',
@@ -184,11 +238,6 @@ export const PERMISSIONS = {
     cancel: 'invoice:cancel',
     delete: 'invoice:delete',
     send: 'invoice:send',
-  },
-  commission: {
-    read: 'commission:read',
-    manage: 'commission:manage',
-    approve: 'commission:approve',
   },
   priceList: {
     read: 'price_list:read',
@@ -522,16 +571,6 @@ export const PERMISSIONS = {
       approve: 'three_way_match:approve',
       override: 'three_way_match:override',
     },
-    /// Requests for quotation: read, draft / send / record quotes, award to a purchase order.
-    rfq: {
-      read: 'rfq:read',
-      manage: 'rfq:manage',
-      award: 'rfq:award',
-    },
-    priceAgreement: {
-      read: 'price_agreement:read',
-      manage: 'price_agreement:manage',
-    },
   },
   debitNote: {
     create: 'debit_note:create',
@@ -658,6 +697,68 @@ export const PERMISSIONS = {
     /// Customer complaints and service requests (CRM-1).
     caseRead: 'crm:case:read',
     caseWrite: 'crm:case:write',
+  },
+  // ---- Sales / order-to-cash (ADR-S011) ----
+  sales: {
+    quotationRead: 'sales:quotation:read',
+    quotationWrite: 'sales:quotation:write',
+    quotationApprove: 'sales:quotation:approve',
+    quotationSend: 'sales:quotation:send',
+    quotationConvert: 'sales:quotation:convert',
+    orderRead: 'sales:order:read',
+    /// See every salesperson's quotations / orders (without it: own, unassigned and led team).
+    orderReadAll: 'sales:order:read_all',
+    orderWrite: 'sales:order:write',
+    orderConfirm: 'sales:order:confirm',
+    orderCancel: 'sales:order:cancel',
+    orderCloseShort: 'sales:order:close_short',
+    orderHoldRelease: 'sales:order:hold_release',
+    /// Request a change to a confirmed order.
+    orderAmend: 'sales:order:amend',
+    /// Approve / apply a change request.
+    orderAmendApprove: 'sales:order:amend_approve',
+    pricingRead: 'sales:pricing:read',
+    pricingManage: 'sales:pricing:manage',
+    /// Override the billable quantity decided by the billing basis.
+    billingOverride: 'sales:billing:override',
+    /// Override fulfilment / recognition policies on an order.
+    policyOverride: 'sales:policy:override',
+    reportRead: 'sales:report:read',
+    configure: 'sales:configure',
+    /// Raise invoices / down-payment invoices from sales orders.
+    invoiceCreate: 'sales:invoice:create',
+    /// Record customer deposits (advances) and apply them to invoices.
+    depositRecord: 'sales:deposit:record',
+    depositRefund: 'sales:deposit:refund',
+    /// Returns (RMA) and customer complaints (ADR-S011 S7).
+    returnRead: 'sales:return:read',
+    returnWrite: 'sales:return:write',
+    /// Approve a return and settle it (credit note, refund, replacement).
+    returnApprove: 'sales:return:approve',
+    complaintRead: 'sales:complaint:read',
+    complaintWrite: 'sales:complaint:write',
+    /// Collections worklist, dunning runs, promises to pay (ADR-S011 S8).
+    collectionsRead: 'sales:collections:read',
+    collectionsManage: 'sales:collections:manage',
+    /// Blanket / contract agreements (licence salesAgreements, ADR-S011 S9).
+    agreementRead: 'sales:agreement:read',
+    agreementManage: 'sales:agreement:manage',
+    /// Rebate programmes, accrual runs and settlement credit notes.
+    rebateManage: 'sales:rebate:manage',
+    commissionRead: 'sales:commission:read',
+    /// Commission rules, statements and their approval into payroll.
+    commissionManage: 'sales:commission:manage',
+    targetManage: 'sales:target:manage',
+    /// Issue / revoke customer portal links (licence customerPortal, ADR-S011 S10).
+    portalManage: 'sales:portal:manage',
+  },
+  // ---- Credit management (ADR-S011 §3) ----
+  credit: {
+    read: 'credit:read',
+    /// Limits, policy, customer hard hold.
+    manage: 'credit:manage',
+    /// Release a document held by a credit check.
+    override: 'credit:override',
   },
   document: {
     create: 'document:create',

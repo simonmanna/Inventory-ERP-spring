@@ -547,6 +547,9 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 
 ## procurement
 
+> 2026-10-30 S2P audit: [`docs/audit/procurement-current-state-audit.md`](audit/procurement-current-state-audit.md) — parity routes ticked below are ported; see its defect register (P0-1…P0-6) before building on them.
+
+
 - [x] GET /api/v1/procurement/three-way-match — ThreeWayMatchController.list
 - [x] POST /api/v1/procurement/three-way-match/recompute/:orderId — ThreeWayMatchController.recompute
 - [x] POST /api/v1/procurement/three-way-match/validate-bill/:billId — ThreeWayMatchController.validateBill
@@ -583,6 +586,25 @@ freeze `uomId` + `uomFactor` (V5). Pending owner approval — see "Deviations" i
 - [x] PATCH /api/v1/procurement/purchase-requests/:id/reject — PurchaseRequestsController.reject
 - [x] PATCH /api/v1/procurement/purchase-requests/:id/submit — PurchaseRequestsController.submit
 - [x] GET /api/v1/procurement/reports/grni — GrniReconciliationController.grni
+
+### Source-to-Pay extension (ADR-PROCUREMENT-001; no Nest counterpart)
+
+Built on top of the 36 parity routes, which keep their path, verb, permission and JSON. Deliberate behaviour changes on
+parity routes are listed under *Deviations* in [`spec/procurement.md`](spec/procurement.md).
+
+| Wave | Migration | Extension routes | Integration test |
+|---|---|---|---|
+| W1 P0 integrity fixes | V26 | — (parity routes fixed) | `ProcurementIntegrityIT` |
+| W2 policies, suppliers, approvals | V27 | policies, supplier profile / bank / certificates / catalogue / prices | `ProcurementSupplierPolicyIT` |
+| W3 requisition to order, PO lifecycle | V28 | sourcing workbench, send / acknowledge / short-close / close, open orders | `RequisitionToOrderIT` |
+| W4 strategic sourcing | V29 | 13 RFQ + 8 agreement routes | `SourcingIT` |
+| W5 enterprise controls | V30 | 16 (commitments, PO changes, duplicates, claims) | `ProcurementControlsIT` |
+| W6 receiving quality | V31 | 9 (inspections, emergency purchases) | `ReceivingQualityIT` |
+| W7 planning, portal, analytics | V32 | 14 authenticated + 4 public portal routes | `PlanningIT` |
+| W8 end-to-end | — | — | `SourceToPayEndToEndIT` |
+
+The authorization matrix covers all 158 procurement routes (`ProcurementIT`). Route tables per wave are in
+`spec/procurement.md` under *Built — wave n*.
 
 ## pos
 

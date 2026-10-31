@@ -54,7 +54,7 @@ public final class ProductionAlertSources {
             String from = scan.asOf().minusDays(YIELD_WINDOW_DAYS - 1L).toString();
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> plants = (List<Map<String, Object>>) crushing.yieldReport(from,
-                    scan.asOf().toString(), null).get("plants");
+                    scan.asOf().toString(), (String) null).get("plants");
             for (Map<String, Object> plant : plants) {
                 BigDecimal actual = (BigDecimal) plant.get("actualYieldPct");
                 if (actual != null && actual.compareTo(scan.threshold()) < 0) {

@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
@@ -68,11 +69,16 @@ public class VendorBillService {
     private final ControlledActionService controlled;
     private final AuditService audit;
     private final TransactionTemplate newTx;
+    private final AccountDeterminationService determination;
+    private final List<VendorBillPostGuard> guards;
 
     public VendorBillService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ThreeWayMatchService twm, ApprovalsService approvals, ControlledActionService controlled,
-            AuditService audit, PlatformTransactionManager txm) {
+            AuditService audit, PlatformTransactionManager txm, AccountDeterminationService determination,
+            List<VendorBillPostGuard> guards) {
         this.jdbc = jdbc;
+        this.guards = guards;
+        this.determination = determination;
         this.events = events;
         this.workflow = workflow;
         this.builder = builder;
@@ -318,11 +324,22 @@ public class VendorBillService {
             if (!TenantContext.permissions().contains("approvals:decide")) {
                 throw ApiException.forbidden("You do not have approvals:decide permission");
             }
+            // P1-5 (ADR-PROCUREMENT-001): segregation of duties — whoever raised the bill / its approval request cannot
+            // also approve it by posting with override.
+            String requester = jdbc.sql("SELECT \"createdById\" FROM \"ApprovalRequest\" WHERE id = ?").param(pending)
+                    .query(String.class).optional().orElse(null);
+            if (userId != null && (userId.equals(requester) || userId.equals(doc.get("createdBy")))) {
+                throw ApiException.forbidden("You cannot approve a bill you created — another approver must decide");
+            }
             jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'approved', \"decidedAt\" = now(), \"updatedAt\" = now()"
                     + " WHERE id = ?").param(pending).update();
             audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));
         }
         authorizePosting(id, doc);
+        List<String> warnings = new ArrayList<>();
+        for (VendorBillPostGuard g : guards) {
+            warnings.addAll(g.beforePost(id, doc));
+        }
         workflow.transition("vendor_bill", id, "post", null, doc);
         for (String po : links) {
             twm.recomputeForOrder(po);
@@ -335,6 +352,9 @@ public class VendorBillService {
         Map<String, Object> out = builder.document(id);
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
+        if (!warnings.isEmpty()) {
+            out.put("warnings", warnings);
+        }
         return out;
     }
 
@@ -389,46 +409,73 @@ public class VendorBillService {
     /** Supplier ledger: bills (debit) and outbound payments (credit) with a running balance. */
     @Transactional(readOnly = true)
     public Map<String, Object> ledger(String partnerId) {
+        // B2 (post-parity): the statement is the supplier's AP sub-ledger — every posted journal line on a payable
+        // account tagged with this supplier (bills, receipt vouchers, payments, debit notes, reversals) in date order.
+        // Its closing balance therefore equals the GL and AP ageing; Nest summed draft / cancelled bills and dropped
+        // paid ones. "debit" keeps the Nest meaning (what we owe goes up), "credit" what we paid / were credited.
         String org = org();
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (Map<String, Object> b : SqlRows.list(jdbc.sql("SELECT * FROM \"Document\" WHERE \"organizationId\" = ?"
-                + " AND \"partnerId\" = ? AND \"documentType\" = 'vendor_bill' AND status IN ('draft', 'posted', 'cancelled')"
-                + " ORDER BY \"issueDate\" ASC").params(org, partnerId))) {
-            List<Map<String, Object>> lines = builder.lines((String) b.get("id"), true);
-            Object description = !lines.isEmpty() && lines.getFirst().get("description") != null
-                    ? lines.getFirst().get("description") : b.get("notes") != null ? b.get("notes") : "Bill";
-            items.add(Obj.of("id", b.get("id"), "date", b.get("issueDate"), "type", "bill", "reference",
-                    b.get("documentNumber"), "description", description, "debit",
-                    Money.dec(b.get("totalAmount")).doubleValue(), "credit", 0.0, "residual",
-                    JsNumbers.js(Money.dec(b.get("amountResidual"))), "status", b.get("status")));
+        String partnerAp = jdbc.sql("SELECT \"payableAccountId\" FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(partnerId, org).query(String.class).optional().orElse(null);
+        List<String> accounts = new ArrayList<>();
+        accounts.add(determination.payableAccount(null));
+        if (partnerAp != null && !accounts.contains(partnerAp)) {
+            accounts.add(partnerAp);
         }
-        for (Map<String, Object> p : SqlRows.list(jdbc.sql("SELECT * FROM \"Payment\" WHERE \"organizationId\" = ?"
-                + " AND \"partnerId\" = ? AND direction = 'outbound' AND status IN ('posted', 'cancelled')"
-                + " ORDER BY \"paymentDate\" ASC").params(org, partnerId))) {
-            items.add(Obj.of("id", p.get("id"), "date", p.get("paymentDate"), "type",
-                    "cancelled".equals(String.valueOf(p.get("status"))) ? "payment_void" : "payment", "reference",
-                    p.get("paymentNumber"), "description", "Payment (" + p.get("paymentMethod") + ")", "debit", 0.0,
-                    "credit", Money.dec(p.get("amount")).doubleValue(), "status", p.get("status")));
-        }
-        items.sort((a, b) -> ((Instant) a.get("date")).compareTo((Instant) b.get("date")));
-        double running = 0;
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT e.id, e.\"postingDate\", e.\"entryNumber\","
+                + " e.description, e.\"sourceType\", e.\"sourceId\", e.\"reversalOfId\", COALESCE(SUM(l.\"baseCredit\"), 0)"
+                + " AS cr, COALESCE(SUM(l.\"baseDebit\"), 0) AS dr FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON"
+                + " e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND l.\"partnerId\" = ? AND l.\"accountId\" ="
+                + " ANY(?::text[]) AND e.status IN ('posted', 'reversed') GROUP BY e.id ORDER BY e.\"postingDate\" ASC,"
+                + " e.\"createdAt\" ASC, e.\"entryNumber\" ASC").params(org, partnerId, accounts.toArray(String[]::new)));
+        BigDecimal running = Money.ZERO;
         List<Map<String, Object>> tx = new ArrayList<>();
-        for (Map<String, Object> it : items) {
-            double debit = (double) it.get("debit");
-            double credit = (double) it.get("credit");
-            running = running + debit - credit;
-            Map<String, Object> row = new LinkedHashMap<>(it);
+        for (Map<String, Object> r : rows) {
+            BigDecimal debit = Money.dec(r.get("cr"));
+            BigDecimal credit = Money.dec(r.get("dr"));
+            running = running.add(debit).subtract(credit);
+            String source = String.valueOf(r.get("sourceType"));
+            String type = r.get("reversalOfId") != null ? "reversal" : switch (source) {
+                case "vendor_bill" -> "bill";
+                case "payment" -> "payment";
+                case "goods_receipt" -> "receipt";
+                case "purchase_order" -> "purchase_payment";
+                case "debit_note" -> "debit_note";
+                default -> source;
+            };
+            Object reference = r.get("entryNumber");
+            Object residual = null;
+            Object status = "posted";
+            if ("vendor_bill".equals(source) && r.get("sourceId") != null) {
+                Map<String, Object> bill = SqlRows.one(jdbc.sql("SELECT \"documentNumber\", \"amountResidual\","
+                        + " status::text AS status FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(r.get("sourceId"), org));
+                if (bill != null) {
+                    reference = bill.get("documentNumber");
+                    residual = JsNumbers.js(Money.dec(bill.get("amountResidual")));
+                    status = bill.get("status");
+                }
+            } else if ("payment".equals(source) && r.get("sourceId") != null) {
+                Map<String, Object> pay = SqlRows.one(jdbc.sql("SELECT \"paymentNumber\", status::text AS status FROM"
+                        + " \"Payment\" WHERE id = ? AND \"organizationId\" = ?").params(r.get("sourceId"), org));
+                if (pay != null) {
+                    reference = pay.get("paymentNumber");
+                    status = pay.get("status");
+                }
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", r.get("sourceId") != null ? r.get("sourceId") : r.get("id"));
+            row.put("journalEntryId", r.get("id"));
+            row.put("date", r.get("postingDate"));
+            row.put("type", type);
+            row.put("reference", reference);
+            row.put("description", r.get("description"));
             row.put("debit", JsNumbers.js(debit));
             row.put("credit", JsNumbers.js(credit));
+            row.put("residual", residual);
+            row.put("status", status);
             row.put("balance", JsNumbers.js(running));
             tx.add(row);
         }
-        double opening = 0;
-        if (!tx.isEmpty()) {
-            Map<String, Object> first = tx.getFirst();
-            opening = ((Number) first.get("balance")).doubleValue() - ((Number) first.get("debit")).doubleValue()
-                    + ((Number) first.get("credit")).doubleValue();
-        }
-        return Obj.of("openingBalance", JsNumbers.js(opening), "closingBalance", JsNumbers.js(running), "transactions", tx);
+        return Obj.of("openingBalance", 0, "closingBalance", JsNumbers.js(running), "transactions", tx);
     }
 }

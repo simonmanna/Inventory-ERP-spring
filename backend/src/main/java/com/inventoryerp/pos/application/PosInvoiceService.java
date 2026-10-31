@@ -6,6 +6,7 @@ import static com.inventoryerp.pos.application.PosSql.num;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.core.application.PriceSnapshotService;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
@@ -107,12 +108,15 @@ public class PosInvoiceService {
     private final PosStockLocation locations;
     private final TransactionTemplate tx;
 
+    private final PriceSnapshotService snapshots;
+
     public PosInvoiceService(PosDb db, AuditService audit, EventBus events, DocumentBuilderService builder,
             SequenceService sequence, PaymentService payments, PostingService posting,
             AccountDeterminationService determination, StockService stock, StockReservationService reservations,
             PosReceiptsService receipts, PosOverridesService overrides, WorkflowService workflows,
             SettingResolverService settings, NotificationsService notifications, PricingPolicy pricing,
-            PosStockLocation locations, PlatformTransactionManager txm) {
+            PosStockLocation locations, PlatformTransactionManager txm, PriceSnapshotService snapshots) {
+        this.snapshots = snapshots;
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -478,6 +482,7 @@ public class PosInvoiceService {
             workflows.transition("order", orderId, "complete", Obj.of("invoiceId", invId, "invoiceNumber", invoiceNumber),
                     order);
             db.update(Order.class, Obj.of("invoiceId", invId), "id = ?", orderId);
+            snapshots.record("order", orderId);
             Map<String, Object> out = db.first(Invoice.class, "id = ?", invId);
             out.put("items", db.list(InvoiceItem.class, "\"invoiceId\" = ? ORDER BY \"lineNumber\" ASC", invId));
             return out;

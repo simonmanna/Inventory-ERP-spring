@@ -377,8 +377,11 @@ public class StockService {
         audit.recordInTx(AuditInput.of("StockItem", str(stockItem, "id"), "receive", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
                         "unitCost", JsNumbers.dec(unitCost), "ledgerCode", ledgerCode)));
+        BigDecimal actualValue = standardUnit != null
+                ? actualUnitCost.multiply(qty).setScale(6, java.math.RoundingMode.HALF_UP) : cost.totalValue();
         return new Received(ledgerCode, dto.quantity, unitCost, cost.totalValue(),
-                cost.newRunningAverage() != null ? cost.newRunningAverage() : dec(stockItem, "runningAverageCost"));
+                cost.newRunningAverage() != null ? cost.newRunningAverage() : dec(stockItem, "runningAverageCost"),
+                actualValue);
     }
 
     // ================================================================== issue

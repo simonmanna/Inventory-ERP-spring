@@ -22,5 +22,4 @@ CREATE INDEX IF NOT EXISTS "GoodsReceiptNote_org_receivedAt_idx" ON "GoodsReceip
 CREATE INDEX IF NOT EXISTS "BankStatementLine_org_postedAt_idx" ON "BankStatementLine" ("organizationId", "postedAt");
 CREATE INDEX IF NOT EXISTS "BankStatementLine_org_matchedPayment_idx" ON "BankStatementLine" ("organizationId", "matchedPaymentId");
 
-CREATE INDEX IF NOT EXISTS "CommissionEntry_org_earnedOn_idx" ON "CommissionEntry" ("organizationId", "earnedOn");
 CREATE INDEX IF NOT EXISTS "FleetFuelLog_org_employee_fuelledAt_idx" ON "FleetFuelLog" ("organizationId", "employeeId", "fuelledAt");

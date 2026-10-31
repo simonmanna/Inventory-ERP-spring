@@ -1,3 +1,7 @@
+
+> **ADR-S011 (phase S0):** quotations and the quote policy settings are owned by the `sales` module since V24
+> (`SalesQuotation*`, `SalesSettings`). `/crm/quotations*` keeps its routes and JSON and delegates to
+> `SalesQuotationService`; CRM price rules serve quotation pricing through `QuotationPricingPort` until phase S2.
 # CRM — `crm`
 
 | | |
@@ -86,11 +90,11 @@ planned activities + reminders, price rules, quotation approval / credit / conve
 visibility, tenant isolation). Web: `web/src/pages/crm/*` (pipeline kanban, opportunity form, leads, quotations,
 activities, customers, price rules, reports, configuration).
 
-## Commissions (SALES-4)
+## Commissions (SALES-4) — superseded
 
-Status: built, not compiled or run. `/commissions/*` (`commission:read|manage|approve`, `CrmCommissionController`),
-tables `CommissionRule`, `CommissionEntry` (V64), screen `/commissions`. Uses `HrPayrollInputService.addEarning`
-(source `sales_commission`). Tests: `CrmCommissionTest`, `CrmCommissionIT`.
+Removed when the sales O2C module merged: commissions, targets and payroll statements live in sales
+(ADR-S011 S9, `/sales/commissions`, `SalesCommissionService`, table `SalesCommissionRule`). Two engines feeding
+payroll would pay a salesperson twice.
 
 ## CRM-1 complaints and service requests (built, unverified)
 

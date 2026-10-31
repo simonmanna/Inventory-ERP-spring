@@ -203,7 +203,7 @@ public class CrmReportService {
             params.add(user());
         }
         List<Map<String, Object>> byStatus = db.rows("SELECT q.status AS key, count(*) AS count, COALESCE(sum(q.total),"
-                + " 0) AS value FROM \"CrmQuotation\" q" + where + " GROUP BY 1 ORDER BY 2 DESC", params);
+                + " 0) AS value FROM \"SalesQuotation\" q" + where + " GROUP BY 1 ORDER BY 2 DESC", params);
         long count = 0;
         double value = 0;
         long accepted = 0;
@@ -288,7 +288,7 @@ public class CrmReportService {
                 + " d.\"stageChangedAt\" LIMIT 8", q.params);
         rotting.forEach(q::decorate);
         Map<String, Object> pendingApproval = TenantContext.has(Permissions.CRM__QUOTATION_APPROVE)
-                ? db.row("SELECT count(*) AS count, COALESCE(sum(total), 0) AS value FROM \"CrmQuotation\" WHERE"
+                ? db.row("SELECT count(*) AS count, COALESCE(sum(total), 0) AS value FROM \"SalesQuotation\" WHERE"
                         + " \"organizationId\" = ? AND status = 'pending_approval' AND \"deletedAt\" IS NULL", org())
                 : null;
         java.time.Instant ts = today.atStartOfDay(zone).toInstant();

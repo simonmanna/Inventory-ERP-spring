@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
-import { notify } from '@/lib/notify';
+import { idempotentPost } from '@/lib/idempotent-request';
+import { apiMessage, notify } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
@@ -32,17 +33,17 @@ export function PurchaseOrderPayPage() {
 
   const payMut = useMutation({
     mutationFn: async () =>
-      (await api.post(`/procurement/purchase-orders/${id}/pay`, {
+      await idempotentPost(`/procurement/purchase-orders/${id}/pay`, {
         amount: amount ? Number(amount) : undefined,
         reference: reference || undefined,
-      })).data,
+      }),
     onSuccess: () => {
       notify.success(tx('Payment recorded'));
       qc.invalidateQueries({ queryKey: ['purchase-order', id] });
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate(`/procurement/purchase-orders/${id}`);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+    onError: (e: any) => notify.error(apiMessage(e, tx('Failed'))),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;

@@ -220,9 +220,12 @@ class InvoicingIT extends ApiTestSupport {
         assertThat(wht).isEqualByComparingTo("6");
         assertThat(ok(200, "GET", "/vendor-bills/" + id, null).get("status").asString()).isEqualTo("paid");
         JsonNode ledger = ok(200, "GET", "/vendor-bills/suppliers/" + supplier + "/ledger", null);
-        // Nest parity: the ledger only lists draft / posted / cancelled bills, so a fully paid bill drops out.
-        assertThat(ledger.get("closingBalance").asInt()).isEqualTo(-60);
-        assertThat(ledger.get("transactions")).hasSize(1);
+        // B2 (post-parity): the statement is the supplier's AP sub-ledger — bill and payment net to zero (Nest
+        // dropped the paid bill and closed at -60).
+        assertThat(ledger.get("closingBalance").asInt()).isZero();
+        assertThat(ledger.get("transactions")).hasSize(2);
+        assertThat(ledger.get("transactions").get(0).get("type").asString()).isEqualTo("bill");
+        assertThat(ledger.get("transactions").get(1).get("type").asString()).isEqualTo("payment");
         // A suite that rebuilt report snapshots moments ago would make the aging answer from them.
         jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
         assertThat(ok(200, "GET", "/reports/ap/aging", null).get("source").asString()).isEqualTo("live");
@@ -319,10 +322,10 @@ class InvoicingIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("authorization: invoicing (30 + 10 ADR-S005 + 2 PROC-4 + 1 FIN-3) and expenses (18) routes answer "
-            + "401 / 403")
+    @DisplayName("authorization: invoicing (40 base + 10 ADR-S011 deposits / mobile money + 15 Phase 4) and expenses (18) "
+            + "routes answer 401 / 403")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(55);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(65);
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(18);
     }
 }

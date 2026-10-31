@@ -203,6 +203,9 @@ public class InvoicingWorkflowsInitializer {
                         }, null)));
     }
 
+    /** Bill-vs-receipt differences below half a cent are rounding, not variance. */
+    private static final BigDecimal VARIANCE_EPSILON = new BigDecimal("0.005");
+
     private void postBill(Context ctx) {
         String id = (String) ctx.entity().get("id");
         Map<String, Object> full = builder.document(id);
@@ -221,6 +224,7 @@ public class InvoicingWorkflowsInitializer {
         List<Map<String, Object>> postable = new ArrayList<>();
         BigDecimal postableTotal = Money.ZERO;
         BigDecimal priceVariance = Money.ZERO;
+        BigDecimal voucheredVariance = Money.ZERO;
         for (Map<String, Object> line : lines) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             boolean stockable = product != null && Boolean.TRUE.equals(product.get("trackInventory"));
@@ -237,6 +241,21 @@ public class InvoicingWorkflowsInitializer {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
                 priceVariance = priceVariance.add(billUnit.multiply(match.accruedQuantity()))
                         .subtract(match.accruedReceiptValue());
+            }
+            if (match.voucheredQuantity().signum() > 0) {
+                // P1-7 (post-parity): the receipt voucher raised AP at the receipt price; a bill priced higher owes the
+                // difference too (Dr PPV / Cr AP). A lower bill price is a match exception settled by a supplier credit.
+                BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
+                BigDecimal receiptValue = Money.ZERO;
+                for (BillReceiptMatcherService.Consumption c : match.consumptions()) {
+                    if (c.vouchered()) {
+                        receiptValue = receiptValue.add(c.quantity().multiply(c.receiptUnitCost()));
+                    }
+                }
+                BigDecimal diff = billUnit.multiply(match.voucheredQuantity()).subtract(receiptValue);
+                if (diff.compareTo(VARIANCE_EPSILON) > 0) {
+                    voucheredVariance = voucheredVariance.add(diff);
+                }
             }
             BigDecimal postableQty = qty.subtract(match.voucheredQuantity());
             if (postableQty.signum() <= 0) {
@@ -257,6 +276,7 @@ public class InvoicingWorkflowsInitializer {
             postableTotal = postableTotal.add(d(line.get("total")).multiply(factor));
         }
         String entryId = null;
+        postableTotal = postableTotal.add(voucheredVariance);
         if (postableTotal.signum() > 0) {
             String grni = determination.mapped("grni_accrued");
             Grouped g = builder.groupForPosting(partnerId, postable, "purchase", grni);
@@ -275,6 +295,10 @@ public class InvoicingWorkflowsInitializer {
                 post.add(priceVariance.signum() > 0
                         ? new MutableLine(ppv, priceVariance, null, null, "Purchase price variance")
                         : new MutableLine(ppv, null, priceVariance.negate(), null, "Purchase price variance"));
+            }
+            if (voucheredVariance.signum() > 0) {
+                post.add(new MutableLine(priceVarianceAccount(), voucheredVariance, null, null,
+                        "Purchase price variance (billed above receipt)"));
             }
             post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
                     "Bill " + full.get("documentNumber")));

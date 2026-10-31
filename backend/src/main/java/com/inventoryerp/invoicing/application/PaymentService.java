@@ -67,6 +67,10 @@ public class PaymentService {
             String accountId, String reference, String branchId, List<AllocationInput> allocations,
             String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId) {}
 
+    /** Payment method of a customer-deposit application (only through {@link #createDepositApplication}). */
+    public static final String DEPOSIT_METHOD = "customer_deposit";
+    private static final ThreadLocal<Boolean> DEPOSIT_APPLICATION = new ThreadLocal<>();
+
     private final JdbcClient jdbc;
     private final EventBus events;
     private final SequenceService sequence;
@@ -179,6 +183,21 @@ public class PaymentService {
         return record(dto, "inbound", null, allowSessionOwnerMismatch, nested);
     }
 
+    /**
+     * Settle invoices from a customer deposit (ADR-S011 S6, sales-postings.md P9): an inbound receipt whose debit is the
+     * deposit liability account ({@code dto.accountId}); allocations work exactly like a cash receipt. Only the
+     * customer-deposit service calls this.
+     */
+    @Transactional
+    public Map<String, Object> createDepositApplication(PaymentInput dto) {
+        DEPOSIT_APPLICATION.set(true);
+        try {
+            return record(dto, "inbound", null, true, true);
+        } finally {
+            DEPOSIT_APPLICATION.remove();
+        }
+    }
+
     /** Supplier payment: Dr AP / Cr Cash|Bank (+ Cr withholding), behind the {@code supplier_payment} gate. */
     @Transactional
     public Map<String, Object> createSupplierPayment(PaymentInput dto, boolean nested) {
@@ -244,8 +263,16 @@ public class PaymentService {
                         + " balance " + JsNumbers.dec(outstanding) + ". Overpayments require allowOverpayment=true.");
             }
         }
-        TenderAccount.Resolved resolved = TenderAccount.resolve(jdbc, determination, org, method, dto.accountId(),
-                dto.cashSessionId());
+        TenderAccount.Resolved resolved;
+        if (DEPOSIT_METHOD.equals(method)) {
+            // Deposit application (ADR-S011 S6): the "tender" is the customer-deposit liability — Dr deposits / Cr AR.
+            if (!Boolean.TRUE.equals(DEPOSIT_APPLICATION.get()) || dto.accountId() == null) {
+                throw ApiException.badRequest("Unsupported payment method");
+            }
+            resolved = new TenderAccount.Resolved(dto.accountId(), "GEN", null);
+        } else {
+            resolved = TenderAccount.resolve(jdbc, determination, org, method, dto.accountId(), dto.cashSessionId());
+        }
         String cashAccount = resolved.accountId();
         String sessionOwner = resolved.cashSessionId() == null ? null : jdbc.sql("SELECT \"userId\" FROM \"CashSession\""
                 + " WHERE id = ?").param(resolved.cashSessionId()).query(String.class).optional().orElse(null);
@@ -307,7 +334,9 @@ public class PaymentService {
         }
         List<Line> lines = new ArrayList<>();
         if ("inbound".equals(direction)) {
-            lines.add(new Line(cashAccount, JsNumbers.dec(amount), null, null, null, null, null, null));
+            // a deposit application debits the customer's deposit liability: keep the partner on that line
+            lines.add(new Line(cashAccount, JsNumbers.dec(amount), null, DEPOSIT_METHOD.equals(method) ? dto.partnerId()
+                    : null, null, null, null, null));
             lines.add(new Line(counterAccount, null, JsNumbers.dec(amount), dto.partnerId(), null, null, null, null));
         } else {
             lines.add(new Line(counterAccount, JsNumbers.dec(amount), null, dto.partnerId(), null, null, null, null));
@@ -506,6 +535,11 @@ public class PaymentService {
     /** Void a posted payment (reversal, drawer correction, residuals restored). */
     @Transactional
     public Map<String, Object> voidPayment(String id, String reason, String correctionSessionId) {
+        String voidMethod = jdbc.sql("SELECT \"paymentMethod\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()).query(String.class).optional().orElse(null);
+        if (DEPOSIT_METHOD.equals(voidMethod)) {
+            throw ApiException.badRequest("A deposit application is reversed from the customer deposit, not voided");
+        }
         if (reason == null || reason.trim().isEmpty()) {
             throw ApiException.badRequest("A reason is required to void a payment");
         }

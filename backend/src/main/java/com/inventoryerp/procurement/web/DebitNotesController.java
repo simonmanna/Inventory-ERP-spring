@@ -8,6 +8,7 @@ import static com.inventoryerp.procurement.web.ProcurementDtos.MIN1;
 import static com.inventoryerp.procurement.web.ProcurementDtos.NUM;
 import static com.inventoryerp.procurement.web.ProcurementDtos.STR;
 
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.procurement.application.DebitNotesService;
@@ -93,6 +94,7 @@ public class DebitNotesController {
     }
 
     @PatchMapping("/{id}/post")
+    @Idempotent
     @RequirePermissions(Permissions.DEBIT_NOTE__POST)
     public Map<String, Object> post(@PathVariable String id) {
         return svc.post(id);

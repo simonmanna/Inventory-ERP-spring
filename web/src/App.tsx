@@ -33,6 +33,8 @@ import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
 import { ModulesPage } from '@/pages/modules';
 import { crmRoutes } from '@/pages/crm/routes';
+import { salesRoutes } from '@/pages/sales/routes';
+import { procurementPrintRoutes, procurementPublicRoutes, procurementRoutes } from '@/pages/procurement/routes';
 import { BackupPage } from '@/pages/settings/BackupPage';
 import { AssetDashboardPage } from '@/pages/fixed-asset/AssetDashboardPage';
 import { AssetCategoriesPage } from '@/pages/fixed-asset/AssetCategoriesPage';
@@ -109,7 +111,6 @@ import { OrderDetailPage } from '@/pages/orders/order-detail';
 import { ArAgingPage } from '@/pages/invoicing/ar-aging';
 import { CreditControlPage } from '@/pages/invoicing/credit-control';
 import { PriceListsPage } from '@/pages/invoicing/price-lists';
-import { CommissionsPage } from '@/pages/crm/CommissionsPage';
 import { CreditNotesPage } from '@/pages/invoicing/credit-notes';
 import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
@@ -140,34 +141,13 @@ import { JournalEntryCreatePage } from '@/pages/accounting/journal-entry-create'
 import { JournalEntryDetailPage } from '@/pages/accounting/journal-entry-detail';
 import { InventoryPostingRulesPage } from '@/pages/accounting/inventory-posting-rules';
 import { ProductEditPage } from '@/pages/products/ProductEditPage';
-import { PurchaseRequestsPage } from '@/pages/procurement/purchase-requests';
-import { PurchaseRequestCreatePage } from '@/pages/procurement/purchase-request-create';
 import { ProcurementBudgetsPage } from '@/pages/procurement/procurement-budgets';
 import { ProcurementDelegationsPage } from '@/pages/procurement/procurement-delegations';
-import { PurchaseOrdersPage } from '@/pages/procurement/purchase-orders';
-import { PurchaseOrderCreatePage } from '@/pages/procurement/purchase-order-create';
-import { PurchaseOrderDetailPage } from '@/pages/procurement/PurchaseOrderDetailPage';
-import { PurchaseOrderReceivePage } from '@/pages/procurement/PurchaseOrderReceivePage';
-import { PurchaseOrderPayPage } from '@/pages/procurement/PurchaseOrderPayPage';
-import { GoodsReceiptsPage } from '@/pages/procurement/goods-receipts';
 import { CostPoliciesPage } from '@/pages/costing/CostPoliciesPage';
 import { StandardCostsPage } from '@/pages/costing/StandardCostsPage';
 import { ProcessCostingPage } from '@/pages/costing/ProcessCostingPage';
 import { CostCenterAccountingPage } from '@/pages/costing/CostCenterAccountingPage';
-import { LandedCostVouchersPage, LandedCostVoucherEditPage, LandedCostVoucherDetailPage } from '@/pages/costing/LandedCostVouchersPage';
-import { ShipmentsPage } from '@/pages/costing/ShipmentsPage';
-import { LandedCostReportsPage } from '@/pages/costing/LandedCostReportsPage';
-import { GoodsReceiptCreatePage } from '@/pages/procurement/goods-receipt-create';
-import GoodsReceiptDetailPage from '@/pages/procurement/goods-receipt-detail';
-import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
-import { DebitNotesPage } from '@/pages/procurement/debit-notes';
-import { DebitNoteCreatePage } from '@/pages/procurement/debit-note-create';
 import { SupplierPerformancePage } from '@/pages/procurement/supplier-performance';
-import { RfqsPage } from '@/pages/procurement/rfqs';
-import { RfqEditPage } from '@/pages/procurement/rfq-edit';
-import { RfqDetailPage } from '@/pages/procurement/rfq-detail';
-import { PriceAgreementsPage } from '@/pages/procurement/price-agreements';
-import { PriceHistoryPage } from '@/pages/procurement/price-history';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -241,6 +221,7 @@ import KitchenStationsPage from '@/pages/pos/KitchenStationsPage';
 import KdsReportsPage from '@/pages/pos/KdsReportsPage';
 import CashRegistersPage from '@/pages/pos/cash/CashRegistersPage';
 import DigitalMenuPage from '@/pages/pos/DigitalMenuPage';
+import CustomerPortalPage from '@/pages/portal/CustomerPortalPage';
 import TablesPage from '@/pages/tables/TablesPage';
 import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
@@ -263,8 +244,11 @@ export function App() {
   return (
     <Routes key={lang}>
       <Route path="/login" element={<LoginPage />} />
+      {procurementPublicRoutes}
       {/* Digital Menu — customer-facing public route (no auth, no shell). */}
       <Route path="/menu/:branchId/:tableId" element={<DigitalMenuPage />} />
+      {/* Customer portal — magic-link token, no staff login (ADR-S011 S10). */}
+      <Route path="/sales-portal" element={<CustomerPortalPage />} />
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />
@@ -272,6 +256,7 @@ export function App() {
         {driverRoutes}
         {/* Customer portal (PORTAL-1) — customers never see the staff shell. */}
         {portalRoutes}
+        {procurementPrintRoutes}
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPage />} />
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
@@ -318,7 +303,6 @@ export function App() {
                     <Route path="/communication" element={<CommunicationInboxPage />} />
                     <Route path="/communication/rules" element={<CommunicationRulesPage />} />
                     <Route path="/communication/channels" element={<CommunicationChannelsPage />} />
-          <Route path="/commissions" element={<RequirePermission permission={PERMISSIONS.commission.read}><CommissionsPage /></RequirePermission>} />
           <Route path="/price-lists" element={<RequirePermission permission={PERMISSIONS.priceList.read}><PriceListsPage /></RequirePermission>} />
           <Route path="/credit-control" element={<RequirePermission permission={PERMISSIONS.creditControl.read}><CreditControlPage /></RequirePermission>} />
           <Route path="/credit-notes" element={<CreditNotesPage />} />
@@ -526,40 +510,18 @@ export function App() {
           <Route path="/inventory/locations" element={<LocationsPage />} />
           <Route path="/inventory/reservations" element={<StockReservationsPage />} />
           <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
-          <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
-          <Route path="/procurement/purchase-requests/new" element={<PurchaseRequestCreatePage />} />
           <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />
           <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
-          <Route path="/procurement/purchase-orders" element={<PurchaseOrdersPage />} />
-          <Route path="/procurement/purchase-orders/new" element={<PurchaseOrderCreatePage />} />
-          <Route path="/procurement/purchase-orders/:id/receive" element={<PurchaseOrderReceivePage />} />
-          <Route path="/procurement/purchase-orders/:id/pay" element={<PurchaseOrderPayPage />} />
-          <Route path="/procurement/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
-          <Route path="/procurement/goods-receipts" element={<GoodsReceiptsPage />} />
-          <Route path="/procurement/goods-receipts/new" element={<GoodsReceiptCreatePage />} />
-          <Route path="/procurement/goods-receipts/:id" element={<GoodsReceiptDetailPage />} />
-          <Route path="/procurement/landed-cost-vouchers" element={<LandedCostVouchersPage />} />
-          <Route path="/procurement/landed-cost-vouchers/new" element={<LandedCostVoucherEditPage />} />
-          <Route path="/procurement/landed-cost-vouchers/:id" element={<LandedCostVoucherDetailPage />} />
-          <Route path="/procurement/landed-cost-vouchers/:id/edit" element={<LandedCostVoucherEditPage />} />
-          <Route path="/procurement/shipments" element={<ShipmentsPage />} />
-          <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
-          <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
-          <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
-          <Route path="/procurement/rfqs" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqsPage /></RequirePermission>} />
-          <Route path="/procurement/rfqs/new" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
-          <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqDetailPage /></RequirePermission>} />
-          <Route path="/procurement/rfqs/:id/edit" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
-          <Route path="/procurement/price-agreements" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceAgreementsPage /></RequirePermission>} />
-          <Route path="/procurement/price-history" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceHistoryPage /></RequirePermission>} />
           <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
-          <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
-          <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />
+          <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/tasks/new" element={<TaskEditPage />} />
           <Route path="/tasks/:id/edit" element={<TaskEditPage />} />
           {/* CRM sales suite (ADR-S010) — pages/crm/routes.tsx; /crm/deals links redirect */}
           {crmRoutes}
+          {/* Sales / order-to-cash (ADR-S011) — pages/sales/routes.tsx */}
+          {salesRoutes}
+          {procurementRoutes}
 
                   </Route>
                 </Route>

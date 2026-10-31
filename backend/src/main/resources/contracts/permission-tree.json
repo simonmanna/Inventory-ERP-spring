@@ -101,6 +101,59 @@
     "manage": "process_costing:manage",
     "close": "process_costing:close"
   },
+  "supplier": {
+    "read": "supplier:read",
+    "manage": "supplier:manage",
+    "approve": "supplier:approve",
+    "verifyBank": "supplier:verify_bank"
+  },
+  "procurementPolicy": {
+    "read": "procurement_policy:read",
+    "manage": "procurement_policy:manage",
+    "approve": "procurement_policy:approve"
+  },
+  "rfq": {
+    "read": "rfq:read",
+    "manage": "rfq:manage",
+    "award": "rfq:award"
+  },
+  "purchaseAgreement": {
+    "read": "purchase_agreement:read",
+    "manage": "purchase_agreement:manage",
+    "approve": "purchase_agreement:approve"
+  },
+  "budgetControl": {
+    "override": "budget:override",
+    "commitments": "commitment:read"
+  },
+  "poChange": {
+    "request": "po_change:request",
+    "approve": "po_change:approve"
+  },
+  "supplierClaim": {
+    "read": "supplier_claim:read",
+    "manage": "supplier_claim:manage"
+  },
+  "inspection": {
+    "read": "inspection:read",
+    "manage": "inspection:manage"
+  },
+  "emergencyPurchase": {
+    "review": "emergency_purchase:review"
+  },
+  "receiving": {
+    "overrideEvidence": "receiving:override_evidence"
+  },
+  "replenishment": {
+    "read": "replenishment:read",
+    "manage": "replenishment:manage"
+  },
+  "procurementAnalytics": {
+    "read": "procurement_analytics:read"
+  },
+  "supplierPortal": {
+    "manage": "supplier_portal:manage"
+  },
   "landedCost": {
     "read": "landed_cost:read",
     "create": "landed_cost:create",
@@ -166,11 +219,6 @@
     "cancel": "invoice:cancel",
     "delete": "invoice:delete",
     "send": "invoice:send"
-  },
-  "commission": {
-    "read": "commission:read",
-    "manage": "commission:manage",
-    "approve": "commission:approve"
   },
   "priceList": {
     "read": "price_list:read",
@@ -452,15 +500,6 @@
       "read": "three_way_match:read",
       "approve": "three_way_match:approve",
       "override": "three_way_match:override"
-    },
-    "rfq": {
-      "read": "rfq:read",
-      "manage": "rfq:manage",
-      "award": "rfq:award"
-    },
-    "priceAgreement": {
-      "read": "price_agreement:read",
-      "manage": "price_agreement:manage"
     }
   },
   "debitNote": {
@@ -579,6 +618,50 @@
     "configure": "crm:configure",
     "caseRead": "crm:case:read",
     "caseWrite": "crm:case:write"
+  },
+  "sales": {
+    "quotationRead": "sales:quotation:read",
+    "quotationWrite": "sales:quotation:write",
+    "quotationApprove": "sales:quotation:approve",
+    "quotationSend": "sales:quotation:send",
+    "quotationConvert": "sales:quotation:convert",
+    "orderRead": "sales:order:read",
+    "orderReadAll": "sales:order:read_all",
+    "orderWrite": "sales:order:write",
+    "orderConfirm": "sales:order:confirm",
+    "orderCancel": "sales:order:cancel",
+    "orderCloseShort": "sales:order:close_short",
+    "orderHoldRelease": "sales:order:hold_release",
+    "orderAmend": "sales:order:amend",
+    "orderAmendApprove": "sales:order:amend_approve",
+    "pricingRead": "sales:pricing:read",
+    "pricingManage": "sales:pricing:manage",
+    "billingOverride": "sales:billing:override",
+    "policyOverride": "sales:policy:override",
+    "reportRead": "sales:report:read",
+    "configure": "sales:configure",
+    "invoiceCreate": "sales:invoice:create",
+    "depositRecord": "sales:deposit:record",
+    "depositRefund": "sales:deposit:refund",
+    "returnRead": "sales:return:read",
+    "returnWrite": "sales:return:write",
+    "returnApprove": "sales:return:approve",
+    "complaintRead": "sales:complaint:read",
+    "complaintWrite": "sales:complaint:write",
+    "collectionsRead": "sales:collections:read",
+    "collectionsManage": "sales:collections:manage",
+    "agreementRead": "sales:agreement:read",
+    "agreementManage": "sales:agreement:manage",
+    "rebateManage": "sales:rebate:manage",
+    "commissionRead": "sales:commission:read",
+    "commissionManage": "sales:commission:manage",
+    "targetManage": "sales:target:manage",
+    "portalManage": "sales:portal:manage"
+  },
+  "credit": {
+    "read": "credit:read",
+    "manage": "credit:manage",
+    "override": "credit:override"
   },
   "document": {
     "create": "document:create",
