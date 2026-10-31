@@ -143,4 +143,5 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | BR-1 | A restricted user with several locations | Single-location reports require choosing one; the inventory register is refused. Multi-location lists work | Sum over allowed locations in every report | `LocationScope.resolve` |
 | 2026-10-30 | BR-1 | POS and sync | Never scoped: stock posting, `/sync/*`, POS routes do not consult the scope. `directIn`, `start` and embedded adjustments stay unscoped, with `*Checked` variants for screens | Scope POS | Needs POS unfrozen |
 | 2026-10-30 | BR-1 | Clearing a location's branch | The location form can change the branch but not clear it (`EntityPatch` drops nulls) | Dedicated route | Add a clear route if needed |
+| 2026-10-30 | BR-2 | How is an operational figure tied to a branch? | Stock, deliveries and production through the location's branch; a delivery order's own `branchId` wins. Stock value and open receivables are as of now, the rest for the chosen dates | Stamp a branch on each document | `BranchPerformanceService` |
 

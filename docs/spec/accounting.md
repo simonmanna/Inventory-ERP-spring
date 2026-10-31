@@ -142,3 +142,11 @@ inventory and stock-posting flows and are ported with P3–P5. Parity scenarios 
 
 Tests: `CostCenterAccountingIT`. Web: Cost Centers (hierarchy fields), Cost Centre Accounting (P&L, matrix,
 hierarchy, allocation rules / runs, defaults & account rules).
+
+## Branch performance (BR-2)
+
+Status: built, not compiled or run. `GET /reports/branches/comparison` (`report:accounting`, `BranchPerformanceService`):
+ledger P&L, sales, open receivables, stock value, deliveries and production per branch plus a total. Screen:
+`/reports/branches`. `ReportFilterBar` (`web/src/components/report-filter-bar.tsx`) is the shared filter row. Tests:
+`BranchPerformanceIT`, `AccountingExtensionsIT.budgetByBranch`.
+

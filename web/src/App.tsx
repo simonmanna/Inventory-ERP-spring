@@ -210,6 +210,7 @@ import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
 import ZonesPage from '@/pages/tables/ZonesPage';
 import ReportCenterPage from '@/pages/reports/ReportCenterPage';
+import { BranchPerformancePage } from '@/pages/reports/BranchPerformancePage';
 import { ReportPermissionsPage } from '@/pages/settings/ReportPermissionsPage';
 import { StaffPage } from '@/pages/staff/StaffPage';
 import { RolesPage } from '@/pages/staff/RolesPage';
@@ -322,6 +323,7 @@ export function App() {
           <Route path="/budgets/:id" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetDetailPage /></RequirePermission>} />
           <Route path="/opening-balances" element={<RequirePermission permission={PERMISSIONS.openingBalance.read}><OpeningBalancesPage /></RequirePermission>} />
           <Route path="/tax-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><TaxReportPage /></RequirePermission>} />
+          <Route path="/reports/branches" element={<RequirePermission permission={PERMISSIONS.report.accounting}><BranchPerformancePage /></RequirePermission>} />
           <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
           <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
           <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />

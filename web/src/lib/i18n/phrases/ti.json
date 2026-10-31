@@ -10659,5 +10659,9 @@
   "covers hold": "እገዳ ይሽፍን",
   "Data access": "መሰል ሓበሬታ",
   "No restriction: this user sees every branch and location.": "ገደብ የለን፡ እዚ ተጠቃሚ ኩሉ ጨንፈርን ቦታን ይርኢ።",
-  "This user only sees the ticked branches and locations.": "እዚ ተጠቃሚ ዝተመልከቱ ጨናፍርን ቦታታትን ጥራይ ይርኢ።"
+  "This user only sees the ticked branches and locations.": "እዚ ተጠቃሚ ዝተመልከቱ ጨናፍርን ቦታታትን ጥራይ ይርኢ።",
+  "All warehouses": "ኩሎም መኽዘናት",
+  "Net profit": "ጽሩይ ትርፊ",
+  "Branch Performance": "ኣፈጻጽማ ጨናፍር",
+  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "ካብ መዝገብ ዝተረኽበ ትርፊ፡ ተቐባሊ ገንዘብ፡ ክምችት፡ ምብጻሓትን ምህርትን ብጨንፈር። ክምችትን ምህርትን ክርአዩ ቦታታት ናብ ጨናፍር መድብ።"
 }

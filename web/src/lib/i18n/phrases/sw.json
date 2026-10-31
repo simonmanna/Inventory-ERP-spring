@@ -10659,5 +10659,9 @@
   "covers hold": "linafunika usimamishaji",
   "Data access": "Ufikiaji wa data",
   "No restriction: this user sees every branch and location.": "Hakuna kizuizi: mtumiaji huyu anaona matawi na maeneo yote.",
-  "This user only sees the ticked branches and locations.": "Mtumiaji huyu anaona matawi na maeneo yaliyochaguliwa tu."
+  "This user only sees the ticked branches and locations.": "Mtumiaji huyu anaona matawi na maeneo yaliyochaguliwa tu.",
+  "All warehouses": "Maghala yote",
+  "Net profit": "Faida halisi",
+  "Branch Performance": "Utendaji wa Matawi",
+  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "Faida kutoka leja, pamoja na madeni, hisa, usafirishaji na uzalishaji kwa kila tawi. Weka maeneo kwenye matawi ili hisa na uzalishaji vionekane hapa."
 }

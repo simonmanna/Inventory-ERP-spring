@@ -347,6 +347,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/tax-report', label: tx('Tax Report'), icon: ReceiptText, permission: PERMISSIONS.report.accounting },
       { to: '/budgets', label: tx('Budgets'), icon: Target, permission: PERMISSIONS.budget.read },
       { to: '/consolidated-report', label: tx('Branch Consolidation'), icon: Network, permission: PERMISSIONS.report.accounting },
+      { to: '/reports/branches', label: tx('Branch Performance'), icon: Network, permission: PERMISSIONS.report.accounting },
       { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read },
       { to: '/reports', label: tx('Report Center'), icon: BarChart3, permission: PERMISSIONS.report.accounting, reportId: 'accounting.report-center' },
     ],

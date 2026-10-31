@@ -376,4 +376,7 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/inventory/locations`: set a branch on each yard.
   - Staff → building icon: tick branch A for a clerk. The clerk sees only that branch's yards, stock, orders and invoices; a direct URL to branch B gives 404, a filter on it 403.
   - Untick everything: the clerk sees everything again.
+- BR-2
+  - `/reports/branches`: rows per branch and a Consolidated row; figures match `/consolidated-report` for revenue, expenses and net profit.
+  - Stock value by branch follows the location form's branch.
 
