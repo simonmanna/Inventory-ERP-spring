@@ -393,3 +393,12 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - Check the role "Customer Portal" holds only `portal:customer`. Adding any other permission to it removes the lock on routes
   open to any signed-in user.
 
+**INT-1 mobile money** (migration `V81__mobile_money.sql`;
+`./gradlew test --tests '*MobileMoneyIT' --tests '*MobileMoneyProviderTest'`)
+
+- `/payments/mobile-money` → Request payment, number ending in 0: "Waiting for customer"; Check now: "Received", with a link
+  to the receipt. The journal shows Dr mobile money, Cr receivable.
+- Number ending in 9: "Failed", no receipt. Ending in 8: stays waiting.
+- Set `MOBILE_MONEY_CALLBACK_SECRET` and post a signed callback (`docs/spec/invoicing.md`): the receipt appears once, however
+  many times the callback repeats.
+

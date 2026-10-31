@@ -10701,5 +10701,18 @@
   "Search customer or e-mail…": "Noonya kasitoma oba imeeyili…",
   "Set a new password": "Teekawo ekigambo ky'ekyama ekipya",
   "Sign out": "Fuluma",
-  "Truck last seen {{time}}": "Emmotoka esembye okulabibwa {{time}}"
+  "Truck last seen {{time}}": "Emmotoka esembye okulabibwa {{time}}",
+  "Ask a customer to approve a payment on their phone. A received payment becomes a customer receipt.": "Saba kasitoma akkirize okusasula ku ssimu ye. Okusasula okufuniddwa kufuuka lisiiti ya kasitoma.",
+  "Could not check the payment": "Okusasula tekusobodde kukeberebwa",
+  "Could not load the payments. Try again.": "Okusasula tekusobodde kuggulibwa. Ddamu ogezeeko.",
+  "Could not send the request": "Okusaba tekusobodde kuweerezebwa",
+  "Enter 9 to 15 digits": "Yingiza ennamba 9 okutuuka ku 15",
+  "No mobile money requests yet.": "Tewannabaawo kusaba kwa ssente za ku ssimu.",
+  "Phone number *": "Ennamba y'essimu *",
+  "Request payment": "Saba okusasula",
+  "Request {{ref}} sent": "Okusaba {{ref}} kuweerezeddwa",
+  "Send request": "Weereza okusaba",
+  "Test provider: no money moves until a real provider is configured.": "Omugabi w'okugezesa: tewali ssente zitambula okutuusa ng'omugabi wa ddala ateereddwawo.",
+  "The provider refused the payment": "Omugabi agaanye okusasula",
+  "Waiting for customer": "Kulindirira kasitoma"
 }

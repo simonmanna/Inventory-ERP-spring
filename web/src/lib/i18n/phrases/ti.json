@@ -10701,5 +10701,18 @@
   "Search customer or e-mail…": "ዓሚል ወይ ኢመይል ድለ…",
   "Set a new password": "ሓድሽ ቃለ ምስጢር ኣቐምጥ",
   "Sign out": "ውጻእ",
-  "Truck last seen {{time}}": "መኪና ናይ መወዳእታ ዝተራእየት {{time}}"
+  "Truck last seen {{time}}": "መኪና ናይ መወዳእታ ዝተራእየት {{time}}",
+  "Ask a customer to approve a payment on their phone. A received payment becomes a customer receipt.": "ዓሚል ኣብ ተሌፎኑ ክፍሊት ከጽድቕ ሕተት። ዝተቐበልካዮ ክፍሊት ቅብሊት ዓሚል ይኸውን።",
+  "Could not check the payment": "ክፍሊት ክምርመር ኣይከኣለን",
+  "Could not load the payments. Try again.": "ክፍሊታት ክጽዓኑ ኣይከኣሉን። ደጊምካ ፈትን።",
+  "Could not send the request": "ሕቶ ክለኣኽ ኣይከኣለን",
+  "Enter 9 to 15 digits": "ካብ 9 ክሳብ 15 ኣሃዛት ኣእቱ",
+  "No mobile money requests yet.": "ክሳብ ሕጂ ናይ ሞባይል ገንዘብ ሕቶ የለን።",
+  "Phone number *": "ቁጽሪ ተሌፎን *",
+  "Request payment": "ክፍሊት ሕተት",
+  "Request {{ref}} sent": "ሕቶ {{ref}} ተላኢኹ",
+  "Send request": "ሕቶ ስደድ",
+  "Test provider: no money moves until a real provider is configured.": "ናይ መፈተኒ ኣቕራቢ፦ ሓቀኛ ኣቕራቢ ክሳብ ዝውቀር ገንዘብ ኣይንቀሳቐስን።",
+  "The provider refused the payment": "ኣቕራቢ ክፍሊት ኣብዩ",
+  "Waiting for customer": "ንዓሚል ይጽበ"
 }

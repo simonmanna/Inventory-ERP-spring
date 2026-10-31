@@ -139,3 +139,7 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | PORTAL-1 | Licensing | Portal is gated by `ENABLE_PORTAL` and the module switch, not by a licence feature | Add a `portal` feature to the licence server | `.env` |
 | 2026-10-30 | PORTAL-1 | Placing orders | Read-only: customers see orders but cannot place one. Pricing, credit limits and approvals are being changed by other Phase 4 lanes, so a customer order route is safer once those land | Order request from the portal | — |
 | 2026-10-30 | PORTAL-1 | What a customer sees of a trip | Status times, tonnes, site, plate, driver first name, last position while on the road; never freight, cost or the driver's phone | More or less | — |
+| 2026-10-30 | INT-1 | Mobile money module | In `invoicing`, because a receipt goes through `PaymentService` and `accounting` cannot depend on `invoicing` | — | — |
+| 2026-10-30 | INT-1 | Provider | Mock only until a provider is chosen (MTN, Airtel or an aggregator); a real adapter implements `MobileMoneyProvider` | — | `.env` |
+| 2026-10-30 | INT-1 | Stuck pending | A collection stays pending until the provider answers; no expiry, because a late success must still post | Expire after N hours | — |
+| 2026-10-30 | INT-1 | Callback URL | Carries the organization id, since row-level security needs the tenant before any lookup; the HMAC secret is shared across organizations | One secret per organization | `.env` |

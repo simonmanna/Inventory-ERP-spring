@@ -10701,5 +10701,18 @@
   "Search customer or e-mail…": "Tafuta mteja au barua pepe…",
   "Set a new password": "Weka nenosiri jipya",
   "Sign out": "Toka",
-  "Truck last seen {{time}}": "Lori lilionekana mara ya mwisho {{time}}"
+  "Truck last seen {{time}}": "Lori lilionekana mara ya mwisho {{time}}",
+  "Ask a customer to approve a payment on their phone. A received payment becomes a customer receipt.": "Omba mteja aidhinishe malipo kwenye simu yake. Malipo yaliyopokelewa huwa risiti ya mteja.",
+  "Could not check the payment": "Imeshindwa kukagua malipo",
+  "Could not load the payments. Try again.": "Imeshindwa kupakia malipo. Jaribu tena.",
+  "Could not send the request": "Imeshindwa kutuma ombi",
+  "Enter 9 to 15 digits": "Weka tarakimu 9 hadi 15",
+  "No mobile money requests yet.": "Bado hakuna maombi ya pesa kwa simu.",
+  "Phone number *": "Nambari ya simu *",
+  "Request payment": "Omba malipo",
+  "Request {{ref}} sent": "Ombi {{ref}} limetumwa",
+  "Send request": "Tuma ombi",
+  "Test provider: no money moves until a real provider is configured.": "Mtoa huduma wa majaribio: hakuna pesa zinazosogea hadi mtoa huduma halisi awekwe.",
+  "The provider refused the payment": "Mtoa huduma amekataa malipo",
+  "Waiting for customer": "Inasubiri mteja"
 }
