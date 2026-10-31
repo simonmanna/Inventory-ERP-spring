@@ -64,3 +64,9 @@ _None. Any deviation from Nest behaviour must be listed here with the owner's ap
 `OrdersIT` (7 tests): settings + Setting mirror, catalog-resolved pricing, list filters / search / ParseIntPipe,
 `orders.dto.spec.ts` rules, save-with-version / append / header patch, cancel / reopen, billing guards, tenant
 isolation and the 11-route authorization matrix. Parity scenarios and web screens not yet run against Nest.
+
+## Order approval (SALES-2)
+
+Status: built, not compiled, not run. Test `OrdersIT.approval`.
+
+Entity type `sales_order`, snapshot `amount` (order total), `orderNumber`, `partnerId`, `branchId`, `createdBy`. Raised on create when the order has lines, and by `POST /orders/{id}/request-approval` (permission `orders:update`). `GET /orders/{id}/approval` (permission `orders:read`) returns the latest request, or an empty body. `POST /orders/{id}/invoice` answers 400 while approval is pending. Without a workflow nothing changes.

@@ -70,7 +70,7 @@ public class SalesCommissionService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> rules() {
         return db.rows("SELECT r.*, trim(u.\"firstName\" || ' ' || COALESCE(u.\"lastName\", '')) AS \"salespersonName\", t.name AS \"teamName\", c.name AS"
-                + " \"productCategoryName\" FROM \"CommissionRule\" r LEFT JOIN \"User\" u ON u.id = r.\"salespersonId\""
+                + " \"productCategoryName\" FROM \"SalesCommissionRule\" r LEFT JOIN \"User\" u ON u.id = r.\"salespersonId\""
                 + " LEFT JOIN \"CrmTeam\" t ON t.id = r.\"teamId\" LEFT JOIN \"ProductCategory\" c ON c.id ="
                 + " r.\"productCategoryId\" WHERE r.\"organizationId\" = ? ORDER BY r.priority DESC, r.name", org());
     }
@@ -78,7 +78,7 @@ public class SalesCommissionService {
     @Transactional
     public Map<String, Object> saveRule(String id, Map<String, Object> in) {
         if (id != null) {
-            db.require("CommissionRule", id, "Commission rule not found");
+            db.require("SalesCommissionRule", id, "Commission rule not found");
         }
         Map<String, Object> d = new LinkedHashMap<>();
         if (id == null || in.containsKey("name")) {
@@ -113,8 +113,8 @@ public class SalesCommissionService {
         if (in.containsKey("isActive")) {
             d.put("isActive", !Boolean.FALSE.equals(in.get("isActive")));
         }
-        Map<String, Object> row = id == null ? db.insert("CommissionRule", d) : db.patch("CommissionRule", id, d, true);
-        audit.record(AuditInput.of("CommissionRule", str(row.get("id")), id == null ? "create" : "update", null,
+        Map<String, Object> row = id == null ? db.insert("SalesCommissionRule", d) : db.patch("SalesCommissionRule", id, d, true);
+        audit.record(AuditInput.of("SalesCommissionRule", str(row.get("id")), id == null ? "create" : "update", null,
                 Obj.of("fields", d.keySet())));
         return row;
     }
@@ -135,7 +135,7 @@ public class SalesCommissionService {
 
     /** Commission lines of {@code salespersonId} (null = everyone) for {@code [from, to]}. */
     List<Map<String, Object>> compute(String salespersonId, LocalDate from, LocalDate to) {
-        List<Map<String, Object>> rules = db.rows("SELECT * FROM \"CommissionRule\" WHERE \"organizationId\" = ? AND"
+        List<Map<String, Object>> rules = db.rows("SELECT * FROM \"SalesCommissionRule\" WHERE \"organizationId\" = ? AND"
                 + " \"isActive\" AND (\"validFrom\" IS NULL OR \"validFrom\" <= ?) AND (\"validTo\" IS NULL OR \"validTo\""
                 + " >= ?) ORDER BY priority DESC", org(), to, from);
         List<Map<String, Object>> source = new ArrayList<>(revenue.invoiced(from, to));

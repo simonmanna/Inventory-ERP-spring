@@ -4,7 +4,12 @@ import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 
 import com.inventoryerp.accounting.application.JournalService;
+import com.inventoryerp.core.application.BranchScopeService;
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.PaymentTermService;
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.documents.domain.DocumentLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
@@ -70,11 +75,14 @@ public class InvoiceService {
     private final ApprovalsService approvals;
     private final PaymentTermService terms;
     private final JournalService journals;
+    private final CreditControlService credit;
+    private final BranchScopeService scopes;
+    private final PriceListService priceLists;
     private final TransactionTemplate newTx;
 
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
-            ApprovalsService approvals, PaymentTermService terms, JournalService journals,
-            PlatformTransactionManager txm) {
+            ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
+            BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.events = events;
         this.workflow = workflow;
@@ -82,6 +90,9 @@ public class InvoiceService {
         this.approvals = approvals;
         this.terms = terms;
         this.journals = journals;
+        this.credit = credit;
+        this.scopes = scopes;
+        this.priceLists = priceLists;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -110,6 +121,13 @@ public class InvoiceService {
         List<Object> ip = new ArrayList<>(List.of(org()));
         StringBuilder dw = new StringBuilder(" \"organizationId\" = ? AND \"documentType\" = 'sales_invoice'");
         StringBuilder iw = new StringBuilder(" \"organizationId\" = ?");
+        DataScope scope = scopes.scope();
+        if (scope.restricted()) {
+            dw.append(" AND \"branchId\" = ANY(?::text[])");
+            iw.append(" AND \"branchId\" = ANY(?::text[])");
+            dp.add(scope.branchArray());
+            ip.add(scope.branchArray());
+        }
         if (notBlank(f.partnerId())) {
             dw.append(" AND \"partnerId\" = ?");
             iw.append(" AND \"partnerId\" = ?");
@@ -211,7 +229,11 @@ public class InvoiceService {
     /** A manual invoice (lines with account + tax) or a POS invoice normalised to the document shape; null if none. */
     @Transactional(readOnly = true)
     public Map<String, Object> findOne(String id) {
+        DataScope scope = scopes.scope();
         Map<String, Object> doc = builder.document(id, "sales_invoice");
+        if (doc != null && !scope.allowsBranch((String) doc.get("branchId"))) {
+            return null;
+        }
         if (doc != null) {
             doc.put("partner", builder.partner(doc.get("partnerId")));
             doc.put("allocations", allocations("documentId", id));
@@ -227,7 +249,7 @@ public class InvoiceService {
         }
         Map<String, Object> inv = SqlRows.one(Invoice.class, jdbc.sql("SELECT * FROM \"Invoice\" WHERE id = ?"
                 + " AND \"organizationId\" = ?").params(id, org()));
-        if (inv == null) {
+        if (inv == null || !scope.allowsBranch((String) inv.get("branchId"))) {
             return null;
         }
         List<Map<String, Object>> items = SqlRows.list(InvoiceItem.class, jdbc.sql("SELECT * FROM \"InvoiceItem\" WHERE"
@@ -261,17 +283,19 @@ public class InvoiceService {
     public Map<String, Object> create(InvoiceInput dto) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
-        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names), dto.lines());
+        String branchId = scopes.documentBranch(null);
+        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names, branchId),
+                priced(dto, branchId));
         publish("invoice.created", doc);
         return doc;
     }
 
-    private static HeaderInput header(InvoiceInput dto, Term term, Names names) {
+    private static HeaderInput header(InvoiceInput dto, Term term, Names names, String branchId) {
         return new HeaderInput(dto.partnerId(), dto.issueDate(), term.dueDate(), term.paymentTermId(),
                 term.paymentTermName(), dto.paymentMode(), dto.fiscalPositionId(), names.fiscalPositionName(),
                 dto.invoicingJournalId(), names.invoicingJournalName(), dto.salespersonId(), names.salespersonName(),
                 dto.deliveryDate(), dto.deliveryAddress(), dto.incoterm(), dto.incotermLocation(), dto.sourceDocument(),
-                dto.currencyId(), dto.exchangeRate(), dto.reference(), dto.notes(), null, null, null);
+                dto.currencyId(), dto.exchangeRate(), dto.reference(), dto.notes(), null, null, branchId);
     }
 
     record Term(String paymentTermId, String paymentTermName, String dueDate) {}
@@ -324,10 +348,35 @@ public class InvoiceService {
         return new Names(fp, journal, sp);
     }
 
+    /**
+     * SALES-3: lines that came with no price take the customer's price list. A line with a price, or a customer with no
+     * list, passes through unchanged. Tier and unit prices apply; the catalogue price stays the fallback.
+     */
+    private List<LineInput> priced(InvoiceInput dto, String branchId) {
+        if (dto.lines() == null) {
+            return null;
+        }
+        java.time.LocalDate on = dto.issueDate() == null ? java.time.LocalDate.now()
+                : EntityPatch.toInstant(dto.issueDate()).atZone(BusinessZone.get()).toLocalDate();
+        List<LineInput> out = new ArrayList<>();
+        for (LineInput l : dto.lines()) {
+            boolean product = l.lineType() == null || "product".equals(l.lineType());
+            ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
+                    : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
+                            null, on));
+            out.add(p == null ? l : new LineInput(l.productId(), l.menuItemId(), l.variantId(), l.variantName(),
+                    l.accountId(), l.description(), l.quantity(), p.unitPrice(),
+                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent(), l.discountType(),
+                    l.discountAmount(), l.discountReason(), l.discountSource(), l.taxId(), l.lineType(),
+                    l.taxInclusive(), l.uomId()));
+        }
+        return out;
+    }
+
     /** The journal entry the invoice would post, computed without writing anything. */
     @Transactional(readOnly = true)
     public Map<String, Object> previewJournal(InvoiceInput dto) {
-        Totals totals = builder.prepareLines(dto.lines());
+        Totals totals = builder.prepareLines(priced(dto, scopes.documentBranch(null)));
         Grouped g = builder.groupForPosting(dto.partnerId(), totals.prepared().stream().map(PreparedLine::asRow).toList(),
                 "sales", null);
         var journal = journals.resolveSalesJournal(dto.invoicingJournalId());
@@ -375,11 +424,12 @@ public class InvoiceService {
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
+        scopes.assertBranch((String) doc.get("branchId"));
         if (!"draft".equals(String.valueOf(doc.get("status")))) {
             throw ApiException.badRequest("Only draft invoices can be edited");
         }
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
-        Totals totals = builder.prepareLines(dto.lines());
+        Totals totals = builder.prepareLines(priced(dto, (String) doc.get("branchId")));
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"paymentTermId\" = ?,"
@@ -421,6 +471,30 @@ public class InvoiceService {
         workflow.transition("invoice", id, "post", null, doc);
         publish("invoice.posted", doc);
         return withLinesAndPartner(id);
+    }
+
+    /**
+     * {@code POST /invoices/:id/post}: {@link #post} behind the credit check (SALES-1). Other callers of {@link #post}
+     * (opening balances) are not sales and stay unchecked. An invoice for goods a delivery already took out of the yard
+     * is not checked either: refusing it would only hide a debt that exists.
+     */
+    @Transactional
+    public Map<String, Object> postChecked(String id) {
+        Map<String, Object> doc = builder.document(id, "sales_invoice");
+        if (doc != null) {
+            scopes.assertBranch((String) doc.get("branchId"));
+        }
+        if (doc != null && "draft".equals(String.valueOf(doc.get("status")))) {
+            boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
+                    .orElse(false));
+            if (!delivered) {
+                Object mode = doc.get("paymentMode");
+                credit.assertCanSell((String) doc.get("partnerId"), Money.dec(doc.get("totalAmount")), null,
+                        mode == null ? null : String.valueOf(mode));
+            }
+        }
+        return post(id);
     }
 
     /**
@@ -469,6 +543,7 @@ public class InvoiceService {
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
+        scopes.assertBranch((String) doc.get("branchId"));
         doc.put("allocations", SqlRows.list(PaymentAllocation.class, jdbc.sql("SELECT * FROM \"PaymentAllocation\""
                 + " WHERE \"documentId\" = ?").param(id)));
         if ("cancelled".equals(String.valueOf(doc.get("status")))) {

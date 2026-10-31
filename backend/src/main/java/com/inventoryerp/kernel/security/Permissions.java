@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (530 permissions). Constant name = GROUP__ACTION.
+ * exactly (572 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -121,6 +121,14 @@ public final class Permissions {
     public static final String INVOICE__CANCEL = "invoice:cancel";
     public static final String INVOICE__DELETE = "invoice:delete";
     public static final String INVOICE__SEND = "invoice:send";
+    public static final String COMMISSION__READ = "commission:read";
+    public static final String COMMISSION__MANAGE = "commission:manage";
+    public static final String COMMISSION__APPROVE = "commission:approve";
+    public static final String PRICE_LIST__READ = "price_list:read";
+    public static final String PRICE_LIST__MANAGE = "price_list:manage";
+    public static final String CREDIT_CONTROL__READ = "credit_control:read";
+    public static final String CREDIT_CONTROL__MANAGE = "credit_control:manage";
+    public static final String CREDIT_CONTROL__OVERRIDE = "credit_control:override";
     public static final String CREDIT_NOTE__READ = "credit_note:read";
     public static final String CREDIT_NOTE__CREATE = "credit_note:create";
     public static final String CREDIT_NOTE__POST = "credit_note:post";
@@ -140,8 +148,12 @@ public final class Permissions {
     public static final String INVENTORY_LOCATION__READ = "inventory_location:read";
     public static final String INVENTORY_LOCATION__UPDATE = "inventory_location:update";
     public static final String INVENTORY_LOCATION__DELETE = "inventory_location:delete";
+    public static final String ALERTS__READ = "alerts:read";
+    public static final String ALERTS__MANAGE = "alerts:manage";
+    public static final String BI__EXPORT = "bi:export";
     public static final String INVENTORY__READ = "inventory:read";
     public static final String INVENTORY__MOVE = "inventory:move";
+    public static final String INVENTORY__REPLENISH = "inventory:replenish";
     public static final String INVENTORY_DOC__CREATE = "inventory_doc:create";
     public static final String INVENTORY_DOC__READ = "inventory_doc:read";
     public static final String INVENTORY_DOC__UPDATE = "inventory_doc:update";
@@ -287,6 +299,11 @@ public final class Permissions {
     public static final String PROCUREMENT__PURCHASE_REQUEST__DELETE = "purchase_request:delete";
     public static final String PROCUREMENT__PURCHASE_REQUEST__APPROVE = "purchase_request:approve";
     public static final String PROCUREMENT__PURCHASE_REQUEST__SUBMIT = "purchase_request:submit";
+    public static final String PROCUREMENT__BUDGET__READ = "procurement_budget:read";
+    public static final String PROCUREMENT__BUDGET__MANAGE = "procurement_budget:manage";
+    public static final String PROCUREMENT__DELEGATION__READ = "procurement_delegation:read";
+    public static final String PROCUREMENT__DELEGATION__MANAGE = "procurement_delegation:manage";
+    public static final String PROCUREMENT__DELEGATION__CENTRAL = "procurement_delegation:central";
     public static final String PROCUREMENT__PURCHASE_ORDER__CREATE = "purchase_order:create";
     public static final String PROCUREMENT__PURCHASE_ORDER__READ = "purchase_order:read";
     public static final String PROCUREMENT__PURCHASE_ORDER__UPDATE = "purchase_order:update";
@@ -303,6 +320,11 @@ public final class Permissions {
     public static final String PROCUREMENT__THREE_WAY_MATCH__READ = "three_way_match:read";
     public static final String PROCUREMENT__THREE_WAY_MATCH__APPROVE = "three_way_match:approve";
     public static final String PROCUREMENT__THREE_WAY_MATCH__OVERRIDE = "three_way_match:override";
+    public static final String PROCUREMENT__RFQ__READ = "rfq:read";
+    public static final String PROCUREMENT__RFQ__MANAGE = "rfq:manage";
+    public static final String PROCUREMENT__RFQ__AWARD = "rfq:award";
+    public static final String PROCUREMENT__PRICE_AGREEMENT__READ = "price_agreement:read";
+    public static final String PROCUREMENT__PRICE_AGREEMENT__MANAGE = "price_agreement:manage";
     public static final String DEBIT_NOTE__CREATE = "debit_note:create";
     public static final String DEBIT_NOTE__READ = "debit_note:read";
     public static final String DEBIT_NOTE__POST = "debit_note:post";
@@ -317,6 +339,8 @@ public final class Permissions {
     public static final String APPROVALS__READ = "approvals:read";
     public static final String APPROVALS__DECIDE = "approvals:decide";
     public static final String APPROVALS__MANAGE = "approvals:manage";
+    public static final String DOCUMENT_NUMBERING__READ = "document_numbering:read";
+    public static final String DOCUMENT_NUMBERING__MANAGE = "document_numbering:manage";
     public static final String ORDERS__READ = "orders:read";
     public static final String ORDERS__CREATE = "orders:create";
     public static final String ORDERS__UPDATE = "orders:update";
@@ -382,6 +406,8 @@ public final class Permissions {
     public static final String CRM__PRICING_MANAGE = "crm:pricing:manage";
     public static final String CRM__REPORT_READ = "crm:report:read";
     public static final String CRM__CONFIGURE = "crm:configure";
+    public static final String CRM__CASE_READ = "crm:case:read";
+    public static final String CRM__CASE_WRITE = "crm:case:write";
     public static final String SALES__QUOTATION_READ = "sales:quotation:read";
     public static final String SALES__QUOTATION_WRITE = "sales:quotation:write";
     public static final String SALES__QUOTATION_APPROVE = "sales:quotation:approve";
@@ -452,6 +478,8 @@ public final class Permissions {
     public static final String HR__DOCUMENT = "hr:document";
     public static final String HR__TRAINING = "hr:training";
     public static final String HR__REPORT = "hr:report";
+    public static final String HR__RECRUITMENT = "hr:recruitment";
+    public static final String HR__CONTRACT = "hr:contract";
     public static final String COMMUNICATION__CONVERSATION_READ = "communication:conversation:read";
     public static final String COMMUNICATION__CONVERSATION_WRITE = "communication:conversation:write";
     public static final String COMMUNICATION__CONVERSATION_READ_ALL = "communication:conversation:read_all";
@@ -541,6 +569,20 @@ public final class Permissions {
     public static final String QUARRY_BLASTING__APPROVE_EXPLOSIVE = "quarry_blasting:approve_explosive";
     public static final String QUARRY_BLASTING__ISSUE_EXPLOSIVE = "quarry_blasting:issue_explosive";
     public static final String QUARRY_BLASTING__MAGAZINE = "quarry_blasting:magazine";
+    public static final String PORTAL__CUSTOMER = "portal:customer";
+    public static final String PORTAL__MANAGE = "portal:manage";
+    public static final String ANALYTICS__VIEW = "analytics:view";
+    public static final String ANALYTICS__QUARRY = "analytics:quarry";
+    public static final String ANALYTICS__AGGREGATES = "analytics:aggregates";
+    public static final String ANALYTICS__BLOCKS = "analytics:blocks";
+    public static final String ANALYTICS__INVENTORY = "analytics:inventory";
+    public static final String ANALYTICS__PROCUREMENT = "analytics:procurement";
+    public static final String ANALYTICS__SALES = "analytics:sales";
+    public static final String ANALYTICS__FLEET = "analytics:fleet";
+    public static final String ANALYTICS__MAINTENANCE = "analytics:maintenance";
+    public static final String ANALYTICS__FINANCE = "analytics:finance";
+    public static final String ANALYTICS__BRANCH = "analytics:branch";
+    public static final String LABEL__PRINT = "label:print";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -654,6 +696,14 @@ public final class Permissions {
             "invoice:cancel",
             "invoice:delete",
             "invoice:send",
+            "commission:read",
+            "commission:manage",
+            "commission:approve",
+            "price_list:read",
+            "price_list:manage",
+            "credit_control:read",
+            "credit_control:manage",
+            "credit_control:override",
             "credit_note:read",
             "credit_note:create",
             "credit_note:post",
@@ -673,8 +723,12 @@ public final class Permissions {
             "inventory_location:read",
             "inventory_location:update",
             "inventory_location:delete",
+            "alerts:read",
+            "alerts:manage",
+            "bi:export",
             "inventory:read",
             "inventory:move",
+            "inventory:replenish",
             "inventory_doc:create",
             "inventory_doc:read",
             "inventory_doc:update",
@@ -820,6 +874,11 @@ public final class Permissions {
             "purchase_request:delete",
             "purchase_request:approve",
             "purchase_request:submit",
+            "procurement_budget:read",
+            "procurement_budget:manage",
+            "procurement_delegation:read",
+            "procurement_delegation:manage",
+            "procurement_delegation:central",
             "purchase_order:create",
             "purchase_order:read",
             "purchase_order:update",
@@ -836,6 +895,11 @@ public final class Permissions {
             "three_way_match:read",
             "three_way_match:approve",
             "three_way_match:override",
+            "rfq:read",
+            "rfq:manage",
+            "rfq:award",
+            "price_agreement:read",
+            "price_agreement:manage",
             "debit_note:create",
             "debit_note:read",
             "debit_note:post",
@@ -850,6 +914,8 @@ public final class Permissions {
             "approvals:read",
             "approvals:decide",
             "approvals:manage",
+            "document_numbering:read",
+            "document_numbering:manage",
             "orders:read",
             "orders:create",
             "orders:update",
@@ -915,6 +981,8 @@ public final class Permissions {
             "crm:pricing:manage",
             "crm:report:read",
             "crm:configure",
+            "crm:case:read",
+            "crm:case:write",
             "sales:quotation:read",
             "sales:quotation:write",
             "sales:quotation:approve",
@@ -985,6 +1053,8 @@ public final class Permissions {
             "hr:document",
             "hr:training",
             "hr:report",
+            "hr:recruitment",
+            "hr:contract",
             "communication:conversation:read",
             "communication:conversation:write",
             "communication:conversation:read_all",
@@ -1073,7 +1143,21 @@ public final class Permissions {
             "quarry_blasting:request_explosive",
             "quarry_blasting:approve_explosive",
             "quarry_blasting:issue_explosive",
-            "quarry_blasting:magazine");
+            "quarry_blasting:magazine",
+            "portal:customer",
+            "portal:manage",
+            "analytics:view",
+            "analytics:quarry",
+            "analytics:aggregates",
+            "analytics:blocks",
+            "analytics:inventory",
+            "analytics:procurement",
+            "analytics:sales",
+            "analytics:fleet",
+            "analytics:maintenance",
+            "analytics:finance",
+            "analytics:branch",
+            "label:print");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

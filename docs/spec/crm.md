@@ -89,3 +89,22 @@ Tests: `CrmSuiteIT` (stages config, lead conversion, kanban / grouped / list, wo
 planned activities + reminders, price rules, quotation approval / credit / conversion to Order and proforma, reports,
 visibility, tenant isolation). Web: `web/src/pages/crm/*` (pipeline kanban, opportunity form, leads, quotations,
 activities, customers, price rules, reports, configuration).
+
+## Commissions (SALES-4)
+
+Status: built, not compiled or run. `/commissions/*` (`commission:read|manage|approve`, `CrmCommissionController`),
+tables `CommissionRule`, `CommissionEntry` (V64), screen `/commissions`. Uses `HrPayrollInputService.addEarning`
+(source `sales_commission`). Tests: `CrmCommissionTest`, `CrmCommissionIT`.
+
+## CRM-1 complaints and service requests (built, unverified)
+
+`CrmSuiteController.CaseController` (`/crm/cases`, 8 routes: list, get, create, `from-discrepancy/{id}`, patch,
+`{id}/assign`, `{id}/notes`, `{id}/status`), `CrmCaseService`, `CrmCaseRules`, `CrmCaseDiscrepancySubscriber`, migration V94
+(`CrmCase`, `CrmCaseEvent`), permissions `crm:case:read`, `crm:case:write`. Status: open → in_progress → resolved → closed,
+cancelled with a reason, resolved can reopen. Screens: `/crm/cases`, `/crm/cases/:id`; "Open case" on
+`/fleet/delivery-discrepancies`.
+
+## CRM-2 tests and segments (built, unverified)
+
+Tests in `CrmCustomerDataIT`. Segments are `CrmSavedFilter` rows with scope `customers` (V95); `/crm/customers` already
+filters by category. `CrmReminderJob` is exercised directly, since scheduled jobs may be off in tests.

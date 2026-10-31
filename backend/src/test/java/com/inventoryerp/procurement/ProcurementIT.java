@@ -1102,6 +1102,7 @@ class ProcurementIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every procurement route answers 401 without a token and 403 without its permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(60);
+        // 60 + 17 lane D (RFQ, price agreements, reports) + 14 lane B (budgets, delegations, PR approval).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(91);
     }
 }

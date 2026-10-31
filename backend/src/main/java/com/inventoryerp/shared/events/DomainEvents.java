@@ -175,6 +175,8 @@ public final class DomainEvents {
     public static final String FLEET_TRIP_CLOSED = "fleet.trip.closed";
     public static final String FLEET_TRIP_RETURNED = "fleet.trip.returned";
     public static final String FLEET_DELIVERY_DISCREPANCY_DECIDED = "fleet.delivery.discrepancy_decided";
+    public static final String INVENTORY_REPLENISHMENT_REQUESTED = "inventory.replenishment.requested";
+    public static final String ALERT_RAISED = "alert.raised";
     public static final String FLEET_FREIGHT_BILL_MATCHED = "fleet.freight_bill.matched";
     public static final String FLEET_REMINDER_DUE = "fleet.reminder.due";
     public static final String HR_PAYROLL_INPUTS_INCLUDED = "hr.payroll.inputs_included";

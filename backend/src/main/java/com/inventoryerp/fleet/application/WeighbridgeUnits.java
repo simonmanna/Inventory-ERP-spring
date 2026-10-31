@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
@@ -23,10 +24,12 @@ import org.springframework.stereotype.Component;
  *   <li>{@code U} expressed in the product's base unit (base itself, a {@code ProductUom} factor, or the same unit
  *       category) when the base unit is a weight unit (bag of 50 kg);
  *   <li>the same, times the product's weighbridge setting {@code kgPerUnit} (kg per 1 base unit: density for m³
- *       products, bag weight for bags).
+ *       products, bag weight for bags);
+ *   <li>the product's full unit graph (UOM-1, {@link UomConversionService#conversionRate}): density and unit profile
+ *       bridges reached through any unit of either category, e.g. a truckload of an m³ product.
  * </ol>
  *
- * Plain SQL reads only, so a failed lookup never marks the caller's transaction rollback-only.
+ * Never throws for a missing path, so a failed lookup does not mark the caller's transaction rollback-only.
  */
 @Component
 public class WeighbridgeUnits {
@@ -34,9 +37,11 @@ public class WeighbridgeUnits {
     static final MathContext MC = new MathContext(20, RoundingMode.HALF_UP);
 
     private final FleetDb db;
+    private final UomConversionService uoms;
 
-    public WeighbridgeUnits(FleetDb db) {
+    public WeighbridgeUnits(FleetDb db, UomConversionService uoms) {
         this.db = db;
+        this.uoms = uoms;
     }
 
     /** Kilograms per 1 {@code uomId} of the product, or {@code null} when there is no weight conversion. */
@@ -90,7 +95,7 @@ public class WeighbridgeUnits {
             }
         }
         if (toBase == null) {
-            return null;
+            return uoms.conversionRate(productId, uomId, (String) kg.get("id"));
         }
         if (base != null && isWeight(base, kg)) {
             return toBase.multiply(ratio(base, kg), MC);
@@ -98,7 +103,8 @@ public class WeighbridgeUnits {
         BigDecimal perBase = db.jdbc().sql("SELECT \"kgPerUnit\" FROM \"WeighbridgeProductSetting\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ?").params(FleetDb.org(), productId)
                 .query(BigDecimal.class).optional().orElse(null);
-        return perBase == null ? null : toBase.multiply(perBase, MC);
+        return perBase == null ? uoms.conversionRate(productId, uomId, (String) kg.get("id"))
+                : toBase.multiply(perBase, MC);
     }
 
     /** Like {@link #kgPerUnit} but 400 when there is no conversion. */

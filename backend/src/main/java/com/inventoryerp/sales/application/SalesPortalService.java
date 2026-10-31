@@ -5,7 +5,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
-import com.inventoryerp.invoicing.application.MobileMoneyService;
+import com.inventoryerp.invoicing.application.SalesMobileMoneyService;
 import com.inventoryerp.invoicing.application.StatementService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -53,14 +53,14 @@ public class SalesPortalService {
     private final SalesQuotationService quotations;
     private final SalesComplaintService complaints;
     private final StatementService statements;
-    private final MobileMoneyService mobileMoney;
+    private final SalesMobileMoneyService mobileMoney;
     private final NotificationsService notifications;
     private final AuditService audit;
     private final String baseUrl;
     private final boolean allowTestPayments;
 
     public SalesPortalService(SalesDb db, JdbcClient jdbc, SalesQuotationService quotations,
-            SalesComplaintService complaints, StatementService statements, MobileMoneyService mobileMoney,
+            SalesComplaintService complaints, StatementService statements, SalesMobileMoneyService mobileMoney,
             NotificationsService notifications, AuditService audit, @Value("${app.portal.base-url:}") String baseUrl,
             @Value("${app.portal.allow-test-payments:false}") boolean allowTestPayments) {
         this.db = db;

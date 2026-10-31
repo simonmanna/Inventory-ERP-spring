@@ -103,6 +103,8 @@ tasks.withType<JavaCompile> {
 tasks.withType<Test> {
     useJUnitPlatform()
     jvmArgs("-XX:+EnableDynamicAgentLoading")
+    // ~150 test classes with many cached Spring contexts outgrow the 512 MB Gradle default.
+    maxHeapSize = "3g"
     // Application.main pins the JVM (and so the PgJDBC session TimeZone) to UTC; @SpringBootTest never runs main.
     systemProperty("user.timezone", "UTC")
     finalizedBy(tasks.jacocoTestReport)

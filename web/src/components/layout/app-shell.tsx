@@ -86,6 +86,7 @@ import {
   FileInput,
   ReceiptText,
   BellRing,
+  Database,
   Network,
   Inbox,
   CalendarCheck,
@@ -117,7 +118,6 @@ import {
   Gem,
   MapPinned,
   Mountain,
-  ShieldAlert,
   Warehouse,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
@@ -205,7 +205,7 @@ interface NavItem {
   reportId?: string | string[];
   badge?: string;
   /** Per-item feature gate, resolved the same way as section flags. */
-  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS';
+  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS' | 'VITE_ENABLE_ALERTS';
 }
 
 interface NavSection {
@@ -228,7 +228,12 @@ const flagEnabled = (flag?: string): boolean =>
   !flag || (import.meta.env as Record<string, string | undefined>)[flag] === 'true';
 
 const NAV_SECTIONS: NavSection[] = [
-  { items: [{ to: '/', label: tx('Dashboard'), icon: LayoutDashboard }] },
+  {
+    items: [
+      { to: '/', label: tx('Dashboard'), icon: LayoutDashboard },
+      { to: '/alerts', label: tx('Alerts & Exceptions'), icon: BellRing, permission: PERMISSIONS.alerts.read, flag: 'VITE_ENABLE_ALERTS' },
+    ],
+  },
   {
     title: 'POS',
     icon: Coffee,
@@ -252,6 +257,10 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/returns', label: tx('Returns Register'), icon: ListRestart, permission: PERMISSIONS.pos.read },
       { to: '/returns/new', label: tx('New Return'), icon: Undo2, permission: PERMISSIONS.pos.refund },
       { to: '/credit-notes', label: tx('Credit Notes'), icon: FileMinus, permission: PERMISSIONS.creditNote.read },
+      { to: '/credit-control', label: tx('Credit Control'), icon: HandCoins, permission: PERMISSIONS.creditControl.read },
+      { to: '/price-lists', label: tx('Price Lists'), icon: Tags, permission: PERMISSIONS.priceList.read },
+      { to: '/commissions', label: tx('Sales Commissions'), icon: HandCoins, permission: PERMISSIONS.commission.read },
+      { to: '/reports/sales-analysis', label: tx('Sales Analysis'), icon: BarChart3, permission: PERMISSIONS.report.ar },
       { to: '/payments', label: tx('Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging' },
       { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar },
@@ -263,13 +272,17 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/inventory', label: tx('Stock Levels'), icon: Package, permission: 'inventory:read' },
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read' },
+      { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print },
       { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read },
       { to: '/inventory/adjustments', label: tx('Stock Adjustments'), icon: Scale, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/transfers', label: tx('Stock Transfers'), icon: Truck, permission: PERMISSIONS.inventoryDoc.read },
+      { to: '/inventory/reservations', label: tx('Stock Reservations'), icon: ClipboardCheck, permission: 'inventory:read' },
+      { to: '/inventory/replenishment', label: tx('Replenishment'), icon: ClipboardList, permission: 'inventory:read' },
       { to: '/inventory/locations', label: tx('Locations'), icon: MapPin, permission: PERMISSIONS.inventoryLocation.read },
       { to: '/inventory/cost-policies', label: tx('Costing Policy'), icon: Calculator, permission: PERMISSIONS.costingPolicy.read },
       { to: '/products', label: tx('Products'), icon: Package, permission: PERMISSIONS.products.view },
+      { to: '/products/specifications', label: tx('Product specifications'), icon: ClipboardList, permission: PERMISSIONS.product.read },
       { to: '/uom', label: tx('Units of Measure'), icon: Ruler, permission: PERMISSIONS.uom.read },
       { to: '/inventory/reports', label: tx('Inventory Reports'), icon: BarChart3, permission: 'inventory:read', reportId: 'inventory.reports' },
     ],
@@ -315,8 +328,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/accounts/cash-accounts/accounts', label: tx('Accounts'), icon: Wallet, permission: PERMISSIONS.account.read },
       { to: '/accounts/cash-accounts/activity', label: tx('Money Activity'), icon: ArrowRightLeft, permission: PERMISSIONS.account.read },
       { to: '/accounts/cash-accounts/settlements', label: tx('Settlements'), icon: Landmark, permission: PERMISSIONS.cashSession.reconcile },
+      { to: '/bank-reconciliation', label: tx('Bank Reconciliation'), icon: Landmark, permission: PERMISSIONS.bankAccount.read },
       // Cash Registers lives under POS only; Overview links to it from "Open registers".
       { to: '/payments', label: tx('Customer Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
+      { to: '/payments/mobile-money', label: tx('Mobile Money'), icon: Smartphone, permission: PERMISSIONS.payment.read },
+      { to: '/accounts/bank-import', label: tx('Import Bank Statement'), icon: FileInput, permission: PERMISSIONS.bankAccount.update },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Truck, permission: PERMISSIONS.payment.read },
       { to: '/cash-flow/report', label: tx('Money Reports'), icon: BarChart3, permission: PERMISSIONS.account.read, reportId: 'money.reports' },
     ],
@@ -353,8 +369,10 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/tax-report', label: tx('Tax Report'), icon: ReceiptText, permission: PERMISSIONS.report.accounting },
       { to: '/budgets', label: tx('Budgets'), icon: Target, permission: PERMISSIONS.budget.read },
       { to: '/consolidated-report', label: tx('Branch Consolidation'), icon: Network, permission: PERMISSIONS.report.accounting },
+      { to: '/reports/branches', label: tx('Branch Performance'), icon: Network, permission: PERMISSIONS.report.accounting },
       { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read },
       { to: '/reports', label: tx('Report Center'), icon: BarChart3, permission: PERMISSIONS.report.accounting, reportId: 'accounting.report-center' },
+      { to: '/reports/bi-exports', label: tx('BI Exports'), icon: Database, permission: PERMISSIONS.bi.export },
     ],
   },
   {
@@ -371,8 +389,18 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
+      { to: '/procurement/rfqs', label: tx('Requests for Quotation'), icon: FileText, permission: PERMISSIONS.procurement.rfq.read },
+      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ShoppingCart, permission: 'purchase_request:read' },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
+      { to: '/procurement/budgets', label: tx('Procurement Budgets'), icon: Calculator, permission: 'procurement_budget:read' },
+      { to: '/procurement/delegations', label: tx('Purchasing Delegation'), icon: UserCog, permission: 'procurement_delegation:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
+      { to: '/vendor-bills', label: tx('Vendor Bills'), icon: ReceiptText, permission: PERMISSIONS.expense.read },
+      { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar },
+      { to: '/payment-schedule', label: tx('Payment Schedule'), icon: CalendarClock, permission: PERMISSIONS.expense.read },
+      { to: '/procurement/supplier-performance', label: tx('Supplier Performance'), icon: BarChart3, permission: 'purchase_order:read' },
+      { to: '/procurement/price-agreements', label: tx('Price Agreements'), icon: Tags, permission: PERMISSIONS.procurement.priceAgreement.read },
+      { to: '/procurement/price-history', label: tx('Price History'), icon: TrendingUp, permission: PERMISSIONS.procurement.priceAgreement.read },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },
       { to: '/procurement/shipments', label: tx('Import Shipments'), icon: Boxes, permission: PERMISSIONS.landedCost.read },
@@ -401,6 +429,10 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/hr/payroll/settings', label: tx('Payroll Settings'), icon: SettingsIcon, permission: PERMISSIONS.hr.payroll },
       { to: '/hr/documents', label: tx('Documents'), icon: FileText, permission: PERMISSIONS.hr.document },
       { to: '/hr/training', label: tx('Training'), icon: GraduationCap, permission: PERMISSIONS.hr.training },
+      { to: '/hr/recruitment', label: tx('Recruitment'), icon: Users2, permission: PERMISSIONS.hr.recruitment },
+      { to: '/hr/onboarding', label: tx('Onboarding'), icon: ClipboardList, permission: PERMISSIONS.hr.recruitment },
+      { to: '/hr/contracts', label: tx('Contracts'), icon: ScrollText, permission: PERMISSIONS.hr.contract },
+      { to: '/hr/reviews', label: tx('Performance reviews'), icon: ClipboardCheck, permission: PERMISSIONS.hr.performance },
       { to: '/hr/reports', label: tx('Reports'), icon: BarChart3, permission: PERMISSIONS.hr.report, reportId: 'hr.reports' },
       // No permission: both are scoped server-side to the caller's own record
       // (or their own reports), so gating them would mean handing every cashier
@@ -440,6 +472,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
       { to: '/crm/activities', label: tx('Activities'), icon: CalendarCheck, permission: PERMISSIONS.crm.activityRead },
       { to: '/crm/customers', label: tx('Customers'), icon: Users2, permission: PERMISSIONS.crm.dealRead },
+      { to: '/crm/cases', label: tx('Complaints & Requests'), icon: ClipboardCheck, permission: PERMISSIONS.crm.caseRead },
       { to: '/crm/pricing', label: tx('Price Rules'), icon: Tags, permission: PERMISSIONS.crm.pricingRead },
       { to: '/crm/reports', label: tx('Reports'), icon: BarChart3, permission: PERMISSIONS.crm.reportRead },
       { to: '/crm/settings', label: tx('Configuration'), icon: SettingsIcon, permission: PERMISSIONS.crm.configure },
@@ -454,6 +487,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/boms', label: tx('Recipes (BOM)'), icon: ScrollText },
       { to: '/manufacturing/planning', label: tx('Planning'), icon: CalendarDays },
       { to: '/manufacturing/mrp', label: tx('MRP'), icon: CalendarDays },
+      { to: '/manufacturing/planning-board', label: tx('Planning Workbench'), icon: Target, permission: PERMISSIONS.productionPlan.read },
+      { to: '/manufacturing/gantt', label: tx('Production Gantt'), icon: CalendarDays, permission: PERMISSIONS.workOrder.read },
+      { to: '/manufacturing/capacity', label: tx('Capacity Planning'), icon: BarChart3, permission: PERMISSIONS.productionPlan.read },
+      { to: '/manufacturing/shift-plans', label: tx('Shift Plans'), icon: CalendarClock, permission: PERMISSIONS.productionPlan.read },
+      { to: '/manufacturing/plan-performance', label: tx('Plan Performance'), icon: TrendingUp, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/shop-floor', label: tx('Shop Floor'), icon: Boxes },
       { to: '/manufacturing/terminal', label: tx('Operator Terminal'), icon: Smartphone, permission: PERMISSIONS.workOrder.read },
       { to: '/manufacturing/floor-board', label: tx('Shop-floor Live'), icon: Radio, permission: PERMISSIONS.workOrder.read },
@@ -463,6 +501,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/engineering', label: tx('Engineering & Costing'), icon: ScrollText },
       { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read },
       { to: '/manufacturing/process-costing', label: tx('Process Costing'), icon: Layers, permission: PERMISSIONS.processCosting.read },
+      { to: '/manufacturing/costing', label: tx('Manufacturing Costing'), icon: Calculator, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/stage-wip', label: tx('Stage WIP'), icon: Layers, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/precast/curing', label: tx('Precast · Curing board'), icon: Boxes, permission: PERMISSIONS.productionOrder.read },
       { to: '/manufacturing/precast/orders', label: tx('Precast orders'), icon: ClipboardList, permission: PERMISSIONS.productionOrder.read },
@@ -529,11 +568,13 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/delivery-orders', label: tx('Delivery Orders'), icon: ClipboardList, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/trips', label: tx('Trips'), icon: RouteIcon, permission: PERMISSIONS.fleetTrip.read },
       { to: '/fleet/my-trips', label: tx('My Trips'), icon: Navigation, permission: PERMISSIONS.fleetTrip.deliver },
+      { to: '/driver', label: tx('Driver App'), icon: Smartphone, permission: PERMISSIONS.fleetTrip.deliver },
       { to: '/fleet/customer-sites', label: tx('Customer Sites'), icon: MapPin, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/delivery-discrepancies', label: tx('Delivery Discrepancies'), icon: Scale, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/settings/dispatch', label: tx('Dispatch Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/freight-bills', label: tx('Freight Bills'), icon: ReceiptText, permission: PERMISSIONS.fleetFreight.read },
       // 1.6 maintenance
+      { to: '/fleet/plant', label: tx('Fixed Plant'), icon: Factory, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/inspections', label: tx('Inspections'), icon: ClipboardCheck, permission: PERMISSIONS.fleetMaintenance.read },
@@ -575,6 +616,24 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/quality/lab', label: tx('Laboratory Results'), icon: FlaskRound, permission: PERMISSIONS.quality.read },
       { to: '/quality/traceability', label: tx('Batch Traceability'), icon: GitFork, permission: PERMISSIONS.quality.read },
       { to: '/quality/reports', label: tx('Quality Reports'), icon: BarChart3, permission: PERMISSIONS.quality.read },
+    ],
+  },
+  {
+    // Management dashboards (ADR-S020, Track C Phase 5): each dashboard has its own permission.
+    title: 'Analytics',
+    icon: BarChart3,
+    items: [
+      { to: '/analytics', label: tx('Dashboards Overview'), icon: LayoutDashboard, permission: PERMISSIONS.analytics.view },
+      { to: '/analytics/quarry', label: tx('Quarry Operations'), icon: Mountain, permission: PERMISSIONS.analytics.quarry },
+      { to: '/analytics/aggregates', label: tx('Aggregate Processing'), icon: Factory, permission: PERMISSIONS.analytics.aggregates },
+      { to: '/analytics/blocks', label: tx('Block Manufacturing'), icon: Layers, permission: PERMISSIONS.analytics.blocks },
+      { to: '/analytics/inventory', label: tx('Inventory KPIs'), icon: Boxes, permission: PERMISSIONS.analytics.inventory },
+      { to: '/analytics/procurement', label: tx('Procurement KPIs'), icon: ShoppingCart, permission: PERMISSIONS.analytics.procurement },
+      { to: '/analytics/sales', label: tx('Sales KPIs'), icon: ReceiptText, permission: PERMISSIONS.analytics.sales },
+      { to: '/analytics/fleet', label: tx('Fleet & Delivery KPIs'), icon: Truck, permission: PERMISSIONS.analytics.fleet },
+      { to: '/analytics/maintenance', label: tx('Maintenance KPIs'), icon: Wrench, permission: PERMISSIONS.analytics.maintenance },
+      { to: '/analytics/finance', label: tx('Finance KPIs'), icon: Landmark, permission: PERMISSIONS.analytics.finance },
+      { to: '/analytics/branches', label: tx('Branch KPIs'), icon: Network, permission: PERMISSIONS.analytics.branch },
     ],
   },
   {
@@ -630,9 +689,12 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/approvals', label: tx('Approvals'), icon: ShieldCheck, permission: 'approvals:read' },
       { to: '/approval-workflows', label: tx('Approval Workflows'), icon: Shield, permission: 'approvals:read' },
+      { to: '/approval-controls', label: tx('Approval Controls'), icon: Shield, permission: 'approvals:read' },
+      { to: '/settings/document-numbering', label: tx('Document Numbering'), icon: SettingsIcon, permission: 'document_numbering:read' },
       { to: '/approval-policies', label: tx('Approval Policies (legacy)'), icon: Shield, permission: 'approvals:read' },
       { to: '/staff', label: tx('Staff'), icon: UserCog, permission: PERMISSIONS.user.read },
       { to: '/staff/roles', label: tx('Roles & Permissions'), icon: Shield, permission: PERMISSIONS.role.read },
+      { to: '/settings/portal-accounts', label: tx('Customer Portal Accounts'), icon: Users2, permission: PERMISSIONS.portal.manage },
       { to: '/settings/report-permissions', label: tx('Report Permissions'), icon: BarChart3, permission: PERMISSIONS.role.read },
       { to: '/settings/payment-methods', label: tx('Payment Methods'), icon: Wallet, permission: PERMISSIONS.account.read },
       { to: '/settings/registers', label: tx('Registers'), icon: Banknote, permission: PERMISSIONS.cashRegister.read },

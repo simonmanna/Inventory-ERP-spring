@@ -118,6 +118,12 @@ app:
     communication: ${ENABLE_COMMUNICATION:false}
     fleet: ${ENABLE_FLEET:false}
     quarry: ${ENABLE_QUARRY:false}
+    portal: ${ENABLE_PORTAL:false}
+    alerts: ${ENABLE_ALERTS:false}
+  # Scheduled alerts (ADR-S021): hourly scan of yard-level types, daily scan of the rest (ShedLock).
+  alerts:
+    hourly-cron: ${ALERTS_HOURLY_CRON:0 10 * * * *}
+    daily-cron: ${ALERTS_DAILY_CRON:0 30 6 * * *}
   # Fleet 1.6: daily preventive-maintenance run (raises work orders for due service schedules; ShedLock).
   fleet:
     maintenance-due-cron: ${FLEET_MAINTENANCE_DUE_CRON:0 30 5 * * *}

@@ -22,13 +22,14 @@ import { money, dateTime, statusLabel, useOrgCurrency } from '@/lib/format';
 import { PERMISSIONS } from '@erp/shared';
 import { useAuthStore } from '@/stores/auth.store';
 import {
-  useBillOrder, useCancelOrder, useOrder, useReopenOrder,
+  useBillOrder, useCancelOrder, useOrder, useOrderApproval, useReopenOrder, useRequestOrderApproval,
 } from '@/features/orders/api';
 import { usePaymentTerms } from '@/features/accounting/api';
 import { ORDER_TYPE_LABELS } from './line-source';
 import { PAYMENT_MODE_LABELS } from './order-create';
 import type { OrderDetail, OrderLine } from '@/features/orders/types';
 import { tx } from '@/lib/i18n/tx';
+import { notify } from '@/lib/notify';
 
 /** InventoryDetailPage-style InfoRow (dl/dt/dd, uppercase text-xs label). */
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -107,6 +108,11 @@ function TabOverview({ data }: { data: OrderDetail }) {
                           <td className="px-5 py-2.5 text-muted-foreground">{String(l.lineNumber).padStart(2, '0')}</td>
                           <td className="px-3 py-2.5">
                             <span className="font-medium">{l.description}</span>
+                            {l.entryUomCode && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {tx('Entered as')} {l.entryQuantity} {l.entryUomCode}
+                              </span>
+                            )}
                             {l.note && <span className="block text-xs text-muted-foreground">{l.note}</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{q}</td>
@@ -156,13 +162,19 @@ function TabBilling({ data }: { data: OrderDetail }) {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const currency = useOrgCurrency();
   const billOrder = useBillOrder();
+  const approval = useOrderApproval(data.id);
+  const requestApproval = useRequestOrderApproval();
   const [billPending, setBillPending] = useState(false);
   const editable = !data.invoiceId && data.status !== 'cancelled' && data.status !== 'closed';
+  const awaitingApproval = approval.data?.status === 'pending';
 
   const doBill = async () => {
     setBillPending(true);
     try {
       await billOrder.mutateAsync({ id: data.id });
+    } catch (e: any) {
+      notify.error(e?.response?.data?.message ?? tx('Failed'));
+      approval.refetch();
     } finally {
       setBillPending(false);
     }
@@ -212,8 +224,26 @@ function TabBilling({ data }: { data: OrderDetail }) {
         <p className="text-sm text-muted-foreground">
           {tx('Billing posts this order through the same spine as POS sales: order items deduct stock, taxes are recomputed, an')} <code className="text-xs font-mono">INV-</code> {tx('invoice is created and the receivable is posted to the ledger. The order becomes read-only.')}
         </p>
+        {approval.data && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{tx('Order approval')}</span>
+            <Badge variant="outline">{statusLabel(approval.data.status)}</Badge>
+            {approval.data.status === 'rejected' && editable && hasPermission(PERMISSIONS.orders.update) && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={requestApproval.isPending}
+                onClick={() => requestApproval.mutate(data.id, {
+                  onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+                })}
+              >
+                {tx('Request approval again')}
+              </Button>
+            )}
+          </div>
+        )}
         {hasPermission(PERMISSIONS.orders.invoice) && editable && (
-          <Button onClick={doBill} disabled={billPending || billOrder.isPending}>
+          <Button onClick={doBill} disabled={awaitingApproval || billPending || billOrder.isPending}>
             {billPending || billOrder.isPending
               ? <Loader2 className="mr-1 h-4 w-4 animate-spin" />
               : <Receipt className="mr-1 h-4 w-4" />}

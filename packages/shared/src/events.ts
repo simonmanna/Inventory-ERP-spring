@@ -226,6 +226,11 @@ export const EVENTS = {
   FleetTripClosed: 'fleet.trip.closed',
   FleetTripReturned: 'fleet.trip.returned',
   FleetDeliveryDiscrepancyDecided: 'fleet.delivery.discrepancy_decided',
+  // INV-3 — replenishment alerts asked for a purchase request; procurement raises it and reports back.
+  InventoryReplenishmentRequested: 'inventory.replenishment.requested',
+  // Phase 5 — the alert scan raised new alerts of one type (one event per type and run); communication rules can route
+  // it, and the alert subscriber sends it over WhatsApp when the alert rule asks for that channel.
+  AlertRaised: 'alert.raised',
   // Fleet 1.9 — a transporter freight bill was matched to the supplier invoice (AP bill + accrual, or inbound landed
   // cost); an expiry / service-due reminder was raised (communication rules can route it to email / WhatsApp); hr
   // payroll included / re-opened inputs other modules queued (fleet settles fines deducted from drivers' pay).
@@ -565,6 +570,15 @@ export interface DomainEventMap {
   'fleet.delivery.discrepancy_decided': {
     organizationId: string; discrepancyId: string; code: string; loadId: string; deliveryOrderId: string;
     status: 'approved' | 'rejected'; differenceQty: string; creditNoteId: string | null;
+  };
+  'alert.raised': {
+    organizationId: string; alertId: string; alertType: string; severity: 'info' | 'warning' | 'critical';
+    count: number; title: string; body: string; link: string | null; channels: string[]; recipientUserIds: string[];
+  };
+  'inventory.replenishment.requested': {
+    organizationId: string; requestedBy: string | null;
+    lines: Array<{ alertId: string; productId: string; description: string; quantity: string; uomId: string | null;
+      supplierId: string | null; neededBy: string }>;
   };
 }
 

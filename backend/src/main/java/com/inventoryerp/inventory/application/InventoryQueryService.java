@@ -3,6 +3,7 @@ package com.inventoryerp.inventory.application;
 import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.inventory.domain.InventoryBatch;
 import com.inventoryerp.inventory.domain.InventoryLedger;
@@ -42,10 +43,12 @@ public class InventoryQueryService {
 
     private final JdbcClient jdbc;
     private final UomConversionService uomConversion;
+    private final LocationScope scope;
 
-    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion) {
+    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion, LocationScope scope) {
         this.jdbc = jdbc;
         this.uomConversion = uomConversion;
+        this.scope = scope;
     }
 
     private static String org() {
@@ -73,8 +76,14 @@ public class InventoryQueryService {
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" si.\"organizationId\" = ? AND p.\"trackInventory\" = true");
         if (notBlank(q.get("locationId"))) {
+            scope.assertAllowed(q.get("locationId"));
             where.append(" AND si.\"locationId\" = ?");
             params.add(q.get("locationId"));
+        }
+        DataScope access = scope.current();
+        if (access.restricted()) {
+            where.append(" AND si.\"locationId\" = ANY(?::text[])");
+            params.add(access.locationArray());
         }
         if ("true".equals(q.get("lowStock"))) {
             where.append(" AND si.quantity > 0 AND p.\"minQuantity\" > 0 AND si.quantity <= p.\"minQuantity\"");
@@ -108,7 +117,8 @@ public class InventoryQueryService {
     }
 
     /** All products with aggregated stock levels (+ reservations), one row per product. */
-    public PageResult<Map<String, Object>> listProductStockLevels(Map<String, String> q) {
+    public PageResult<Map<String, Object>> listProductStockLevels(Map<String, String> query) {
+        Map<String, String> q = scope.apply(query);
         int page = page(q.get("page"));
         int size = pageSize(q.get("pageSize"), 25, 200);
         String locationId = notBlank(q.get("locationId")) ? q.get("locationId") : null;
@@ -206,7 +216,8 @@ public class InventoryQueryService {
     }
 
     /** Product header, quants, batches, recent ledger, recipes and purchase lines for one product. */
-    public Map<String, Object> getItemDetail(String productId, String locationId) {
+    public Map<String, Object> getItemDetail(String productId, String locationFilter) {
+        String locationId = scope.resolve(locationFilter);
         Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, code, name, sku, barcode, description,"
                         + " \"productType\", \"costingMethod\", \"minQuantity\", \"reorderQty\", \"batchTracking\","
                         + " \"trackInventory\", \"stockPolicy\", \"uomId\", \"purchaseUomId\", \"salesPrice\", \"costPrice\","
@@ -291,6 +302,10 @@ public class InventoryQueryService {
 
     /** {@code {totalItems, lowStockCount, totalLocations, totalProducts}}. */
     public Map<String, Object> getStockStats() {
+        DataScope access = scope.current();
+        if (access.restricted()) {
+            return restrictedStats(access);
+        }
         List<Map<String, Object>> products = jdbc.sql("SELECT p.id, p.\"minQuantity\","
                         + " COALESCE((SELECT SUM(si.quantity) FROM \"StockItem\" si WHERE si.\"productId\" = p.id), 0) AS qty,"
                         + " EXISTS (SELECT 1 FROM \"StockItem\" si WHERE si.\"productId\" = p.id AND si.quantity > 0) AS has"
@@ -308,6 +323,24 @@ public class InventoryQueryService {
                 (long) products.size());
     }
 
+    /** {@link #getStockStats} over a restricted user's locations (BR-1). */
+    private Map<String, Object> restrictedStats(DataScope access) {
+        String[] allowed = access.locationArray();
+        List<Map<String, Object>> products = jdbc.sql("SELECT p.id, p.\"minQuantity\","
+                        + " COALESCE((SELECT SUM(si.quantity) FROM \"StockItem\" si WHERE si.\"productId\" = p.id AND"
+                        + " si.\"locationId\" = ANY(?::text[])), 0) AS qty FROM \"Product\" p WHERE"
+                        + " p.\"organizationId\" = ? AND p.\"deletedAt\" IS NULL")
+                .params(allowed, org()).query().listOfRows();
+        long totalItems = products.stream().filter(p -> ((BigDecimal) p.get("qty")).signum() > 0).count();
+        long low = products.stream().filter(p -> {
+            BigDecimal qty = (BigDecimal) p.get("qty");
+            BigDecimal min = p.get("minQuantity") == null ? Money.ZERO : (BigDecimal) p.get("minQuantity");
+            return min.signum() > 0 && qty.signum() > 0 && qty.compareTo(min) <= 0;
+        }).count();
+        return Obj.of("totalItems", totalItems, "lowStockCount", low, "totalLocations", (long) allowed.length,
+                "totalProducts", (long) products.size());
+    }
+
     /** Paged stock ledger (newest first) with product / variant / location / batch includes. */
     public PageResult<Map<String, Object>> getLedger(Map<String, String> q) {
         int page = page(q.get("page"));
@@ -319,6 +352,11 @@ public class InventoryQueryService {
                 where.append(" AND \"").append(f).append("\" = ?");
                 params.add(q.get(f));
             }
+        }
+        DataScope access = scope.current();
+        if (access.restricted()) {
+            where.append(" AND \"locationId\" = ANY(?::text[])");
+            params.add(access.locationArray());
         }
         if (notBlank(q.get("type"))) {
             where.append(" AND type::text = ?");
@@ -358,6 +396,10 @@ public class InventoryQueryService {
 
     /** Active batches expiring within {@code days} (default 30), FEFO order. */
     public List<Map<String, Object>> getExpiringBatches(String days, String locationId) {
+        return expiringBatches(days, scope.resolve(locationId));
+    }
+
+    private List<Map<String, Object>> expiringBatches(String days, String locationId) {
         double d = JsNumbers.number(days);
         int n = (int) Math.max(1, Double.isNaN(d) || d == 0 ? 30 : d);
         Instant horizon = Instant.now().plusSeconds(86_400L * n);
@@ -389,6 +431,10 @@ public class InventoryQueryService {
 
     /** Par-based reorder suggestions (suggested qty in purchase units). */
     public List<Map<String, Object>> getReorderSuggestions(String locationId) {
+        return reorderSuggestions(scope.resolve(locationId));
+    }
+
+    private List<Map<String, Object>> reorderSuggestions(String locationId) {
         List<Map<String, Object>> products = SqlRows.list(jdbc.sql("SELECT id, code, name, \"minQuantity\", \"reorderQty\","
                 + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\" FROM \"Product\" WHERE"
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"trackInventory\" = true"
@@ -434,6 +480,10 @@ public class InventoryQueryService {
 
     /** Ledger grouped by product and move type over a window. */
     public List<Map<String, Object>> getMovementSummary(String start, String end, String locationId) {
+        return movementSummary(start, end, scope.resolve(locationId));
+    }
+
+    private List<Map<String, Object>> movementSummary(String start, String end, String locationId) {
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" \"organizationId\" = ?");
         if (notBlank(locationId)) {
@@ -488,6 +538,10 @@ public class InventoryQueryService {
 
     /** Cached on-hand vs Σ ledger vs Σ batches per (product, variant, location) cell. */
     public Map<String, Object> getStockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
+        return stockReconciliation(scope.resolve(locationId), toleranceIn, includeMatched);
+    }
+
+    private Map<String, Object> stockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
         BigDecimal tolerance = new BigDecimal(JsNumbers.toJsString(toleranceIn != null ? toleranceIn : 0.000001));
         List<Object> params = new ArrayList<>(List.of(org()));
         String loc = "";
@@ -566,6 +620,10 @@ public class InventoryQueryService {
 
     /** Quants at negative on-hand with the estimated valuation exposure. */
     public Map<String, Object> getNegativeStock(String locationId) {
+        return negativeStock(scope.resolve(locationId));
+    }
+
+    private Map<String, Object> negativeStock(String locationId) {
         List<Object> params = new ArrayList<>(List.of(org()));
         String loc = "";
         if (notBlank(locationId)) {

@@ -161,3 +161,38 @@ FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isola
 two goods vendors, generated + linked supplier bills, supplier-scoped charge, paid-bill reversal guard; bill-mode
 validation and one bill per invoice). Web: Landed Costs, Import
 Shipments, Landed Cost Reports (incl. cost components) under Purchases.
+
+## Phase 4 additions (built, unverified)
+
+PROC-4: `GET /procurement/reports/supplier-performance?from&to&partnerId` (`purchase_order:read`), default the last 90 days.
+Screen `/procurement/supplier-performance`. Tests: `SupplierPerformanceIT`, `SupplierPerformanceServiceTest`. Nothing was compiled or run.
+
+## Phase 4 RFQ (built, unverified)
+
+PROC-1: `/procurement/rfqs`: list, get, create, patch, send, cancel, quotations, comparison, award (`rfq:read|manage|award`). Award needs an Idempotency-Key and raises the PO through `PurchaseOrdersService.create`. Tables V73.
+Screens `/procurement/rfqs`, `/procurement/rfqs/new`, `/procurement/rfqs/:id`, `/procurement/rfqs/:id/edit`. Test: `RfqIT`. Nothing was compiled or run.
+
+## Phase 4 price agreements (built, unverified)
+
+PROC-2: `/procurement/price-agreements` (list, get, lookup, create, patch, cancel) and `/procurement/reports/price-history` (`price_agreement:read|manage`). Table `SupplierPriceAgreement` (V74).
+Screens `/procurement/price-agreements`, `/procurement/price-history`. Test: `PriceAgreementIT`. Nothing was compiled or run.
+
+## Phase 4 handling test (added, not run)
+
+PROC-6: `LandedCostVoucherIT.handlingByQuantity` asserts the seeded HANDLING component capitalizes, spreads by quantity and balances. No production code changed. The test was not run.
+## Budgets, spend control and delegation (PROC-3)
+
+Status: built, not compiled, not run. Tests in `ProcurementControlIT`. Decisions in `docs/DECISIONS_FOR_OWNER.md`.
+
+- `/procurement/budgets` (list, get, create, update draft, `activate`, `close`, `revise`, delete draft). Permissions `procurement_budget:read|manage`.
+- `POST /procurement/budget-check`: preview for forms, permission `purchase_request:read`.
+- `/procurement/delegations` (list, create, update, delete). Permissions `procurement_delegation:read|manage`, and `procurement_delegation:central` for central buyers.
+- `ProcurementBudgetService.enforce` locks the active budget rows in id order inside the document's transaction. A refusal is a 409 with code `PROCUREMENT_BUDGET_EXCEEDED`.
+- `POST /procurement/purchase-orders` and `POST /procurement/purchase-requests` accept an optional `departmentId`. Responses do not change.
+- The `purchase_order` approval snapshot now carries `branchId` and `departmentId`, so CTRL-1 conditions apply.
+
+## Purchase request approval (PROC-5)
+
+Status: built, not compiled, not run. Tests in `ProcurementControlIT`.
+
+Entity type `purchase_request`, raised on submit with snapshot `amount` (estimated value, base currency), `branchId`, `departmentId`. `PATCH .../approve` and `.../reject` decide the pending request through the engine. `PurchaseRequestApprovalSubscriber` applies inbox decisions, idempotently. `GET .../{id}/approval` returns the latest request with its decisions, or an empty body when no workflow applied. Without a workflow nothing changes.

@@ -592,6 +592,53 @@ export function useFiscalPeriods(params?: { page?: number }) {
   });
 }
 
+export interface CloseChecklistCheck {
+  key: string;
+  label: string;
+  blocking: boolean;
+  count: number;
+  ok: boolean;
+}
+
+export interface CloseChecklistSignOff {
+  key: string;
+  label: string;
+  signed: boolean;
+  note: string | null;
+  signedBy: string | null;
+  signedByName: string | null;
+  signedAt: string | null;
+}
+
+export interface CloseChecklist {
+  periodId: string;
+  name: string;
+  status: FiscalPeriod['status'];
+  startDate: string;
+  endDate: string;
+  checks: CloseChecklistCheck[];
+  signOffs: CloseChecklistSignOff[];
+  readyToClose: boolean;
+  complete: boolean;
+}
+
+export function useCloseChecklist(periodId: string | undefined) {
+  return useQuery({
+    queryKey: ['close-checklist', periodId],
+    queryFn: async () => (await api.get<CloseChecklist>(`/fiscal-periods/${periodId}/close-checklist`)).data,
+    enabled: !!periodId,
+  });
+}
+
+export function useSignCloseStep(periodId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ key, signed, note }: { key: string; signed: boolean; note?: string }) =>
+      (await api.put<CloseChecklist>(`/fiscal-periods/${periodId}/close-checklist/${key}`, { signed, note })).data,
+    onSuccess: (data) => qc.setQueryData(['close-checklist', periodId], data),
+  });
+}
+
 export function useCreateFiscalPeriod() {
   const qc = useQueryClient();
   return useMutation({

@@ -21,6 +21,7 @@ import com.inventoryerp.fleet.domain.FleetTransporterRate;
 import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
+import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -92,6 +93,7 @@ public class FleetDispatchService {
     private final AuditService audit;
     private final EventBus events;
     private final FleetWeighbridgeRuleService weighRules;
+    private final CreditControlService creditControl;
 
     private final CreditService credit;
 
@@ -99,7 +101,9 @@ public class FleetDispatchService {
             FleetVehicleService vehicles, FleetDriverService drivers, FleetDispatchEligibilityService eligibility,
             FleetMeterService meters, FleetTelematicsService telematics, FleetLoadFactors factors, StockService stock,
             PosStockLocation stockLocations, FilesService files, SequenceService sequence, AuditService audit,
-            EventBus events, FleetWeighbridgeRuleService weighRules, CreditService credit) {
+            EventBus events, FleetWeighbridgeRuleService weighRules, CreditService credit,
+            CreditControlService creditControl) {
+        this.creditControl = creditControl;
         this.credit = credit;
         this.db = db;
         this.orders = orders;
@@ -805,6 +809,9 @@ public class FleetDispatchService {
         recheckOwn(t);
         Instant now = Instant.now();
         boolean moveStock = "dispatch".equals(order.get("stockMode"));
+        if (moveStock) {
+            creditControl.assertNotOnHold((String) order.get("partnerId"));
+        }
         BigDecimal tonnes = BigDecimal.ZERO;
         boolean knownT = false;
         BigDecimal total = BigDecimal.ZERO;

@@ -2,7 +2,7 @@ package com.inventoryerp.invoicing.web;
 
 import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.invoicing.application.CustomerDepositService.DepositInput;
-import com.inventoryerp.invoicing.application.MobileMoneyService;
+import com.inventoryerp.invoicing.application.SalesMobileMoneyService;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -27,9 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class CustomerDepositController {
 
     private final CustomerDepositService deposits;
-    private final MobileMoneyService mobileMoney;
+    private final SalesMobileMoneyService mobileMoney;
 
-    public CustomerDepositController(CustomerDepositService deposits, MobileMoneyService mobileMoney) {
+    public CustomerDepositController(CustomerDepositService deposits, SalesMobileMoneyService mobileMoney) {
         this.deposits = deposits;
         this.mobileMoney = mobileMoney;
     }

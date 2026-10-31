@@ -18,9 +18,13 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
@@ -30,34 +34,107 @@ import tools.jackson.databind.JsonNode;
  * step whose {@code [minAmount, maxAmount)} band contains the document amount, in stepOrder order; each
  * step needs {@code requiredCount} distinct approvers holding any of its permissions. No workflow for an
  * entity type ⇒ auto-approve ({@code null}). Public method signatures are used by other modules.
+ *
+ * <p>CTRL-1: workflows and steps may also carry branch and department conditions, read from the snapshot keys
+ * {@code branchId} and {@code departmentId} (the requester's department when the snapshot has none). A conditioned
+ * workflow beats an unconditioned one for the same document. A step may be decided by the department manager instead
+ * of permission holders, {@link ApprovalLimitService} caps what each approver may approve, and
+ * {@link SegregationOfDutiesService} keeps the makers named in the snapshot key {@code makerIds} (comma separated) from
+ * deciding on the sensitive pairs.
  */
 @Service
 public class ApprovalsService {
+
+    /** Step scope: the manager of the document's department decides, not permission holders. */
+    public static final String DEPARTMENT_MANAGER = "department_manager";
 
     private final EntityManager em;
     private final AuditService audit;
     private final EventBus events;
     private final PermissionService permissions;
+    private final ApprovalLimitService limits;
+    private final SegregationOfDutiesService sod;
+    private final ObjectProvider<ApprovalOrgDirectory> directory;
 
-    public ApprovalsService(EntityManager em, AuditService audit, EventBus events, PermissionService permissions) {
+    public ApprovalsService(EntityManager em, AuditService audit, EventBus events, PermissionService permissions,
+            ApprovalLimitService limits, SegregationOfDutiesService sod,
+            ObjectProvider<ApprovalOrgDirectory> directory) {
         this.em = em;
         this.audit = audit;
         this.events = events;
         this.permissions = permissions;
+        this.limits = limits;
+        this.sod = sod;
+        this.directory = directory;
     }
 
     private record Workflow(ApprovalWorkflow row, List<ApprovalStep> steps) {}
 
-    /** Most-specific active workflow for (entityType, amount). */
-    private Workflow resolveWorkflow(String entityType, double amount) {
+    /** What the conditions are evaluated against. The requester's department is only looked up when one is needed. */
+    private final class Scope {
+        final double amount;
+        final String branchId;
+        private final String requesterId;
+        private String departmentId;
+        private boolean looked;
+
+        Scope(Map<String, Object> snapshot, String requesterId) {
+            this.amount = amountOf(snapshot);
+            this.branchId = text(snapshot, "branchId");
+            this.departmentId = text(snapshot, "departmentId");
+            this.looked = this.departmentId != null;
+            this.requesterId = requesterId;
+        }
+
+        String departmentId() {
+            if (!looked) {
+                looked = true;
+                ApprovalOrgDirectory dir = directory.getIfAvailable();
+                departmentId = dir == null || requesterId == null ? null : dir.departmentOf(requesterId);
+            }
+            return departmentId;
+        }
+
+        boolean matches(String conditionBranchId, String conditionDepartmentId) {
+            return (conditionBranchId == null || conditionBranchId.equals(branchId))
+                    && (conditionDepartmentId == null || conditionDepartmentId.equals(departmentId()));
+        }
+
+        /** The snapshot to store: the looked-up department is frozen on it so later decisions see the same scope. */
+        Map<String, Object> stamp(Map<String, Object> snapshot) {
+            if (snapshot == null || text(snapshot, "departmentId") != null || !looked || departmentId == null) {
+                return snapshot;
+            }
+            Map<String, Object> out = new LinkedHashMap<>(snapshot);
+            out.put("departmentId", departmentId);
+            return out;
+        }
+    }
+
+    private static String text(Map<String, Object> snapshot, String key) {
+        Object v = snapshot == null ? null : snapshot.get(key);
+        return v == null || String.valueOf(v).isEmpty() ? null : String.valueOf(v);
+    }
+
+    private static int specificity(ApprovalWorkflow w) {
+        return (w.getBranchId() != null ? 1 : 0) + (w.getDepartmentId() != null ? 1 : 0);
+    }
+
+    /** Most-specific active workflow for the scope: branch and department conditions first, then minAmount. */
+    private Workflow resolveWorkflow(String entityType, Scope scope) {
+        double amount = scope.amount;
         List<ApprovalWorkflow> wfs = em.createQuery("select w from ApprovalWorkflow w where w.organizationId = :org"
                         + " and w.entityType = :type and w.isActive = true order by w.minAmount desc nulls last",
                         ApprovalWorkflow.class)
                 .setParameter("org", TenantContext.organizationId())
                 .setParameter("type", entityType)
                 .getResultList();
-        for (ApprovalWorkflow w : wfs) {
-            if (w.getMinAmount() == null || amount >= w.getMinAmount().doubleValue()) {
+        // Stable sort: workflows of equal specificity keep the minAmount order above.
+        List<ApprovalWorkflow> ranked = new ArrayList<>(wfs);
+        ranked.sort(Comparator.comparingInt(ApprovalsService::specificity).reversed());
+        for (ApprovalWorkflow w : ranked) {
+            if (scope.matches(w.getBranchId(), w.getDepartmentId())
+                    && (w.getMinAmount() == null || amount >= w.getMinAmount().doubleValue())) {
                 return new Workflow(w, steps(w.getId()));
             }
         }
@@ -71,12 +148,13 @@ public class ApprovalsService {
                 .getResultList();
     }
 
-    private static List<ApprovalStep> applicableSteps(Workflow wf, double amount) {
+    private static List<ApprovalStep> applicableSteps(Workflow wf, Scope scope) {
+        double amount = scope.amount;
         List<ApprovalStep> out = new ArrayList<>();
         for (ApprovalStep s : wf.steps()) {
             boolean lo = s.getMinAmount() == null || amount >= s.getMinAmount().doubleValue();
             boolean hi = s.getMaxAmount() == null || amount < s.getMaxAmount().doubleValue();
-            if (lo && hi) {
+            if (lo && hi && scope.matches(s.getBranchId(), s.getDepartmentId())) {
                 out.add(s);
             }
         }
@@ -100,12 +178,12 @@ public class ApprovalsService {
     public Map<String, Object> requestApproval(String entityType, String entityId, Map<String, Object> snapshot,
             String policyId) {
         String orgId = TenantContext.organizationId();
-        double amount = amountOf(snapshot);
-        Workflow wf = resolveWorkflow(entityType, amount);
+        Scope scope = new Scope(snapshot, TenantContext.userId());
+        Workflow wf = resolveWorkflow(entityType, scope);
         if (wf == null) {
             return null;
         }
-        List<ApprovalStep> steps = applicableSteps(wf, amount);
+        List<ApprovalStep> steps = applicableSteps(wf, scope);
         if (steps.isEmpty()) {
             return null;
         }
@@ -114,7 +192,7 @@ public class ApprovalsService {
         req.setOrganizationId(orgId);
         req.setEntityType(entityType);
         req.setEntityId(entityId);
-        req.setSnapshot(EntityJson.toJson(snapshot));
+        req.setSnapshot(EntityJson.toJson(scope.stamp(snapshot)));
         req.setWorkflowId(wf.row().getId());
         req.setCurrentStep(first.getStepOrder());
         req.setRequiredCount(first.getRequiredCount());
@@ -161,25 +239,52 @@ public class ApprovalsService {
         Workflow wf = req.getWorkflowId() == null ? null : workflow(req.getWorkflowId());
         ApprovalPolicy policy = req.getPolicyId() == null ? null : em.find(ApprovalPolicy.class, req.getPolicyId());
         List<ApprovalDecision> decisions = decisions(req.getId());
-        double amount = amountOf(snapshot(req));
+        Map<String, Object> snapshot = snapshot(req);
+        Scope scope = new Scope(snapshot, req.getCreatedById());
         List<String> approverPermissions;
         int requiredCount;
+        boolean managerStep = false;
         if (wf != null) {
             ApprovalStep step = wf.steps().stream().filter(s -> s.getStepOrder().equals(req.getCurrentStep())).findFirst()
                     .orElse(null);
             approverPermissions = step == null ? List.of() : nn(step.getApproverPermissions());
             requiredCount = step == null ? req.getRequiredCount() : step.getRequiredCount();
+            managerStep = step != null && DEPARTMENT_MANAGER.equals(step.getApproverScope());
         } else {
             approverPermissions = policy == null ? List.of() : nn(policy.getApproverPermissions());
             requiredCount = req.getRequiredCount();
         }
 
         List<String> perms = permissions.current();
-        if (!approverPermissions.isEmpty() && approverPermissions.stream().noneMatch(perms::contains)) {
+        // A department-manager step falls back to its permissions when no manager resolves (no HR link, or the
+        // manager is the requester), so a request can never be left without a possible decider.
+        String manager = managerStep ? departmentManager(scope, req.getCreatedById()) : null;
+        if (manager != null && !manager.equals(userId)) {
+            throw ApiException.badRequest("Only the department manager can decide on this step");
+        }
+        if (manager == null && !approverPermissions.isEmpty()
+                && approverPermissions.stream().noneMatch(perms::contains)) {
             throw ApiException.badRequest("You are not allowed to decide on this step");
         }
-        if (req.getCreatedById() != null && req.getCreatedById().equals(userId) && !approverPermissions.isEmpty()) {
+        boolean selfGuard = !approverPermissions.isEmpty() || manager != null
+                || ControlledConfigService.ENTITY_TYPE.equals(req.getEntityType());
+        if (req.getCreatedById() != null && req.getCreatedById().equals(userId) && selfGuard) {
             throw ApiException.badRequest("You cannot approve a request you created");
+        }
+        if (sod.enforced(req.getEntityType())) {
+            Set<String> makers = new LinkedHashSet<>();
+            if (req.getCreatedById() != null) {
+                makers.add(req.getCreatedById());
+            }
+            String named = text(snapshot, "makerIds");
+            if (named != null) {
+                makers.addAll(List.of(named.split(",")));
+            }
+            sod.assertNotMaker(req.getEntityType(), "ApprovalRequest", req.getId(), userId, makers);
+        }
+        if ("approved".equals(status)) {
+            limits.assertWithin(req.getEntityType(), scope.amount, scope.branchId,
+                    scope.departmentId(), userId, perms);
         }
         if (wf != null && Boolean.TRUE.equals(wf.row().getEnforceDistinctApprovers()) && decisions.stream()
                 .anyMatch(d -> userId.equals(d.getApproverId()) && d.getStepOrder() < req.getCurrentStep())) {
@@ -218,7 +323,7 @@ public class ApprovalsService {
             decidedAt = Instant.now();
         } else if (approvals >= requiredCount) {
             List<ApprovalStep> remaining = wf == null ? List.of()
-                    : applicableSteps(wf, amount).stream().filter(s -> s.getStepOrder() > req.getCurrentStep()).toList();
+                    : applicableSteps(wf, scope).stream().filter(s -> s.getStepOrder() > req.getCurrentStep()).toList();
             if (!remaining.isEmpty()) {
                 nextStep = remaining.getFirst().getStepOrder();
                 nextRequired = remaining.getFirst().getRequiredCount();
@@ -288,14 +393,58 @@ public class ApprovalsService {
         return null;
     }
 
+    /**
+     * {@link #checkOrRequestApproval} for a document whose amount can still change: an approval given for a lower
+     * amount no longer counts. It is cancelled and a new request raised for the current amount.
+     */
+    @Transactional
+    public Map<String, Object> checkOrRequestApprovalOfAmount(String entityType, String entityId,
+            Map<String, Object> snapshot) {
+        List<ApprovalRequest> approved = em.createQuery("select r from ApprovalRequest r where r.organizationId = :org"
+                        + " and r.entityType = :type and r.entityId = :eid and r.status = :st", ApprovalRequest.class)
+                .setParameter("org", TenantContext.organizationId())
+                .setParameter("type", entityType)
+                .setParameter("eid", entityId)
+                .setParameter("st", ApprovalStatus.APPROVED)
+                .getResultList();
+        double amount = amountOf(snapshot);
+        for (ApprovalRequest r : approved) {
+            double was = amountOf(snapshot(r));
+            if (amount > was) {
+                r.setStatus(ApprovalStatus.CANCELLED);
+                Map<String, Object> nv = new LinkedHashMap<>();
+                nv.put("status", ApprovalStatus.CANCELLED.value());
+                nv.put("approvedAmount", was);
+                nv.put("currentAmount", amount);
+                audit.recordInTx(AuditInput.of("ApprovalRequest", r.getId(), "cancel", null, nv));
+            }
+        }
+        em.flush();
+        return checkOrRequestApproval(entityType, entityId, snapshot);
+    }
+
+    /** Status of the latest request for a document, or {@code null} when it never needed one. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> latestRequest(String entityType, String entityId) {
+        List<ApprovalRequest> rows = em.createQuery("select r from ApprovalRequest r where r.organizationId = :org"
+                        + " and r.entityType = :type and r.entityId = :eid order by r.createdAt desc",
+                        ApprovalRequest.class)
+                .setParameter("org", TenantContext.organizationId())
+                .setParameter("type", entityType)
+                .setParameter("eid", entityId)
+                .setMaxResults(1)
+                .getResultList();
+        return rows.isEmpty() ? null : withIncludes(rows.getFirst());
+    }
+
     /** Record a synchronously-authorized manager override as an already-approved request. */
     @Transactional
     public Map<String, Object> recordSynchronousOverride(String entityType, String entityId, String approverId,
             Map<String, Object> snapshot, String comment) {
         String orgId = TenantContext.organizationId();
-        double amount = amountOf(snapshot);
-        Workflow wf = resolveWorkflow(entityType, amount);
-        List<ApprovalStep> steps = wf == null ? List.of() : applicableSteps(wf, amount);
+        Scope scope = new Scope(snapshot, TenantContext.userId());
+        Workflow wf = resolveWorkflow(entityType, scope);
+        List<ApprovalStep> steps = wf == null ? List.of() : applicableSteps(wf, scope);
         int lastStep = steps.isEmpty() ? 1 : steps.getLast().getStepOrder();
         ApprovalRequest req = new ApprovalRequest();
         req.setOrganizationId(orgId);
@@ -396,6 +545,17 @@ public class ApprovalsService {
             return m;
         }
         return Map.of();
+    }
+
+    /** The user who manages the document's department, unless that is the requester or nobody resolves. */
+    private String departmentManager(Scope scope, String requesterId) {
+        ApprovalOrgDirectory dir = directory.getIfAvailable();
+        String departmentId = scope.departmentId();
+        if (dir == null || departmentId == null) {
+            return null;
+        }
+        String manager = dir.departmentManagerOf(departmentId);
+        return manager == null || manager.equals(requesterId) ? null : manager;
     }
 
     private static Map<String, Object> event(String orgId, ApprovalRequest req) {

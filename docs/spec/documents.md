@@ -90,3 +90,11 @@ templates, relations + chain, sources, attachments validation, tenant isolation,
 routes). `dms-type-resolver.service.spec.ts` is covered by the existing resolver usage in invoicing. The
 remaining Jest files listed in the generated spec are cross-module integration suites (POS / procurement /
 HR / sync) ported with their phases. Parity scenario: `contract-tests/scenarios/documents-dms.json`.
+
+## INT-3 label printing (Phase 4, built, unverified: nothing compiled or run)
+
+`GET /labels/sources/{type}` (`product, stockpile, ticket`; `search`) and `POST /labels/render` (`type, ids, copies, format` =
+pdf or zpl, `symbology` = qr or code128), both `label:print` (`V82__label_printing.sql`). `LabelRenderer` draws 100 × 60 mm
+labels: a PDF with vector bars from a ZXing matrix for any printer, or a ZPL II file for a 203 dpi Zebra printer, with `^` and
+`~` removed from values. Screen: `/labels`. Precast pallet labels stay as they are. No direct print to a network printer.
+

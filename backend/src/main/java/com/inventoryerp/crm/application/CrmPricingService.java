@@ -6,6 +6,9 @@ import static com.inventoryerp.crm.application.CrmDb.org;
 import static com.inventoryerp.crm.application.CrmDb.str;
 import static com.inventoryerp.crm.application.CrmDb.user;
 
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -36,12 +39,14 @@ public class CrmPricingService {
     private final CrmDb db;
     private final AuditService audit;
     private final com.inventoryerp.sales.application.SalesPricingEngine engine;
+    private final PriceListService priceLists;
 
     public CrmPricingService(CrmDb db, AuditService audit,
-            com.inventoryerp.sales.application.SalesPricingEngine engine) {
+            com.inventoryerp.sales.application.SalesPricingEngine engine, PriceListService priceLists) {
         this.engine = engine;
         this.db = db;
         this.audit = audit;
+        this.priceLists = priceLists;
     }
 
     /** One priced line. {@code discountPercent} is the discount off {@code unitPrice} granted by the rule. */
@@ -227,6 +232,12 @@ public class CrmPricingService {
             }
             return new Price(productId, qty, list, list, v, "rule", str(rule.get("id")), str(rule.get("name")), taxId,
                     incl, name);
+        }
+        ListPrice listed = priceLists.resolve(new PriceQuery(partnerId, productId, qty, null, null, null, on));
+        if (listed != null) {
+            return new Price(productId, qty, list, listed.unitPrice() != null ? listed.unitPrice() : list,
+                    listed.discountPercent(), "price_list", listed.priceListId(), listed.priceListName(), taxId, incl,
+                    name);
         }
         BigDecimal standing = partner == null ? BigDecimal.ZERO : dec(partner.get("disc"));
         if (standing.signum() == 0 && partner != null) {

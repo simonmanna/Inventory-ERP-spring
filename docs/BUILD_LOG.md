@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phase 4 — lanes A–F in parallel worktrees. From 2026-10-30 the user asked to skip compile/build: everything after bd3f34b is unverified until a full build is run
-Next action: merge lanes A–F, tag gaps-closed, then Phase 5.
+Current: Phases 6 and 7 — hardening review, demo data and guides. Everything after bd3f34b is unverified until a full build is run
+Next action: merge Phase 5, then Phases 6 and 7; run a full build and only then create the held tags.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -91,15 +91,15 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 2.7 shop-floor execution & data capture | merged, not verified on main (C) | 42dd59c, de1d082, 82f719e | | V30, ADR-S015; 41 routes; branch build 934 tests green; pushed on the user's instruction without a full build of the merged tree |
 | 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
 | 3 requirements verification | done (C) | 66219a2 | requirements-verified | 263 rows: 166 verified, 82 partial, 15 missing. By reading code only; nothing compiled or run |
-| 4.A manufacturing: MFG-1 2.5 planning, MFG-2 2.8 costing, MFG-3 E2E ITs, MFG-4 demo seed | in-progress (C, worktree) | | | |
-| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | in-progress (C, worktree) | | | |
-| 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | in-progress (C, worktree) | | | |
-| 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | in-progress (C, worktree) | | | |
-| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | in-progress (C, worktree) | | | |
-| 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | in-progress (C, worktree) | | | |
-| 4.x sales O2C (ADR-S011) | in-progress (owner session) | | | Step 0 docs on `phase/S0-sales-docs` (ADR-S011, `PRODUCT_ARCHITECTURE.md`, `spec/sales.md`, `spec/sales-postings.md`, `spec/credit.md`); S0 code waits for owner review; each phase S0–S10 gated by owner go-ahead. Covers ROADMAP 1.5 / 1.6. Do not touch `manufacturing/**` |
-| 4 all gaps closed | todo | | gaps-closed | |
-| 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |
+| 4.A manufacturing: MFG-1 2.5 planning, MFG-2 2.8 costing, MFG-3 E2E ITs, MFG-4 demo seed | merged, unverified (C) | a37abae..a741588 | manufacturing-advanced-complete not created until tested | V40–V41; 33 routes; never compiled or run. /mrp/runs quantities change for yield, curing and co-products |
+| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | merged, unverified (C) | 7223c0a..4750344 | | V50–V52; 25 routes; never compiled or run. SoD pairs are off per tenant until switched on; supplier-bill hook not yet called by lane D code |
+| 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | merged, unverified (C) | bcfe891..8b4cffb | | V60–V64; ADR-S017; 32 routes; never compiled or run. Branch scope covers inventory, stock documents, orders, invoices, deliveries only |
+| 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | merged, unverified (C) | d43915d..d280613 | | V70–V74; 27 routes; never compiled or run. Do not migrate a shared DB until every lane is merged: lanes use number blocks V40–V99 that merge out of order |
+| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | merged, unverified (C) | f757092..fbec71a | | V80–V82; ADR-S050; 38 routes; never compiled or run. Portal read-only; mobile money mock only |
+| 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | merged, unverified (C) | c84fc26..810f3f7 | | V90–V97; 73 routes; never compiled or run |
+| 4.x sales O2C (ADR-S011) | S0–S10 built; merged with PR #7 (migrations V120–V130) | | | Step 0 docs on `phase/S0-sales-docs` (ADR-S011, `PRODUCT_ARCHITECTURE.md`, `spec/sales.md`, `spec/sales-postings.md`, `spec/credit.md`); S0 code waits for owner review; each phase S0–S10 gated by owner go-ahead. Covers ROADMAP 1.5 / 1.6. Do not touch `manufacturing/**` |
+| 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
+| 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
 

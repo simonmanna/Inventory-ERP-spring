@@ -30,6 +30,8 @@ Modular monolith on Spring Boot 4 with Spring Modulith boundaries — the same s
 | `orders` | `modules/orders` | `ENABLE_ORDERS` | (uses pos Order tables via services) |
 | `communication` | `modules/communication` | `ENABLE_COMMUNICATION` | Conversation, Message, CommunicationChannel, ... (13) |
 | `fleet` | — (new, ADR-S009) | `ENABLE_FLEET` | Fleet* (7 in 1.1; hand-written entities, not generated) |
+| `alerts` | — (new, ADR-S021) | `ENABLE_ALERTS` | AlertRule, AlertEvent; modules feed it through `alerts.spi.AlertSource` |
+| `biexport` | — (new) | none, `bi:export` | None: reads the `reporting` views of V111 |
 
 Table ownership comes from `tools/prisma2jpa/generate.mjs` (`moduleOf`). If you move a table,
 change it there and regenerate.

@@ -1,11 +1,14 @@
 package com.inventoryerp.manufacturing;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.manufacturing.application.MfgCommands.CompleteOrder;
 import com.inventoryerp.manufacturing.application.ProductionService;
+import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
@@ -113,6 +116,28 @@ class ManufacturingIT extends MfgTestSupport {
                 .isCloseTo(20000.0 / 18, org.assertj.core.data.Offset.offset(0.01));
         assertThat(done.get("scrapQty").asString()).isEqualTo("2");
         assertThat(balance(wipAccount)).isEqualByComparingTo(wipBefore);
+    }
+
+    @Test
+    @DisplayName("loss write-off: with the pair on, whoever ran the order cannot write off its loss, someone else can")
+    void lossWriteOffSeparation() {
+        String flour = product("FLOUR-SOD");
+        String cake = product("CAKE-SOD");
+        stockIn(bakery, flour, 10, 5000);
+        String id = started(bom(cake, flour, 20, 4, Map.of())).get("id").asString();
+        String rule = "/approval-controls/sod-rules/" + SegregationOfDutiesService.PRODUCTION_LOSS_WRITE_OFF;
+        ok(200, "PUT", rule, Map.of("isActive", true));
+        try {
+            assertThatThrownBy(() -> TenantContext.run(TenantContext.TenantStore.user(demoOrg, adminId),
+                    () -> production.completeOrder(id, CompleteOrder.of(BigDecimal.ZERO))))
+                    .isInstanceOf(ApiException.class).hasMessageContaining("Separation of duties");
+            String other = createUser(demoOrg, "writeoff-" + UUID.randomUUID() + "@demo.test", "Other@12345", null);
+            Map<String, Object> done = TenantContext.run(TenantContext.TenantStore.user(demoOrg, other),
+                    () -> production.completeOrder(id, CompleteOrder.of(BigDecimal.ZERO)));
+            assertThat(done.get("status")).isEqualTo("completed");
+        } finally {
+            ok(200, "PUT", rule, Map.of("isActive", false));
+        }
     }
 
     @Test
@@ -404,7 +429,8 @@ class ManufacturingIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without token, 403 without permission")
     void authorization() {
-        // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(234);
+        // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3)
+        // + 24 planning (ADR-S017, 2.5) + 9 costing routes (ADR-S018, 2.8).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(267);
     }
 }

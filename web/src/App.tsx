@@ -26,6 +26,8 @@ import { PostingMonitorPage } from '@/pages/pos/PostingMonitorPage';
 import { ApprovalsPage } from '@/pages/approvals';
 import { ApprovalPoliciesPage } from '@/pages/approval-policies';
 import { ApprovalWorkflowsPage } from '@/pages/approval-workflows';
+import { ApprovalControlsPage } from '@/pages/approval-controls';
+import { DocumentNumberingPage } from '@/pages/settings/DocumentNumberingPage';
 import { RecurringPage } from '@/pages/recurring';
 import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
@@ -51,6 +53,8 @@ import { EngineeringChangesPage } from '@/pages/manufacturing/EngineeringChanges
 import { StageWipReportPage } from '@/pages/manufacturing/StageWipReportPage';
 import { precastRoutes } from '@/pages/manufacturing/precast/routes';
 import { shopFloorRoutes } from '@/pages/manufacturing/shop-floor/routes';
+import { planningBoardRoutes } from '@/pages/manufacturing/planning-board/routes';
+import { mfgCostingRoutes } from '@/pages/manufacturing/costing/routes';
 import { ChartOfAccountsPage } from '@/pages/accounting/chart-of-accounts';
 import { AccountDetailPage } from '@/pages/accounting/AccountDetailPage';
 import { CashFlowReportPage } from '@/pages/accounting/cash-flow-report';
@@ -83,11 +87,13 @@ import { CurrencyPage } from '@/pages/accounting/currency';
 import { InventoryValuationPage } from '@/pages/accounting/inventory-valuation';
 import { InventoryGlTieOutPage } from '@/pages/accounting/inventory-gl-tieout';
 import { YearEndClosePage } from '@/pages/accounting/year-end-close';
+import { PeriodCloseChecklistPage } from '@/pages/accounting/period-close-checklist';
 import { TrialBalancePage } from '@/pages/accounting/trial-balance';
 import { BudgetsPage } from '@/pages/accounting/budgets';
 import { BudgetDetailPage } from '@/pages/accounting/budget-detail';
 import { OpeningBalancesPage } from '@/pages/accounting/opening-balances';
 import { TaxReportPage } from '@/pages/accounting/tax-report';
+import { BankReconciliationPage } from '@/pages/accounting/bank-reconciliation';
 import { ConsolidatedReportPage } from '@/pages/accounting/consolidated-report';
 import { StatementsPage } from '@/pages/invoicing/statements';
 import { DetailedAccountingReportPage } from '@/pages/accounting/detailed-report';
@@ -102,10 +108,16 @@ import CommunicationChannelsPage from '@/pages/communication/channels';
 import { OrderCreatePage } from '@/pages/orders/order-create';
 import { OrderDetailPage } from '@/pages/orders/order-detail';
 import { ArAgingPage } from '@/pages/invoicing/ar-aging';
+import { CreditControlPage } from '@/pages/invoicing/credit-control';
+import { PriceListsPage } from '@/pages/invoicing/price-lists';
+import { CommissionsPage } from '@/pages/crm/CommissionsPage';
 import { CreditNotesPage } from '@/pages/invoicing/credit-notes';
 import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
 import { PaymentsPage } from '@/pages/invoicing/payments';
+import { MobileMoneyPage } from '@/pages/invoicing/MobileMoneyPage';
+import { BankImportPage } from '@/pages/money/BankImportPage';
+import { LabelPrintPage } from '@/pages/labels/LabelPrintPage';
 import { PaymentDetailPage } from '@/pages/invoicing/payment-detail';
 import { ReceiptsPage } from '@/pages/pos/ReceiptsPage';
 import { ReceiptDetailPage } from '@/pages/pos/ReceiptDetailPage';
@@ -117,6 +129,11 @@ import { ExpensesPage } from '@/pages/expenses/ExpensesPage';
 import ExpensesReportPage from '@/pages/expenses/ExpensesReportPage';
 import ExpenseCategoriesPage from '@/pages/expenses/ExpenseCategoriesPage';
 import { SupplierPaymentsPage } from '@/pages/purchasing/supplier-payments';
+import { VendorBillsPage } from '@/pages/purchasing/vendor-bills';
+import { VendorBillEditPage } from '@/pages/purchasing/vendor-bill-edit';
+import { VendorBillDetailPage } from '@/pages/purchasing/vendor-bill-detail';
+import { ApAgingPage } from '@/pages/purchasing/ap-aging';
+import { PaymentSchedulePage } from '@/pages/purchasing/payment-schedule';
 import { JournalsPage } from '@/pages/accounting/journals';
 import { JournalDetailPage } from '@/pages/accounting/JournalDetailPage';
 import { JournalEditPage } from '@/pages/accounting/JournalEditPage';
@@ -125,6 +142,9 @@ import { JournalEntryDetailPage } from '@/pages/accounting/journal-entry-detail'
 import { InventoryPostingRulesPage } from '@/pages/accounting/inventory-posting-rules';
 import { ProductEditPage } from '@/pages/products/ProductEditPage';
 import { PurchaseRequestsPage } from '@/pages/procurement/purchase-requests';
+import { PurchaseRequestCreatePage } from '@/pages/procurement/purchase-request-create';
+import { ProcurementBudgetsPage } from '@/pages/procurement/procurement-budgets';
+import { ProcurementDelegationsPage } from '@/pages/procurement/procurement-delegations';
 import { PurchaseOrdersPage } from '@/pages/procurement/purchase-orders';
 import { PurchaseOrderCreatePage } from '@/pages/procurement/purchase-order-create';
 import { PurchaseOrderDetailPage } from '@/pages/procurement/PurchaseOrderDetailPage';
@@ -143,6 +163,12 @@ import GoodsReceiptDetailPage from '@/pages/procurement/goods-receipt-detail';
 import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
 import { DebitNotesPage } from '@/pages/procurement/debit-notes';
 import { DebitNoteCreatePage } from '@/pages/procurement/debit-note-create';
+import { SupplierPerformancePage } from '@/pages/procurement/supplier-performance';
+import { RfqsPage } from '@/pages/procurement/rfqs';
+import { RfqEditPage } from '@/pages/procurement/rfq-edit';
+import { RfqDetailPage } from '@/pages/procurement/rfq-detail';
+import { PriceAgreementsPage } from '@/pages/procurement/price-agreements';
+import { PriceHistoryPage } from '@/pages/procurement/price-history';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -163,7 +189,11 @@ import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
+import { analyticsRoutes } from '@/pages/analytics/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
+import { driverRoutes } from '@/pages/driver/routes';
+import { portalRoutes } from '@/pages/portal/routes';
+import { PortalAccountsPage } from '@/pages/portal/PortalAccountsPage';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -193,9 +223,16 @@ import { HrTeamPage } from '@/pages/hr/HrTeamPage';
 import { HrDocumentsPage } from '@/pages/hr/HrDocumentsPage';
 import { HrTrainingPage } from '@/pages/hr/HrTrainingPage';
 import { HrSelfServicePage } from '@/pages/hr/HrSelfServicePage';
+import { HrRecruitmentPage } from '@/pages/hr/HrRecruitmentPage';
+import { HrOnboardingPage } from '@/pages/hr/HrOnboardingPage';
+import { HrContractsPage } from '@/pages/hr/HrContractsPage';
+import { HrReviewsPage } from '@/pages/hr/HrReviewsPage';
 import { StockLedgerPage } from '@/pages/inventory/StockLedgerPage';
 import { StockMovementDetailPage } from '@/pages/inventory/StockMovementDetailPage';
 import LocationsPage from '@/pages/inventory/LocationsPage';
+import { StockReservationsPage } from '@/pages/inventory/StockReservationsPage';
+import { ProductSpecsPage } from '@/pages/products/ProductSpecsPage';
+import { ReplenishmentPage } from '@/pages/inventory/ReplenishmentPage';
 import TerminalPage from '@/pages/pos/Terminal';
 import { TerminalWorkspace } from '@/pages/pos/TerminalWorkspace';
 import ReportsPage from '@/pages/pos/ReportsPage';
@@ -211,6 +248,10 @@ import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
 import ZonesPage from '@/pages/tables/ZonesPage';
 import ReportCenterPage from '@/pages/reports/ReportCenterPage';
+import { BiExportsPage } from '@/pages/reports/BiExportsPage';
+import { AlertsPage } from '@/pages/alerts/AlertsPage';
+import { BranchPerformancePage } from '@/pages/reports/BranchPerformancePage';
+import { SalesAnalysisPage } from '@/pages/reports/SalesAnalysisPage';
 import { ReportPermissionsPage } from '@/pages/settings/ReportPermissionsPage';
 import { StaffPage } from '@/pages/staff/StaffPage';
 import { RolesPage } from '@/pages/staff/RolesPage';
@@ -231,6 +272,10 @@ export function App() {
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />
+        {/* Driver web app (DRIVER-1) — phone shell, no sidebar. */}
+        {driverRoutes}
+        {/* Customer portal (PORTAL-1) — customers never see the staff shell. */}
+        {portalRoutes}
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPage />} />
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
@@ -260,6 +305,7 @@ export function App() {
           <Route path="/suppliers/:partnerId/ledger" element={<SupplierLedgerPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/products/new" element={<ProductEditPage />} />
+          <Route path="/products/specifications" element={<ProductSpecsPage />} />
           <Route path="/products/:id/edit" element={<ProductEditPage />} />
           <Route path="/uom" element={<UomPage />} />
           <Route path="/menu" element={<MenuPage />} />
@@ -276,10 +322,16 @@ export function App() {
                     <Route path="/communication" element={<CommunicationInboxPage />} />
                     <Route path="/communication/rules" element={<CommunicationRulesPage />} />
                     <Route path="/communication/channels" element={<CommunicationChannelsPage />} />
+          <Route path="/commissions" element={<RequirePermission permission={PERMISSIONS.commission.read}><CommissionsPage /></RequirePermission>} />
+          <Route path="/price-lists" element={<RequirePermission permission={PERMISSIONS.priceList.read}><PriceListsPage /></RequirePermission>} />
+          <Route path="/credit-control" element={<RequirePermission permission={PERMISSIONS.creditControl.read}><CreditControlPage /></RequirePermission>} />
           <Route path="/credit-notes" element={<CreditNotesPage />} />
           <Route path="/credit-notes/new" element={<CreditNoteCreatePage />} />
           <Route path="/credit-notes/:id" element={<CreditNoteDetailPage />} />
           <Route path="/payments" element={<PaymentsPage />} />
+          <Route path="/accounts/bank-import" element={<RequirePermission permission={PERMISSIONS.bankAccount.update}><BankImportPage /></RequirePermission>} />
+          <Route path="/labels" element={<RequirePermission permission={PERMISSIONS.label.print}><LabelPrintPage /></RequirePermission>} />
+          <Route path="/payments/mobile-money" element={<RequirePermission permission={PERMISSIONS.payment.read}><MobileMoneyPage /></RequirePermission>} />
           <Route path="/payments/:id" element={<PaymentDetailPage />} />
           <Route path="/pos/receipts" element={<ReceiptsPage />} />
           <Route path="/pos/receipts/:invoiceId" element={<ReceiptDetailPage />} />
@@ -293,6 +345,12 @@ export function App() {
           <Route path="/expenses/categories" element={<ExpenseCategoriesPage />} />
           <Route path="/expenses/reports" element={<RequireReport reportId="expenses.reports"><ExpensesReportPage /></RequireReport>} />
           <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
+          <Route path="/vendor-bills" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillsPage /></RequirePermission>} />
+          <Route path="/vendor-bills/new" element={<RequirePermission permission={PERMISSIONS.expense.create}><VendorBillEditPage /></RequirePermission>} />
+          <Route path="/vendor-bills/:id" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillDetailPage /></RequirePermission>} />
+          <Route path="/vendor-bills/:id/edit" element={<RequirePermission permission={PERMISSIONS.expense.update}><VendorBillEditPage /></RequirePermission>} />
+          <Route path="/payment-schedule" element={<RequirePermission permission={PERMISSIONS.expense.read}><PaymentSchedulePage /></RequirePermission>} />
+          <Route path="/ap-aging" element={<RequirePermission permission={PERMISSIONS.report.ar}><ApAgingPage /></RequirePermission>} />
           <Route path="/ar-aging" element={<RequireReport reportId="sales.ar-aging"><ArAgingPage /></RequireReport>} />
           <Route path="/accounts" element={<ChartOfAccountsPage />} />
           <Route path="/accounts/new" element={<AccountDetailPage />} />
@@ -304,6 +362,7 @@ export function App() {
           <Route path="/accounts/cash-accounts/accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountsPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/activity" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyActivityPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/settlements" element={<RequirePermission permission={PERMISSIONS.cashSession.reconcile}><MoneySettlementsPage /></RequirePermission>} />
+          <Route path="/bank-reconciliation" element={<RequirePermission permission={PERMISSIONS.bankAccount.read}><BankReconciliationPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/transactions" element={<Navigate to="/accounts/cash-accounts/activity" replace />} />
           <Route path="/accounts/cash-accounts/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountDetailPage /></RequirePermission>} />
           <Route path="/cash-flow/report" element={<RequireReport reportId="money.reports"><RequirePermission permission={PERMISSIONS.account.read}><CashFlowReportPage /></RequirePermission></RequireReport>} />
@@ -324,6 +383,10 @@ export function App() {
           <Route path="/budgets/:id" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetDetailPage /></RequirePermission>} />
           <Route path="/opening-balances" element={<RequirePermission permission={PERMISSIONS.openingBalance.read}><OpeningBalancesPage /></RequirePermission>} />
           <Route path="/tax-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><TaxReportPage /></RequirePermission>} />
+          <Route path="/reports/sales-analysis" element={<RequirePermission permission={PERMISSIONS.report.ar}><SalesAnalysisPage /></RequirePermission>} />
+          <Route path="/reports/branches" element={<RequirePermission permission={PERMISSIONS.report.accounting}><BranchPerformancePage /></RequirePermission>} />
+          <Route path="/reports/bi-exports" element={<RequirePermission permission={PERMISSIONS.bi.export}><BiExportsPage /></RequirePermission>} />
+          <Route path="/alerts" element={<RequirePermission permission={PERMISSIONS.alerts.read}><AlertsPage /></RequirePermission>} />
           <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
           <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
           <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />
@@ -335,6 +398,7 @@ export function App() {
           <Route path="/pos-gl-reconciliation" element={<RequireReport reportId="accounting.pos-gl-recon"><PosGlReconciliationPage /></RequireReport>} />
           <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/fiscal-periods" element={<FiscalPeriodsPage />} />
+          <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
           <Route path="/taxes" element={<TaxesPage />} />
           <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />
           <Route path="/accounts/fiscal-positions" element={<FiscalPositionsPage />} />
@@ -348,6 +412,8 @@ export function App() {
           <Route path="/reports" element={<RequireReport reportId="accounting.report-center"><ReportCenterPage /></RequireReport>} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/approval-workflows" element={<ApprovalWorkflowsPage />} />
+          <Route path="/approval-controls" element={<ApprovalControlsPage />} />
+          <Route path="/settings/document-numbering" element={<DocumentNumberingPage />} />
           <Route path="/approval-policies" element={<ApprovalPoliciesPage />} />
           <Route path="/recurring" element={<RecurringPage />} />
           <Route path="/webhooks" element={<WebhooksPage />} />
@@ -361,6 +427,7 @@ export function App() {
           <Route path="/settings/license" element={<RequirePermission permission={PERMISSIONS.setting.read}><LicensePage /></RequirePermission>} />
           <Route path="/settings/receipt" element={<ReceiptSettingsPage />} />
           <Route path="/settings/backup" element={<BackupPage />} />
+          <Route path="/settings/portal-accounts" element={<RequirePermission permission={PERMISSIONS.portal.manage}><PortalAccountsPage /></RequirePermission>} />
           <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
           <Route path="/settings/devices" element={<DevicesPage />} />
           <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />
@@ -390,6 +457,8 @@ export function App() {
           <Route path="/manufacturing/orders/:id" element={<ProductionOrderDetailPage />} />
           {/* Shop-floor execution & data capture (ADR-S015, 2.7) */}
           {shopFloorRoutes}
+          {planningBoardRoutes}
+          {mfgCostingRoutes}
           <Route path="/inventory" element={<InventoryItemsPage />} />
           <Route path="/inventory/items" element={<InventoryItemsPage />} />
           <Route path="/inventory/items/:productId" element={<InventoryDetailPage />} />
@@ -415,6 +484,8 @@ export function App() {
           {qualityRoutes}
           {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
           {quarryRoutes}
+          {/* Management dashboards (ADR-S020) — screens in pages/analytics/routes.tsx */}
+          {analyticsRoutes}
           {/* Repair & Maintenance — static segments before /repair/orders/:id */}
           <Route path="/repair" element={<RepairDashboardPage />} />
           <Route path="/repair/orders" element={<RepairOrdersPage />} />
@@ -435,6 +506,10 @@ export function App() {
           <Route path="/hr/team" element={<HrTeamPage />} />
           <Route path="/hr/documents" element={<HrDocumentsPage />} />
           <Route path="/hr/training" element={<HrTrainingPage />} />
+          <Route path="/hr/recruitment" element={<HrRecruitmentPage />} />
+          <Route path="/hr/onboarding" element={<HrOnboardingPage />} />
+          <Route path="/hr/contracts" element={<HrContractsPage />} />
+          <Route path="/hr/reviews" element={<HrReviewsPage />} />
           <Route path="/hr/employees" element={<HrEmployeesPage />} />
           <Route path="/hr/employees/:id" element={<HrEmployeeDetailPage />} />
           <Route path="/hr/departments" element={<HrDepartmentsPage />} />
@@ -453,7 +528,12 @@ export function App() {
           <Route path="/inventory/ledger" element={<StockLedgerPage />} />
           <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
           <Route path="/inventory/locations" element={<LocationsPage />} />
+          <Route path="/inventory/reservations" element={<StockReservationsPage />} />
+          <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
           <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
+          <Route path="/procurement/purchase-requests/new" element={<PurchaseRequestCreatePage />} />
+          <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />
+          <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
           <Route path="/procurement/purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="/procurement/purchase-orders/new" element={<PurchaseOrderCreatePage />} />
           <Route path="/procurement/purchase-orders/:id/receive" element={<PurchaseOrderReceivePage />} />
@@ -470,6 +550,13 @@ export function App() {
           <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
           <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
           <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
+          <Route path="/procurement/rfqs" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqsPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/new" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqDetailPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/:id/edit" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
+          <Route path="/procurement/price-agreements" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceAgreementsPage /></RequirePermission>} />
+          <Route path="/procurement/price-history" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceHistoryPage /></RequirePermission>} />
+          <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
           <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
           <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />
           <Route path="/tasks" element={<TasksPage />} />

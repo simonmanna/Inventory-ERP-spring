@@ -51,7 +51,8 @@ public class PurchaseRequestsController {
             String branchId,
             String description,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String neededBy,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid PRLineRequest> lines) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid PRLineRequest> lines,
+            String departmentId) {}
 
     private final PurchaseRequestsService svc;
 
@@ -71,13 +72,20 @@ public class PurchaseRequestsController {
         return svc.findOne(id);
     }
 
+    /** The approval request of a purchase request; empty when no workflow applied. */
+    @GetMapping("/{id}/approval")
+    @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_REQUEST__READ)
+    public Map<String, Object> approval(@PathVariable String id) {
+        return svc.approval(id);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_REQUEST__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreatePRRequest dto) {
         return svc.create(new CreateInput(dto.partnerId(), dto.branchId(), dto.description(), dto.neededBy(),
                 dto.lines().stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
-                        l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes())).toList()));
+                        l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes())).toList(), dto.departmentId()));
     }
 
     @PatchMapping("/{id}/submit")

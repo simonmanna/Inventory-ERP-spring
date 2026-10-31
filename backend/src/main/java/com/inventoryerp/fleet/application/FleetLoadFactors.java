@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.kernel.crud.SqlRows;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -15,7 +16,9 @@ import org.springframework.stereotype.Component;
  *   <li>the product master: {@code Product.weight} in kg and {@code Product.volume} in m³ per base unit (Odoo
  *       convention);</li>
  *   <li>the base unit itself: a tonne unit (t, ton, tonne, mt) weighs 1 t, a kg unit 0.001 t, a cubic-metre unit
- *       (m3, m³, cbm) is 1 m³.</li>
+ *       (m3, m³, cbm) is 1 m³;</li>
+ *   <li>the product's density and unit profile (UOM-1): whatever is still unknown, through
+ *       {@link UomConversionService#conversionRate}.</li>
  * </ol>
  * A line in another unit multiplies by its snapshot {@code uomFactor} (base units per line unit).
  */
@@ -27,9 +30,11 @@ public class FleetLoadFactors {
     private static final Set<String> CUBIC = Set.of("m3", "m³", "cbm", "cubic metre", "cubic meter", "cu m");
 
     private final FleetDb db;
+    private final UomConversionService uoms;
 
-    public FleetLoadFactors(FleetDb db) {
+    public FleetLoadFactors(FleetDb db, UomConversionService uoms) {
         this.db = db;
+        this.uoms = uoms;
     }
 
     /** Tonnes / m³ per product base unit (null = unknown) and where they came from. */
@@ -46,8 +51,8 @@ public class FleetLoadFactors {
         String org = FleetDb.org();
         Map<String, Object> f = SqlRows.one(db.jdbc().sql("SELECT \"tonnesPerUnit\", \"cubicMetresPerUnit\" FROM"
                 + " \"FleetProductLoadFactor\" WHERE \"organizationId\" = ? AND \"productId\" = ?").params(org, productId));
-        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT p.weight, p.volume, u.code AS \"uomCode\", u.symbol"
-                + " AS \"uomSymbol\" FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id = ?"
+        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT p.\"uomId\", p.weight, p.volume, u.code AS \"uomCode\","
+                + " u.symbol AS \"uomSymbol\" FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id = ?"
                 + " AND p.\"organizationId\" = ?").params(productId, org));
         BigDecimal t = f == null ? null : (BigDecimal) f.get("tonnesPerUnit");
         BigDecimal m = f == null ? null : (BigDecimal) f.get("cubicMetresPerUnit");
@@ -72,8 +77,29 @@ public class FleetLoadFactors {
                 m = BigDecimal.ONE;
                 source = source == null ? "unit" : source;
             }
+            String baseId = (String) p.get("uomId");
+            if (t == null) {
+                t = perBase(productId, baseId, "TON");
+                source = source == null && t != null ? "density" : source;
+            }
+            if (m == null) {
+                m = perBase(productId, baseId, "M3");
+                source = source == null && m != null ? "density" : source;
+            }
         }
         return new Factor(t, m, source);
+    }
+
+    /** Units with this code per 1 base unit, from the product's density and unit profile; null when unknown. */
+    private BigDecimal perBase(String productId, String baseUomId, String code) {
+        if (baseUomId == null) {
+            return null;
+        }
+        String target = db.jdbc().sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND upper(code) = ?"
+                + " AND \"deletedAt\" IS NULL ORDER BY \"isActive\" DESC LIMIT 1").params(FleetDb.org(), code)
+                .query(String.class).optional().orElse(null);
+        BigDecimal rate = target == null ? null : uoms.conversionRate(productId, baseUomId, target);
+        return rate == null ? null : rate.setScale(6, RoundingMode.HALF_UP);
     }
 
     /** Smallest quantity step of a unit: whole units when its rounding precision is ≥ 1 (pieces, bags), else 0.001. */

@@ -69,7 +69,8 @@ public class PurchaseOrdersController {
             String terms,
             String warehouseId,
             String requestId,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid POLineRequest> lines) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid POLineRequest> lines,
+            String departmentId) {}
 
     /** {@code ReceiveLineDto}. */
     public record ReceiveLineRequest(
@@ -139,7 +140,7 @@ public class PurchaseOrdersController {
                 dto.expectedDeliveryDate(), dto.currencyCode(), dto.exchangeRate(), dto.paymentType(), dto.notes(),
                 dto.terms(), dto.warehouseId(), dto.requestId(), dto.lines().stream().map(l -> new LineInput(
                         l.productId(), l.description(), l.quantity(), l.unitOfMeasureId(), l.unitPrice(), l.taxId(),
-                        l.taxRate(), l.notes())).toList()));
+                        l.taxRate(), l.notes())).toList(), dto.departmentId()));
     }
 
     @PatchMapping("/{id}")

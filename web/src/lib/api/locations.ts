@@ -5,6 +5,8 @@ export interface InventoryLocation {
   code: string;
   name: string;
   type: string;
+  /** BR-1: the branch this location belongs to. */
+  branchId?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -24,7 +26,7 @@ export const locationsApi = {
   get(id: string): Promise<InventoryLocation> {
     return api.get(`/inventory/locations/${id}`).then((r) => r.data);
   },
-  create(body: { code: string; name: string; type?: string; isActive?: boolean }): Promise<InventoryLocation> {
+  create(body: { code: string; name: string; type?: string; isActive?: boolean; branchId?: string }): Promise<InventoryLocation> {
     return api.post('/inventory/locations', body).then((r) => r.data);
   },
   update(id: string, body: Partial<InventoryLocation>): Promise<InventoryLocation> {

@@ -25,6 +25,8 @@ import { ChecklistTemplatesPage } from './maintenance/ChecklistTemplatesPage';
 import { InspectionsPage, InspectionDetailPage } from './maintenance/InspectionsPage';
 import { InspectionEntryPage } from './maintenance/InspectionEntryPage';
 import { DefectsPage } from './maintenance/DefectsPage';
+import { PlantRegisterPage } from './maintenance/PlantRegisterPage';
+import { PlantCostsPage } from './maintenance/PlantCostsPage';
 import { fuelRoutes } from './fuel/fuel-routes';
 import { dispatchRoutes } from './dispatch/dispatch-routes';
 import { weighbridgeRoutes } from './weighbridge/weighbridge-routes';
@@ -65,6 +67,9 @@ export const fleetRoutes = (
     <Route path="/fleet/claims/:id" element={<RequirePermission permission={PERMISSIONS.fleetDriver.read}><ClaimDetailPage /></RequirePermission>} />
     <Route path="/fleet/settings/allowances" element={<RequirePermission permission={[PERMISSIONS.fleet.settings, PERMISSIONS.fleetDriver.read]}><AllowanceRulesPage /></RequirePermission>} />
     {/* 1.6 maintenance */}
+    {/* CMMS-1 fixed plant */}
+    <Route path="/fleet/plant" element={<RequirePermission permission={PERMISSIONS.fleetVehicle.read}><PlantRegisterPage /></RequirePermission>} />
+    <Route path="/fleet/plant/costs" element={<RequirePermission permission={PERMISSIONS.fleet.report}><PlantCostsPage /></RequirePermission>} />
     <Route path="/fleet/maintenance" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><MaintenanceDuePage /></RequirePermission>} />
     <Route path="/fleet/maintenance/work-orders" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><WorkOrdersPage /></RequirePermission>} />
     <Route path="/fleet/maintenance/work-orders/:id" element={<RequirePermission permission={PERMISSIONS.fleetMaintenance.read}><WorkOrderDetailPage /></RequirePermission>} />

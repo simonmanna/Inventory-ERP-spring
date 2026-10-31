@@ -31,8 +31,11 @@ public class LedgerDetailService {
 
     private final JdbcClient jdbc;
 
-    public LedgerDetailService(JdbcClient jdbc) {
+    private final LocationScope scope;
+
+    public LedgerDetailService(JdbcClient jdbc, LocationScope scope) {
         this.jdbc = jdbc;
+        this.scope = scope;
     }
 
     private static String org() {
@@ -51,7 +54,7 @@ public class LedgerDetailService {
     public Map<String, Object> getEntry(String id) {
         Map<String, Object> entry = SqlRows.one(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\""
                 + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
-        if (entry == null) {
+        if (entry == null || !scope.permits(str(entry, "locationId"))) {
             throw ApiException.notFound("Ledger entry not found");
         }
         include(entry);

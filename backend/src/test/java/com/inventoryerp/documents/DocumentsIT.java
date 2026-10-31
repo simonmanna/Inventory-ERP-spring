@@ -224,6 +224,6 @@ class DocumentsIT extends ApiTestSupport {
     void isolationAndAuthz() {
         String id = invoice();
         assertThat(call("GET", "/documents/" + id, null, otherToken).status()).isEqualTo(404);
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.documents")).isEqualTo(28);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.documents")).isEqualTo(30);
     }
 }

@@ -185,6 +185,20 @@ export const PERMISSIONS = {
     delete: 'invoice:delete',
     send: 'invoice:send',
   },
+  commission: {
+    read: 'commission:read',
+    manage: 'commission:manage',
+    approve: 'commission:approve',
+  },
+  priceList: {
+    read: 'price_list:read',
+    manage: 'price_list:manage',
+  },
+  creditControl: {
+    read: 'credit_control:read',
+    manage: 'credit_control:manage',
+    override: 'credit_control:override',
+  },
   creditNote: {
     read: 'credit_note:read',
     create: 'credit_note:create',
@@ -216,9 +230,21 @@ export const PERMISSIONS = {
     update: 'inventory_location:update',
     delete: 'inventory_location:delete',
   },
+  /// Scheduled alerts and exception reports (Phase 5, ADR-S021). Holding `alerts:read` also puts a user on the default
+  /// recipient list; `alerts:manage` sets thresholds, channels and recipients per alert type.
+  alerts: {
+    read: 'alerts:read',
+    manage: 'alerts:manage',
+  },
+  /// Read-only reporting datasets as CSV (Phase 5 integrations).
+  bi: {
+    export: 'bi:export',
+  },
   inventory: {
     read: 'inventory:read',
     move: 'inventory:move',
+    /// Replenishment rules, alerts and raising requisitions from them (INV-3).
+    replenish: 'inventory:replenish',
   },
   // ---- F.8 — Stock document wrappers + masters ----
   inventoryDoc: {
@@ -463,6 +489,17 @@ export const PERMISSIONS = {
       approve: 'purchase_request:approve',
       submit: 'purchase_request:submit',
     },
+    /// Procurement budgets and what is committed against them (PROC-3).
+    budget: {
+      read: 'procurement_budget:read',
+      manage: 'procurement_budget:manage',
+    },
+    /// Who may buy for a branch (PROC-3). `central` is the central buying team, which no branch rule restricts.
+    delegation: {
+      read: 'procurement_delegation:read',
+      manage: 'procurement_delegation:manage',
+      central: 'procurement_delegation:central',
+    },
     purchaseOrder: {
       create: 'purchase_order:create',
       read: 'purchase_order:read',
@@ -484,6 +521,16 @@ export const PERMISSIONS = {
       read: 'three_way_match:read',
       approve: 'three_way_match:approve',
       override: 'three_way_match:override',
+    },
+    /// Requests for quotation: read, draft / send / record quotes, award to a purchase order.
+    rfq: {
+      read: 'rfq:read',
+      manage: 'rfq:manage',
+      award: 'rfq:award',
+    },
+    priceAgreement: {
+      read: 'price_agreement:read',
+      manage: 'price_agreement:manage',
     },
   },
   debitNote: {
@@ -507,6 +554,11 @@ export const PERMISSIONS = {
     read: 'approvals:read',
     decide: 'approvals:decide',
     manage: 'approvals:manage',
+  },
+  /// Document number formats (CTRL-2).
+  documentNumbering: {
+    read: 'document_numbering:read',
+    manage: 'document_numbering:manage',
   },
   // ---- Generic Orders (back-office Order CRUD, POS-independent) ----
     orders: {
@@ -603,6 +655,9 @@ export const PERMISSIONS = {
     pricingManage: 'crm:pricing:manage',
     reportRead: 'crm:report:read',
     configure: 'crm:configure',
+    /// Customer complaints and service requests (CRM-1).
+    caseRead: 'crm:case:read',
+    caseWrite: 'crm:case:write',
   },
   // ---- Sales / order-to-cash (ADR-S011) ----
   sales: {
@@ -713,6 +768,10 @@ export const PERMISSIONS = {
     document: 'hr:document',
     training: 'hr:training',
     report: 'hr:report',
+    /// Job openings, applicants, interviews and onboarding checklists (HR-1).
+    recruitment: 'hr:recruitment',
+    /// Employment contract records and renewals (HR-2).
+    contract: 'hr:contract',
   },
   // ---- Communication platform — messaging + channels ----
   // NB: read/write/send are CAPABILITIES. Per-conversation ACCESS is enforced
@@ -898,6 +957,34 @@ export const PERMISSIONS = {
     issueExplosive: 'quarry_blasting:issue_explosive',
     /// Magazines (licence, keeper) and the controlled-explosive product registry.
     magazine: 'quarry_blasting:magazine',
+  },
+  // ---- Customer portal (PORTAL-1, ADR-S050) ----
+  portal: {
+    /// The only permission of a portal login: its own orders, deliveries, invoices and statement.
+    customer: 'portal:customer',
+    /// Staff: open, disable and reset customer portal accounts.
+    manage: 'portal:manage',
+  },
+  // ---- Management dashboards (Track C Phase 5, ADR-S020) ----
+  // Route ↔ permission matrix: docs/spec/analytics-kpis.md §Routes. A viewer holds analytics:view plus one per dashboard.
+  analytics: {
+    /// Open the analytics screens and their filter lists; shows nothing without a dashboard permission below.
+    view: 'analytics:view',
+    quarry: 'analytics:quarry',
+    aggregates: 'analytics:aggregates',
+    blocks: 'analytics:blocks',
+    inventory: 'analytics:inventory',
+    procurement: 'analytics:procurement',
+    sales: 'analytics:sales',
+    fleet: 'analytics:fleet',
+    maintenance: 'analytics:maintenance',
+    finance: 'analytics:finance',
+    branch: 'analytics:branch',
+  },
+  // ---- Label printing (INT-3) ----
+  label: {
+    /// Print product, stockpile and weighbridge ticket labels (PDF or ZPL).
+    print: 'label:print',
   },
 } as const;
 

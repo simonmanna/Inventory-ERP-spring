@@ -99,3 +99,51 @@ receipts with allocations + Idempotency-Key requirement + replay + void restorin
 vendor bills with stock-in + PURCH journal + supplier payment with withholding (2160) + supplier ledger + AP
 aging, AR reports, tenant isolation, authorization matrix = 30 routes), `TaxCalculationServiceTest` (port of
 `tax-calculation.service.spec.ts`). Parity scenario: `contract-tests/scenarios/invoicing-ar-ap.json`.
+
+## Phase 4 additions (built, unverified)
+
+FIN-2: `GET /vendor-bills` also takes `status` and `partnerId` (additive; other unknown parameters still answer 400).
+Screens: `/vendor-bills`, `/vendor-bills/new`, `/vendor-bills/:id`, `/vendor-bills/:id/edit`, `/ap-aging`.
+Test: `VendorBillListIT`. Nothing was compiled or run.
+
+## Phase 4 supplier payment schedule (built, unverified)
+
+PROC-4: `GET /vendor-bills/payment-schedule?partnerId&from&to` (`expense:read`), `PUT /vendor-bills/{id}/payment-schedule` (`expense:update`), table `SupplierPaymentSchedule` (V70). A plan moves no money.
+Screen `/payment-schedule`. Test: `SupplierPaymentScheduleIT`. Nothing was compiled or run.
+
+## Phase 4 tax pack (built, unverified)
+
+FIN-3: `GET /reports/tax/pack?from&to&branchId` (`report:accounting`): 13 numbered boxes by VAT category plus a GL cross-check. Test: `TaxPackIT`. Nothing was compiled or run.
+## INT-1 mobile money collections (Phase 4, built, unverified: nothing compiled or run)
+
+Lives in `invoicing`, not `accounting`, because it creates receipts through `PaymentService` and `invoicing` already depends
+on `accounting`. `MobileMoneyProvider` is the SPI, `MockMobileMoneyProvider` the only implementation (no money moves): the
+last digit of the number picks the outcome (`9` refused, `8` stays pending, else successful on the first status check).
+Migration `V81__mobile_money.sql` (`MobileMoneyCollection`). Permissions: existing `payment:read`, `payment:create`.
+
+| Route | Purpose |
+|---|---|
+| `GET /mobile-money/settings` | provider, available, whether configured, whether a callback secret is set |
+| `GET /mobile-money/collections` (`status, partnerId, page, pageSize`), `GET .../{id}` | list, detail |
+| `POST /mobile-money/collections` (`Idempotency-Key`; `partnerId, amount, msisdn, accountId, invoiceId` or `documentId`, `description`) | start a collection |
+| `POST /mobile-money/collections/{id}/refresh` (`Idempotency-Key`) | ask the provider now |
+| `POST /mobile-money/callbacks/{provider}/{organizationId}` (public, `X-Signature` = hex HMAC-SHA256 of the raw body) | provider callback; 401 for a bad signature, 200 for an unknown reference |
+
+The row commits before the provider is called. `pending → successful` creates one receipt (Dr mobile money account, Cr
+receivable, method `mobile_money`, reference = our reference) under the row lock, so polls and callbacks cannot post twice.
+`pending → failed` posts nothing. Reversal is the existing `POST /payments/{id}/void`. `MobileMoneyPollJob` polls pending
+collections older than a minute (`MOBILE_MONEY_POLL_CRON`, ShedLock). The number is stored masked. Screen:
+`/payments/mobile-money`. Config: `MOBILE_MONEY_PROVIDER`, `MOBILE_MONEY_URL`, `MOBILE_MONEY_API_KEY`,
+`MOBILE_MONEY_CALLBACK_SECRET` (empty refuses every callback).
+## Credit control (SALES-1)
+
+Status: built, not compiled or run. `CreditControlService` (exposure, `assertCanSell`, `assertNotOnHold`, overrides),
+`CreditControlController` at `/credit-control` (`credit_control:read|manage|override`), table `PartnerCreditOverride`
+(V61). `POST /invoices/:id/post` calls `InvoiceService.postChecked`; `InvoiceService.post` is unchanged for opening
+balances. Screen: `/credit-control`. Test: `CreditControlIT`.
+
+## Sales analysis (SALES-5)
+
+Status: built, not compiled or run. `GET /reports/ar/sales-analysis` (`report:ar`, `SalesAnalysisService`), screen
+`/reports/sales-analysis`. Test: `SalesAnalysisIT`.
+

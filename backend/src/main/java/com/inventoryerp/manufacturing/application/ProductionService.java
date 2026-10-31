@@ -17,6 +17,8 @@ import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.inventory.domain.InventoryLocation;
 import com.inventoryerp.inventory.domain.StockItem;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.ControlledActionService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -83,6 +85,7 @@ public class ProductionService {
     private final SequenceService seq;
     private final AuditService audit;
     private final ApprovalsService approvals;
+    private final ControlledActionService controlled;
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final StockReservationService reservations;
@@ -95,7 +98,8 @@ public class ProductionService {
     private final TransactionTemplate newTx;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
-            StockService stock, StockPostingService stockPosting, StockReservationService reservations,
+            ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
+            StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
             PlatformTransactionManager txm) {
@@ -106,6 +110,7 @@ public class ProductionService {
         this.seq = seq;
         this.audit = audit;
         this.approvals = approvals;
+        this.controlled = controlled;
         this.stock = stock;
         this.stockPosting = stockPosting;
         this.reservations = reservations;
@@ -429,6 +434,9 @@ public class ProductionService {
             dto.outputs().forEach(o -> outputOverrides.put(o.lineId(), o));
         }
         String quarantineId = Boolean.TRUE.equals(pre.get("qcRequired")) ? resolveQuarantineLocation() : null;
+        if (dto.qtyProduced() == null || dto.qtyProduced().signum() <= 0) {
+            authorizeLossWriteOff(pre, dec(pre, "materialCost"));
+        }
 
         lock(id);
         Map<String, Object> order = getOrNull(id, false, true);
@@ -557,6 +565,21 @@ public class ProductionService {
         return updated;
     }
 
+    /**
+     * Sensitive pair: writing off a production loss (zero yield, or units failed at QC) needs an approval when a
+     * {@code production_loss_writeoff} workflow exists, and whoever raised the order may not clear it alone.
+     */
+    private void authorizeLossWriteOff(Map<String, Object> order, BigDecimal value) {
+        ControlledActionService.Outcome outcome = controlled.authorize(new ControlledActionService.Action(
+                SegregationOfDutiesService.PRODUCTION_LOSS_WRITE_OFF, "ProductionOrder", str(order, "id"), value,
+                null, null, java.util.Arrays.asList(str(order, "createdBy"), str(order, "updatedBy")),
+                Obj.of("orderCode", order.get("orderCode"))));
+        if (!outcome.allowed()) {
+            throw ApiException.badRequest("Approval required before writing off the loss on " + order.get("orderCode")
+                    + ". Pending request " + outcome.approvalRequestId() + ".");
+        }
+    }
+
     // ================================================================== QC
 
     /** Clear a qc_hold order: passed units leave quarantine for the sale location, failed units are wasted. */
@@ -578,6 +601,9 @@ public class ProductionService {
         BigDecimal passed = dto.passedQty();
         BigDecimal failed = dto.failedQty() != null ? dto.failedQty() : BigDecimal.ZERO;
         BigDecimal rework = dto.reworkQty() != null ? dto.reworkQty() : BigDecimal.ZERO;
+        if (failed.signum() > 0) {
+            authorizeLossWriteOff(pre, failed.multiply(dec(pre, "outputUnitCost")));
+        }
 
         lock(id);
         Map<String, Object> order = db.byId(ProductionOrder.class, id);

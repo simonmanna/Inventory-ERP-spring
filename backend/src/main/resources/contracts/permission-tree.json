@@ -167,6 +167,20 @@
     "delete": "invoice:delete",
     "send": "invoice:send"
   },
+  "commission": {
+    "read": "commission:read",
+    "manage": "commission:manage",
+    "approve": "commission:approve"
+  },
+  "priceList": {
+    "read": "price_list:read",
+    "manage": "price_list:manage"
+  },
+  "creditControl": {
+    "read": "credit_control:read",
+    "manage": "credit_control:manage",
+    "override": "credit_control:override"
+  },
   "creditNote": {
     "read": "credit_note:read",
     "create": "credit_note:create",
@@ -196,9 +210,17 @@
     "update": "inventory_location:update",
     "delete": "inventory_location:delete"
   },
+  "alerts": {
+    "read": "alerts:read",
+    "manage": "alerts:manage"
+  },
+  "bi": {
+    "export": "bi:export"
+  },
   "inventory": {
     "read": "inventory:read",
-    "move": "inventory:move"
+    "move": "inventory:move",
+    "replenish": "inventory:replenish"
   },
   "inventoryDoc": {
     "create": "inventory_doc:create",
@@ -400,6 +422,15 @@
       "approve": "purchase_request:approve",
       "submit": "purchase_request:submit"
     },
+    "budget": {
+      "read": "procurement_budget:read",
+      "manage": "procurement_budget:manage"
+    },
+    "delegation": {
+      "read": "procurement_delegation:read",
+      "manage": "procurement_delegation:manage",
+      "central": "procurement_delegation:central"
+    },
     "purchaseOrder": {
       "create": "purchase_order:create",
       "read": "purchase_order:read",
@@ -421,6 +452,15 @@
       "read": "three_way_match:read",
       "approve": "three_way_match:approve",
       "override": "three_way_match:override"
+    },
+    "rfq": {
+      "read": "rfq:read",
+      "manage": "rfq:manage",
+      "award": "rfq:award"
+    },
+    "priceAgreement": {
+      "read": "price_agreement:read",
+      "manage": "price_agreement:manage"
     }
   },
   "debitNote": {
@@ -444,6 +484,10 @@
     "read": "approvals:read",
     "decide": "approvals:decide",
     "manage": "approvals:manage"
+  },
+  "documentNumbering": {
+    "read": "document_numbering:read",
+    "manage": "document_numbering:manage"
   },
   "orders": {
     "read": "orders:read",
@@ -532,7 +576,9 @@
     "pricingRead": "crm:pricing:read",
     "pricingManage": "crm:pricing:manage",
     "reportRead": "crm:report:read",
-    "configure": "crm:configure"
+    "configure": "crm:configure",
+    "caseRead": "crm:case:read",
+    "caseWrite": "crm:case:write"
   },
   "sales": {
     "quotationRead": "sales:quotation:read",
@@ -612,7 +658,9 @@
     "performance": "hr:performance",
     "document": "hr:document",
     "training": "hr:training",
-    "report": "hr:report"
+    "report": "hr:report",
+    "recruitment": "hr:recruitment",
+    "contract": "hr:contract"
   },
   "communication": {
     "conversationRead": "communication:conversation:read",
@@ -734,5 +782,25 @@
     "approveExplosive": "quarry_blasting:approve_explosive",
     "issueExplosive": "quarry_blasting:issue_explosive",
     "magazine": "quarry_blasting:magazine"
+  },
+  "portal": {
+    "customer": "portal:customer",
+    "manage": "portal:manage"
+  },
+  "analytics": {
+    "view": "analytics:view",
+    "quarry": "analytics:quarry",
+    "aggregates": "analytics:aggregates",
+    "blocks": "analytics:blocks",
+    "inventory": "analytics:inventory",
+    "procurement": "analytics:procurement",
+    "sales": "analytics:sales",
+    "fleet": "analytics:fleet",
+    "maintenance": "analytics:maintenance",
+    "finance": "analytics:finance",
+    "branch": "analytics:branch"
+  },
+  "label": {
+    "print": "label:print"
   }
 }

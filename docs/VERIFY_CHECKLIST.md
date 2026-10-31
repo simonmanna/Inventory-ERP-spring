@@ -166,7 +166,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S0 — Sales foundation (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFoundationIT' --tests 'com.inventoryerp.crm.CrmSuiteIT'`.
-- Migration: `V39__sales_foundation.sql`; verification queries + rollback in `docs/runbooks/sales-quote-migration.md`.
+- Migration: `V120__sales_foundation.sql`; verification queries + rollback in `docs/runbooks/sales-quote-migration.md`.
 - Screens (CRM → Quotations, unchanged UI): open a quotation created before the upgrade → same number, lines, status.
   Create a quote, submit, *Revise* → revision 1 in draft; the previous revision is kept (table `SalesQuotationRevision`).
   CRM → Settings: change quote validity days → saved (now stored in `SalesSettings`).
@@ -176,7 +176,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S1 — Sales orders (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.*'`; web `pnpm web:typecheck`.
-- Migration: `V40__sales_orders.sql`.
+- Migration: `V121__sales_orders.sql`.
 - Screens: Sales → Sales Orders → *New order*: customer, customer PO, requested date, 2 lines → Save → totals; *Confirm
   order* → status Confirmed, ribbon on "Sales order". A customer on credit hold → confirmed but *On hold*; *Release*
   refused until the customer hold is lifted.
@@ -191,7 +191,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S2 — Pricing and commercial approvals (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesPricingIT'`.
-- Migration: `V41__sales_pricing.sql`.
+- Migration: `V122__sales_pricing.sql`.
 - Screens: Sales → Pricelists → *New pricelist* "CONTRACTOR" → *Add rule* all products 5 % discount → assign the
   customer category "Contractors". *Price simulator*: a contractor customer pays list − 5 %, a walk-in pays list.
   Second pricelist for one customer: aggregate fixed 46 000, from 500 t 44 000, zone "Far" 48 000 → simulator shows
@@ -205,7 +205,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S3 — Credit control (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.credit.CreditIT'`.
-- Migration: `V42__credit.sql`.
+- Migration: `V123__credit.sql`.
 - Screens: Sales → Credit Control → Credit limits: customer limit 50 000 000. Sales order of 60 000 000 → *Confirm
   order* → Confirmed but **Credit hold** ("credit limit would be exceeded"); a sales rep's *Release* is refused; a user
   with `credit:override` releases it → Decisions tab shows hold then override.
@@ -218,7 +218,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S4 — ATP and reservations (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAtpIT'`.
-- Migration: `V43__sales_atp.sql`.
+- Migration: `V124__sales_atp.sql`.
 - Screens: product with 150 t in Yard A and 50 t in Yard B, PO of 300 t due in 10 days. Order 100 t from Yard A →
   *Confirm* → Availability panel: reserved 100. Second order 100 t from Yard A → reserved 50, short 50, pegged to the
   PO, "full by" the PO date. Sales → Backorders lists it. Raise Yard A stock → *Re-plan* → fully reserved.
@@ -228,7 +228,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S5 — Fulfilment (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesFulfilmentIT' --tests 'com.inventoryerp.fleet.FleetDispatchIT'`.
-- Migration: `V44__sales_fulfilment.sql`.
+- Migration: `V125__sales_fulfilment.sql`.
 - Screens (ENABLE_FLEET=true): confirmed sales order 50 t from the yard → Fulfilment panel → *Create delivery order* →
   Fleet delivery order DO-… with 50 t → plan loads (30 t payload) → assign a transporter → put the sales order on hold
   → *Dispatch* refused ("on hold") → release → dispatch trip 1 → order shows dispatched 30, reserved 20, status In
@@ -240,7 +240,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S6 — Billing, deposits, mobile money (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesBillingIT'`.
-- Migration: `V45__sales_billing_deposits.sql`.
+- Migration: `V126__sales_billing_deposits.sql`.
 - Screens: confirmed order of 100 × 1 000 000 (product invoice policy "ordered") → Billing panel → *Record deposit*
   30 000 000 by bank → Accounting: Dr Bank / Cr 2350 Customer Deposits. *Create invoice* → draft invoice 100 000 000
   → post it in Invoicing → back on the order *Apply to…* the invoice → invoice open 70 000 000, deposit closed.
@@ -252,7 +252,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S7 — Returns, complaints (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesReturnIT'`.
-- Migration: `V46__sales_returns.sql`.
+- Migration: `V127__sales_returns.sql`.
 - Screens: delivered + invoiced order → *Return / claim* → 5 blocks "Wrong grade" → Returns → approve → *Receive
   goods* (stock +5 at the yard) → *Record inspection* (restock) → *Close return* with "Credit note" → credit note
   posted against the order invoice; order line: invoiced 20, credited 5, returned 5.
@@ -264,7 +264,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S8 — Collections (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesCollectionsIT'`.
-- Migration: `V47__sales_collections.sql`.
+- Migration: `V128__sales_collections.sql`.
 - Screens: Sales → Collections → Dunning levels: L1 from 1 day e-mail, L2 from 30 days letter + fee 5 000, L3 from
   60 days letter + credit hold. *Run dunning now* → customers reach their level; L2 raises a draft late-fee invoice;
   L3 puts the customer on credit hold; a customer with an open promise is skipped; a second run does not repeat.
@@ -274,7 +274,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S9 — Agreements, rebates, commissions, targets (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesAgreementIT'`.
-- Migration: `V48__sales_agreements_rebates_commissions.sql`. Licence key `salesAgreements` (trial grants it).
+- Migration: `V129__sales_agreements_rebates_commissions.sql`. Licence key `salesAgreements` (trial grants it).
 - Screens: Sales → Agreements & rebates → *New agreement* for a contractor: aggregate 100 t at 800 (list 1 000) →
   *Activate*. New sales order for that customer → pick the agreement → line priced 800 (source agreement) → confirm
   60 t → agreement shows released 60 / balance 40. A second order of 50 t → *Confirm* goes to approval ("exceeds the
@@ -291,7 +291,7 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 ## Phase S10 — Analytics, advisor, customer portal (ADR-S011)
 
 - Commands: `./gradlew test --tests 'com.inventoryerp.sales.SalesInsightsIT'`.
-- Migration: `V49__sales_customer_portal.sql`. Licence key `customerPortal` (trial grants it).
+- Migration: `V130__sales_customer_portal.sql`. Licence key `customerPortal` (trial grants it).
 - Screens: Sales → Sales analytics → Overview tiles + 12-month chart + Advisor list (post an invoice below cost →
   "Sold below cost"); Analysis by product / customer / month with margin %; Customer profitability (freight from
   transporter trips, rebates, commissions); Forecast 3 / 6 / 12 months with a confirmed order dated next month.
@@ -448,6 +448,52 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Crushing Reports: yield and loss, cost per tonne (product, plant, by kind), plant hours / throughput / utilisation.
 - Doubts: normal loss is measured on the last stage's input; system BOMs are active without the BOM approval gate.
 
+## MFG-1 — Advanced planning & scheduling (ADR-S017)
+
+Nothing here has been compiled or run. Run `PlanningIT`, `PlanningCalendarTest`, `DemandNettingTest` and
+`CapacityCalculatorTest` first. Migration `V40__manufacturing_planning.sql`.
+
+- `/manufacturing/planning-board`: Demand tab lists delivery orders in priority order with covered and uncovered
+  quantities. Pick a location, create a plan from the shortfall, confirm it at `/manufacturing/planning`.
+- Order priorities tab: the order from that plan shows the customer, the due date and the priority. Press Schedule.
+- `/manufacturing/gantt`: drag a bar onto a closed day or a night. It lands on the next working minute.
+- `/manufacturing/capacity`: load, bottleneck badge, crushing circuit t/h and the aggregate plan per grading profile.
+- `/manufacturing/shift-plans`: add a shift plan, publish it, confirm it can no longer be deleted; add a target.
+- `/manufacturing/plan-performance`: orders on time, production vs plan and target, shortfall.
+- Curing order: set minimum curing days on a stage and check the 7-day gap between the two bars.
+
+**Doubts**: curing and quarantined stock counts as supply; drag-and-drop was never tried in a browser;
+Tigrinya and Luganda phrases are machine-quality and need a native reader.
+
+## MFG-2 — Manufacturing costing & analytics (ADR-S018)
+
+Nothing here has been compiled or run. Run `ManufacturingCostingIT`, `CostAbsorptionCalculatorTest` and
+`VarianceCalculatorTest` first. Migration `V41__manufacturing_costing.sql`.
+
+- `/manufacturing/costing` → Rates: set labour, machine and overhead rates on a work centre.
+- Run a work order, then open its order → "Actual cost and variances": the amounts due match hours × rates. Press Absorb
+  into WIP, reopen, confirm nothing is due and the journal has Dr WIP / Cr overhead absorbed.
+- Reverse that stage posting: the amount is due again.
+- `/manufacturing/costing`: cost by shift, plant, product and month; variances of completed orders; gross margin.
+
+**Doubts**: absorption must be pressed before the stages close; margin is an estimate, not booked COGS.
+
+## MFG-3 — Phase 2 end-to-end tests
+
+Written, never run. Run `Phase2ExitIT`, `PrecastManufacturingIT.actualCostPerAcceptableBlock` and
+`MultiStageProductionIT.multiLevelTraceability`. A failure may be the test's fixture rather than the product. The blast in
+exit (a) is planned, not fired.
+
+## MFG-4 — Construction manufacturing demo seed
+
+Written, never run. Run `ManufacturingDemoSeedIT`, then start once with `SEED_MANUFACTURING_DEMO=true` and the `seed`
+profile on a throwaway database.
+
+- `/quarry/...`: site `DM-Q1` with ROM and three product stockpiles, rising ROM stock.
+- `/manufacturing/crushing`: about 26 posted runs, cost per tonne in the reports.
+- `/manufacturing/precast/orders`: about 8 orders; recent batches still curing, older ones released.
+- `/manufacturing/plan-performance`: the month's plant and block targets against actuals.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use
@@ -491,3 +537,256 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane D: finance and procurement (nothing here was compiled or run)
+
+- FIN-2 Vendor bills
+  - `/vendor-bills` → New vendor bill: one product line and one service line with a GL account → Save draft → Edit → Post.
+  - Filter by status and supplier; search by number. A draft of a PO-linked bill with a mismatch shows the hold banner.
+  - Pay supplier from the bill (bank + named account), then `/ap-aging` falls by that amount; as-of date changes buckets.
+  - Void a posted, unpaid bill: the journal entry reverses.
+- PROC-4 Payments and suppliers
+  - `/payment-schedule`: a posted bill due in 3 days shows under Next 7 days; Plan it for +20 days and it moves to Next 30 days; Hold moves it out of the total.
+  - `/procurement/supplier-performance`: receive one PO on time and one late, check on-time 50 %; a failed incoming lot lowers Quality pass.
+  - `/reports` → Purchases tab: orders in the date range match `/procurement/purchase-orders`.
+- FIN-1 Bank reconciliation
+  - `/bank-reconciliation`: choose the bank account, import a CSV (date, reference, description, amount; money out negative); importing it again adds nothing.
+  - Auto-match pairs a -70 line with a supplier payment of 70 and a +90 line with a receipt of 90, within the tolerance.
+  - Match by hand from the candidates; Exclude a bank charge with a reason; Undo returns either to unmatched.
+  - Payments not on a statement falls as lines match. Check the book balance against `/accounts/cash-accounts/accounts`.
+- FIN-3 Statements, tax and close
+  - `/profit-and-loss` and `/cash-flow` for a month with known journals: figures match a hand calculation; cash flow closing equals the ledger.
+  - `/taxes`: add, edit and delete a rate.
+  - `/tax-report`: Tax return pack shows 13 boxes, says whether it agrees with the ledger, and Download CSV works.
+  - `/fiscal-periods` → Checklist: a draft journal shows as a warning; sign off a step, remove it; a closed period is read-only.
+- PROC-1 RFQ
+  - `/procurement/rfqs` → New RFQ with two lines and two suppliers → Mark as sent → Record quotation for each supplier, one in another currency with a rate.
+  - Comparison marks the cheapest per line and Best on the cheapest complete quote; an expired quote cannot be awarded.
+  - Award: choose a warehouse; the PO opens at the quoted prices and terms; the RFQ shows Awarded.
+- PROC-2 Price agreements
+  - `/procurement/price-agreements`: add an agreement; a second one overlapping the same dates is refused; End the first, then add the new price.
+  - Quantity breaks: two agreements with From quantity 0 and 50; `GET /procurement/price-agreements/lookup` picks by quantity.
+  - `/procurement/price-history?product=<id>`: lowest, highest, weighted average, latest; variance shows when PO and agreement share a currency.
+- PROC-6 Handling
+  - `/procurement/landed-cost-vouchers/new`: add a Loading & handling charge on a two-line receipt; it spreads by quantity and raises the stock cost.
+## Phase 4 lane B — Approvals, procurement control, numbering
+
+**Nothing here was compiled or run.** Compile first, then run `ApprovalControlsIT` and the suites of the touched modules.
+
+CTRL-1, migration `V50__approval_controls.sql`:
+
+- `/approval-workflows`: create a workflow for one branch and another without a branch. A document of that branch uses the branch workflow. A step set to Department manager only takes that manager.
+- `/approval-controls` → Limits: add a limit for `purchase_order:approve` of 1,000. An approver with that permission is refused on a 5,000 request and the step stays open.
+- `/approval-controls` → Separation of duties: switch on Stock adjustment. The creator of an adjustment gets a 403 on approve; another user can post it. `/audit-log`, entity `SodCheck`, shows both.
+- Switch on Production loss write-off, then complete an order with zero output as the user who raised it: refused.
+- Add a workflow for Configuration Changes, then flip a pair. The change appears under Held changes, the requester cannot approve it, a second person can, and the switch then moves.
+
+PROC-3, migration `V51__procurement_budgets_delegation.sql`:
+
+- `/procurement/budgets`: create a block budget of 1,000 for a branch, activate. Submit a PR of 600: Reserved shows 600. A 500 purchase for that branch shows an alert and is refused. Convert the PR to a purchase: Committed 600, Reserved 0.
+- `/procurement/delegations`: add a Central rule for a branch. A user without `procurement_delegation:central` cannot raise a purchase there. Add a Delegated rule with a limit: the delegate can buy up to it.
+
+PROC-5 (no migration): add a workflow for Purchase Requests, then raise and submit a PR at `/procurement/purchase-requests/new`. The requester cannot approve it. Each step moves on Approve or in `/approvals`, the card shows the step, and the last approval sets it to approved. Reject keeps the reason.
+
+SALES-2 (no migration; needs `ENABLE_ORDERS=true`): add a workflow for Sales Orders, create an order, open it, Billing tab. It shows the approval pending and Generate Invoice is disabled. Approve as another user, then add a line: billing asks again. Approve again and bill.
+
+CTRL-2, migration `V52__document_numbering.sql`:
+
+- `/settings/document-numbering`: set Purchase request to prefix `REQ/{YY}/`, 3 digits. The next PR takes that number and continues the same counter. Use default restores it. Next number refuses a value at or below the current one. A format without the year on Purchase order is refused.
+- Confirm an invoice and a POS sale still number as before.
+## Phase 4 lane E — plant, field and integrations (built, unverified; nothing compiled or run)
+
+**CMMS-1 fixed plant** (`cd backend && ./gradlew test --tests 'com.inventoryerp.fleet.FleetPlantIT'`)
+
+- `/fleet/plant`: the page seeds five plant classes. Register a crusher through "Register plant" (class Crusher, a home
+  location, opening hours) and see it in the list, filtered by location.
+- Open the unit: Maintenance tab, add an hours schedule, read the meter past the lead, raise and start a work order. The
+  unit shows `in workshop`; issue a part and labour; complete it and it returns to active.
+- `/fleet/plant/costs`: maintenance, hours, cost per hour and downtime for the unit.
+- Link a fixed asset on the unit. The asset detail page shows the link; dispose the asset and the unit becomes `disposed`.
+- A trip assignment to the crusher is refused ("fixed plant and cannot carry a load").
+
+**DRIVER-1 driver app** (`./gradlew test --tests 'com.inventoryerp.fleet.FleetDriverAppIT'`)
+
+- Create a role with `fleet_trip:read` + `fleet_trip:deliver`, a user with it, and set that user on the driver's hr employee.
+  Assign a truck to the driver.
+- On a phone open `/driver`: the truck shows "Pre-trip check not done today". Install to the home screen; it opens at `/driver`.
+- Pre-trip check: fail one item with a photo; the unit shows the defect, and the office sees it under `/fleet/defects`.
+- Log fuel with a receipt photo: a draft appears in `/fleet/fuel`; a second truck's id is refused (403).
+- Trips: open a dispatched trip, capture signature and photo, confirm POD.
+
+**INT-2 telematics adapter** (`./gradlew test --tests '*RestTelematicsProviderTest'`)
+
+- `/fleet/telematics` lists providers `mock` and `rest`. A device on `rest` with no `FLEET_TELEMATICS_URL` shows the
+  "not configured" error after a sync; other devices keep syncing.
+- With a vendor or gateway answering the contract in `docs/spec/fleet.md`, positions and meters arrive on the next sync.
+
+**PORTAL-1 customer portal** (migration `V80__customer_portal.sql`; `ENABLE_PORTAL=true`;
+`./gradlew test --tests 'com.inventoryerp.portal.PortalIT'`)
+
+- As staff: `/settings/portal-accounts` → Open account for a customer.
+- Sign in as that customer on the normal login page: it lands on `/portal`, with no staff menu.
+- Orders, invoices (PDF opens) and statement show only that customer's documents.
+- Dispatch a trip for the customer with a telematics device on the truck: `/portal/deliveries/:id` moves on its own and links
+  to the truck's position; after POD it shows who received it.
+- Type a staff URL such as `/fleet`: back to `/portal`. Disable the account: the next portal request fails at once.
+- Check the role "Customer Portal" holds only `portal:customer`. Adding any other permission to it removes the lock on routes
+  open to any signed-in user.
+
+**INT-1 mobile money** (migration `V81__mobile_money.sql`;
+`./gradlew test --tests '*MobileMoneyIT' --tests '*MobileMoneyProviderTest'`)
+
+- `/payments/mobile-money` → Request payment, number ending in 0: "Waiting for customer"; Check now: "Received", with a link
+  to the receipt. The journal shows Dr mobile money, Cr receivable.
+- Number ending in 9: "Failed", no receipt. Ending in 8: stays waiting.
+- Set `MOBILE_MONEY_CALLBACK_SECRET` and post a signed callback (`docs/spec/invoicing.md`): the receipt appears once, however
+  many times the callback repeats.
+
+**INT-3 bank files and labels** (migration `V82__label_printing.sql`; `./gradlew test --tests '*BankStatementParserTest'
+--tests '*LabelRendererTest' --tests '*LabelsAndBankFilesIT'`)
+
+- `/accounts/bank-import`: upload a real statement from the client's bank. Preview shows the lines and totals; check the signs
+  and dates. Import, then import again: the second run adds nothing.
+- `/labels`: pick products, Print PDF, scan the printed QR and Code 128 with a handheld scanner. Download ZPL and send it to a
+  Zebra printer, if the client has one.
+- Repeat for a stockpile and a weighbridge ticket.
+## Phase 4 lane C: sales and branches (nothing compiled or run)
+
+- UOM-1
+  - `/uom`: M3, BAG, TRUCK exist.
+  - Product edit → Density & Weights: sand 1.6 t/m³, bag 50 kg, truck 30 t; save, reload, values stay.
+  - `/invoices/new`: line in TRUCK, price scales; post; stock falls by 30 t per truck.
+  - `/orders/new`: line in TRUCK; detail shows "Entered as 2 TRUCK"; bill it; stock falls by the tonnes.
+  - Inventory item detail: on hand shows the equivalents line.
+  - Weighbridge ticket for a delivery line in m³: tonnes convert with the density.
+- SALES-1
+  - `/credit-control`: search any customer, open it, set a limit of 1000.
+  - `/orders/new`: 600 passes, a second 600 is refused with "Credit limit exceeded".
+  - `/invoices`: posting past the limit is refused.
+  - Put on hold: credit order refused, cash order accepted.
+  - Grant an override as user A: user A's sale is still refused, user B's passes.
+  - POS credit sale behaves as before.
+- BR-1 (high risk)
+  - Before any grant: log in as a normal user with an active branch set; every list shows what it showed before.
+  - POS sale and sync as a user with a grant: unchanged.
+  - `/inventory/locations`: set a branch on each yard.
+  - Staff → building icon: tick branch A for a clerk. The clerk sees only that branch's yards, stock, orders and invoices; a direct URL to branch B gives 404, a filter on it 403.
+  - Untick everything: the clerk sees everything again.
+- BR-2
+  - `/reports/branches`: rows per branch and a Consolidated row; figures match `/consolidated-report` for revenue, expenses and net profit.
+  - Stock value by branch follows the location form's branch.
+- SALES-3
+  - `/price-lists`: list Contract A for one customer, sand 90, from 100 at 80, truck price 2500.
+  - `/invoices/new`: leave the price empty (API or a cleared field): the list price appears after save; a typed price stays.
+  - `/orders/new`, delivery order and quotation for the same customer take the same price.
+  - Another customer keeps the catalogue price.
+- SALES-4
+  - `/commissions`: add a 5% rule. Post an invoice with a salesperson; Calculate shows the entry; calculate again adds nothing.
+  - Approve, send to payroll; run payroll for the employee: the commission appears as an allowance line.
+  - Cancel a posted invoice and calculate: its entry is cancelled.
+- SALES-5
+  - `/reports/sales-analysis`: group by product, branch, customer, salesperson, month; totals agree with `/reports/ar/revenue-by-customer` for the same dates (ERP invoices).
+
+## Phase 4 HR-1 — recruitment and onboarding (built, not run)
+
+- [ ] `/hr/onboarding` → Templates: add "Safety induction", due after 3 days.
+- [ ] `/hr/recruitment`: create an opening (headcount 1), set it to open, add an applicant, schedule an interview.
+- [ ] Move the applicant to offer, hire: an employee appears, the opening closes, `/hr/onboarding` shows the task due 3 days after the hire date.
+- [ ] A second hire of the same applicant is refused; a required task cannot be skipped.
+
+## Phase 4 HR-2 — contract records (built, not run)
+
+- [ ] `/hr/contracts`: create a fixed-term contract, activate it: the employee detail shows the contract end date.
+- [ ] Activate a second contract for the same employee: the first becomes superseded.
+- [ ] Renew: a draft starts the day after the old end date. Terminate needs a reason.
+- [ ] Set an end date within 60 days: it appears under "Ending soon". The daily job at 01:20 expires it after the end date.
+
+## Phase 4 HR-3 — configurable overtime (built, not run)
+
+- [ ] `/hr/payroll/settings` → Overtime: add a rule, weekday 1.25, weekend 1.5, holiday 2, weekend days SUNDAY.
+- [ ] Record attendance overtime on a weekday, a Sunday and a holiday, calculate a run: overtime pay uses each multiplier.
+- [ ] With no active rule, overtime is 1.5 times the hourly rate, as before.
+
+## Phase 4 HR-4 — performance review screen (built, not run)
+
+- [ ] `/hr/reviews`: create a review with a rating, filter by employee, submit and approve it, edit it, delete it.
+- [ ] The menu entry shows only with `hr:performance`.
+
+## Phase 4 HR-5 — payroll cost allocation (built, not run)
+
+- [ ] `/hr/payroll/settings` → Cost allocation: split a department 100 % to one cost centre, one employee 50/50 across two.
+- [ ] Approve a run: the journal shows salaries debits per cost centre and branch, debits = credits.
+- [ ] The report on the same tab shows the amounts by department and cost centre. Reversing the run empties it.
+- [ ] With no splits at all, the journal has one salaries debit, as before.
+- [ ] Accounting: a cost-centre report for the period shows the same totals.
+
+## Phase 4 CRM-1 — complaints and service requests (built, not run)
+
+- [ ] `/crm/cases`: create a complaint; the due time follows the priority. Filter by status, type, priority, overdue.
+- [ ] On the case: add a note, assign an owner (they get a notification), start, resolve with a resolution, close.
+- [ ] `/fleet/delivery-discrepancies` → Open case: a high-priority delivery complaint opens with the customer and quantities; the button again opens the same case.
+- [ ] Approve the discrepancy: the case timeline shows the decision and any credit note; the case stays open.
+
+## Phase 4 CRM-2 — customer data tests and segments (built, not run)
+
+- [ ] Run `CrmCustomerDataIT` (contacts, reminder job, saved filters, segments, product categories).
+- [ ] `/crm/customers`: filter by category, name a segment, save it, clear the filters, pick it from Segments.
+
+## Phase 4 INV-1 — stock reservation screen (built, not run)
+
+- [ ] `/inventory/reservations` → New reservation: pick a location and product, see on hand, reserved and available; reserve more than available: a warning shows, the save still works (soft reservation).
+- [ ] Filter by status and location. Release, then Consume on another row. Check `/inventory/reservations/atp` follows.
+
+## Phase 4 INV-2 — product attributes and grades (built, not run)
+
+- [ ] `/products/specifications` → Grades: add C25. Attributes: add Strength (number, MPa), Size (choice 10 mm, 20 mm), one required.
+- [ ] Products tab: pick a product, set grade, standard and attributes. A required attribute left blank blocks Save; the server refuses it too.
+- [ ] A grade in use cannot be deleted. POS still sells the product and its JSON has no new field.
+
+## Phase 4 INV-3 — replenishment (built, not run)
+
+- [ ] `/inventory/replenishment` → Rules: add a rule with minimum 10 for a product with 6 in stock. Scan now: an alert shows available 6 and the suggested quantity.
+- [ ] Reserve stock on `/inventory/reservations` and scan: available drops by the reservation.
+- [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/procurement/purchase-requests` shows a draft, one per supplier.
+- [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
+- [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.
+
+## Phase 5 alerts, forecast and BI (built, not run)
+
+Set `ENABLE_ALERTS=true` and `VITE_ENABLE_ALERTS=true`, then restart. Migrations V110 and V111 must apply; V111 fails at
+boot if a view names a missing column.
+
+- [ ] `/alerts` → Settings lists 9 types. Edit Expiring documents: threshold 60, weekly, In-app. Reload: it stayed.
+- [ ] Give a quarry site a licence expiring in 10 days. Scan now: one alert in the list, one bell for each `alerts:read` user.
+- [ ] Scan now again: nothing new, no second bell. Set the licence to yesterday and scan: a new critical alert.
+- [ ] Two sites at once: one bell with both lines, two rows in the list.
+- [ ] Each type with its data: a customer over limit, an approved budget overspent, a pending weighbridge exception, a curing batch ready, an overdue CAPA, a crushing week under the minimum yield, an overdue fleet service, an expiring employee document.
+- [ ] Switch a type off: Scan now leaves it out. Tick Email with no SMTP: the log shows `[DEV-EMAIL]`.
+- [ ] WhatsApp: a user whose e-mail matches a partner with a WhatsApp identity and channel gets the digest once.
+- [ ] Exception report totals match the list. Export CSV opens in a spreadsheet. A second organization sees none of it.
+- [ ] A user without `alerts:manage` has no Edit or Scan now; the routes answer 403.
+- [ ] With `app.jobs.enabled=true`, the logs show `alert scan hourly` and `alert scan daily`, and `/actuator/prometheus` shows `alerts_raised_total`.
+- [ ] `/manufacturing/planning` → Forecast: products with invoiced sales show next week, trend and period forecast. Family filter narrows them.
+- [ ] Demand tab: Include forecast, then Smoothed: a block product with history shows a Forecast row, less firm demand. Create plan from shortfall makes a pegged line; an aggregate with no BOM comes back as skipped.
+- [ ] With Smoothed off, the demand figures match the previous release.
+- [ ] `/reports/bi-exports`: every dataset downloads, with a header even when empty. A second organization's file has none of the first's rows.
+- [ ] Create the `bi_reader` role from `docs/integrations.md`: `SELECT` on a `reporting` view works and `SELECT` on `"Invoice"` is refused.
+## Phase 5 dashboards and KPIs (built, not compiled or run)
+
+Nothing here has been compiled. Start with `AnalyticsIT`, `KpiMathTest`, `AnalyticsViewTest`, `ModularityTests` and the
+tests of the services that gained overloads: `QuarryIT`, `CrushingIT`, `PrecastManufacturingIT`, `FleetCostingIT`,
+supplier performance tests and the manufacturing costing tests. Their routes must answer as before.
+
+- [ ] Sign in as Administrator after V100. The Analytics menu lists Dashboards Overview and ten dashboards.
+- [ ] `/analytics`: headline tiles per dashboard. Change the dates and a branch; the figures move and the URL keeps them.
+- [ ] For each dashboard, compare two tiles with the report they come from (`docs/spec/analytics-kpis.md` names it): for
+      example Extraction cost per tonne with `/quarry/reports`, Input-to-output yield with the crushing reports.
+- [ ] Click a tile with a drill-down: the list opens, pages, and each number opens its document.
+- [ ] Click a row in Extraction by site, Sales by customer and Branch performance: the list narrows to that row.
+- [ ] Add a role with `analytics:view` and `analytics:sales` only: the menu shows those two; `/analytics/finance` refuses.
+- [ ] Restrict a user to one branch with the Staff data access dialog: figures shrink, another branch gives 403, the branch list shows
+      one branch, Finance hides cash and says why, Maintenance says OEE is unavailable.
+- [ ] Switch a module off for the organization: its dashboard refuses, and the overview leaves it out.
+- [ ] Open a dashboard on a phone width: filters wrap, tables scroll sideways, the page does not.
+- [ ] With production volumes, time `/analytics/inventory` and `/analytics/finance` over a year: inventory runs one stock
+      health report per location for a branch view, finance one consolidation per month.

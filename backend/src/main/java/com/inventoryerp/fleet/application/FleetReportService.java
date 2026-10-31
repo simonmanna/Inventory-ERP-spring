@@ -71,6 +71,16 @@ public class FleetReportService {
     /** Finished trips of the period with revenue, charge, product cost and trip cost (see the class comment). */
     List<TripFact> tripFacts(Period p, String partnerId, String siteId, String vehicleId, String driverId,
             String carrier, String transporterId, String deliveryOrderId) {
+        return tripFacts(p, partnerId, siteId, vehicleId, driverId, carrier, transporterId, deliveryOrderId, null,
+                null);
+    }
+
+    /**
+     * As above, limited to trips of orders in {@code branchIds} (the order's branch, else its location's branch; null =
+     * all) and to trips carrying {@code productId}.
+     */
+    private List<TripFact> tripFacts(Period p, String partnerId, String siteId, String vehicleId, String driverId,
+            String carrier, String transporterId, String deliveryOrderId, String[] branchIds, String productId) {
         String org = FleetDb.org();
         StringBuilder where = new StringBuilder(" WHERE t.\"organizationId\" = ? AND t.status IN ('delivered',"
                 + " 'closed') AND t.\"deliveredAt\" >= ? AND t.\"deliveredAt\" < ?");
@@ -82,6 +92,16 @@ public class FleetReportService {
         FleetIncidentService.eq(where, params, "t.carrier", carrier);
         FleetIncidentService.eq(where, params, "t.\"transporterPartnerId\"", transporterId);
         FleetIncidentService.eq(where, params, "t.\"deliveryOrderId\"", deliveryOrderId);
+        if (branchIds != null) {
+            where.append(" AND COALESCE(o.\"branchId\", (SELECT ol.\"branchId\" FROM \"InventoryLocation\" ol WHERE"
+                    + " ol.id = o.\"locationId\")) = ANY(?::text[])");
+            params.add(branchIds);
+        }
+        if (productId != null && !productId.isBlank()) {
+            where.append(" AND EXISTS (SELECT 1 FROM \"FleetLoadLine\" pl WHERE pl.\"loadId\" = t.id"
+                    + " AND pl.\"productId\" = ?)");
+            params.add(productId);
+        }
         List<Map<String, Object>> trips = SqlRows.list(db.jdbc().sql("""
                 SELECT t.id, t.code, t.carrier, t."vehicleId", t."driverId", t."transporterPartnerId",
                        t."deliveryOrderId", t."deliveredAt", t."distanceKm", t."freightAmount", t."freightBasis",
@@ -338,6 +358,35 @@ public class FleetReportService {
     }
 
     // ------------------------------------------------------------------ deliveries, tonnes, transport cost
+
+    /**
+     * Deliveries, on-time, tonnes and transport cost of the finished trips for the analytics dashboard (ADR-S020): the
+     * same rows as {@link #deliveries} and {@link #transportCost} over one set of trip facts, grouped once per
+     * {@code groupBys} entry. {@code branchIds} null means every branch.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> deliveryKpis(DeliveryQuery q, String[] branchIds, String productId,
+            List<String> groupBys) {
+        Period p = FleetCostingService.period(q.from(), q.to());
+        List<TripFact> facts = tripFacts(p, q.partnerId(), q.siteId(), q.vehicleId(), q.driverId(), q.carrier(),
+                q.transporterPartnerId(), null, branchIds, productId);
+        Map<String, Object> groups = new LinkedHashMap<>();
+        for (String g : groupBys) {
+            Map<String, String> labels = new LinkedHashMap<>();
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (Map.Entry<String, List<TripFact>> e : group(facts, f -> key(f, g), labels).entrySet()) {
+                Map<String, Object> row = deliveryRow(e.getKey(), labels.get(e.getKey()), e.getValue());
+                row.putAll(costRow(e.getKey(), labels.get(e.getKey()), e.getValue()));
+                rows.add(row);
+            }
+            groups.put(g, rows);
+        }
+        Map<String, Object> totals = deliveryRow("total", "Total", facts);
+        totals.putAll(costRow("total", "Total", facts));
+        Map<String, Object> out = envelope(p, null, List.of(), totals);
+        out.put("groups", groups);
+        return out;
+    }
 
     /**
      * Deliveries completed and on time per day (default), month, customer, site, vehicle, driver, transporter or

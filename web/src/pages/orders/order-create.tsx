@@ -12,6 +12,10 @@ import { useAuthStore } from '@/stores/auth.store';
 import { usePartners, type Partner } from '@/features/partners/api';
 import { useCreateOrder, useOrderSettings } from '@/features/orders/api';
 import { usePaymentTerms } from '@/features/accounting/api';
+import { resolveListPrice } from '@/features/invoicing/price-list-api';
+import { useProducts } from '@/features/products/api';
+import { unitPrice as suggestedUnitPrice } from '@/features/products/units';
+import { UnitSelect } from '@/components/unit-select';
 import { ORDER_TYPE_LABELS, sourceDef } from './line-source';
 import { OrderLinePicker } from './OrderLinePicker';
 import type { CreateOrderInput, OrderLineInput, OrderType } from '@/features/orders/types';
@@ -68,6 +72,12 @@ export function OrderCreatePage() {
   const resolved = settings?.resolved ?? 'menu';
   const def = sourceDef(resolved);
 
+  const productsQ = useProducts({ page: 1, pageSize: 200 });
+  const productsById = useMemo(
+    () => new Map((productsQ.data?.data ?? []).map((p) => [p.id, p])),
+    [productsQ.data],
+  );
+
   const totals = useMemo(() => {
     const subtotal = lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
     const discount = lines.reduce((sum, l) => {
@@ -79,7 +89,19 @@ export function OrderCreatePage() {
   }, [lines]);
 
   const addLine = (line: OrderLineInput) => {
-    setLines((prev) => [...prev, { ...line, _key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }]);
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setLines((prev) => [...prev, { ...line, _key: key }]);
+    // SALES-3: the customer's price list replaces the catalogue price when one applies.
+    if (line.productId) {
+      void resolveListPrice({ partnerId, productId: line.productId, quantity: line.quantity }).then((listed) => {
+        if (listed) {
+          updateLine(key, {
+            ...(listed.unitPrice != null ? { unitPrice: listed.unitPrice } : {}),
+            ...(listed.discountPercent > 0 ? { discountPercent: listed.discountPercent } : {}),
+          });
+        }
+      });
+    }
   };
 
   const updateLine = (key: string, patch: Partial<OrderLineInput>) => {
@@ -251,6 +273,19 @@ export function OrderCreatePage() {
                             onChange={(e) => updateLine(line._key, { quantity: Number(e.target.value) || 0 })}
                             className={inputClass}
                           />
+                          {line.productId && (
+                            <UnitSelect
+                              product={productsById.get(line.productId)}
+                              role="sales"
+                              value={line.uomId}
+                              className="mt-1 w-full rounded border bg-background px-1 py-0.5 text-xs"
+                              onChange={(uomId) => {
+                                const product = line.productId ? productsById.get(line.productId) : undefined;
+                                const price = suggestedUnitPrice(product, uomId, 'sales');
+                                updateLine(line._key, price === null ? { uomId } : { uomId, unitPrice: price });
+                              }}
+                            />
+                          )}
                         </td>
                         <td className="px-2 py-2">
                           <Input
