@@ -108,7 +108,7 @@ public class ControlledConfigService {
     @Transactional(readOnly = true)
     public String lastApprover(String requestId) {
         return jdbc.sql("SELECT \"approverId\" FROM \"ApprovalDecision\" WHERE \"requestId\" = ? AND"
-                        + " \"organizationId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1")
+                        + " \"organizationId\" = ? ORDER BY \"decidedAt\" DESC LIMIT 1")
                 .params(requestId, org()).query(String.class).optional().orElse(null);
     }
 

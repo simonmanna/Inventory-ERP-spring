@@ -10686,5 +10686,6 @@
   "The end date is before the start date": "Olunaku olw'enkomerero lukulembera olw'okutandika",
   "Warn at %": "Labula ku %",
   "Warns only": "Kulabula bulabuzi",
-  "When a document goes over": "Ekiwandiiko bwe kiyitawo"
+  "When a document goes over": "Ekiwandiiko bwe kiyitawo",
+  "Waiting for approval, step {{step}}": "Kirindirira okukkirizibwa, omutendera {{step}}"
 }

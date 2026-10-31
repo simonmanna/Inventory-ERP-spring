@@ -3,6 +3,7 @@ package com.inventoryerp.procurement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.kernel.events.OutboxWorker;
 import com.inventoryerp.procurement.web.ProcurementControlController;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -25,6 +27,9 @@ import tools.jackson.databind.JsonNode;
  * purchasing, and purchase requests through the approval engine.
  */
 class ProcurementControlIT extends ApiTestSupport {
+
+    @Autowired
+    OutboxWorker outbox;
 
     String role;
     String warehouse;
@@ -216,6 +221,80 @@ class ProcurementControlIT extends ApiTestSupport {
                 "delegateUserId", localId, "maxOrderAmount", 100));
         assertThat(order(local, yard, 100, null).status()).isEqualTo(201);
         assertThat(order(local, yard, 101, null).status()).isEqualTo(403);
+    }
+
+    /** A workflow for purchase requests over this amount, removed after the test. */
+    String prWorkflow(Object minAmount) {
+        return okBy(otherToken, 201, "POST", "/approval-workflows", Map.of("name", "PR " + sfx(), "entityType",
+                "purchase_request", "minAmount", minAmount, "steps", List.of(Map.of("stepOrder", 1, "name", "Buyer",
+                        "approverPermissions", List.of("purchase_request:approve"), "requiredCount", 1),
+                        Map.of("stepOrder", 2, "name", "Finance", "approverPermissions",
+                                List.of("purchase_request:approve"), "requiredCount", 1)))).get("id").asString();
+    }
+
+    void drainOutbox() {
+        for (int i = 0; i < 5; i++) {
+            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
+            outbox.tick();
+        }
+    }
+
+    @Test
+    @DisplayName("request approval: below the workflow it is a status change; above it every step must clear")
+    void requestThroughEngine() {
+        String wf = prWorkflow(1000);
+        try {
+            String small = request(branch, 10);
+            okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + small + "/submit", null);
+            assertThat(by(buyerToken, "GET", "/procurement/purchase-requests/" + small + "/approval", null).raw().body())
+                    .isEmpty();
+            assertThat(okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + small + "/approve", null)
+                    .get("status").asString()).isEqualTo("approved");
+
+            String big = request(branch, 5000);
+            okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + big + "/submit", null);
+            Res own = by(buyerToken, "PATCH", "/procurement/purchase-requests/" + big + "/approve", null);
+            assertThat(own.status()).isEqualTo(400);
+            assertThat(own.body().get("message").asString()).isEqualTo("You cannot approve a request you created");
+
+            JsonNode first = okBy(checkerToken, 200, "PATCH", "/procurement/purchase-requests/" + big + "/approve", null);
+            assertThat(first.get("status").asString()).isEqualTo("submitted");
+            assertThat(okBy(otherToken, 200, "PATCH", "/procurement/purchase-requests/" + big + "/approve", null)
+                    .get("status").asString()).isEqualTo("approved");
+        } finally {
+            okBy(otherToken, 200, "DELETE", "/approval-workflows/" + wf, null);
+        }
+    }
+
+    @Test
+    @DisplayName("request approval: a decision in the inbox reaches the request, once, and a rejection keeps its reason")
+    void inboxDecision() {
+        String wf = okBy(otherToken, 201, "POST", "/approval-workflows", Map.of("name", "PR " + sfx(), "entityType",
+                "purchase_request", "steps", List.of(Map.of("stepOrder", 1, "name", "Buyer", "approverPermissions",
+                        List.of("purchase_request:approve"), "requiredCount", 1)))).get("id").asString();
+        try {
+            String id = request(branch, 50);
+            okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + id + "/submit", null);
+            String requestId = okBy(buyerToken, 200, "GET", "/procurement/purchase-requests/" + id + "/approval", null)
+                    .get("id").asString();
+            okBy(checkerToken, 201, "POST", "/approvals/" + requestId + "/decide", Map.of("status", "approved"));
+            drainOutbox();
+            assertThat(okBy(buyerToken, 200, "GET", "/procurement/purchase-requests/" + id, null).get("status")
+                    .asString()).isEqualTo("approved");
+
+            String other = request(branch, 50);
+            okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + other + "/submit", null);
+            String otherRequest = okBy(buyerToken, 200, "GET", "/procurement/purchase-requests/" + other + "/approval",
+                    null).get("id").asString();
+            okBy(checkerToken, 201, "POST", "/approvals/" + otherRequest + "/decide", Map.of("status", "rejected",
+                    "comment", "No budget this quarter"));
+            drainOutbox();
+            JsonNode rejected = okBy(buyerToken, 200, "GET", "/procurement/purchase-requests/" + other, null);
+            assertThat(rejected.get("status").asString()).isEqualTo("rejected");
+            assertThat(rejected.get("rejectedReason").asString()).isEqualTo("No budget this quarter");
+        } finally {
+            okBy(otherToken, 200, "DELETE", "/approval-workflows/" + wf, null);
+        }
     }
 
     @Test

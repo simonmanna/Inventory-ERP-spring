@@ -72,6 +72,13 @@ public class PurchaseRequestsController {
         return svc.findOne(id);
     }
 
+    /** The approval request of a purchase request; empty when no workflow applied. */
+    @GetMapping("/{id}/approval")
+    @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_REQUEST__READ)
+    public Map<String, Object> approval(@PathVariable String id) {
+        return svc.approval(id);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_REQUEST__CREATE)

@@ -10686,5 +10686,6 @@
   "The end date is before the start date": "Tarehe ya mwisho iko kabla ya tarehe ya kuanza",
   "Warn at %": "Onya kwa %",
   "Warns only": "Huonya tu",
-  "When a document goes over": "Hati inapozidi"
+  "When a document goes over": "Hati inapozidi",
+  "Waiting for approval, step {{step}}": "Inasubiri idhini, hatua {{step}}"
 }

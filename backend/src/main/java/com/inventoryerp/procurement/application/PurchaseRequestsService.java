@@ -4,8 +4,10 @@ import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
+import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
@@ -30,9 +32,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Purchase requests (port of {@code purchase-requests.service.ts}): draft → submitted → approved | rejected; a PO
  * created from an approved request links back via {@code requestId}.
+ *
+ * <p>PROC-5: with a {@value #APPROVAL_ENTITY} workflow, submit raises an approval request and the outcome comes from
+ * the engine, whether decided here through approve / reject or in the approvals inbox
+ * ({@link PurchaseRequestApprovalSubscriber}). Without a workflow, approve and reject work as a plain status change.
  */
 @Service
 public class PurchaseRequestsService {
+
+    public static final String APPROVAL_ENTITY = "purchase_request";
 
     /** {@code CreatePRInput}. */
     public record CreateInput(String partnerId, String branchId, String description, String neededBy,
@@ -47,12 +55,14 @@ public class PurchaseRequestsService {
     private final EventBus events;
     private final AuditService audit;
     private final ProcurementBudgetService budgets;
+    private final ApprovalsService approvals;
     private final TransactionTemplate tx;
 
     public PurchaseRequestsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
-            ProcurementBudgetService budgets, PlatformTransactionManager txm) {
+            ProcurementBudgetService budgets, ApprovalsService approvals, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.budgets = budgets;
+        this.approvals = approvals;
         this.sequence = sequence;
         this.events = events;
         this.audit = audit;
@@ -168,8 +178,15 @@ public class PurchaseRequestsService {
             throw ApiException.badRequest("Cannot submit PR in status " + pr.get("status"));
         }
         Map<String, Object> updated = tx.execute(st -> {
-            budgets.enforce(budgetDoc(pr));
-            return update(id, "status = 'submitted'");
+            ProcurementBudgetService.Doc doc = budgetDoc(pr);
+            budgets.enforce(doc);
+            Map<String, Object> submitted = update(id, "status = 'submitted'");
+            BigDecimal value = doc.lines().stream().map(ProcurementBudgetService.DocLine::amount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            approvals.requestApproval(APPROVAL_ENTITY, id, ProcurementSql.defined("amount", JsNumbers.js(value),
+                    "requestNumber", pr.get("requestNumber"), "branchId", doc.branchId(), "departmentId",
+                    doc.departmentId(), "createdBy", user()), null);
+            return submitted;
         });
         audit.record(AuditInput.of("PurchaseRequest", id, "update", null, Obj.of("status", "submitted")));
         events.publish("purchase_request.submitted", Obj.of("organizationId", org(), "requestId", id));
@@ -193,17 +210,36 @@ public class PurchaseRequestsService {
         return row == null ? null : (String) row.get("departmentId");
     }
 
-    /** submitted → approved. */
+    /** submitted → approved, or the next step of the approval workflow when one is running. */
     public Map<String, Object> approve(String id) {
         Map<String, Object> pr = requireOwned(id);
         if (!"submitted".equals(pr.get("status"))) {
             throw ApiException.badRequest("Cannot approve PR in status " + pr.get("status"));
         }
+        return tx.execute(st -> {
+            Map<String, Object> request = latestRequest(id);
+            if (request == null) {
+                return markApproved(id, user());
+            }
+            String status = (String) request.get("status");
+            if ("pending".equals(status)) {
+                approvals.decide((String) request.get("id"), "approved", null);
+                status = (String) latestRequest(id).get("status");
+            }
+            return switch (status) {
+                case "approved" -> markApproved(id, user());
+                case "rejected" -> markRejected(id, lastDecision((String) request.get("id")).get("comment"));
+                default -> requireOwned(id);
+            };
+        });
+    }
+
+    private Map<String, Object> markApproved(String id, String approverId) {
         Map<String, Object> updated = update(id, "status = 'approved', \"approvedAt\" = " + NOW + ", \"approvedById\" = ?",
-                user());
+                approverId);
         audit.record(AuditInput.of("PurchaseRequest", id, "approve", null, Obj.of("status", "approved")));
         events.publish("purchase_request.approved", ProcurementSql.defined("organizationId", org(), "requestId", id,
-                "approverId", user()));
+                "approverId", approverId));
         return updated;
     }
 
@@ -213,9 +249,60 @@ public class PurchaseRequestsService {
         if (!List.of("submitted", "draft").contains(pr.get("status"))) {
             throw ApiException.badRequest("Cannot reject PR in status " + pr.get("status"));
         }
+        return tx.execute(st -> {
+            Map<String, Object> request = latestRequest(id);
+            if (request != null && "pending".equals(request.get("status"))) {
+                approvals.decide((String) request.get("id"), "rejected", reason);
+            }
+            return markRejected(id, reason);
+        });
+    }
+
+    private Map<String, Object> markRejected(String id, Object comment) {
+        String reason = comment == null ? "" : comment.toString();
         Map<String, Object> updated = update(id, "status = 'rejected', \"rejectedReason\" = ?", reason);
         events.publish("purchase_request.rejected", Obj.of("organizationId", org(), "requestId", id, "reason", reason));
         return updated;
+    }
+
+    /**
+     * Apply a decision taken in the approvals inbox ({@code approval.decided}, delivered at least once). A request
+     * no longer waiting is left alone.
+     */
+    public void applyDecision(String id, boolean approved, String approvalRequestId) {
+        Map<String, Object> pr = find(id);
+        if (pr == null || !"submitted".equals(pr.get("status"))) {
+            return;
+        }
+        Map<String, Object> decision = lastDecision(approvalRequestId);
+        tx.executeWithoutResult(st -> {
+            if (approved) {
+                markApproved(id, (String) decision.get("approverId"));
+            } else {
+                markRejected(id, decision.get("comment"));
+            }
+        });
+    }
+
+    /** The approval request of a purchase request with its decisions; {@code null} when it never needed one. */
+    public Map<String, Object> approval(String id) {
+        requireOwned(id);
+        return approvals.latestRequest(APPROVAL_ENTITY, id);
+    }
+
+    /** The most recent approval request: {@code {id, status}}. */
+    private Map<String, Object> latestRequest(String id) {
+        return SqlRows.one(jdbc.sql("SELECT id, status::text AS status FROM \"ApprovalRequest\" WHERE \"organizationId\""
+                + " = ? AND \"entityType\" = ? AND \"entityId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1")
+                .params(org(), APPROVAL_ENTITY, id));
+    }
+
+    /** Who decided last and what they said. */
+    private Map<String, Object> lastDecision(String approvalRequestId) {
+        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT \"approverId\", comment FROM \"ApprovalDecision\" WHERE"
+                + " \"requestId\" = ? AND \"organizationId\" = ? ORDER BY \"decidedAt\" DESC LIMIT 1")
+                .params(approvalRequestId, org()));
+        return row != null ? row : Obj.of("approverId", null, "comment", null);
     }
 
     /** Hard delete of a draft. */

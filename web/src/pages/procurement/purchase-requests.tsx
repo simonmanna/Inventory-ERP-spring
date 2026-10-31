@@ -12,6 +12,29 @@ import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
+interface ApprovalState {
+  id: string;
+  status: string;
+  currentStep: number;
+}
+
+/** Where a submitted request stands in the approval workflow; nothing when no workflow applied. */
+function ApprovalProgress({ id }: { id: string }) {
+  const state = useQuery<ApprovalState | null>({
+    queryKey: ['purchase-request-approval', id],
+    retry: false,
+    queryFn: async () => (await api.get(`/procurement/purchase-requests/${id}/approval`)).data || null,
+  });
+  if (!state.data || state.data.status !== 'pending') return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {tx('Waiting for approval, step {{step}}', { step: state.data.currentStep })}
+      {' · '}
+      <Link className="text-primary underline" to="/approvals">{tx('Open approvals')}</Link>
+    </p>
+  );
+}
+
 interface PurchaseRequest {
   id: string;
   requestNumber: string;
@@ -36,7 +59,9 @@ export function PurchaseRequestsPage() {
     onSuccess: () => {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['purchase-requests'] });
+      qc.invalidateQueries({ queryKey: ['purchase-request-approval'] });
     },
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
   const reject = useMutation({
     mutationFn: async () => (await api.patch(`/procurement/purchase-requests/${rejectingId}/reject`, { reason: rejectReason })).data,
@@ -46,6 +71,7 @@ export function PurchaseRequestsPage() {
       setRejectReason('');
       qc.invalidateQueries({ queryKey: ['purchase-requests'] });
     },
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
   return (
@@ -91,6 +117,7 @@ export function PurchaseRequestsPage() {
                 <span>{tx('Created')} {new Date(pr.createdAt).toLocaleDateString()}</span>
                 <span>{pr._count?.orders ?? 0} {tx('PO(s)')}</span>
               </div>
+              {pr.status === 'submitted' && <ApprovalProgress id={pr.id} />}
               <div className="flex flex-wrap gap-1 border-t pt-2">
                 {pr.status === 'draft' && (
                   <Button size="sm" onClick={() => act.mutate({ id: pr.id, action: 'submit' })}>

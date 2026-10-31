@@ -370,3 +370,5 @@ PROC-3, migration `V51__procurement_budgets_delegation.sql`:
 
 - `/procurement/budgets`: create a block budget of 1,000 for a branch, activate. Submit a PR of 600: Reserved shows 600. A 500 purchase for that branch shows an alert and is refused. Convert the PR to a purchase: Committed 600, Reserved 0.
 - `/procurement/delegations`: add a Central rule for a branch. A user without `procurement_delegation:central` cannot raise a purchase there. Add a Delegated rule with a limit: the delegate can buy up to it.
+
+PROC-5 (no migration): add a workflow for Purchase Requests, then raise and submit a PR at `/procurement/purchase-requests/new`. The requester cannot approve it. Each step moves on Approve or in `/approvals`, the card shows the step, and the last approval sets it to approved. Reject keeps the reason.

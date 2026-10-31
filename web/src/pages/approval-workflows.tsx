@@ -85,6 +85,7 @@ function fmtBand(min: number | null, max: number | null): string {
 
 const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
   Procurement: [
+    { key: 'purchase_request', label: tx('Purchase Requests') },
     { key: 'purchase_order', label: tx('Purchase Orders') },
     { key: 'supplier_bill_approval', label: tx('Supplier Bill Approval') },
     { key: 'goods_receipt', label: tx('Goods Receipts') },

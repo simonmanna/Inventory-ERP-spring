@@ -172,3 +172,9 @@ Status: built, not compiled, not run. Tests in `ProcurementControlIT`. Decisions
 - `ProcurementBudgetService.enforce` locks the active budget rows in id order inside the document's transaction. A refusal is a 409 with code `PROCUREMENT_BUDGET_EXCEEDED`.
 - `POST /procurement/purchase-orders` and `POST /procurement/purchase-requests` accept an optional `departmentId`. Responses do not change.
 - The `purchase_order` approval snapshot now carries `branchId` and `departmentId`, so CTRL-1 conditions apply.
+
+## Purchase request approval (PROC-5)
+
+Status: built, not compiled, not run. Tests in `ProcurementControlIT`.
+
+Entity type `purchase_request`, raised on submit with snapshot `amount` (estimated value, base currency), `branchId`, `departmentId`. `PATCH .../approve` and `.../reject` decide the pending request through the engine. `PurchaseRequestApprovalSubscriber` applies inbox decisions, idempotently. `GET .../{id}/approval` returns the latest request with its decisions, or an empty body when no workflow applied. Without a workflow nothing changes.

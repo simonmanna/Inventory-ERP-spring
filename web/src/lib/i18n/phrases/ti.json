@@ -10686,5 +10686,6 @@
   "The end date is before the start date": "ዕለት መወዳእታ ቅድሚ ዕለት መጀመሪ እዩ",
   "Warn at %": "ኣብ % ኣጠንቅቕ",
   "Warns only": "ምጥንቃቕ ጥራይ",
-  "When a document goes over": "ሰነድ ምስ ዝሓልፍ"
+  "When a document goes over": "ሰነድ ምስ ዝሓልፍ",
+  "Waiting for approval, step {{step}}": "ፍቓድ ይጽበ፡ ስጉምቲ {{step}}"
 }
