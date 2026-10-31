@@ -70,8 +70,8 @@ public class VendorBillService {
     private final TransactionTemplate newTx;
 
     public VendorBillService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
-            ThreeWayMatchService twm, ApprovalsService approvals, ControlledActionService controlled, AuditService audit,
-            PlatformTransactionManager txm) {
+            ThreeWayMatchService twm, ApprovalsService approvals, ControlledActionService controlled,
+            AuditService audit, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.events = events;
         this.workflow = workflow;
@@ -347,7 +347,8 @@ public class VendorBillService {
         ControlledActionService.Outcome outcome = controlled.authorize(new ControlledActionService.Action(
                 SegregationOfDutiesService.SUPPLIER_BILL_APPROVAL, "VendorBill", id,
                 total == null ? null : new BigDecimal(String.valueOf(total)), (String) doc.get("branchId"), null,
-                java.util.Arrays.asList((String) doc.get("createdBy"), (String) doc.get("updatedBy")), Obj.of("documentNumber", doc.get("documentNumber"))));
+                java.util.Arrays.asList((String) doc.get("createdBy"), (String) doc.get("updatedBy")),
+                Obj.of("documentNumber", doc.get("documentNumber"))));
         if (!outcome.allowed()) {
             throw ApiException.badRequest("Approval required before posting bill " + doc.get("documentNumber")
                     + ". Pending request " + outcome.approvalRequestId() + ".");
