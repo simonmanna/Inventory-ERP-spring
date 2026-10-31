@@ -10717,5 +10717,15 @@
   "Review deleted": "Okukebera kusaziddwamu",
   "Review saved": "Okukebera kuterekeddwa",
   "Review updated": "Okukebera kukyusiddwa",
-  "Scores, ratings and notes for each review period.": "Obubonero, okugereka n'ebiwandiiko ku buli kiseera ky'okukebera."
+  "Scores, ratings and notes for each review period.": "Obubonero, okugereka n'ebiwandiiko ku buli kiseera ky'okukebera.",
+  "An employee's split beats the department's. Without any split, payroll posts one salary line as before.": "Enjawulo y'omukozi esinga ey'ekitongole. Awatali njawulo, omusaala gusasulwa ku lunyiriri lumu nga bwe kyali.",
+  "Cost center": "Ekitongole ky'ensaasaanya",
+  "Cost split": "Okugabanya ensaasaanya",
+  "Cost split saved": "Okugabanya ensaasaanya kuterekeddwa",
+  "Could not load the report": "Tekisobose kuleeta lipoota",
+  "Could not save the cost split": "Tekisobose kuterekera kugabanya nsaasaanya",
+  "No approved payroll in this range.": "Tewali musaala gukkiriziddwa mu kiseera kino.",
+  "Payroll cost by department and cost centre": "Ensaasaanya y'emisaala mu kitongole n'ekifo ky'ensaasaanya",
+  "Pick the payroll periods to report on.": "Londa ebiseera by'emisaala okukolako lipoota.",
+  "Unallocated": "Tekigabanyiziddwa"
 }

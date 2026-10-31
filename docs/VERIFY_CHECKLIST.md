@@ -378,3 +378,11 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 
 - [ ] `/hr/reviews`: create a review with a rating, filter by employee, submit and approve it, edit it, delete it.
 - [ ] The menu entry shows only with `hr:performance`.
+
+## Phase 4 HR-5 — payroll cost allocation (built, not run)
+
+- [ ] `/hr/payroll/settings` → Cost allocation: split a department 100 % to one cost centre, one employee 50/50 across two.
+- [ ] Approve a run: the journal shows salaries debits per cost centre and branch, debits = credits.
+- [ ] The report on the same tab shows the amounts by department and cost centre. Reversing the run empties it.
+- [ ] With no splits at all, the journal has one salaries debit, as before.
+- [ ] Accounting: a cost-centre report for the period shows the same totals.

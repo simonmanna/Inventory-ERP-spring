@@ -104,6 +104,14 @@ active rule the calculation is the Nest one. `overtimeHours` is an Int column: w
 
 Screen `/hr/reviews` over the existing `/hr/reviews` routes; no backend change. `useHrReviews` also takes `take` / `skip`.
 
+### HR-5 payroll cost allocation (built, unverified)
+
+`HrPayrollConfigController` adds `GET/PUT /hr/payroll/cost-allocation-rules`, `GET /hr/payroll/runs/{id}/cost-allocation`,
+`GET /hr/payroll/cost-report?from&to` (`hr:payroll`). `HrPayrollCostService`, pure `HrPayrollCostAllocator`, migration
+V93 (`HrCostAllocationRule`, `HrPayrollCostLine`). `HrPayrollService.approveRun` calls `salaryDebits`: with rules the
+salary debit becomes one line per (cost centre, branch), summing exactly to the old amount; without rules it is the Nest
+line. Reversal deletes the run's cost lines; the journal reversal copies the tags.
+
 ## Status
 
 140/140 routes (`HrController`, 11 services in `com.inventoryerp.hr.application`).

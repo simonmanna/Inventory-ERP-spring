@@ -10717,5 +10717,15 @@
   "Review deleted": "Tathmini imefutwa",
   "Review saved": "Tathmini imehifadhiwa",
   "Review updated": "Tathmini imesasishwa",
-  "Scores, ratings and notes for each review period.": "Alama, ukadiriaji na maelezo kwa kila kipindi cha tathmini."
+  "Scores, ratings and notes for each review period.": "Alama, ukadiriaji na maelezo kwa kila kipindi cha tathmini.",
+  "An employee's split beats the department's. Without any split, payroll posts one salary line as before.": "Mgawanyo wa mfanyakazi hushinda ule wa idara. Bila mgawanyo, mishahara huingizwa kama mstari mmoja kama awali.",
+  "Cost center": "Kituo cha gharama",
+  "Cost split": "Mgawanyo wa gharama",
+  "Cost split saved": "Mgawanyo wa gharama umehifadhiwa",
+  "Could not load the report": "Imeshindwa kupakia ripoti",
+  "Could not save the cost split": "Imeshindwa kuhifadhi mgawanyo wa gharama",
+  "No approved payroll in this range.": "Hakuna mishahara iliyoidhinishwa katika kipindi hiki.",
+  "Payroll cost by department and cost centre": "Gharama za mishahara kwa idara na kituo cha gharama",
+  "Pick the payroll periods to report on.": "Chagua vipindi vya mishahara vya kuripoti.",
+  "Unallocated": "Haijagawiwa"
 }

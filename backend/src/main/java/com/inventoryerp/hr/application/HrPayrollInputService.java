@@ -207,6 +207,18 @@ public class HrPayrollInputService {
                 + " AND kind = 'earning' GROUP BY \"debitAccountId\" ORDER BY \"debitAccountId\"").params(runId, org()));
     }
 
+    /** What the run's redirected earnings take from each employee's salary debit (HR-5 cost allocation). */
+    Map<String, BigDecimal> redirectedByEmployee(String runId) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"employeeId\", sum(amount) AS amount FROM"
+                + " \"HrPayrollInput\" WHERE \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending' AND"
+                + " \"debitAccountId\" IS NOT NULL AND kind = 'earning' GROUP BY \"employeeId\"")
+                .params(runId, org()))) {
+            out.put((String) r.get("employeeId"), SqlRows.dec(r, "amount"));
+        }
+        return out;
+    }
+
     /**
      * Credit accounts and amounts of the run's deduction inputs (credited by the payroll journal; a null account is
      * the "other deductions" contra of salaries expense). Empty without deductions.

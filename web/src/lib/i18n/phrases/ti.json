@@ -10717,5 +10717,15 @@
   "Review deleted": "ገምጋም ተደምሲሱ",
   "Review saved": "ገምጋም ተዓቂቡ",
   "Review updated": "ገምጋም ተመሓይሹ",
-  "Scores, ratings and notes for each review period.": "ነጥብታት፣ ደረጃታትን መዘኻኸርታትን ንነፍሲ ወከፍ እዋን ገምጋም።"
+  "Scores, ratings and notes for each review period.": "ነጥብታት፣ ደረጃታትን መዘኻኸርታትን ንነፍሲ ወከፍ እዋን ገምጋም።",
+  "An employee's split beats the department's. Without any split, payroll posts one salary line as before.": "ምቅላዕ ሰራሕተኛ ካብ ናይ ክፍሊ ይበልጽ። ብዘይ ምቅላዕ፣ ደሞዝ ከምቲ ቀደም ብሓደ መስመር ይምዝገብ።",
+  "Cost center": "ማእከል ወጻኢ",
+  "Cost split": "ምቅላዕ ወጻኢ",
+  "Cost split saved": "ምቅላዕ ወጻኢ ተዓቂቡ",
+  "Could not load the report": "ጸብጻብ ምጽዓን ኣይተኻእለን",
+  "Could not save the cost split": "ምቅላዕ ወጻኢ ምዕቃብ ኣይተኻእለን",
+  "No approved payroll in this range.": "ኣብዚ እዋን ዝጸደቐ ደሞዝ የለን።",
+  "Payroll cost by department and cost centre": "ወጻኢ ደሞዝ ብክፍልን ማእከል ወጻእን",
+  "Pick the payroll periods to report on.": "ጸብጻብ ዝግበረሎም እዋናት ደሞዝ ምረጽ።",
+  "Unallocated": "ዘይተመደበ"
 }

@@ -75,15 +75,18 @@ public class HrPayrollService {
     private final AccountDeterminationService accounts;
     private final HrPayrollInputService payrollInputs;
     private final HrOvertimeService overtime;
+    private final HrPayrollCostService costs;
 
     public HrPayrollService(HrDb hr, SequenceService seq, PostingService posting,
-            AccountDeterminationService accounts, HrPayrollInputService payrollInputs, HrOvertimeService overtime) {
+            AccountDeterminationService accounts, HrPayrollInputService payrollInputs, HrOvertimeService overtime,
+            HrPayrollCostService costs) {
         this.hr = hr;
         this.seq = seq;
         this.posting = posting;
         this.accounts = accounts;
         this.payrollInputs = payrollInputs;
         this.overtime = overtime;
+        this.costs = costs;
     }
 
     private static String invalid(String what, Object v) {
@@ -689,8 +692,10 @@ public class HrPayrollService {
             // Additive (ADR-S009 §2): payroll inputs with a debit account (another module's clearing liability) are
             // debited there instead of salaries expense; without such inputs the journal is the Nest one.
             List<Map<String, Object>> redirected = payrollInputs.redirectedDebits(id);
+            // Additive (HR-5): with cost allocation rules the salary debit is split by cost centre and branch; without
+            // rules it stays one line. Either way the run's cost lines are kept for the department report.
             if (redirected.isEmpty()) {
-                lines.add(PostingRequest.Line.debit(salaryExpense, decOf(gross), "Salaries & wages"));
+                salaryDebits(lines, salaryExpense, decOf(gross), id, runItems);
             } else {
                 BigDecimal moved = BigDecimal.ZERO;
                 for (Map<String, Object> r : redirected) {
@@ -698,7 +703,7 @@ public class HrPayrollService {
                 }
                 BigDecimal rest = decOf(gross).subtract(moved);
                 if (rest.signum() > 0) {
-                    lines.add(PostingRequest.Line.debit(salaryExpense, rest, "Salaries & wages"));
+                    salaryDebits(lines, salaryExpense, rest, id, runItems);
                 }
                 for (Map<String, Object> r : redirected) {
                     lines.add(PostingRequest.Line.debit((String) r.get("debitAccountId"), SqlRows.dec(r, "amount"),
@@ -757,6 +762,21 @@ public class HrPayrollService {
         });
     }
 
+    /** The salary expense debit of an approved run, split by {@link HrPayrollCostService} when rules exist. */
+    private void salaryDebits(List<PostingRequest.Line> lines, String salaryExpense, BigDecimal amount, String runId,
+            List<Map<String, Object>> runItems) {
+        List<HrPayrollCostAllocator.Debit> debits = costs.allocate(runId, runItems, amount,
+                payrollInputs.redirectedByEmployee(runId));
+        if (debits.isEmpty()) {
+            lines.add(PostingRequest.Line.debit(salaryExpense, amount, "Salaries & wages"));
+            return;
+        }
+        for (HrPayrollCostAllocator.Debit d : debits) {
+            lines.add(new PostingRequest.Line(salaryExpense, d.amount(), null, null, "Salaries & wages", d.branchId(),
+                    d.costCenterId(), null));
+        }
+    }
+
     private static Map<String, Object> itemFor(List<Map<String, Object>> items, Object employeeId) {
         for (Map<String, Object> i : items) {
             if (i.get("employeeId").equals(employeeId)) {
@@ -804,6 +824,7 @@ public class HrPayrollService {
                         + (dto.get("reason") == null ? "payroll run reversal" : PosSql.jsString(dto.get("reason"))));
             }
             payrollInputs.reopenRun(id);
+            costs.clearRun(id);
             Map<String, Object> reversed = hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
                     "glPosted", false, "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "cancel", Obj.of("status", status,

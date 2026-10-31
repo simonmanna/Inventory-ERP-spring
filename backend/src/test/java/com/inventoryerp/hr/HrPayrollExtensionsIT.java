@@ -15,7 +15,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
-/** Payroll additions: configurable overtime (HR-3) on the real payroll engine. */
+/** Payroll additions on the real payroll engine: configurable overtime (HR-3) and cost allocation (HR-5). */
 class HrPayrollExtensionsIT extends ApiTestSupport {
 
     String suffix() {
@@ -35,6 +35,8 @@ class HrPayrollExtensionsIT extends ApiTestSupport {
     void isolated(Consumer<String> body) {
         List<String> parked = jdbc.sql("UPDATE \"HrEmployee\" SET \"isActive\" = false WHERE \"organizationId\" = ?"
                 + " AND \"isActive\" = true RETURNING id").param(demoOrg).query(String.class).list();
+        List<String> components = jdbc.sql("UPDATE \"HrPayrollComponent\" SET \"isActive\" = false WHERE"
+                + " \"organizationId\" = ? AND \"isActive\" = true RETURNING id").param(demoOrg).query(String.class).list();
         jdbc.sql("UPDATE \"HrOvertimeRule\" SET \"isActive\" = false WHERE \"organizationId\" = ?").param(demoOrg)
                 .update();
         try {
@@ -42,6 +44,8 @@ class HrPayrollExtensionsIT extends ApiTestSupport {
         } finally {
             jdbc.sql("UPDATE \"HrEmployee\" SET \"isActive\" = true WHERE id = ANY(?)")
                     .param(parked.toArray(String[]::new)).update();
+            jdbc.sql("UPDATE \"HrPayrollComponent\" SET \"isActive\" = true WHERE id = ANY(?)")
+                    .param(components.toArray(String[]::new)).update();
             jdbc.sql("UPDATE \"HrOvertimeRule\" SET \"isActive\" = false WHERE \"organizationId\" = ?").param(demoOrg)
                     .update();
         }
@@ -99,6 +103,90 @@ class HrPayrollExtensionsIT extends ApiTestSupport {
         });
     }
 
+    String costCenter(String s, String name) {
+        return ok(201, "POST", "/cost-centers", Map.of("code", name + s, "name", name)).get("id").asString();
+    }
+
+    @Test
+    @DisplayName("a split must add up to 100, name real cost centres, and can be cleared")
+    void splitValidation() {
+        String s = suffix();
+        String emp = ok(201, "POST", "/hr/employees", Map.of("firstName", "Split")).get("id").asString();
+        String cc = costCenter(s, "V");
+        String other = costCenter(s, "W");
+        assertThat(as("PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "employee", "targetId", emp, "lines",
+                List.of(Map.of("costCenterId", cc, "percent", 60)))).status()).isEqualTo(400);
+        assertThat(as("PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "employee", "targetId", emp, "lines",
+                List.of(Map.of("costCenterId", UUID.randomUUID().toString(), "percent", 100)))).status()).isEqualTo(404);
+        assertThat(as("PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "nope", "targetId", emp)).status())
+                .isEqualTo(400);
+        JsonNode saved = ok(200, "PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "employee", "targetId", emp,
+                "lines", List.of(Map.of("costCenterId", cc, "percent", 60), Map.of("costCenterId", other, "percent", 40))));
+        assertThat(saved.get("rows")).hasSize(2);
+        JsonNode cleared = ok(200, "PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "employee", "targetId", emp,
+                "lines", List.of()));
+        assertThat(cleared.get("rows")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("with rules the salary debit splits by cost centre and branch, balances, and reverses cleanly")
+    void allocatedJournal() {
+        isolated(s -> {
+            jdbc.sql("DELETE FROM \"HrCostAllocationRule\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+            String dept = ok(201, "POST", "/hr/departments", Map.of("code", "q" + s, "name", "Quarry " + s)).get("id")
+                    .asString();
+            String quarry = costCenter(s, "Q");
+            String plant = costCenter(s, "P");
+            String a = ok(201, "POST", "/hr/employees", Map.of("firstName", "A", "baseSalary", 1000000, "departmentId",
+                    dept)).get("id").asString();
+            String b = ok(201, "POST", "/hr/employees", Map.of("firstName", "B", "baseSalary", 500000, "departmentId",
+                    dept)).get("id").asString();
+            ok(200, "PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "department", "targetId", dept, "lines",
+                    List.of(Map.of("costCenterId", quarry, "percent", 100))));
+            ok(200, "PUT", "/hr/payroll/cost-allocation-rules", Map.of("scope", "employee", "targetId", b, "lines",
+                    List.of(Map.of("costCenterId", quarry, "percent", 50), Map.of("costCenterId", plant, "percent", 50))));
+            LocalDate month = monthStartingMonday().plusYears(1).withDayOfMonth(1);
+            String runId = calculatedRun(month, s);
+            String journal = ok(201, "POST", "/hr/payroll/runs/" + runId + "/approve", null).get("journalEntryId")
+                    .asString();
+            String salaries = jdbc.sql("SELECT \"accountId\" FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND"
+                    + " \"costCenterId\" = ? LIMIT 1").params(journal, quarry).query(String.class).single();
+            assertThat(jdbc.sql("SELECT sum(debit) FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND \"accountId\" = ?"
+                    + " AND \"costCenterId\" = ?").params(journal, salaries, quarry).query(BigDecimal.class).single())
+                    .isEqualByComparingTo("1250000");
+            assertThat(jdbc.sql("SELECT sum(debit) FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND \"accountId\" = ?"
+                    + " AND \"costCenterId\" = ?").params(journal, salaries, plant).query(BigDecimal.class).single())
+                    .isEqualByComparingTo("250000");
+            assertThat(jdbc.sql("SELECT sum(debit) - sum(credit) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?")
+                    .param(journal).query(BigDecimal.class).single()).isEqualByComparingTo("0");
+            JsonNode report = ok(200, "GET", "/hr/payroll/runs/" + runId + "/cost-allocation", null);
+            assertThat(report.get("rows")).hasSize(2);
+            JsonNode byPeriod = ok(200, "GET", "/hr/payroll/cost-report?from=" + month + "&to="
+                    + month.plusMonths(1), null);
+            assertThat(byPeriod.get("rows").toString()).contains("Quarry " + s);
+            ok(201, "POST", "/hr/payroll/runs/" + runId + "/reverse", Map.of("reason", "Wrong month"));
+            assertThat(ok(200, "GET", "/hr/payroll/runs/" + runId + "/cost-allocation", null).get("rows")).isEmpty();
+            jdbc.sql("DELETE FROM \"HrCostAllocationRule\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+        });
+    }
+
+    @Test
+    @DisplayName("without rules the journal keeps one untagged salary line, and the report still shows the department")
+    void noRulesKeepsTheJournal() {
+        isolated(s -> {
+            jdbc.sql("DELETE FROM \"HrCostAllocationRule\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+            ok(201, "POST", "/hr/employees", Map.of("firstName", "Plain", "baseSalary", 700000));
+            String runId = calculatedRun(monthStartingMonday().plusYears(2).withDayOfMonth(1), s);
+            String journal = ok(201, "POST", "/hr/payroll/runs/" + runId + "/approve", null).get("journalEntryId")
+                    .asString();
+            assertThat(jdbc.sql("SELECT count(*) FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND debit > 0")
+                    .param(journal).query(Long.class).single()).isEqualTo(1L);
+            assertThat(jdbc.sql("SELECT count(*) FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND \"costCenterId\""
+                    + " IS NOT NULL").param(journal).query(Long.class).single()).isZero();
+            assertThat(ok(200, "GET", "/hr/payroll/runs/" + runId + "/cost-allocation", null).get("rows")).hasSize(1);
+        });
+    }
+
     @Test
     @DisplayName("rule validation")
     void validation() {
@@ -118,6 +206,6 @@ class HrPayrollExtensionsIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix")
     void authorization() {
-        assertThat(assertAuthorizationMatrix(HrPayrollConfigController.class)).isEqualTo(4);
+        assertThat(assertAuthorizationMatrix(HrPayrollConfigController.class)).isEqualTo(8);
     }
 }
