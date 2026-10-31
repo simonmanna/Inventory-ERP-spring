@@ -340,6 +340,12 @@ Nothing here has been compiled or run. Run `ManufacturingCostingIT`, `CostAbsorp
 
 **Doubts**: absorption must be pressed before the stages close; margin is an estimate, not booked COGS.
 
+## MFG-3 — Phase 2 end-to-end tests
+
+Written, never run. Run `Phase2ExitIT`, `PrecastManufacturingIT.actualCostPerAcceptableBlock` and
+`MultiStageProductionIT.multiLevelTraceability`. A failure may be the test's fixture rather than the product. The blast in
+exit (a) is planned, not fired.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use

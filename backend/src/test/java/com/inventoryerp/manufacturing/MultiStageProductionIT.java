@@ -547,6 +547,69 @@ class MultiStageProductionIT extends MfgTestSupport {
                 .get("message").asString()).startsWith("Child orders can only be created for a draft or confirmed");
     }
 
+    static JsonNode findNode(JsonNode node, String kind, String batch) {
+        for (JsonNode c : node.get("children")) {
+            if (kind.equals(c.get("kind").asString()) && (batch == null || batch.equals(c.path("batchNumber").asString()))) {
+                return c;
+            }
+        }
+        throw new AssertionError("no " + kind + " " + batch + " under " + node.get("label"));
+    }
+
+    @Test
+    @DisplayName("Phase 2 exit (c): multi-level order with an intermediate, then the traceability report walks it back")
+    void multiLevelTraceability() {
+        String cement = product("TRCEM");
+        String mix = product("TRMIX");
+        String kerb = product("TRKERB");
+        String mixLot = "MIX-" + suffix();
+        String kerbLot = "KERB-" + suffix();
+        stockIn(bakery, cement, 100, 3);
+        bom(mix, cement, 1, 2, Map.of());
+        String kerbBom = activeBom(kerb, 1, List.of(line(mix, 1)), null);
+
+        JsonNode parent = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", kerbBom, "plannedQty", 10,
+                "locationId", bakery, "outputLocationId", warehouse));
+        String parentId = parent.get("id").asString();
+        JsonNode tree = ok(201, "POST", "/manufacturing/production-orders/" + parentId + "/child-orders", Map.of());
+        assertThat(tree.get("children")).hasSize(1);
+        JsonNode childNode = tree.get("children").get(0);
+        String childId = childNode.get("id").asString();
+        assertThat(num(childNode.get("plannedQty"))).isEqualByComparingTo("10");
+
+        ok(201, "POST", "/manufacturing/production-orders/" + childId + "/confirm", null);
+        ok(201, "POST", "/manufacturing/production-orders/" + childId + "/start", Map.of());
+        ok(201, "POST", "/manufacturing/production-orders/" + childId + "/complete", Map.of("qtyProduced", 10,
+                "batchNumber", mixLot));
+        assertThat(onHand(mix, bakery)).isEqualByComparingTo("10");
+
+        ok(201, "POST", "/manufacturing/production-orders/" + parentId + "/confirm", null);
+        String lineId = ok(200, "GET", "/manufacturing/production-orders/" + parentId, null).get("materials").get(0)
+                .get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + parentId + "/start", Map.of("materials", List.of(Map.of(
+                "lineId", lineId, "qtyConsumed", 10, "batchNumber", mixLot))));
+        ok(201, "POST", "/manufacturing/production-orders/" + parentId + "/complete", Map.of("qtyProduced", 10,
+                "batchNumber", kerbLot));
+        assertThat(onHand(kerb, warehouse)).isEqualByComparingTo("10");
+        assertThat(ok(200, "GET", "/manufacturing/production-orders/" + parentId + "/order-tree", null)
+                .get("childrenDone").asInt()).isEqualTo(1);
+
+        JsonNode root = ok(200, "GET", "/quality/traceability?productId=" + kerb + "&batchNumber=" + kerbLot
+                + "&direction=backward", null).get("root");
+        assertThat(root.get("kind").asString()).isEqualTo("batch");
+        JsonNode kerbOrder = findNode(root, "production_order", null);
+        assertThat(kerbOrder.get("label").asString()).isEqualTo(parent.get("orderCode").asString());
+        JsonNode mixBatch = findNode(kerbOrder, "batch", mixLot);
+        assertThat(mixBatch.get("productId").asString()).isEqualTo(mix);
+        JsonNode mixOrder = findNode(mixBatch, "production_order", null);
+        assertThat(mixOrder.get("label").asString()).isEqualTo(childNode.get("orderCode").asString());
+        assertThat(findNode(mixOrder, "material", null).get("untracked").asBoolean()).isTrue();
+
+        JsonNode forward = ok(200, "GET", "/quality/traceability?productId=" + mix + "&batchNumber=" + mixLot
+                + "&direction=forward", null).get("root");
+        assertThat(forward.toString()).contains(kerbLot);
+    }
+
     @Test
     @DisplayName("concurrency: two simultaneous manual issues of the same scarce material — one wins, stock never negative")
     void concurrentIssue() throws Exception {

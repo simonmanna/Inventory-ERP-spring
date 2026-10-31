@@ -50,7 +50,9 @@ One row per list item of [`construction-materials-erp.md`](construction-material
 - **2.5 advanced planning & scheduling** and **2.8 manufacturing costing & analytics** were never built, and there is
   no `manufacturing-advanced-complete` tag. Bullets that rest on them are `present-partial` where older manufacturing
   code covers part of the bullet, and `missing` where it covers none.
-- **Phase 2 exit ITs**: end-to-end (a) blast to cost per tonne does not exist: no test touches both
+- **Phase 2 exit ITs (MFG-3, written, not run)**: (a) `Phase2ExitIT.quarryToSizedStockpiles`, (b)
+  `PrecastManufacturingIT.actualCostPerAcceptableBlock`, (c) `MultiStageProductionIT.multiLevelTraceability`. The blast in
+  (a) stays planned because firing needs the explosives flow `QuarryIT` covers. Before MFG-3: end-to-end (a) blast to cost per tonne did not exist: no test touches both
   `/quarry/extraction-logs` and `/manufacturing/crushing/runs`. (b) `PrecastManufacturingIT.endToEnd` covers most of the
   block flow; check it against the brief. (c) `MultiStageProductionIT.multiLevel` covers the multi-level order; the
   traceability report step needs checking against the brief.
@@ -258,7 +260,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 185 | Tracking raw stone by source, type, grade, or location. | `present-verified` | quarry · `/quarry/materials` (rockType, grade), `/stockpiles`, `/rom-stock` · `/quarry/materials`, `/quarry/stockpiles` · QuarryIT.masterData/extractionIntoRomStock | — |
 | 186 | Recording excavator and loader usage. | `present-verified` | quarry · extraction resource `kind=equipment`, `vehicleId`, `/quarry/equipment-rates` · ExtractionEntryPage · QuarryIT.extractionIntoRomStock | — |
 | 187 | Tracking extraction activities by shift and operator. | `present-verified` | quarry · ExtractionLogInput shift + resource `employeeId`, list filter `shift` · `/quarry/extraction` · QuarryIT.extractionIntoRomStock | — |
-| 188 | Monitoring material transferred from extraction areas to crushing plants. | `present-partial` | `/quarry/haulage-trips` destination `crusher` · `/quarry/haulage` · QuarryIT.reverseReleasesEvidence. **No test walks haulage into a crushing run** | Phase 2 E2E (a) (MFG-3) |
+| 188 | Monitoring material transferred from extraction areas to crushing plants. | `present-partial (built, unverified)` | `/quarry/haulage-trips` → extraction log → `/manufacturing/crushing/runs` · Phase2ExitIT.quarryToSizedStockpiles | Test written by MFG-3, not run |
 | 189 | Recording extraction-related fuel, labour, and equipment costs. | `present-partial (built, unverified)` | Actual clock hours, meter energy and fleet cost per hour via `/manufacturing/costing/rates` and `/orders/{id}/absorb` · ManufacturingCostingIT. Payroll actuals not linked (HR-5) | Built by MFG-2, not compiled or run |
 | 190 | Monitoring extraction performance against planned targets. | `present-verified` | quarry · `/quarry/reports/extraction-vs-target` · TargetVariance · `/quarry/reports` · QuarryIT, QuarryCalculatorsTest | — |
 | 191 | Recording material losses and unusable rock. | `present-verified` | quarry · `/quarry/losses`, log loss lines · `/quarry/losses` · QuarryIT.extractionIntoRomStock (overburden, lossCost) | — |

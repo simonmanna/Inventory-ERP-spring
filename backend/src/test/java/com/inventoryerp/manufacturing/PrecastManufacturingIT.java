@@ -270,6 +270,67 @@ class PrecastManufacturingIT extends MfgTestSupport {
     }
 
     @Test
+    @DisplayName("Phase 2 exit (b): order → backflush → pressing → curing → strength QC → release, with actual labour,"
+            + " machine and overhead in the cost per acceptable block")
+    void actualCostPerAcceptableBlock() {
+        Plant p = plant(7);
+        String press = ok(201, "POST", "/manufacturing/work-centers", Map.of("code", "PRS-" + suffix(), "name",
+                "Block press")).get("id").asString();
+        ok(200, "PUT", "/manufacturing/costing/rates/" + press, Map.of("labourRatePerHour", 10, "machineRatePerHour", 20,
+                "overheadRatePerHour", 5));
+        JsonNode qs = ok(201, "POST", "/quality/specifications", Map.of("code", "QS-" + suffix(), "name",
+                "Block strength", "productId", p.block(), "parameters", List.of(Map.of("code", "CS7", "name",
+                        "7-day compressive strength", "kind", "numeric", "unit", "N/mm²", "minValue", 7))));
+        ok(200, "POST", "/quality/specifications/" + qs.get("id").asString() + "/activate", null);
+        ok(201, "POST", "/quality/inspection-plans", Map.of("code", "QP-" + suffix(), "name", "Curing strength",
+                "stage", "in_process", "productId", p.block(), "specificationId", qs.get("id").asString(), "stageKey",
+                p.checkpoint(), "independentRelease", false, "samplingMethod", "fixed", "sampleSize", 1));
+
+        BigDecimal wip0 = balance(wipAccount);
+        String orderId = order(p, 200).get("id").asString();
+        String wo = ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/work-orders/generate", null).get(0)
+                .get("id").asString();
+        ok(200, "PATCH", "/manufacturing/work-orders/" + wo + "/assign", Map.of("workCenterId", press));
+        ok(201, "POST", "/manufacturing/work-orders/" + wo + "/start", null);
+        ok(201, "POST", "/manufacturing/work-orders/" + wo + "/complete", Map.of("labourMins", 240));
+
+        String batchId = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 196, "qtyBroken", 4,
+                "cycles", 20, "lastRun", true, "date", daysAgo(10))).get("batch").get("id").asString();
+        // The pressing stage has closed, so the four hours land on the curing stage: 40 + 80 + 20.
+        JsonNode absorbed = keyed("/manufacturing/costing/orders/" + orderId + "/absorb", null);
+        assertThat(num(absorbed.get("total"))).isEqualByComparingTo("140");
+        assertThat(absorbed.get("skipped")).isEmpty();
+
+        keyed(BASE + "/curing-batches/" + batchId + "/cube", Map.of("qtyGood", 190, "qtySecondGrade", 4, "qtyBroken", 2));
+        String lotId = ok(200, "GET", "/quality/inspection-lots?sourceType=production_order&sourceId=" + orderId, null)
+                .get("data").get(0).get("id").asString();
+        ok(200, "POST", "/quality/inspection-lots/" + lotId + "/results", Map.of("results", List.of(Map.of(
+                "parameterCode", "CS7", "sampleNo", 1, "numericValue", 8.2))));
+        Res rel = call("POST", "/quality/inspection-lots/" + lotId + "/release", Map.of(), key(UUID.randomUUID()
+                .toString()));
+        assertThat(rel.status()).as(rel.raw().body()).isEqualTo(200);
+        drainOutbox();
+        assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("190");
+
+        JsonNode c = ok(200, "GET", BASE + "/orders/" + orderId, null).get("costing");
+        assertThat(num(c.get("materialCost"))).isEqualByComparingTo("1100");
+        assertThat(num(c.get("conversionCost"))).isEqualByComparingTo("140");
+        assertThat(num(c.get("totalCost"))).isEqualByComparingTo("1240");
+        BigDecimal fg = num(c.get("finishedGoodsValue"));
+        assertThat(fg.add(num(c.get("secondGradeValue"))).add(num(c.get("abnormalScrapValue")))).isEqualByComparingTo("1240");
+        BigDecimal perBlock = fg.divide(BigDecimal.valueOf(190), 6, java.math.RoundingMode.HALF_UP);
+        assertThat(num(c.get("costPerAcceptableBlock"))).isEqualByComparingTo(perBlock);
+
+        JsonNode cost = ok(200, "GET", "/manufacturing/costing/orders/" + orderId, null);
+        assertThat(num(cost.get("labourCost"))).isEqualByComparingTo("40");
+        assertThat(num(cost.get("machineCost"))).isEqualByComparingTo("80");
+        assertThat(num(cost.get("overheadCost"))).isEqualByComparingTo("20");
+        assertThat(num(cost.get("precast").get("costPerAcceptableBlock"))).isEqualByComparingTo(perBlock);
+        assertThat(balance(wipAccount)).isEqualByComparingTo(wip0);
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
     @DisplayName("minimum curing: cubing refused before the hold, a manual pass waits (curing) until the job releases")
     void curingHoldAndDeferredGate() {
         Plant p = plant(7);
