@@ -1,12 +1,14 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { TerminalPage } from './TerminalPage';
-import { FloorBoardPage } from './FloorBoardPage';
-import { ShiftReportsPage } from './ShiftReportsPage';
-import { ShiftReportDetailPage } from './ShiftReportDetailPage';
-import { OeePage } from './OeePage';
-import { FloorSetupPage } from './FloorSetupPage';
+
+const TerminalPage = lazy(() => import('./TerminalPage').then((m) => ({ default: m.TerminalPage })));
+const FloorBoardPage = lazy(() => import('./FloorBoardPage').then((m) => ({ default: m.FloorBoardPage })));
+const ShiftReportsPage = lazy(() => import('./ShiftReportsPage').then((m) => ({ default: m.ShiftReportsPage })));
+const ShiftReportDetailPage = lazy(() => import('./ShiftReportDetailPage').then((m) => ({ default: m.ShiftReportDetailPage })));
+const OeePage = lazy(() => import('./OeePage').then((m) => ({ default: m.OeePage })));
+const FloorSetupPage = lazy(() => import('./FloorSetupPage').then((m) => ({ default: m.FloorSetupPage })));
 
 /** Shop-floor execution & data capture screens (ADR-S015, manufacturing 2.7). Static segments before :id. */
 const read = PERMISSIONS.workOrder.read;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PendingCashOperations } from '@/pages/pos/PendingCashOperations';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { PageSuspense } from '@/components/page-loading';
 import {
   LayoutDashboard,
   Building2,
@@ -1201,7 +1202,9 @@ export function AppShell() {
           {/* Above the content, not over it: a licence notice must be impossible
               to miss and equally impossible to be in the way of a sale. */}
           <LicenseBanner />
-          <Outlet />
+          <PageSuspense>
+            <Outlet />
+          </PageSuspense>
         </main>
       </div>
 

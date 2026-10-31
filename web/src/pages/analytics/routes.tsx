@@ -1,8 +1,10 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { AnalyticsDomainPage } from './AnalyticsDomainPage';
-import { AnalyticsOverviewPage } from './AnalyticsOverviewPage';
+
+const AnalyticsDomainPage = lazy(() => import('./AnalyticsDomainPage').then((m) => ({ default: m.AnalyticsDomainPage })));
+const AnalyticsOverviewPage = lazy(() => import('./AnalyticsOverviewPage').then((m) => ({ default: m.AnalyticsOverviewPage })));
 
 const P = PERMISSIONS.analytics;
 const DASHBOARDS: Array<[string, string]> = [

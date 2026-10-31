@@ -1,12 +1,14 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { MyTripsPage } from '@/pages/fleet/dispatch/MyTripsPage';
-import { PodCapturePage } from '@/pages/fleet/dispatch/PodCapturePage';
-import { DriverShell } from './DriverShell';
-import { DriverHomePage } from './DriverHomePage';
-import { DriverFuelPage } from './DriverFuelPage';
-import { DriverPreTripPage } from './DriverPreTripPage';
+
+const MyTripsPage = lazy(() => import('@/pages/fleet/dispatch/MyTripsPage').then((m) => ({ default: m.MyTripsPage })));
+const PodCapturePage = lazy(() => import('@/pages/fleet/dispatch/PodCapturePage').then((m) => ({ default: m.PodCapturePage })));
+const DriverShell = lazy(() => import('./DriverShell').then((m) => ({ default: m.DriverShell })));
+const DriverHomePage = lazy(() => import('./DriverHomePage').then((m) => ({ default: m.DriverHomePage })));
+const DriverFuelPage = lazy(() => import('./DriverFuelPage').then((m) => ({ default: m.DriverFuelPage })));
+const DriverPreTripPage = lazy(() => import('./DriverPreTripPage').then((m) => ({ default: m.DriverPreTripPage })));
 
 /** Driver web app (DRIVER-1): phone shell outside the desktop sidebar. Web only; the Android POS app is unrelated. */
 export const driverRoutes = (

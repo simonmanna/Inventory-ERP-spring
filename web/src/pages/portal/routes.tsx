@@ -1,11 +1,17 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { PortalShell } from './PortalShell';
-import { PortalHomePage } from './PortalHomePage';
-import { PortalOrderDetailPage, PortalOrdersPage } from './PortalOrdersPage';
-import { PortalDeliveriesPage, PortalDeliveryDetailPage } from './PortalDeliveriesPage';
-import { PortalInvoiceDetailPage, PortalInvoicesPage, PortalStatementPage } from './PortalInvoicesPage';
+
+const PortalShell = lazy(() => import('./PortalShell').then((m) => ({ default: m.PortalShell })));
+const PortalHomePage = lazy(() => import('./PortalHomePage').then((m) => ({ default: m.PortalHomePage })));
+const PortalOrderDetailPage = lazy(() => import('./PortalOrdersPage').then((m) => ({ default: m.PortalOrderDetailPage })));
+const PortalOrdersPage = lazy(() => import('./PortalOrdersPage').then((m) => ({ default: m.PortalOrdersPage })));
+const PortalDeliveriesPage = lazy(() => import('./PortalDeliveriesPage').then((m) => ({ default: m.PortalDeliveriesPage })));
+const PortalDeliveryDetailPage = lazy(() => import('./PortalDeliveriesPage').then((m) => ({ default: m.PortalDeliveryDetailPage })));
+const PortalInvoiceDetailPage = lazy(() => import('./PortalInvoicesPage').then((m) => ({ default: m.PortalInvoiceDetailPage })));
+const PortalInvoicesPage = lazy(() => import('./PortalInvoicesPage').then((m) => ({ default: m.PortalInvoicesPage })));
+const PortalStatementPage = lazy(() => import('./PortalInvoicesPage').then((m) => ({ default: m.PortalStatementPage })));
 
 /** Customer portal (PORTAL-1, ADR-S050): its own shell; the staff sidebar is never shown to a customer. */
 export const portalRoutes = (

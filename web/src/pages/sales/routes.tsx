@@ -1,20 +1,25 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { SalesDashboardPage } from './SalesDashboardPage';
-import { SalesOrdersPage } from './SalesOrdersPage';
-import { SalesOrderPage } from './SalesOrderPage';
-import { PricelistsPage } from './PricelistsPage';
-import { PricelistPage } from './PricelistPage';
-import { MarginFloorsPage } from './MarginFloorsPage';
-import { CreditPage } from './CreditPage';
-import { BackordersPage } from './BackordersPage';
-import { ComplaintsPage, ReturnDetailPage, ReturnsPage } from './ReturnsPages';
-import { CollectionsPage } from './CollectionsPage';
-import { AgreementsPage, CommissionsPage } from './AgreementsPages';
-import { AnalyticsPage } from './AnalyticsPage';
-import { PresentationPage } from './PresentationPage';
-import { PortalAccessPage } from './PortalAccessPage';
+
+const SalesDashboardPage = lazy(() => import('./SalesDashboardPage').then((m) => ({ default: m.SalesDashboardPage })));
+const SalesOrdersPage = lazy(() => import('./SalesOrdersPage').then((m) => ({ default: m.SalesOrdersPage })));
+const SalesOrderPage = lazy(() => import('./SalesOrderPage').then((m) => ({ default: m.SalesOrderPage })));
+const PricelistsPage = lazy(() => import('./PricelistsPage').then((m) => ({ default: m.PricelistsPage })));
+const PricelistPage = lazy(() => import('./PricelistPage').then((m) => ({ default: m.PricelistPage })));
+const MarginFloorsPage = lazy(() => import('./MarginFloorsPage').then((m) => ({ default: m.MarginFloorsPage })));
+const CreditPage = lazy(() => import('./CreditPage').then((m) => ({ default: m.CreditPage })));
+const BackordersPage = lazy(() => import('./BackordersPage').then((m) => ({ default: m.BackordersPage })));
+const ComplaintsPage = lazy(() => import('./ReturnsPages').then((m) => ({ default: m.ComplaintsPage })));
+const ReturnDetailPage = lazy(() => import('./ReturnsPages').then((m) => ({ default: m.ReturnDetailPage })));
+const ReturnsPage = lazy(() => import('./ReturnsPages').then((m) => ({ default: m.ReturnsPage })));
+const CollectionsPage = lazy(() => import('./CollectionsPage').then((m) => ({ default: m.CollectionsPage })));
+const AgreementsPage = lazy(() => import('./AgreementsPages').then((m) => ({ default: m.AgreementsPage })));
+const CommissionsPage = lazy(() => import('./AgreementsPages').then((m) => ({ default: m.CommissionsPage })));
+const AnalyticsPage = lazy(() => import('./AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
+const PresentationPage = lazy(() => import('./PresentationPage').then((m) => ({ default: m.PresentationPage })));
+const PortalAccessPage = lazy(() => import('./PortalAccessPage').then((m) => ({ default: m.PortalAccessPage })));
 
 const P = PERMISSIONS.sales;
 

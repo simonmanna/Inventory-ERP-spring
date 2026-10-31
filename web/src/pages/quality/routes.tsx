@@ -1,19 +1,21 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { QualityOverviewPage } from './QualityOverviewPage';
-import { SpecificationsPage } from './SpecificationsPage';
-import { SpecificationDetailPage } from './SpecificationDetailPage';
-import { InspectionPlansPage } from './InspectionPlansPage';
-import { InspectionLotsPage } from './InspectionLotsPage';
-import { InspectionLotDetailPage } from './InspectionLotDetailPage';
-import { NcrsPage } from './NcrsPage';
-import { NcrDetailPage } from './NcrDetailPage';
-import { CapasPage } from './CapasPage';
-import { CapaDetailPage } from './CapaDetailPage';
-import { LabImportsPage } from './LabImportsPage';
-import { TraceabilityPage } from './TraceabilityPage';
-import { QualityReportsPage } from './QualityReportsPage';
+
+const QualityOverviewPage = lazy(() => import('./QualityOverviewPage').then((m) => ({ default: m.QualityOverviewPage })));
+const SpecificationsPage = lazy(() => import('./SpecificationsPage').then((m) => ({ default: m.SpecificationsPage })));
+const SpecificationDetailPage = lazy(() => import('./SpecificationDetailPage').then((m) => ({ default: m.SpecificationDetailPage })));
+const InspectionPlansPage = lazy(() => import('./InspectionPlansPage').then((m) => ({ default: m.InspectionPlansPage })));
+const InspectionLotsPage = lazy(() => import('./InspectionLotsPage').then((m) => ({ default: m.InspectionLotsPage })));
+const InspectionLotDetailPage = lazy(() => import('./InspectionLotDetailPage').then((m) => ({ default: m.InspectionLotDetailPage })));
+const NcrsPage = lazy(() => import('./NcrsPage').then((m) => ({ default: m.NcrsPage })));
+const NcrDetailPage = lazy(() => import('./NcrDetailPage').then((m) => ({ default: m.NcrDetailPage })));
+const CapasPage = lazy(() => import('./CapasPage').then((m) => ({ default: m.CapasPage })));
+const CapaDetailPage = lazy(() => import('./CapaDetailPage').then((m) => ({ default: m.CapaDetailPage })));
+const LabImportsPage = lazy(() => import('./LabImportsPage').then((m) => ({ default: m.LabImportsPage })));
+const TraceabilityPage = lazy(() => import('./TraceabilityPage').then((m) => ({ default: m.TraceabilityPage })));
+const QualityReportsPage = lazy(() => import('./QualityReportsPage').then((m) => ({ default: m.QualityReportsPage })));
 
 /** Quality management screens (ADR-S013); core-available, gated by quality:* permissions. Static segments before :id. */
 const read = PERMISSIONS.quality.read;

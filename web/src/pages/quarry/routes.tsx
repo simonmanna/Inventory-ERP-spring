@@ -1,25 +1,28 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { QuarryDashboardPage } from './QuarryDashboardPage';
-import { SitesPage } from './SitesPage';
-import { SiteDetailPage } from './SiteDetailPage';
-import { MaterialsPage } from './MaterialsPage';
-import { PlansPage } from './PlansPage';
-import { ExtractionLogsPage } from './ExtractionLogsPage';
-import { ExtractionEntryPage } from './ExtractionEntryPage';
-import { ExtractionLogDetailPage } from './ExtractionLogDetailPage';
-import { HaulagePage } from './HaulagePage';
-import { LossesPage } from './LossesPage';
-import { StockpilesPage } from './StockpilesPage';
-import { StockpileDetailPage } from './StockpileDetailPage';
-import { BlastsPage } from './BlastsPage';
-import { BlastDetailPage } from './BlastDetailPage';
-import { ExplosiveIssuesPage } from './ExplosiveIssuesPage';
-import { ExplosiveIssueDetailPage } from './ExplosiveIssueDetailPage';
-import { MagazineDetailPage, MagazinesPage } from './MagazinesPage';
-import { QuarryReportsPage } from './QuarryReportsPage';
-import { QuarrySettingsPage } from './QuarrySettingsPage';
+
+const QuarryDashboardPage = lazy(() => import('./QuarryDashboardPage').then((m) => ({ default: m.QuarryDashboardPage })));
+const SitesPage = lazy(() => import('./SitesPage').then((m) => ({ default: m.SitesPage })));
+const SiteDetailPage = lazy(() => import('./SiteDetailPage').then((m) => ({ default: m.SiteDetailPage })));
+const MaterialsPage = lazy(() => import('./MaterialsPage').then((m) => ({ default: m.MaterialsPage })));
+const PlansPage = lazy(() => import('./PlansPage').then((m) => ({ default: m.PlansPage })));
+const ExtractionLogsPage = lazy(() => import('./ExtractionLogsPage').then((m) => ({ default: m.ExtractionLogsPage })));
+const ExtractionEntryPage = lazy(() => import('./ExtractionEntryPage').then((m) => ({ default: m.ExtractionEntryPage })));
+const ExtractionLogDetailPage = lazy(() => import('./ExtractionLogDetailPage').then((m) => ({ default: m.ExtractionLogDetailPage })));
+const HaulagePage = lazy(() => import('./HaulagePage').then((m) => ({ default: m.HaulagePage })));
+const LossesPage = lazy(() => import('./LossesPage').then((m) => ({ default: m.LossesPage })));
+const StockpilesPage = lazy(() => import('./StockpilesPage').then((m) => ({ default: m.StockpilesPage })));
+const StockpileDetailPage = lazy(() => import('./StockpileDetailPage').then((m) => ({ default: m.StockpileDetailPage })));
+const BlastsPage = lazy(() => import('./BlastsPage').then((m) => ({ default: m.BlastsPage })));
+const BlastDetailPage = lazy(() => import('./BlastDetailPage').then((m) => ({ default: m.BlastDetailPage })));
+const ExplosiveIssuesPage = lazy(() => import('./ExplosiveIssuesPage').then((m) => ({ default: m.ExplosiveIssuesPage })));
+const ExplosiveIssueDetailPage = lazy(() => import('./ExplosiveIssueDetailPage').then((m) => ({ default: m.ExplosiveIssueDetailPage })));
+const MagazineDetailPage = lazy(() => import('./MagazinesPage').then((m) => ({ default: m.MagazineDetailPage })));
+const MagazinesPage = lazy(() => import('./MagazinesPage').then((m) => ({ default: m.MagazinesPage })));
+const QuarryReportsPage = lazy(() => import('./QuarryReportsPage').then((m) => ({ default: m.QuarryReportsPage })));
+const QuarrySettingsPage = lazy(() => import('./QuarrySettingsPage').then((m) => ({ default: m.QuarrySettingsPage })));
 
 const P = PERMISSIONS;
 // Every quarry screen reads the form lookups, so each also needs quarry_site:read.

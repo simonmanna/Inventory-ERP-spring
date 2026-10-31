@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { PageSuspense } from '@/components/page-loading';
 import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/auth.store';
@@ -37,7 +38,7 @@ export function PortalShell() {
           ))}
         </nav>
       </header>
-      <main className="mx-auto max-w-4xl p-3"><Outlet /></main>
+      <main className="mx-auto max-w-4xl p-3"><PageSuspense><Outlet /></PageSuspense></main>
     </div>
   );
 }

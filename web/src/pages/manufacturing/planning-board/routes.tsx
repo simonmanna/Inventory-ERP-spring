@@ -1,11 +1,13 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { PlanningWorkbenchPage } from './PlanningWorkbenchPage';
-import { GanttPage } from './GanttPage';
-import { CapacityPage } from './CapacityPage';
-import { ShiftPlansPage } from './ShiftPlansPage';
-import { PlanPerformancePage } from './PlanPerformancePage';
+
+const PlanningWorkbenchPage = lazy(() => import('./PlanningWorkbenchPage').then((m) => ({ default: m.PlanningWorkbenchPage })));
+const GanttPage = lazy(() => import('./GanttPage').then((m) => ({ default: m.GanttPage })));
+const CapacityPage = lazy(() => import('./CapacityPage').then((m) => ({ default: m.CapacityPage })));
+const ShiftPlansPage = lazy(() => import('./ShiftPlansPage').then((m) => ({ default: m.ShiftPlansPage })));
+const PlanPerformancePage = lazy(() => import('./PlanPerformancePage').then((m) => ({ default: m.PlanPerformancePage })));
 
 /** Advanced planning & scheduling screens (ADR-S019, manufacturing 2.5). */
 const read = PERMISSIONS.productionPlan.read;

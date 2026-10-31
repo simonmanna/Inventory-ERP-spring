@@ -1,14 +1,16 @@
+import { lazy } from 'react';
 import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { CrushingRunsPage } from './CrushingRunsPage';
-import { CrushingRunEntryPage } from './CrushingRunEntryPage';
-import { CrushingRunDetailPage } from './CrushingRunDetailPage';
-import { CrushingPlantsPage } from './CrushingPlantsPage';
-import { CrushingPlantEditorPage } from './CrushingPlantEditorPage';
-import { GradingProfilePage } from './GradingProfilePage';
-import { CrushingStockpilesPage } from './CrushingStockpilesPage';
-import { CrushingReportsPage } from './CrushingReportsPage';
+
+const CrushingRunsPage = lazy(() => import('./CrushingRunsPage').then((m) => ({ default: m.CrushingRunsPage })));
+const CrushingRunEntryPage = lazy(() => import('./CrushingRunEntryPage').then((m) => ({ default: m.CrushingRunEntryPage })));
+const CrushingRunDetailPage = lazy(() => import('./CrushingRunDetailPage').then((m) => ({ default: m.CrushingRunDetailPage })));
+const CrushingPlantsPage = lazy(() => import('./CrushingPlantsPage').then((m) => ({ default: m.CrushingPlantsPage })));
+const CrushingPlantEditorPage = lazy(() => import('./CrushingPlantEditorPage').then((m) => ({ default: m.CrushingPlantEditorPage })));
+const GradingProfilePage = lazy(() => import('./GradingProfilePage').then((m) => ({ default: m.GradingProfilePage })));
+const CrushingStockpilesPage = lazy(() => import('./CrushingStockpilesPage').then((m) => ({ default: m.CrushingStockpilesPage })));
+const CrushingReportsPage = lazy(() => import('./CrushingReportsPage').then((m) => ({ default: m.CrushingReportsPage })));
 
 const P = PERMISSIONS;
 // Every crushing screen reads the form lookups, so each also needs crushing:read.

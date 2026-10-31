@@ -1,19 +1,22 @@
+import { lazy } from 'react';
 import { Navigate, Route, useParams } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
-import { CrmDashboardPage } from './CrmDashboardPage';
-import { PipelinePage } from './PipelinePage';
-import { OpportunityDetailPage } from './OpportunityDetailPage';
-import { LeadsPage } from './LeadsPage';
-import { ActivitiesPage } from './ActivitiesPage';
-import { QuotationsPage } from './QuotationsPage';
-import { QuotationEditorPage } from './QuotationEditorPage';
-import { CustomerDetailPage, CustomersPage } from './CustomersPage';
-import { PriceRulesPage } from './PriceRulesPage';
-import { CrmReportsPage } from './CrmReportsPage';
-import { CrmSettingsPage } from './CrmSettingsPage';
-import { CasesPage } from './CasesPage';
-import { CaseDetailPage } from './CaseDetailPage';
+
+const CrmDashboardPage = lazy(() => import('./CrmDashboardPage').then((m) => ({ default: m.CrmDashboardPage })));
+const PipelinePage = lazy(() => import('./PipelinePage').then((m) => ({ default: m.PipelinePage })));
+const OpportunityDetailPage = lazy(() => import('./OpportunityDetailPage').then((m) => ({ default: m.OpportunityDetailPage })));
+const LeadsPage = lazy(() => import('./LeadsPage').then((m) => ({ default: m.LeadsPage })));
+const ActivitiesPage = lazy(() => import('./ActivitiesPage').then((m) => ({ default: m.ActivitiesPage })));
+const QuotationsPage = lazy(() => import('./QuotationsPage').then((m) => ({ default: m.QuotationsPage })));
+const QuotationEditorPage = lazy(() => import('./QuotationEditorPage').then((m) => ({ default: m.QuotationEditorPage })));
+const CustomerDetailPage = lazy(() => import('./CustomersPage').then((m) => ({ default: m.CustomerDetailPage })));
+const CustomersPage = lazy(() => import('./CustomersPage').then((m) => ({ default: m.CustomersPage })));
+const PriceRulesPage = lazy(() => import('./PriceRulesPage').then((m) => ({ default: m.PriceRulesPage })));
+const CrmReportsPage = lazy(() => import('./CrmReportsPage').then((m) => ({ default: m.CrmReportsPage })));
+const CrmSettingsPage = lazy(() => import('./CrmSettingsPage').then((m) => ({ default: m.CrmSettingsPage })));
+const CasesPage = lazy(() => import('./CasesPage').then((m) => ({ default: m.CasesPage })));
+const CaseDetailPage = lazy(() => import('./CaseDetailPage').then((m) => ({ default: m.CaseDetailPage })));
 
 /** Old deal links keep working: /crm/deals/:id → /crm/opportunities/:id. */
 function LegacyDealRedirect() {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { PageSuspense } from '@/components/page-loading';
 import { ClipboardCheck, Fuel, Home, Truck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
@@ -31,7 +32,7 @@ export function DriverShell() {
   ];
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <main className="mx-auto w-full max-w-xl flex-1 p-3 pb-36"><Outlet /></main>
+      <main className="mx-auto w-full max-w-xl flex-1 p-3 pb-36"><PageSuspense><Outlet /></PageSuspense></main>
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t bg-background" aria-label={tx('Driver app')}>
         <div className="mx-auto grid max-w-xl grid-cols-4">
           {tabs.map((t) => (
