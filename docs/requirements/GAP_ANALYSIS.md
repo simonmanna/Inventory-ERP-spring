@@ -456,7 +456,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 445 | Advanced weighbridge management. | `present-verified` | See 5.1 (42 weighbridge routes) · FleetWeighbridgeIT, FleetWeighbridgeDispatchIT | — |
 | 446 | Specialized aggregate production planning. | `missing` | 2.5 not built; crushing is not connected to plans or MRP capacity in t/h | Build 2.5 (MFG-1) |
 | 447 | Advanced block manufacturing and quality management. | `present-verified` | See 3.3 and 3.5 | — |
-| 448 | Fleet GPS tracking and telematics integration. | `present-partial` | TelematicsProvider SPI + MockTelematicsProvider · `/fleet/telematics`, `/fleet/live` · FleetTelematicsIT. No real vendor adapter | Vendor adapter once chosen (INT-2) |
+| 448 | Fleet GPS tracking and telematics integration. | `present-partial (built, unverified)` | TelematicsProvider SPI + MockTelematicsProvider + RestTelematicsProvider (contract adapter) · `/fleet/telematics`, `/fleet/live` · FleetTelematicsIT, RestTelematicsProviderTest. Vendor not chosen | Verify by running it |
 | 449 | Laboratory testing integrations. | `present-verified` | quality · `/quality/lab-imports`, `/lab-adapters` · `/quality/lab` · QualityLotsIT.labCsvImport, LabAdaptersTest, CsvLabResultsTest | — |
 | 450 | Automated production data capture. | `present-verified` | manufacturing · `/shop-floor/machine-data`, `/machine-events` · `/manufacturing/floor-setup` · ShopFloorExecutionIT.multiStageAndMachineData, MachineAdaptersTest | — |
 | 451 | Industry-specific dashboards and profitability reports. | `present-partial` | Module report pages exist; no consolidated industry dashboard | Phase 5 dashboards |
@@ -471,7 +471,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 464 | Barcode scanners and label printers. | `present-partial` | `/products/resolve-barcode` (CoreIT), `scanner-debounce.ts`, precast labels. No label printer integration | Label printing (INT-3) |
 | 465 | Accounting and banking interfaces. | `present-partial` | Statement import takes JSON lines only; CSV and PDF exports. No bank feed or accounting interface | Bank import formats (INT-3) |
 | 466 | Mobile money payment providers. | `missing` | No provider SPI: `MobileMoneyProvider`/`PaymentProvider` absent, mobile money is a tender label only | Provider SPI + mock (INT-1) |
-| 467 | GPS and fleet tracking systems. | `present-partial` | As fleet telematics above | INT-2 |
+| 467 | GPS and fleet tracking systems. | `present-partial (built, unverified)` | As fleet telematics above, RestTelematicsProvider | Verify by running it |
 | 468 | Production machinery and industrial data systems. | `present-verified` | manufacturing · machine adapters · ShopFloorExecutionIT, MachineAdaptersTest, MachineEventParserTest | — |
 | 469 | Business intelligence tools. | `present-partial` | `/metrics`, `/webhooks`, CSV exports (KernelIT). No BI connector or read model | Phase 5 integrations |
 | 470 | Customer-facing websites and applications. | `present-partial` | Webhooks and REST API only; no customer-facing app | PORTAL-1 |

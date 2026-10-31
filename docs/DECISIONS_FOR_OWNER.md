@@ -133,3 +133,4 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | DRIVER-1 | Trip visibility | `/fleet/trips?mine=true` and the trip detail use `fleet_trip:read`, which is not limited to the driver's own trips on the API | Own-trip scope on the trip routes | — |
 | 2026-10-30 | DRIVER-1 | Fuel logs from a phone | Always drafts; the office posts them | Let drivers post | Fuel logs screen |
 | 2026-10-30 | DRIVER-1 | Offline use | The shell opens offline; fuel logs, checks and POD need a connection (retries reuse the idempotency key). No offline write queue | Queue writes on the phone | — |
+| 2026-10-30 | INT-2 | Telematics vendor | Not chosen: a `rest` adapter with our own small JSON contract, default provider stays `mock` until `FLEET_TELEMATICS_PROVIDER=rest` | A named vendor's API | `.env` |

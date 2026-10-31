@@ -1466,3 +1466,12 @@ driver from `HrEmployee.userId` (403 without an active profile), refuses a unit 
 names only for payment accounts and tanks. Fuel logs from the app are always drafts under the driver's employee id; the
 office reviews and posts them. Failed checklist items raise defects through `FleetInspectionService.record`.
 
+## INT-2 telematics vendor adapter (Phase 4, built, unverified: nothing compiled or run)
+
+`RestTelematicsProvider` (type `rest`) is a second `TelematicsProvider` bean beside the mock. No vendor is chosen, so it
+fixes a small bearer-token JSON contract: `GET /units/{unit}/positions?from=&to=`, `GET /units/{unit}/meters` (404 = none)
+and `GET /events?since=` (see the class Javadoc for fields). A real platform answers it directly or through a thin
+gateway; when the vendor is chosen only this class changes. Config: `FLEET_TELEMATICS_PROVIDER=rest`,
+`FLEET_TELEMATICS_URL`, `FLEET_TELEMATICS_API_KEY`, `FLEET_TELEMATICS_TIMEOUT_MS`. Each device selects its provider, so mock
+and real units can run side by side. Failures land on the device (`lastError`) and never contain the key.
+

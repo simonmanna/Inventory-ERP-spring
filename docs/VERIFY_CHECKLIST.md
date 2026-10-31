@@ -375,3 +375,9 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - Log fuel with a receipt photo: a draft appears in `/fleet/fuel`; a second truck's id is refused (403).
 - Trips: open a dispatched trip, capture signature and photo, confirm POD.
 
+**INT-2 telematics adapter** (`./gradlew test --tests '*RestTelematicsProviderTest'`)
+
+- `/fleet/telematics` lists providers `mock` and `rest`. A device on `rest` with no `FLEET_TELEMATICS_URL` shows the
+  "not configured" error after a sync; other devices keep syncing.
+- With a vendor or gateway answering the contract in `docs/spec/fleet.md`, positions and meters arrive on the next sync.
+
