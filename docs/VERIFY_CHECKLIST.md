@@ -657,7 +657,7 @@ supplier performance tests and the manufacturing costing tests. Their routes mus
 
 Written, never run. Run `ConstructionDemoSeedIT` (slow: it seeds the whole quarter), then start once on an empty
 throwaway database with `SEED_CONSTRUCTION_DEMO=true`, the `seed` profile and `ENABLE_FLEET`, `ENABLE_QUARRY`,
-`ENABLE_MANUFACTURING`, `ENABLE_HR` and `ENABLE_QUALITY` on. Sign in to organization `CMDEMO` as
+`ENABLE_MANUFACTURING` and `ENABLE_HR` on (quality has no module switch). Sign in to organization `CMDEMO` as
 `admin@construction.test` (`SEED_ADMIN_PASSWORD`, default `Admin@123`); role users have password `Demo@123`.
 
 - A failure here is most likely a fixture or an unchecked rule in `FleetConstructionDemoSeed`, not the product. The first

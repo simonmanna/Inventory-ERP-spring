@@ -3,8 +3,9 @@ package com.inventoryerp.kernel.seed;
 import java.util.List;
 
 /**
- * Roles and sign-ins of the construction demo organization, one per role of {@code docs/guides/construction-materials.md}.
- * Password {@code Demo@123}, like the POS demo staff; a demo database only.
+ * Roles and sign-ins of the construction demo organization, one per role of
+ * {@code docs/guides/construction-materials.md}. Password {@code Demo@123}, like the POS demo staff; a demo database
+ * only.
  */
 final class ConstructionDemoRoles {
 
@@ -41,16 +42,17 @@ final class ConstructionDemoRoles {
                             "quarry_extraction:update", "quarry_extraction:post", "quarry_extraction:haul",
                             "quarry_blasting:read", "crushing:read", "crushing_run:record", "crushing_run:post",
                             "crushing_survey:record", "production_order:read", "production_order:create",
-                            "production_order:start", "production_order:complete", "production_plan:read",
+                            "production_order:start", "production_order:complete", "production_order:qc",
+                            "production_plan:read",
                             "production:report", "shop_floor:machine_data", "bom:read", "work_center:read",
                             "inventory:read"))),
             new Staff("quality@construction.test", "Queen", "Quality", "Quality Officer",
-                    "Samples, tests, holds and releases material", "QRY", with(List.of("quality:read", "quality:inspect",
-                            "quality:hold", "quality:release", "quality:dispose", "quality:ncr", "quality:capa",
+                    "Samples, tests, holds and releases material", "QRY", with(List.of("quality:read",
+                            "quality:inspect", "quality:hold", "quality:release", "quality:dispose", "quality:ncr", "quality:capa",
                             "production_order:read", "production_order:qc", "crushing:read", "inventory:read"))),
             new Staff("stores@construction.test", "Simon", "Stores", "Storekeeper",
-                    "Receives, issues, transfers and counts stock", "KLA", with(List.of("inventory:read", "inventory:move",
-                            "inventory_count:read", "inventory_count:count", "inventory_count:submit",
+                    "Receives, issues, transfers and counts stock", "KLA", with(List.of("inventory:read",
+                            "inventory:move", "inventory_count:read", "inventory_count:count", "inventory_count:submit",
                             "inventory_doc:read", "inventory_doc:create", "goods_receipt:read",
                             "goods_receipt:create", "purchase_order:read", "purchase_order:receive",
                             "fleet_maintenance:read"))),
@@ -67,6 +69,7 @@ final class ConstructionDemoRoles {
                             "analytics:quarry", "analytics:aggregates", "analytics:blocks", "analytics:inventory",
                             "analytics:procurement", "analytics:sales", "analytics:fleet", "analytics:maintenance",
                             "analytics:finance", "analytics:branch", "alerts:read", "bi:export", "approvals:read",
+                            "approvals:decide",
                             "weighbridge:read", "weighbridge:approve_exception", "fleet:report",
                             "fleet_dispatch:read", "fleet_dispatch:approve_discrepancy", "fleet_freight:read",
                             "fleet_freight:approve_variance", "quarry:report", "production:report",

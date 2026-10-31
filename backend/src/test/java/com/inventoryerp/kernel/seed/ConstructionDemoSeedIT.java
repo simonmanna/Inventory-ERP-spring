@@ -37,8 +37,8 @@ class ConstructionDemoSeedIT extends ApiTestSupport {
         assertThat(org).isNotEqualTo(demoOrg);
 
         // Never mixed into the POS demo.
-        assertThat(count("SELECT count(*) FROM \"FleetVehicle\" WHERE \"organizationId\" = ? AND code LIKE 'CM-%'", demoOrg))
-                .isZero();
+        assertThat(count("SELECT count(*) FROM \"FleetVehicle\" WHERE \"organizationId\" = ? AND code LIKE 'CM-%'",
+                demoOrg)).isZero();
         assertThat(count("SELECT count(*) FROM \"Partner\" WHERE \"organizationId\" = ? AND code LIKE 'CM-%'", demoOrg))
                 .isZero();
 
@@ -51,26 +51,28 @@ class ConstructionDemoSeedIT extends ApiTestSupport {
         assertThat(rows("FleetCustomerSite", org)).isEqualTo(20);
         assertThat(count("SELECT count(*) FROM \"Partner\" WHERE \"organizationId\" = ? AND \"isCustomer\"", org))
                 .isEqualTo(20);
-        assertThat(count("SELECT count(*) FROM \"Partner\" WHERE \"organizationId\" = ? AND code LIKE 'CM-TRAN-%'", org))
-                .isEqualTo(2);
-        assertThat(count("SELECT count(*) FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND \"branchId\" IS NULL",
-                org)).isZero();
+        assertThat(count("SELECT count(*) FROM \"Partner\" WHERE \"organizationId\" = ? AND code LIKE 'CM-TRAN-%'",
+                org)).isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND \"branchId\" IS"
+                + " NULL", org)).isZero();
         assertThat(count("SELECT count(*) FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key = 'wip'", org))
                 .isEqualTo(1);
         assertThat(count("SELECT count(*) FROM \"Role\" WHERE \"organizationId\" = ? AND name = 'Weighbridge Operator'",
                 org)).isEqualTo(1);
 
         // Three months of work.
-        long posted = count("SELECT count(*) FROM \"CrushingRun\" WHERE \"organizationId\" = ? AND status = 'posted'", org);
+        long posted = count("SELECT count(*) FROM \"CrushingRun\" WHERE \"organizationId\" = ? AND status = 'posted'",
+                org);
         assertThat(posted).isGreaterThanOrEqualTo(70);
-        long closed = count("SELECT count(*) FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND status = 'closed'", org);
+        long closed = count("SELECT count(*) FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND status = 'closed'",
+                org);
         assertThat(closed).isGreaterThanOrEqualTo(450);
         assertThat(count("SELECT count(*) FROM \"WeighbridgeTicket\" WHERE \"organizationId\" = ? AND status ="
                 + " 'completed'", org)).isEqualTo(closed);
-        assertThat(count("SELECT count(*) FROM \"FleetFuelLog\" WHERE \"organizationId\" = ? AND status = 'posted'", org))
-                .isPositive();
-        assertThat(count("SELECT count(*) FROM \"FleetWorkOrder\" WHERE \"organizationId\" = ? AND status = 'completed'",
+        assertThat(count("SELECT count(*) FROM \"FleetFuelLog\" WHERE \"organizationId\" = ? AND status = 'posted'",
                 org)).isPositive();
+        assertThat(count("SELECT count(*) FROM \"FleetWorkOrder\" WHERE \"organizationId\" = ? AND status ="
+                + " 'completed'", org)).isPositive();
         assertThat(count("SELECT count(*) FROM \"Document\" WHERE \"organizationId\" = ? AND \"documentType\" ="
                 + " 'sales_invoice' AND status IN ('posted', 'paid')", org)).isEqualTo(closed);
         assertThat(rows("Payment", org)).isPositive();
@@ -78,8 +80,8 @@ class ConstructionDemoSeedIT extends ApiTestSupport {
 
         // The past days carry their own dates, cost of sales included.
         LocalDate today = LocalDate.now(BusinessZone.get());
-        Date first = jdbc.sql("SELECT min(\"dispatchedAt\")::date FROM \"FleetLoad\" WHERE \"organizationId\" = ?").param(org)
-                .query(Date.class).single();
+        Date first = jdbc.sql("SELECT min(\"dispatchedAt\")::date FROM \"FleetLoad\" WHERE \"organizationId\" = ?")
+                .param(org).query(Date.class).single();
         assertThat(first.toLocalDate()).isBefore(today.minusDays(80));
         assertThat(count("SELECT count(DISTINCT date_trunc('month', \"postingDate\")) FROM \"JournalEntry\" WHERE"
                 + " \"organizationId\" = ? AND \"sourceType\" = 'fleet_trip'", org)).isGreaterThanOrEqualTo(3);
@@ -93,7 +95,8 @@ class ConstructionDemoSeedIT extends ApiTestSupport {
         BigDecimal debit = BigDecimal.ZERO;
         BigDecimal credit = BigDecimal.ZERO;
         for (Map<String, Object> e : entries) {
-            assertThat((BigDecimal) e.get("d")).as("entry " + e.get("id")).isEqualByComparingTo((BigDecimal) e.get("c"));
+            assertThat((BigDecimal) e.get("d")).as("entry " + e.get("id"))
+                    .isEqualByComparingTo((BigDecimal) e.get("c"));
             debit = debit.add((BigDecimal) e.get("d"));
             credit = credit.add((BigDecimal) e.get("c"));
         }
