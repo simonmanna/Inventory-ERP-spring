@@ -736,6 +736,19 @@
     "customer": "portal:customer",
     "manage": "portal:manage"
   },
+  "analytics": {
+    "view": "analytics:view",
+    "quarry": "analytics:quarry",
+    "aggregates": "analytics:aggregates",
+    "blocks": "analytics:blocks",
+    "inventory": "analytics:inventory",
+    "procurement": "analytics:procurement",
+    "sales": "analytics:sales",
+    "fleet": "analytics:fleet",
+    "maintenance": "analytics:maintenance",
+    "finance": "analytics:finance",
+    "branch": "analytics:branch"
+  },
   "label": {
     "print": "label:print"
   }

@@ -30,6 +30,11 @@ public record AnalyticsView(AnalyticsFilter filter, LocalDate from, LocalDate to
         return to.toString();
     }
 
+    /** End of the last day for the ledger reports, whose date-only {@code to} would stop at that day's midnight. */
+    public String ledgerTo() {
+        return to + "T23:59:59.999Z";
+    }
+
     public Date fromDate() {
         return Date.valueOf(from);
     }

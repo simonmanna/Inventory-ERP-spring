@@ -46,6 +46,7 @@ the same filters plus `page` and `pageSize` (default 25, at most 200). Both need
 |---|---|---|---|
 | `/analytics/filter-options` | `analytics:view` | none | none |
 | `/analytics/quarry` | `analytics:quarry` | `quarry` | `extraction-logs` |
+| `/analytics/aggregates` | `analytics:aggregates` | `manufacturing` | `crushing-runs` |
 
 Administrators receive every analytics permission through V100. Other roles get them in Staff, Roles & Permissions.
 
@@ -65,3 +66,20 @@ Source: `QuarryReportService` over posted, non-deleted extraction logs, with a s
 A plan's actual tonnes cover the plan's whole period, not the dashboard period, so a plan that overlaps the period
 counts in full. The screen says so. The product filter keeps logs and plans whose material is stocked as that product,
 so a plan with no material drops out.
+
+## Aggregate processing
+
+Source: `CrushingReportService` over posted, non-deleted crushing runs, with a plant list and product added for analytics.
+Recirculated oversize is not feed or output here: runs store it apart.
+
+| KPI | Formula |
+|---|---|
+| Feed volume | Σ `feedTonnes` of posted runs with `runDate` in the period |
+| Production volume | Σ `outputTonnes` of those runs |
+| Input-to-output yield | production volume ÷ feed volume × 100 |
+| Material loss | Σ `lossTonnes` of those runs |
+| Material loss % | material loss ÷ feed volume × 100 |
+| Cost per tonne | Σ `totalCost` of the runs ÷ production volume |
+
+The product filter keeps runs that fed or produced the product, and each KPI then covers the whole run, so the
+per-product table is the place to read one product's tonnes.
