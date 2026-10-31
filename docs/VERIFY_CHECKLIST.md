@@ -374,3 +374,8 @@ PROC-3, migration `V51__procurement_budgets_delegation.sql`:
 PROC-5 (no migration): add a workflow for Purchase Requests, then raise and submit a PR at `/procurement/purchase-requests/new`. The requester cannot approve it. Each step moves on Approve or in `/approvals`, the card shows the step, and the last approval sets it to approved. Reject keeps the reason.
 
 SALES-2 (no migration; needs `ENABLE_ORDERS=true`): add a workflow for Sales Orders, create an order, open it, Billing tab. It shows the approval pending and Generate Invoice is disabled. Approve as another user, then add a line: billing asks again. Approve again and bill.
+
+CTRL-2, migration `V52__document_numbering.sql`:
+
+- `/settings/document-numbering`: set Purchase request to prefix `REQ/{YY}/`, 3 digits. The next PR takes that number and continues the same counter. Use default restores it. Next number refuses a value at or below the current one. A format without the year on Purchase order is refused.
+- Confirm an invoice and a POS sale still number as before.

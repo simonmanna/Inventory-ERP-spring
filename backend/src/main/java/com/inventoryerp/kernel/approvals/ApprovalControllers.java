@@ -42,8 +42,8 @@ public final class ApprovalControllers {
             @OneOf({"permission", "department_manager"}) String approverScope) {
 
         ApprovalAdminService.Step toStep() {
-            return new ApprovalAdminService.Step(stepOrder, name, approverPermissions, requiredCount, minAmount, maxAmount,
-                    branchId, departmentId, approverScope);
+            return new ApprovalAdminService.Step(stepOrder, name, approverPermissions, requiredCount, minAmount,
+                    maxAmount, branchId, departmentId, approverScope);
         }
     }
 
@@ -197,8 +197,9 @@ public final class ApprovalControllers {
             if (held != null) {
                 return held;
             }
-            return admin.createWorkflow(dto.name(), dto.entityType(), dto.minAmount(), dto.branchId(), dto.departmentId(),
-                    dto.enforceDistinctApprovers(), dto.isActive(), dto.steps().stream().map(StepRequest::toStep).toList());
+            return admin.createWorkflow(dto.name(), dto.entityType(), dto.minAmount(), dto.branchId(),
+                    dto.departmentId(), dto.enforceDistinctApprovers(), dto.isActive(),
+                    dto.steps().stream().map(StepRequest::toStep).toList());
         }
 
         @PatchMapping("/{id}")

@@ -10690,5 +10690,11 @@
   "Waiting for approval, step {{step}}": "Inasubiri idhini, hatua {{step}}",
   "Order approval": "Idhini ya oda",
   "Request approval again": "Omba idhini tena",
-  "Sales Orders": "Oda za mauzo"
+  "Sales Orders": "Oda za mauzo",
+  "Digits": "Tarakimu",
+  "Document Numbering": "Namba za hati",
+  "Next number": "Namba inayofuata",
+  "Prefix, suffix and length of document numbers. {YYYY}, {YY} and {MM} fill in the date. Numbers already issued do not change, and a counter can only move forward.": "Kiambishi awali, kiambishi tamati na urefu wa namba za hati. {YYYY}, {YY} na {MM} hujaza tarehe. Namba zilizokwisha tolewa hazibadiliki, na kaunta inaweza kusonga mbele tu.",
+  "Suffix": "Kiambishi tamati",
+  "Use default": "Tumia chaguo-msingi"
 }

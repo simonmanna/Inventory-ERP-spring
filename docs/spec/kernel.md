@@ -135,3 +135,9 @@ Status: built, not compiled, not run. Tests in `ApprovalControlsIT`.
 - **Hook for other modules**: `ControlledActionService.authorize(Action)` runs the approval gate, then separation of duties, and returns `Outcome`. Use `SegregationOfDutiesService.CREDIT_OVERRIDE` (lane C) and `SUPPLIER_BILL_APPROVAL` (lane D) as pair keys. The caller stops on `allowed == false` and reports `approvalRequestId`.
 - **Stale approvals**: `ApprovalsService.checkOrRequestApprovalOfAmount` cancels an approval given for a lower amount.
 - **Controlled changes**: `ControlledConfigService.holdIfControlled`, applied through `ConfigChangeApplier` beans on `approval.decided`.
+
+## Document numbering (CTRL-2)
+
+Status: built, not compiled, not run. Tests in `DocumentNumberingIT`.
+
+`/document-numbering`: `GET` (permission `document_numbering:read`), `PUT /{key}`, `DELETE /{key}`, `POST /{key}/advance` (permission `document_numbering:manage`). `{key}` is a logical key of `DocumentNumberCatalog` (`po`, not `po:2026`). `SequenceService.next` keeps its signature. For a catalogue key it reads `DocumentNumberFormat` and, when a row exists, uses its prefix, suffix and padding instead of the arguments. Tokens: `{YYYY}`, `{YY}` (year of the key when it has one), `{MM}`. A new document type gets a format by adding one catalogue line.

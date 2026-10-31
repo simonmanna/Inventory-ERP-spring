@@ -25,8 +25,8 @@ public class HrApprovalDirectory implements ApprovalOrgDirectory {
     @Override
     public String departmentManagerOf(String departmentId) {
         return jdbc.sql("SELECT e.\"userId\" FROM \"HrDepartment\" d JOIN \"HrEmployee\" e ON e.id = d.\"managerId\""
-                        + " WHERE d.id = ? AND d.\"organizationId\" = ? AND d.\"deletedAt\" IS NULL AND e.\"deletedAt\" IS"
-                        + " NULL AND e.\"userId\" IS NOT NULL LIMIT 1")
+                        + " WHERE d.id = ? AND d.\"organizationId\" = ? AND d.\"deletedAt\" IS NULL"
+                        + " AND e.\"deletedAt\" IS NULL AND e.\"userId\" IS NOT NULL LIMIT 1")
                 .params(departmentId, TenantContext.organizationId()).query(String.class).optional().orElse(null);
     }
 }

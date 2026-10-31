@@ -10690,5 +10690,11 @@
   "Waiting for approval, step {{step}}": "ፍቓድ ይጽበ፡ ስጉምቲ {{step}}",
   "Order approval": "ፍቓድ ትእዛዝ",
   "Request approval again": "ፍቓድ ደጊምካ ሕተት",
-  "Sales Orders": "ትእዛዛት መሸጣ"
+  "Sales Orders": "ትእዛዛት መሸጣ",
+  "Digits": "ኣሃዛት",
+  "Document Numbering": "ቁጽሪ ሰነዳት",
+  "Next number": "ዝቕጽል ቁጽሪ",
+  "Prefix, suffix and length of document numbers. {YYYY}, {YY} and {MM} fill in the date. Numbers already issued do not change, and a counter can only move forward.": "መበገሲ፡ መደምደምታን ንውሓትን ቁጽሪ ሰነዳት። {YYYY}፡ {YY}ን {MM}ን ዕለት ይመልኡ። ዝተዋህቡ ቁጽርታት ኣይቕየሩን፡ ቆጻሪ ድማ ንቕድሚት ጥራይ ይኸይድ።",
+  "Suffix": "መደምደምታ",
+  "Use default": "ነባሪ ተጠቐም"
 }

@@ -98,7 +98,8 @@ public class ProductionService {
     private final TransactionTemplate newTx;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
-            ControlledActionService controlled, StockService stock, StockPostingService stockPosting, StockReservationService reservations,
+            ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
+            StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
             PlatformTransactionManager txm) {

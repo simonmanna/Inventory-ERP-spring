@@ -59,8 +59,8 @@ public class ApprovalLimitService {
         String id = UUID.randomUUID().toString();
         Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ApprovalLimit\" (id, \"organizationId\", name,"
                         + " \"entityType\", \"userId\", permission, \"branchId\", \"departmentId\", \"maxAmount\","
-                        + " \"isActive\", \"createdBy\", \"updatedBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?,"
-                        + " ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
+                        + " \"isActive\", \"createdBy\", \"updatedBy\", \"createdAt\", \"updatedAt\") VALUES"
+                        + " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                 .params(id, org(), in.name().trim(), blank(in.entityType()), blank(in.userId()), blank(in.permission()),
                         blank(in.branchId()), blank(in.departmentId()), in.maxAmount(), in.isActive() == null
                                 || in.isActive(), TenantContext.userId(), TenantContext.userId()));

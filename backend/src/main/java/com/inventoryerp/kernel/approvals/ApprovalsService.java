@@ -262,7 +262,8 @@ public class ApprovalsService {
         if (manager != null && !manager.equals(userId)) {
             throw ApiException.badRequest("Only the department manager can decide on this step");
         }
-        if (manager == null && !approverPermissions.isEmpty() && approverPermissions.stream().noneMatch(perms::contains)) {
+        if (manager == null && !approverPermissions.isEmpty()
+                && approverPermissions.stream().noneMatch(perms::contains)) {
             throw ApiException.badRequest("You are not allowed to decide on this step");
         }
         boolean selfGuard = !approverPermissions.isEmpty() || manager != null

@@ -90,8 +90,8 @@ public class ProcurementDelegationService {
         String id = UUID.randomUUID().toString();
         Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ProcurementDelegation\" (id, \"organizationId\","
                         + " \"branchId\", mode, \"delegateUserId\", \"maxOrderAmount\", \"validFrom\", \"validTo\","
-                        + " \"isActive\", notes, \"createdBy\", \"updatedBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?,"
-                        + " ?, ?, ?, ?, ?::date, ?::date, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
+                        + " \"isActive\", notes, \"createdBy\", \"updatedBy\", \"createdAt\", \"updatedAt\") VALUES"
+                        + " (?, ?, ?, ?, ?, ?, ?::date, ?::date, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                 .params(id, org(), in.branchId(), in.mode(), in.delegateUserId(), in.maxOrderAmount(), in.validFrom(),
                         in.validTo(), in.isActive() == null || in.isActive(), in.notes(), user(), user()));
         audit.recordInTx(AuditInput.of("ProcurementDelegation", id, "create", null, row));

@@ -519,6 +519,11 @@ export const PERMISSIONS = {
     decide: 'approvals:decide',
     manage: 'approvals:manage',
   },
+  /// Document number formats (CTRL-2).
+  documentNumbering: {
+    read: 'document_numbering:read',
+    manage: 'document_numbering:manage',
+  },
   // ---- Generic Orders (back-office Order CRUD, POS-independent) ----
     orders: {
       read: 'orders:read',

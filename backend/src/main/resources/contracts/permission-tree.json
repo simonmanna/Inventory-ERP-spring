@@ -454,6 +454,10 @@
     "decide": "approvals:decide",
     "manage": "approvals:manage"
   },
+  "documentNumbering": {
+    "read": "document_numbering:read",
+    "manage": "document_numbering:manage"
+  },
   "orders": {
     "read": "orders:read",
     "create": "orders:create",

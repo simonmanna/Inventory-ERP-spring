@@ -10690,5 +10690,11 @@
   "Waiting for approval, step {{step}}": "Kirindirira okukkirizibwa, omutendera {{step}}",
   "Order approval": "Okukkiriza oda",
   "Request approval again": "Saba okukkirizibwa nate",
-  "Sales Orders": "Oda z'okutunda"
+  "Sales Orders": "Oda z'okutunda",
+  "Digits": "Ennamba",
+  "Document Numbering": "Ennamba z'ebiwandiiko",
+  "Next number": "Ennamba eddako",
+  "Prefix, suffix and length of document numbers. {YYYY}, {YY} and {MM} fill in the date. Numbers already issued do not change, and a counter can only move forward.": "Entandikwa, enkomerero n'obuwanvu bw'ennamba z'ebiwandiiko. {YYYY}, {YY} ne {MM} bijjuza olunaku. Ennamba ezaafulumizibwa tezikyuka, era omubazi guyinza kugenda mu maaso kyokka.",
+  "Suffix": "Enkomerero",
+  "Use default": "Kozesa ekya bulijjo"
 }

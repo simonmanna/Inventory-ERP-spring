@@ -186,7 +186,8 @@ public class PurchaseOrdersService {
                             + " \"organizationId\", \"orderNumber\", \"partnerId\", \"branchId\", description,"
                             + " \"orderDate\", \"expectedDeliveryDate\", \"currencyCode\", \"exchangeRate\", subtotal,"
                             + " \"taxAmount\", \"totalAmount\", status, \"paymentType\", \"paymentStatus\", notes, terms,"
-                            + " \"requestId\", \"departmentId\", \"createdBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?,"
+                            + " \"requestId\", \"departmentId\", \"createdBy\", \"createdAt\", \"updatedAt\")"
+                            + " VALUES (?, ?, ?,"
                             + " ?, ?, ?, " + NOW + ", ?, ?, ?, ?, ?, ?, 'draft', ?::\"PaymentType\","
                             + " ?::\"PaymentStatus\", ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                     .params(id, orgId, orderNumber, dto.partnerId(), dto.branchId(), dto.description(),
