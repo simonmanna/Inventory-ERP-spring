@@ -51,7 +51,11 @@ public class CommunicationSubscriber {
             "cash.session.closed",
             // Procurement
             "purchase_order.approved",
-            "goods_receipt.posted");
+            "goods_receipt.posted",
+            // Fleet 1.9 reminders, one per item and day
+            "fleet.reminder.due",
+            // Scheduled alerts (ADR-S021): one event per alert type and scan
+            "alert.raised");
 
     private final EventBus events;
     private final RuleEngineService ruleEngine;

@@ -230,6 +230,16 @@ export const PERMISSIONS = {
     update: 'inventory_location:update',
     delete: 'inventory_location:delete',
   },
+  /// Scheduled alerts and exception reports (Phase 5, ADR-S021). Holding `alerts:read` also puts a user on the default
+  /// recipient list; `alerts:manage` sets thresholds, channels and recipients per alert type.
+  alerts: {
+    read: 'alerts:read',
+    manage: 'alerts:manage',
+  },
+  /// Read-only reporting datasets as CSV (Phase 5 integrations).
+  bi: {
+    export: 'bi:export',
+  },
   inventory: {
     read: 'inventory:read',
     move: 'inventory:move',

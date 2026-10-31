@@ -68,7 +68,7 @@ public class FleetReminderService {
     }
 
     /** One reminder candidate. */
-    record Item(String type, String itemId, String key, String state, String vehicleId, String driverId,
+    public record Item(String type, String itemId, String key, String state, String vehicleId, String driverId,
             LocalDate dueOn, String title, String body, String link) {}
 
     /**
@@ -79,6 +79,26 @@ public class FleetReminderService {
     public Map<String, Object> run(LocalDate asOf) {
         LocalDate day = asOf == null ? LocalDate.now(BusinessZone.get()) : asOf;
         String org = FleetDb.org();
+        List<Item> items = dueItems(org, day);
+        Map<String, Object> sent = new LinkedHashMap<>();
+        for (String t : List.of("compliance_document", "driver_document", "vehicle_tare", "service_due")) {
+            sent.put(t, 0);
+        }
+        int skipped = 0;
+        for (Item it : items) {
+            if (remind(org, day, it)) {
+                sent.put(it.type(), (Integer) sent.get(it.type()) + 1);
+                count("fleet.reminders.sent", it.type());
+            } else {
+                skipped++;
+                count("fleet.reminders.skipped", it.type());
+            }
+        }
+        return Obj.of("asOf", day, "sent", sent, "skipped", skipped, "items", items.size());
+    }
+
+    /** Everything due on {@code day}; reads only, shared with the alert sources ({@link FleetAlertSources}). */
+    public List<Item> dueItems(String org, LocalDate day) {
         List<Item> items = new ArrayList<>();
         for (Map<String, Object> d : compliance.dueForOrganization(org, day)) {
             String plate = d.get("vehicleRegistrationPlate") == null ? "" : " (" + d.get("vehicleRegistrationPlate")
@@ -133,21 +153,7 @@ public class FleetReminderService {
                     "Plan the " + s.get("name") + " service of " + v.get("code") + (s.get("liveWorkOrder") == null
                             ? "." : " (work order raised)."), "/fleet/maintenance"));
         }
-        Map<String, Object> sent = new LinkedHashMap<>();
-        for (String t : List.of("compliance_document", "driver_document", "vehicle_tare", "service_due")) {
-            sent.put(t, 0);
-        }
-        int skipped = 0;
-        for (Item it : items) {
-            if (remind(org, day, it)) {
-                sent.put(it.type(), (Integer) sent.get(it.type()) + 1);
-                count("fleet.reminders.sent", it.type());
-            } else {
-                skipped++;
-                count("fleet.reminders.skipped", it.type());
-            }
-        }
-        return Obj.of("asOf", day, "sent", sent, "skipped", skipped, "items", items.size());
+        return items;
     }
 
     /** Claim the item's row for the day; only the first claim notifies. */

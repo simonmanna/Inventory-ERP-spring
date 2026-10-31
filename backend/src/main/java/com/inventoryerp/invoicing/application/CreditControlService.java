@@ -218,6 +218,20 @@ public class CreditControlService {
                 rows.size());
     }
 
+    /** A customer's name and position, for the credit alerts. */
+    public record NamedExposure(String partnerName, Exposure exposure) {}
+
+    /** Every customer with a limit, by name. The current user's own overrides do not apply to a scan: it has no user. */
+    @Transactional(readOnly = true)
+    public List<NamedExposure> limitedCustomers() {
+        List<NamedExposure> out = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE \"organizationId\""
+                + " = ? AND \"deletedAt\" IS NULL AND \"creditLimit\" > 0 ORDER BY name").param(org()))) {
+            out.add(new NamedExposure((String) r.get("name"), exposure((String) r.get("id"), null)));
+        }
+        return out;
+    }
+
     /** One customer's position with every override. */
     @Transactional(readOnly = true)
     public Map<String, Object> customer(String partnerId) {
