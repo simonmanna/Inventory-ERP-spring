@@ -365,3 +365,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/payment-schedule`: a posted bill due in 3 days shows under Next 7 days; Plan it for +20 days and it moves to Next 30 days; Hold moves it out of the total.
   - `/procurement/supplier-performance`: receive one PO on time and one late, check on-time 50 %; a failed incoming lot lowers Quality pass.
   - `/reports` → Purchases tab: orders in the date range match `/procurement/purchase-orders`.
+- FIN-1 Bank reconciliation
+  - `/bank-reconciliation`: choose the bank account, import a CSV (date, reference, description, amount; money out negative); importing it again adds nothing.
+  - Auto-match pairs a -70 line with a supplier payment of 70 and a +90 line with a receipt of 90, within the tolerance.
+  - Match by hand from the candidates; Exclude a bank charge with a reason; Undo returns either to unmatched.
+  - Payments not on a statement falls as lines match. Check the book balance against `/accounts/cash-accounts/accounts`.

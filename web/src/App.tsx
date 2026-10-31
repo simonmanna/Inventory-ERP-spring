@@ -87,6 +87,7 @@ import { BudgetsPage } from '@/pages/accounting/budgets';
 import { BudgetDetailPage } from '@/pages/accounting/budget-detail';
 import { OpeningBalancesPage } from '@/pages/accounting/opening-balances';
 import { TaxReportPage } from '@/pages/accounting/tax-report';
+import { BankReconciliationPage } from '@/pages/accounting/bank-reconciliation';
 import { ConsolidatedReportPage } from '@/pages/accounting/consolidated-report';
 import { StatementsPage } from '@/pages/invoicing/statements';
 import { DetailedAccountingReportPage } from '@/pages/accounting/detailed-report';
@@ -312,6 +313,7 @@ export function App() {
           <Route path="/accounts/cash-accounts/accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountsPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/activity" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyActivityPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/settlements" element={<RequirePermission permission={PERMISSIONS.cashSession.reconcile}><MoneySettlementsPage /></RequirePermission>} />
+          <Route path="/bank-reconciliation" element={<RequirePermission permission={PERMISSIONS.bankAccount.read}><BankReconciliationPage /></RequirePermission>} />
           <Route path="/accounts/cash-accounts/transactions" element={<Navigate to="/accounts/cash-accounts/activity" replace />} />
           <Route path="/accounts/cash-accounts/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountDetailPage /></RequirePermission>} />
           <Route path="/cash-flow/report" element={<RequireReport reportId="money.reports"><RequirePermission permission={PERMISSIONS.account.read}><CashFlowReportPage /></RequirePermission></RequireReport>} />
