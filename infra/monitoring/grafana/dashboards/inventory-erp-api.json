@@ -460,6 +460,16 @@
           "refId": "C",
           "expr": "max(erp_event_publications_incomplete{job=\"inventory-erp-api\"})",
           "legendFormat": "event outbox incomplete"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(increase(erp_job_failures_total{job=\"inventory-erp-api\"}[1h]))",
+          "legendFormat": "job failures (1 h)"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(increase(erp_provider_failures_total{job=\"inventory-erp-api\"}[1h]))",
+          "legendFormat": "provider failures (1 h)"
         }
       ],
       "id": 13

@@ -99,7 +99,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | merged, unverified (C) | c84fc26..810f3f7 | | V90–V97; 73 routes; never compiled or run |
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
 | 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
-| 6 production hardening | todo | | v2.1.0-rc | |
+| 6 production hardening | code review merged, unverified (C) | 6326250..7eec4c7 | tag v2.1.0-rc held: release.yml publishes images on v*.*.* | V120; 7 defects fixed; critical open finding: routes with no permission check, see DECISIONS_FOR_OWNER |
 | 7 demo, docs, final report | demo org and guides merged, unverified; report pending (C) | a3cd947, 02a18eb, 1d8ff9a | | SEED_CONSTRUCTION_DEMO, off by default; never compiled or run |
 
 ### Phase 1 summary (fleet-complete, 2026-10-30)

@@ -44,6 +44,9 @@ services:
       DB_USER: ${DB_USER:-erp}
       DB_PASSWORD: ${DB_PASSWORD:-erp}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # Behind the web container's nginx: without this every client shares nginx's address, so the anonymous rate
+      # limits (10 logins in 5 minutes) would apply to the whole site at once.
+      SERVER_FORWARD_HEADERS_STRATEGY: native
       STORAGE_LOCAL_DIR: /app/var/uploads
       BACKUP_DIR: /app/backups
     volumes:
@@ -56,6 +59,14 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.web
+      # Build-time menu flags: mirror the API's ENABLE_* (unset = hidden). Rebuild the image after changing one.
+      args:
+        VITE_ENABLE_BEVERAGE: ${VITE_ENABLE_BEVERAGE:-}
+        VITE_ENABLE_TASKS: ${VITE_ENABLE_TASKS:-}
+        VITE_ENABLE_MANUFACTURING: ${VITE_ENABLE_MANUFACTURING:-}
+        VITE_ENABLE_HR: ${VITE_ENABLE_HR:-}
+        VITE_ENABLE_ORDERS: ${VITE_ENABLE_ORDERS:-}
+        VITE_ENABLE_ALERTS: ${VITE_ENABLE_ALERTS:-}
     container_name: ierp-web
     restart: unless-stopped
     depends_on:

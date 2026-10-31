@@ -518,8 +518,8 @@ public class ManufacturingCostingService {
         if (average != null && average.signum() > 0) {
             return new Object[] {average, "stock_average"};
         }
-        BigDecimal price = db.jdbc().sql("SELECT \"costPrice\" FROM \"Product\" WHERE id = ?").param(productId)
-                .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        BigDecimal price = db.jdbc().sql("SELECT \"costPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, MfgDb.org()).query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
         return new Object[] {price, "cost_price"};
     }
 }

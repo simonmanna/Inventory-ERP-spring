@@ -1,5 +1,17 @@
 # Owner verification checklist (Track C — construction materials)
 
+> **Read this first. Everything merged after commit `bd3f34b` has never been compiled or run.** That is the rest of
+> Phase 2 and all of Phases 3, 4, 5 and 6: more than 90 commits, about 70,000 lines and 32 migrations (V30 to V120). No
+> Gradle, no tests, no tsc, no lint, no server start. Phase 6 reviewed it by reading and with static scripts, which do not
+> replace a build. Where a section below says "verified" or "green", it describes code at or before `bd3f34b`.
+>
+> **A shared database must only be migrated from V31 after the whole set is merged.** Flyway runs with `out-of-order`
+> off, so a database that has taken a higher version refuses a lower one that arrives later, and the numbers have gaps
+> by design. Never migrate a shared database from a partial branch; use a throwaway database for trials.
+>
+> Work top to bottom through the [run-book](#run-book-build-to-backup-drill) at the end of this file. If step 1 fails, go
+> to [first build triage](#first-build-triage).
+
 Per module: what to run, the migrations added, the screens to click through with the expected result, and open
 doubts. Work through it top to bottom on a machine with Docker (Testcontainers) or a local Postgres
 (`IT_EXTERNAL_DB=true`, see `docs/BUILD_LOG.md` → "Environment notes").
@@ -669,3 +681,204 @@ throwaway database with `SEED_CONSTRUCTION_DEMO=true`, the `seed` profile and `E
 - Accounting: `wip` maps to 1420 on the account mapping screen.
 - Sales: one posted invoice per closed trip, older ones paid by bank, one in five half paid; newest month unpaid.
 - Driver app: `driver@construction.test` sees today's open delivery on `CM-T01`.
+## Phase 6 — production hardening (reviewed by reading, nothing compiled or run)
+
+**What the review covered.** Static scripts over the whole backend and web, calibrated on `bd3f34b`, which is known to
+build: anything reported there is noise. Java syntax, imports, constructor and method arity, argument, assignment and
+return types where the receiver could be inferred (about 44 % of calls; the rest are JDK, third-party or lambda
+parameters), unknown identifiers, unimplemented interface methods. Spring beans, constructor cycles, conditional beans. Modulith cycles and internals. Flyway replayed in order
+into a schema model. Entities against columns. Every SQL string parsed and checked for tables, columns, placeholder
+counts, enum and `CHECK` values, `NOT NULL` inserts. Web imports, exports, routes and permission keys. Third-party calls
+against the real jars.
+
+**Fixed:** one compile error (`ProcurementReplenishmentService` called a record with the old field count); portal
+lock-down lost when the role held a second permission; a cost lookup with no organization filter; the mock mobile money
+provider could post real receipts in production; a retried credit override doubled the waiver; every client behind nginx
+shared one rate-limit bucket; `VITE_ENABLE_*` never reached the Docker build. Added 14 indexes, failure metrics for the jobs
+and mobile money, alert rules, the route census in `ArchitectureTests` and `tools/perf/construction-load.mjs`.
+
+**Commands**
+
+```bash
+cd backend && ./gradlew test --tests 'com.inventoryerp.ArchitectureTests' --tests 'com.inventoryerp.portal.PortalIT'
+cd backend && ./gradlew test --tests 'com.inventoryerp.invoicing.CreditControlIT' --tests 'com.inventoryerp.invoicing.Mobile*'
+```
+
+**Migration**: `V120__hardening_indexes.sql` (14 indexes, no POS table; see `docs/OPERATIONS.md` 4a).
+
+**Click-through**
+
+- [ ] Give the Customer Portal role a second permission (`partner:read`), wait 60 s: that login gets `/partners`, and
+      `/search`, `/files`, `/approvals` still answer 403. An administrator still reaches all of them.
+- [ ] Under `SPRING_PROFILES_ACTIVE=prod` with `MOBILE_MONEY_PROVIDER=mock`: Collect is refused ("not configured").
+- [ ] Double-submit a credit override: one row, and the waiver is not doubled.
+- [ ] Behind nginx, sign in with a wrong password 11 times from one machine: only that machine gets 429.
+- [ ] Stop a provider or break a job: `erp_job_failures_total` / `erp_provider_failures_total` rise at `/api/v1/metrics`.
+
+**Open doubts**: the route list in `docs/DECISIONS_FOR_OWNER.md` (Phase 6) needs your decision before go-live.
+
+## POS and sync regression
+
+`git diff --name-only 9c82a91 HEAD` touches no file under `backend/.../pos`, `backend/.../sync`, their tests, `android/`,
+`web/src/{features,pages}/{pos,tables,menu}`, `reference/`, `V1` or `V2`. No POS table gained, lost or changed a column.
+
+POS does use nine shared classes that did change, so run the suite rather than trust the diff: `ExpensesService`,
+`DirectStockService`, `InventoryCountService`, `StockReservationService`, `StockService`, `DocumentBuilderService`,
+`SequenceService`, `Permissions`, `DomainEvents`. Their removed lines were read: a comment, a trailing comma, re-wrapped
+signatures and one query that gained an optional batch filter. Two migrations touch tables POS reads:
+`InventoryLocation` gains a nullable `branchId` (V62) and `Role` gains permissions (each `UPDATE "Role"`).
+
+```bash
+cd backend && ./gradlew test --tests 'com.inventoryerp.pos.*' --tests 'com.inventoryerp.sync.*'
+cd backend && ./gradlew test --tests 'com.inventoryerp.invoicing.*' --tests 'com.inventoryerp.inventory.*'  # shared spines
+cd android && ./gradlew :app:testDebugUnitTest :app:lintDebug
+node contract-tests/run.mjs --module pos       # Nest parity: needs both stacks, see contract-tests/README.md
+pnpm vitest run tests/e2e                      # copy reference/e2e to tests/e2e first; API_URL defaults to :3001
+API_BASE=http://localhost:3001 TERMINALS=50 DURATION_S=30 node tools/perf/checkout-smoke.mjs   # p95 < 150 ms
+```
+
+Then by hand on a till: PIN login, open shift, sale, split bill, tab edit, offline sale and sync, Z-report, close shift.
+
+## Run-book: build to backup drill
+
+Do these in order and stop at the first failure. Use a throwaway database until step 4 passes.
+
+### 1. Build
+
+```bash
+cd backend && ./gradlew clean compileJava compileTestJava spotlessCheck
+node tools/contracts2java/generate.mjs && git diff --exit-code -- backend  # generated files are current
+pnpm install --frozen-lockfile && pnpm shared:build
+pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n && pnpm web:build
+cd license-server && ./gradlew build
+```
+
+### 2. Boot-level tests
+
+These fail fast and name most wiring problems. Docker for Testcontainers, or a local Postgres 16 with
+`max_locks_per_transaction=1024`:
+`IT_EXTERNAL_DB=true JDBC_DATABASE_URL='jdbc:postgresql://localhost:5436/<db>?stringtype=unspecified' DB_USER=postgres DB_PASSWORD=postgres`.
+
+```bash
+cd backend && ./gradlew test --tests 'com.inventoryerp.ModularityTests' --tests 'com.inventoryerp.ArchitectureTests'
+cd backend && ./gradlew test --tests 'com.inventoryerp.ApplicationIT'    # every migration, ddl-auto=validate, context
+```
+
+Start the app once with every `ENABLE_*` off and once with all on: conditional beans only fail in one of the two.
+
+### 3. POS and sync first
+
+Run the [POS and sync regression](#pos-and-sync-regression). Do not go on with a POS failure.
+
+### 4. Full suite
+
+```bash
+cd backend && ./gradlew build     # tests + JaCoCo gate + spotless + bootJar, 6 to 8 minutes
+```
+
+### 5. Stack up
+
+```bash
+cp .env.example .env     # set JWT secrets, DB_PASSWORD, METRICS_TOKEN, BACKUP_ENCRYPTION_PASSWORD
+# API modules: ENABLE_MANUFACTURING ENABLE_FLEET ENABLE_QUARRY ENABLE_HR ENABLE_ORDERS ENABLE_ASSETS ENABLE_COMMUNICATION
+#              ENABLE_ALERTS ENABLE_PORTAL. Web menu, rebuilt into the image: VITE_ENABLE_MANUFACTURING VITE_ENABLE_HR
+#              VITE_ENABLE_ORDERS VITE_ENABLE_ALERTS
+docker compose up -d --build
+docker compose logs -f api     # Flyway reaches V120, "Started Application"
+```
+
+Check `/api/v1/health/ready`, then turn each module on for the organization under Settings → Modules, confirm its licence
+feature, and load the demo with `SEED_MANUFACTURING_DEMO=true` and the `seed` profile. Check the seeded GL balances.
+
+### 6. Click-through per module
+
+Use the sections above, in this order, because later ones depend on earlier ones:
+
+| Order | Module | Sections |
+|---|---|---|
+| 1 | Masters, units, branches and data scope | Phase 4 lane C |
+| 2 | Inventory, replenishment, reservations | Phase 4 INV-1 to INV-3 |
+| 3 | Procurement, approvals, numbering, RFQ | Phase 4 lanes B and D |
+| 4 | Finance, period close, bank | Phase 4 lane D |
+| 5 | Fleet, dispatch, weighbridge | Phases 1.1 to 1.9 |
+| 6 | Quarry, quality | Phase 2.2; quality from `docs/spec/quality.md` and its gates in 2.1 and 2.4 |
+| 7 | Multi-stage, crushing, blocks, shop floor | Phases 2.1, 2.3, 2.4, 2.7 |
+| 8 | Planning, costing, demo seed | MFG-1 to MFG-4 |
+| 9 | Sales, credit, price lists, commissions | Phase 4 lane C |
+| 10 | HR, CRM | Phase 4 HR-1 to HR-5, CRM-1, CRM-2 |
+| 11 | Portal, mobile money, labels, field | Phase 4 lane E |
+| 12 | Alerts, forecast, BI, dashboards | Phase 5 sections |
+| 13 | Hardening | Phase 6 |
+
+Each module: one document end to end, its GL entry balances, a reversal, a refused action as a user without the
+permission, and a second organization sees nothing.
+
+### 7. Performance
+
+Seed volume first: the target is p95 < 300 ms on list and detail routes with 1M rows. Restart the API with
+`THROTTLE_ENABLED=false`.
+
+```bash
+API_BASE=http://localhost:3001 node tools/perf/construction-load.mjs             # all read groups, 20 users, 30 s each
+GROUPS=dispatch,weighbridge VUS=50 DURATION_S=120 node tools/perf/construction-load.mjs
+WRITES=1 PERF_STATION_ID=<id> PERF_PLANT_ID=<id> node tools/perf/construction-load.mjs writes   # throwaway database
+```
+
+Look first at `/analytics/inventory`, `/analytics/finance` and the customer portal. For a slow route, use
+`pg_stat_statements` (`docs/OPERATIONS.md` 7b) and the manual indexes in 4a. Turn throttling back on afterwards.
+
+### 8. Backup and restore drill
+
+```bash
+ADMIN_EMAIL=... ADMIN_PASSWORD=... node scripts/dr-drill.mjs      # backup, restore, second API, equal trial balance
+```
+
+The drill drops its scratch database, so restore once more by hand for the new data (`POST /api/v1/admin/backups/restore`
+with `{scope:"database", backupFile, targetDatabase}`) and compare live with restored:
+
+```sql
+SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+SELECT count(*) FROM information_schema.views WHERE table_schema = 'reporting';    -- 8
+SELECT max(version::int) FROM flyway_schema_history WHERE success;                 -- 120
+SELECT (SELECT count(*) FROM "WeighbridgeTicket"), (SELECT count(*) FROM "CrushingRun"), (SELECT count(*) FROM "PortalAccount"),
+       (SELECT count(*) FROM "MobileMoneyCollection"), (SELECT count(*) FROM "AlertEvent"), (SELECT count(*) FROM "PriceList");
+```
+
+Open one fleet document and one label from the restored system to confirm the uploads came back. Drop the scratch database.
+
+### 9. Release
+
+Only with every step above green: decide the routes in `docs/DECISIONS_FOR_OWNER.md` (Phase 6), set a real
+`MOBILE_MONEY_PROVIDER` or leave collections unused, then migrate the shared database once, from the merged set.
+
+## First build triage
+
+Expect some errors: this is the first compile of more than 90 commits. Work in this order, because one early error hides
+later ones.
+
+1. **`compileJava` fails.** Fix from the top. The review found no missing import, wrong arity or wrong argument type, so
+   look first where the scripts could not: lambda parameters, generic inference, calls on third-party classes, checked
+   exceptions. Likely spots: the `TenantContext.run` lambdas in `MobileMoneyService` (`Supplier` against `Runnable`),
+   `CrushingReportService`, `AnalyticsDocuments`. A record that gained a field: `grep -rn 'new <Record>(' backend/src`.
+2. **`compileTestJava` fails.** Tests were checked the same way but are the least-read code. Fix the test unless it shows
+   a real signature mistake.
+3. **`spotlessCheck` fails.** `./gradlew spotlessApply`; it only touches whitespace.
+4. **`ModularityTests` fails.** Read the named dependency. Fix it through an `application` API or an event; never open an
+   internal package. Unused imports do not count, but a `var` whose type is another module's internal class does.
+5. **`ApplicationIT` fails on Flyway.** V31 and below are already applied: add a new migration, never edit those. A
+   failing V40 or later has not been applied to the shared database yet, so fix it in place, then drop the throwaway
+   database and start again.
+6. **`ApplicationIT` fails on Hibernate validate.** The message names the column and type. Fix the entity, not the table.
+7. **Context fails to start.** `UnsatisfiedDependency` or circular reference: fix the wiring with `ObjectProvider` where
+   the module is optional. `Ambiguous mapping`: rename the newer route. Then repeat with all `ENABLE_*` flags flipped.
+8. **Tests fail by the hundred.** Look for one cause first: a shared fixture, the demo seed, `ApiTestSupport`, a permission
+   the seed role lacks, an expected route count. `SqlRows` returns `LocalDate` for `date` columns and `Instant` for
+   `timestamp`, so a wrong cast shows up as `ClassCastException` at runtime only.
+9. **`jacocoTestCoverageVerification` fails.** `build` enforces a line-coverage floor per `*.application` package
+   (`coverage.application.min`, 80 % by default). It is a ratchet: never lower it. A low package usually means its
+   tests did not run, or a new package such as `alerts`, `biexport` or `analytics` needs more.
+10. **`web:typecheck` fails.** Same order: shared build first, then imports. The scripts confirmed imports, exports,
+    routes and permission keys, not types. `pnpm web:i18n` gaps are listed per locale; nine repeated phrases are harmless.
+
+After each fix, rerun only the step that failed, then go on. If a fix changes behaviour, log it in
+`docs/DECISIONS_FOR_OWNER.md`.
