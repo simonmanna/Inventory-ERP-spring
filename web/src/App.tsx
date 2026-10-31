@@ -268,7 +268,7 @@ export function App() {
       {/* Digital Menu — customer-facing public route (no auth, no shell). */}
       <Route path="/menu/:branchId/:tableId" element={<DigitalMenuPage />} />
       {/* Customer portal — magic-link token, no staff login (ADR-S011 S10). */}
-      <Route path="/portal" element={<CustomerPortalPage />} />
+      <Route path="/sales-portal" element={<CustomerPortalPage />} />
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />

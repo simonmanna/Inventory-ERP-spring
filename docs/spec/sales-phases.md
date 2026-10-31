@@ -346,7 +346,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   expiring in 7 days, 30+ days overdue customers with undelivered orders, agreements ending within 30 days with
   > 20 % unreleased. It never posts, approves or changes data.
 - `SalesPortalService`: staff issue (`POST /sales/portal/access`, optional e-mail, 1–365 days) and revoke links; the
-  public `/portal/*` routes (`@Public`, header `X-Portal-Token`, throttled) run in the token's organization scoped to
+  public `/sales-portal/*` routes (`@Public`, header `X-Portal-Token`, throttled) run in the token's organization scoped to
   its customer: me (open / overdue balance), quotations (list, detail without internal fields, accept, decline),
   orders with lines and delivery trips, invoices / credit notes, statement PDF, mobile-money payment of an open
   invoice (a repeat within 10 minutes returns the running request), payment status, complaints.
@@ -354,7 +354,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   (tests only).
 - Routes: `/sales/analytics/*` (4), `/sales/advisor`, `/sales/portal/access*` (3), `/portal/*` (12).
   Web: Sales analytics page (overview + advisor, analysis, profitability, forecast), Customer portal links page,
-  public `/portal` page (token kept in session storage, removed from the address bar).
+  public `/sales-portal` page (token kept in session storage, removed from the address bar).
 - Tests: `SalesInsightsIT` (3) — analysis / profitability / forecast numbers, advisor rules, portal scope (other
   customer's quotation 404), accept, payment booked, PDF, complaint, revoke → 401. Browser-checked locally:
   analytics tabs, portal link, portal page.

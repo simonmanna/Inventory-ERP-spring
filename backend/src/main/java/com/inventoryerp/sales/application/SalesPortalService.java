@@ -107,7 +107,7 @@ public class SalesPortalService {
         Map<String, Object> row = db.insert("CustomerPortalAccess", Obj.of("partnerId", partnerId, "email", email,
                 "tokenHash", hash(token), "expiresAt", expires, "createdById", user()));
         String base = blank(str(in.get("baseUrl"))) ? baseUrl : str(in.get("baseUrl"));
-        String path = "/portal?token=" + token;
+        String path = "/sales-portal?token=" + token;
         String url = (base == null ? "" : base.replaceAll("/+$", "")) + path;
         boolean emailed = false;
         if (Boolean.TRUE.equals(in.get("sendEmail")) && !blank(email) && !blank(base)) {

@@ -46,7 +46,7 @@ function useToken(): string | null {
 export default function CustomerPortalPage() {
   const token = useToken();
   const call = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const res = await fetch(`${getApiBaseUrl()}/portal${path}`, {
+    const res = await fetch(`${getApiBaseUrl()}/sales-portal${path}`, {
       ...init,
       headers: { 'X-Portal-Token': token ?? '', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
     });
@@ -75,7 +75,7 @@ export default function CustomerPortalPage() {
         <div><h1 className="text-xl font-semibold">{me.name}</h1><p className="text-sm text-muted-foreground">{tx('Open balance')} {money(me.openBalance)}{Number(me.overdue) > 0 && <span className="text-rose-600"> · {tx('overdue')} {money(me.overdue)}</span>}</p></div>
         <a className="text-sm text-primary hover:underline" href="#" onClick={async (e) => {
           e.preventDefault();
-          const res = await fetch(`${getApiBaseUrl()}/portal/statement.pdf`, { headers: { 'X-Portal-Token': token ?? '' } });
+          const res = await fetch(`${getApiBaseUrl()}/sales-portal/statement.pdf`, { headers: { 'X-Portal-Token': token ?? '' } });
           if (res.ok) window.open(URL.createObjectURL(await res.blob()), '_blank');
         }}>{tx('Download statement (PDF)')}</a>
       </div>

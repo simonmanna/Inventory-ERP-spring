@@ -165,11 +165,11 @@ class SalesInsightsIT extends ApiTestSupport {
         JsonNode access = ok(201, "POST", "/sales/portal/access", Map.of("partnerId", c, "days", 7, "baseUrl",
                 "https://erp.example.test"));
         String token = access.get("token").asString();
-        assertThat(access.get("url").asString()).startsWith("https://erp.example.test/portal?token=");
+        assertThat(access.get("url").asString()).startsWith("https://erp.example.test/sales-portal?token=");
         Map<String, String> h = Map.of("X-Portal-Token", token);
-        assertThat(call("GET", "/portal/me", null, Map.of()).status()).isEqualTo(401);
-        assertThat(call("GET", "/portal/me", null, Map.of("X-Portal-Token", "nope")).status()).isEqualTo(401);
-        assertThat(call("GET", "/portal/me", null, h).body().get("id").asString()).isEqualTo(c);
+        assertThat(call("GET", "/sales-portal/me", null, Map.of()).status()).isEqualTo(401);
+        assertThat(call("GET", "/sales-portal/me", null, Map.of("X-Portal-Token", "nope")).status()).isEqualTo(401);
+        assertThat(call("GET", "/sales-portal/me", null, h).body().get("id").asString()).isEqualTo(c);
 
         String mine = ok(201, "POST", "/sales/quotations", Map.of("partnerId", c, "lines", List.of(Map.of("productId",
                 product, "quantity", 3, "unitPrice", 1000)))).get("id").asString();
@@ -177,43 +177,43 @@ class SalesInsightsIT extends ApiTestSupport {
                 "productId", product, "quantity", 3, "unitPrice", 1000)))).get("id").asString();
         jdbc.sql("UPDATE \"SalesQuotation\" SET status = 'sent', \"validUntil\" = CURRENT_DATE + 10 WHERE id IN (?, ?)")
                 .params(mine, theirs).update();
-        assertThat(call("GET", "/portal/quotations", null, h).body().size()).isEqualTo(1);
-        assertThat(call("GET", "/portal/quotations/" + theirs, null, h).status()).isEqualTo(404);
-        assertThat(call("POST", "/portal/quotations/" + theirs + "/accept", null, h).status()).isEqualTo(404);
-        JsonNode accepted = call("POST", "/portal/quotations/" + mine + "/accept", null, h).body();
+        assertThat(call("GET", "/sales-portal/quotations", null, h).body().size()).isEqualTo(1);
+        assertThat(call("GET", "/sales-portal/quotations/" + theirs, null, h).status()).isEqualTo(404);
+        assertThat(call("POST", "/sales-portal/quotations/" + theirs + "/accept", null, h).status()).isEqualTo(404);
+        JsonNode accepted = call("POST", "/sales-portal/quotations/" + mine + "/accept", null, h).body();
         assertThat(accepted.get("status").asString()).isEqualTo("accepted");
         assertThat(accepted.has("approvalReasons")).isFalse();
 
         String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "lines", List.of(Map.of("productId", product,
                 "quantity", 2)))).get("id").asString();
         ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
-        assertThat(call("GET", "/portal/orders", null, h).body().size()).isEqualTo(1);
-        assertThat(call("GET", "/portal/orders/" + so, null, h).body().get("lines").size()).isEqualTo(1);
+        assertThat(call("GET", "/sales-portal/orders", null, h).body().size()).isEqualTo(1);
+        assertThat(call("GET", "/sales-portal/orders/" + so, null, h).body().get("lines").size()).isEqualTo(1);
 
         String inv = postedInvoice(c, 2, 1000, today);
         postedInvoice(other, 1, 1000, today);
-        assertThat(call("GET", "/portal/invoices", null, h).body().size()).isEqualTo(1);
-        JsonNode pay = call("POST", "/portal/invoices/" + inv + "/pay", Map.of("provider", "mock", "phone",
+        assertThat(call("GET", "/sales-portal/invoices", null, h).body().size()).isEqualTo(1);
+        JsonNode pay = call("POST", "/sales-portal/invoices/" + inv + "/pay", Map.of("provider", "mock", "phone",
                 "+256771234567"), h).body();
         assertThat(pay.get("status").asString()).isEqualTo("pending");
-        assertThat(call("POST", "/portal/invoices/" + inv + "/pay", Map.of("provider", "mock", "phone", "+256771234567"),
+        assertThat(call("POST", "/sales-portal/invoices/" + inv + "/pay", Map.of("provider", "mock", "phone", "+256771234567"),
                 h).body().get("id").asString()).isEqualTo(pay.get("id").asString());
-        JsonNode paid = call("GET", "/portal/payments/" + pay.get("id").asString(), null, h).body();
+        JsonNode paid = call("GET", "/sales-portal/payments/" + pay.get("id").asString(), null, h).body();
         assertThat(paid.path("status").asString(null)).as(paid.toString()).isEqualTo("succeeded");
         assertThat(ok(200, "GET", "/invoices/" + inv, null).get("amountResidual").asDouble()).isZero();
 
         HttpResponse<byte[]> pdf = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
-                + "/api/v1/portal/statement.pdf")).header("X-Portal-Token", token).GET().build(),
+                + "/api/v1/sales-portal/statement.pdf")).header("X-Portal-Token", token).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(pdf.statusCode()).isEqualTo(200);
         assertThat(new String(pdf.body(), 0, 4)).isEqualTo("%PDF");
 
-        assertThat(call("POST", "/portal/complaints", Map.of("category", "quality", "description", "Cracked blocks",
+        assertThat(call("POST", "/sales-portal/complaints", Map.of("category", "quality", "description", "Cracked blocks",
                 "orderId", so), h).status()).isEqualTo(201);
-        assertThat(call("GET", "/portal/complaints", null, h).body().size()).isEqualTo(1);
+        assertThat(call("GET", "/sales-portal/complaints", null, h).body().size()).isEqualTo(1);
 
         ok(200, "POST", "/sales/portal/access/" + access.get("id").asString() + "/revoke", null);
-        assertThat(call("GET", "/portal/me", null, h).status()).isEqualTo(401);
+        assertThat(call("GET", "/sales-portal/me", null, h).status()).isEqualTo(401);
         assertThat(ok(200, "GET", "/sales/portal/access?partnerId=" + c, null).get(0).get("revokedAt").isNull()).isFalse();
     }
 }

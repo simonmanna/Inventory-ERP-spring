@@ -126,9 +126,9 @@ public final class SalesInsightsController {
         }
     }
 
-    /** {@code /portal/*}: the customer's own view, authenticated by the {@code X-Portal-Token} magic-link token. */
+    /** {@code /sales-portal/*}: the customer's own view, authenticated by the {@code X-Portal-Token} magic-link token. */
     @RestController
-    @RequestMapping("/portal")
+    @RequestMapping("/sales-portal")
     @Public
     @RequiresFeature(LicenseFeatures.CUSTOMER_PORTAL)
     @Throttle(limit = 120, ttlMs = 60 * 1000)
