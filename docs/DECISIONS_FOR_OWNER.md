@@ -139,3 +139,8 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | HR-5 | Journal without rules | Unchanged: one salary line with no tags. Only `HrPayrollCostLine` is added, so the department report still works | Always tag branch | `HrPayrollService.salaryDebits` |
 | 2026-10-30 | HR-5 | What is allocated? | Gross pay less what fleet inputs redirected. The "other deductions contra" credit stays on salaries expense with no cost centre, so a cost centre shows gross, not gross net of other deductions | Split the contra credit too | `HrPayrollCostService.allocate` |
 | 2026-10-30 | HR-5 | Cost lines on reversal | Deleted with the reversal: the report shows only live charges; the journal keeps the reversal | Keep with a reversed flag | `HrPayrollCostService.clearRun` |
+| 2026-10-30 | CRM-1 | One model or two? | One `CrmCase` with `caseType` complaint or service_request | Separate complaint and service-request models | — |
+| 2026-10-30 | CRM-1 | Response times | Urgent 4 h, high 24 h, normal 72 h, low 7 days from creation, editable per case | Configurable SLA table | `CrmCaseRules.RESPONSE` |
+| 2026-10-30 | CRM-1 | Delivery discrepancy link | Opened by hand from a discrepancy (`/crm/cases/from-discrepancy/{id}`), one live case per discrepancy, high priority. Fleet's decision is added to the timeline; it does not close the case | Open a case for every discrepancy automatically | Delivery Discrepancies → Open case |
+| 2026-10-30 | CRM-1 | New permissions | `crm:case:read`, `crm:case:write` (Administrator); no own-vs-all visibility | Reuse deal permissions | Roles |
+| 2026-10-30 | CRM-1 | Module dependency | crm now calls `fleet.application.FleetDiscrepancyService`; fleet never calls crm | Read fleet tables by SQL | `CrmCaseService` |

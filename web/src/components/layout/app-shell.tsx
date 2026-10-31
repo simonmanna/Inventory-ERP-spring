@@ -416,6 +416,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead },
       { to: '/crm/activities', label: tx('Activities'), icon: CalendarCheck, permission: PERMISSIONS.crm.activityRead },
       { to: '/crm/customers', label: tx('Customers'), icon: Users2, permission: PERMISSIONS.crm.dealRead },
+      { to: '/crm/cases', label: tx('Complaints & Requests'), icon: ClipboardCheck, permission: PERMISSIONS.crm.caseRead },
       { to: '/crm/pricing', label: tx('Price Rules'), icon: Tags, permission: PERMISSIONS.crm.pricingRead },
       { to: '/crm/reports', label: tx('Reports'), icon: BarChart3, permission: PERMISSIONS.crm.reportRead },
       { to: '/crm/settings', label: tx('Configuration'), icon: SettingsIcon, permission: PERMISSIONS.crm.configure },

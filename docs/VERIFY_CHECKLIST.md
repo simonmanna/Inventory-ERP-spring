@@ -386,3 +386,10 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - [ ] The report on the same tab shows the amounts by department and cost centre. Reversing the run empties it.
 - [ ] With no splits at all, the journal has one salaries debit, as before.
 - [ ] Accounting: a cost-centre report for the period shows the same totals.
+
+## Phase 4 CRM-1 — complaints and service requests (built, not run)
+
+- [ ] `/crm/cases`: create a complaint; the due time follows the priority. Filter by status, type, priority, overdue.
+- [ ] On the case: add a note, assign an owner (they get a notification), start, resolve with a resolution, close.
+- [ ] `/fleet/delivery-discrepancies` → Open case: a high-priority delivery complaint opens with the customer and quantities; the button again opens the same case.
+- [ ] Approve the discrepancy: the case timeline shows the decision and any credit note; the case stays open.

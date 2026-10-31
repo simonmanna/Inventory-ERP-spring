@@ -603,6 +603,9 @@ export const PERMISSIONS = {
     pricingManage: 'crm:pricing:manage',
     reportRead: 'crm:report:read',
     configure: 'crm:configure',
+    /// Customer complaints and service requests (CRM-1).
+    caseRead: 'crm:case:read',
+    caseWrite: 'crm:case:write',
   },
   document: {
     create: 'document:create',

@@ -228,7 +228,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 143 | Quotation follow-up and conversion tracking. | `present-verified` | crm · `/crm/quotations/{id}/convert`, `/crm/reports` (leadConversion, conversion) · `/crm/quotations`, `/crm/reports` · CrmSuiteIT.quotations/reports | — |
 | 144 | Customer segmentation. | `present-partial` | Partner categories, CRM tags and `/crm/saved-filters` exist; `saved-filters` not called by any test; no segment entity | Needs test; decide on segments (CRM-2) |
 | 145 | Sales pipeline monitoring. | `present-verified` | crm · `/crm/opportunities/kanban`, `/crm/analytics/pipeline`, `/crm/dashboard` · `/crm/pipeline`, `/crm` · CrmIT.analytics, CrmSuiteIT.configurableStages | — |
-| 146 | Customer complaints and service requests. | `missing` | No complaint or service request entity (grep in `crm`: empty) | Build complaints, tie to delivery discrepancies (CRM-1) |
+| 146 | Customer complaints and service requests. | `present-partial (built, unverified)` | Built: `/crm/cases` (V94, CrmCaseService, CrmCaseRules, CrmCaseDiscrepancySubscriber), `from-discrepancy` ties a case to a fleet delivery discrepancy. CrmCaseIT and CrmCaseRulesTest written; screens `/crm/cases`, `/crm/cases/:id`, "Open case" on delivery discrepancies. Nothing compiled or run | Build complaints, tie to delivery discrepancies (CRM-1) |
 | 147 | Customer purchasing history and sales analysis. | `present-verified` | crm · `/crm/analytics/partner/{id}`, `/crm/customers/{id}` · `/crm/customers/:id` · CrmIT.analytics | — |
 
 ### 2.7 Reporting, Analytics, and Business Intelligence

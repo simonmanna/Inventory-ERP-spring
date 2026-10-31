@@ -1,5 +1,6 @@
 package com.inventoryerp.crm.web;
 
+import com.inventoryerp.crm.application.CrmCaseService;
 import com.inventoryerp.crm.application.CrmConfigService;
 import com.inventoryerp.crm.application.CrmPipelineService;
 import com.inventoryerp.crm.application.CrmPlannerService;
@@ -10,6 +11,7 @@ import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.web.ApiException;
+import com.inventoryerp.shared.web.PageResult;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.List;
@@ -186,6 +188,70 @@ public final class CrmSuiteController {
         @RequirePermissions(Permissions.CRM__DEAL_READ)
         public Map<String, Object> delete(@PathVariable String id) {
             return svc.deleteFilter(id);
+        }
+    }
+
+    /** {@code /crm/cases}: customer complaints and service requests (CRM-1). */
+    @RestController
+    @RequestMapping("/crm/cases")
+    public static class CaseController {
+
+        private final CrmCaseService svc;
+
+        public CaseController(CrmCaseService svc) {
+            this.svc = svc;
+        }
+
+        @GetMapping
+        @RequirePermissions(Permissions.CRM__CASE_READ)
+        public PageResult<Map<String, Object>> list(@RequestParam Map<String, String> q) {
+            return svc.list(q);
+        }
+
+        @GetMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CASE_READ)
+        public Map<String, Object> get(@PathVariable String id) {
+            return svc.get(id);
+        }
+
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> create(@RequestBody Map<String, Object> b) {
+            return svc.create(body(b));
+        }
+
+        @PostMapping("/from-discrepancy/{discrepancyId}")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> fromDiscrepancy(@PathVariable String discrepancyId,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return svc.fromDiscrepancy(discrepancyId, body(b));
+        }
+
+        @PatchMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.update(id, body(b));
+        }
+
+        @PostMapping("/{id}/assign")
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> assign(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.assign(id, body(b));
+        }
+
+        @PostMapping("/{id}/notes")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> addNote(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.addNote(id, body(b));
+        }
+
+        @PostMapping("/{id}/status")
+        @RequirePermissions(Permissions.CRM__CASE_WRITE)
+        public Map<String, Object> setStatus(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.setStatus(id, body(b));
         }
     }
 

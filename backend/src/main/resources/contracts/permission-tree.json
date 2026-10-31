@@ -532,7 +532,9 @@
     "pricingRead": "crm:pricing:read",
     "pricingManage": "crm:pricing:manage",
     "reportRead": "crm:report:read",
-    "configure": "crm:configure"
+    "configure": "crm:configure",
+    "caseRead": "crm:case:read",
+    "caseWrite": "crm:case:write"
   },
   "document": {
     "create": "document:create",

@@ -12,6 +12,8 @@ import { CustomerDetailPage, CustomersPage } from './CustomersPage';
 import { PriceRulesPage } from './PriceRulesPage';
 import { CrmReportsPage } from './CrmReportsPage';
 import { CrmSettingsPage } from './CrmSettingsPage';
+import { CasesPage } from './CasesPage';
+import { CaseDetailPage } from './CaseDetailPage';
 
 /** Old deal links keep working: /crm/deals/:id → /crm/opportunities/:id. */
 function LegacyDealRedirect() {
@@ -34,6 +36,8 @@ export const crmRoutes = (
     <Route path="/crm/quotations/:id" element={<RequirePermission permission={P.quotationRead}><QuotationEditorPage /></RequirePermission>} />
     <Route path="/crm/customers" element={<RequirePermission permission={P.dealRead}><CustomersPage /></RequirePermission>} />
     <Route path="/crm/customers/:id" element={<RequirePermission permission={P.dealRead}><CustomerDetailPage /></RequirePermission>} />
+    <Route path="/crm/cases" element={<RequirePermission permission={P.caseRead}><CasesPage /></RequirePermission>} />
+    <Route path="/crm/cases/:id" element={<RequirePermission permission={P.caseRead}><CaseDetailPage /></RequirePermission>} />
     <Route path="/crm/pricing" element={<RequirePermission permission={P.pricingRead}><PriceRulesPage /></RequirePermission>} />
     <Route path="/crm/reports" element={<RequirePermission permission={P.reportRead}><CrmReportsPage /></RequirePermission>} />
     <Route path="/crm/settings" element={<RequirePermission permission={P.configure}><CrmSettingsPage /></RequirePermission>} />
