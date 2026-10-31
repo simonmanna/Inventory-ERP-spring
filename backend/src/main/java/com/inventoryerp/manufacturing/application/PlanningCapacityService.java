@@ -251,7 +251,7 @@ public class PlanningCapacityService {
     public Map<String, Object> aggregates(String from, String to, String plantId) {
         Period p = period(from, to);
         Map<String, BigDecimal> demanded = new HashMap<>();
-        for (Demand d : demand.collect(p.from(), p.to(), false, 4, true)) {
+        for (Demand d : demand.collect(p.from(), p.to(), false, PlanningDemandService.RUN_RATE, 4, true)) {
             demanded.merge(d.productId(), d.qty(), BigDecimal::add);
         }
         List<Map<String, Object>> rows = new ArrayList<>();
