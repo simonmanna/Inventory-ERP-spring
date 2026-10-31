@@ -2,6 +2,9 @@ package com.inventoryerp.fleet.application;
 
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.fleet.application.DispatchCommands.CloseOrderInput;
 import com.inventoryerp.fleet.application.DispatchCommands.DeliveryLineInput;
@@ -94,12 +97,14 @@ public class FleetDeliveryOrderService {
     private final FleetLoadFactors factors;
     private final CreditControlService credit;
     private final BranchScopeService scopes;
+    private final PriceListService priceLists;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
             OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, CreditControlService credit,
-            BranchScopeService scopes) {
+            BranchScopeService scopes, PriceListService priceLists) {
         this.scopes = scopes;
+        this.priceLists = priceLists;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -246,9 +251,14 @@ public class FleetDeliveryOrderService {
             Map<String, Object> product = product(l.productId());
             String uomId = blank(l.uomId()) == null ? (String) product.get("uomId") : l.uomId();
             BigDecimal factor = uoms.factorToBase(l.productId(), uomId);
+            // SALES-3: a line with no price takes the customer's list, by site and zone, else the catalogue price.
+            ListPrice listed = l.unitPrice() != null ? null : priceLists.resolve(new PriceQuery(in.partnerId(),
+                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate()));
+            BigDecimal price = l.unitPrice() != null ? l.unitPrice() : listed != null && listed.unitPrice() != null
+                    ? listed.unitPrice() : (BigDecimal) product.get("salesPrice");
             lines.add(new Line(l.productId(), null, FleetVehicleService.trim(l.description()), uomId, factor,
-                    l.quantity(), null, l.unitPrice() != null ? l.unitPrice() : (BigDecimal) product.get("salesPrice"),
-                    null, blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
+                    l.quantity(), null, price, listed == null || listed.discountPercent().signum() == 0 ? null
+                            : listed.discountPercent(), blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
                     FleetVehicleService.trim(l.notes())));
         }
         BigDecimal value = BigDecimal.ZERO;

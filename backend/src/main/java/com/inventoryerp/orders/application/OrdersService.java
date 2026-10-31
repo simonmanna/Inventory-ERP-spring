@@ -6,6 +6,9 @@ import static com.inventoryerp.pos.application.PosSql.user;
 
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
@@ -73,12 +76,13 @@ public class OrdersService {
     private final UomConversionService units;
     private final CreditControlService credit;
     private final BranchScopeService scopes;
+    private final PriceListService priceLists;
     private final TransactionTemplate tx;
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
             PosOrdersService posOrders, UomConversionService units, CreditControlService credit,
-            BranchScopeService scopes, PlatformTransactionManager txm) {
+            BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -91,6 +95,7 @@ public class OrdersService {
         this.units = units;
         this.credit = credit;
         this.scopes = scopes;
+        this.priceLists = priceLists;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -536,6 +541,27 @@ public class OrdersService {
         }
     }
 
+    /** SALES-3: a product line that came with no price takes the customer's price list, in the line's unit. */
+    private void applyPriceLists(String orderId, List<Line> lines) {
+        if (lines.stream().noneMatch(l -> !l.carried && l.unitPrice == null && PosSql.truthy(l.productId))) {
+            return;
+        }
+        Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, org());
+        for (Line l : lines) {
+            if (l.carried || l.unitPrice != null || !PosSql.truthy(l.productId)) {
+                continue;
+            }
+            ListPrice p = priceLists.resolve(new PriceQuery((String) order.get("partnerId"), l.productId,
+                    l.quantity, l.uomId, (String) order.get("branchId"), null, null));
+            if (p != null) {
+                l.unitPrice = p.unitPrice();
+                if (l.discountPercent.signum() == 0) {
+                    l.discountPercent = p.discountPercent();
+                }
+            }
+        }
+    }
+
     /**
      * UOM-1: a line in another unit of the product is stored in the product's sales unit, because billing, stock and
      * delivery all read {@code OrderItem.quantity} that way. Price and quantity convert so the line value is the same;
@@ -615,6 +641,7 @@ public class OrdersService {
         }
         all.addAll(resolved);
         resolveCatalog(all);
+        applyPriceLists(orderId, all);
         applyEntryUnits(all);
         List<LineInput> inputs = new ArrayList<>();
         all.forEach(l -> inputs.add(l.input()));

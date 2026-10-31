@@ -114,3 +114,10 @@ Status: built, not compiled or run. `GET|PUT /user-data-scopes/:userId` (`user:r
 `UserDataScope` (V62). `BranchScopeService.scope()` returns the grant; `assertBranch`, `documentBranch` and
 `assertUnrestricted` are the helpers. Inventory uses it through `LocationScope`. Test: `UserDataScopeIT`.
 
+## Price lists (SALES-3)
+
+Status: built, not compiled or run. `/price-lists` CRUD and `POST /price-lists/resolve` (`price_list:read|manage`),
+tables `PriceList`, `PriceListItem`, `PriceListAssignment` (V63). `PriceListService.resolve` is called by
+`InvoiceService`, `OrdersService`, `FleetDeliveryOrderService` and `CrmPricingService` for lines with no price; POS never
+calls it. Screen: `/price-lists`. Test: `PriceListIT`.
+

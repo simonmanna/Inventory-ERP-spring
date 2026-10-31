@@ -10663,5 +10663,18 @@
   "All warehouses": "ኩሎም መኽዘናት",
   "Net profit": "ጽሩይ ትርፊ",
   "Branch Performance": "ኣፈጻጽማ ጨናፍር",
-  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "ካብ መዝገብ ዝተረኽበ ትርፊ፡ ተቐባሊ ገንዘብ፡ ክምችት፡ ምብጻሓትን ምህርትን ብጨንፈር። ክምችትን ምህርትን ክርአዩ ቦታታት ናብ ጨናፍር መድብ።"
+  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "ካብ መዝገብ ዝተረኽበ ትርፊ፡ ተቐባሊ ገንዘብ፡ ክምችት፡ ምብጻሓትን ምህርትን ብጨንፈር። ክምችትን ምህርትን ክርአዩ ቦታታት ናብ ጨናፍር መድብ።",
+  "Wholesale": "ጅምላ",
+  "Contract": "ውዕል",
+  "Negotiated": "ብዝርርብ",
+  "Tier": "ደረጃ",
+  "Price Lists": "ዝርዝር ዋጋታት",
+  "Used on orders, invoices and deliveries when a line has no price of its own. A price typed on a line always wins.": "መስመር ናቱ ዋጋ ምስ ዘይህልዎ ኣብ ትእዛዛት፡ ፋክቱራታትን ምብጻሓትን ይጥቀም። ኣብ መስመር ዝተጻሕፈ ዋጋ ኩሉ ግዜ ይዕወት።",
+  "New price list": "ሓድሽ ዝርዝር ዋጋ",
+  "Edit price list": "ዝርዝር ዋጋ ኣመሓይሽ",
+  "No price lists yet.": "ገና ዝርዝር ዋጋ የለን።",
+  "Default for all customers": "ንኹሎም ዓማዊል ነባሪ",
+  "customer(s) on this list": "ኣብዚ ዝርዝር ዘለዉ ዓማዊል",
+  "From qty": "ካብ ብዝሒ",
+  "Sales unit": "መሸጢ መዐቀኒ"
 }

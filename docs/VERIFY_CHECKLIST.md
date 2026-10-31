@@ -379,4 +379,9 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - BR-2
   - `/reports/branches`: rows per branch and a Consolidated row; figures match `/consolidated-report` for revenue, expenses and net profit.
   - Stock value by branch follows the location form's branch.
+- SALES-3
+  - `/price-lists`: list Contract A for one customer, sand 90, from 100 at 80, truck price 2500.
+  - `/invoices/new`: leave the price empty (API or a cleared field): the list price appears after save; a typed price stays.
+  - `/orders/new`, delivery order and quotation for the same customer take the same price.
+  - Another customer keeps the catalogue price.
 

@@ -10663,5 +10663,18 @@
   "All warehouses": "Sitoowa zonna",
   "Net profit": "Amagoba amatuufu",
   "Branch Performance": "Enkola y'amatabi",
-  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "Amagoba okuva mu kitabo, ssente ezisigadde, ebintu, ebitwalibwa n'ebikoleddwa ku buli ttabi. Gabira ebifo amatabi ebintu n'ebikoleddwa bilabikire wano."
+  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "Amagoba okuva mu kitabo, ssente ezisigadde, ebintu, ebitwalibwa n'ebikoleddwa ku buli ttabi. Gabira ebifo amatabi ebintu n'ebikoleddwa bilabikire wano.",
+  "Wholesale": "Olw'ekibinja",
+  "Contract": "Endagaano",
+  "Negotiated": "Eyateesebwako",
+  "Tier": "Eddaala",
+  "Price Lists": "Olukalala lw'emiwendo",
+  "Used on orders, invoices and deliveries when a line has no price of its own. A price typed on a line always wins.": "Ekozesebwa ku biragiro, invoyisi n'ebitwalibwa ng'olunyiriri terulina muwendo gwalwo. Omuwendo oguwandiikiddwa ku lunyiriri gwe guwangula.",
+  "New price list": "Olukalala lw'emiwendo oluggya",
+  "Edit price list": "Kyusa olukalala lw'emiwendo",
+  "No price lists yet.": "Tewali lukalala lwa miwendo.",
+  "Default for all customers": "Ekya bulijjo eri bakasitoma bonna",
+  "customer(s) on this list": "bakasitoma ku lukalala luno",
+  "From qty": "Okuva ku bungi",
+  "Sales unit": "Ekipimo eky'okutunda"
 }

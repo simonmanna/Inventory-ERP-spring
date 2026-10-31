@@ -10663,5 +10663,18 @@
   "All warehouses": "Maghala yote",
   "Net profit": "Faida halisi",
   "Branch Performance": "Utendaji wa Matawi",
-  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "Faida kutoka leja, pamoja na madeni, hisa, usafirishaji na uzalishaji kwa kila tawi. Weka maeneo kwenye matawi ili hisa na uzalishaji vionekane hapa."
+  "Profit from the ledger, plus receivables, stock, deliveries and production per branch. Assign locations to branches for stock and production to appear here.": "Faida kutoka leja, pamoja na madeni, hisa, usafirishaji na uzalishaji kwa kila tawi. Weka maeneo kwenye matawi ili hisa na uzalishaji vionekane hapa.",
+  "Wholesale": "Jumla",
+  "Contract": "Mkataba",
+  "Negotiated": "Iliyojadiliwa",
+  "Tier": "Daraja",
+  "Price Lists": "Orodha za Bei",
+  "Used on orders, invoices and deliveries when a line has no price of its own. A price typed on a line always wins.": "Hutumika kwenye maagizo, ankara na usafirishaji mstari usipokuwa na bei yake. Bei iliyoandikwa kwenye mstari hushinda daima.",
+  "New price list": "Orodha mpya ya bei",
+  "Edit price list": "Hariri orodha ya bei",
+  "No price lists yet.": "Bado hakuna orodha za bei.",
+  "Default for all customers": "Chaguomsingi kwa wateja wote",
+  "customer(s) on this list": "wateja kwenye orodha hii",
+  "From qty": "Kuanzia kiasi",
+  "Sales unit": "Kipimo cha mauzo"
 }

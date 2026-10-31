@@ -7,6 +7,9 @@ import com.inventoryerp.accounting.application.JournalService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.PaymentTermService;
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.documents.domain.DocumentLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
@@ -74,11 +77,12 @@ public class InvoiceService {
     private final JournalService journals;
     private final CreditControlService credit;
     private final BranchScopeService scopes;
+    private final PriceListService priceLists;
     private final TransactionTemplate newTx;
 
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
-            BranchScopeService scopes, PlatformTransactionManager txm) {
+            BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.events = events;
         this.workflow = workflow;
@@ -88,6 +92,7 @@ public class InvoiceService {
         this.journals = journals;
         this.credit = credit;
         this.scopes = scopes;
+        this.priceLists = priceLists;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -278,8 +283,9 @@ public class InvoiceService {
     public Map<String, Object> create(InvoiceInput dto) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
-        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names,
-                scopes.documentBranch(null)), dto.lines());
+        String branchId = scopes.documentBranch(null);
+        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names, branchId),
+                priced(dto, branchId));
         publish("invoice.created", doc);
         return doc;
     }
@@ -342,10 +348,35 @@ public class InvoiceService {
         return new Names(fp, journal, sp);
     }
 
+    /**
+     * SALES-3: lines that came with no price take the customer's price list. A line with a price, or a customer with no
+     * list, passes through unchanged. Tier and unit prices apply; the catalogue price stays the fallback.
+     */
+    private List<LineInput> priced(InvoiceInput dto, String branchId) {
+        if (dto.lines() == null) {
+            return null;
+        }
+        java.time.LocalDate on = dto.issueDate() == null ? java.time.LocalDate.now()
+                : EntityPatch.toInstant(dto.issueDate()).atZone(BusinessZone.get()).toLocalDate();
+        List<LineInput> out = new ArrayList<>();
+        for (LineInput l : dto.lines()) {
+            boolean product = l.lineType() == null || "product".equals(l.lineType());
+            ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
+                    : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
+                            null, on));
+            out.add(p == null ? l : new LineInput(l.productId(), l.menuItemId(), l.variantId(), l.variantName(),
+                    l.accountId(), l.description(), l.quantity(), p.unitPrice(),
+                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent(), l.discountType(),
+                    l.discountAmount(), l.discountReason(), l.discountSource(), l.taxId(), l.lineType(),
+                    l.taxInclusive(), l.uomId()));
+        }
+        return out;
+    }
+
     /** The journal entry the invoice would post, computed without writing anything. */
     @Transactional(readOnly = true)
     public Map<String, Object> previewJournal(InvoiceInput dto) {
-        Totals totals = builder.prepareLines(dto.lines());
+        Totals totals = builder.prepareLines(priced(dto, scopes.documentBranch(null)));
         Grouped g = builder.groupForPosting(dto.partnerId(), totals.prepared().stream().map(PreparedLine::asRow).toList(),
                 "sales", null);
         var journal = journals.resolveSalesJournal(dto.invoicingJournalId());
@@ -398,7 +429,7 @@ public class InvoiceService {
             throw ApiException.badRequest("Only draft invoices can be edited");
         }
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
-        Totals totals = builder.prepareLines(dto.lines());
+        Totals totals = builder.prepareLines(priced(dto, (String) doc.get("branchId")));
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"paymentTermId\" = ?,"

@@ -144,4 +144,8 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | BR-1 | POS and sync | Never scoped: stock posting, `/sync/*`, POS routes do not consult the scope. `directIn`, `start` and embedded adjustments stay unscoped, with `*Checked` variants for screens | Scope POS | Needs POS unfrozen |
 | 2026-10-30 | BR-1 | Clearing a location's branch | The location form can change the branch but not clear it (`EntityPatch` drops nulls) | Dedicated route | Add a clear route if needed |
 | 2026-10-30 | BR-2 | How is an operational figure tied to a branch? | Stock, deliveries and production through the location's branch; a delivery order's own `branchId` wins. Stock value and open receivables are as of now, the rest for the chosen dates | Stamp a branch on each document | `BranchPerformanceService` |
+| 2026-10-30 | SALES-3 | Where do price lists live? | `core`, because invoicing and orders need them and `crm` depends on both. Existing CRM price rules stay and still win on quotations; a list comes after a rule there | Extend `CrmPriceRule` (dependency cycle) | Migrate rules into lists, then retire them |
+| 2026-10-30 | SALES-3 | When does a list apply? | Only to a line with no price. A typed price wins. Web screens that prefill a price send it, so on those screens clear the price to use the list | Always reprice | Have the screens call `/price-lists/resolve` when customer or quantity changes |
+| 2026-10-30 | SALES-3 | Which list wins? | Customer > category > default; then priority; then branch list, site over zone, product over category, exact unit, biggest quantity break | Lowest price | `PriceListService.resolve` |
+| 2026-10-30 | SALES-3 | Currency | Lists are in the organization currency | One list per currency | Add a column |
 

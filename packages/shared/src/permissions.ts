@@ -185,6 +185,10 @@ export const PERMISSIONS = {
     delete: 'invoice:delete',
     send: 'invoice:send',
   },
+  priceList: {
+    read: 'price_list:read',
+    manage: 'price_list:manage',
+  },
   creditControl: {
     read: 'credit_control:read',
     manage: 'credit_control:manage',
