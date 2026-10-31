@@ -13,6 +13,7 @@ import { formatCurrency } from '@/lib/utils';
 import { date, dateTime } from '@/lib/format';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useInventoryItemDetail, type InventoryItemDetail } from '@/features/inventory/api';
+import { ProductUnitEquivalents } from '@/features/products/unit-profile-card';
 import { tx } from '@/lib/i18n/tx';
 
 function getTotalQuantity(data: InventoryItemDetail): number {
@@ -128,6 +129,7 @@ function TabOverview({ data }: { data: InventoryItemDetail }) {
                 <p className={`text-2xl font-bold mt-0.5 ${isOutOfStock(data) ? 'text-destructive' : isLowStock(data) ? 'text-amber-600' : ''}`}>
                   {getTotalQuantity(data).toLocaleString()}
                 </p>
+                <ProductUnitEquivalents productId={product.id} quantity={getTotalQuantity(data)} />
               </div>
               <div className="p-3 bg-muted/30 rounded-lg border">
                 <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{tx('Min. Level')}</p>

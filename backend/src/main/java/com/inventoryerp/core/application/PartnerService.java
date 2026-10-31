@@ -15,6 +15,8 @@ import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -176,5 +178,19 @@ public class PartnerService extends BaseCrudService<Partner> {
 
     private static String str(Object v) {
         return v == null ? null : String.valueOf(v);
+    }
+
+    /** Credit limit and hold (SALES-1); null leaves a value unchanged. Used by invoicing's credit control. */
+    @Transactional
+    public void updateCreditPolicy(String id, BigDecimal creditLimit, Boolean creditHold) {
+        Partner p = em.createQuery("select p from Partner p where p.id = :id", Partner.class).setParameter("id", id)
+                .getResultList().stream().findFirst().orElseThrow(() -> ApiException.notFound("Partner not found"));
+        if (creditLimit != null) {
+            p.setCreditLimit(creditLimit.setScale(2, RoundingMode.HALF_UP));
+        }
+        if (creditHold != null) {
+            p.setCreditHold(creditHold);
+        }
+        em.flush();
     }
 }

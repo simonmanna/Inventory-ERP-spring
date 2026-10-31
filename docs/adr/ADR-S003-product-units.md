@@ -57,3 +57,24 @@ An audit against standard retail/ERP practice found four gaps:
   `OrderItem.uomId` carried through orders, splits, transfers and `/sync/push`. Multi-unit scanning at
   the till keeps working through packaging barcodes (`ProductPackaging`).
 - Stock documents (adjustments, transfers, counts, waste) stay in the base unit.
+
+## Extension (UOM-1, 2026-10-30): density, m³, bags and truckloads
+
+Status: built, **not compiled or run**.
+
+1. **Units**: `M3` (Volume, 1000 L), `BAG` and `TRUCK` (Quantity, factor 1) join the seed and every existing org (V60).
+   Bag and truckload stay at 1 because their content differs per product; that content is a `ProductUom` row.
+2. **Density is not a new column.** It is the `ProductUomConversion` bridge `1 M3 = d TON`. `Product` and its JSON are
+   unchanged, so nothing POS reads moves.
+3. **A bridge connects two categories, not just two units, and bridges chain** (`bridgeRate`). An exact bridge still
+   wins; the walk only runs where the engine used to answer 400.
+4. **`/products/:id/unit-profile`** is the one place to enter density, kg per piece, kg per bag and tonnes per
+   truckload. It writes rows 1 and 2 above and keeps an existing `ProductUom` row for M3 or TON in step, because such a
+   row wins over the bridge. `0` removes a fact. `/products/:id/unit-equivalents` shows a quantity in every unit.
+5. **`conversionRate`** is the non-throwing read for callers that must not poison a transaction (weighbridge).
+6. **`/orders` lines accept `uomId`**, stored converted to the sales unit in `OrderItem`, because the frozen POS billing
+   spine reads that column in the sales unit. `OrderLineEntryUnit` keeps what was typed. POS itself is untouched.
+
+Limits: a truckload is one size per product, so a real load is still measured by the weighbridge; the snapshot on a line
+is what the document holds. Quotation lines (`crm`) have no unit yet.
+

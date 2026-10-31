@@ -221,3 +221,53 @@ export function useRestoreProduct() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
   });
 }
+
+// UOM-1: density, weights and truckload of one product, plus a quantity in every unit it converts to.
+
+export interface ProductUnitProfile {
+  productId: string;
+  baseUomId: string | null;
+  densityTonnesPerM3: number | null;
+  kgPerPiece: number | null;
+  kgPerBag: number | null;
+  tonnesPerTruckload: number | null;
+}
+
+export type ProductUnitProfileInput = Partial<Pick<ProductUnitProfile,
+  'densityTonnesPerM3' | 'kgPerPiece' | 'kgPerBag' | 'tonnesPerTruckload'>>;
+
+export interface ProductUnitEquivalent {
+  uomId: string;
+  code: string;
+  name: string;
+  symbol: string | null;
+  quantity: number;
+  isBase: boolean;
+}
+
+export function useProductUnitProfile(id: string | undefined) {
+  return useQuery({
+    queryKey: ['products', id, 'unit-profile'],
+    queryFn: async () => (await api.get<ProductUnitProfile>(`/products/${id}/unit-profile`)).data,
+    enabled: !!id,
+  });
+}
+
+export function useSaveProductUnitProfile(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ProductUnitProfileInput) =>
+      (await api.put<ProductUnitProfile>(`/products/${id}/unit-profile`, input)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
+  });
+}
+
+export function useProductUnitEquivalents(id: string | undefined, quantity: number | undefined) {
+  return useQuery({
+    queryKey: ['products', id, 'unit-equivalents', quantity],
+    queryFn: async () => (await api.get<{ units: ProductUnitEquivalent[] }>(`/products/${id}/unit-equivalents`, {
+      params: { quantity },
+    })).data.units,
+    enabled: !!id && quantity !== undefined,
+  });
+}

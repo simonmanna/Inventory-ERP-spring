@@ -10,8 +10,11 @@ import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.util.ArrayDeque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +29,11 @@ import org.springframework.transaction.annotation.Transactional;
  * (Box = 24 for this product), that per-product factor wins over the organization-wide category factor.
  * {@link #resolveLineUnit} picks and validates the unit of a purchase/sales line and returns the factor to
  * snapshot on it, so later edits to the product's units never change a posted document.
+ *
+ * <p>UOM-1: a {@code ProductUomConversion} bridge also connects the two whole unit categories for that product, not
+ * just its two end units, and bridges chain. "1 m³ = 1.6 t" therefore also answers L ↔ kg, and with "1 pc = 19 kg"
+ * also pc ↔ m³. An exact bridge between the two units still wins; the chain is only tried where a 400 was returned
+ * before. {@link #conversionRate} is the non-throwing form for callers that must not mark a transaction rollback-only.
  */
 @Service
 public class UomConversionService {
@@ -73,6 +81,11 @@ public class UomConversionService {
             throw ApiException.badRequest("Unit of measure " + id + " not found");
         }
         return rows.getFirst();
+    }
+
+    private UnitOfMeasure findUom(String id) {
+        return em.createQuery("select u from UnitOfMeasure u where u.id = :id", UnitOfMeasure.class)
+                .setParameter("id", id).getResultList().stream().findFirst().orElse(null);
     }
 
     private static boolean sameCategory(UnitOfMeasure a, UnitOfMeasure b) {
@@ -123,12 +136,109 @@ public class UomConversionService {
                     }
                     result = Money.dec(qty).divide(inverse.getFactor(), DECIMAL_JS);
                 } else {
-                    throw ApiException.badRequest("No conversion from " + from.getCode() + " to " + to.getCode()
-                            + ": different categories — add a product-specific conversion.");
+                    BigDecimal chained = product == null ? null : bridgeRate(product.getId(), from, to);
+                    if (chained == null) {
+                        throw ApiException.badRequest("No conversion from " + from.getCode() + " to " + to.getCode()
+                                + ": different categories — add a product-specific conversion.");
+                    }
+                    result = Money.dec(qty).multiply(chained, DECIMAL_JS);
                 }
             }
         }
         return round ? roundToStep(result, to.getRoundingPrecision()) : result;
+    }
+
+    /**
+     * How many {@code toUomId} make 1 {@code fromUomId} for the product (unrounded), or {@code null} when no conversion
+     * exists. Same routing as {@link #convert}: {@code ProductUom} factors, the category factor, then the bridges. It
+     * never throws for a missing path, so a caller's transaction stays usable.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal conversionRate(String productId, String fromUomId, String toUomId) {
+        if (fromUomId == null || toUomId == null) {
+            return null;
+        }
+        if (fromUomId.equals(toUomId)) {
+            return BigDecimal.ONE;
+        }
+        UnitOfMeasure from = findUom(fromUomId);
+        UnitOfMeasure to = findUom(toUomId);
+        if (from == null || to == null) {
+            return null;
+        }
+        Product product = productId == null || productId.isEmpty() ? null : product(productId);
+        if (product != null && product.getUomId() != null
+                && ((!fromUomId.equals(product.getUomId()) && productUnit(productId, fromUomId) != null)
+                        || (!toUomId.equals(product.getUomId()) && productUnit(productId, toUomId) != null))) {
+            BigDecimal fromBase = baseRate(product, from);
+            BigDecimal toBase = baseRate(product, to);
+            return fromBase == null || toBase == null || toBase.signum() <= 0 ? null
+                    : fromBase.divide(toBase, DECIMAL_JS);
+        }
+        return plainRate(product, from, to);
+    }
+
+    /** Base units per 1 {@code unit} of the product, or null. */
+    private BigDecimal baseRate(Product product, UnitOfMeasure unit) {
+        if (unit.getId().equals(product.getUomId())) {
+            return BigDecimal.ONE;
+        }
+        ProductUom own = productUnit(product.getId(), unit.getId());
+        if (own != null) {
+            return own.getFactor();
+        }
+        UnitOfMeasure base = findUom(product.getUomId());
+        return base == null ? null : plainRate(product, unit, base);
+    }
+
+    /** Category factor, else the product's bridges; ignores {@code ProductUom}. */
+    private BigDecimal plainRate(Product product, UnitOfMeasure from, UnitOfMeasure to) {
+        if (sameCategory(from, to)) {
+            return to.getFactor().signum() <= 0 ? null : from.getFactor().divide(to.getFactor(), DECIMAL_JS);
+        }
+        return product == null ? null : bridgeRate(product.getId(), from, to);
+    }
+
+    /** One step of the bridge walk: {@code rate} of {@code unit} make 1 of the unit the walk started from. */
+    private record Hop(UnitOfMeasure unit, BigDecimal rate) {}
+
+    /**
+     * Walk the product's bridges from {@code from}'s category to {@code to}'s category, each bridge used at most once.
+     * Null when they are not connected.
+     */
+    private BigDecimal bridgeRate(String productId, UnitOfMeasure from, UnitOfMeasure to) {
+        List<ProductUomConversion> bridges = em.createQuery("select c from ProductUomConversion c where c.productId = :p",
+                ProductUomConversion.class).setParameter("p", productId).getResultList();
+        Set<String> used = new HashSet<>();
+        ArrayDeque<Hop> queue = new ArrayDeque<>();
+        queue.add(new Hop(from, BigDecimal.ONE));
+        while (!queue.isEmpty()) {
+            Hop hop = queue.poll();
+            if (sameCategory(hop.unit(), to)) {
+                return to.getFactor().signum() <= 0 ? null : hop.rate().multiply(hop.unit().getFactor(), DECIMAL_JS)
+                        .divide(to.getFactor(), DECIMAL_JS);
+            }
+            for (ProductUomConversion b : bridges) {
+                if (used.contains(b.getId()) || b.getFactor().signum() <= 0) {
+                    continue;
+                }
+                UnitOfMeasure start = findUom(b.getFromUomId());
+                UnitOfMeasure end = findUom(b.getToUomId());
+                if (start == null || end == null || start.getFactor().signum() <= 0 || end.getFactor().signum() <= 0) {
+                    continue;
+                }
+                if (sameCategory(hop.unit(), start)) {
+                    used.add(b.getId());
+                    queue.add(new Hop(end, hop.rate().multiply(hop.unit().getFactor(), DECIMAL_JS)
+                            .divide(start.getFactor(), DECIMAL_JS).multiply(b.getFactor(), DECIMAL_JS)));
+                } else if (sameCategory(hop.unit(), end)) {
+                    used.add(b.getId());
+                    queue.add(new Hop(start, hop.rate().multiply(hop.unit().getFactor(), DECIMAL_JS)
+                            .divide(end.getFactor(), DECIMAL_JS).divide(b.getFactor(), DECIMAL_JS)));
+                }
+            }
+        }
+        return null;
     }
 
     /** Convert into the product's base (stock) unit; no-op when {@code fromUomId} is null/base. */

@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (505 permissions). Constant name = GROUP__ACTION.
+ * exactly (513 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -121,6 +121,14 @@ public final class Permissions {
     public static final String INVOICE__CANCEL = "invoice:cancel";
     public static final String INVOICE__DELETE = "invoice:delete";
     public static final String INVOICE__SEND = "invoice:send";
+    public static final String COMMISSION__READ = "commission:read";
+    public static final String COMMISSION__MANAGE = "commission:manage";
+    public static final String COMMISSION__APPROVE = "commission:approve";
+    public static final String PRICE_LIST__READ = "price_list:read";
+    public static final String PRICE_LIST__MANAGE = "price_list:manage";
+    public static final String CREDIT_CONTROL__READ = "credit_control:read";
+    public static final String CREDIT_CONTROL__MANAGE = "credit_control:manage";
+    public static final String CREDIT_CONTROL__OVERRIDE = "credit_control:override";
     public static final String CREDIT_NOTE__READ = "credit_note:read";
     public static final String CREDIT_NOTE__CREATE = "credit_note:create";
     public static final String CREDIT_NOTE__POST = "credit_note:post";
@@ -629,6 +637,14 @@ public final class Permissions {
             "invoice:cancel",
             "invoice:delete",
             "invoice:send",
+            "commission:read",
+            "commission:manage",
+            "commission:approve",
+            "price_list:read",
+            "price_list:manage",
+            "credit_control:read",
+            "credit_control:manage",
+            "credit_control:override",
             "credit_note:read",
             "credit_note:create",
             "credit_note:post",

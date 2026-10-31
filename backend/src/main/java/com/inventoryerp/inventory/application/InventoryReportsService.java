@@ -60,10 +60,12 @@ public class InventoryReportsService {
 
     private final JdbcClient jdbc;
     private final InventoryQueryService queries;
+    private final LocationScope scope;
 
-    public InventoryReportsService(JdbcClient jdbc, InventoryQueryService queries) {
+    public InventoryReportsService(JdbcClient jdbc, InventoryQueryService queries, LocationScope scope) {
         this.jdbc = jdbc;
         this.queries = queries;
+        this.scope = scope;
     }
 
     private static String org() {
@@ -213,7 +215,8 @@ public class InventoryReportsService {
     // ------------------------------------------------------------------ 1. item movements
 
     /** Stock card summary per item over local days [start, end]. */
-    public Map<String, Object> itemMovements(Map<String, String> q) {
+    public Map<String, Object> itemMovements(Map<String, String> query) {
+        Map<String, String> q = scope.apply(query);
         Range r = range(q);
         List<String> types = moveTypes(q);
         List<String> productIds = scopedProductIds(q);
@@ -399,7 +402,8 @@ public class InventoryReportsService {
     // ------------------------------------------------------------------ 2. valuation
 
     /** Current on-hand valuation per item with stock-status filter and category breakdown. */
-    public Map<String, Object> valuation(Map<String, String> q) {
+    public Map<String, Object> valuation(Map<String, String> query) {
+        Map<String, String> q = scope.apply(query);
         String status = q.get("status") == null || q.get("status").isEmpty() ? "all" : q.get("status");
         if (!STOCK_STATUSES.contains(status)) {
             throw ApiException.badRequest("Unknown status: " + status);
@@ -519,7 +523,8 @@ public class InventoryReportsService {
     // ------------------------------------------------------------------ 3. movement analysis
 
     /** Totals by move type, daily trend, top consumed / lost / received items (default: last 30 days). */
-    public Map<String, Object> movementAnalysis(Map<String, String> q) {
+    public Map<String, Object> movementAnalysis(Map<String, String> query) {
+        Map<String, String> q = scope.apply(query);
         Range r = range(q);
         List<String> types = moveTypes(q);
         List<String> productIds = scopedProductIds(q);
@@ -705,7 +710,8 @@ public class InventoryReportsService {
     // ------------------------------------------------------------------ 7. stock health
 
     /** Aging buckets, turnover, days of cover and slow / dead classification per quant. */
-    public Map<String, Object> stockHealth(Map<String, String> q) {
+    public Map<String, Object> stockHealth(Map<String, String> query) {
+        Map<String, String> q = scope.apply(query);
         Instant now = Instant.now();
         double sd = JsNumbers.number(q.getOrDefault("slowDays", "90"));
         int slowDays = (int) Math.max(1, Math.min(3650, Double.isNaN(sd) || sd == 0 ? 90 : sd));

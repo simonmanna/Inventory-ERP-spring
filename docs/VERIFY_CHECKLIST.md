@@ -466,4 +466,40 @@ CTRL-2, migration `V52__document_numbering.sql`:
 - `/labels`: pick products, Print PDF, scan the printed QR and Code 128 with a handheld scanner. Download ZPL and send it to a
   Zebra printer, if the client has one.
 - Repeat for a stockpile and a weighbridge ticket.
+## Phase 4 lane C: sales and branches (nothing compiled or run)
+
+- UOM-1
+  - `/uom`: M3, BAG, TRUCK exist.
+  - Product edit → Density & Weights: sand 1.6 t/m³, bag 50 kg, truck 30 t; save, reload, values stay.
+  - `/invoices/new`: line in TRUCK, price scales; post; stock falls by 30 t per truck.
+  - `/orders/new`: line in TRUCK; detail shows "Entered as 2 TRUCK"; bill it; stock falls by the tonnes.
+  - Inventory item detail: on hand shows the equivalents line.
+  - Weighbridge ticket for a delivery line in m³: tonnes convert with the density.
+- SALES-1
+  - `/credit-control`: search any customer, open it, set a limit of 1000.
+  - `/orders/new`: 600 passes, a second 600 is refused with "Credit limit exceeded".
+  - `/invoices`: posting past the limit is refused.
+  - Put on hold: credit order refused, cash order accepted.
+  - Grant an override as user A: user A's sale is still refused, user B's passes.
+  - POS credit sale behaves as before.
+- BR-1 (high risk)
+  - Before any grant: log in as a normal user with an active branch set; every list shows what it showed before.
+  - POS sale and sync as a user with a grant: unchanged.
+  - `/inventory/locations`: set a branch on each yard.
+  - Staff → building icon: tick branch A for a clerk. The clerk sees only that branch's yards, stock, orders and invoices; a direct URL to branch B gives 404, a filter on it 403.
+  - Untick everything: the clerk sees everything again.
+- BR-2
+  - `/reports/branches`: rows per branch and a Consolidated row; figures match `/consolidated-report` for revenue, expenses and net profit.
+  - Stock value by branch follows the location form's branch.
+- SALES-3
+  - `/price-lists`: list Contract A for one customer, sand 90, from 100 at 80, truck price 2500.
+  - `/invoices/new`: leave the price empty (API or a cleared field): the list price appears after save; a typed price stays.
+  - `/orders/new`, delivery order and quotation for the same customer take the same price.
+  - Another customer keeps the catalogue price.
+- SALES-4
+  - `/commissions`: add a 5% rule. Post an invoice with a salesperson; Calculate shows the entry; calculate again adds nothing.
+  - Approve, send to payroll; run payroll for the employee: the commission appears as an allowance line.
+  - Cancel a posted invoice and calculate: its entry is cancelled.
+- SALES-5
+  - `/reports/sales-analysis`: group by product, branch, customer, salesperson, month; totals agree with `/reports/ar/revenue-by-customer` for the same dates (ERP invoices).
 

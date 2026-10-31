@@ -20,14 +20,18 @@ public final class UomSeed {
     static final List<Category> SEED = List.of(
             new Category("Quantity", "UNIT", List.of(
                     new Unit("UNIT", "Piece", "pc", "1", "1", "reference"),
-                    new Unit("DOZEN", "Dozen", "dz", "12", "1", "bigger"))),
+                    new Unit("DOZEN", "Dozen", "dz", "12", "1", "bigger"),
+                    // Per-product sizes: the real content comes from ProductUom (UOM-1, ADR-S003).
+                    new Unit("BAG", "Bag", "bag", "1", "1", "bigger"),
+                    new Unit("TRUCK", "Truckload", "truck", "1", "0.01", "bigger"))),
             new Category("Weight", "KG", List.of(
                     new Unit("KG", "Kilogram", "kg", "1", "0.001", "reference"),
                     new Unit("G", "Gram", "g", "0.001", "0.001", "smaller"),
                     new Unit("TON", "Tonne", "t", "1000", "0.001", "bigger"))),
             new Category("Volume", "L", List.of(
                     new Unit("L", "Liter", "L", "1", "0.001", "reference"),
-                    new Unit("ML", "Milliliter", "ml", "0.001", "0.01", "smaller"))),
+                    new Unit("ML", "Milliliter", "ml", "0.001", "0.01", "smaller"),
+                    new Unit("M3", "Cubic metre", "m³", "1000", "0.001", "bigger"))),
             new Category("Length", "M", List.of(
                     new Unit("M", "Meter", "m", "1", "0.001", "reference"),
                     new Unit("CM", "Centimeter", "cm", "0.01", "0.01", "smaller"),

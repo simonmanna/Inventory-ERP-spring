@@ -135,3 +135,15 @@ receivable, method `mobile_money`, reference = our reference) under the row lock
 collections older than a minute (`MOBILE_MONEY_POLL_CRON`, ShedLock). The number is stored masked. Screen:
 `/payments/mobile-money`. Config: `MOBILE_MONEY_PROVIDER`, `MOBILE_MONEY_URL`, `MOBILE_MONEY_API_KEY`,
 `MOBILE_MONEY_CALLBACK_SECRET` (empty refuses every callback).
+## Credit control (SALES-1)
+
+Status: built, not compiled or run. `CreditControlService` (exposure, `assertCanSell`, `assertNotOnHold`, overrides),
+`CreditControlController` at `/credit-control` (`credit_control:read|manage|override`), table `PartnerCreditOverride`
+(V61). `POST /invoices/:id/post` calls `InvoiceService.postChecked`; `InvoiceService.post` is unchanged for opening
+balances. Screen: `/credit-control`. Test: `CreditControlIT`.
+
+## Sales analysis (SALES-5)
+
+Status: built, not compiled or run. `GET /reports/ar/sales-analysis` (`report:ar`, `SalesAnalysisService`), screen
+`/reports/sales-analysis`. Test: `SalesAnalysisIT`.
+

@@ -160,4 +160,10 @@ Screen `/fiscal-periods/:id/checklist`. Tests: `PeriodCloseChecklistIT`, `Financ
 column or debit + credit columns, day-first dates, thousands in either style. MT940: `:61:` + `:86:`, reversals flipped.
 camt.053: `Ntry` elements, DTDs refused. A line without a bank reference gets a stable hash reference (date, amount, text,
 occurrence in the file), so a repeat import skips it and two identical charges stay. Screen: `/accounts/bank-import`.
+## Branch performance (BR-2)
+
+Status: built, not compiled or run. `GET /reports/branches/comparison` (`report:accounting`, `BranchPerformanceService`):
+ledger P&L, sales, open receivables, stock value, deliveries and production per branch plus a total. Screen:
+`/reports/branches`. `ReportFilterBar` (`web/src/components/report-filter-bar.tsx`) is the shared filter row. Tests:
+`BranchPerformanceIT`, `AccountingExtensionsIT.budgetByBranch`.
 

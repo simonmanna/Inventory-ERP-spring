@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ProductUnitProfileCard } from '@/features/products/unit-profile-card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -722,6 +723,8 @@ export function ProductEditPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {!isNew && id && <ProductUnitProfileCard productId={id} />}
 
               <Card>
                 <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">

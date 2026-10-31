@@ -1474,4 +1474,11 @@ and `GET /events?since=` (see the class Javadoc for fields). A real platform ans
 gateway; when the vendor is chosen only this class changes. Config: `FLEET_TELEMATICS_PROVIDER=rest`,
 `FLEET_TELEMATICS_URL`, `FLEET_TELEMATICS_API_KEY`, `FLEET_TELEMATICS_TIMEOUT_MS`. Each device selects its provider, so mock
 and real units can run side by side. Failures land on the device (`lastError`) and never contain the key.
+## Phase 4 lane C touch points (not compiled or run)
+
+- `WeighbridgeUnits` and `FleetLoadFactors` now take `UomConversionService` and fall back to the product's density and
+  unit profile (UOM-1).
+- `FleetDeliveryOrderService.create` checks credit and fills unpriced lines from price lists by site and zone
+  (SALES-1, SALES-3); list and detail follow the user's location scope (BR-1).
+- `FleetDispatchService.dispatch` refuses a customer on hold when fleet issues the stock (SALES-1).
 

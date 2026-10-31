@@ -100,3 +100,24 @@ P2: 81/81 routes. `CoreIT` (CRUD contract, partners, products, UoM, payment term
 bootstrap/invite, authorization matrix, tenant isolation) + `UomConversionServiceTest` (port of
 `uom-conversion.service.spec.ts`). The listed `test/integration/audit/*` specs exercise inventory/POS flows
 and are ported with P3–P5. DEMO seed UoM/products follow with the accounting seed.
+
+## Density and construction units (UOM-1, ADR-S003 extension)
+
+Status: built, not compiled or run. `GET|PUT /products/:id/unit-profile`, `GET /products/:id/unit-equivalents`
+(`ProductUnitProfileController`, `product:read` / `product:update`). `ProductUnitProfileService` writes
+`ProductUomConversion` and `ProductUom`; `UomConversionService.conversionRate` is the non-throwing read. Seeds M3, BAG,
+TRUCK. Test: `ProductDensityIT`, `OrdersUnitsIT`.
+
+## User data scope (BR-1, ADR-S017)
+
+Status: built, not compiled or run. `GET|PUT /user-data-scopes/:userId` (`user:read` / `user:update`), table
+`UserDataScope` (V62). `BranchScopeService.scope()` returns the grant; `assertBranch`, `documentBranch` and
+`assertUnrestricted` are the helpers. Inventory uses it through `LocationScope`. Test: `UserDataScopeIT`.
+
+## Price lists (SALES-3)
+
+Status: built, not compiled or run. `/price-lists` CRUD and `POST /price-lists/resolve` (`price_list:read|manage`),
+tables `PriceList`, `PriceListItem`, `PriceListAssignment` (V63). `PriceListService.resolve` is called by
+`InvoiceService`, `OrdersService`, `FleetDeliveryOrderService` and `CrmPricingService` for lines with no price; POS never
+calls it. Screen: `/price-lists`. Test: `PriceListIT`.
+

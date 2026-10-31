@@ -61,10 +61,13 @@ public class InventoryCountService {
     private final StockDocService stockDoc;
     private final ApprovalsService approvals;
     private final AuditService audit;
+    private final LocationScope locationScope;
     private final TransactionTemplate newTx;
 
     public InventoryCountService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq,
-            StockDocService stockDoc, ApprovalsService approvals, AuditService audit, PlatformTransactionManager txm) {
+            StockDocService stockDoc, ApprovalsService approvals, AuditService audit, LocationScope locationScope,
+            PlatformTransactionManager txm) {
+        this.locationScope = locationScope;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -100,7 +103,7 @@ public class InventoryCountService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id, boolean reveal) {
         Map<String, Object> s = session(id);
-        if (s == null) {
+        if (s == null || !locationScope.permits((String) s.get("locationId"))) {
             throw ApiException.notFound("Count session not found");
         }
         full(s);
@@ -155,6 +158,9 @@ public class InventoryCountService {
         for (Map<String, Object> s : SqlRows.list(InventoryCountSession.class, jdbc.sql("SELECT * FROM"
                 + " \"InventoryCountSession\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
                 + " ORDER BY \"startedAt\" DESC LIMIT 100").param(org()))) {
+            if (!locationScope.permits((String) s.get("locationId"))) {
+                continue;
+            }
             s.put("location", SqlRows.one(InventoryLocation.class,
                     jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE id = ?").param(s.get("locationId"))));
             long n = jdbc.sql("SELECT count(*) FROM \"InventoryCountLine\" WHERE \"sessionId\" = ?").param(s.get("id"))
@@ -163,6 +169,14 @@ public class InventoryCountService {
             out.add(s);
         }
         return out;
+    }
+
+    /** {@link #start} from a user's screen (BR-1); offline sync calls {@link #start} and is not scoped. */
+    @Transactional
+    public Map<String, Object> startChecked(String locationId, String countTypeIn, String notes, Boolean blind,
+            List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart) {
+        locationScope.assertAllowed(locationId);
+        return start(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart);
     }
 
     /** Start (or resume) a count session. */

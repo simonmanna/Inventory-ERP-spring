@@ -185,6 +185,20 @@ export const PERMISSIONS = {
     delete: 'invoice:delete',
     send: 'invoice:send',
   },
+  commission: {
+    read: 'commission:read',
+    manage: 'commission:manage',
+    approve: 'commission:approve',
+  },
+  priceList: {
+    read: 'price_list:read',
+    manage: 'price_list:manage',
+  },
+  creditControl: {
+    read: 'credit_control:read',
+    manage: 'credit_control:manage',
+    override: 'credit_control:override',
+  },
   creditNote: {
     read: 'credit_note:read',
     create: 'credit_note:create',

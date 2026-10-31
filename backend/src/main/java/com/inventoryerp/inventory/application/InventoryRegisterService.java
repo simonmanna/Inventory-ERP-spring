@@ -125,10 +125,12 @@ public class InventoryRegisterService {
 
     private final JdbcClient jdbc;
     private final InventoryReportsService reports;
+    private final LocationScope scope;
 
-    public InventoryRegisterService(JdbcClient jdbc, InventoryReportsService reports) {
+    public InventoryRegisterService(JdbcClient jdbc, InventoryReportsService reports, LocationScope scope) {
         this.jdbc = jdbc;
         this.reports = reports;
+        this.scope = scope;
     }
 
     private static String org() {
@@ -149,6 +151,7 @@ public class InventoryRegisterService {
         if (!KINDS.contains(kind)) {
             throw ApiException.badRequest("Unknown report: " + kind);
         }
+        scope.assertUnrestricted();
         Instant end = parseLocalDay(q.get("end"), false);
         if (end == null) {
             end = parseLocalDay(localIso(Instant.now()), false);

@@ -48,6 +48,11 @@ export interface OrderLine {
   lineNumber: number;
   cancelled: boolean;
   modifiers?: Array<{ id: string; name: string; priceDelta: number }>;
+  /** UOM-1: what was typed when the line was entered in another unit; `quantity` is in the sales unit. */
+  entryUomId?: string;
+  entryUomCode?: string;
+  entryQuantity?: number;
+  entryUnitPrice?: number;
 }
 
 export interface OrderDetail extends Order {
@@ -68,6 +73,8 @@ export interface OrderDetail extends Order {
 /** One order line input — EITHER a product (retail) OR a menu item ref. */
 export interface OrderLineInput {
   productId?: string;
+  /** UOM-1: another sales unit of the product (quantity and price are then in that unit). */
+  uomId?: string;
   menuItemId?: string;
   sku?: string;
   description: string;

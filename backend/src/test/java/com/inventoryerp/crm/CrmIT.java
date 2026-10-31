@@ -179,6 +179,6 @@ class CrmIT extends ApiTestSupport {
         String id = deal("Private", 10).get("id").asString();
         assertThat(call("GET", "/crm/deals/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/crm/deals", null, otherToken).body().get("meta").get("total").asInt()).isZero();
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.crm")).isEqualTo(88);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.crm")).isEqualTo(97);
     }
 }

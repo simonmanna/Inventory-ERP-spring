@@ -105,6 +105,9 @@ import CommunicationChannelsPage from '@/pages/communication/channels';
 import { OrderCreatePage } from '@/pages/orders/order-create';
 import { OrderDetailPage } from '@/pages/orders/order-detail';
 import { ArAgingPage } from '@/pages/invoicing/ar-aging';
+import { CreditControlPage } from '@/pages/invoicing/credit-control';
+import { PriceListsPage } from '@/pages/invoicing/price-lists';
+import { CommissionsPage } from '@/pages/crm/CommissionsPage';
 import { CreditNotesPage } from '@/pages/invoicing/credit-notes';
 import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
@@ -233,6 +236,8 @@ import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
 import ZonesPage from '@/pages/tables/ZonesPage';
 import ReportCenterPage from '@/pages/reports/ReportCenterPage';
+import { BranchPerformancePage } from '@/pages/reports/BranchPerformancePage';
+import { SalesAnalysisPage } from '@/pages/reports/SalesAnalysisPage';
 import { ReportPermissionsPage } from '@/pages/settings/ReportPermissionsPage';
 import { StaffPage } from '@/pages/staff/StaffPage';
 import { RolesPage } from '@/pages/staff/RolesPage';
@@ -300,6 +305,9 @@ export function App() {
                     <Route path="/communication" element={<CommunicationInboxPage />} />
                     <Route path="/communication/rules" element={<CommunicationRulesPage />} />
                     <Route path="/communication/channels" element={<CommunicationChannelsPage />} />
+          <Route path="/commissions" element={<RequirePermission permission={PERMISSIONS.commission.read}><CommissionsPage /></RequirePermission>} />
+          <Route path="/price-lists" element={<RequirePermission permission={PERMISSIONS.priceList.read}><PriceListsPage /></RequirePermission>} />
+          <Route path="/credit-control" element={<RequirePermission permission={PERMISSIONS.creditControl.read}><CreditControlPage /></RequirePermission>} />
           <Route path="/credit-notes" element={<CreditNotesPage />} />
           <Route path="/credit-notes/new" element={<CreditNoteCreatePage />} />
           <Route path="/credit-notes/:id" element={<CreditNoteDetailPage />} />
@@ -358,6 +366,8 @@ export function App() {
           <Route path="/budgets/:id" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetDetailPage /></RequirePermission>} />
           <Route path="/opening-balances" element={<RequirePermission permission={PERMISSIONS.openingBalance.read}><OpeningBalancesPage /></RequirePermission>} />
           <Route path="/tax-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><TaxReportPage /></RequirePermission>} />
+          <Route path="/reports/sales-analysis" element={<RequirePermission permission={PERMISSIONS.report.ar}><SalesAnalysisPage /></RequirePermission>} />
+          <Route path="/reports/branches" element={<RequirePermission permission={PERMISSIONS.report.accounting}><BranchPerformancePage /></RequirePermission>} />
           <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
           <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
           <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />

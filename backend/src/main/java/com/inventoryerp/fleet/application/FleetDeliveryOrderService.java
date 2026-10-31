@@ -1,5 +1,10 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.BranchScopeService;
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.fleet.application.DispatchCommands.CloseOrderInput;
 import com.inventoryerp.fleet.application.DispatchCommands.DeliveryLineInput;
@@ -11,6 +16,7 @@ import com.inventoryerp.fleet.domain.FleetDeliveryOrder;
 import com.inventoryerp.fleet.domain.FleetDeliveryOrderLine;
 import com.inventoryerp.fleet.domain.FleetLoad;
 import com.inventoryerp.inventory.application.PosStockLocation;
+import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.invoicing.application.InvoiceService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -89,10 +95,16 @@ public class FleetDeliveryOrderService {
     private final OrdersService orders;
     private final InvoiceService invoices;
     private final FleetLoadFactors factors;
+    private final CreditControlService credit;
+    private final BranchScopeService scopes;
+    private final PriceListService priceLists;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
-            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors) {
+            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, CreditControlService credit,
+            BranchScopeService scopes, PriceListService priceLists) {
+        this.scopes = scopes;
+        this.priceLists = priceLists;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -102,6 +114,7 @@ public class FleetDeliveryOrderService {
         this.orders = orders;
         this.invoices = invoices;
         this.factors = factors;
+        this.credit = credit;
     }
 
     // ------------------------------------------------------------------ queries
@@ -126,6 +139,11 @@ public class FleetDeliveryOrderService {
                 where.append(" AND o.status = ?");
                 params.add(q.status());
             }
+        }
+        DataScope scope = scopes.scope();
+        if (scope.restricted()) {
+            where.append(" AND o.\"locationId\" = ANY(?::text[])");
+            params.add(scope.locationArray());
         }
         addEq(where, params, "o.\"partnerId\"", q.partnerId());
         addEq(where, params, "o.\"siteId\"", q.siteId());
@@ -171,7 +189,7 @@ public class FleetDeliveryOrderService {
     public Map<String, Object> get(String id) {
         Map<String, Object> o = SqlRows.one(db.jdbc().sql(SELECT + " WHERE o.id = ? AND o.\"organizationId\" = ?")
                 .params(id, FleetDb.org()));
-        if (o == null) {
+        if (o == null || !scopes.scope().allowsLocation((String) o.get("locationId"))) {
             throw ApiException.notFound("Delivery order not found");
         }
         o.put("site", o.get("siteId") == null ? null : SqlRows.one(db.jdbc().sql("SELECT * FROM \"FleetCustomerSite\""
@@ -233,11 +251,21 @@ public class FleetDeliveryOrderService {
             Map<String, Object> product = product(l.productId());
             String uomId = blank(l.uomId()) == null ? (String) product.get("uomId") : l.uomId();
             BigDecimal factor = uoms.factorToBase(l.productId(), uomId);
+            // SALES-3: a line with no price takes the customer's list, by site and zone, else the catalogue price.
+            ListPrice listed = l.unitPrice() != null ? null : priceLists.resolve(new PriceQuery(in.partnerId(),
+                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate()));
+            BigDecimal price = l.unitPrice() != null ? l.unitPrice() : listed != null && listed.unitPrice() != null
+                    ? listed.unitPrice() : (BigDecimal) product.get("salesPrice");
             lines.add(new Line(l.productId(), null, FleetVehicleService.trim(l.description()), uomId, factor,
-                    l.quantity(), null, l.unitPrice() != null ? l.unitPrice() : (BigDecimal) product.get("salesPrice"),
-                    null, blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
+                    l.quantity(), null, price, listed == null || listed.discountPercent().signum() == 0 ? null
+                            : listed.discountPercent(), blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
                     FleetVehicleService.trim(l.notes())));
         }
+        BigDecimal value = BigDecimal.ZERO;
+        for (Line l : lines) {
+            value = value.add(l.qty().multiply(l.unitPrice() == null ? BigDecimal.ZERO : l.unitPrice()));
+        }
+        credit.assertCanSell(in.partnerId(), value, null, null);
         Header h = new Header(in.partnerId(), blank(in.siteId()), blank(in.locationId()), in.requestedDate(),
                 in.windowFrom(), in.windowTo(), in.priority(), in.contactName(), in.contactPhone(),
                 blank(in.costCenterId()), blank(in.branchId()), in.notes());

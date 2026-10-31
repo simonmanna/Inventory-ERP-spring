@@ -172,6 +172,20 @@ public class PaymentTermService {
         }
     }
 
+    /** {@link #assertCreditOk(Boolean, BigDecimal, double, double)} in exact decimals, same messages (SALES-1). */
+    public static void assertCreditOk(Boolean creditHold, BigDecimal creditLimit, BigDecimal currentBalance,
+            BigDecimal addAmount) {
+        if (Boolean.TRUE.equals(creditHold)) {
+            throw ApiException.badRequest("Customer is on credit hold.");
+        }
+        BigDecimal after = currentBalance.add(addAmount);
+        if (creditLimit != null && creditLimit.signum() > 0 && after.compareTo(creditLimit) > 0) {
+            throw ApiException.badRequest("Credit limit exceeded: limit "
+                    + com.inventoryerp.kernel.common.JsNumbers.toJsString(creditLimit.doubleValue()) + ", would become "
+                    + com.inventoryerp.kernel.common.JsNumbers.toJsString(after.doubleValue()) + ".");
+        }
+    }
+
     /** Idempotent: inserts the built-in default terms when the org has zero live rows. */
     @Transactional
     public void ensureDefaults(String organizationId) {

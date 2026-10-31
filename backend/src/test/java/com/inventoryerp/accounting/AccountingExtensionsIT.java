@@ -286,4 +286,21 @@ class AccountingExtensionsIT extends ApiTestSupport {
         assertThat(call("GET", "/reports/accounting/consolidated", null, token).status()).isEqualTo(403);
         assertThat(call("GET", "/budgets", null, (String) null).status()).isEqualTo(401);
     }
+
+    @Test
+    @DisplayName("budget by branch: vs-actual counts only that branch's postings (BR-2)")
+    void budgetByBranch() {
+        String branch = ok(201, "POST", "/branches", Map.of("code", "BB-" + suffix(), "name", "Budget branch")).get("id")
+                .asString();
+        String other = ok(201, "POST", "/branches", Map.of("code", "BO-" + suffix(), "name", "Other branch")).get("id")
+                .asString();
+        String salary = account("5710");
+        JsonNode b = ok(201, "POST", "/budgets", Map.of("name", "Branch budget " + suffix(), "fiscalYear",
+                LocalDate.now().getYear(), "branchId", branch, "lines", List.of(Map.of("accountId", salary, "period",
+                        YearMonth.now().toString(), "amount", 1000))));
+        journal(salary, account("1100"), 300, branch, null);
+        journal(salary, account("1100"), 9000, other, null);
+        JsonNode vs = ok(200, "GET", "/budgets/" + b.get("id").asString() + "/vs-actual", null);
+        assertThat(vs.get("rows").get(0).get("actual").asString()).isEqualTo("300");
+    }
 }

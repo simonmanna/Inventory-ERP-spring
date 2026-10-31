@@ -78,7 +78,8 @@ final class OrdersDtos {
             String variantId,
             String variantName,
             Double variantPrice,
-            Boolean taxInclusive) {}
+            Boolean taxInclusive,
+            String uomId) {}
 
     /** {@code CreateOrderDto}. */
     public record CreateOrderRequest(
