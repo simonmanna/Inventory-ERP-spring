@@ -432,10 +432,9 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(cash.body().get("message").asString()).isEqualTo("Only credit purchases can accept manual payments");
 
         // inv-readiness P0-2: concurrent full-balance payments on one credit PO — exactly one succeeds.
-        String race = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"PurchaseOrder\" (id, \"organizationId\", \"orderNumber\", \"partnerId\", \"paymentType\","
-                + " status, \"totalAmount\", \"totalPaid\", \"updatedAt\") VALUES (?, ?, ?, ?, 'credit', 'received', 100, 0,"
-                + " now())").params(race, demoOrg, "RDY-PO-" + suffix(), supplier).update();
+        // ADR-PROCUREMENT-001 P0-4: a PO only pays what its receipts vouchered, so the race order is received first.
+        String race = createPo("credit", product, 1, 100, null).get("id").asString();
+        receive(race, List.of(rline(product, 1, 100)));
         ExecutorService pool = Executors.newFixedThreadPool(4);
         try {
             List<Future<Res>> futures = new ArrayList<>();
@@ -487,8 +486,9 @@ class ProcurementIT extends ApiTestSupport {
         // DefaultValuePipe treats Number("x") = NaN as missing (verified on Nest).
         assertThat(ok(200, "GET", "/procurement/purchase-orders?page=x", null).get("meta").get("page").asInt())
                 .isEqualTo(1);
-        // Nest builds `contains` on enum columns → Prisma validation error → 500.
-        assertThat(as("GET", "/procurement/purchase-orders?search=PO", null).status()).isEqualTo(500);
+        // B6 (post-parity): Nest answered 500 (`contains` on enum columns); the text columns are searched instead.
+        JsonNode found = ok(200, "GET", "/procurement/purchase-orders?search=" + po.get("orderNumber").asString(), null);
+        assertThat(found.get("meta").get("total").asInt()).isEqualTo(1);
         JsonNode dated = ok(200, "GET", "/procurement/purchase-orders?partnerId=" + supplier + "&dateFrom=" + today
                 + "&dateTo=" + today, null);
         assertThat(dated.get("meta").get("total").asInt()).isPositive();
@@ -839,12 +839,19 @@ class ProcurementIT extends ApiTestSupport {
                 supplier, "reason", "overcharge", "lines", List.of(Map.of("description", "Fee", "quantity", 1,
                         "unitPrice", 10))));
         assertThat(inbound.get("noteNumber").asString()).startsWith("DBN-IN-");
-        // Nest credits AP and the expense line alike, so PostingService refuses the entry.
-        Res unbalanced = as("PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/post", null);
-        assertThat(unbalanced.status()).isEqualTo(400);
-        assertThat(unbalanced.body().get("message").asString()).startsWith("Unbalanced entry");
-        assertThat(ok(200, "PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/cancel", null)
-                .get("status").asString()).isEqualTo("cancelled");
+        // B1 (post-parity): Nest credited AP and the expense line alike (unbalanced); a supplier's debit note is
+        // Dr expense / Cr AP, tagged with the supplier.
+        BigDecimal apBefore = balance(mapped("accounts_payable"));
+        JsonNode inboundPosted = ok(200, "PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/post",
+                null);
+        assertThat(inboundPosted.get("status").asString()).isEqualTo("posted");
+        assertThat(balance(mapped("accounts_payable")).subtract(apBefore)).isEqualByComparingTo("-10");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
+                + " WHERE e.\"sourceType\" = 'debit_note' AND e.\"sourceId\" = ? AND l.\"partnerId\" = ?")
+                .params(inbound.get("id").asString(), supplier).query(Long.class).single()).isEqualTo(1);
+        Res cancelPosted = as("PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/cancel", null);
+        assertThat(cancelPosted.body().get("message").asString())
+                .isEqualTo("Cannot cancel a posted debit note; reverse with a credit note");
         Res badPartner = as("POST", "/procurement/debit-notes", Map.of("direction", "inbound", "partnerId",
                 UUID.randomUUID().toString(), "reason", "other", "lines", List.of(Map.of("description", "x", "quantity",
                         1, "unitPrice", 1))));
@@ -1046,10 +1053,12 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(pending).hasSize(1);
         assertThat(pending.get(0).get("status").asString()).isEqualTo("pending");
         receive(poId, List.of(rline(product, 10, 10)));
-        JsonNode blocked = ok(201, "POST", "/procurement/three-way-match/recompute/" + poId, null);
-        assertThat(blocked.get(0).get("status").asString()).isEqualTo("blocked");
-        assertThat(blocked.get(0).get("receivedQuantity").asString()).isEqualTo("10");
-        JsonNode list = ok(200, "GET", "/procurement/three-way-match?purchaseOrderId=" + poId + "&status=blocked", null);
+        // P1-1 (post-parity): received but not billed yet is work in progress ("partial"), not a blocked exception
+        // (Nest flagged every unbilled receipt as blocked).
+        JsonNode partial = ok(201, "POST", "/procurement/three-way-match/recompute/" + poId, null);
+        assertThat(partial.get(0).get("status").asString()).isEqualTo("partial");
+        assertThat(new BigDecimal(partial.get(0).get("receivedQuantity").asString())).isEqualByComparingTo("10");
+        JsonNode list = ok(200, "GET", "/procurement/three-way-match?purchaseOrderId=" + poId + "&status=partial", null);
         assertThat(list).hasSize(1);
         assertThat(list.get(0).get("order").get("orderNumber").asString()).isEqualTo(po.get("orderNumber").asString());
         assertThat(ok(201, "POST", "/procurement/three-way-match/recompute/" + UUID.randomUUID(), null)).isEmpty();
@@ -1059,8 +1068,10 @@ class ProcurementIT extends ApiTestSupport {
                         "quantity", 10, "unitPrice", 10))));
         JsonNode validation = ok(201, "POST", "/procurement/three-way-match/validate-bill/" + bill.get("id").asString(),
                 null);
-        assertThat(validation.has("ok")).isTrue();
+        // The draft bill (10 × 10, net) matches the posted receipt exactly.
+        assertThat(validation.get("ok").asBoolean()).isTrue();
         assertThat(validation.get("matches")).hasSize(1);
+        assertThat(validation.get("matches").get(0).get("status").asString()).isEqualTo("matched");
         JsonNode none = ok(201, "POST", "/procurement/three-way-match/validate-bill/" + UUID.randomUUID(), null);
         assertThat(none.get("ok").asBoolean()).isTrue();
         assertThat(none.get("matches")).isEmpty();
@@ -1102,7 +1113,7 @@ class ProcurementIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every procurement route answers 401 without a token and 403 without its permission")
     void authorization() {
-        // 60 + 17 lane D (RFQ, price agreements, reports) + 14 lane B (budgets, delegations, PR approval).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(91);
+        // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(173);
     }
 }

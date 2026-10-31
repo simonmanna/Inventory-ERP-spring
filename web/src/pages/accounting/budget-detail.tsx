@@ -268,6 +268,11 @@ function VsActual({ id }: { id: string }) {
             <div className="text-xs text-muted-foreground">
               {tx('Variance')} {money(data.totals[k].variance)}
             </div>
+            {data.totals[k].committed != null && (
+              <div className="text-xs text-muted-foreground">
+                {tx('Committed')} {money(data.totals[k].committed)} · {tx('Available')} {money(data.totals[k].available)}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -279,6 +284,8 @@ function VsActual({ id }: { id: string }) {
               <TableHead>{tx('Type')}</TableHead>
               <TableHead className="text-right">{tx('Budget')}</TableHead>
               <TableHead className="text-right">{tx('Actual')}</TableHead>
+              <TableHead className="text-right">{tx('Committed')}</TableHead>
+              <TableHead className="text-right">{tx('Available')}</TableHead>
               <TableHead className="text-right">{tx('Variance')}</TableHead>
               <TableHead className="text-right">{tx('Used')}</TableHead>
             </TableRow>
@@ -292,6 +299,10 @@ function VsActual({ id }: { id: string }) {
                 <TableCell>{r.type === 'income' ? tx('Income') : tx('Expense')}</TableCell>
                 <TableCell className="text-right">{money(r.budget)}</TableCell>
                 <TableCell className="text-right">{money(r.actual)}</TableCell>
+                <TableCell className="text-right">{r.type === 'expense' && r.committed ? money(r.committed) : '—'}</TableCell>
+                <TableCell className={`text-right ${Number(r.available) < 0 ? 'font-medium text-red-600' : ''}`}>
+                  {r.type === 'expense' && r.available != null ? money(r.available) : '—'}
+                </TableCell>
                 <TableCell className={`text-right font-medium ${r.favorable ? 'text-emerald-600' : 'text-red-600'}`}>
                   {money(r.variance)}
                   {r.variancePct != null && <span className="ml-1 text-xs">({r.variancePct}%)</span>}

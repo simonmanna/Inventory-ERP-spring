@@ -66,6 +66,23 @@ export const EVENTS = {
   ThreeWayMatchComputed: 'three_way_match.computed',
   DebitNoteCreated: 'debit_note.created',
   DebitNotePosted: 'debit_note.posted',
+  // ADR-PROCUREMENT-001 — Source-to-Pay
+  SupplierStatusChanged: 'supplier.status_changed',
+  SupplierBankAccountAdded: 'supplier.bank_account_added',
+  SupplierBankAccountVerified: 'supplier.bank_account_verified',
+  SupplierCertificateExpiring: 'supplier.certificate_expiring',
+  RfqSent: 'rfq.sent',
+  RfqAwarded: 'rfq.awarded',
+  AgreementActivated: 'agreement.activated',
+  AgreementExhausted: 'agreement.exhausted',
+  PurchaseOrderClosed: 'purchase_order.closed',
+  PurchaseOrderChanged: 'purchase_order.changed',
+  BudgetExceeded: 'budget.exceeded',
+  SupplierClaimRaised: 'supplier_claim.raised',
+  SupplierClaimSettled: 'supplier_claim.settled',
+  BillDuplicateSuspected: 'bill.duplicate_suspected',
+  SupplierPortalUsed: 'supplier_portal.used',
+  ReplenishmentRaised: 'replenishment.raised',
   // DMS — generic document lifecycle (Phase 2 engine facts; one event per engine
   // action so posting/reversal/notification hooks can subscribe generically).
   DocumentCreated: 'document.created',
@@ -407,6 +424,22 @@ export interface DomainEventMap {
   'three_way_match.computed': { organizationId: string; purchaseOrderId: string; matched: number; mismatched: number; blocked: number };
   'debit_note.created': { organizationId: string; noteId: string; noteNumber: string; direction: 'outbound' | 'inbound' };
   'debit_note.posted': { organizationId: string; noteId: string; direction: 'outbound' | 'inbound'; amount: string };
+  'supplier.status_changed': { organizationId: string; partnerId: string; from: string; to: string; reason: string };
+  'supplier.bank_account_added': { organizationId: string; partnerId: string; bankAccountId: string };
+  'supplier.bank_account_verified': { organizationId: string; partnerId: string; bankAccountId: string };
+  'supplier.certificate_expiring': { organizationId: string; partnerId: string; certificateId: string; type: string; validTo: string };
+  'rfq.sent': { organizationId: string; rfqId: string };
+  'rfq.awarded': { organizationId: string; rfqId: string };
+  'agreement.activated': { organizationId: string; agreementId: string };
+  'agreement.exhausted': { organizationId: string; agreementId: string };
+  'purchase_order.closed': { organizationId: string; orderId: string; reason: string };
+  'purchase_order.changed': { organizationId: string; orderId: string; changeRequestId: string; revision: number };
+  'budget.exceeded': { organizationId: string; sourceType: string; sourceId: string; accountId: string; overBy: string; mode: string };
+  'supplier_claim.raised': { organizationId: string; claimId: string; partnerId: string; amount: string };
+  'supplier_claim.settled': { organizationId: string; claimId: string; debitNoteId: string };
+  'bill.duplicate_suspected': { organizationId: string; billId: string; duplicateOfIds: string[] };
+  'supplier_portal.used': { organizationId: string; tokenId: string; documentType: string; documentId: string; action: string };
+  'replenishment.raised': { organizationId: string; requestId: string; lines: number };
   // DMS — generic document lifecycle facts (Phase 2 engine). Every engine action
   // emits `document.<action>`; subscribers (posting/reversal/notification hooks)
   // filter on `action`/`documentTypeCode` as needed.
@@ -797,6 +830,12 @@ export type DomainEventName = keyof DomainEventMap;
  * event part of the permanent record.
  */
 export const EVENT_SUBJECT: Partial<Record<DomainEventName, { entityType: string; idField: string }>> = {
+  'supplier.status_changed': { entityType: 'supplier', idField: 'partnerId' },
+  'supplier.bank_account_added': { entityType: 'supplier', idField: 'partnerId' },
+  'supplier.bank_account_verified': { entityType: 'supplier', idField: 'partnerId' },
+  'purchase_order.changed': { entityType: 'purchase_order', idField: 'orderId' },
+  'supplier_claim.raised': { entityType: 'supplier_claim', idField: 'claimId' },
+  'supplier_claim.settled': { entityType: 'supplier_claim', idField: 'claimId' },
   'order.confirmed': { entityType: 'order', idField: 'orderId' },
   'order.fulfillment_started': { entityType: 'order', idField: 'orderId' },
   'order.completed': { entityType: 'order', idField: 'orderId' },

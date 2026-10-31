@@ -44,8 +44,9 @@ export function PurchaseOrderCreatePage() {
   const partners = useQuery<Partner[]>({
     queryKey: ['partners-supplier'],
     queryFn: async () => {
-      const res = await api.get<{ data: Partner[] }>('/partners?pageSize=100&search=SUPP');
-      return res.data.data ?? [];
+      // Suppliers only (ADR-PROCUREMENT-001): the old `search=SUPP` text match missed most suppliers.
+      const res = await api.get<Partner[]>('/procurement/suppliers/options');
+      return res.data ?? [];
     },
   });
   const products = useQuery<Product[]>({

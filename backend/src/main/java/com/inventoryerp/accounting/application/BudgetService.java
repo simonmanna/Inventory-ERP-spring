@@ -45,10 +45,12 @@ public class BudgetService {
 
     private final JdbcClient jdbc;
     private final AccountResolverService accounts;
+    private final CommitmentService commitments;
 
-    public BudgetService(JdbcClient jdbc, AccountResolverService accounts) {
+    public BudgetService(JdbcClient jdbc, AccountResolverService accounts, CommitmentService commitments) {
         this.jdbc = jdbc;
         this.accounts = accounts;
+        this.commitments = commitments;
     }
 
     private static String org() {
@@ -335,6 +337,9 @@ public class BudgetService {
             actualRaw.computeIfAbsent((String) r.get("accountId"), k -> new TreeMap<>())
                     .put((String) r.get("period"), new BigDecimal[] {SqlRows.dec(r, "d"), SqlRows.dec(r, "c")});
         }
+        // ADR-PROCUREMENT-001 W5: open purchase commitments (memo, no GL) per account and month.
+        Map<String, Map<String, BigDecimal>> committedRaw = commitments.committedByAccount(
+                (String) b.get("branchId"), (String) b.get("costCenterId"), from.toString(), to.toString());
         Set<String> ids = new HashSet<>(budget.keySet());
         // Only P&L actuals matter when the account was not budgeted; balance-sheet movements are noise here.
         Map<String, AccountMeta> metaAll = accounts.meta(actualRaw.keySet());
@@ -354,6 +359,7 @@ public class BudgetService {
         BigDecimal incomeActual = BigDecimal.ZERO;
         BigDecimal expenseBudget = BigDecimal.ZERO;
         BigDecimal expenseActual = BigDecimal.ZERO;
+        BigDecimal expenseCommitted = BigDecimal.ZERO;
         for (String accountId : ids) {
             AccountMeta a = meta.get(accountId);
             if (a == null) {
@@ -362,8 +368,10 @@ public class BudgetService {
             boolean income = isIncome(a);
             Map<String, BigDecimal> bm = budget.getOrDefault(accountId, Map.of());
             Map<String, BigDecimal[]> am = actualRaw.getOrDefault(accountId, Map.of());
+            Map<String, BigDecimal> cm = committedRaw.getOrDefault(accountId, Map.of());
             BigDecimal bTotal = BigDecimal.ZERO;
             BigDecimal aTotal = BigDecimal.ZERO;
+            BigDecimal cTotal = BigDecimal.ZERO;
             List<Map<String, Object>> monthly = new ArrayList<>();
             for (String m : months) {
                 BigDecimal bv = bm.getOrDefault(m, BigDecimal.ZERO);
@@ -372,7 +380,9 @@ public class BudgetService {
                         : AccountClassification.displayBalance(dc[0].subtract(dc[1]), a.normalBalance());
                 bTotal = bTotal.add(bv);
                 aTotal = aTotal.add(av);
-                monthly.add(Obj.of("period", m, "budget", plain(bv), "actual", plain(av)));
+                BigDecimal cv = income ? BigDecimal.ZERO : cm.getOrDefault(m, BigDecimal.ZERO);
+                cTotal = cTotal.add(cv);
+                monthly.add(Obj.of("period", m, "budget", plain(bv), "actual", plain(av), "committed", plain(cv)));
             }
             BigDecimal variance = aTotal.subtract(bTotal);
             boolean favorable = income ? variance.signum() >= 0 : variance.signum() <= 0;
@@ -383,13 +393,15 @@ public class BudgetService {
                             : variance.multiply(BigDecimal.valueOf(100)).divide(bTotal, 2, RoundingMode.HALF_UP),
                     "favorable", favorable, "utilizationPct", bTotal.signum() == 0 ? null
                             : aTotal.multiply(BigDecimal.valueOf(100)).divide(bTotal, 2, RoundingMode.HALF_UP),
-                    "months", monthly));
+                    "months", monthly, "committed", plain(cTotal), "available",
+                    plain(bTotal.subtract(aTotal).subtract(cTotal))));
             if (income) {
                 incomeBudget = incomeBudget.add(bTotal);
                 incomeActual = incomeActual.add(aTotal);
             } else {
                 expenseBudget = expenseBudget.add(bTotal);
                 expenseActual = expenseActual.add(aTotal);
+                expenseCommitted = expenseCommitted.add(cTotal);
             }
         }
         rows.sort((x, y) -> String.valueOf(x.get("code")).compareTo(String.valueOf(y.get("code"))));
@@ -403,7 +415,8 @@ public class BudgetService {
                         "income", Obj.of("budget", plain(incomeBudget), "actual", plain(incomeActual), "variance",
                                 plain(incomeActual.subtract(incomeBudget))),
                         "expense", Obj.of("budget", plain(expenseBudget), "actual", plain(expenseActual), "variance",
-                                plain(expenseActual.subtract(expenseBudget))),
+                                plain(expenseActual.subtract(expenseBudget)), "committed", plain(expenseCommitted),
+                                "available", plain(expenseBudget.subtract(expenseActual).subtract(expenseCommitted))),
                         "net", Obj.of("budget", plain(netBudget), "actual", plain(netActual), "variance",
                                 plain(netActual.subtract(netBudget)))));
     }

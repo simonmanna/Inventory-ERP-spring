@@ -136,7 +136,7 @@ export function PurchaseRequestsPage() {
                 )}
                 {pr.status === 'approved' && (
                   <Button size="sm" variant="outline" asChild>
-                    <Link to={`/procurement/purchase-orders/new?requestId=${pr.id}`}>
+                    <Link to={`/procurement/sourcing?requestId=${pr.id}`}>
                       {tx('Convert to PO')}
                     </Link>
                   </Button>

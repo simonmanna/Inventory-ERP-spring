@@ -1,5 +1,10 @@
 # Accounting & Inventory — Deep Assessment
 
+> **Follow-up (2026-10-30):** the procurement / S2P deep audit in
+> [`docs/audit/procurement-current-state-audit.md`](../audit/procurement-current-state-audit.md) records additional
+> P0 defects not listed here (standard-cost GRNI residue, PO delete after receipt, debit-note double post, duplicate
+> payment engine, receipt FX, cross-org ids).
+
 > **Date:** 2026-10-27 · **Branch:** `phase/P7-beverage` · **Scope:** Spring backend (`backend/`), web (`web/`),
 > Nest reference (`reference/nest-api/`) · **Benchmark:** what a professional mid-market ERP (Odoo 17 Enterprise,
 > SAP Business One, NetSuite, Dynamics 365 Business Central) is expected to provide.

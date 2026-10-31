@@ -34,14 +34,14 @@ public class ThreeWayMatchController {
 
     @PostMapping("/recompute/{orderId}")
     @ResponseStatus(HttpStatus.CREATED)
-    @RequirePermissions(Permissions.PROCUREMENT__THREE_WAY_MATCH__READ)
+    @RequirePermissions(Permissions.PROCUREMENT__THREE_WAY_MATCH__APPROVE)
     public List<Map<String, Object>> recompute(@PathVariable String orderId) {
         return svc.recomputeForOrder(orderId);
     }
 
     @PostMapping("/validate-bill/{billId}")
     @ResponseStatus(HttpStatus.CREATED)
-    @RequirePermissions(Permissions.PROCUREMENT__THREE_WAY_MATCH__READ)
+    @RequirePermissions(Permissions.PROCUREMENT__THREE_WAY_MATCH__APPROVE)
     public Map<String, Object> validateBill(@PathVariable String billId) {
         return svc.validateBillForPosting(billId);
     }

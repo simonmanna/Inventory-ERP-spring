@@ -1,4 +1,28 @@
 {
+  "supplier.status_changed": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
+  "supplier.bank_account_added": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
+  "supplier.bank_account_verified": {
+    "entityType": "supplier",
+    "idField": "partnerId"
+  },
+  "purchase_order.changed": {
+    "entityType": "purchase_order",
+    "idField": "orderId"
+  },
+  "supplier_claim.raised": {
+    "entityType": "supplier_claim",
+    "idField": "claimId"
+  },
+  "supplier_claim.settled": {
+    "entityType": "supplier_claim",
+    "idField": "claimId"
+  },
   "order.confirmed": {
     "entityType": "order",
     "idField": "orderId"

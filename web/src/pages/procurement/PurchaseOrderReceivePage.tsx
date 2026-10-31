@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
@@ -50,7 +51,7 @@ export function PurchaseOrderReceivePage() {
 
   const receiveMut = useMutation({
     mutationFn: async () =>
-      (await api.post(`/procurement/purchase-orders/${id}/receive`, {
+      idempotentPost(`/procurement/purchase-orders/${id}/receive`, {
         warehouseId,
         notes,
         lines: po.data?.lines
@@ -62,7 +63,7 @@ export function PurchaseOrderReceivePage() {
             quantity: receivedQtys[l.id] ?? l.quantity,
             unitCost: l.unitPrice,
           })) ?? [],
-      })).data,
+      }),
     onSuccess: (res: any) => {
       if (res?.approvalRequired) {
         notify.success(tx('Receipt {{v1}} saved as a draft — awaiting goods-receipt approval before stock is posted', { v1: res.grn?.receiptNumber ?? '' }));

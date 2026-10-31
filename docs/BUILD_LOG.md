@@ -118,3 +118,37 @@ balanced GL. Full build: 867 tests / 0 failed. Owner review: GL account proposal
 own-fleet trip cost analytic only, telematics mock only, no vendor-binary weighbridge protocols.
 
 STATUS: CODE WRITTEN, NOT COMPILED OR RUN. Held until a full build passes: tags manufacturing-advanced-complete, gaps-closed, bi-complete, v2.1.0-rc, v2.1.0.
+
+### Source-to-Pay build (ADR-PROCUREMENT-001, 2026-10-30)
+
+Owner instruction: build P0–P5 of `docs/roadmap/procurement-roadmap.md` as one production-ready purchasing system.
+Supplier portal = secure link per document; AI = built-in statistics; open decisions = proposed defaults. With no
+policy configured, behaviour stays as before.
+
+| Wave | Status | Commit | Tests (full build) | Notes |
+|---|---|---|---|---|
+| W0 baseline | done | — | 867 | local Postgres 16, `IT_EXTERNAL_DB=true` |
+| W1 P0 integrity (V150) | done | (see git log) | 877 | receipt voucher at actual value, delete / pay guards, debit-note claim, BigDecimal three-way match, FX, org checks |
+| W2 policies + suppliers (V151) | done | | 885 | maker-checker effective-dated policies, supplier lifecycle, dual-control bank accounts, certificates, price history |
+| W3 requisition → order (V152) | done | eddd37c | 892 | workbench, PO lifecycle, short-close, print |
+| W4 sourcing (V153) | done | eddd37c | 892 | RFQ, quotations, comparison, split award, agreements and releases |
+| W5 controls (V154) | done | 2d6a87b | 898 | commitments and budget control, PO change requests and revisions, match tolerances, duplicate bills, claims |
+| W6 receiving quality (V155) | done | d0b34c3 | 902 | inspection, weighbridge evidence SPI, emergency purchases |
+| W7 planning (V156) | done | 7a7663a | 906 | replenishment, scorecards, statistics, supplier portal, dashboard |
+| W8 hardening | done | (this branch) | 907 | end-to-end IT, docs, guide, self-review |
+
+Deferred (tracked in the roadmap):
+- landed-cost gaps G1–G8 beyond V12–V25
+- `goods_in_transit`
+- direct-to-site project acceptance
+- `asset.acquired` hand-off
+- density-based t ↔ m³ conversion
+- parity scenario JSON for the new routes (extension routes have no Nest counterpart to diff)
+
+Known limits after W8 (self-review):
+- The portal throttle is per client IP. Behind a reverse proxy, configure forwarded-IP handling, or all suppliers
+  share one bucket.
+- `POST /procurement/replenishment/raise` has no idempotency key. A double submit raises two draft requests, which
+  are visible and cancellable.
+- An order activated outside a transaction re-states its commitments right after the status change. Every later
+  change re-syncs them.

@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (572 permissions). Constant name = GROUP__ACTION.
+ * exactly (594 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -77,6 +77,33 @@ public final class Permissions {
     public static final String PROCESS_COSTING__READ = "process_costing:read";
     public static final String PROCESS_COSTING__MANAGE = "process_costing:manage";
     public static final String PROCESS_COSTING__CLOSE = "process_costing:close";
+    public static final String SUPPLIER__READ = "supplier:read";
+    public static final String SUPPLIER__MANAGE = "supplier:manage";
+    public static final String SUPPLIER__APPROVE = "supplier:approve";
+    public static final String SUPPLIER__VERIFY_BANK = "supplier:verify_bank";
+    public static final String PROCUREMENT_POLICY__READ = "procurement_policy:read";
+    public static final String PROCUREMENT_POLICY__MANAGE = "procurement_policy:manage";
+    public static final String PROCUREMENT_POLICY__APPROVE = "procurement_policy:approve";
+    public static final String RFQ__READ = "rfq:read";
+    public static final String RFQ__MANAGE = "rfq:manage";
+    public static final String RFQ__AWARD = "rfq:award";
+    public static final String PURCHASE_AGREEMENT__READ = "purchase_agreement:read";
+    public static final String PURCHASE_AGREEMENT__MANAGE = "purchase_agreement:manage";
+    public static final String PURCHASE_AGREEMENT__APPROVE = "purchase_agreement:approve";
+    public static final String BUDGET_CONTROL__OVERRIDE = "budget:override";
+    public static final String BUDGET_CONTROL__COMMITMENTS = "commitment:read";
+    public static final String PO_CHANGE__REQUEST = "po_change:request";
+    public static final String PO_CHANGE__APPROVE = "po_change:approve";
+    public static final String SUPPLIER_CLAIM__READ = "supplier_claim:read";
+    public static final String SUPPLIER_CLAIM__MANAGE = "supplier_claim:manage";
+    public static final String INSPECTION__READ = "inspection:read";
+    public static final String INSPECTION__MANAGE = "inspection:manage";
+    public static final String EMERGENCY_PURCHASE__REVIEW = "emergency_purchase:review";
+    public static final String RECEIVING__OVERRIDE_EVIDENCE = "receiving:override_evidence";
+    public static final String REPLENISHMENT__READ = "replenishment:read";
+    public static final String REPLENISHMENT__MANAGE = "replenishment:manage";
+    public static final String PROCUREMENT_ANALYTICS__READ = "procurement_analytics:read";
+    public static final String SUPPLIER_PORTAL__MANAGE = "supplier_portal:manage";
     public static final String LANDED_COST__READ = "landed_cost:read";
     public static final String LANDED_COST__CREATE = "landed_cost:create";
     public static final String LANDED_COST__APPROVE = "landed_cost:approve";
@@ -320,11 +347,6 @@ public final class Permissions {
     public static final String PROCUREMENT__THREE_WAY_MATCH__READ = "three_way_match:read";
     public static final String PROCUREMENT__THREE_WAY_MATCH__APPROVE = "three_way_match:approve";
     public static final String PROCUREMENT__THREE_WAY_MATCH__OVERRIDE = "three_way_match:override";
-    public static final String PROCUREMENT__RFQ__READ = "rfq:read";
-    public static final String PROCUREMENT__RFQ__MANAGE = "rfq:manage";
-    public static final String PROCUREMENT__RFQ__AWARD = "rfq:award";
-    public static final String PROCUREMENT__PRICE_AGREEMENT__READ = "price_agreement:read";
-    public static final String PROCUREMENT__PRICE_AGREEMENT__MANAGE = "price_agreement:manage";
     public static final String DEBIT_NOTE__CREATE = "debit_note:create";
     public static final String DEBIT_NOTE__READ = "debit_note:read";
     public static final String DEBIT_NOTE__POST = "debit_note:post";
@@ -652,6 +674,33 @@ public final class Permissions {
             "process_costing:read",
             "process_costing:manage",
             "process_costing:close",
+            "supplier:read",
+            "supplier:manage",
+            "supplier:approve",
+            "supplier:verify_bank",
+            "procurement_policy:read",
+            "procurement_policy:manage",
+            "procurement_policy:approve",
+            "rfq:read",
+            "rfq:manage",
+            "rfq:award",
+            "purchase_agreement:read",
+            "purchase_agreement:manage",
+            "purchase_agreement:approve",
+            "budget:override",
+            "commitment:read",
+            "po_change:request",
+            "po_change:approve",
+            "supplier_claim:read",
+            "supplier_claim:manage",
+            "inspection:read",
+            "inspection:manage",
+            "emergency_purchase:review",
+            "receiving:override_evidence",
+            "replenishment:read",
+            "replenishment:manage",
+            "procurement_analytics:read",
+            "supplier_portal:manage",
             "landed_cost:read",
             "landed_cost:create",
             "landed_cost:approve",
@@ -895,11 +944,6 @@ public final class Permissions {
             "three_way_match:read",
             "three_way_match:approve",
             "three_way_match:override",
-            "rfq:read",
-            "rfq:manage",
-            "rfq:award",
-            "price_agreement:read",
-            "price_agreement:manage",
             "debit_note:create",
             "debit_note:read",
             "debit_note:post",

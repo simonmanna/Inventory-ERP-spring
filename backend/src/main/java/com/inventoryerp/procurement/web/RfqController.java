@@ -1,164 +1,177 @@
 package com.inventoryerp.procurement.web;
 
-import static com.inventoryerp.procurement.web.ProcurementDtos.ARR;
-import static com.inventoryerp.procurement.web.ProcurementDtos.DATE_MSG;
-import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
-import static com.inventoryerp.procurement.web.ProcurementDtos.NOT_EMPTY;
-import static com.inventoryerp.procurement.web.ProcurementDtos.NUM;
-import static com.inventoryerp.procurement.web.ProcurementDtos.STR;
-
-import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.procurement.application.RfqService;
-import com.inventoryerp.procurement.application.RfqService.AwardInput;
+import com.inventoryerp.procurement.application.RfqService.AwardLine;
+import com.inventoryerp.procurement.application.RfqService.CreateInput;
 import com.inventoryerp.procurement.application.RfqService.LineInput;
-import com.inventoryerp.procurement.application.RfqService.QuotationInput;
-import com.inventoryerp.procurement.application.RfqService.QuoteLineInput;
-import com.inventoryerp.procurement.application.RfqService.RfqInput;
+import com.inventoryerp.procurement.application.RfqService.QuoteInput;
+import com.inventoryerp.procurement.application.RfqService.QuoteLine;
 import com.inventoryerp.shared.validation.ArrayMinSize;
 import com.inventoryerp.shared.validation.OneOf;
-import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** {@code /procurement/rfqs}: requests for quotation, supplier quotations, comparison and award (PROC-1). */
+/**
+ * {@code /procurement/rfqs} — requests for quotation, supplier quotations, comparison, awards and order creation
+ * (ADR-PROCUREMENT-001 wave 4; no Nest counterpart).
+ */
 @RestController
 @RequestMapping("/procurement/rfqs")
 public class RfqController {
 
-    /** One requested item. */
-    public record RfqLineRequest(
-            String productId,
-            @NotEmpty(message = NOT_EMPTY) String description,
-            @NotNull(message = NUM) @DecimalMin(value = "0.001", message = "must not be less than 0.001")
-            BigDecimal quantity,
-            String unitOfMeasureId) {}
+    public record LineRequest(String requestLineId, String productId, String description,
+            @Positive(message = "quantity must be a positive number") BigDecimal quantity, String uomId,
+            String requiredDate, String notes) {}
 
-    /** Draft body. */
-    public record RfqRequest(
-            @NotEmpty(message = NOT_EMPTY) String title,
-            String purchaseRequestId,
-            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
-            @NotEmpty(message = NOT_EMPTY) String currencyCode,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid RfqLineRequest> lines,
-            List<String> supplierIds) {
+    public record CreateRequest(@NotBlank(message = "title is required") String title, String deadline,
+            String branchId, String deliveryLocationId, String deliveryTerms, String notes, Map<String, Integer> weights,
+            List<String> requestLineIds, List<@Valid LineRequest> lines, List<String> supplierIds) {}
 
-        RfqInput toInput() {
-            return new RfqInput(title, purchaseRequestId, dueDate, currencyCode, notes, lines.stream()
-                    .map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
-                    l.unitOfMeasureId())).toList(),
-                    supplierIds);
-        }
-    }
+    public record SupplierRequest(@NotBlank(message = "partnerId is required") String partnerId) {}
 
-    /** One quoted price. */
-    public record QuoteLineRequest(
-            @NotNull(message = STR) String rfqLineId,
-            @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
-            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal taxRate) {}
+    public record QuoteLineRequest(@NotBlank(message = "rfqLineId is required") String rfqLineId,
+            @NotNull(message = "unitPrice is required") @DecimalMin(value = "0", message = "unitPrice must not be less"
+                    + " than 0") BigDecimal unitPrice,
+            @Positive(message = "quantity must be a positive number") BigDecimal quantity,
+            @Min(value = 0, message = "leadTimeDays must not be less than 0") Integer leadTimeDays,
+            @DecimalMin(value = "0", message = "taxRate must not be less than 0") BigDecimal taxRate, String alternative,
+            String notes) {}
 
-    /** A supplier's quotation. */
-    public record QuotationRequest(
-            @NotNull(message = STR) String partnerId,
-            String reference,
-            String currencyCode,
-            @DecimalMin(value = "0.00000001", message = "must be a positive number") BigDecimal exchangeRate,
-            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String validUntil,
-            @Min(value = 0, message = "must not be less than 0") Integer leadTimeDays,
-            String paymentTerms,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid QuoteLineRequest> lines) {
+    public record QuoteRequest(@NotBlank(message = "partnerId is required") String partnerId, String supplierReference,
+            String validUntil, String currencyCode,
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate,
+            @Min(value = 0, message = "leadTimeDays must not be less than 0") Integer leadTimeDays,
+            @Min(value = 0, message = "paymentTermsDays must not be less than 0") Integer paymentTermsDays,
+            @DecimalMin(value = "0", message = "freightAmount must not be less than 0") BigDecimal freightAmount,
+            @DecimalMin(value = "0", message = "qualityScore must be between 0 and 100")
+            @DecimalMax(value = "100", message = "qualityScore must be between 0 and 100") BigDecimal qualityScore,
+            String notes, @NotNull(message = "lines must be an array") @ArrayMinSize(1) List<@Valid QuoteLineRequest> lines) {}
 
-        QuotationInput toInput() {
-            return new QuotationInput(partnerId, reference, currencyCode, exchangeRate, validUntil, leadTimeDays,
-                    paymentTerms, notes, lines.stream()
-                    .map(l -> new QuoteLineInput(l.rfqLineId(), l.unitPrice(), l.taxRate())).toList());
-        }
-    }
+    public record DeclineRequest(@NotBlank(message = "partnerId is required") String partnerId, String reason) {}
 
-    /** Award one quotation. */
-    public record AwardRequest(
-            @NotNull(message = STR) String quotationId,
-            @NotNull(message = STR) String warehouseId,
-            @OneOf({"cash", "credit"}) String paymentType) {}
+    public record AwardLineRequest(@NotBlank(message = "rfqLineId is required") String rfqLineId,
+            @NotBlank(message = "partnerId is required") String partnerId,
+            @Positive(message = "quantity must be a positive number") BigDecimal quantity, String justification) {}
 
-    private final RfqService svc;
+    public record AwardRequest(@NotNull(message = "lines must be an array") @ArrayMinSize(1)
+            List<@Valid AwardLineRequest> lines) {}
 
-    public RfqController(RfqService svc) {
-        this.svc = svc;
+    public record OrdersRequest(@NotBlank(message = "warehouseId is required") String warehouseId,
+            @OneOf({"cash", "credit"}) String paymentType, String expectedDeliveryDate) {}
+
+    private final RfqService rfqs;
+
+    public RfqController(RfqService rfqs) {
+        this.rfqs = rfqs;
     }
 
     @GetMapping
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__READ)
-    public PageResult<Map<String, Object>> list(@RequestParam Map<String, String> query) {
-        return svc.list(QueryParams.page(query, "status"), query.get("status"));
+    @RequirePermissions(Permissions.RFQ__READ)
+    public List<Map<String, Object>> list(@RequestParam(required = false) String status) {
+        return rfqs.list(status);
     }
 
     @GetMapping("/{id}")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__READ)
-    public Map<String, Object> findOne(@PathVariable String id) {
-        return svc.findOne(id);
+    @RequirePermissions(Permissions.RFQ__READ)
+    public Map<String, Object> get(@PathVariable String id) {
+        return rfqs.get(id);
     }
 
     @GetMapping("/{id}/comparison")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__READ)
+    @RequirePermissions(Permissions.RFQ__READ)
     public Map<String, Object> comparison(@PathVariable String id) {
-        return svc.comparison(id);
+        return rfqs.comparison(id);
     }
 
     @PostMapping
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__MANAGE)
-    public Map<String, Object> create(@Valid @RequestBody RfqRequest dto) {
-        return svc.create(dto.toInput());
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> create(@Valid @RequestBody CreateRequest dto) {
+        return rfqs.create(new CreateInput(dto.title(), dto.deadline(), dto.branchId(), dto.deliveryLocationId(),
+                dto.deliveryTerms(), dto.notes(), dto.weights(), dto.requestLineIds(), dto.lines() == null ? null
+                        : dto.lines().stream().map(l -> new LineInput(l.requestLineId(), l.productId(), l.description(),
+                                l.quantity(), l.uomId(), l.requiredDate(), l.notes())).toList(), dto.supplierIds()));
     }
 
-    @PatchMapping("/{id}")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__MANAGE)
-    public Map<String, Object> update(@PathVariable String id, @Valid @RequestBody RfqRequest dto) {
-        return svc.update(id, dto.toInput());
+    @PostMapping("/{id}/suppliers")
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> addSupplier(@PathVariable String id, @Valid @RequestBody SupplierRequest dto) {
+        return rfqs.addSupplier(id, dto.partnerId());
+    }
+
+    @DeleteMapping("/{id}/suppliers/{partnerId}")
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> removeSupplier(@PathVariable String id, @PathVariable String partnerId) {
+        return rfqs.removeSupplier(id, partnerId);
     }
 
     @PostMapping("/{id}/send")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__MANAGE)
+    @RequirePermissions(Permissions.RFQ__MANAGE)
     public Map<String, Object> send(@PathVariable String id) {
-        return svc.send(id);
+        return rfqs.send(id);
+    }
+
+    @PostMapping("/{id}/close")
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> close(@PathVariable String id) {
+        return rfqs.close(id);
     }
 
     @PostMapping("/{id}/cancel")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__MANAGE)
+    @RequirePermissions(Permissions.RFQ__MANAGE)
     public Map<String, Object> cancel(@PathVariable String id) {
-        return svc.cancel(id);
+        return rfqs.cancel(id);
     }
 
     @PostMapping("/{id}/quotations")
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__MANAGE)
-    public Map<String, Object> recordQuotation(@PathVariable String id, @Valid @RequestBody QuotationRequest dto) {
-        return svc.recordQuotation(id, dto.toInput());
+    @Idempotent
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> recordQuotation(@PathVariable String id, @Valid @RequestBody QuoteRequest dto) {
+        return rfqs.recordQuotation(id, new QuoteInput(dto.partnerId(), dto.supplierReference(), dto.validUntil(),
+                dto.currencyCode(), dto.exchangeRate(), dto.leadTimeDays(), dto.paymentTermsDays(), dto.freightAmount(),
+                dto.qualityScore(), dto.notes(), dto.lines().stream().map(l -> new QuoteLine(l.rfqLineId(), l.unitPrice(),
+                        l.quantity(), l.leadTimeDays(), l.taxRate(), l.alternative(), l.notes())).toList()), "manual");
     }
 
-    /** Raises a purchase order, so a retry must replay instead of ordering twice. */
+    @PostMapping("/{id}/decline")
+    @RequirePermissions(Permissions.RFQ__MANAGE)
+    public Map<String, Object> decline(@PathVariable String id, @Valid @RequestBody DeclineRequest dto) {
+        return rfqs.decline(id, dto.partnerId(), dto.reason());
+    }
+
     @PostMapping("/{id}/award")
-    @Idempotent(required = true)
-    @RequirePermissions(Permissions.PROCUREMENT__RFQ__AWARD)
+    @Idempotent
+    @RequirePermissions(Permissions.RFQ__AWARD)
     public Map<String, Object> award(@PathVariable String id, @Valid @RequestBody AwardRequest dto) {
-        return svc.award(id, new AwardInput(dto.quotationId(), dto.warehouseId(), dto.paymentType()));
+        return rfqs.award(id, dto.lines().stream().map(l -> new AwardLine(l.rfqLineId(), l.partnerId(), l.quantity(),
+                l.justification())).toList());
+    }
+
+    @PostMapping("/{id}/orders")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_ORDER__CREATE)
+    public Map<String, Object> createOrders(@PathVariable String id, @Valid @RequestBody OrdersRequest dto) {
+        return rfqs.createOrders(id, dto.warehouseId(), dto.paymentType(), dto.expectedDeliveryDate());
     }
 }

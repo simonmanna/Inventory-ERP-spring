@@ -90,15 +90,17 @@ class StandardProcessCostingIT extends MfgTestSupport {
         assertThat(balance(mapped("stock_valuation")).subtract(sv0)).isEqualByComparingTo("200");
 
         BigDecimal sv1 = balance(mapped("stock_valuation"));
+        // The DEMO org is shared across suites (other suites post PPV too), so the variance is measured as a delta.
+        BigDecimal ppv0 = bal(variance("purchase_price"));
         receive(bolt, 10, 130);
-        BigDecimal ppv = bal(variance("purchase_price"));
+        BigDecimal ppv = bal(variance("purchase_price")).subtract(ppv0);
         assertThat(ppv).isEqualByComparingTo("100");
         assertThat(balance(mapped("stock_valuation")).subtract(sv1)).isEqualByComparingTo("1200");
         BigDecimal ledgerUnit = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE \"productId\" = ? ORDER BY"
                 + " \"createdAt\" DESC LIMIT 1").param(bolt).query(BigDecimal.class).single();
         assertThat(ledgerUnit).isEqualByComparingTo("120");
         receive(bolt, 10, 110);
-        assertThat(bal(variance("purchase_price"))).isEqualByComparingTo("0");
+        assertThat(bal(variance("purchase_price")).subtract(ppv0)).isEqualByComparingTo("0");
 
         JsonNode report = ok(200, "GET", "/inventory/standard-costs/variances?from=" + today + "&to=" + today
                 + "&kind=purchase_price&productId=" + bolt, null);

@@ -101,6 +101,59 @@
     "manage": "process_costing:manage",
     "close": "process_costing:close"
   },
+  "supplier": {
+    "read": "supplier:read",
+    "manage": "supplier:manage",
+    "approve": "supplier:approve",
+    "verifyBank": "supplier:verify_bank"
+  },
+  "procurementPolicy": {
+    "read": "procurement_policy:read",
+    "manage": "procurement_policy:manage",
+    "approve": "procurement_policy:approve"
+  },
+  "rfq": {
+    "read": "rfq:read",
+    "manage": "rfq:manage",
+    "award": "rfq:award"
+  },
+  "purchaseAgreement": {
+    "read": "purchase_agreement:read",
+    "manage": "purchase_agreement:manage",
+    "approve": "purchase_agreement:approve"
+  },
+  "budgetControl": {
+    "override": "budget:override",
+    "commitments": "commitment:read"
+  },
+  "poChange": {
+    "request": "po_change:request",
+    "approve": "po_change:approve"
+  },
+  "supplierClaim": {
+    "read": "supplier_claim:read",
+    "manage": "supplier_claim:manage"
+  },
+  "inspection": {
+    "read": "inspection:read",
+    "manage": "inspection:manage"
+  },
+  "emergencyPurchase": {
+    "review": "emergency_purchase:review"
+  },
+  "receiving": {
+    "overrideEvidence": "receiving:override_evidence"
+  },
+  "replenishment": {
+    "read": "replenishment:read",
+    "manage": "replenishment:manage"
+  },
+  "procurementAnalytics": {
+    "read": "procurement_analytics:read"
+  },
+  "supplierPortal": {
+    "manage": "supplier_portal:manage"
+  },
   "landedCost": {
     "read": "landed_cost:read",
     "create": "landed_cost:create",
@@ -452,15 +505,6 @@
       "read": "three_way_match:read",
       "approve": "three_way_match:approve",
       "override": "three_way_match:override"
-    },
-    "rfq": {
-      "read": "rfq:read",
-      "manage": "rfq:manage",
-      "award": "rfq:award"
-    },
-    "priceAgreement": {
-      "read": "price_agreement:read",
-      "manage": "price_agreement:manage"
     }
   },
   "debitNote": {
