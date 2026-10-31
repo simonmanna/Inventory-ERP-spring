@@ -327,6 +327,19 @@ Nothing here has been compiled or run. Run `PlanningIT`, `PlanningCalendarTest`,
 **Doubts**: curing and quarantined stock counts as supply; drag-and-drop was never tried in a browser;
 Tigrinya and Luganda phrases are machine-quality and need a native reader.
 
+## MFG-2 — Manufacturing costing & analytics (ADR-S018)
+
+Nothing here has been compiled or run. Run `ManufacturingCostingIT`, `CostAbsorptionCalculatorTest` and
+`VarianceCalculatorTest` first. Migration `V41__manufacturing_costing.sql`.
+
+- `/manufacturing/costing` → Rates: set labour, machine and overhead rates on a work centre.
+- Run a work order, then open its order → "Actual cost and variances": the amounts due match hours × rates. Press Absorb
+  into WIP, reopen, confirm nothing is due and the journal has Dr WIP / Cr overhead absorbed.
+- Reverse that stage posting: the amount is due again.
+- `/manufacturing/costing`: cost by shift, plant, product and month; variances of completed orders; gross margin.
+
+**Doubts**: absorption must be pressed before the stages close; margin is an estimate, not booked COGS.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use

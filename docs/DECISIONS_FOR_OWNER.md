@@ -134,3 +134,9 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | MFG-1 | Due date cannot be met | Schedule forward from now and store the lateness | Refuse | `PlanningScheduleService.scheduleBackward` |
 | 2026-10-30 | MFG-1 | Gantt drag against the sequence | Allowed with a warning; calendar and capacity are hard limits | Refuse the move | `PlanningScheduleService.warnings` |
 | 2026-10-30 | MFG-1 | MRP behaviour change | Yield gross-up, curing days in the release offset and co-product receipts now apply in `/mrp/runs`. Same JSON, but quantities and dates differ for BOMs with yield under 100 %, curing or co-products | Leave MRP alone | `MrpPlanningService.run` |
+| 2026-10-30 | MFG-2 | Labour rate source | Configured rate per work centre × clocked hours; payroll actuals are not linked yet | Actual payroll cost (needs HR-5) | `CostAbsorptionService.usage` |
+| 2026-10-30 | MFG-2 | Credit of absorbed cost | The rate's credit account, else overhead absorbed (same as crushing) | Always the mapping | Rate field `creditAccountId` |
+| 2026-10-30 | MFG-2 | Absorption is on demand | A planner presses Absorb; it does not run at stage completion, so cost is missed if the stages close first (reported as skipped) | Absorb automatically on completion | Hook `absorb` into the stage engine |
+| 2026-10-30 | MFG-2 | Standard for variances | BOM current roll-up, else product cost price, else actual (no price variance) | Only products with a frozen standard | `ManufacturingCostingService.orderVariances` |
+| 2026-10-30 | MFG-2 | Margin cost basis | Period production cost per unit, else stock average, else cost price. Estimate, not booked COGS | Read COGS from the GL | `ManufacturingCostingService.margin` |
+| 2026-10-30 | MFG-2 | New permissions | None: rates use `standard_cost:manage`, absorb `production_order:complete`, reports `production:report` | A costing permission | `CostingAnalyticsController` |

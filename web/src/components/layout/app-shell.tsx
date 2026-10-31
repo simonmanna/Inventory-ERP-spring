@@ -440,6 +440,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/engineering', label: tx('Engineering & Costing'), icon: ScrollText },
       { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read },
       { to: '/manufacturing/process-costing', label: tx('Process Costing'), icon: Layers, permission: PERMISSIONS.processCosting.read },
+      { to: '/manufacturing/costing', label: tx('Manufacturing Costing'), icon: Calculator, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/stage-wip', label: tx('Stage WIP'), icon: Layers, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/precast/curing', label: tx('Precast · Curing board'), icon: Boxes, permission: PERMISSIONS.productionOrder.read },
       { to: '/manufacturing/precast/orders', label: tx('Precast orders'), icon: ClipboardList, permission: PERMISSIONS.productionOrder.read },

@@ -117,6 +117,7 @@ export function ProductionOrderDetailPage() {
         <Stat label={tx('Yield variance')} value={Number(order.yieldVariance).toFixed(2)} />
       </div>
 
+      <div><Button asChild variant="outline" size="sm"><Link to={`/manufacturing/costing/orders/${id}`}>{tx('Actual cost and variances')}</Link></Button></div>
       <OrderStagesPanel orderId={id} />
 
       <OrderAdvancedPanel order={order as any} />

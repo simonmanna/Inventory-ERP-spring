@@ -237,7 +237,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 |---:|---|---|---|---|
 | 157 | Financial statements and management accounts. | `present-partial` | Same reports as 2.1 financial statements; P&L and cash flow assertions are smoke only | Needs test (FIN-3) |
 | 158 | Sales, purchases, and inventory reports. | `present-partial` | Sales and inventory reports tested (InvoicingIT.arReports, InventoryIT.reports). Purchases tab in `/reports` has no test found | Needs test (PROC-4) |
-| 159 | Profitability analysis. | `present-partial` | Delivery profitability (FleetCostingIT.profitability), P&L. No gross margin by product or customer | Margin report, depends on 2.8 (MFG-2) |
+| 159 | Profitability analysis. | `present-partial (built, unverified)` | `/manufacturing/costing/reports/margin` by product or customer, delivery profitability, P&L · `/manufacturing/costing` | Built by MFG-2, not compiled or run |
 | 160 | Outstanding customer and supplier balances. | `present-partial` | AR verified (`/ar-aging`). `/reports/ap/aging` tested but **no screen uses it**; supplier ledger is per supplier | AP aging screen (FIN-2) |
 | 161 | Stock valuation and stock movement reports. | `present-verified` | inventory · `/inventory/reports/valuation`, `/movements` · `/inventory-valuation`, `/inventory/reports` · InventoryIT.reports, ReportingIT.inventory | — |
 | 162 | Branch and departmental performance reports. | `present-partial` | Branch P&L and TB by column, cost-centre matrix (AccountingExtensionsIT.consolidated, CostCenterAccountingIT). No operational comparison | Branch performance report (BR-2) |
@@ -259,7 +259,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 186 | Recording excavator and loader usage. | `present-verified` | quarry · extraction resource `kind=equipment`, `vehicleId`, `/quarry/equipment-rates` · ExtractionEntryPage · QuarryIT.extractionIntoRomStock | — |
 | 187 | Tracking extraction activities by shift and operator. | `present-verified` | quarry · ExtractionLogInput shift + resource `employeeId`, list filter `shift` · `/quarry/extraction` · QuarryIT.extractionIntoRomStock | — |
 | 188 | Monitoring material transferred from extraction areas to crushing plants. | `present-partial` | `/quarry/haulage-trips` destination `crusher` · `/quarry/haulage` · QuarryIT.reverseReleasesEvidence. **No test walks haulage into a crushing run** | Phase 2 E2E (a) (MFG-3) |
-| 189 | Recording extraction-related fuel, labour, and equipment costs. | `present-partial` | Recorded and posted as rate × hours and litres × price (QuarryIT). `docs/spec/quarry.md` Status: actual payroll labour and fleet-tank fuel issued to plant are not linked | Actual cost links (MFG-2) |
+| 189 | Recording extraction-related fuel, labour, and equipment costs. | `present-partial (built, unverified)` | Actual clock hours, meter energy and fleet cost per hour via `/manufacturing/costing/rates` and `/orders/{id}/absorb` · ManufacturingCostingIT. Payroll actuals not linked (HR-5) | Built by MFG-2, not compiled or run |
 | 190 | Monitoring extraction performance against planned targets. | `present-verified` | quarry · `/quarry/reports/extraction-vs-target` · TargetVariance · `/quarry/reports` · QuarryIT, QuarryCalculatorsTest | — |
 | 191 | Recording material losses and unusable rock. | `present-verified` | quarry · `/quarry/losses`, log loss lines · `/quarry/losses` · QuarryIT.extractionIntoRomStock (overburden, lossCost) | — |
 | 192 | Reporting extraction volumes and costs by site and period. | `present-verified` | quarry · `/quarry/reports/cost-per-tonne`, `/losses` · QuarryReportService · `/quarry/reports` · QuarryIT.extractionIntoRomStock | — |
@@ -277,7 +277,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 208 | Recording fuel, electricity, labour, and maintenance consumption. | `present-verified` | manufacturing · run meters (diesel, kWh), crew hours, cost lines · CrushingRunService · CrushingRunEntryPage · CrushingIT.runLifecycle (conversionCost 620) | — |
 | 209 | Monitoring production targets and actual output. | `present-partial (built, unverified)` | `/manufacturing/planning/targets`, `/reports/production-vs-target` · PlanningIT.shiftPlansAndTargets | Built by MFG-1, not compiled or run |
 | 210 | Recording transfers from production plants to finished-goods stockyards. | `present-verified` | manufacturing · outputs posted to stockpile locations · `/manufacturing/crushing/stockpiles` · CrushingIT.runLifecycle (onHand per pile) | — |
-| 211 | Tracking production costs by batch, shift, plant, or product. | `present-partial` | `reports/cost-per-tonne` by product and plant, cost per run. **No by-shift report** (shift is a list filter only) | Cost by shift (MFG-2) |
+| 211 | Tracking production costs by batch, shift, plant, or product. | `present-partial (built, unverified)` | `/manufacturing/costing/reports/summary?groupBy=shift|plant|product|month` · `/manufacturing/costing` · ManufacturingCostingIT.plainOrder | Built by MFG-2, not compiled or run |
 | 212 | Comparing expected yield against actual yield. | `present-verified` | manufacturing · `reports/yield`, `yieldVariancePct` · `/manufacturing/crushing/reports` · CrushingIT.runLifecycle, CrushingCalculatorTest | — |
 | 213 | Generating production performance and efficiency reports. | `present-verified` | manufacturing · `reports/yield`, `reports/plant-hours`, `/shop-floor/oee` · `/manufacturing/crushing/reports`, `/manufacturing/oee` · CrushingIT, OeeCalculatorTest | — |
 
@@ -295,9 +295,9 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 232 | Tracking rejected blocks, breakages, and production waste. | `present-verified` | manufacturing · `/precast/reports/breakage`, `rejectionRatePct` · `/manufacturing/precast/reports` · PrecastManufacturingIT.endToEnd | — |
 | 233 | Recording curing or quality inspection stages where applicable. | `present-verified` | manufacturing · `/precast/curing-batches` cube, gate, readings · `/manufacturing/precast/curing*` · PrecastManufacturingIT.curingHoldAndDeferredGate | — |
 | 234 | Finished-product registration and stock transfer. | `present-verified` | manufacturing · `/curing-batches/{id}/final-inspection`, `/manufacturing/production-orders/finished-goods` · PrecastManufacturingIT.endToEnd, ManufacturingIT | — |
-| 235 | Production labour, energy, and machine cost allocation. | `present-partial` | Conversion costs per stage and `/manufacturing/cost-allocation-rules` (MultiStageProductionIT.allocationRules). Machine cost from fleet cost per hour and work-centre rates do not exist | Absorption rates (MFG-2) |
+| 235 | Production labour, energy, and machine cost allocation. | `present-partial (built, unverified)` | `/manufacturing/costing/rates`, `/orders/{id}/absorb` · CostAbsorptionCalculatorTest, ManufacturingCostingIT | Built by MFG-2, not compiled or run |
 | 236 | Manufacturing cost calculation per block or production batch. | `present-verified` | manufacturing · `/precast/reports/cost-per-block` · `/manufacturing/precast/reports` · PrecastManufacturingIT.endToEnd (costPerAcceptableBlock) | — |
-| 237 | Production variance analysis. | `present-partial` | `/manufacturing/reports/variances` (CostingEngineeringIT.costing), `/inventory/standard-costs/variances` (StandardProcessCostingIT). No price/usage, yield, labour efficiency or overhead split | Variance analysis (MFG-2) |
+| 237 | Production variance analysis. | `present-partial (built, unverified)` | `/manufacturing/costing/orders/{id}/variances`, `/variances` · VarianceCalculatorTest, ManufacturingCostingIT.plainOrder | Built by MFG-2, not compiled or run |
 | 238 | Quality inspection and batch traceability. | `present-verified` | quality, manufacturing · `/quality/traceability`, `/manufacturing/reports/genealogy` · `/quality/traceability` · QualityNcrTraceIT.traceability | — |
 
 ### 3.4 Production Planning and Scheduling
@@ -347,11 +347,11 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 302 | FIFO costing. | `present-verified` | inventory · FIFO · InventoryCostPolicyIT.avcoToFifo, ProcurementIT.landedCostFifoLot | — |
 | 303 | Standard costing for planning and variance analysis. | `present-verified` | inventory, manufacturing · `/inventory/standard-costs` · `/manufacturing/standard-costs` · StandardProcessCostingIT.standardReceiptsAndRevaluation | — |
 | 304 | Production batch costing. | `present-verified` | manufacturing · `/manufacturing/process-costing`, crushing run cost · `/manufacturing/process-costing` · StandardProcessCostingIT.processCosting, CrushingIT.runLifecycle | — |
-| 305 | Actual production cost allocation. | `present-partial` | Conversion costs by stage, joint cost split (MultiStageProductionIT, JointCostAllocatorTest). 2.8 not built: no actual labour or equipment feed | Build 2.8 (MFG-2) |
+| 305 | Actual production cost allocation. | `present-partial (built, unverified)` | `/manufacturing/costing/orders/{id}` and `/absorb` · `/manufacturing/costing/orders/:id` · ManufacturingCostingIT | Built by MFG-2, not compiled or run |
 | 306 | Landed cost allocation for purchased materials. | `present-verified` | procurement · `/procurement/landed-cost-vouchers` · LandedCostVoucherService · `/procurement/landed-cost-vouchers*` · LandedCostVoucherIT | — |
-| 307 | Allocation of eligible production overheads. | `present-partial` | BOM overhead fields (CostingEngineeringIT, ManufacturingHardeningIT). 2.8 not built: no absorption rate per work centre | Build 2.8 (MFG-2) |
+| 307 | Allocation of eligible production overheads. | `present-partial (built, unverified)` | `/manufacturing/costing/rates` per work centre, `/orders/{id}/absorb` · ManufacturingCostingIT | Built by MFG-2, not compiled or run |
 | 308 | Work-in-progress and finished-goods valuation. | `present-verified` | manufacturing, inventory · `/reports/wip-reconciliation`, `/stage-wip`, valuation · `/manufacturing/stage-wip`, `/inventory-valuation` · MultiStageProductionIT, ManufacturingIT | — |
-| 309 | Inventory adjustments and production variance reporting. | `present-partial` | Inventory adjustments verified (InventoryIT.documents). Production variance as in 3.3: no full split | Build 2.8 (MFG-2) |
+| 309 | Inventory adjustments and production variance reporting. | `present-partial (built, unverified)` | Inventory adjustments plus `/manufacturing/costing/variances` · VarianceCalculatorTest | Built by MFG-2, not compiled or run |
 
 ### 4.3 Landed Cost and Procurement Cost Allocation
 

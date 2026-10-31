@@ -447,3 +447,20 @@ Status: built, **not compiled or run**. Migration `V40__manufacturing_planning.s
 | `GET /reports/shortfall`, `/production-vs-plan`, `/plan-adherence`, `/production-vs-target` | `production:report` | Reports |
 
 Screens: `/manufacturing/planning-board`, `/gantt`, `/capacity`, `/shift-plans`, `/plan-performance`.
+
+## ADR-S018 — 2.8 Manufacturing costing & analytics
+
+Status: built, **not compiled or run**. Migration `V41__manufacturing_costing.sql`. Tables `WorkCenterCostRate`,
+`ProductionCostAbsorption`. No new permissions.
+
+| Route under `/manufacturing/costing` | Permission | Purpose |
+|---|---|---|
+| `GET /rates` | `work_center:read` | Every active centre with its rates |
+| `PUT, DELETE /rates/{workCenterId}` | `standard_cost:manage` | Set or remove rates |
+| `GET /orders/{id}` | `production_order:read` | Actual cost, absorption due, block or tonne unit cost |
+| `POST /orders/{id}/absorb` | `production_order:complete` | Post what is due. Requires `Idempotency-Key` |
+| `GET /orders/{id}/variances`, `GET /variances` | `production:report` | Price, usage, efficiency, overhead, yield |
+| `GET /reports/summary?groupBy=shift\|plant\|product\|month` | `production:report` | Output, cost, unit cost |
+| `GET /reports/margin?groupBy=product\|customer` | `production:report` | Gross margin |
+
+Screens: `/manufacturing/costing`, `/manufacturing/costing/orders/:id`, linked from the production order page.
