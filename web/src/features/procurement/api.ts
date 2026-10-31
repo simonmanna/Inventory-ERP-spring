@@ -208,3 +208,122 @@ export function useAwardRfq(id: string) {
     ),
   );
 }
+
+// ---- Price agreements and price history (PROC-2) ----
+
+export interface PriceAgreement {
+  id: string;
+  partnerId: string;
+  partnerName: string | null;
+  productId: string;
+  productName: string | null;
+  productCode: string | null;
+  unitPrice: string;
+  currencyCode: string;
+  minQuantity: string;
+  validFrom: string;
+  validTo: string | null;
+  reference: string | null;
+  notes: string | null;
+  status: 'active' | 'cancelled';
+  /** `expired` is derived from today. */
+  state: 'active' | 'expired' | 'cancelled';
+}
+
+export interface PriceAgreementInput {
+  partnerId: string;
+  productId: string;
+  unitPrice: number;
+  currencyCode: string;
+  minQuantity?: number;
+  validFrom: string;
+  validTo?: string;
+  reference?: string;
+  notes?: string;
+}
+
+export interface PriceHistoryRow {
+  purchaseOrderId: string;
+  orderNumber: string;
+  orderDate: string;
+  partnerId: string;
+  partnerName: string | null;
+  currencyCode: string;
+  quantity: string;
+  unitPrice: string;
+  baseUnitPrice: string;
+  agreedPrice: string | null;
+  variance: string | null;
+}
+
+export interface PriceHistory {
+  productId: string;
+  summary: {
+    orders: number;
+    minPrice: string | null;
+    maxPrice: string | null;
+    averagePrice: string | null;
+    lastPrice: string | null;
+    firstPrice: string | null;
+    truncated: boolean;
+  };
+  suppliers: {
+    partnerId: string;
+    partnerName: string | null;
+    orders: number;
+    quantity: string;
+    averagePrice: string | null;
+    lastPrice: string;
+  }[];
+  rows: PriceHistoryRow[];
+}
+
+export function usePriceAgreements(params: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status?: string;
+  partnerId?: string;
+}) {
+  return useQuery({
+    queryKey: ['price-agreements', params],
+    queryFn: async () => (await api.get<PaginatedResult<PriceAgreement>>('/procurement/price-agreements', { params })).data,
+  });
+}
+
+export function usePriceHistory(params: { productId: string; partnerId?: string; from?: string; to?: string }) {
+  return useQuery({
+    queryKey: ['price-history', params],
+    queryFn: async () => (await api.get<PriceHistory>('/procurement/reports/price-history', { params })).data,
+    enabled: !!params.productId,
+  });
+}
+
+function usePriceAgreementMutation<V, R>(fn: (vars: V) => Promise<R>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['price-agreements'] }),
+  });
+}
+
+export function useCreatePriceAgreement() {
+  return usePriceAgreementMutation(async (input: PriceAgreementInput) =>
+    (await api.post<PriceAgreement>('/procurement/price-agreements', input)).data,
+  );
+}
+
+export function useEndPriceAgreement() {
+  return usePriceAgreementMutation(async ({ id, ...patch }: {
+    id: string;
+    validTo?: string;
+    reference?: string;
+    notes?: string;
+  }) => (await api.patch<PriceAgreement>(`/procurement/price-agreements/${id}`, patch)).data);
+}
+
+export function useCancelPriceAgreement() {
+  return usePriceAgreementMutation(async (id: string) =>
+    (await api.post<PriceAgreement>(`/procurement/price-agreements/${id}/cancel`)).data,
+  );
+}

@@ -379,3 +379,9 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/procurement/rfqs` → New RFQ with two lines and two suppliers → Mark as sent → Record quotation for each supplier, one in another currency with a rate.
   - Comparison marks the cheapest per line and Best on the cheapest complete quote; an expired quote cannot be awarded.
   - Award: choose a warehouse; the PO opens at the quoted prices and terms; the RFQ shows Awarded.
+- PROC-2 Price agreements
+  - `/procurement/price-agreements`: add an agreement; a second one overlapping the same dates is refused; End the first, then add the new price.
+  - Quantity breaks: two agreements with From quantity 0 and 50; `GET /procurement/price-agreements/lookup` picks by quantity.
+  - `/procurement/price-history?product=<id>`: lowest, highest, weighted average, latest; variance shows when PO and agreement share a currency.
+- PROC-6 Handling
+  - `/procurement/landed-cost-vouchers/new`: add a Loading & handling charge on a two-line receipt; it spreads by quantity and raises the stock cost.

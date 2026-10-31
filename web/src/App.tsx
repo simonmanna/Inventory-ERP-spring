@@ -153,6 +153,8 @@ import { SupplierPerformancePage } from '@/pages/procurement/supplier-performanc
 import { RfqsPage } from '@/pages/procurement/rfqs';
 import { RfqEditPage } from '@/pages/procurement/rfq-edit';
 import { RfqDetailPage } from '@/pages/procurement/rfq-detail';
+import { PriceAgreementsPage } from '@/pages/procurement/price-agreements';
+import { PriceHistoryPage } from '@/pages/procurement/price-history';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -489,6 +491,8 @@ export function App() {
           <Route path="/procurement/rfqs/new" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
           <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqDetailPage /></RequirePermission>} />
           <Route path="/procurement/rfqs/:id/edit" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
+          <Route path="/procurement/price-agreements" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceAgreementsPage /></RequirePermission>} />
+          <Route path="/procurement/price-history" element={<RequirePermission permission={PERMISSIONS.procurement.priceAgreement.read}><PriceHistoryPage /></RequirePermission>} />
           <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
           <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
           <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />

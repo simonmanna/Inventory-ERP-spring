@@ -171,3 +171,8 @@ Screen `/procurement/supplier-performance`. Tests: `SupplierPerformanceIT`, `Sup
 
 PROC-1: `/procurement/rfqs`: list, get, create, patch, send, cancel, quotations, comparison, award (`rfq:read|manage|award`). Award needs an Idempotency-Key and raises the PO through `PurchaseOrdersService.create`. Tables V73.
 Screens `/procurement/rfqs`, `/procurement/rfqs/new`, `/procurement/rfqs/:id`, `/procurement/rfqs/:id/edit`. Test: `RfqIT`. Nothing was compiled or run.
+
+## Phase 4 price agreements (built, unverified)
+
+PROC-2: `/procurement/price-agreements` (list, get, lookup, create, patch, cancel) and `/procurement/reports/price-history` (`price_agreement:read|manage`). Table `SupplierPriceAgreement` (V74).
+Screens `/procurement/price-agreements`, `/procurement/price-history`. Test: `PriceAgreementIT`. Nothing was compiled or run.
