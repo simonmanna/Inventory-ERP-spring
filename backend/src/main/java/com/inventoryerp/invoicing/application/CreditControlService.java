@@ -269,6 +269,9 @@ public class CreditControlService {
         if (in.expiresAt() == null || !in.expiresAt().isAfter(Instant.now())) {
             throw ApiException.badRequest("expiresAt must be in the future");
         }
+        if (in.reason() == null || in.reason().isBlank()) {
+            throw ApiException.badRequest("reason should not be empty");
+        }
         // Sensitive pair: an override can need an approval; it covers the customer, so no single sale's maker is known.
         ControlledActionService.Outcome outcome = controlled.authorize(new ControlledActionService.Action(
                 SegregationOfDutiesService.CREDIT_OVERRIDE, "Partner", partnerId, amount, null, null, List.of(),
@@ -276,9 +279,6 @@ public class CreditControlService {
         if (!outcome.allowed()) {
             throw ApiException.badRequest("Approval required before overriding this customer's credit. Pending"
                     + " request " + outcome.approvalRequestId() + ".");
-        }
-        if (in.reason() == null || in.reason().isBlank()) {
-            throw ApiException.badRequest("reason should not be empty");
         }
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"PartnerCreditOverride\" (id, \"organizationId\", \"partnerId\", amount, \"coversHold\","

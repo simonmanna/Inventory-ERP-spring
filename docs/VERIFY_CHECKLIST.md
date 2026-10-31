@@ -310,6 +310,52 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Crushing Reports: yield and loss, cost per tonne (product, plant, by kind), plant hours / throughput / utilisation.
 - Doubts: normal loss is measured on the last stage's input; system BOMs are active without the BOM approval gate.
 
+## MFG-1 — Advanced planning & scheduling (ADR-S017)
+
+Nothing here has been compiled or run. Run `PlanningIT`, `PlanningCalendarTest`, `DemandNettingTest` and
+`CapacityCalculatorTest` first. Migration `V40__manufacturing_planning.sql`.
+
+- `/manufacturing/planning-board`: Demand tab lists delivery orders in priority order with covered and uncovered
+  quantities. Pick a location, create a plan from the shortfall, confirm it at `/manufacturing/planning`.
+- Order priorities tab: the order from that plan shows the customer, the due date and the priority. Press Schedule.
+- `/manufacturing/gantt`: drag a bar onto a closed day or a night. It lands on the next working minute.
+- `/manufacturing/capacity`: load, bottleneck badge, crushing circuit t/h and the aggregate plan per grading profile.
+- `/manufacturing/shift-plans`: add a shift plan, publish it, confirm it can no longer be deleted; add a target.
+- `/manufacturing/plan-performance`: orders on time, production vs plan and target, shortfall.
+- Curing order: set minimum curing days on a stage and check the 7-day gap between the two bars.
+
+**Doubts**: curing and quarantined stock counts as supply; drag-and-drop was never tried in a browser;
+Tigrinya and Luganda phrases are machine-quality and need a native reader.
+
+## MFG-2 — Manufacturing costing & analytics (ADR-S018)
+
+Nothing here has been compiled or run. Run `ManufacturingCostingIT`, `CostAbsorptionCalculatorTest` and
+`VarianceCalculatorTest` first. Migration `V41__manufacturing_costing.sql`.
+
+- `/manufacturing/costing` → Rates: set labour, machine and overhead rates on a work centre.
+- Run a work order, then open its order → "Actual cost and variances": the amounts due match hours × rates. Press Absorb
+  into WIP, reopen, confirm nothing is due and the journal has Dr WIP / Cr overhead absorbed.
+- Reverse that stage posting: the amount is due again.
+- `/manufacturing/costing`: cost by shift, plant, product and month; variances of completed orders; gross margin.
+
+**Doubts**: absorption must be pressed before the stages close; margin is an estimate, not booked COGS.
+
+## MFG-3 — Phase 2 end-to-end tests
+
+Written, never run. Run `Phase2ExitIT`, `PrecastManufacturingIT.actualCostPerAcceptableBlock` and
+`MultiStageProductionIT.multiLevelTraceability`. A failure may be the test's fixture rather than the product. The blast in
+exit (a) is planned, not fired.
+
+## MFG-4 — Construction manufacturing demo seed
+
+Written, never run. Run `ManufacturingDemoSeedIT`, then start once with `SEED_MANUFACTURING_DEMO=true` and the `seed`
+profile on a throwaway database.
+
+- `/quarry/...`: site `DM-Q1` with ROM and three product stockpiles, rising ROM stock.
+- `/manufacturing/crushing`: about 26 posted runs, cost per tonne in the reports.
+- `/manufacturing/precast/orders`: about 8 orders; recent batches still curing, older ones released.
+- `/manufacturing/plan-performance`: the month's plant and block targets against actuals.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use

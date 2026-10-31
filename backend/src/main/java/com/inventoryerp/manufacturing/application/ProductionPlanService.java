@@ -45,13 +45,15 @@ public class ProductionPlanService {
     private final SequenceService seq;
     private final ProductionService production;
     private final TransactionTemplate tx;
+    private final PlanningPegService pegs;
 
     public ProductionPlanService(MfgDb db, SequenceService seq, ProductionService production,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm, PlanningPegService pegs) {
         this.db = db;
         this.seq = seq;
         this.production = production;
         this.tx = new TransactionTemplate(txm);
+        this.pegs = pegs;
     }
 
     /** A DRAFT plan, optionally pre-filled from all open (submitted/approved) request lines. */
@@ -145,6 +147,7 @@ public class ProductionPlanService {
                         "Plan " + plan.get("planNumber")));
                 db.update(ProductionPlanLine.class, str(line, "id"), Obj.of("generatedOrderId", order.get("id")));
                 db.update(ProductionOrder.class, str(order, "id"), Obj.of("planId", id));
+                pegs.attachOrder(str(line, "id"), str(order, "id"));
             });
         }
         return tx.execute(s -> {

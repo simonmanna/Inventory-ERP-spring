@@ -41,13 +41,16 @@ import org.springframework.transaction.annotation.Transactional;
  * other reservations + open PO remainders + open production output); a shortfall or a breach of the reorder point
  * becomes a lot-sized planned order, due at its earliest demand and released lead-time days earlier. Planned make
  * orders explode into their components' demand at the release date. Planned orders are firmed into draft production
- * orders (make) or draft purchase requests (buy).
+ * orders (make) or draft purchase requests (buy). ADR-S017: make quantities are grossed up for the BOM's expected
+ * yield, the release also leaves room for curing (the routing's stage curing days or the mix design's, the larger),
+ * and co-products of open and planned orders count as receipts of the co-product.
  */
 @Service
 public class MrpPlanningService {
 
     private static final int MAX_LEVEL = 20;
     private static final int MAX_PEGS = 50;
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     /** One requirement for a product. */
     record Demand(BigDecimal qty, Instant date, Map<String, Object> ref) {}
@@ -169,6 +172,7 @@ public class MrpPlanningService {
         String runId = str(run, "id");
 
         Set<String> done = new LinkedHashSet<>();
+        Map<String, BigDecimal> plannedCoProducts = new HashMap<>();
         int planned = 0;
         int make = 0;
         int late = 0;
@@ -186,13 +190,17 @@ public class MrpPlanningService {
                 BigDecimal grossQty = gross.stream().map(Demand::qty).reduce(BigDecimal.ZERO, BigDecimal::add);
                 BigDecimal onHand = onHand(productId, locationId);
                 BigDecimal reserved = reservedByOthers(productId, locationId);
-                BigDecimal receipts = openPurchase(productId).add(openProductionOutput(productId));
+                BigDecimal receipts = openPurchase(productId).add(openProductionOutput(productId))
+                        .add(openCoProductOutput(productId))
+                        .add(plannedCoProducts.getOrDefault(productId, BigDecimal.ZERO));
                 BigDecimal projected = onHand.subtract(reserved).add(receipts).subtract(grossQty);
                 BigDecimal net = prm.safetyStock().subtract(projected).max(BigDecimal.ZERO);
                 if (prm.reorderPoint().signum() > 0 && projected.compareTo(prm.reorderPoint()) < 0) {
                     net = net.max(prm.reorderPoint().subtract(projected));
                 }
-                BigDecimal qty = net.signum() > 0 ? lotSize(net, prm) : BigDecimal.ZERO;
+                Map<String, Object> bom = "make".equals(prm.procurement()) ? boms.findActive(productId, "") : null;
+                BigDecimal qty = net.signum() > 0 ? lotSize(bom == null ? net
+                        : grossForYield(net, dec(bom, "expectedYieldPct")), prm) : BigDecimal.ZERO;
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("runId", runId);
                 item.put("productId", productId);
@@ -210,8 +218,7 @@ public class MrpPlanningService {
                     continue;
                 }
                 Instant due = gross.stream().map(Demand::date).min(Comparator.naturalOrder()).orElse(now);
-                Instant release = due.minus(prm.leadTimeDays(), ChronoUnit.DAYS);
-                Map<String, Object> bom = "make".equals(prm.procurement()) ? boms.findActive(productId, "") : null;
+                Instant release = due.minus(prm.leadTimeDays() + (bom == null ? 0 : curingDays(bom)), ChronoUnit.DAYS);
                 String kind = bom != null ? "make" : "buy";
                 Map<String, Object> po = new LinkedHashMap<>();
                 po.put("runId", runId);
@@ -239,6 +246,7 @@ public class MrpPlanningService {
                                         "productId", productId)));
                         llc.merge(m.componentProductId(), level + 1, Math::max);
                     }
+                    addPlannedCoProducts(plannedCoProducts, bom, qty);
                 }
             }
         }
@@ -450,7 +458,7 @@ public class MrpPlanningService {
         path.remove(p);
     }
 
-    private BigDecimal onHand(String productId, String locationId) {
+    BigDecimal onHand(String productId, String locationId) {
         return locationId != null
                 ? db.jdbc().sql("SELECT coalesce(sum(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
                         + " AND \"productId\" = ? AND \"locationId\" = ?").params(MfgDb.org(), productId, locationId)
@@ -460,7 +468,7 @@ public class MrpPlanningService {
     }
 
     /** Active reservations held for anything but production orders (those are already counted as demand). */
-    private BigDecimal reservedByOthers(String productId, String locationId) {
+    BigDecimal reservedByOthers(String productId, String locationId) {
         return db.jdbc().sql("SELECT coalesce(sum(quantity), 0) FROM \"StockReservation\" WHERE \"organizationId\" = ?"
                         + " AND \"productId\" = ? AND status = 'active' AND \"sourceType\" <> 'production_order'"
                         + (locationId != null ? " AND \"locationId\" = ?" : ""))
@@ -476,11 +484,56 @@ public class MrpPlanningService {
                 + " 'partially_received')").params(MfgDb.org(), productId).query(BigDecimal.class).single();
     }
 
-    private BigDecimal openProductionOutput(String productId) {
+    BigDecimal openProductionOutput(String productId) {
         return db.jdbc().sql("SELECT coalesce(sum(greatest(\"plannedQty\" - \"producedQty\", 0)), 0) FROM"
                 + " \"ProductionOrder\" WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
                 + " AND status IN ('draft', 'confirmed', 'in_progress')").params(MfgDb.org(), productId)
                 .query(BigDecimal.class).single();
+    }
+
+    /** Co-product quantity still to come from open orders of BOMs that yield {@code productId} as a co-product. */
+    BigDecimal openCoProductOutput(String productId) {
+        return db.jdbc().sql("SELECT coalesce(sum(greatest(o.\"plannedQty\" - o.\"producedQty\", 0) * c.quantity"
+                + " / nullif(b.\"outputQuantity\", 0)), 0) FROM \"ProductionOrder\" o JOIN \"BomCoProduct\" c ON"
+                + " c.\"bomId\" = o.\"bomId\" JOIN \"Bom\" b ON b.id = o.\"bomId\" WHERE o.\"organizationId\" = ?"
+                + " AND c.\"productId\" = ? AND c.stocked = true AND c.role <> 'waste'"
+                + " AND o.status IN ('draft', 'confirmed', 'in_progress')").params(MfgDb.org(), productId)
+                .query(BigDecimal.class).single();
+    }
+
+    private void addPlannedCoProducts(Map<String, BigDecimal> planned, Map<String, Object> bom, BigDecimal qty) {
+        BigDecimal output = dec(bom, "outputQuantity");
+        if (output.signum() <= 0) {
+            return;
+        }
+        for (Map<String, Object> c : SqlRows.list(db.jdbc().sql("SELECT \"productId\", quantity FROM \"BomCoProduct\""
+                + " WHERE \"organizationId\" = ? AND \"bomId\" = ? AND stocked = true AND role <> 'waste'")
+                .params(MfgDb.org(), bom.get("id")))) {
+            planned.merge(str(c, "productId"), Money.div(dec(c, "quantity").multiply(qty), output), BigDecimal::add);
+        }
+    }
+
+    /**
+     * Calendar days an output cures before it can be released: the stage curing days of the BOM's routing, or the mix
+     * design's minimum, whichever is larger.
+     */
+    int curingDays(Map<String, Object> bom) {
+        int routed = bom.get("routingId") == null ? 0 : db.jdbc().sql("SELECT coalesce(sum(s.\"minCuringDays\"), 0)::int"
+                + " FROM \"RoutingStageSetup\" s JOIN \"RoutingOperation\" o ON o.id = s.\"routingOperationId\""
+                + " WHERE s.\"organizationId\" = ? AND o.\"routingId\" = ?").params(MfgDb.org(), bom.get("routingId"))
+                .query(Integer.class).single();
+        int mix = db.jdbc().sql("SELECT coalesce(max(\"minCuringDays\"), 0)::int FROM \"PrecastMixDesign\""
+                + " WHERE \"organizationId\" = ? AND \"bomId\" = ?").params(MfgDb.org(), bom.get("id"))
+                .query(Integer.class).single();
+        return Math.max(routed, mix);
+    }
+
+    /** The quantity to start so the expected yield still delivers {@code net}. */
+    static BigDecimal grossForYield(BigDecimal net, BigDecimal yieldPct) {
+        if (yieldPct == null || yieldPct.signum() <= 0 || yieldPct.compareTo(HUNDRED) >= 0) {
+            return net;
+        }
+        return net.multiply(HUNDRED).divide(yieldPct, 6, RoundingMode.CEILING);
     }
 
     /** Minimum order quantity, then round up to the order multiple. */
