@@ -3,7 +3,9 @@ package com.inventoryerp.core.web;
 import com.inventoryerp.core.application.OrganizationsService;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.security.AuthUser;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.Public;
+import com.inventoryerp.kernel.security.RequirePermissions;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
@@ -20,7 +22,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** {@code /organizations} (port of {@code organizations.controller.ts}). */
+/**
+ * {@code /organizations} (port of {@code organizations.controller.ts}). Deviation (security, owner-approved
+ * 2026-10-31): Nest let any signed-in user invite users, deactivate users and change organization settings; those
+ * routes now need {@code user:create}, {@code user:update} and {@code organization:update}.
+ */
 @RestController
 @RequestMapping("/organizations")
 public class OrganizationsController {
@@ -81,6 +87,7 @@ public class OrganizationsController {
     }
 
     @PatchMapping("/me/settings")
+    @RequirePermissions(Permissions.ORGANIZATION__UPDATE)
     public Map<String, Object> updateSettings(@Valid @RequestBody UpdateSettingsRequest dto) {
         return svc.updateSettings(dto.name(), dto.timezone(), dto.currencyCode(), dto.settings(),
                 EntityPatch.present("name", dto.name()), EntityPatch.present("timezone", dto.timezone()),
@@ -100,12 +107,14 @@ public class OrganizationsController {
     }
 
     @PostMapping("/users/invite")
+    @RequirePermissions(Permissions.USER__CREATE)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> invite(@Valid @RequestBody InviteUserRequest dto) {
         return svc.inviteUser(dto.email(), dto.firstName(), dto.lastName(), dto.roleId());
     }
 
     @PatchMapping("/users/{id}/deactivate")
+    @RequirePermissions(Permissions.USER__UPDATE)
     public Map<String, Object> deactivate(@PathVariable String id) {
         return svc.deactivate(id);
     }

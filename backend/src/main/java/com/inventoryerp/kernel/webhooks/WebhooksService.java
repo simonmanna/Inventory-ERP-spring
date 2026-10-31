@@ -41,13 +41,15 @@ public class WebhooksService {
     private final EntityManager em;
     private final JdbcClient jdbc;
     private final JsonMapper mapper;
+    private final WebhookUrlGuard urlGuard;
     private final SecureRandom random = new SecureRandom();
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
-    public WebhooksService(EntityManager em, JdbcClient jdbc, JsonMapper mapper) {
+    public WebhooksService(EntityManager em, JdbcClient jdbc, JsonMapper mapper, WebhookUrlGuard urlGuard) {
         this.em = em;
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.urlGuard = urlGuard;
     }
 
     private String newSecret() {
@@ -58,6 +60,7 @@ public class WebhooksService {
 
     @Transactional
     public Map<String, Object> createEndpoint(String url, List<String> events, String description) {
+        urlGuard.check(url);
         WebhookEndpoint e = new WebhookEndpoint();
         e.setOrganizationId(TenantContext.organizationId());
         e.setUrl(url);
@@ -170,6 +173,12 @@ public class WebhooksService {
             String ts = String.valueOf(Instant.now().getEpochSecond());
             String sig = signBody(d.secret(), body, ts);
             int attempts = d.attempts() + 1;
+            String blocked = urlGuard.problem(d.url());
+            if (blocked != null) {
+                scheduleRetry(d.id(), MAX_ATTEMPTS, null, null, blocked);
+                failed++;
+                continue;
+            }
             try {
                 HttpResponse<String> res = http.send(HttpRequest.newBuilder(URI.create(d.url()))
                         .timeout(Duration.ofSeconds(10))

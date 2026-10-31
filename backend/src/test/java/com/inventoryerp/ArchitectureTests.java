@@ -27,14 +27,15 @@ class ArchitectureTests {
 
     /**
      * Controllers with routes open to any signed-in user, kept from the Nest contract. Nothing new goes here: a new route
-     * declares a permission or {@code @Public}. Several of these should not stay open, see DECISIONS_FOR_OWNER (Phase 6).
+     * declares a permission or {@code @Public}. The admin routes of OrganizationsController and FeatureFlagsController declare permissions since PR-0;
+     * their read routes stay open.
      */
     private static final Set<String> SIGNED_IN_CONTROLLERS = Set.of("ApprovalsController", "AuthController",
-            "CompanySettingsController", "DigitalMenuPublicController", "DocumentsController", "ExportController",
+            "CompanySettingsController", "DigitalMenuPublicController", "DocumentsController",
             "FeatureFlagsController", "FilesController", "HealthController", "HrController", "LicenseController",
             "NotificationsController", "OrganizationsController", "PermissionsController", "PosMenuController",
             "PosSplitController", "PosTablesController", "RecurringController", "ReportAccessController",
-            "ReportsDashboardController", "SearchController", "TaskController", "WebhooksController");
+            "ReportsDashboardController", "SearchController", "TaskController");
 
     private static final DescribedPredicate<JavaMethod> ROUTES = DescribedPredicate.describe("a route",
             (JavaMethod m) -> m.isMetaAnnotatedWith(RequestMapping.class) || m.isAnnotatedWith(RequestMapping.class));

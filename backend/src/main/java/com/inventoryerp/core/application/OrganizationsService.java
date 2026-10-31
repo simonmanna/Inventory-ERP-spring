@@ -211,6 +211,26 @@ public class OrganizationsService {
         return out;
     }
 
+    /**
+     * Deviation (security, 2026-10-31): Nest accepted any {@code roleId}. The role must belong to the organization, and
+     * a caller can only hand out permissions they hold, so an invite cannot create a user stronger than the inviter.
+     */
+    private void assertGrantable(String orgId, String roleId) {
+        List<String[]> rows = jdbc.sql("SELECT permissions FROM \"Role\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(roleId, orgId)
+                .query((rs, n) -> (String[]) rs.getArray("permissions").getArray())
+                .list();
+        if (rows.isEmpty()) {
+            throw ApiException.badRequest("Role not found in this organization");
+        }
+        java.util.Set<String> held = new java.util.HashSet<>(TenantContext.permissions());
+        for (String p : rows.getFirst()) {
+            if (!held.contains(p)) {
+                throw ApiException.forbidden("You cannot assign a role with permissions you do not hold");
+            }
+        }
+    }
+
     /** Invite a new user to the current organization (invite token by email). */
     @Transactional
     public Map<String, Object> inviteUser(String email, String firstName, String lastName, String roleId) {
@@ -220,6 +240,9 @@ public class OrganizationsService {
                 .params(orgId, lower).query(Long.class).single() > 0;
         if (exists) {
             throw ApiException.conflict("A user with this email already exists in your organization");
+        }
+        if (roleId != null && !roleId.isEmpty()) {
+            assertGrantable(orgId, roleId);
         }
         String userId = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"User\" (id, \"organizationId\", email, \"passwordHash\", \"firstName\", \"lastName\","

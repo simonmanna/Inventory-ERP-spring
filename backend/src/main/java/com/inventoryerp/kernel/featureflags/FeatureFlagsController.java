@@ -1,6 +1,8 @@
 package com.inventoryerp.kernel.featureflags;
 
 import com.inventoryerp.kernel.modules.ModuleRegistry;
+import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.security.RequirePermissions;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.util.Comparator;
@@ -49,12 +51,14 @@ public class FeatureFlagsController {
     }
 
     @PostMapping
+    @RequirePermissions(Permissions.SETTING__UPDATE)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> set(@Valid @RequestBody SetFlagRequest dto) {
         return svc.set(dto.key(), dto.enabled(), dto.payload());
     }
 
     @DeleteMapping("/{key}")
+    @RequirePermissions(Permissions.SETTING__UPDATE)
     public Map<String, Object> unset(@PathVariable String key) {
         svc.unset(key);
         return Map.of("ok", true);
@@ -81,12 +85,14 @@ public class FeatureFlagsController {
     }
 
     @PostMapping("/modules/{name}/enable")
+    @RequirePermissions(Permissions.SETTING__UPDATE)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> enable(@PathVariable String name, @RequestBody(required = false) SetModuleConfigRequest dto) {
         return svc.enableModule(name, dto == null ? null : dto.config());
     }
 
     @PatchMapping("/modules/{name}/disable")
+    @RequirePermissions(Permissions.SETTING__UPDATE)
     public Map<String, Object> disable(@PathVariable String name) {
         svc.disableModule(name);
         return Map.of("ok", true);
