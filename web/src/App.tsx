@@ -109,6 +109,9 @@ import { CreditNotesPage } from '@/pages/invoicing/credit-notes';
 import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
 import { PaymentsPage } from '@/pages/invoicing/payments';
+import { MobileMoneyPage } from '@/pages/invoicing/MobileMoneyPage';
+import { BankImportPage } from '@/pages/money/BankImportPage';
+import { LabelPrintPage } from '@/pages/labels/LabelPrintPage';
 import { PaymentDetailPage } from '@/pages/invoicing/payment-detail';
 import { ReceiptsPage } from '@/pages/pos/ReceiptsPage';
 import { ReceiptDetailPage } from '@/pages/pos/ReceiptDetailPage';
@@ -181,6 +184,9 @@ import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
+import { driverRoutes } from '@/pages/driver/routes';
+import { portalRoutes } from '@/pages/portal/routes';
+import { PortalAccountsPage } from '@/pages/portal/PortalAccountsPage';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -245,6 +251,10 @@ export function App() {
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />
+        {/* Driver web app (DRIVER-1) — phone shell, no sidebar. */}
+        {driverRoutes}
+        {/* Customer portal (PORTAL-1) — customers never see the staff shell. */}
+        {portalRoutes}
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPage />} />
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
@@ -294,6 +304,9 @@ export function App() {
           <Route path="/credit-notes/new" element={<CreditNoteCreatePage />} />
           <Route path="/credit-notes/:id" element={<CreditNoteDetailPage />} />
           <Route path="/payments" element={<PaymentsPage />} />
+          <Route path="/accounts/bank-import" element={<RequirePermission permission={PERMISSIONS.bankAccount.update}><BankImportPage /></RequirePermission>} />
+          <Route path="/labels" element={<RequirePermission permission={PERMISSIONS.label.print}><LabelPrintPage /></RequirePermission>} />
+          <Route path="/payments/mobile-money" element={<RequirePermission permission={PERMISSIONS.payment.read}><MobileMoneyPage /></RequirePermission>} />
           <Route path="/payments/:id" element={<PaymentDetailPage />} />
           <Route path="/pos/receipts" element={<ReceiptsPage />} />
           <Route path="/pos/receipts/:invoiceId" element={<ReceiptDetailPage />} />
@@ -385,6 +398,7 @@ export function App() {
           <Route path="/settings/license" element={<RequirePermission permission={PERMISSIONS.setting.read}><LicensePage /></RequirePermission>} />
           <Route path="/settings/receipt" element={<ReceiptSettingsPage />} />
           <Route path="/settings/backup" element={<BackupPage />} />
+          <Route path="/settings/portal-accounts" element={<RequirePermission permission={PERMISSIONS.portal.manage}><PortalAccountsPage /></RequirePermission>} />
           <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
           <Route path="/settings/devices" element={<DevicesPage />} />
           <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />

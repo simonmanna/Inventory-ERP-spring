@@ -95,7 +95,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | merged, unverified (C) | 7223c0a..4750344 | | V50–V52; 25 routes; never compiled or run. SoD pairs are off per tenant until switched on; supplier-bill hook not yet called by lane D code |
 | 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | in-progress (C, worktree) | | | |
 | 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | merged, unverified (C) | d43915d..d280613 | | V70–V74; 27 routes; never compiled or run. Do not migrate a shared DB until every lane is merged: lanes use number blocks V40–V99 that merge out of order |
-| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | in-progress (C, worktree) | | | |
+| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | merged, unverified (C) | f757092..fbec71a | | V80–V82; ADR-S050; 38 routes; never compiled or run. Portal read-only; mobile money mock only |
 | 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | in-progress (C, worktree) | | | |
 | 4 all gaps closed | todo | | gaps-closed | |
 | 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |

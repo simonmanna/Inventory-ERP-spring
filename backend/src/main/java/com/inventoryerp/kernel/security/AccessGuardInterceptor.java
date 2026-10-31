@@ -32,17 +32,18 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
     private static final Logger log = LoggerFactory.getLogger(AccessGuardInterceptor.class);
 
     /** Modules whose boot-time gate is an env flag (Nest {@code MODULE_ENV_FLAGS} → app.modules.*). */
-    private static final Map<String, String> MODULE_ENV_FLAGS = Map.of(
-            "task", "app.modules.tasks",
-            "manufacturing", "app.modules.manufacturing",
-            "rental", "app.modules.rental",
-            "repair", "app.modules.repair",
-            "hr", "app.modules.hr",
-            "beverage", "app.modules.beverage",
-            "fixed-asset", "app.modules.assets",
-            "communication", "app.modules.communication",
-            "fleet", "app.modules.fleet",
-            "quarry", "app.modules.quarry");
+    private static final Map<String, String> MODULE_ENV_FLAGS = Map.ofEntries(
+            Map.entry("task", "app.modules.tasks"),
+            Map.entry("manufacturing", "app.modules.manufacturing"),
+            Map.entry("rental", "app.modules.rental"),
+            Map.entry("repair", "app.modules.repair"),
+            Map.entry("hr", "app.modules.hr"),
+            Map.entry("beverage", "app.modules.beverage"),
+            Map.entry("fixed-asset", "app.modules.assets"),
+            Map.entry("communication", "app.modules.communication"),
+            Map.entry("fleet", "app.modules.fleet"),
+            Map.entry("quarry", "app.modules.quarry"),
+            Map.entry("portal", "app.modules.portal"));
 
     private final PermissionService permissions;
     private final FeatureFlagsService flags;
@@ -80,6 +81,16 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
                     throw ApiException.forbidden(
                             "Missing required permission(s): " + String.join(", ", required.value()));
                 }
+            }
+        }
+
+        // Customer portal (ADR-S050): such a login holds portal:customer and nothing else, so permissioned routes
+        // already refuse it; routes open to any signed-in user refuse it here, except its own session routes.
+        if (auth != null && (required == null || required.value().length == 0)
+                && find(method, Public.class) == null && find(method, CustomerPortalReachable.class) == null) {
+            List<String> granted = permissions.permissionsOf(auth.organizationId(), auth.sub());
+            if (granted.size() == 1 && Permissions.PORTAL__CUSTOMER.equals(granted.get(0))) {
+                throw ApiException.forbidden("Customer portal logins cannot use this route");
             }
         }
 

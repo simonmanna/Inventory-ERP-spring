@@ -37,6 +37,14 @@ public class FleetCategoryService {
             new String[] {"LIGHT_VEHICLE", "Light vehicle", "road_vehicle", "odometer"},
             new String[] {"OTHER", "Other", "other", "odometer"});
 
+    /** CMMS-1: code, name, kind, default meter type of the fixed-plant classes. */
+    static final List<String[]> FIXED_PLANT_DEFAULTS = List.of(
+            new String[] {"CRUSHER", "Crusher", "fixed_plant", "hours"},
+            new String[] {"CONVEYOR", "Conveyor", "fixed_plant", "hours"},
+            new String[] {"SCREEN", "Vibrating screen", "fixed_plant", "hours"},
+            new String[] {"BLOCK_MACHINE", "Block machine", "fixed_plant", "hours"},
+            new String[] {"GENSET", "Fixed generator", "fixed_plant", "hours"});
+
     private final FleetDb db;
     private final AuditService audit;
 
@@ -54,8 +62,22 @@ public class FleetCategoryService {
         if (n > 0) {
             return;
         }
-        int sort = 10;
-        for (String[] d : DEFAULTS) {
+        seed(org, DEFAULTS, 10);
+    }
+
+    /**
+     * Seeds the fixed-plant classes for the current organization (CMMS-1). Unlike {@link #ensureDefaults} it runs for
+     * organizations that already have classes, adds only the missing codes and never touches a renamed class.
+     */
+    @Transactional
+    public void ensureFixedPlantClasses() {
+        ensureDefaults();
+        seed(FleetDb.org(), FIXED_PLANT_DEFAULTS, 200);
+    }
+
+    private void seed(String org, List<String[]> classes, int firstSort) {
+        int sort = firstSort;
+        for (String[] d : classes) {
             db.jdbc().sql("INSERT INTO \"FleetVehicleCategory\" (id, \"organizationId\", code, name, kind,"
                             + " \"defaultMeterType\", \"sortOrder\", \"isSystem\", \"isActive\", \"createdAt\", \"updatedAt\")"
                             + " VALUES (?, ?, ?, ?, ?, ?, ?, true, true, " + FleetDb.NOW + ", " + FleetDb.NOW + ")"

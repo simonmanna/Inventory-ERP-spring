@@ -863,6 +863,18 @@ export const PERMISSIONS = {
     /// Magazines (licence, keeper) and the controlled-explosive product registry.
     magazine: 'quarry_blasting:magazine',
   },
+  // ---- Customer portal (PORTAL-1, ADR-S050) ----
+  portal: {
+    /// The only permission of a portal login: its own orders, deliveries, invoices and statement.
+    customer: 'portal:customer',
+    /// Staff: open, disable and reset customer portal accounts.
+    manage: 'portal:manage',
+  },
+  // ---- Label printing (INT-3) ----
+  label: {
+    /// Print product, stockpile and weighbridge ticket labels (PDF or ZPL).
+    print: 'label:print',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

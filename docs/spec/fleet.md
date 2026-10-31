@@ -371,6 +371,29 @@ today; Phase 4 CMMS registers crushers, conveyors, screens, block machines and g
 for them without schema change. The services only use the unit view of `MaintainableUnits` (identity, class, cost
 centre, branch, lifetime meters, status hold / release); a separate plant register would implement that view.
 
+### CMMS-1 fixed plant (Phase 4, built, unverified: nothing compiled or run)
+
+Fixed plant is **not** a parallel model: crushers, conveyors, screens, block machines and fixed generators are
+`FleetVehicle` units of a class with `kind = fixed_plant`. `FleetCategoryService.ensureFixedPlantClasses` adds the classes
+`CRUSHER, CONVEYOR, SCREEN, BLOCK_MACHINE, GENSET` (hours meter) to any organization on first use of a `/fleet/plant`
+route; the road defaults and their count are unchanged. `FleetPlantService` + `FleetPlantController` (package
+`fleet.web.plant`):
+
+| Route | Purpose | Permission |
+|---|---|---|
+| `GET /fleet/plant` (`search, categoryId, status, branchId, locationId, page, pageSize`) | register by location: class, location, lifetime hours, linked asset, open work orders, open downtime | `fleet_vehicle:read` |
+| `POST /fleet/plant` | register (body = `VehicleInput`, 400 for a class that is not fixed plant) | `fleet_vehicle:create` |
+| `GET /fleet/plant/classes` | active fixed-plant classes (seeds the missing ones) | `fleet_vehicle:read` |
+| `GET /fleet/plant/by-asset/{assetId}` | unit linked to a fixed asset, `{unit: null}` when none | `fleet_vehicle:read` |
+| `GET /fleet/plant/costs` (`from, to, categoryId, branchId, locationId`) | cost per equipment: the 1.9 cost buckets, hours, cost per hour, work orders, downtime hours (open downtime counts to now) | `fleet:report` |
+
+Schedules, work orders, parts, labour, external bills, downtime, inspections, defects and reliability are the 1.6 routes
+on the same unit id. `FleetDispatchEligibilityService` refuses a fixed-plant unit (it can never carry a load).
+Depreciation and disposal stay in `fixedasset`: `FleetVehicle.assetId` links them, the vehicle detail shows book value,
+the asset detail links back (`PlantUnitLink`), and `fixed_asset.disposed` moves a linked **fixed-plant** unit to
+`disposed` (`FleetPlantAssetSubscriber`, idempotent; road vehicles stay manual). Screens: `/fleet/plant`,
+`/fleet/plant/costs`; registration, detail, schedules and work orders reuse the fleet screens. No migration needed.
+
 ### Routes (51, all under `/api/v1`, `@RequiresModule("fleet")`)
 
 | Group | Routes | Permission |
@@ -1424,3 +1447,31 @@ idempotent, reports). `FleetIncidentsIT` / `HrIT` unchanged and green.
   snapshot can be added for very large fleets.
 - Export headers are English (server-rendered); the screens are translated.
 - Demo trips are dated over the last week in fleet's tables; their stock / GL entries carry the seeding day.
+
+## DRIVER-1 driver web app (Phase 4, built, unverified: nothing compiled or run)
+
+Web only; `android/` is untouched. A phone shell at `/driver` (no sidebar, bottom bar) that installs as its own PWA:
+`DriverShell` swaps the POS manifest for `public/driver.webmanifest` (`start_url: /driver`) while it is on screen. The
+service worker precache and SPA fallback are shared, so the shell opens without network; API calls still need network.
+
+| Screen | Route | Backend |
+|---|---|---|
+| Home | `/driver` | `GET /fleet/driver-app/home`: driver, units (assignment, open check-out or live trip), today's pre-trip result, open defects, live trips |
+| Trips, POD | `/driver/trips`, `/driver/trips/:id` | existing `MyTripsPage` / `PodCapturePage` with a `basePath` prop; `GET /fleet/trips?mine=true`, the POD routes |
+| Pre-trip check | `/driver/pre-trip` | `GET /fleet/driver-app/pre-trip?vehicleId=`, `POST /fleet/driver-app/inspections` (`Idempotency-Key`), `POST .../inspections/{id}/photos` |
+| Fuel log | `/driver/fuel` | `GET /fleet/driver-app/fuel-options?vehicleId=`, `GET` + `POST /fleet/driver-app/fuel-logs` (`Idempotency-Key`), `POST .../fuel-logs/{id}/receipt` |
+
+All 8 routes need `fleet_trip:deliver`; `/driver/trips` also needs `fleet_trip:read`. `FleetDriverAppService` resolves the
+driver from `HrEmployee.userId` (403 without an active profile), refuses a unit that is not the driver's, and returns
+names only for payment accounts and tanks. Fuel logs from the app are always drafts under the driver's employee id; the
+office reviews and posts them. Failed checklist items raise defects through `FleetInspectionService.record`.
+
+## INT-2 telematics vendor adapter (Phase 4, built, unverified: nothing compiled or run)
+
+`RestTelematicsProvider` (type `rest`) is a second `TelematicsProvider` bean beside the mock. No vendor is chosen, so it
+fixes a small bearer-token JSON contract: `GET /units/{unit}/positions?from=&to=`, `GET /units/{unit}/meters` (404 = none)
+and `GET /events?since=` (see the class Javadoc for fields). A real platform answers it directly or through a thin
+gateway; when the vendor is chosen only this class changes. Config: `FLEET_TELEMATICS_PROVIDER=rest`,
+`FLEET_TELEMATICS_URL`, `FLEET_TELEMATICS_API_KEY`, `FLEET_TELEMATICS_TIMEOUT_MS`. Each device selects its provider, so mock
+and real units can run side by side. Failures land on the device (`lastError`) and never contain the key.
+

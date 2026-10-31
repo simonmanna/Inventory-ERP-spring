@@ -17,6 +17,7 @@ import { formatCurrency } from '@/lib/utils';
 import { useAsset, useAllAssetCategories, useAssetAssignments, useCreateAssignment, useAssetTransfers, useCreateTransfer, useAssetMaintenance, useCreateMaintenance, useAssetWarranties, useCreateWarranty, useAssetDisposal, useCreateDisposal, useAssetAcquisition, useUpsertAcquisition, useAssetDepreciation } from '@/features/fixed-asset/api';
 import type { Asset } from '@/features/fixed-asset/types';
 import { tx } from '@/lib/i18n/tx';
+import { PlantUnitLink } from './PlantUnitLink';
 
 const statusColor: Record<string, string> = { active: 'bg-green-100 text-green-800', under_maintenance: 'bg-yellow-100 text-yellow-800', disposed: 'bg-red-100 text-red-800', lost_stolen: 'bg-red-100 text-red-800', in_repair: 'bg-orange-100 text-orange-800', reserved: 'bg-blue-100 text-blue-800' };
 
@@ -75,6 +76,7 @@ function OverviewTab({ asset, categories }: { asset: Asset; categories: any[] })
   const catName = categories.find((c: any) => c.id === asset.categoryId)?.name ?? asset.category?.name ?? '-';
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <PlantUnitLink assetId={asset.id} />
       <Card><CardHeader><CardTitle className="text-sm font-medium">{tx('Purchase Cost')}</CardTitle></CardHeader><CardContent><p className="text-2xl font-bold">{formatCurrency(asset.purchaseCost ?? '0')}</p></CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm font-medium">{tx('Current Value')}</CardTitle></CardHeader><CardContent><p className="text-2xl font-bold">{formatCurrency(asset.currentValue ?? '0')}</p></CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm font-medium">{tx('Salvage Value')}</CardTitle></CardHeader><CardContent><p className="text-2xl font-bold">{formatCurrency(asset.salvageValue ?? '0')}</p></CardContent></Card>

@@ -8,7 +8,7 @@ import { num } from '../fleet-format';
 import { TripStatusPill } from './dispatch-ui';
 
 /** Driver's phone view (fleet 1.3): my trips, on-the-road ones first, as big cards. */
-export function MyTripsPage() {
+export function MyTripsPage({ basePath = '/fleet/my-trips' }: { basePath?: string }) {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useTrips({ mine: true, status: 'active', page: 1, pageSize: 50 });
   const rows = data?.data ?? [];
@@ -21,7 +21,7 @@ export function MyTripsPage() {
         <div className="rounded-xl border bg-card p-6 text-center text-muted-foreground">{tx('No trips assigned to you.')}</div>
       )}
       {rows.map((t) => (
-        <button key={t.id} type="button" onClick={() => navigate(`/fleet/my-trips/${t.id}`)}
+        <button key={t.id} type="button" onClick={() => navigate(`${basePath}/${t.id}`)}
           className="w-full rounded-2xl border bg-card p-4 text-left shadow-sm active:bg-accent">
           <div className="flex items-center justify-between gap-2">
             <span className="text-lg font-semibold">{t.code}</span>

@@ -152,3 +152,12 @@ FIN-1: `GET /bank-reconciliation/{lines,runs,summary}`, `GET /bank-reconciliatio
 
 FIN-3: `GET /fiscal-periods/{id}/close-checklist` (`fiscal_period:read`), `PUT /fiscal-periods/{id}/close-checklist/{key}` (`fiscal_period:update`), table `PeriodCloseSignOff` (V72). The checklist does not gate `close`.
 Screen `/fiscal-periods/:id/checklist`. Tests: `PeriodCloseChecklistIT`, `FinancialStatementsIT`, `core/TaxesIT`. Nothing was compiled or run.
+## INT-3 bank statement files (Phase 4, built, unverified: nothing compiled or run)
+
+`POST /bank-reconciliation/import-file` (multipart `file`; `bankAccountId, currencyCode, format` = auto, csv, mt940, camt053;
+`dryRun`; `bank_account:update`) parses with `BankStatementParser` and imports through the unchanged
+`BankReconciliationService.importStatement`. CSV: header row found in the first 30 rows, comma, semicolon or tab, one amount
+column or debit + credit columns, day-first dates, thousands in either style. MT940: `:61:` + `:86:`, reversals flipped.
+camt.053: `Ntry` elements, DTDs refused. A line without a bank reference gets a stable hash reference (date, amount, text,
+occurrence in the file), so a repeat import skips it and two identical charges stay. Screen: `/accounts/bank-import`.
+

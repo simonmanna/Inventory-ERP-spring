@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (502 permissions). Constant name = GROUP__ACTION.
+ * exactly (505 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -513,6 +513,9 @@ public final class Permissions {
     public static final String QUARRY_BLASTING__APPROVE_EXPLOSIVE = "quarry_blasting:approve_explosive";
     public static final String QUARRY_BLASTING__ISSUE_EXPLOSIVE = "quarry_blasting:issue_explosive";
     public static final String QUARRY_BLASTING__MAGAZINE = "quarry_blasting:magazine";
+    public static final String PORTAL__CUSTOMER = "portal:customer";
+    public static final String PORTAL__MANAGE = "portal:manage";
+    public static final String LABEL__PRINT = "label:print";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -1017,7 +1020,10 @@ public final class Permissions {
             "quarry_blasting:request_explosive",
             "quarry_blasting:approve_explosive",
             "quarry_blasting:issue_explosive",
-            "quarry_blasting:magazine");
+            "quarry_blasting:magazine",
+            "portal:customer",
+            "portal:manage",
+            "label:print");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

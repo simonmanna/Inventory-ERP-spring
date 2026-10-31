@@ -256,6 +256,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/inventory', label: tx('Stock Levels'), icon: Package, permission: 'inventory:read' },
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read' },
+      { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print },
       { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read },
       { to: '/inventory/adjustments', label: tx('Stock Adjustments'), icon: Scale, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
@@ -311,6 +312,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/bank-reconciliation', label: tx('Bank Reconciliation'), icon: Landmark, permission: PERMISSIONS.bankAccount.read },
       // Cash Registers lives under POS only; Overview links to it from "Open registers".
       { to: '/payments', label: tx('Customer Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
+      { to: '/payments/mobile-money', label: tx('Mobile Money'), icon: Smartphone, permission: PERMISSIONS.payment.read },
+      { to: '/accounts/bank-import', label: tx('Import Bank Statement'), icon: FileInput, permission: PERMISSIONS.bankAccount.update },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Truck, permission: PERMISSIONS.payment.read },
       { to: '/cash-flow/report', label: tx('Money Reports'), icon: BarChart3, permission: PERMISSIONS.account.read, reportId: 'money.reports' },
     ],
@@ -512,11 +515,13 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/delivery-orders', label: tx('Delivery Orders'), icon: ClipboardList, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/trips', label: tx('Trips'), icon: RouteIcon, permission: PERMISSIONS.fleetTrip.read },
       { to: '/fleet/my-trips', label: tx('My Trips'), icon: Navigation, permission: PERMISSIONS.fleetTrip.deliver },
+      { to: '/driver', label: tx('Driver App'), icon: Smartphone, permission: PERMISSIONS.fleetTrip.deliver },
       { to: '/fleet/customer-sites', label: tx('Customer Sites'), icon: MapPin, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/delivery-discrepancies', label: tx('Delivery Discrepancies'), icon: Scale, permission: PERMISSIONS.fleetDispatch.read },
       { to: '/fleet/settings/dispatch', label: tx('Dispatch Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/freight-bills', label: tx('Freight Bills'), icon: ReceiptText, permission: PERMISSIONS.fleetFreight.read },
       // 1.6 maintenance
+      { to: '/fleet/plant', label: tx('Fixed Plant'), icon: Factory, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/inspections', label: tx('Inspections'), icon: ClipboardCheck, permission: PERMISSIONS.fleetMaintenance.read },
@@ -618,6 +623,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/approval-policies', label: tx('Approval Policies (legacy)'), icon: Shield, permission: 'approvals:read' },
       { to: '/staff', label: tx('Staff'), icon: UserCog, permission: PERMISSIONS.user.read },
       { to: '/staff/roles', label: tx('Roles & Permissions'), icon: Shield, permission: PERMISSIONS.role.read },
+      { to: '/settings/portal-accounts', label: tx('Customer Portal Accounts'), icon: Users2, permission: PERMISSIONS.portal.manage },
       { to: '/settings/report-permissions', label: tx('Report Permissions'), icon: BarChart3, permission: PERMISSIONS.role.read },
       { to: '/settings/payment-methods', label: tx('Payment Methods'), icon: Wallet, permission: PERMISSIONS.account.read },
       { to: '/settings/registers', label: tx('Registers'), icon: Banknote, permission: PERMISSIONS.cashRegister.read },

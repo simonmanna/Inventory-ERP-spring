@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.auth.AuthDtos.RefreshRequest;
 import com.inventoryerp.kernel.auth.AuthDtos.ResetPasswordRequest;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.AuthUser;
+import com.inventoryerp.kernel.security.CustomerPortalReachable;
 import com.inventoryerp.kernel.security.Public;
 import com.inventoryerp.kernel.security.Throttle;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** {@code /auth/*} (port of {@code auth.controller.ts}). */
 @RestController
 @RequestMapping("/auth")
+@CustomerPortalReachable
 public class AuthController {
 
     private final AuthService auth;

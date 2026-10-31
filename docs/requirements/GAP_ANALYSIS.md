@@ -423,9 +423,9 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 396 | Fixed asset registration and asset classification. | `present-verified` | fixedasset · `/fixed-assets`, `/asset-categories` · `/fixed-assets*` · FixedAssetIT.categories/register | — |
-| 397 | Equipment registers and assigned locations. | `present-partial` | Fixed asset `location`; fleet units include mobile plant. `fixed_plant` kind accepted but no classes seeded (generator is seeded as mobile plant), no test uses it | Fixed plant register (CMMS-1) |
-| 398 | Preventive maintenance schedules. | `present-partial` | FleetServiceScheduleService, `/fleet/service-schedules` (FleetMaintenanceIT.scheduleToWorkOrder). Not proven for fixed plant | Fixed plant schedules (CMMS-1) |
-| 399 | Maintenance work orders. | `present-partial` | `/fleet/work-orders` (FleetMaintenanceIT). Not proven for fixed plant | Fixed plant work orders (CMMS-1) |
+| 397 | Equipment registers and assigned locations. | `present-partial (built, unverified)` | FleetPlantService, `/fleet/plant`, `/fleet/plant/classes`, PlantRegisterPage (by location), FleetPlantIT | Verify by running it |
+| 398 | Preventive maintenance schedules. | `present-partial (built, unverified)` | Fleet 1.6 schedules on plant units (hours / calendar), FleetPlantIT.scheduleWorkOrderCost | Verify by running it |
+| 399 | Maintenance work orders. | `present-partial (built, unverified)` | Fleet 1.6 work orders on plant units, FleetPlantIT.scheduleWorkOrderCost | Verify by running it |
 | 400 | Breakdown and repair records. | `present-verified` | fleet, fixedasset · `/fleet/defects`, `/fixed-assets/{id}/repairs` · `/fleet/defects`, `/fixed-assets/:id` · FleetMaintenanceIT, FixedAssetIT | — |
 | 401 | Spare parts inventory and consumption. | `present-verified` | fleet · work order parts · `/fleet/maintenance/work-orders/:id` · FleetMaintenanceIT.partsIssueReturnReverse | — |
 | 402 | Maintenance labour and service costs. | `present-verified` | fleet · work order labour and bills · FleetMaintenanceIT.labourAndBills | — |
@@ -462,25 +462,25 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 445 | Advanced weighbridge management. | `present-verified` | See 5.1 (42 weighbridge routes) · FleetWeighbridgeIT, FleetWeighbridgeDispatchIT | — |
 | 446 | Specialized aggregate production planning. | `missing` | 2.5 not built; crushing is not connected to plans or MRP capacity in t/h | Build 2.5 (MFG-1) |
 | 447 | Advanced block manufacturing and quality management. | `present-verified` | See 3.3 and 3.5 | — |
-| 448 | Fleet GPS tracking and telematics integration. | `present-partial` | TelematicsProvider SPI + MockTelematicsProvider · `/fleet/telematics`, `/fleet/live` · FleetTelematicsIT. No real vendor adapter | Vendor adapter once chosen (INT-2) |
+| 448 | Fleet GPS tracking and telematics integration. | `present-partial (built, unverified)` | TelematicsProvider SPI + MockTelematicsProvider + RestTelematicsProvider (contract adapter) · `/fleet/telematics`, `/fleet/live` · FleetTelematicsIT, RestTelematicsProviderTest. Vendor not chosen | Verify by running it |
 | 449 | Laboratory testing integrations. | `present-verified` | quality · `/quality/lab-imports`, `/lab-adapters` · `/quality/lab` · QualityLotsIT.labCsvImport, LabAdaptersTest, CsvLabResultsTest | — |
 | 450 | Automated production data capture. | `present-verified` | manufacturing · `/shop-floor/machine-data`, `/machine-events` · `/manufacturing/floor-setup` · ShopFloorExecutionIT.multiStageAndMachineData, MachineAdaptersTest | — |
 | 451 | Industry-specific dashboards and profitability reports. | `present-partial` | Module report pages exist; no consolidated industry dashboard | Phase 5 dashboards |
-| 452 | Customer portals for orders and delivery tracking. | `missing` | No portal route, screen or customer auth (grep `portal`: empty) | Build portal (PORTAL-1) |
-| 453 | Mobile applications for drivers, supervisors, and field operators. | `present-partial` | `/fleet/my-trips`, PodCapturePage, `/manufacturing/terminal`, ExtractionEntryPage (phone/tablet), PWA plumbing in `vite.config.ts`. MyTripsPage has no fuel log or pre-trip checklist | Driver web app (DRIVER-1) |
+| 452 | Customer portals for orders and delivery tracking. | `present-partial (built, unverified)` | portal module · `/portal/*`, `/portal-accounts` · PortalShell, `/portal/deliveries/:id` (live status, last position) · PortalIT · ADR-S050 | Verify by running it |
+| 453 | Mobile applications for drivers, supervisors, and field operators. | `present-partial (built, unverified)` | `/driver` PWA shell (DriverHomePage, trips and POD on `/driver/trips`, DriverFuelPage, DriverPreTripPage), FleetDriverAppService, `/fleet/driver-app/*`, `public/driver.webmanifest`, FleetDriverAppIT; supervisors keep `/manufacturing/terminal` and ExtractionEntryPage | Verify by running it |
 
 ### 8.3 Integration and Automation
 
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 463 | Weighbridge hardware. | `present-verified` | fleet · `/fleet/weighbridge/devices` · FleetWeighbridgeIT.tcpDevice | Simulated device only; test on the client indicator |
-| 464 | Barcode scanners and label printers. | `present-partial` | `/products/resolve-barcode` (CoreIT), `scanner-debounce.ts`, precast labels. No label printer integration | Label printing (INT-3) |
-| 465 | Accounting and banking interfaces. | `present-partial` | Statement import takes JSON lines only; CSV and PDF exports. No bank feed or accounting interface | Bank import formats (INT-3) |
-| 466 | Mobile money payment providers. | `missing` | No provider SPI: `MobileMoneyProvider`/`PaymentProvider` absent, mobile money is a tender label only | Provider SPI + mock (INT-1) |
-| 467 | GPS and fleet tracking systems. | `present-partial` | As fleet telematics above | INT-2 |
+| 464 | Barcode scanners and label printers. | `present-partial (built, unverified)` | `/products/resolve-barcode`, `scanner-debounce.ts`, precast labels; `/labels/*`, LabelService, LabelRenderer (ZXing QR and Code 128 as PDF, ZPL file) · `/labels` · LabelRendererTest, LabelsAndBankFilesIT | Verify by running it |
+| 465 | Accounting and banking interfaces. | `present-partial (built, unverified)` | BankStatementParser (CSV, MT940, camt.053), `/bank-reconciliation/import-file` · `/accounts/bank-import` · BankStatementParserTest, LabelsAndBankFilesIT. No live bank feed | Verify by running it |
+| 466 | Mobile money payment providers. | `present-partial (built, unverified)` | MobileMoneyProvider SPI + MockMobileMoneyProvider · `/mobile-money/*`, MobileMoneyService (receipt through PaymentService) · `/payments/mobile-money` · MobileMoneyIT, MobileMoneyProviderTest. No real provider | Verify by running it |
+| 467 | GPS and fleet tracking systems. | `present-partial (built, unverified)` | As fleet telematics above, RestTelematicsProvider | Verify by running it |
 | 468 | Production machinery and industrial data systems. | `present-verified` | manufacturing · machine adapters · ShopFloorExecutionIT, MachineAdaptersTest, MachineEventParserTest | — |
 | 469 | Business intelligence tools. | `present-partial` | `/metrics`, `/webhooks`, CSV exports (KernelIT). No BI connector or read model | Phase 5 integrations |
-| 470 | Customer-facing websites and applications. | `present-partial` | Webhooks and REST API only; no customer-facing app | PORTAL-1 |
+| 470 | Customer-facing websites and applications. | `present-partial (built, unverified)` | Customer portal (452); webhooks and REST API | Verify by running it |
 | 471 | Notification and communication services. | `present-verified` | communication · `/communication/*`, MessagingProvider · `/communication*` · CommunicationIT, ProvidersTest | — |
 
 ### 9 Security, Auditability, and Operational Control

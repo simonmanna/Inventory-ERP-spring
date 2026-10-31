@@ -410,3 +410,60 @@ CTRL-2, migration `V52__document_numbering.sql`:
 
 - `/settings/document-numbering`: set Purchase request to prefix `REQ/{YY}/`, 3 digits. The next PR takes that number and continues the same counter. Use default restores it. Next number refuses a value at or below the current one. A format without the year on Purchase order is refused.
 - Confirm an invoice and a POS sale still number as before.
+## Phase 4 lane E — plant, field and integrations (built, unverified; nothing compiled or run)
+
+**CMMS-1 fixed plant** (`cd backend && ./gradlew test --tests 'com.inventoryerp.fleet.FleetPlantIT'`)
+
+- `/fleet/plant`: the page seeds five plant classes. Register a crusher through "Register plant" (class Crusher, a home
+  location, opening hours) and see it in the list, filtered by location.
+- Open the unit: Maintenance tab, add an hours schedule, read the meter past the lead, raise and start a work order. The
+  unit shows `in workshop`; issue a part and labour; complete it and it returns to active.
+- `/fleet/plant/costs`: maintenance, hours, cost per hour and downtime for the unit.
+- Link a fixed asset on the unit. The asset detail page shows the link; dispose the asset and the unit becomes `disposed`.
+- A trip assignment to the crusher is refused ("fixed plant and cannot carry a load").
+
+**DRIVER-1 driver app** (`./gradlew test --tests 'com.inventoryerp.fleet.FleetDriverAppIT'`)
+
+- Create a role with `fleet_trip:read` + `fleet_trip:deliver`, a user with it, and set that user on the driver's hr employee.
+  Assign a truck to the driver.
+- On a phone open `/driver`: the truck shows "Pre-trip check not done today". Install to the home screen; it opens at `/driver`.
+- Pre-trip check: fail one item with a photo; the unit shows the defect, and the office sees it under `/fleet/defects`.
+- Log fuel with a receipt photo: a draft appears in `/fleet/fuel`; a second truck's id is refused (403).
+- Trips: open a dispatched trip, capture signature and photo, confirm POD.
+
+**INT-2 telematics adapter** (`./gradlew test --tests '*RestTelematicsProviderTest'`)
+
+- `/fleet/telematics` lists providers `mock` and `rest`. A device on `rest` with no `FLEET_TELEMATICS_URL` shows the
+  "not configured" error after a sync; other devices keep syncing.
+- With a vendor or gateway answering the contract in `docs/spec/fleet.md`, positions and meters arrive on the next sync.
+
+**PORTAL-1 customer portal** (migration `V80__customer_portal.sql`; `ENABLE_PORTAL=true`;
+`./gradlew test --tests 'com.inventoryerp.portal.PortalIT'`)
+
+- As staff: `/settings/portal-accounts` → Open account for a customer.
+- Sign in as that customer on the normal login page: it lands on `/portal`, with no staff menu.
+- Orders, invoices (PDF opens) and statement show only that customer's documents.
+- Dispatch a trip for the customer with a telematics device on the truck: `/portal/deliveries/:id` moves on its own and links
+  to the truck's position; after POD it shows who received it.
+- Type a staff URL such as `/fleet`: back to `/portal`. Disable the account: the next portal request fails at once.
+- Check the role "Customer Portal" holds only `portal:customer`. Adding any other permission to it removes the lock on routes
+  open to any signed-in user.
+
+**INT-1 mobile money** (migration `V81__mobile_money.sql`;
+`./gradlew test --tests '*MobileMoneyIT' --tests '*MobileMoneyProviderTest'`)
+
+- `/payments/mobile-money` → Request payment, number ending in 0: "Waiting for customer"; Check now: "Received", with a link
+  to the receipt. The journal shows Dr mobile money, Cr receivable.
+- Number ending in 9: "Failed", no receipt. Ending in 8: stays waiting.
+- Set `MOBILE_MONEY_CALLBACK_SECRET` and post a signed callback (`docs/spec/invoicing.md`): the receipt appears once, however
+  many times the callback repeats.
+
+**INT-3 bank files and labels** (migration `V82__label_printing.sql`; `./gradlew test --tests '*BankStatementParserTest'
+--tests '*LabelRendererTest' --tests '*LabelsAndBankFilesIT'`)
+
+- `/accounts/bank-import`: upload a real statement from the client's bank. Preview shows the lines and totals; check the signs
+  and dates. Import, then import again: the second run adds nothing.
+- `/labels`: pick products, Print PDF, scan the printed QR and Code 128 with a handheld scanner. Download ZPL and send it to a
+  Zebra printer, if the client has one.
+- Repeat for a stockpile and a weighbridge ticket.
+

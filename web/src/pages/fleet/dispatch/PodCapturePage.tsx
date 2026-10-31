@@ -17,7 +17,7 @@ import { TripStatusPill } from './dispatch-ui';
 import { TripActions } from './TripActions';
 
 /** Phone-first trip screen for the driver (fleet 1.3): actions, then proof of delivery with signature, GPS and photo. */
-export function PodCapturePage() {
+export function PodCapturePage({ basePath = '/fleet/my-trips' }: { basePath?: string }) {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const has = useAuthStore((s) => s.hasPermission);
@@ -38,7 +38,7 @@ export function PodCapturePage() {
   return (
     <div className="mx-auto max-w-xl space-y-4">
       <div className="flex items-start gap-2">
-        <Button variant="ghost" size="icon" aria-label={tx('Back')} onClick={() => navigate('/fleet/my-trips')}><ArrowLeft className="h-5 w-5" /></Button>
+        <Button variant="ghost" size="icon" aria-label={tx('Back')} onClick={() => navigate(basePath)}><ArrowLeft className="h-5 w-5" /></Button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold">{t.code}</h1><TripStatusPill status={t.status} /></div>
           <p className="text-sm text-muted-foreground">{t.partnerName} · {t.deliveryNoteNumber ?? t.deliveryOrderCode}</p>
@@ -70,7 +70,7 @@ export function PodCapturePage() {
         ))}
       </div>
 
-      <TripActions trip={t} big podPath={`/fleet/my-trips/${t.id}#pod`} />
+      <TripActions trip={t} big podPath={`${basePath}/${t.id}#pod`} />
 
       {canPod && <PodForm trip={t} />}
       {t.pod && <PodDone trip={t} canPhoto={has(PERMISSIONS.fleetTrip.deliver)} />}
