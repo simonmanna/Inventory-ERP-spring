@@ -358,8 +358,8 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 319 | Freight and transport charges. | `present-verified` | procurement · CostComponentService FREIGHT · `/procurement/landed-cost-vouchers*` · LandedCostVoucherIT.laptopImport | — |
-| 320 | Loading and unloading. | `present-partial` | HANDLING component "Loading & handling" seeded with route and screen; no test uses it | Needs test (PROC-6) |
-| 321 | Handling fees. | `present-partial` | Same HANDLING component; no test uses it | Needs test (PROC-6) |
+| 320 | Loading and unloading. | `present-partial (built, unverified)` | HANDLING component "Loading & handling" seeded with route and screen; no test uses it. Phase 4: LandedCostVoucherIT.handlingByQuantity covers the HANDLING component | Unverified: the test was not run |
+| 321 | Handling fees. | `present-partial (built, unverified)` | Same HANDLING component; no test uses it. Phase 4: LandedCostVoucherIT.handlingByQuantity covers the HANDLING component | Unverified: the test was not run |
 | 322 | Insurance. | `present-verified` | procurement · INSURANCE component · LandedCostVoucherIT.laptopImport | — |
 | 323 | Customs charges and other eligible import costs. | `present-verified` | procurement · DUTY, CLEARING components · LandedCostVoucherIT.laptopImport | — |
 | 324 | Other directly attributable acquisition expenses. | `present-verified` | procurement · `/procurement/cost-components` · LandedCostVoucherIT.chargeTreatments | — |

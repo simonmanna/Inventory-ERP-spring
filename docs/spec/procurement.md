@@ -176,3 +176,7 @@ Screens `/procurement/rfqs`, `/procurement/rfqs/new`, `/procurement/rfqs/:id`, `
 
 PROC-2: `/procurement/price-agreements` (list, get, lookup, create, patch, cancel) and `/procurement/reports/price-history` (`price_agreement:read|manage`). Table `SupplierPriceAgreement` (V74).
 Screens `/procurement/price-agreements`, `/procurement/price-history`. Test: `PriceAgreementIT`. Nothing was compiled or run.
+
+## Phase 4 handling test (added, not run)
+
+PROC-6: `LandedCostVoucherIT.handlingByQuantity` asserts the seeded HANDLING component capitalizes, spreads by quantity and balances. No production code changed. The test was not run.
