@@ -28,7 +28,8 @@ class TaxesIT extends ApiTestSupport {
         assertThat(Double.parseDouble(updated.get("rate").asString())).isEqualTo(16.0);
         assertThat(updated.get("vatCategory").asString()).isEqualTo("zero_rated");
 
-        assertThat(call("GET", "/taxes?search=" + name.replace(" ", "%20"), null, otherToken).body().get("data")).isEmpty();
+        assertThat(call("GET", "/taxes?search=" + name.replace(" ", "%20"), null,
+                otherToken).body().get("data")).isEmpty();
 
         assertThat(as("DELETE", "/taxes/" + id, null).status()).isEqualTo(204);
         assertThat(ok(200, "GET", "/taxes?search=" + name.replace(" ", "%20"), null).get("data")).isEmpty();

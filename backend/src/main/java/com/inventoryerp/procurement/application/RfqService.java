@@ -90,7 +90,8 @@ public class RfqService {
 
     private Map<String, Object> rfq(String id, boolean lock) {
         Map<String, Object> r = SqlRows.one(jdbc.sql("SELECT id, \"rfqNumber\", title, status, \"purchaseRequestId\","
-                + " \"dueDate\"::text AS \"dueDate\", \"currencyCode\", notes, \"sentAt\", \"awardedAt\", \"awardedBy\","
+                + " \"dueDate\"::text AS \"dueDate\", \"currencyCode\", notes, \"sentAt\", \"awardedAt\", "
+                + "\"awardedBy\","
                 + " \"awardedQuotationId\", \"purchaseOrderId\", \"createdBy\", \"createdAt\", \"updatedAt\""
                 + " FROM \"PurchaseRfq\" WHERE id = ? AND \"organizationId\" = ?" + (lock ? " FOR UPDATE" : ""))
                 .params(id, org()));
@@ -129,7 +130,8 @@ public class RfqService {
                 + " (SELECT count(*) FROM \"PurchaseQuotation\" q WHERE q.\"rfqId\" = r.id) AS quotations"
                 + " FROM \"PurchaseRfq\" r" + where + " ORDER BY r.\"createdAt\" DESC, r.id LIMIT " + pageSize
                 + " OFFSET " + (page - 1) * pageSize).params(params));
-        long total = jdbc.sql("SELECT count(*) FROM \"PurchaseRfq\" r" + where).params(params).query(Long.class).single();
+        long total = jdbc.sql("SELECT count(*) FROM \"PurchaseRfq\" r"
+                + where).params(params).query(Long.class).single();
         return PageResult.of(rows, page, pageSize, total);
     }
 
@@ -142,7 +144,8 @@ public class RfqService {
     private Map<String, Object> detail(String id, Map<String, Object> r) {
         r.put("lines", lines(id));
         r.put("suppliers", SqlRows.list(jdbc.sql("SELECT s.\"partnerId\", p.name AS \"partnerName\" FROM"
-                + " \"PurchaseRfqSupplier\" s LEFT JOIN \"Partner\" p ON p.id = s.\"partnerId\" AND p.\"organizationId\" ="
+                + " \"PurchaseRfqSupplier\" s LEFT JOIN \"Partner\" p ON p.id = s.\"partnerId\" AND "
+                + "p.\"organizationId\" ="
                 + " s.\"organizationId\" WHERE s.\"rfqId\" = ? AND s.\"organizationId\" = ? ORDER BY p.name")
                 .params(id, org())));
         List<Map<String, Object>> quotes = quotations(id);
@@ -162,7 +165,8 @@ public class RfqService {
     }
 
     private List<Map<String, Object>> quotations(String rfqId) {
-        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT q.id, q.\"partnerId\", p.name AS \"partnerName\","
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT q.id, q.\"partnerId\", p.name AS "
+                + "\"partnerName\","
                 + " q.reference, q.\"currencyCode\", q.\"exchangeRate\", q.\"validUntil\"::text AS \"validUntil\","
                 + " q.\"leadTimeDays\", q.\"paymentTerms\", q.notes, q.\"createdAt\" FROM \"PurchaseQuotation\" q"
                 + " LEFT JOIN \"Partner\" p ON p.id = q.\"partnerId\" AND p.\"organizationId\" = q.\"organizationId\""
@@ -210,7 +214,8 @@ public class RfqService {
         int year = today().getYear();
         String number = sequence.next("rfq:" + year, "RFQ-" + year + "-", 5);
         jdbc.sql("INSERT INTO \"PurchaseRfq\" (id, \"organizationId\", \"rfqNumber\", title, \"purchaseRequestId\","
-                        + " \"dueDate\", \"currencyCode\", notes, \"createdBy\", \"updatedBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                        + " \"dueDate\", \"currencyCode\", notes, \"createdBy\", \"updatedBy\") VALUES (?, ?, ?, ?, "
+                        + "?, ?, ?, ?, ?, ?)")
                 .params(id, org(), number, dto.title(), dto.purchaseRequestId(), sqlDate(dto.dueDate()),
                         dto.currencyCode(), dto.notes(), user(), user())
                 .update();
@@ -223,12 +228,15 @@ public class RfqService {
     @Transactional
     public Map<String, Object> update(String id, RfqInput dto) {
         requireStatus(rfq(id, true), "draft", "Only a draft RFQ can be edited");
-        jdbc.sql("UPDATE \"PurchaseRfq\" SET title = ?, \"purchaseRequestId\" = ?, \"dueDate\" = ?, \"currencyCode\" = ?,"
-                        + " notes = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+        jdbc.sql("UPDATE \"PurchaseRfq\" SET title = ?, \"purchaseRequestId\" = ?, \"dueDate\" = ?, \"currencyCode\" "
+                + "= ?,"
+                        + " notes = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(dto.title(), dto.purchaseRequestId(), sqlDate(dto.dueDate()), dto.currencyCode(), dto.notes(),
                         user(), id, org())
                 .update();
-        jdbc.sql("DELETE FROM \"PurchaseRfqLine\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?").params(id, org()).update();
+        jdbc.sql("DELETE FROM \"PurchaseRfqLine\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?").params(id,
+                org()).update();
         jdbc.sql("DELETE FROM \"PurchaseRfqSupplier\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?").params(id, org())
                 .update();
         writeLinesAndSuppliers(id, dto);
@@ -239,12 +247,14 @@ public class RfqService {
     @Transactional
     public Map<String, Object> send(String id) {
         requireStatus(rfq(id, true), "draft", "Only a draft RFQ can be sent");
-        long suppliers = jdbc.sql("SELECT count(*) FROM \"PurchaseRfqSupplier\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?")
+        long suppliers = jdbc.sql("SELECT count(*) FROM \"PurchaseRfqSupplier\" WHERE \"rfqId\" = ? AND "
+                + "\"organizationId\" = ?")
                 .params(id, org()).query(Long.class).single();
         if (suppliers == 0) {
             throw ApiException.badRequest("Invite at least one supplier before sending");
         }
-        jdbc.sql("UPDATE \"PurchaseRfq\" SET status = 'sent', \"sentAt\" = " + NOW + ", \"updatedBy\" = ?, \"updatedAt\" = "
+        jdbc.sql("UPDATE \"PurchaseRfq\" SET status = 'sent', \"sentAt\" = " + NOW
+                + ", \"updatedBy\" = ?, \"updatedAt\" = "
                 + NOW + " WHERE id = ? AND \"organizationId\" = ?").params(user(), id, org()).update();
         audit.recordInTx(AuditInput.of("PurchaseRfq", id, "update", null, Obj.of("status", "sent")));
         return detail(id, rfq(id, false));
@@ -268,7 +278,8 @@ public class RfqService {
     public Map<String, Object> recordQuotation(String id, QuotationInput dto) {
         Map<String, Object> r = rfq(id, true);
         requireStatus(r, "sent", "Quotations can only be recorded on a sent RFQ");
-        long invited = jdbc.sql("SELECT count(*) FROM \"PurchaseRfqSupplier\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?"
+        long invited = jdbc.sql("SELECT count(*) FROM \"PurchaseRfqSupplier\" WHERE \"rfqId\" = ? AND "
+                + "\"organizationId\" = ?"
                 + " AND \"partnerId\" = ?").params(id, org(), dto.partnerId()).query(Long.class).single();
         if (invited == 0) {
             throw ApiException.badRequest("This supplier was not invited to the RFQ");
@@ -281,11 +292,13 @@ public class RfqService {
                 throw ApiException.badRequest("Each quoted line must be a different line of this RFQ");
             }
         }
-        jdbc.sql("DELETE FROM \"PurchaseQuotation\" WHERE \"rfqId\" = ? AND \"organizationId\" = ? AND \"partnerId\" = ?")
+        jdbc.sql("DELETE FROM \"PurchaseQuotation\" WHERE \"rfqId\" = ? AND \"organizationId\" = ? AND \"partnerId\" "
+                + "= ?")
                 .params(id, org(), dto.partnerId()).update();
         String quotationId = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"PurchaseQuotation\" (id, \"organizationId\", \"rfqId\", \"partnerId\", reference,"
-                        + " \"currencyCode\", \"exchangeRate\", \"validUntil\", \"leadTimeDays\", \"paymentTerms\", notes,"
+                        + " \"currencyCode\", \"exchangeRate\", \"validUntil\", \"leadTimeDays\", \"paymentTerms\", "
+                        + "notes,"
                         + " \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(quotationId, org(), id, dto.partnerId(), dto.reference(),
                         dto.currencyCode() != null ? dto.currencyCode() : r.get("currencyCode"),
@@ -299,7 +312,8 @@ public class RfqService {
                             l.taxRate() != null ? l.taxRate() : BigDecimal.ZERO)
                     .update();
         }
-        audit.recordInTx(AuditInput.of("PurchaseRfq", id, "update", null, Obj.of("quotationId", quotationId, "partnerId",
+        audit.recordInTx(AuditInput.of("PurchaseRfq", id, "update", null, Obj.of("quotationId", quotationId,
+                "partnerId",
                 dto.partnerId())));
         return detail(id, rfq(id, false));
     }
@@ -340,7 +354,8 @@ public class RfqService {
                         "lineTotal", p == null ? null : JsNumbers.dec(p.multiply(qty)), "cheapest",
                         p != null && p.compareTo(best) == 0));
             }
-            rows.add(Obj.of("rfqLineId", lineId, "description", line.get("description"), "quantity", line.get("quantity"),
+            rows.add(Obj.of("rfqLineId", lineId, "description", line.get("description"), "quantity",
+                    line.get("quantity"),
                     "quotes", cells));
         }
         LocalDate today = today();
@@ -358,17 +373,21 @@ public class RfqService {
                 }
             }
             boolean complete = prices.size() == rfqLines.size();
-            boolean expired = q.get("validUntil") != null && LocalDate.parse((String) q.get("validUntil")).isBefore(today);
+            boolean expired = q.get("validUntil") != null
+                    && LocalDate.parse((String) q.get("validUntil")).isBefore(today);
             if (complete && !expired && (lowest == null || total.compareTo(lowest) < 0)) {
                 lowest = total;
                 recommended = quoteId;
             }
-            totals.add(Obj.of("quotationId", quoteId, "partnerId", q.get("partnerId"), "partnerName", q.get("partnerName"),
-                    "currencyCode", q.get("currencyCode"), "baseTotal", JsNumbers.dec(total), "linesQuoted", prices.size(),
+            totals.add(Obj.of("quotationId", quoteId, "partnerId", q.get("partnerId"), "partnerName",
+                    q.get("partnerName"),
+                    "currencyCode", q.get("currencyCode"), "baseTotal", JsNumbers.dec(total), "linesQuoted",
+                            prices.size(),
                     "complete", complete, "expired", expired, "validUntil", q.get("validUntil"), "leadTimeDays",
                     q.get("leadTimeDays"), "paymentTerms", q.get("paymentTerms")));
         }
-        return Obj.of("rfqId", id, "rfqNumber", r.get("rfqNumber"), "status", r.get("status"), "lines", rows, "quotations",
+        return Obj.of("rfqId", id, "rfqNumber", r.get("rfqNumber"), "status", r.get("status"), "lines", rows,
+                "quotations",
                 totals, "recommendedQuotationId", recommended);
     }
 
@@ -408,16 +427,20 @@ public class RfqService {
         String expected = lead == null ? null : today().plusDays(((Number) lead).longValue()).toString();
         Map<String, Object> po = orders.create(new CreateInput((String) quote.get("partnerId"), null,
                 "From " + r.get("rfqNumber"), expected, (String) quote.get("currencyCode"),
-                new BigDecimal((String) quote.get("exchangeRate")), dto.paymentType() != null ? dto.paymentType() : "credit",
-                null, (String) quote.get("paymentTerms"), dto.warehouseId(), (String) r.get("purchaseRequestId"), poLines));
+                new BigDecimal((String) quote.get("exchangeRate")),
+                        dto.paymentType() != null ? dto.paymentType() : "credit",
+                null, (String) quote.get("paymentTerms"), dto.warehouseId(), (String) r.get("purchaseRequestId"),
+                        poLines));
         jdbc.sql("UPDATE \"PurchaseRfq\" SET status = 'awarded', \"awardedAt\" = " + NOW + ", \"awardedBy\" = ?,"
-                        + " \"awardedQuotationId\" = ?, \"purchaseOrderId\" = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW
+                        + " \"awardedQuotationId\" = ?, \"purchaseOrderId\" = ?, \"updatedBy\" = ?, \"updatedAt\" = "
+                        + NOW
                         + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(user(), dto.quotationId(), po.get("id"), user(), id, org()).update();
         audit.recordInTx(AuditInput.of("PurchaseRfq", id, "update", null, Obj.of("status", "awarded", "quotationId",
                 dto.quotationId(), "purchaseOrderId", po.get("id"))));
         Map<String, Object> out = detail(id, rfq(id, false));
-        out.put("purchaseOrder", Obj.of("id", po.get("id"), "orderNumber", po.get("orderNumber"), "status", po.get("status")));
+        out.put("purchaseOrder", Obj.of("id", po.get("id"), "orderNumber", po.get("orderNumber"), "status",
+                po.get("status")));
         return out;
     }
 }

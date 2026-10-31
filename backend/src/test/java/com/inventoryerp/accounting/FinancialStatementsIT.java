@@ -29,7 +29,8 @@ class FinancialStatementsIT extends ApiTestSupport {
     }
 
     void journal(String debitCode, String creditCode, int amount) {
-        String id = ok(200, "POST", "/journal-entries", Map.of("journalCode", "GEN", "date", "2009-03-15", "description",
+        String id = ok(200, "POST", "/journal-entries", Map.of("journalCode", "GEN", "date", "2009-03-15",
+                "description",
                 "Statement test", "lines", List.of(Map.of("accountId", accountId(debitCode), "debit", amount),
                         Map.of("accountId", accountId(creditCode), "credit", amount)))).get("id").asString();
         Res posted = call("POST", "/journal-entries/" + id + "/post", null, checkerToken);
@@ -47,7 +48,8 @@ class FinancialStatementsIT extends ApiTestSupport {
         String email = "statements-" + UUID.randomUUID().toString().substring(0, 8) + "@demo.test";
         createUser(demoOrg, email, "Checker@12345", role);
         checkerToken = login("DEMO", email, "Checker@12345");
-        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, \"updatedAt\")"
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, "
+                + "\"updatedAt\")"
                         + " VALUES (?, ?, ?, ?::timestamp, ?::timestamp, 'open', now())")
                 .params(UUID.randomUUID().toString(), demoOrg, "Statements 2009-03", FROM, TO).update();
 

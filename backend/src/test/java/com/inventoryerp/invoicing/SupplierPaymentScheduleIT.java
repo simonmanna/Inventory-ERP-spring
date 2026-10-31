@@ -47,7 +47,8 @@ class SupplierPaymentScheduleIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("a bill without a plan is scheduled on its due date; a plan moves it, a hold takes it out of the total")
+    @DisplayName("a bill without a plan is scheduled on its due date; a plan moves it, a hold takes it out of the "
+            + "total")
     void planAndHold() {
         String bill = postedBill(100);
         String path = "/vendor-bills/payment-schedule?partnerId=" + supplier;
@@ -69,7 +70,8 @@ class SupplierPaymentScheduleIT extends ApiTestSupport {
         ok(200, "PUT", "/vendor-bills/" + bill + "/payment-schedule", hold);
         JsonNode held = ok(200, "GET", path, null);
         assertThat(row(held, bill).get("bucket").asString()).isEqualTo("on_hold");
-        assertThat(new BigDecimal(held.get("totals").get("onHold").asString())).isGreaterThanOrEqualTo(new BigDecimal("100"));
+        assertThat(new BigDecimal(held.get("totals").get("onHold").asString()))
+                .isGreaterThanOrEqualTo(new BigDecimal("100"));
         assertThat(row(held, bill).get("plannedDate").isNull()).isTrue();
     }
 
@@ -79,7 +81,8 @@ class SupplierPaymentScheduleIT extends ApiTestSupport {
         String bill = postedBill(50);
         Res over = as("PUT", "/vendor-bills/" + bill + "/payment-schedule", Map.of("plannedAmount", 51));
         assertThat(over.status()).isEqualTo(400);
-        assertThat(over.body().get("message").asString()).isEqualTo("Planned amount cannot exceed the outstanding balance");
+        assertThat(over.body().get("message").asString()).isEqualTo("Planned amount cannot exceed the outstanding "
+                + "balance");
 
         String draft = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today.toString(),
                 "lines", List.of(Map.of("description", "Draft", "quantity", 1, "unitPrice", 5)))).get("id").asString();
@@ -94,7 +97,8 @@ class SupplierPaymentScheduleIT extends ApiTestSupport {
         Res list = call("GET", "/vendor-bills/payment-schedule", null, otherToken);
         assertThat(list.status()).isEqualTo(200);
         assertThat(list.body().get("rows")).isEmpty();
-        assertThat(call("PUT", "/vendor-bills/" + bill + "/payment-schedule", Map.of("onHold", true), otherToken).status())
+        assertThat(call("PUT", "/vendor-bills/" + bill + "/payment-schedule", Map.of("onHold", true),
+                otherToken).status())
                 .isEqualTo(404);
     }
 }

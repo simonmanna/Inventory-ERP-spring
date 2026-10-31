@@ -26,7 +26,8 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
     @BeforeAll
     void period() {
         periodId = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, \"updatedAt\")"
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, "
+                + "\"updatedAt\")"
                         + " VALUES (?, ?, ?, ?::timestamp, ?::timestamp, 'open', now())")
                 .params(periodId, demoOrg, "Checklist 2008-04", "2008-04-01", "2008-04-30").update();
     }
@@ -75,7 +76,8 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
         assertThat(signed.get("note").asString()).isEqualTo("All accounts agreed");
         assertThat(signed.get("signedAt").isNull()).isFalse();
 
-        JsonNode removed = signOff(ok(200, "PUT", path + "bank_reconciled", Map.of("signed", false)), "bank_reconciled");
+        JsonNode removed = signOff(ok(200, "PUT", path + "bank_reconciled", Map.of("signed", false)),
+                "bank_reconciled");
         assertThat(removed.get("signed").asBoolean()).isFalse();
 
         assertThat(as("PUT", path + "nonsense", Map.of("signed", true)).status()).isEqualTo(400);
@@ -85,7 +87,8 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
     @DisplayName("a closed period's checklist can be read but not changed")
     void closedPeriod() {
         String closed = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, \"updatedAt\")"
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status, "
+                + "\"updatedAt\")"
                         + " VALUES (?, ?, ?, ?::timestamp, ?::timestamp, 'closed', now())")
                 .params(closed, demoOrg, "Checklist 2008-05", "2008-05-01", "2008-05-31").update();
         assertThat(ok(200, "GET", "/fiscal-periods/" + closed + "/close-checklist", null).get("status").asString())
@@ -97,8 +100,10 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
     @Test
     @DisplayName("tenant isolation and authorization")
     void isolation() {
-        assertThat(call("GET", "/fiscal-periods/" + periodId + "/close-checklist", null, otherToken).status()).isEqualTo(404);
-        assertThat(call("PUT", "/fiscal-periods/" + periodId + "/close-checklist/bank_reconciled", Map.of("signed", true),
+        assertThat(call("GET", "/fiscal-periods/" + periodId + "/close-checklist", null,
+                otherToken).status()).isEqualTo(404);
+        assertThat(call("PUT", "/fiscal-periods/" + periodId + "/close-checklist/bank_reconciled", Map.of("signed",
+                true),
                 otherToken).status()).isEqualTo(404);
         assertThat(assertAuthorizationMatrix(PeriodCloseController.class)).isEqualTo(5);
     }

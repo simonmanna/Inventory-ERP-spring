@@ -156,7 +156,8 @@ public class TaxReportService {
         BigDecimal difference = net.subtract(glNet);
         return Obj.of("from", fromRaw, "to", toRaw, "branchId", branchId, "boxes", boxes, "position",
                 summary.get("position"), "glNet", StatementService.plain(glNet), "glDifference",
-                StatementService.plain(difference), "reconciled", difference.abs().compareTo(new BigDecimal("0.01")) <= 0,
+                StatementService.plain(difference), "reconciled",
+                        difference.abs().compareTo(new BigDecimal("0.01")) <= 0,
                 "output", output.get("lines"), "input", input.get("lines"));
     }
 

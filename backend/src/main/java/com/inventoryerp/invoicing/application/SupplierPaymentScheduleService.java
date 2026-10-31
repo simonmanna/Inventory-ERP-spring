@@ -91,7 +91,8 @@ public class SupplierPaymentScheduleService {
             r.put("paymentDate", payOn.toString());
             r.put("scheduledAmount", JsNumbers.dec(amount));
             r.put("amountResidual", JsNumbers.dec(residual));
-            r.put("plannedAmount", r.get("plannedAmount") == null ? null : JsNumbers.dec(Money.dec(r.get("plannedAmount"))));
+            r.put("plannedAmount", r.get("plannedAmount") == null ? null
+                    : JsNumbers.dec(Money.dec(r.get("plannedAmount"))));
             r.put("daysOverdue", Math.max(0, days));
             r.put("bucket", bucket);
             out.add(r);
@@ -123,7 +124,8 @@ public class SupplierPaymentScheduleService {
         LocalDate plannedDate = parseDate(input.plannedDate());
         boolean onHold = Boolean.TRUE.equals(input.onHold());
         jdbc.sql("INSERT INTO \"SupplierPaymentSchedule\" (id, \"organizationId\", \"documentId\", \"plannedDate\","
-                        + " \"plannedAmount\", \"onHold\", notes, \"createdBy\", \"updatedBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        + " \"plannedAmount\", \"onHold\", notes, \"createdBy\", \"updatedBy\") VALUES (?, ?, ?, ?, "
+                        + "?, ?, ?, ?, ?)"
                         + " ON CONFLICT (\"organizationId\", \"documentId\") DO UPDATE SET \"plannedDate\" ="
                         + " EXCLUDED.\"plannedDate\", \"plannedAmount\" = EXCLUDED.\"plannedAmount\", \"onHold\" ="
                         + " EXCLUDED.\"onHold\", notes = EXCLUDED.notes, \"updatedBy\" = EXCLUDED.\"updatedBy\","

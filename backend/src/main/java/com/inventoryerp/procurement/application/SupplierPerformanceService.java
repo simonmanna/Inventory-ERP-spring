@@ -61,7 +61,8 @@ public class SupplierPerformanceService {
         for (Map<String, Object> r : query("SELECT po.\"partnerId\", count(*) AS orders,"
                 + " COALESCE(SUM(po.\"totalAmount\" * po.\"exchangeRate\"), 0) AS spend FROM \"PurchaseOrder\" po"
                 + " WHERE po.\"organizationId\" = ? AND po.\"deletedAt\" IS NULL"
-                + " AND po.status::text NOT IN ('draft', 'cancelled') AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?",
+                + " AND po.status::text NOT IN ('draft', 'cancelled') AND po.\"orderDate\" >= ? AND po.\"orderDate\" "
+                + "< ?",
                 "po.\"partnerId\"", partnerId, start, end)) {
             Map<String, Object> row = row(byPartner, r);
             row.put("orders", ((Number) r.get("orders")).longValue());
@@ -96,14 +97,17 @@ public class SupplierPerformanceService {
                 + " count(*) FILTER (WHERE l.result = 'pass') AS passed,"
                 + " COALESCE(SUM(l.\"rejectedQty\"), 0) AS \"rejectedQty\" FROM \"QualityInspectionLot\" l"
                 + " WHERE l.\"organizationId\" = ? AND l.status <> 'cancelled' AND l.\"supplierPartnerId\" IS NOT NULL"
-                + " AND l.\"createdAt\" >= ? AND l.\"createdAt\" < ?", "l.\"supplierPartnerId\"", partnerId, start, end)) {
+                + " AND l.\"createdAt\" >= ? AND l.\"createdAt\" < ?", "l.\"supplierPartnerId\"", partnerId, start,
+                end)) {
             Map<String, Object> row = row(byPartner, r);
             row.put("inspectionLots", ((Number) r.get("lots")).longValue());
-            row.put("qualityRate", rate(((Number) r.get("passed")).longValue(), ((Number) r.get("evaluated")).longValue()));
+            row.put("qualityRate", rate(((Number) r.get("passed")).longValue(),
+                    ((Number) r.get("evaluated")).longValue()));
             row.put("rejectedQty", JsNumbers.dec(Money.dec(r.get("rejectedQty"))));
         }
         for (Map<String, Object> r : query("SELECT po.\"partnerId\", COALESCE(SUM(m.\"priceVariance\" *"
-                + " m.\"billedQuantity\"), 0) AS variance, COALESCE(SUM(m.\"orderedUnitPrice\" * m.\"billedQuantity\"), 0)"
+                + " m.\"billedQuantity\"), 0) AS variance, COALESCE(SUM(m.\"orderedUnitPrice\" * "
+                + "m.\"billedQuantity\"), 0)"
                 + " AS base FROM \"ThreeWayMatch\" m JOIN \"PurchaseOrder\" po ON po.id = m.\"purchaseOrderId\""
                 + " WHERE m.\"organizationId\" = ? AND m.\"billedUnitPrice\" IS NOT NULL AND po.\"deletedAt\" IS NULL"
                 + " AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?", "po.\"partnerId\"", partnerId, start, end)) {

@@ -37,7 +37,8 @@ class BankReconciliationIT extends ApiTestSupport {
     String payment(String account, String direction, int amount) {
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Payment\" (id, \"organizationId\", \"paymentNumber\", direction, \"partnerId\","
-                        + " \"paymentDate\", \"paymentMethod\", \"accountId\", amount, status, \"updatedAt\") VALUES (?, ?, ?,"
+                        + " \"paymentDate\", \"paymentMethod\", \"accountId\", amount, status, \"updatedAt\") VALUES "
+                        + "(?, ?, ?,"
                         + " ?::\"PaymentDirection\", ?, now(), 'bank', ?, ?, 'posted'::\"DocumentStatus\", now())")
                 .params(id, demoOrg, "BR-" + id.substring(0, 12), direction, partner, account, amount).update();
         return id;
@@ -71,7 +72,8 @@ class BankReconciliationIT extends ApiTestSupport {
     @DisplayName("import is idempotent on externalRef")
     void importIdempotent() {
         String account = account();
-        assertThat(importLines(account, List.of(line("A1", 100), line("A2", -40))).get("imported").asInt()).isEqualTo(2);
+        assertThat(importLines(account, List.of(line("A1", 100), line("A2",
+                -40))).get("imported").asInt()).isEqualTo(2);
         JsonNode again = importLines(account, List.of(line("A1", 100), line("A3", 5)));
         assertThat(again.get("imported").asInt()).isEqualTo(1);
         assertThat(again.get("skipped").asInt()).isEqualTo(1);
@@ -187,12 +189,16 @@ class BankReconciliationIT extends ApiTestSupport {
         importLines(account, List.of(line("T1", 12)));
         String id = lineByRef(account, "T1").get("id").asString();
 
-        assertThat(call("GET", "/bank-reconciliation/lines?bankAccountId=" + account, null, otherToken).body().get("data"))
+        assertThat(call("GET", "/bank-reconciliation/lines?bankAccountId=" + account, null,
+                otherToken).body().get("data"))
                 .isEmpty();
-        assertThat(call("GET", "/bank-reconciliation/lines/" + id + "/candidates", null, otherToken).status()).isEqualTo(404);
-        assertThat(call("POST", "/bank-reconciliation/lines/" + id + "/match", Map.of("paymentId", pay), otherToken).status())
+        assertThat(call("GET", "/bank-reconciliation/lines/" + id + "/candidates", null,
+                otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/bank-reconciliation/lines/" + id + "/match", Map.of("paymentId", pay),
+                otherToken).status())
                 .isEqualTo(404);
-        assertThat(call("POST", "/bank-reconciliation/lines/" + id + "/exclude", Map.of("note", "x"), otherToken).status())
+        assertThat(call("POST", "/bank-reconciliation/lines/" + id + "/exclude", Map.of("note", "x"),
+                otherToken).status())
                 .isEqualTo(404);
         assertThat(lineByRef(account, "T1").get("status").asString()).isEqualTo("unmatched");
     }

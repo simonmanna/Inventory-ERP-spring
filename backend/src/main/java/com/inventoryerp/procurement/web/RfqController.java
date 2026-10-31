@@ -63,7 +63,8 @@ public class RfqController {
 
         RfqInput toInput() {
             return new RfqInput(title, purchaseRequestId, dueDate, currencyCode, notes, lines.stream()
-                    .map(l -> new LineInput(l.productId(), l.description(), l.quantity(), l.unitOfMeasureId())).toList(),
+                    .map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
+                    l.unitOfMeasureId())).toList(),
                     supplierIds);
         }
     }

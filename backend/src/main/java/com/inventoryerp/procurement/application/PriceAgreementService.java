@@ -46,7 +46,8 @@ public class PriceAgreementService {
     private static final int HISTORY_LIMIT = 500;
     private static final String SELECT = "SELECT a.id, a.\"partnerId\", pa.name AS \"partnerName\", a.\"productId\","
             + " pr.name AS \"productName\", pr.code AS \"productCode\", a.\"unitPrice\", a.\"currencyCode\","
-            + " a.\"minQuantity\", a.\"validFrom\"::text AS \"validFrom\", a.\"validTo\"::text AS \"validTo\", a.reference,"
+            + " a.\"minQuantity\", a.\"validFrom\"::text AS \"validFrom\", a.\"validTo\"::text AS \"validTo\", "
+            + "a.reference,"
             + " a.notes, a.status, a.\"createdAt\" FROM \"SupplierPriceAgreement\" a"
             + " LEFT JOIN \"Partner\" pa ON pa.id = a.\"partnerId\" AND pa.\"organizationId\" = a.\"organizationId\""
             + " LEFT JOIN \"Product\" pr ON pr.id = a.\"productId\" AND pr.\"organizationId\" = a.\"organizationId\"";
@@ -119,11 +120,13 @@ public class PriceAgreementService {
             params.add(like);
             params.add(like);
         }
-        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(SELECT + where + " ORDER BY a.\"createdAt\" DESC, a.id LIMIT "
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(SELECT + where
+                + " ORDER BY a.\"createdAt\" DESC, a.id LIMIT "
                 + pageSize + " OFFSET " + (page - 1) * pageSize).params(params));
         rows.forEach(r -> render(r, today));
         long total = jdbc.sql("SELECT count(*) FROM \"SupplierPriceAgreement\" a LEFT JOIN \"Partner\" pa ON pa.id ="
-                + " a.\"partnerId\" AND pa.\"organizationId\" = a.\"organizationId\" LEFT JOIN \"Product\" pr ON pr.id ="
+                + " a.\"partnerId\" AND pa.\"organizationId\" = a.\"organizationId\" LEFT JOIN \"Product\" pr ON "
+                + "pr.id ="
                 + " a.\"productId\" AND pr.\"organizationId\" = a.\"organizationId\"" + where)
                 .params(params).query(Long.class).single();
         return PageResult.of(rows, page, pageSize, total);
@@ -165,22 +168,27 @@ public class PriceAgreementService {
         }
         BigDecimal minQuantity = dto.minQuantity() == null ? BigDecimal.ZERO : dto.minQuantity();
         long overlapping = jdbc.sql("SELECT count(*) FROM \"SupplierPriceAgreement\" WHERE \"organizationId\" = ?"
-                        + " AND \"partnerId\" = ? AND \"productId\" = ? AND \"currencyCode\" = ? AND \"minQuantity\" = ?"
+                        + " AND \"partnerId\" = ? AND \"productId\" = ? AND \"currencyCode\" = ? AND \"minQuantity\" "
+                        + "= ?"
                         + " AND status = 'active' AND (\"validTo\" IS NULL OR \"validTo\" >= ?)"
                         + " AND (?::date IS NULL OR \"validFrom\" <= ?::date)")
-                .params(org(), dto.partnerId(), dto.productId(), dto.currencyCode(), minQuantity, sql(from), sql(to), sql(to))
+                .params(org(), dto.partnerId(), dto.productId(), dto.currencyCode(), minQuantity, sql(from), sql(to),
+                sql(to))
                 .query(Long.class).single();
         if (overlapping > 0) {
             throw ApiException.conflict("An active agreement already covers these dates. End it first.");
         }
         String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"SupplierPriceAgreement\" (id, \"organizationId\", \"partnerId\", \"productId\", \"unitPrice\","
-                        + " \"currencyCode\", \"minQuantity\", \"validFrom\", \"validTo\", reference, notes, \"createdBy\","
+        jdbc.sql("INSERT INTO \"SupplierPriceAgreement\" (id, \"organizationId\", \"partnerId\", \"productId\", "
+                + "\"unitPrice\","
+                        + " \"currencyCode\", \"minQuantity\", \"validFrom\", \"validTo\", reference, notes, "
+                        + "\"createdBy\","
                         + " \"updatedBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(id, org(), dto.partnerId(), dto.productId(), dto.unitPrice(), dto.currencyCode(), minQuantity,
                         sql(from), sql(to), dto.reference(), dto.notes(), user(), user())
                 .update();
-        audit.recordInTx(AuditInput.of("SupplierPriceAgreement", id, "create", null, Obj.of("partnerId", dto.partnerId(),
+        audit.recordInTx(AuditInput.of("SupplierPriceAgreement", id, "create", null, Obj.of("partnerId",
+                dto.partnerId(),
                 "productId", dto.productId(), "unitPrice", dto.unitPrice())));
         return load(id);
     }
@@ -254,11 +262,15 @@ public class PriceAgreementService {
             params.add(sql(date(toRaw)));
         }
         List<Map<String, Object>> raw = SqlRows.list(jdbc.sql("SELECT po.id AS \"purchaseOrderId\", po.\"orderNumber\","
-                + " po.\"orderDate\", po.\"partnerId\", pa.name AS \"partnerName\", po.\"currencyCode\", po.\"exchangeRate\","
-                + " l.quantity, l.\"unitPrice\", COALESCE(l.\"uomFactor\", 1) AS \"uomFactor\", ag.\"unitPrice\" AS \"agreedPrice\""
+                + " po.\"orderDate\", po.\"partnerId\", pa.name AS \"partnerName\", po.\"currencyCode\", "
+                + "po.\"exchangeRate\","
+                + " l.quantity, l.\"unitPrice\", COALESCE(l.\"uomFactor\", 1) AS \"uomFactor\", ag.\"unitPrice\" AS "
+                + "\"agreedPrice\""
                 + " FROM \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" po ON po.id = l.\"purchaseOrderId\""
-                + " LEFT JOIN \"Partner\" pa ON pa.id = po.\"partnerId\" AND pa.\"organizationId\" = po.\"organizationId\""
-                + " LEFT JOIN LATERAL (SELECT a.\"unitPrice\" FROM \"SupplierPriceAgreement\" a WHERE a.\"organizationId\" ="
+                + " LEFT JOIN \"Partner\" pa ON pa.id = po.\"partnerId\" AND pa.\"organizationId\" = "
+                + "po.\"organizationId\""
+                + " LEFT JOIN LATERAL (SELECT a.\"unitPrice\" FROM \"SupplierPriceAgreement\" a WHERE "
+                + "a.\"organizationId\" ="
                 + " po.\"organizationId\" AND a.\"partnerId\" = po.\"partnerId\" AND a.\"productId\" = l.\"productId\""
                 + " AND a.\"currencyCode\" = po.\"currencyCode\" AND a.status = 'active'"
                 + " AND a.\"validFrom\" <= po.\"orderDate\"::date AND (a.\"validTo\" IS NULL OR a.\"validTo\" >="
@@ -278,19 +290,25 @@ public class PriceAgreementService {
                 factor = BigDecimal.ONE;
             }
             BigDecimal documentPrice = SqlRows.dec(r, "unitPrice").divide(factor, 6, RoundingMode.HALF_UP);
-            BigDecimal basePrice = documentPrice.multiply(SqlRows.dec(r, "exchangeRate")).setScale(6, RoundingMode.HALF_UP);
+            BigDecimal basePrice = documentPrice.multiply(SqlRows.dec(r, "exchangeRate")).setScale(6,
+                    RoundingMode.HALF_UP);
             BigDecimal baseQuantity = SqlRows.dec(r, "quantity").multiply(factor);
             BigDecimal agreed = r.get("agreedPrice") == null ? null : SqlRows.dec(r, "agreedPrice");
-            rows.add(Obj.of("purchaseOrderId", r.get("purchaseOrderId"), "orderNumber", r.get("orderNumber"), "orderDate",
-                    r.get("orderDate"), "partnerId", r.get("partnerId"), "partnerName", r.get("partnerName"), "currencyCode",
-                    r.get("currencyCode"), "quantity", JsNumbers.dec(baseQuantity), "unitPrice", JsNumbers.dec(documentPrice),
-                    "baseUnitPrice", JsNumbers.dec(basePrice), "agreedPrice", agreed == null ? null : JsNumbers.dec(agreed),
+            rows.add(Obj.of("purchaseOrderId", r.get("purchaseOrderId"), "orderNumber", r.get("orderNumber"),
+                    "orderDate",
+                    r.get("orderDate"), "partnerId", r.get("partnerId"), "partnerName", r.get("partnerName"),
+                            "currencyCode",
+                    r.get("currencyCode"), "quantity", JsNumbers.dec(baseQuantity), "unitPrice",
+                            JsNumbers.dec(documentPrice),
+                    "baseUnitPrice", JsNumbers.dec(basePrice), "agreedPrice",
+                            agreed == null ? null : JsNumbers.dec(agreed),
                     "variance", agreed == null ? null : JsNumbers.dec(documentPrice.subtract(agreed))));
             weighted = weighted.add(basePrice.multiply(baseQuantity));
             quantity = quantity.add(baseQuantity);
             min = min == null ? basePrice : min.min(basePrice);
             max = max == null ? basePrice : max.max(basePrice);
-            Map<String, Object> s = bySupplier.computeIfAbsent((String) r.get("partnerId"), id -> Obj.of("partnerId", id,
+            Map<String, Object> s = bySupplier.computeIfAbsent((String) r.get("partnerId"), id -> Obj.of("partnerId",
+                    id,
                     "partnerName", r.get("partnerName"), "orders", 0L, "quantity", Money.ZERO, "value", Money.ZERO,
                     "lastPrice", JsNumbers.dec(basePrice)));
             s.put("orders", (Long) s.get("orders") + 1);
@@ -303,7 +321,8 @@ public class PriceAgreementService {
             BigDecimal value = (BigDecimal) s.get("value");
             suppliers.add(Obj.of("partnerId", s.get("partnerId"), "partnerName", s.get("partnerName"), "orders",
                     s.get("orders"), "quantity", JsNumbers.dec(q), "averagePrice", q.signum() == 0 ? null
-                            : JsNumbers.dec(value.divide(q, 6, RoundingMode.HALF_UP)), "lastPrice", s.get("lastPrice")));
+                            : JsNumbers.dec(value.divide(q, 6, RoundingMode.HALF_UP)), "lastPrice",
+                            s.get("lastPrice")));
         }
         Map<String, Object> summary = Obj.of("orders", rows.size(), "minPrice", min == null ? null : JsNumbers.dec(min),
                 "maxPrice", max == null ? null : JsNumbers.dec(max), "averagePrice", quantity.signum() == 0 ? null

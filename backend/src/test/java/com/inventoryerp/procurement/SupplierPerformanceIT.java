@@ -30,7 +30,8 @@ class SupplierPerformanceIT extends ApiTestSupport {
                 .params(supplier, demoOrg, "SP-" + suffix(), "Scorecard Supplier " + suffix()).update();
         product = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
-                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?, 'stockable', true,"
+                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?, "
+                        + "'stockable', true,"
                         + " 'AVCO'::\"CostingMethod\", 0, 0, now())")
                 .params(product, demoOrg, "SP-" + suffix(), "Cement " + suffix()).update();
     }
@@ -50,7 +51,8 @@ class SupplierPerformanceIT extends ApiTestSupport {
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + adminToken);
         h.put("Idempotency-Key", UUID.randomUUID().toString());
-        Res r = call("POST", "/procurement/purchase-orders/" + poId + "/receive", Map.of("warehouseId", warehouse, "lines",
+        Res r = call("POST", "/procurement/purchase-orders/" + poId + "/receive", Map.of("warehouseId", warehouse,
+                "lines",
                 List.of(Map.of("productId", product, "description", "Cement", "quantity", qty, "unitCost", cost))), h);
         assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
     }
@@ -67,14 +69,16 @@ class SupplierPerformanceIT extends ApiTestSupport {
         String lotPass = UUID.randomUUID().toString();
         String lotFail = UUID.randomUUID().toString();
         for (String[] lot : new String[][] {{lotPass, "pass"}, {lotFail, "fail"}}) {
-            jdbc.sql("INSERT INTO \"QualityInspectionLot\" (id, \"organizationId\", \"lotNumber\", stage, \"productId\","
+            jdbc.sql("INSERT INTO \"QualityInspectionLot\" (id, \"organizationId\", \"lotNumber\", stage, "
+                    + "\"productId\","
                             + " quantity, \"supplierPartnerId\", result) VALUES (?, ?, ?, 'incoming', ?, 1, ?, ?)")
                     .params(lot[0], demoOrg, "LOT-" + suffix(), product, supplier, lot[1]).update();
         }
         String poLine = jdbc.sql("SELECT id FROM \"PurchaseOrderLine\" WHERE \"purchaseOrderId\" = ?").param(onTime)
                 .query(String.class).single();
         jdbc.sql("INSERT INTO \"ThreeWayMatch\" (id, \"organizationId\", \"purchaseOrderId\", \"purchaseOrderLineId\","
-                        + " \"orderedQuantity\", \"billedQuantity\", \"orderedUnitPrice\", \"billedUnitPrice\", \"priceVariance\","
+                        + " \"orderedQuantity\", \"billedQuantity\", \"orderedUnitPrice\", \"billedUnitPrice\", "
+                        + "\"priceVariance\","
                         + " \"updatedAt\") VALUES (?, ?, ?, ?, 10, 10, 100, 102, 2, now())")
                 .params(UUID.randomUUID().toString(), demoOrg, onTime, poLine).update();
 
@@ -101,7 +105,8 @@ class SupplierPerformanceIT extends ApiTestSupport {
     void purchasesReport() {
         LocalDate today = LocalDate.now();
         String po = order(4, 25, today.plusDays(1));
-        JsonNode inRange = ok(200, "GET", "/procurement/purchase-orders?partnerId=" + supplier + "&pageSize=200&dateFrom="
+        JsonNode inRange = ok(200, "GET", "/procurement/purchase-orders?partnerId=" + supplier
+                + "&pageSize=200&dateFrom="
                 + today + "&dateTo=" + today, null);
         JsonNode found = null;
         for (JsonNode row : inRange.get("data")) {

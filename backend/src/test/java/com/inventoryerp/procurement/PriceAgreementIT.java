@@ -27,7 +27,8 @@ class PriceAgreementIT extends ApiTestSupport {
 
     @BeforeAll
     void fixtures() {
-        warehouse = ok(201, "POST", "/inventory/locations", Map.of("code", "PA-" + suffix(), "name", "Prices " + suffix(),
+        warehouse = ok(201, "POST", "/inventory/locations", Map.of("code", "PA-" + suffix(), "name", "Prices "
+                + suffix(),
                 "type", "warehouse")).get("id").asString();
     }
 
@@ -42,13 +43,15 @@ class PriceAgreementIT extends ApiTestSupport {
     String product() {
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
-                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?, 'stockable', true,"
+                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?, "
+                        + "'stockable', true,"
                         + " 'AVCO'::\"CostingMethod\", 0, 0, now())")
                 .params(id, demoOrg, "PA-" + suffix(), "Cement " + suffix()).update();
         return id;
     }
 
-    Map<String, Object> agreement(String partner, String product, int price, int minQuantity, LocalDate from, LocalDate to) {
+    Map<String, Object> agreement(String partner, String product, int price, int minQuantity, LocalDate from,
+            LocalDate to) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("partnerId", partner);
         m.put("productId", product);
@@ -73,9 +76,11 @@ class PriceAgreementIT extends ApiTestSupport {
         assertThat(clash.status()).isEqualTo(409);
 
         ok(200, "PATCH", "/procurement/price-agreements/" + id, Map.of("validTo", today.minusDays(1).toString()));
-        JsonNode second = ok(200, "POST", "/procurement/price-agreements", agreement(partner, product, 90, 0, today, null));
+        JsonNode second = ok(200, "POST", "/procurement/price-agreements", agreement(partner, product, 90, 0, today,
+                null));
         assertThat(second.get("state").asString()).isEqualTo("active");
-        assertThat(ok(200, "GET", "/procurement/price-agreements/" + id, null).get("state").asString()).isEqualTo("expired");
+        assertThat(ok(200, "GET", "/procurement/price-agreements/" + id,
+                null).get("state").asString()).isEqualTo("expired");
 
         JsonNode expired = ok(200, "GET", "/procurement/price-agreements?status=expired&partnerId=" + partner, null);
         assertThat(expired.get("data")).hasSize(1);
@@ -86,7 +91,8 @@ class PriceAgreementIT extends ApiTestSupport {
     @DisplayName("validTo before validFrom, an unknown supplier and changes to a cancelled agreement are refused")
     void validation() {
         String product = product();
-        assertThat(as("POST", "/procurement/price-agreements", agreement(supplier(), product, 1, 0, today, today.minusDays(1)))
+        assertThat(as("POST", "/procurement/price-agreements", agreement(supplier(), product, 1, 0, today,
+                today.minusDays(1)))
                 .status()).isEqualTo(400);
         assertThat(as("POST", "/procurement/price-agreements",
                 agreement(UUID.randomUUID().toString(), product, 1, 0, today, null)).status()).isEqualTo(404);
@@ -107,12 +113,15 @@ class PriceAgreementIT extends ApiTestSupport {
                 agreement(partner, product, 80, 50, today.minusDays(5), null)).get("id").asString();
         String path = "/procurement/price-agreements/lookup?partnerId=" + partner + "&productId=" + product;
 
-        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=10", null).get("agreement").get("unitPrice").asString()))
+        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=10",
+                null).get("agreement").get("unitPrice").asString()))
                 .isEqualByComparingTo("100");
-        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=50", null).get("agreement").get("unitPrice").asString()))
+        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=50",
+                null).get("agreement").get("unitPrice").asString()))
                 .isEqualByComparingTo("80");
         ok(200, "POST", "/procurement/price-agreements/" + volume + "/cancel", null);
-        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=50", null).get("agreement").get("unitPrice").asString()))
+        assertThat(new BigDecimal(ok(200, "GET", path + "&quantity=50",
+                null).get("agreement").get("unitPrice").asString()))
                 .isEqualByComparingTo("100");
         assertThat(ok(200, "GET", path + "&date=2001-01-01", null).get("agreement").isNull()).isTrue();
     }
@@ -136,7 +145,8 @@ class PriceAgreementIT extends ApiTestSupport {
         // (10*110 + 30*90) / 40
         assertThat(new BigDecimal(summary.get("averagePrice").asString())).isEqualByComparingTo("95");
 
-        JsonNode mine = ok(200, "GET", "/procurement/reports/price-history?productId=" + product + "&partnerId=" + partner,
+        JsonNode mine = ok(200, "GET", "/procurement/reports/price-history?productId=" + product + "&partnerId="
+                + partner,
                 null);
         JsonNode row = mine.get("rows").get(0);
         assertThat(new BigDecimal(row.get("agreedPrice").asString())).isEqualByComparingTo("100");
@@ -154,10 +164,12 @@ class PriceAgreementIT extends ApiTestSupport {
     @Test
     @DisplayName("tenant isolation and authorization")
     void isolation() {
-        String id = ok(200, "POST", "/procurement/price-agreements", agreement(supplier(), product(), 1, 0, today, null))
+        String id = ok(200, "POST", "/procurement/price-agreements", agreement(supplier(), product(), 1, 0, today,
+                null))
                 .get("id").asString();
         assertThat(call("GET", "/procurement/price-agreements/" + id, null, otherToken).status()).isEqualTo(404);
-        assertThat(call("POST", "/procurement/price-agreements/" + id + "/cancel", null, otherToken).status()).isEqualTo(404);
+        assertThat(call("POST", "/procurement/price-agreements/" + id + "/cancel", null,
+                otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/procurement/price-agreements", null, otherToken).body().get("data")).isEmpty();
         assertThat(assertAuthorizationMatrix(PriceAgreementController.class)).isEqualTo(7);
     }

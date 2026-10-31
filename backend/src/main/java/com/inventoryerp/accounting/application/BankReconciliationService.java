@@ -112,7 +112,8 @@ public class BankReconciliationService {
             Instant at = (Instant) line.get("postedAt");
             String candidate = signed
                     ? signedCandidate(organizationId, bankAccountId, SqlRows.dec(line, "amount"), at, tolMs)
-                    : jdbc.sql("SELECT id FROM \"Payment\" WHERE \"organizationId\" = ? AND \"accountId\" = ? AND status = 'posted'"
+                    : jdbc.sql("SELECT id FROM \"Payment\" WHERE \"organizationId\" = ? AND \"accountId\" = ? AND "
+                    + "status = 'posted'"
                             + " AND \"paymentDate\" >= ? AND \"paymentDate\" <= ? AND amount = ? LIMIT 1")
                     .params(organizationId, bankAccountId, FiscalPeriodControl.ts(at.minus(Duration.ofMillis(tolMs))),
                             FiscalPeriodControl.ts(at.plus(Duration.ofMillis(tolMs))), SqlRows.dec(line, "amount"))
@@ -142,7 +143,8 @@ public class BankReconciliationService {
     /** Closest unmatched payment of the line's size and direction within the tolerance. */
     private String signedCandidate(String org, String bankAccountId, BigDecimal amount, Instant at, long tolMs) {
         return jdbc.sql("SELECT p.id FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
-                        + " AND p.status = 'posted' AND p.direction::text = ? AND p.amount = ? AND p.\"paymentDate\" >= ?"
+                        + " AND p.status = 'posted' AND p.direction::text = ? AND p.amount = ? AND p.\"paymentDate\" "
+                        + ">= ?"
                         + " AND p.\"paymentDate\" <= ? AND NOT EXISTS (SELECT 1 FROM \"BankStatementLine\" b WHERE"
                         + " b.\"organizationId\" = p.\"organizationId\" AND b.\"matchedPaymentId\" = p.id)"
                         + " ORDER BY abs(extract(epoch FROM p.\"paymentDate\" - ?::timestamp)), p.id LIMIT 1")
@@ -175,7 +177,8 @@ public class BankReconciliationService {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT l.id, l.\"postedAt\", l.\"externalRef\","
                 + " l.description, l.amount, l.\"currencyCode\", l.status, l.note, l.\"matchedPaymentId\","
                 + " p.\"paymentNumber\" AS \"matchedPaymentNumber\" FROM \"BankStatementLine\" l"
-                + " LEFT JOIN \"Payment\" p ON p.id = l.\"matchedPaymentId\" AND p.\"organizationId\" = l.\"organizationId\""
+                + " LEFT JOIN \"Payment\" p ON p.id = l.\"matchedPaymentId\" AND p.\"organizationId\" = "
+                + "l.\"organizationId\""
                 + where + " ORDER BY l.\"postedAt\" DESC, l.id LIMIT " + pageSize + " OFFSET " + (page - 1) * pageSize)
                 .params(params));
         rows.forEach(r -> r.put("amount", JsNumbers.dec(SqlRows.dec(r, "amount"))));
@@ -213,10 +216,12 @@ public class BankReconciliationService {
                 + " count(*) FILTER (WHERE status = 'unmatched') AS \"unmatchedCount\","
                 + " count(*) FILTER (WHERE status = 'excluded') AS \"excludedCount\" FROM \"BankStatementLine\""
                 + " WHERE \"organizationId\" = ? AND \"bankAccountId\" = ?").params(org, bankAccountId));
-        Map<String, Object> open = SqlRows.one(jdbc.sql("SELECT COALESCE(SUM(p.amount) FILTER (WHERE p.direction::text ="
+        Map<String, Object> open = SqlRows.one(jdbc.sql("SELECT COALESCE(SUM(p.amount) FILTER (WHERE "
+                + "p.direction::text ="
                 + " 'inbound'), 0) AS inbound, COALESCE(SUM(p.amount) FILTER (WHERE p.direction::text = 'outbound'), 0)"
                 + " AS outbound, count(*) AS payments FROM \"Payment\" p WHERE p.\"organizationId\" = ?"
-                + " AND p.\"accountId\" = ? AND p.status = 'posted' AND NOT EXISTS (SELECT 1 FROM \"BankStatementLine\" b"
+                + " AND p.\"accountId\" = ? AND p.status = 'posted' AND NOT EXISTS (SELECT 1 FROM "
+                + "\"BankStatementLine\" b"
                 + " WHERE b.\"organizationId\" = p.\"organizationId\" AND b.\"matchedPaymentId\" = p.id)")
                 .params(org, bankAccountId));
         return body("bookBalance", JsNumbers.dec(book), "statementTotal", JsNumbers.dec(SqlRows.dec(lines, "total")),
@@ -235,11 +240,14 @@ public class BankReconciliationService {
         Map<String, Object> line = requireLine(lineId, org, false);
         BigDecimal amount = SqlRows.dec(line, "amount");
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT p.id, p.\"paymentNumber\", p.\"paymentDate\","
-                + " p.amount, p.direction::text AS direction, p.reference, pa.name AS \"partnerName\" FROM \"Payment\" p"
+                + " p.amount, p.direction::text AS direction, p.reference, pa.name AS \"partnerName\" FROM "
+                + "\"Payment\" p"
                 + " LEFT JOIN \"Partner\" pa ON pa.id = p.\"partnerId\" WHERE p.\"organizationId\" = ?"
                 + " AND p.\"accountId\" = ? AND p.status = 'posted' AND p.direction::text = ? AND p.amount = ?"
-                + " AND NOT EXISTS (SELECT 1 FROM \"BankStatementLine\" b WHERE b.\"organizationId\" = p.\"organizationId\""
-                + " AND b.\"matchedPaymentId\" = p.id) ORDER BY abs(extract(epoch FROM p.\"paymentDate\" - ?::timestamp)),"
+                + " AND NOT EXISTS (SELECT 1 FROM \"BankStatementLine\" b WHERE b.\"organizationId\" = "
+                + "p.\"organizationId\""
+                + " AND b.\"matchedPaymentId\" = p.id) ORDER BY abs(extract(epoch FROM p.\"paymentDate\" - "
+                + "?::timestamp)),"
                 + " p.id LIMIT 20")
                 .params(org, line.get("bankAccountId"), amount.signum() < 0 ? "outbound" : "inbound", amount.abs(),
                         FiscalPeriodControl.ts((Instant) line.get("postedAt"))));
@@ -255,7 +263,8 @@ public class BankReconciliationService {
         if (!"unmatched".equals(line.get("status"))) {
             throw ApiException.badRequest("Only an unmatched line can be matched");
         }
-        Map<String, Object> payment = SqlRows.one(jdbc.sql("SELECT id, amount, direction::text AS direction, status::text"
+        Map<String, Object> payment = SqlRows.one(jdbc.sql("SELECT id, amount, direction::text AS direction, "
+                + "status::text"
                 + " AS status, \"accountId\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(paymentId, org));
         if (payment == null) {
@@ -266,7 +275,8 @@ public class BankReconciliationService {
         if (!"posted".equals(payment.get("status")) || !line.get("bankAccountId").equals(payment.get("accountId"))) {
             throw ApiException.badRequest("Payment is not a posted payment of this account");
         }
-        if (!direction.equals(payment.get("direction")) || SqlRows.dec(payment, "amount").compareTo(amount.abs()) != 0) {
+        if (!direction.equals(payment.get("direction")) || SqlRows.dec(payment,
+                "amount").compareTo(amount.abs()) != 0) {
             throw ApiException.badRequest("Payment amount and direction must equal the statement line");
         }
         long taken = jdbc.sql("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ?"
@@ -274,9 +284,11 @@ public class BankReconciliationService {
         if (taken > 0) {
             throw ApiException.conflict("Payment is already matched to another statement line");
         }
-        jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRunId\" = NULL,"
+        jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRunId\" = "
+                + "NULL,"
                 + " note = NULL WHERE id = ? AND \"organizationId\" = ?").params(paymentId, lineId, org).update();
-        audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, body("matchedPaymentId", paymentId)));
+        audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, body("matchedPaymentId",
+                paymentId)));
         return body("id", lineId, "status", "matched", "matchedPaymentId", paymentId);
     }
 
@@ -288,14 +300,17 @@ public class BankReconciliationService {
         if (!"unmatched".equals(line.get("status"))) {
             throw ApiException.badRequest("Only an unmatched line can be excluded");
         }
-        jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'excluded', note = ? WHERE id = ? AND \"organizationId\" = ?")
+        jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'excluded', note = ? WHERE id = ? AND \"organizationId\" "
+                + "= ?")
                 .params(note, lineId, org).update();
-        audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, body("status", "excluded", "note", note)));
+        audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, body("status", "excluded", "note",
+                note)));
         return body("id", lineId, "status", "excluded", "note", note);
     }
 
     private Map<String, Object> requireLine(String lineId, String org, boolean lock) {
-        Map<String, Object> line = SqlRows.one(jdbc.sql("SELECT id, \"bankAccountId\", \"postedAt\", amount, status FROM"
+        Map<String, Object> line = SqlRows.one(jdbc.sql("SELECT id, \"bankAccountId\", \"postedAt\", amount, status "
+                + "FROM"
                 + " \"BankStatementLine\" WHERE id = ? AND \"organizationId\" = ?" + (lock ? " FOR UPDATE" : ""))
                 .params(lineId, org));
         if (line == null) {
@@ -307,7 +322,8 @@ public class BankReconciliationService {
     /** Manually unmatch a single line (Nest throws a plain Error → 500 when the line is unknown). */
     @Transactional
     public Map<String, Object> unmatch(String lineId) {
-        int n = jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'unmatched', \"matchedPaymentId\" = NULL, \"matchedRunId\" = NULL, note = NULL"
+        int n = jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'unmatched', \"matchedPaymentId\" = NULL, "
+                + "\"matchedRunId\" = NULL, note = NULL"
                 + " WHERE id = ? AND \"organizationId\" = ?").params(lineId, TenantContext.organizationId()).update();
         if (n == 0) {
             throw new IllegalStateException("Line not found");

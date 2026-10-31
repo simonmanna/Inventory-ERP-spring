@@ -88,7 +88,8 @@ public class BankReconciliationController {
     @GetMapping("/lines")
     @RequirePermissions(Permissions.BANK_ACCOUNT__READ)
     public PageResult<Map<String, Object>> lines(@RequestParam Map<String, String> query) {
-        return svc.lines(query.get("bankAccountId"), query.get("status"), QueryParams.page(query, "bankAccountId", "status"));
+        return svc.lines(query.get("bankAccountId"), query.get("status"), QueryParams.page(query, "bankAccountId",
+                "status"));
     }
 
     @GetMapping("/runs")

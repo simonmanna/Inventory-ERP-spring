@@ -36,7 +36,8 @@ class TaxPackIT extends ApiTestSupport {
         String account = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '2200'")
                 .param(demoOrg).query(String.class).single();
         String tax = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Tax\" (id, \"organizationId\", name, code, rate, \"accountId\", \"vatCategory\", \"updatedAt\")"
+        jdbc.sql("INSERT INTO \"Tax\" (id, \"organizationId\", name, code, rate, \"accountId\", \"vatCategory\", "
+                + "\"updatedAt\")"
                         + " VALUES (?, ?, ?, ?, 18, ?, 'standard', now())")
                 .params(tax, demoOrg, "Pack VAT " + tax, "P" + tax.substring(0, 6), account).update();
         String customer = UUID.randomUUID().toString();
@@ -45,7 +46,8 @@ class TaxPackIT extends ApiTestSupport {
                 .params(customer, demoOrg, "C-" + customer.substring(0, 8), "Pack Customer " + customer).update();
         String product = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
-                        + " \"costPrice\", \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, 'Haulage', 'service', 100, 0,"
+                        + " \"costPrice\", \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, 'Haulage', 'service', "
+                        + "100, 0,"
                         + " false, now())")
                 .params(product, demoOrg, "PK-" + product.substring(0, 8)).update();
         Res draft = as("POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",

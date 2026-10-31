@@ -44,7 +44,8 @@ public class PeriodCloseChecklistService {
     }
 
     private Map<String, Object> period(String periodId, String org) {
-        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT id, name, status::text AS status, \"startDate\", \"endDate\""
+        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT id, name, status::text AS status, \"startDate\", "
+                + "\"endDate\""
                 + " FROM \"FiscalPeriod\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                 .params(periodId, org));
         if (p == null) {
@@ -80,34 +81,43 @@ public class PeriodCloseChecklistService {
                         + " AND status::text <> 'reconciled'", org, end)));
         checks.add(check("stock_posting", "Stock postings finished", true,
                 count("SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND status::text IN"
-                        + " ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, start, end)));
+                        + " ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org,
+                        start, end)));
         checks.add(check("inventory_mutations", "No pending stock documents", true, mutations));
         checks.add(check("inventory_exceptions", "No open inventory exceptions", true,
-                count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = 'open'"
+                count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = "
+                        + "'open'"
                         + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, start, end)));
         checks.add(check("draft_journals", "No draft journal entries", false,
                 count("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
                         + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, start, end)));
-        checks.add(check("draft_invoices", "No draft sales invoices", false, draftDocuments("sales_invoice", org, start, end)));
-        checks.add(check("draft_bills", "No draft vendor bills", false, draftDocuments("vendor_bill", org, start, end)));
+        checks.add(check("draft_invoices", "No draft sales invoices", false, draftDocuments("sales_invoice", org, start,
+                end)));
+        checks.add(check("draft_bills", "No draft vendor bills", false, draftDocuments("vendor_bill", org, start,
+                end)));
         checks.add(check("draft_receipts", "No draft goods receipts", false,
-                count("SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
-                        + " AND \"deletedAt\" IS NULL AND \"receivedAt\" >= ? AND \"receivedAt\" <= ?", org, start, end)));
+                count("SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ? AND status::text = "
+                        + "'draft'"
+                        + " AND \"deletedAt\" IS NULL AND \"receivedAt\" >= ? AND \"receivedAt\" <= ?", org, start,
+                        end)));
         checks.add(check("unmatched_bank_lines", "No unmatched bank statement lines", false,
                 count("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ? AND status = 'unmatched'"
                         + " AND \"postedAt\" >= ? AND \"postedAt\" <= ?", org, start, end)));
 
         Map<String, Map<String, Object>> signed = new HashMap<>();
         for (Map<String, Object> s : SqlRows.list(jdbc.sql("SELECT s.key, s.note, s.\"signedBy\", s.\"signedAt\","
-                + " u.\"firstName\" AS \"signedByName\" FROM \"PeriodCloseSignOff\" s LEFT JOIN \"User\" u ON u.id = s.\"signedBy\""
+                + " u.\"firstName\" AS \"signedByName\" FROM \"PeriodCloseSignOff\" s LEFT JOIN \"User\" u ON u.id = "
+                + "s.\"signedBy\""
                 + " WHERE s.\"organizationId\" = ? AND s.\"periodId\" = ?").params(org, periodId))) {
             signed.put((String) s.get("key"), s);
         }
         List<Map<String, Object>> signOffs = new ArrayList<>();
         SIGN_OFFS.forEach((key, label) -> {
             Map<String, Object> s = signed.get(key);
-            signOffs.add(Obj.of("key", key, "label", label, "signed", s != null, "note", s == null ? null : s.get("note"),
-                    "signedBy", s == null ? null : s.get("signedBy"), "signedByName", s == null ? null : s.get("signedByName"),
+            signOffs.add(Obj.of("key", key, "label", label, "signed", s != null, "note",
+                    s == null ? null : s.get("note"),
+                    "signedBy", s == null ? null : s.get("signedBy"), "signedByName",
+                            s == null ? null : s.get("signedByName"),
                     "signedAt", s == null ? null : s.get("signedAt")));
         });
         boolean gatesPass = checks.stream().allMatch(c -> !Boolean.TRUE.equals(c.get("blocking"))
@@ -136,9 +146,12 @@ public class PeriodCloseChecklistService {
             throw ApiException.badRequest("Only an open period's checklist can be changed");
         }
         if (signed) {
-            jdbc.sql("INSERT INTO \"PeriodCloseSignOff\" (id, \"organizationId\", \"periodId\", key, note, \"signedBy\")"
-                            + " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (\"organizationId\", \"periodId\", key) DO UPDATE SET"
-                            + " note = EXCLUDED.note, \"signedBy\" = EXCLUDED.\"signedBy\", \"signedAt\" = CURRENT_TIMESTAMP")
+            jdbc.sql("INSERT INTO \"PeriodCloseSignOff\" (id, \"organizationId\", \"periodId\", key, note, "
+                    + "\"signedBy\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (\"organizationId\", \"periodId\", key) DO "
+                            + "UPDATE SET"
+                            + " note = EXCLUDED.note, \"signedBy\" = EXCLUDED.\"signedBy\", \"signedAt\" = "
+                            + "CURRENT_TIMESTAMP")
                     .params(UUID.randomUUID().toString(), org, periodId, key, note, TenantContext.userId()).update();
         } else {
             jdbc.sql("DELETE FROM \"PeriodCloseSignOff\" WHERE \"organizationId\" = ? AND \"periodId\" = ? AND key = ?")

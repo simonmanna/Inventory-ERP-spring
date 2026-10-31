@@ -86,7 +86,8 @@ class RfqIT extends ApiTestSupport {
     @Test
     @DisplayName("life cycle: a draft edits, send needs a supplier, a sent RFQ is frozen, cancel ends it")
     void lifeCycle() {
-        JsonNode noSuppliers = ok(200, "POST", "/procurement/rfqs", Map.of("title", "Empty", "currencyCode", "UGX", "lines",
+        JsonNode noSuppliers = ok(200, "POST", "/procurement/rfqs", Map.of("title", "Empty", "currencyCode", "UGX",
+                "lines",
                 List.of(Map.of("description", "Fuel filter", "quantity", 1))));
         assertThat(noSuppliers.get("rfqNumber").asString()).startsWith("RFQ-");
         assertThat(noSuppliers.get("status").asString()).isEqualTo("draft");
@@ -98,7 +99,8 @@ class RfqIT extends ApiTestSupport {
         assertThat(edited.get("title").asString()).isEqualTo("Filters");
         assertThat(edited.get("suppliers")).hasSize(1);
 
-        assertThat(ok(200, "POST", "/procurement/rfqs/" + id + "/send", null).get("status").asString()).isEqualTo("sent");
+        assertThat(ok(200, "POST", "/procurement/rfqs/" + id + "/send",
+                null).get("status").asString()).isEqualTo("sent");
         assertThat(as("PATCH", "/procurement/rfqs/" + id, Map.of("title", "Late", "currencyCode", "UGX", "lines",
                 List.of(Map.of("description", "X", "quantity", 1)))).status()).isEqualTo(400);
         assertThat(ok(200, "POST", "/procurement/rfqs/" + id + "/cancel", null).get("status").asString())
@@ -129,7 +131,8 @@ class RfqIT extends ApiTestSupport {
         }
         assertThat(cmp.get("recommendedQuotationId").asString()).isEqualTo(cheapQuote);
         for (JsonNode cell : cmp.get("lines").get(0).get("quotes")) {
-            assertThat(cell.get("cheapest").asBoolean()).isEqualTo(cheapQuote.equals(cell.get("quotationId").asString()));
+            assertThat(cell.get("cheapest").asBoolean())
+                    .isEqualTo(cheapQuote.equals(cell.get("quotationId").asString()));
         }
         assertThat(one.get("quotations")).hasSize(1);
 
@@ -140,7 +143,8 @@ class RfqIT extends ApiTestSupport {
         assertThat(partial.get("recommendedQuotationId").asString()).isEqualTo(dearQuote);
 
         quote(rfq, dear, 100, 50, Map.of("validUntil", LocalDate.now().minusDays(1).toString()));
-        assertThat(ok(200, "GET", "/procurement/rfqs/" + id + "/comparison", null).get("recommendedQuotationId").isNull())
+        assertThat(ok(200, "GET", "/procurement/rfqs/" + id + "/comparison",
+                null).get("recommendedQuotationId").isNull())
                 .isTrue();
     }
 
@@ -150,11 +154,13 @@ class RfqIT extends ApiTestSupport {
         JsonNode rfq = sent();
         String path = "/procurement/rfqs/" + rfq.get("id").asString() + "/quotations";
         String line = rfq.get("lines").get(0).get("id").asString();
-        assertThat(as("POST", path, Map.of("partnerId", uninvited, "lines", List.of(Map.of("rfqLineId", line, "unitPrice",
+        assertThat(as("POST", path, Map.of("partnerId", uninvited, "lines", List.of(Map.of("rfqLineId", line,
+                "unitPrice",
                 5)))).status()).isEqualTo(400);
         assertThat(as("POST", path, Map.of("partnerId", cheap, "lines", List.of(Map.of("rfqLineId",
                 UUID.randomUUID().toString(), "unitPrice", 5)))).status()).isEqualTo(400);
-        assertThat(as("POST", path, Map.of("partnerId", cheap, "lines", List.of(Map.of("rfqLineId", line, "unitPrice", 5),
+        assertThat(as("POST", path, Map.of("partnerId", cheap, "lines", List.of(Map.of("rfqLineId", line, "unitPrice",
+                5),
                 Map.of("rfqLineId", line, "unitPrice", 6)))).status()).isEqualTo(400);
         assertThat(as("POST", "/procurement/rfqs/" + draft().get("id").asString() + "/quotations", Map.of("partnerId",
                 cheap, "lines", List.of(Map.of("rfqLineId", line, "unitPrice", 5)))).status()).isEqualTo(400);
@@ -168,7 +174,8 @@ class RfqIT extends ApiTestSupport {
         JsonNode quoted = quote(rfq, cheap, 120, 90, Map.of("leadTimeDays", 7, "paymentTerms", "Net 30"));
         String quotation = quotationOf(quoted, cheap);
 
-        Res noKey = as("POST", "/procurement/rfqs/" + id + "/award", Map.of("quotationId", quotation, "warehouseId", warehouse));
+        Res noKey = as("POST", "/procurement/rfqs/" + id + "/award", Map.of("quotationId", quotation, "warehouseId",
+                warehouse));
         assertThat(noKey.status()).isEqualTo(400);
 
         Res awarded = award(id, quotation);
