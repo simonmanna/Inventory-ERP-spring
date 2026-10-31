@@ -10750,5 +10750,8 @@
   "Owner changed": "Nnannyini akyusiddwa",
   "Resolve": "Gonjoola",
   "Service request": "Okusaba obuweereza",
-  "The priority sets the due time; you can change it on the case.": "Ekikulembera kiteekawo obudde; osobola okubukyusa ku nsonga."
+  "The priority sets the due time; you can change it on the case.": "Ekikulembera kiteekawo obudde; osobola okubukyusa ku nsonga.",
+  "Save segment": "Tereka ekitundu",
+  "Segment name": "Erinnya ly'ekitundu",
+  "Segments": "Ebitundu by'abaguzi"
 }

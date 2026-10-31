@@ -393,3 +393,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - [ ] On the case: add a note, assign an owner (they get a notification), start, resolve with a resolution, close.
 - [ ] `/fleet/delivery-discrepancies` → Open case: a high-priority delivery complaint opens with the customer and quantities; the button again opens the same case.
 - [ ] Approve the discrepancy: the case timeline shows the decision and any credit note; the case stays open.
+
+## Phase 4 CRM-2 — customer data tests and segments (built, not run)
+
+- [ ] Run `CrmCustomerDataIT` (contacts, reminder job, saved filters, segments, product categories).
+- [ ] `/crm/customers`: filter by category, name a segment, save it, clear the filters, pick it from Segments.

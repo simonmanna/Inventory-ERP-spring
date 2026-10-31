@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Building2, CalendarPlus, FileText, Plus, Users } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTablePagination, ListPageHeader, SearchInput } from '@/components/list';
@@ -10,7 +11,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { date, money, relativeTime, statusLabel } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import { useCustomer, useCustomers } from '@/features/crm/suite-api';
+import { crmApi, useCategoryOptions, useCrmMutation, useCustomer, useCustomers, useSavedFilters } from '@/features/crm/suite-api';
 import { DealStatusPill, KpiCard, QuoteStatusPill, typeLabel } from './crm-ui';
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 
@@ -19,7 +20,23 @@ export function CustomersPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const set = (k: string, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); if (k !== 'page') n.delete('page'); return n; }, { replace: true });
-  const { data, isLoading } = useCustomers({ q: params.get('q') || undefined, sort: params.get('sort') || undefined, creditHold: params.get('creditHold') || undefined, page: Number(params.get('page') ?? 1), pageSize: 50 });
+  const { data, isLoading } = useCustomers({ q: params.get('q') || undefined, sort: params.get('sort') || undefined, creditHold: params.get('creditHold') || undefined, categoryId: params.get('categoryId') || undefined, page: Number(params.get('page') ?? 1), pageSize: 50 });
+  const { data: categories } = useCategoryOptions('partner');
+  const { data: segments } = useSavedFilters('customers');
+  const saveSegment = useCrmMutation(crmApi.saveFilter);
+  const [segmentName, setSegmentName] = useState('');
+  const applySegment = (id: string) => {
+    const segment = segments?.find((s) => s.id === id);
+    if (segment) setParams(new URLSearchParams(segment.filters), { replace: true });
+  };
+  const currentFilters = () => {
+    const out: Record<string, string> = {};
+    for (const k of ['q', 'sort', 'creditHold', 'categoryId']) {
+      const v = params.get(k);
+      if (v) out[k] = v;
+    }
+    return out;
+  };
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Users} title={tx('Customers')} description={tx('Customers and contacts with their pipeline, revenue and open receivables.')}
@@ -31,6 +48,19 @@ export function CustomersPage() {
           <option value="receivable">{tx('Open receivables')}</option><option value="lastActivity">{tx('Last activity')}</option>
         </select>
         <label className="flex items-center gap-1.5 text-sm"><input type="checkbox" checked={params.get('creditHold') === 'true'} onChange={(e) => set('creditHold', e.target.checked ? 'true' : '')} />{tx('On credit hold')}</label>
+        <select className="h-9 rounded-md border bg-background px-2 text-sm" value={params.get('categoryId') ?? ''} onChange={(e) => set('categoryId', e.target.value)}>
+          <option value="">{tx('All categories')}</option>
+          {(categories ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select className="h-9 rounded-md border bg-background px-2 text-sm" value="" onChange={(e) => applySegment(e.target.value)}>
+          <option value="">{tx('Segments')}</option>
+          {(segments ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <Input className="h-9 w-40" placeholder={tx('Segment name')} value={segmentName} onChange={(e) => setSegmentName(e.target.value)} />
+        <Button size="sm" variant="outline" disabled={!segmentName.trim() || saveSegment.isPending}
+          onClick={() => saveSegment.mutate({ scope: 'customers', name: segmentName.trim(), filters: currentFilters(), shared: true }, { onSuccess: () => setSegmentName('') })}>
+          {tx('Save segment')}
+        </Button>
       </div>
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
         <table className="w-full min-w-[900px] text-sm">

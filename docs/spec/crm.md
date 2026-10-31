@@ -93,3 +93,8 @@ activities, customers, price rules, reports, configuration).
 (`CrmCase`, `CrmCaseEvent`), permissions `crm:case:read`, `crm:case:write`. Status: open → in_progress → resolved → closed,
 cancelled with a reason, resolved can reopen. Screens: `/crm/cases`, `/crm/cases/:id`; "Open case" on
 `/fleet/delivery-discrepancies`.
+
+## CRM-2 tests and segments (built, unverified)
+
+Tests in `CrmCustomerDataIT`. Segments are `CrmSavedFilter` rows with scope `customers` (V95); `/crm/customers` already
+filters by category. `CrmReminderJob` is exercised directly, since scheduled jobs may be off in tests.

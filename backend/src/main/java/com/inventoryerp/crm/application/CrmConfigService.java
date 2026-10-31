@@ -35,7 +35,8 @@ public class CrmConfigService {
     static final Set<String> LEGACY_STAGES = Set.of("lead", "qualified", "proposal", "negotiation", "won");
     static final Set<String> COLORS = Set.of("slate", "sky", "blue", "indigo", "violet", "pink", "rose", "orange",
             "amber", "lime", "emerald", "teal");
-    static final Set<String> FILTER_SCOPES = Set.of("pipeline", "leads", "quotations", "activities", "report");
+    static final Set<String> FILTER_SCOPES = Set.of("pipeline", "leads", "quotations", "activities", "report",
+            "customers");
 
     private final CrmDb db;
     private final AuditService audit;
@@ -458,7 +459,8 @@ public class CrmConfigService {
     public Map<String, Object> saveFilter(Map<String, Object> in) {
         String scope = str(in.get("scope"));
         if (scope == null || !FILTER_SCOPES.contains(scope)) {
-            throw ApiException.badRequest("scope must be one of: pipeline, leads, quotations, activities, report");
+            throw ApiException.badRequest("scope must be one of: pipeline, leads, quotations, activities, report,"
+                    + " customers");
         }
         Object filters = in.get("filters") == null ? Map.of() : in.get("filters");
         if (Boolean.TRUE.equals(in.get("isDefault"))) {

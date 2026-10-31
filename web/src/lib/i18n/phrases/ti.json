@@ -10750,5 +10750,8 @@
   "Owner changed": "ዋና ተቐይሩ",
   "Resolve": "ፍታሕ",
   "Service request": "ሕቶ ኣገልግሎት",
-  "The priority sets the due time; you can change it on the case.": "ቀዳምነት ግዜ ገደብ ይውስን፤ ኣብቲ ጉዳይ ክትቅይሮ ትኽእል ኢኻ።"
+  "The priority sets the due time; you can change it on the case.": "ቀዳምነት ግዜ ገደብ ይውስን፤ ኣብቲ ጉዳይ ክትቅይሮ ትኽእል ኢኻ።",
+  "Save segment": "ክፍሊ ዓቅብ",
+  "Segment name": "ስም ክፍሊ",
+  "Segments": "ክፍልታት ዓማዊል"
 }

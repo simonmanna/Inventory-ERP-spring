@@ -10750,5 +10750,8 @@
   "Owner changed": "Mhusika amebadilishwa",
   "Resolve": "Suluhisha",
   "Service request": "Ombi la huduma",
-  "The priority sets the due time; you can change it on the case.": "Kipaumbele huweka muda wa mwisho; unaweza kuubadilisha kwenye kesi."
+  "The priority sets the due time; you can change it on the case.": "Kipaumbele huweka muda wa mwisho; unaweza kuubadilisha kwenye kesi.",
+  "Save segment": "Hifadhi sehemu",
+  "Segment name": "Jina la sehemu",
+  "Segments": "Sehemu za wateja"
 }
