@@ -361,3 +361,7 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - Filter by status and supplier; search by number. A draft of a PO-linked bill with a mismatch shows the hold banner.
   - Pay supplier from the bill (bank + named account), then `/ap-aging` falls by that amount; as-of date changes buckets.
   - Void a posted, unpaid bill: the journal entry reverses.
+- PROC-4 Payments and suppliers
+  - `/payment-schedule`: a posted bill due in 3 days shows under Next 7 days; Plan it for +20 days and it moves to Next 30 days; Hold moves it out of the total.
+  - `/procurement/supplier-performance`: receive one PO on time and one late, check on-time 50 %; a failed incoming lot lowers Quality pass.
+  - `/reports` → Purchases tab: orders in the date range match `/procurement/purchase-orders`.

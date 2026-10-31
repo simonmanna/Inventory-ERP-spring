@@ -120,6 +120,7 @@ import { VendorBillsPage } from '@/pages/purchasing/vendor-bills';
 import { VendorBillEditPage } from '@/pages/purchasing/vendor-bill-edit';
 import { VendorBillDetailPage } from '@/pages/purchasing/vendor-bill-detail';
 import { ApAgingPage } from '@/pages/purchasing/ap-aging';
+import { PaymentSchedulePage } from '@/pages/purchasing/payment-schedule';
 import { JournalsPage } from '@/pages/accounting/journals';
 import { JournalDetailPage } from '@/pages/accounting/JournalDetailPage';
 import { JournalEditPage } from '@/pages/accounting/JournalEditPage';
@@ -146,6 +147,7 @@ import GoodsReceiptDetailPage from '@/pages/procurement/goods-receipt-detail';
 import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
 import { DebitNotesPage } from '@/pages/procurement/debit-notes';
 import { DebitNoteCreatePage } from '@/pages/procurement/debit-note-create';
+import { SupplierPerformancePage } from '@/pages/procurement/supplier-performance';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -297,6 +299,7 @@ export function App() {
           <Route path="/vendor-bills/new" element={<RequirePermission permission={PERMISSIONS.expense.create}><VendorBillEditPage /></RequirePermission>} />
           <Route path="/vendor-bills/:id" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillDetailPage /></RequirePermission>} />
           <Route path="/vendor-bills/:id/edit" element={<RequirePermission permission={PERMISSIONS.expense.update}><VendorBillEditPage /></RequirePermission>} />
+          <Route path="/payment-schedule" element={<RequirePermission permission={PERMISSIONS.expense.read}><PaymentSchedulePage /></RequirePermission>} />
           <Route path="/ap-aging" element={<RequirePermission permission={PERMISSIONS.report.ar}><ApAgingPage /></RequirePermission>} />
           <Route path="/ar-aging" element={<RequireReport reportId="sales.ar-aging"><ArAgingPage /></RequireReport>} />
           <Route path="/accounts" element={<ChartOfAccountsPage />} />
@@ -475,6 +478,7 @@ export function App() {
           <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
           <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
           <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
+          <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
           <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
           <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />
           <Route path="/tasks" element={<TasksPage />} />

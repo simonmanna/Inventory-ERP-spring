@@ -534,6 +534,53 @@ export function useApAging(asOf?: string) {
   });
 }
 
+export interface PaymentScheduleRow {
+  documentId: string;
+  documentNumber: string;
+  partnerId: string;
+  partnerName: string | null;
+  reference: string | null;
+  issueDate: string;
+  dueDate: string | null;
+  amountResidual: string;
+  plannedDate: string | null;
+  plannedAmount: string | null;
+  onHold: boolean;
+  notes: string | null;
+  /** Planned date, else the due date. */
+  paymentDate: string;
+  scheduledAmount: string;
+  daysOverdue: number;
+  bucket: 'overdue' | 'next_7_days' | 'next_30_days' | 'later' | 'on_hold';
+}
+
+export interface PaymentSchedule {
+  asOf: string;
+  totals: { overdue: string; next7Days: string; next30Days: string; later: string; onHold: string; total: string };
+  rows: PaymentScheduleRow[];
+}
+
+export function usePaymentSchedule(params: { partnerId?: string; from?: string; to?: string }) {
+  return useQuery({
+    queryKey: ['payment-schedule', params],
+    queryFn: async () => (await api.get<PaymentSchedule>('/vendor-bills/payment-schedule', { params })).data,
+  });
+}
+
+export function usePlanPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...plan }: {
+      id: string;
+      plannedDate?: string;
+      plannedAmount?: number;
+      onHold: boolean;
+      notes?: string;
+    }) => (await api.put(`/vendor-bills/${id}/payment-schedule`, plan)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-schedule'] }),
+  });
+}
+
 export interface SupplierLedger {
   openingBalance: number;
   closingBalance: number;

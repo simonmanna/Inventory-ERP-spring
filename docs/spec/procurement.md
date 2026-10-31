@@ -161,3 +161,8 @@ FIFO lots across a shipment; idempotent replay; GRN reversal block; tenant isola
 two goods vendors, generated + linked supplier bills, supplier-scoped charge, paid-bill reversal guard; bill-mode
 validation and one bill per invoice). Web: Landed Costs, Import
 Shipments, Landed Cost Reports (incl. cost components) under Purchases.
+
+## Phase 4 additions (built, unverified)
+
+PROC-4: `GET /procurement/reports/supplier-performance?from&to&partnerId` (`purchase_order:read`), default the last 90 days.
+Screen `/procurement/supplier-performance`. Tests: `SupplierPerformanceIT`, `SupplierPerformanceServiceTest`. Nothing was compiled or run.

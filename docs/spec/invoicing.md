@@ -105,3 +105,8 @@ aging, AR reports, tenant isolation, authorization matrix = 30 routes), `TaxCalc
 FIN-2: `GET /vendor-bills` also takes `status` and `partnerId` (additive; other unknown parameters still answer 400).
 Screens: `/vendor-bills`, `/vendor-bills/new`, `/vendor-bills/:id`, `/vendor-bills/:id/edit`, `/ap-aging`.
 Test: `VendorBillListIT`. Nothing was compiled or run.
+
+## Phase 4 supplier payment schedule (built, unverified)
+
+PROC-4: `GET /vendor-bills/payment-schedule?partnerId&from&to` (`expense:read`), `PUT /vendor-bills/{id}/payment-schedule` (`expense:update`), table `SupplierPaymentSchedule` (V70). A plan moves no money.
+Screen `/payment-schedule`. Test: `SupplierPaymentScheduleIT`. Nothing was compiled or run.
