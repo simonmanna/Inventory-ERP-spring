@@ -134,3 +134,8 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | DRIVER-1 | Fuel logs from a phone | Always drafts; the office posts them | Let drivers post | Fuel logs screen |
 | 2026-10-30 | DRIVER-1 | Offline use | The shell opens offline; fuel logs, checks and POD need a connection (retries reuse the idempotency key). No offline write queue | Queue writes on the phone | — |
 | 2026-10-30 | INT-2 | Telematics vendor | Not chosen: a `rest` adapter with our own small JSON contract, default provider stays `mock` until `FLEET_TELEMATICS_PROVIDER=rest` | A named vendor's API | `.env` |
+| 2026-10-30 | PORTAL-1 | Customer sign-in | Portal logins are `User` rows with only `portal:customer`, tied to one customer by `PortalAccount`; staff set the first password; sign-in uses the normal login page with the organization code (ADR-S050) | Separate customer token | `/settings/portal-accounts` |
+| 2026-10-30 | PORTAL-1 | Licence seats | Each active portal login counts as a user seat | Exclude portal users from `LicenseLimits` | Licence |
+| 2026-10-30 | PORTAL-1 | Licensing | Portal is gated by `ENABLE_PORTAL` and the module switch, not by a licence feature | Add a `portal` feature to the licence server | `.env` |
+| 2026-10-30 | PORTAL-1 | Placing orders | Read-only: customers see orders but cannot place one. Pricing, credit limits and approvals are being changed by other Phase 4 lanes, so a customer order route is safer once those land | Order request from the portal | — |
+| 2026-10-30 | PORTAL-1 | What a customer sees of a trip | Status times, tonnes, site, plate, driver first name, last position while on the road; never freight, cost or the driver's phone | More or less | — |

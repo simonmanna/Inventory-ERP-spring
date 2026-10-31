@@ -690,5 +690,9 @@
     "approveExplosive": "quarry_blasting:approve_explosive",
     "issueExplosive": "quarry_blasting:issue_explosive",
     "magazine": "quarry_blasting:magazine"
+  },
+  "portal": {
+    "customer": "portal:customer",
+    "manage": "portal:manage"
   }
 }

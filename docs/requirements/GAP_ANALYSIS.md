@@ -460,7 +460,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 449 | Laboratory testing integrations. | `present-verified` | quality · `/quality/lab-imports`, `/lab-adapters` · `/quality/lab` · QualityLotsIT.labCsvImport, LabAdaptersTest, CsvLabResultsTest | — |
 | 450 | Automated production data capture. | `present-verified` | manufacturing · `/shop-floor/machine-data`, `/machine-events` · `/manufacturing/floor-setup` · ShopFloorExecutionIT.multiStageAndMachineData, MachineAdaptersTest | — |
 | 451 | Industry-specific dashboards and profitability reports. | `present-partial` | Module report pages exist; no consolidated industry dashboard | Phase 5 dashboards |
-| 452 | Customer portals for orders and delivery tracking. | `missing` | No portal route, screen or customer auth (grep `portal`: empty) | Build portal (PORTAL-1) |
+| 452 | Customer portals for orders and delivery tracking. | `present-partial (built, unverified)` | portal module · `/portal/*`, `/portal-accounts` · PortalShell, `/portal/deliveries/:id` (live status, last position) · PortalIT · ADR-S050 | Verify by running it |
 | 453 | Mobile applications for drivers, supervisors, and field operators. | `present-partial (built, unverified)` | `/driver` PWA shell (DriverHomePage, trips and POD on `/driver/trips`, DriverFuelPage, DriverPreTripPage), FleetDriverAppService, `/fleet/driver-app/*`, `public/driver.webmanifest`, FleetDriverAppIT; supervisors keep `/manufacturing/terminal` and ExtractionEntryPage | Verify by running it |
 
 ### 8.3 Integration and Automation
@@ -474,7 +474,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 467 | GPS and fleet tracking systems. | `present-partial (built, unverified)` | As fleet telematics above, RestTelematicsProvider | Verify by running it |
 | 468 | Production machinery and industrial data systems. | `present-verified` | manufacturing · machine adapters · ShopFloorExecutionIT, MachineAdaptersTest, MachineEventParserTest | — |
 | 469 | Business intelligence tools. | `present-partial` | `/metrics`, `/webhooks`, CSV exports (KernelIT). No BI connector or read model | Phase 5 integrations |
-| 470 | Customer-facing websites and applications. | `present-partial` | Webhooks and REST API only; no customer-facing app | PORTAL-1 |
+| 470 | Customer-facing websites and applications. | `present-partial (built, unverified)` | Customer portal (452); webhooks and REST API | Verify by running it |
 | 471 | Notification and communication services. | `present-verified` | communication · `/communication/*`, MessagingProvider · `/communication*` · CommunicationIT, ProvidersTest | — |
 
 ### 9 Security, Auditability, and Operational Control

@@ -607,6 +607,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/approval-policies', label: tx('Approval Policies (legacy)'), icon: Shield, permission: 'approvals:read' },
       { to: '/staff', label: tx('Staff'), icon: UserCog, permission: PERMISSIONS.user.read },
       { to: '/staff/roles', label: tx('Roles & Permissions'), icon: Shield, permission: PERMISSIONS.role.read },
+      { to: '/settings/portal-accounts', label: tx('Customer Portal Accounts'), icon: Users2, permission: PERMISSIONS.portal.manage },
       { to: '/settings/report-permissions', label: tx('Report Permissions'), icon: BarChart3, permission: PERMISSIONS.role.read },
       { to: '/settings/payment-methods', label: tx('Payment Methods'), icon: Wallet, permission: PERMISSIONS.account.read },
       { to: '/settings/registers', label: tx('Registers'), icon: Banknote, permission: PERMISSIONS.cashRegister.read },

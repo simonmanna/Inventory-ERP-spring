@@ -381,3 +381,15 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   "not configured" error after a sync; other devices keep syncing.
 - With a vendor or gateway answering the contract in `docs/spec/fleet.md`, positions and meters arrive on the next sync.
 
+**PORTAL-1 customer portal** (migration `V80__customer_portal.sql`; `ENABLE_PORTAL=true`;
+`./gradlew test --tests 'com.inventoryerp.portal.PortalIT'`)
+
+- As staff: `/settings/portal-accounts` → Open account for a customer.
+- Sign in as that customer on the normal login page: it lands on `/portal`, with no staff menu.
+- Orders, invoices (PDF opens) and statement show only that customer's documents.
+- Dispatch a trip for the customer with a telematics device on the truck: `/portal/deliveries/:id` moves on its own and links
+  to the truck's position; after POD it shows who received it.
+- Type a staff URL such as `/fleet`: back to `/portal`. Disable the account: the next portal request fails at once.
+- Check the role "Customer Portal" holds only `portal:customer`. Adding any other permission to it removes the lock on routes
+  open to any signed-in user.
+

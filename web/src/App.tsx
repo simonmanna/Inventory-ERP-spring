@@ -164,6 +164,8 @@ import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
 import { driverRoutes } from '@/pages/driver/routes';
+import { portalRoutes } from '@/pages/portal/routes';
+import { PortalAccountsPage } from '@/pages/portal/PortalAccountsPage';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -230,6 +232,8 @@ export function App() {
         <Route path="/pos/kds" element={<KdsPage />} />
         {/* Driver web app (DRIVER-1) — phone shell, no sidebar. */}
         {driverRoutes}
+        {/* Customer portal (PORTAL-1) — customers never see the staff shell. */}
+        {portalRoutes}
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPage />} />
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
@@ -360,6 +364,7 @@ export function App() {
           <Route path="/settings/license" element={<RequirePermission permission={PERMISSIONS.setting.read}><LicensePage /></RequirePermission>} />
           <Route path="/settings/receipt" element={<ReceiptSettingsPage />} />
           <Route path="/settings/backup" element={<BackupPage />} />
+          <Route path="/settings/portal-accounts" element={<RequirePermission permission={PERMISSIONS.portal.manage}><PortalAccountsPage /></RequirePermission>} />
           <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
           <Route path="/settings/devices" element={<DevicesPage />} />
           <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />
