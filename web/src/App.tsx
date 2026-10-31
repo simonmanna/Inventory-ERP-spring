@@ -150,6 +150,9 @@ import { ThreeWayMatchPage } from '@/pages/procurement/three-way-match';
 import { DebitNotesPage } from '@/pages/procurement/debit-notes';
 import { DebitNoteCreatePage } from '@/pages/procurement/debit-note-create';
 import { SupplierPerformancePage } from '@/pages/procurement/supplier-performance';
+import { RfqsPage } from '@/pages/procurement/rfqs';
+import { RfqEditPage } from '@/pages/procurement/rfq-edit';
+import { RfqDetailPage } from '@/pages/procurement/rfq-detail';
 import { InventoryItemsPage } from '@/pages/inventory/InventoryItemsPage';
 import InventoryDetailPage from '@/pages/inventory/InventoryDetailPage';
 import { StockAdjustmentsPage } from '@/pages/inventory/StockAdjustmentsPage';
@@ -482,6 +485,10 @@ export function App() {
           <Route path="/procurement/landed-cost-reports" element={<LandedCostReportsPage />} />
           <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
           <Route path="/procurement/three-way-match" element={<ThreeWayMatchPage />} />
+          <Route path="/procurement/rfqs" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqsPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/new" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/:id" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.read}><RfqDetailPage /></RequirePermission>} />
+          <Route path="/procurement/rfqs/:id/edit" element={<RequirePermission permission={PERMISSIONS.procurement.rfq.manage}><RfqEditPage /></RequirePermission>} />
           <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
           <Route path="/procurement/debit-notes" element={<DebitNotesPage />} />
           <Route path="/procurement/debit-notes/new" element={<DebitNoteCreatePage />} />

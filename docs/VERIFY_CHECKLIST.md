@@ -375,3 +375,7 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - `/taxes`: add, edit and delete a rate.
   - `/tax-report`: Tax return pack shows 13 boxes, says whether it agrees with the ledger, and Download CSV works.
   - `/fiscal-periods` → Checklist: a draft journal shows as a warning; sign off a step, remove it; a closed period is read-only.
+- PROC-1 RFQ
+  - `/procurement/rfqs` → New RFQ with two lines and two suppliers → Mark as sent → Record quotation for each supplier, one in another currency with a rate.
+  - Comparison marks the cheapest per line and Best on the cheapest complete quote; an expired quote cannot be awarded.
+  - Award: choose a warehouse; the PO opens at the quoted prices and terms; the RFQ shows Awarded.

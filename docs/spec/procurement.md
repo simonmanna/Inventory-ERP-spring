@@ -166,3 +166,8 @@ Shipments, Landed Cost Reports (incl. cost components) under Purchases.
 
 PROC-4: `GET /procurement/reports/supplier-performance?from&to&partnerId` (`purchase_order:read`), default the last 90 days.
 Screen `/procurement/supplier-performance`. Tests: `SupplierPerformanceIT`, `SupplierPerformanceServiceTest`. Nothing was compiled or run.
+
+## Phase 4 RFQ (built, unverified)
+
+PROC-1: `/procurement/rfqs`: list, get, create, patch, send, cancel, quotations, comparison, award (`rfq:read|manage|award`). Award needs an Idempotency-Key and raises the PO through `PurchaseOrdersService.create`. Tables V73.
+Screens `/procurement/rfqs`, `/procurement/rfqs/new`, `/procurement/rfqs/:id`, `/procurement/rfqs/:id/edit`. Test: `RfqIT`. Nothing was compiled or run.
