@@ -676,6 +676,112 @@ export function useLockPeriod() {
   });
 }
 
+/* ── Fiscal Years (year-end close, ADR-S023) ──────────────────── */
+
+export interface FiscalYear {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  periodicity: 'monthly' | 'quarterly' | 'yearly';
+  status: 'open' | 'closed';
+  lockedPeriods: boolean;
+  closedAt: string | null;
+  closedBy: string | null;
+  netIncome: string | null;
+  openPeriods: number;
+  periods: Pick<FiscalPeriod, 'id' | 'name' | 'startDate' | 'endDate' | 'status' | 'closedAt' | 'lockedAt'>[];
+}
+
+export interface YearCloseChecklist extends Omit<CloseChecklist, 'periodId' | 'status'> {
+  fiscalYearId: string;
+  status: FiscalYear['status'];
+}
+
+export interface YearClosingBalances {
+  fiscalYearId: string;
+  name: string;
+  asOf: string;
+  status: FiscalYear['status'];
+  accounts: { accountId: string; code: string; name: string; debit: string; credit: string; balance: string }[];
+}
+
+export function useFiscalYears() {
+  return useQuery({
+    queryKey: ['fiscal-years'],
+    queryFn: async () => (await api.get<FiscalYear[]>('/fiscal-years')).data,
+  });
+}
+
+export function useFiscalYear(id: string | undefined) {
+  return useQuery({
+    queryKey: ['fiscal-years', id],
+    queryFn: async () => (await api.get<FiscalYear>(`/fiscal-years/${id}`)).data,
+    enabled: !!id,
+  });
+}
+
+export function useCreateFiscalYear() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { name?: string; startDate: string; endDate?: string; periodicity: FiscalYear['periodicity'] }) =>
+      (await api.post<FiscalYear>('/fiscal-years', input)).data,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fiscal-years'] });
+      qc.invalidateQueries({ queryKey: ['fiscal-periods'] });
+      notify.success(tx('Fiscal year created'));
+    },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+  });
+}
+
+export function useYearCloseChecklist(id: string | undefined) {
+  return useQuery({
+    queryKey: ['year-close-checklist', id],
+    queryFn: async () => (await api.get<YearCloseChecklist>(`/fiscal-years/${id}/close-checklist`)).data,
+    enabled: !!id,
+  });
+}
+
+export function useSignYearCloseStep(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ key, signed, note }: { key: string; signed: boolean; note?: string }) =>
+      (await api.put<YearCloseChecklist>(`/fiscal-years/${id}/close-checklist/${key}`, { signed, note })).data,
+    onSuccess: (data) => qc.setQueryData(['year-close-checklist', id], data),
+  });
+}
+
+export function useYearClosingBalances(id: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['year-closing-balances', id],
+    queryFn: async () => (await api.get<YearClosingBalances>(`/fiscal-years/${id}/closing-balances`)).data,
+    enabled: !!id && enabled,
+  });
+}
+
+function useYearAction(path: 'close' | 'reopen', done: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, lockPeriods }: { id: string; lockPeriods?: boolean }) =>
+      (await api.post<FiscalYear>(`/fiscal-years/${id}/${path}`, path === 'close' ? { lockPeriods } : undefined)).data,
+    onSuccess: () => {
+      ['fiscal-years', 'year-close-checklist', 'year-closing-balances', 'fiscal-periods'].forEach((k) =>
+        qc.invalidateQueries({ queryKey: [k] }));
+      notify.success(done);
+    },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+  });
+}
+
+export function useCloseFiscalYear() {
+  return useYearAction('close', tx('Fiscal year closed'));
+}
+
+export function useReopenFiscalYear() {
+  return useYearAction('reopen', tx('Fiscal year reopened'));
+}
+
 /* ── Taxes ────────────────────────────────────────────────────── */
 
 export interface Tax {

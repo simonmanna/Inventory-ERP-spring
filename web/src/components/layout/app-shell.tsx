@@ -360,6 +360,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/tieout', label: tx('Tie-Out'), icon: ShieldCheck, permission: PERMISSIONS.report.accounting, reportId: 'accounting.tieout' },
       { to: '/pos-gl-reconciliation', label: tx('POS → GL Recon'), icon: Package, permission: PERMISSIONS.report.accounting, reportId: 'accounting.pos-gl-recon' },
       { to: '/audit-log', label: tx('Audit Log'), icon: History, permission: PERMISSIONS.auditLog.read },
+      { to: '/fiscal-years', label: tx('Fiscal Years'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read },
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read },
       { to: '/taxes', label: tx('Tax Rates'), icon: Percent, permission: PERMISSIONS.tax.read },
       { to: '/cost-centers', label: tx('Cost Centers'), icon: Users, permission: PERMISSIONS.costCenter.read },

@@ -92,6 +92,8 @@ const TieOutPage = lazy(() => import('@/pages/accounting/tieout').then((m) => ({
 const PosGlReconciliationPage = lazy(() => import('@/pages/accounting/pos-gl-reconciliation').then((m) => ({ default: m.PosGlReconciliationPage })));
 const AuditLogPage = lazy(() => import('@/pages/accounting/audit-log').then((m) => ({ default: m.AuditLogPage })));
 const FiscalPeriodsPage = lazy(() => import('@/pages/accounting/fiscal-periods'));
+const FiscalYearsPage = lazy(() => import('@/pages/accounting/fiscal-years'));
+const FiscalYearClosePage = lazy(() => import('@/pages/accounting/fiscal-year-close'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
@@ -384,6 +386,8 @@ export function App() {
             <Route path="/pos-gl-reconciliation" element={<RequireReport reportId="accounting.pos-gl-recon"><PosGlReconciliationPage /></RequireReport>} />
             <Route path="/audit-log" element={<AuditLogPage />} />
             <Route path="/fiscal-periods" element={<FiscalPeriodsPage />} />
+            <Route path="/fiscal-years" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearsPage /></RequirePermission>} />
+            <Route path="/fiscal-years/:id" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearClosePage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<TaxesPage />} />
             <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />

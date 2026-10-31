@@ -8,8 +8,8 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | Phase | Scope | Size | Status |
 |---|---|---|---|
 | PR-0 | Green CI: order-dependent test failures, critical permission gap, web i18n gate, web bundle over the precache limit | S | **done 2026-10-31** |
-| PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | todo |
-| PR-2 | 1.7 Year-end close | S | todo |
+| PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | **part 1 done 2026-10-31** (see below); part 2 open |
+| PR-2 | 1.7 Year-end close | S | **done 2026-10-31** (ADR-S023) |
 | PR-3 | 2.4 Analytic dimensions | M | todo |
 | PR-4 | 2.1 Warehouse management | L | todo |
 | PR-5 | 2.3 Replenishment & MRP completion | L | todo |
@@ -61,3 +61,41 @@ chunks stay precached, so the offline POS still works.
 
 **Finding for PR-1:** `OutboxWorker` keeps a failing row `pending` forever and always picks the oldest rows first, so
 50 permanently failing rows stall every subscriber (same as Nest).
+
+## PR-1 part 1 — as built
+
+- **Outbox retry limit** (`V213`): a failed `EventOutbox` row waits `nextAttemptAt` (5 s doubling to 15 min) and turns
+  `dead` after `OUTBOX_MAX_ATTEMPTS` (10); it no longer holds back newer rows. Gauges `erp.outbox.pending` /
+  `erp.outbox.dead`, alerts `EventOutboxDeadRows` / `EventOutboxBacklog`, routes `GET /admin/outbox/dead`,
+  `POST /admin/outbox/{id}/retry`, `POST /admin/outbox/dead/retry` (organization-scoped, audited).
+  Tests: `OutboxDeadLetterIT`, `OutboxBackoffTest`.
+- **Row-level security enforced** (`V214`, `db/callback/afterMigrate.sql`): every table with `organizationId` (≈ 520)
+  plus `Organization` has the tenant policy; work without a tenant is not restricted. Flyway and backups run as the
+  owner (`FLYWAY_USER`), the API as a non-owner role created by the callback (compose: `erp_app`). The whole IT suite
+  now runs as a non-owner role. That run found and fixed three real defects: BI views not readable by the app role,
+  licence seat caps counting one tenant instead of the installation (`InstallWide` helper; also licence module
+  reconciliation), and per-org document sequences needing ownership (`setval` instead of `ALTER SEQUENCE`).
+  Tests: `TenantRowSecurityIT` (role restricted, every tenant table covered, cross-tenant read / insert / update refused).
+- **Dependency scan**: `follow-redirects` ≥ 1.16.2 and `image-size` ≥ 2.0.3 (pnpm overrides; `image-size` is not in
+  the browser build). Trivy HIGH findings: 0.
+- **Whole-app 401/403 matrix**: `AuthorizationMatrixIT` checks every route (> 2,000) in one run.
+- **Functional gaps**: replenishment (INV-3) now counts open purchase orders and requests for the location
+  (`IncomingSupplyProvider`, implemented by procurement; `V215` `incoming` on the alert). Commission clawback on credit
+  notes was already done by the S9 engine (the gap was in the removed SALES-4). Portal write actions move to PR-9.
+
+## PR-1 part 2 — open
+
+| Item | Why it is not done yet |
+|---|---|
+| JaCoCo 80 % per `application` package | measured per package after the build; needs targeted tests package by package |
+| POS checkout p95 < 150 ms | needs profiling of the ~400 statements per checkout on a production-like box |
+| Browser click-through of every screen | needs the full stack running with Playwright |
+| Nest parity run, then Nest retirement | needs a live Nest + Postgres next to Spring |
+
+## PR-2 — as built (ADR-S023)
+
+`V216`: `FiscalYear`, `FiscalPeriod.fiscalYearId`, `FiscalYearSignOff`, `FiscalYearBalance`. Routes (`fiscal_period:*`):
+`GET|POST /fiscal-years`, `GET /fiscal-years/:id`, `GET /fiscal-years/:id/close-checklist`,
+`PUT /fiscal-years/:id/close-checklist/:key`, `GET /fiscal-years/:id/closing-balances`, `POST /fiscal-years/:id/close`,
+`POST /fiscal-years/:id/reopen`. Web: `/fiscal-years`, `/fiscal-years/:id`. Tests: `FiscalYearIT`,
+`FiscalYearPeriodsTest`.
