@@ -109,7 +109,7 @@ class FleetDriverAppIT extends ApiTestSupport {
                 .isEqualTo(403);
         String key = UUID.randomUUID().toString();
         Res first = call("POST", "/fleet/driver-app/fuel-logs", fuel(truck), keyed(driverToken, key));
-        assertThat(first.status()).as(first.raw().body()).isEqualTo(201);
+        assertThat(first.status()).as(first.raw().body()).isEqualTo(200); // idempotent routes answer 200 (CONTRACT.md)
         assertThat(first.body().get("status").asString()).isEqualTo("draft");
         Res replay = call("POST", "/fleet/driver-app/fuel-logs", fuel(truck), keyed(driverToken, key));
         assertThat(replay.body().get("id").asString()).isEqualTo(first.body().get("id").asString());
@@ -137,7 +137,7 @@ class FleetDriverAppIT extends ApiTestSupport {
         body.put("templateId", template.get("id").asString());
         body.put("items", items);
         Res r = call("POST", "/fleet/driver-app/inspections", body, keyed(driverToken, UUID.randomUUID().toString()));
-        assertThat(r.status()).as(r.raw().body()).isEqualTo(201);
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
         assertThat(r.body().get("result").asString()).isEqualTo("fail");
         assertThat(r.body().get("defectCount").asInt()).isEqualTo(1);
         JsonNode unit = call("GET", "/fleet/driver-app/home", null, driverToken).body().get("units").get(0);

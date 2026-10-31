@@ -88,7 +88,7 @@ public class ProductUnitProfileService {
         changes.put("kgPerPiece", in.kgPerPiece());
         changes.put("kgPerBag", in.kgPerBag());
         changes.put("tonnesPerTruckload", in.tonnesPerTruckload());
-        audit.record(AuditInput.of("Product", productId, "update_unit_profile", null, changes));
+        audit.record(AuditInput.of("Product", productId, "update", null, changes));
         return profile(p);
     }
 

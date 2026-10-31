@@ -169,7 +169,7 @@ public class CrmCommissionService {
         int cancelled = db.update("UPDATE \"CommissionEntry\" e SET status = 'cancelled' FROM \"Document\" d WHERE"
                 + " d.id = e.\"documentId\" AND e.\"organizationId\" = ? AND e.status IN ('accrued', 'approved') AND"
                 + " d.status::text NOT IN ('posted', 'paid')", org());
-        audit.recordInTx(AuditInput.of("CommissionRun", start + ".." + end, "calculate", null, Obj.of("created", created,
+        audit.recordInTx(AuditInput.of("CommissionRun", start + ".." + end, "create", null, Obj.of("created", created,
                 "cancelled", cancelled, "linesWithoutRule", noRule)));
         return Obj.of("from", start, "to", end, "created", created, "cancelled", cancelled, "linesWithoutRule", noRule);
     }
@@ -282,7 +282,7 @@ public class CrmCommissionService {
             entries += db.update("UPDATE \"CommissionEntry\" SET status = 'exported', \"payrollInputId\" = ? WHERE"
                     + " \"organizationId\" = ? AND status = 'approved' AND \"employeeId\" = ? AND \"earnedOn\" <= ?",
                     input.get("id"), org(), employee, java.sql.Date.valueOf(end));
-            audit.recordInTx(AuditInput.of("CommissionEntry", batch, "export", null, Obj.of("employeeId", employee,
+            audit.recordInTx(AuditInput.of("CommissionEntry", batch, "post", null, Obj.of("employeeId", employee,
                     "total", g.get("total"), "payrollInputId", input.get("id"))));
             inputs++;
         }

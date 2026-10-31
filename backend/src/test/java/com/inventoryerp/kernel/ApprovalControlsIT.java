@@ -362,7 +362,7 @@ class ApprovalControlsIT extends ApiTestSupport {
     @DisplayName("tenancy: another organization cannot see or change a limit")
     void tenantIsolation() {
         String id = okAs(senior, 201, "POST", "/approval-controls/limits", Map.of("name", "Mine", "userId", senior.id(),
-                "maxAmount", 10)).get("id").asString();
+                "entityType", "tenancy_" + sfx(), "maxAmount", 10)).get("id").asString(); // scoped: no leak into other tests
         assertThat(as("DELETE", "/approval-controls/limits/" + id, null).status()).isEqualTo(404);
         for (JsonNode l : ok(200, "GET", "/approval-controls/limits", null)) {
             assertThat(l.get("id").asString()).isNotEqualTo(id);

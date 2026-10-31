@@ -261,7 +261,7 @@ public class CreditControlService {
             throw ApiException.badRequest("creditLimit must not be less than 0");
         }
         partners.updateCreditPolicy(partnerId, creditLimit, creditHold);
-        audit.recordInTx(AuditInput.of("Partner", partnerId, "credit_policy", Obj.of("creditLimit",
+        audit.recordInTx(AuditInput.of("Partner", partnerId, "update", Obj.of("creditLimit",
                 before.get("creditLimit"), "creditHold", before.get("creditHold")), Obj.of("creditLimit", creditLimit,
                 "creditHold", creditHold, "reason", reason)));
         return customer(partnerId);
@@ -313,7 +313,7 @@ public class CreditControlService {
         if (partnerId == null) {
             throw ApiException.notFound("Credit override not found");
         }
-        audit.recordInTx(AuditInput.of("PartnerCreditOverride", id, "revoke"));
+        audit.recordInTx(AuditInput.of("PartnerCreditOverride", id, "cancel"));
         return customer(partnerId);
     }
 }

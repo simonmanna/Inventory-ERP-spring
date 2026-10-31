@@ -255,7 +255,7 @@ class CoreIT extends ApiTestSupport {
         assertThat(boot.body().has("inviteToken")).isFalse();
         String orgId = boot.body().get("organization").get("id").asString();
         assertThat(jdbc.sql("SELECT count(*) FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ?").param(orgId)
-                .query(Long.class).single()).isEqualTo(12);
+                .query(Long.class).single()).isEqualTo(15); // 12 + m³, bag, truckload (UOM-1)
         assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryPostingRule\" WHERE \"organizationId\" = ?").param(orgId)
                 .query(Long.class).single()).isEqualTo(30);
 

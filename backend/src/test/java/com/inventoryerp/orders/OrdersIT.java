@@ -231,7 +231,7 @@ class OrdersIT extends ApiTestSupport {
             Res decided = call("POST", "/approvals/" + firstRequest + "/decide", Map.of("status", "approved"), approver);
             assertThat(decided.status()).as(decided.raw().body()).isEqualTo(201);
 
-            ok(200, "POST", "/orders/" + id + "/items", Map.of("lines", List.of(Map.of("productId", productId,
+            ok(201, "POST", "/orders/" + id + "/items", Map.of("lines", List.of(Map.of("productId", productId,
                     "quantity", 5))));
             Res stale = as("POST", "/orders/" + id + "/invoice", Map.of("paymentMode", "credit"));
             assertThat(stale.status()).isEqualTo(400);

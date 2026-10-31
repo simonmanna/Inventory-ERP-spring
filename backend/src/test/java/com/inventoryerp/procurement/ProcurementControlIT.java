@@ -3,6 +3,7 @@ package com.inventoryerp.procurement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.accounting.application.AccountingSeedContributor;
 import com.inventoryerp.kernel.events.OutboxWorker;
 import com.inventoryerp.procurement.web.ProcurementControlController;
 import java.time.LocalDate;
@@ -29,10 +30,14 @@ import tools.jackson.databind.JsonNode;
 class ProcurementControlIT extends ApiTestSupport {
 
     @Autowired
+    AccountingSeedContributor accounting;
+
+    @Autowired
     OutboxWorker outbox;
 
     String role;
     String warehouse;
+    String supplier;
     String branch;
     String buyerToken;
     String buyerId;
@@ -51,6 +56,12 @@ class ProcurementControlIT extends ApiTestSupport {
         jdbc.sql("INSERT INTO \"InventoryLocation\" (id, \"organizationId\", code, name, type, \"updatedAt\") VALUES"
                 + " (?, ?, ?, 'Main', 'warehouse', now())").params(warehouse, otherOrg, "W-" + sfx()).update();
         branch = branch();
+        // Purchase orders resolve an expense account (default_expense) for non-stock lines: give the org a chart.
+        new org.springframework.transaction.support.TransactionTemplate(txm).executeWithoutResult(
+                st -> accounting.seed(otherOrg));
+        supplier = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isSupplier\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, 'Fuel supplier', true, now())").params(supplier, otherOrg, "S-" + sfx()).update();
         String email = "buyer-" + sfx() + "@other.test";
         buyerId = createUser(otherOrg, email, "Buyer@12345", role);
         buyerToken = login(otherOrgCode, email, "Buyer@12345");
@@ -91,6 +102,7 @@ class ProcurementControlIT extends ApiTestSupport {
 
     Res order(String token, String branchId, Object value, String requestId) {
         Map<String, Object> body = new LinkedHashMap<>();
+        body.put("partnerId", supplier);
         body.put("warehouseId", warehouse);
         body.put("branchId", branchId);
         body.put("paymentType", "credit");

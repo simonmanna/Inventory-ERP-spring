@@ -8,7 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -20,7 +20,8 @@ class SupplierPerformanceIT extends ApiTestSupport {
     String supplier;
     String product;
 
-    @BeforeAll
+    // Fresh supplier and product per test: the scorecard counts every order of the supplier.
+    @BeforeEach
     void fixtures() {
         warehouse = ok(201, "POST", "/inventory/locations", Map.of("code", "SP-" + suffix(), "name", "Scorecard "
                 + suffix(), "type", "warehouse")).get("id").asString();
