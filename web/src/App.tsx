@@ -163,6 +163,7 @@ import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
+import { driverRoutes } from '@/pages/driver/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -227,6 +228,8 @@ export function App() {
       <Route element={<ProtectedRoute />}>
         {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
         <Route path="/pos/kds" element={<KdsPage />} />
+        {/* Driver web app (DRIVER-1) — phone shell, no sidebar. */}
+        {driverRoutes}
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPage />} />
           {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}

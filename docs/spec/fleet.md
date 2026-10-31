@@ -1447,3 +1447,22 @@ idempotent, reports). `FleetIncidentsIT` / `HrIT` unchanged and green.
   snapshot can be added for very large fleets.
 - Export headers are English (server-rendered); the screens are translated.
 - Demo trips are dated over the last week in fleet's tables; their stock / GL entries carry the seeding day.
+
+## DRIVER-1 driver web app (Phase 4, built, unverified: nothing compiled or run)
+
+Web only; `android/` is untouched. A phone shell at `/driver` (no sidebar, bottom bar) that installs as its own PWA:
+`DriverShell` swaps the POS manifest for `public/driver.webmanifest` (`start_url: /driver`) while it is on screen. The
+service worker precache and SPA fallback are shared, so the shell opens without network; API calls still need network.
+
+| Screen | Route | Backend |
+|---|---|---|
+| Home | `/driver` | `GET /fleet/driver-app/home`: driver, units (assignment, open check-out or live trip), today's pre-trip result, open defects, live trips |
+| Trips, POD | `/driver/trips`, `/driver/trips/:id` | existing `MyTripsPage` / `PodCapturePage` with a `basePath` prop; `GET /fleet/trips?mine=true`, the POD routes |
+| Pre-trip check | `/driver/pre-trip` | `GET /fleet/driver-app/pre-trip?vehicleId=`, `POST /fleet/driver-app/inspections` (`Idempotency-Key`), `POST .../inspections/{id}/photos` |
+| Fuel log | `/driver/fuel` | `GET /fleet/driver-app/fuel-options?vehicleId=`, `GET` + `POST /fleet/driver-app/fuel-logs` (`Idempotency-Key`), `POST .../fuel-logs/{id}/receipt` |
+
+All 8 routes need `fleet_trip:deliver`; `/driver/trips` also needs `fleet_trip:read`. `FleetDriverAppService` resolves the
+driver from `HrEmployee.userId` (403 without an active profile), refuses a unit that is not the driver's, and returns
+names only for payment accounts and tanks. Fuel logs from the app are always drafts under the driver's employee id; the
+office reviews and posts them. Failed checklist items raise defects through `FleetInspectionService.record`.
+

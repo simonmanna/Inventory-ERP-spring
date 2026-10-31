@@ -461,7 +461,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 450 | Automated production data capture. | `present-verified` | manufacturing · `/shop-floor/machine-data`, `/machine-events` · `/manufacturing/floor-setup` · ShopFloorExecutionIT.multiStageAndMachineData, MachineAdaptersTest | — |
 | 451 | Industry-specific dashboards and profitability reports. | `present-partial` | Module report pages exist; no consolidated industry dashboard | Phase 5 dashboards |
 | 452 | Customer portals for orders and delivery tracking. | `missing` | No portal route, screen or customer auth (grep `portal`: empty) | Build portal (PORTAL-1) |
-| 453 | Mobile applications for drivers, supervisors, and field operators. | `present-partial` | `/fleet/my-trips`, PodCapturePage, `/manufacturing/terminal`, ExtractionEntryPage (phone/tablet), PWA plumbing in `vite.config.ts`. MyTripsPage has no fuel log or pre-trip checklist | Driver web app (DRIVER-1) |
+| 453 | Mobile applications for drivers, supervisors, and field operators. | `present-partial (built, unverified)` | `/driver` PWA shell (DriverHomePage, trips and POD on `/driver/trips`, DriverFuelPage, DriverPreTripPage), FleetDriverAppService, `/fleet/driver-app/*`, `public/driver.webmanifest`, FleetDriverAppIT; supervisors keep `/manufacturing/terminal` and ExtractionEntryPage | Verify by running it |
 
 ### 8.3 Integration and Automation
 

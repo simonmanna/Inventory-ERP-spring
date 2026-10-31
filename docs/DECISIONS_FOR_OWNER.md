@@ -129,3 +129,7 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | CMMS-1 | Generator class | The existing `GENERATOR` class stays mobile plant; a new `GENSET` class covers fixed generators | Reclassify `GENERATOR` | Vehicle Classes |
 | 2026-10-30 | CMMS-1 | Asset disposal | Disposing an asset in `fixedasset` moves a linked fixed-plant unit to `disposed` automatically; road vehicles stay manual as before; open work orders on the unit are left as they are | Apply to all units | — |
 | 2026-10-30 | CMMS-1 | Dispatch | A fixed-plant unit always fails the dispatch eligibility check | Allow by setting | — |
+| 2026-10-30 | DRIVER-1 | Driver permissions | No new permission: `fleet_trip:deliver` opens the app and its routes, scoped in the service to the driver's own units and records; a driver role needs `fleet_trip:read` + `fleet_trip:deliver` | A dedicated `driver_app:use` key | Roles |
+| 2026-10-30 | DRIVER-1 | Trip visibility | `/fleet/trips?mine=true` and the trip detail use `fleet_trip:read`, which is not limited to the driver's own trips on the API | Own-trip scope on the trip routes | — |
+| 2026-10-30 | DRIVER-1 | Fuel logs from a phone | Always drafts; the office posts them | Let drivers post | Fuel logs screen |
+| 2026-10-30 | DRIVER-1 | Offline use | The shell opens offline; fuel logs, checks and POD need a connection (retries reuse the idempotency key). No offline write queue | Queue writes on the phone | — |

@@ -365,3 +365,13 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - `/fleet/plant/costs`: maintenance, hours, cost per hour and downtime for the unit.
 - Link a fixed asset on the unit. The asset detail page shows the link; dispose the asset and the unit becomes `disposed`.
 - A trip assignment to the crusher is refused ("fixed plant and cannot carry a load").
+
+**DRIVER-1 driver app** (`./gradlew test --tests 'com.inventoryerp.fleet.FleetDriverAppIT'`)
+
+- Create a role with `fleet_trip:read` + `fleet_trip:deliver`, a user with it, and set that user on the driver's hr employee.
+  Assign a truck to the driver.
+- On a phone open `/driver`: the truck shows "Pre-trip check not done today". Install to the home screen; it opens at `/driver`.
+- Pre-trip check: fail one item with a photo; the unit shows the defect, and the office sees it under `/fleet/defects`.
+- Log fuel with a receipt photo: a draft appears in `/fleet/fuel`; a second truck's id is refused (403).
+- Trips: open a dispatched trip, capture signature and photo, confirm POD.
+
