@@ -23,6 +23,11 @@ export interface DemandProduct {
   supplyQty: Num; shortfallQty: Num; makeable: boolean;
 }
 export interface DemandView { from: string; to: string; rows: DemandRow[]; products: DemandProduct[] }
+export interface ForecastProduct {
+  productId: string; code: string | null; name: string | null; family: 'aggregate' | 'block' | null; level: Num;
+  trendPerWeek: Num; meanAbsoluteError: Num; nextWeekQty: Num; horizonQty: Num; confidence: 'low' | 'medium' | 'high';
+}
+export interface ForecastView { from: string; to: string; weeks: number; products: ForecastProduct[] }
 export interface BoardOrder {
   id: string; orderCode: string; status: string; productName: string | null; plannedQty: Num; dueAt: string | null;
   priority: number; priorityReason: string | null; partnerName: string | null; scheduleMode: string;
@@ -101,7 +106,10 @@ export const useTargets = (f: Filters) => useQuery({ queryKey: [...KEY, 'targets
 export const usePlanReport = <T,>(name: string, f: Filters) =>
   useQuery({ queryKey: [...KEY, 'report', name, f], queryFn: () => get<T>(`/reports/${name}`, f) });
 
-export const usePlanFromDemand = () => useChange((b: { dateTo: string; locationId: string; includeForecast: boolean }) =>
+export const useDemandForecast = (f: Filters) =>
+  useQuery({ queryKey: [...KEY, 'forecast', f], queryFn: () => get<ForecastView>('/forecast', f) });
+
+export const usePlanFromDemand = () => useChange((b: { dateTo: string; locationId: string; includeForecast: boolean; forecastMethod?: string }) =>
   api.post(`${P}/plans/from-demand`, b).then((r) => r.data));
 export const useSaveOrderPlanning = () => useChange((v: { id: string; dueAt?: string; priority?: number }) =>
   api.put(`${P}/orders/${v.id}`, { dueAt: v.dueAt, priority: v.priority }).then((r) => r.data));

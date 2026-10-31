@@ -14,7 +14,7 @@ import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
 import { useLocationOptions } from '@/features/manufacturing/options';
 import {
-  qty, useDemand, usePlanBoard, usePlanFromDemand, useSaveOrderPlanning, useScheduleBackward, useScheduleOpen,
+  qty, useDemand, useDemandForecast, usePlanBoard, usePlanFromDemand, useSaveOrderPlanning, useScheduleBackward, useScheduleOpen,
 } from '@/features/manufacturing/api-planning';
 import { addDays, demandTypeLabel, PriorityBadge, priorityOptions, ymd } from './planning-ui';
 
@@ -27,9 +27,11 @@ export function PlanningWorkbenchPage() {
       <Tabs defaultValue="demand">
         <TabsList>
           <TabsTrigger value="demand">{tx('Demand')}</TabsTrigger>
+          <TabsTrigger value="forecast">{tx('Forecast')}</TabsTrigger>
           <TabsTrigger value="orders">{tx('Order priorities')}</TabsTrigger>
         </TabsList>
         <TabsContent value="demand"><DemandTab /></TabsContent>
+        <TabsContent value="forecast"><ForecastTab /></TabsContent>
         <TabsContent value="orders"><OrdersTab /></TabsContent>
       </Tabs>
     </div>
@@ -41,12 +43,14 @@ function DemandTab() {
   const [from, setFrom] = useState(ymd(today));
   const [to, setTo] = useState(ymd(addDays(today, 30)));
   const [forecast, setForecast] = useState(false);
+  const [smoothed, setSmoothed] = useState(false);
   const [locationId, setLocationId] = useState('');
   const can = useAuthStore((s) => s.hasPermission);
   const locations = useLocationOptions();
-  const { data, isLoading, isError } = useDemand({ from, to, includeForecast: forecast });
+  const forecastMethod = smoothed ? 'smoothed' : 'run_rate';
+  const { data, isLoading, isError } = useDemand({ from, to, includeForecast: forecast, forecastMethod });
   const generate = usePlanFromDemand();
-  const onGenerate = () => generate.mutate({ dateTo: to, locationId, includeForecast: forecast }, {
+  const onGenerate = () => generate.mutate({ dateTo: to, locationId, includeForecast: forecast, forecastMethod }, {
     onSuccess: () => notify.success(tx('Draft plan created')),
     onError: (e) => notify.error(apiMessage(e, tx('Could not create the plan'))),
   });
@@ -58,6 +62,12 @@ function DemandTab() {
           <input type="checkbox" checked={forecast} onChange={(e) => setForecast(e.target.checked)} />
           {tx('Include forecast')}
         </label>
+        {forecast && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={smoothed} onChange={(e) => setSmoothed(e.target.checked)} />
+            {tx('Smoothed, with aggregates and blocks')}
+          </label>
+        )}
         <FilterSelect value={locationId} onChange={setLocationId} allLabel={tx('Production location')}
           options={(locations.data ?? []).map((l: { id: string; name: string }) => ({ value: l.id, label: l.name }))} />
         {can(PERMISSIONS.productionPlan.create) && (
@@ -120,6 +130,57 @@ function DemandTab() {
             </CardContent>
           </Card>
         </>
+      )}
+    </div>
+  );
+}
+
+const familyLabel = (family: string | null) =>
+  (family === 'aggregate' ? tx('Aggregates') : family === 'block' ? tx('Blocks') : '-');
+const confidenceLabel = (c: string) => (c === 'high' ? tx('High') : c === 'medium' ? tx('Medium') : tx('Low'));
+
+/** Smoothed weekly sales per product and what they imply for the horizon. Plans nothing by itself. */
+function ForecastTab() {
+  const today = new Date();
+  const [from, setFrom] = useState(ymd(today));
+  const [to, setTo] = useState(ymd(addDays(today, 30)));
+  const [family, setFamily] = useState('');
+  const { data, isLoading, isError } = useDemandForecast({ from, to, family: family || undefined });
+  return (
+    <div className="space-y-4">
+      <ListToolbar>
+        <DateRangeFilter from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
+        <FilterSelect value={family} onChange={setFamily} allLabel={tx('All products')}
+          options={[{ value: 'aggregate', label: tx('Aggregates') }, { value: 'block', label: tx('Blocks') }]} />
+      </ListToolbar>
+      {isLoading && <p className="text-muted-foreground">{tx('Loading…')}</p>}
+      {isError && <p className="text-destructive">{tx('Could not load the forecast.')}</p>}
+      {data && (
+        <Card>
+          <CardHeader><CardTitle>{tx('Forecast from the last {{weeks}} weeks of sales', { weeks: data.weeks })}</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto">
+            {data.products.length === 0 ? <p className="text-sm text-muted-foreground">{tx('Not enough sales history yet.')}</p> : (
+              <Table>
+                <TableHeader><TableRow>
+                  <TableHead>{tx('Product')}</TableHead><TableHead>{tx('Family')}</TableHead>
+                  <TableHead className="text-right">{tx('Next week')}</TableHead><TableHead className="text-right">{tx('Trend per week')}</TableHead>
+                  <TableHead className="text-right">{tx('Period forecast')}</TableHead><TableHead>{tx('Confidence')}</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {data.products.map((p) => (
+                    <TableRow key={p.productId}>
+                      <TableCell>{p.name}</TableCell><TableCell>{familyLabel(p.family)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{qty(p.nextWeekQty)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{qty(p.trendPerWeek)}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{qty(p.horizonQty)}</TableCell>
+                      <TableCell>{confidenceLabel(p.confidence)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       )}
     </div>
   );
