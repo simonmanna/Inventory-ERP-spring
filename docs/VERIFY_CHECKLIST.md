@@ -346,6 +346,16 @@ Written, never run. Run `Phase2ExitIT`, `PrecastManufacturingIT.actualCostPerAcc
 `MultiStageProductionIT.multiLevelTraceability`. A failure may be the test's fixture rather than the product. The blast in
 exit (a) is planned, not fired.
 
+## MFG-4 — Construction manufacturing demo seed
+
+Written, never run. Run `ManufacturingDemoSeedIT`, then start once with `SEED_MANUFACTURING_DEMO=true` and the `seed`
+profile on a throwaway database.
+
+- `/quarry/...`: site `DM-Q1` with ROM and three product stockpiles, rising ROM stock.
+- `/manufacturing/crushing`: about 26 posted runs, cost per tonne in the reports.
+- `/manufacturing/precast/orders`: about 8 orders; recent batches still curing, older ones released.
+- `/manufacturing/plan-performance`: the month's plant and block targets against actuals.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use

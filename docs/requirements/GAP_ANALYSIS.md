@@ -56,8 +56,8 @@ One row per list item of [`construction-materials-erp.md`](construction-material
   `/quarry/extraction-logs` and `/manufacturing/crushing/runs`. (b) `PrecastManufacturingIT.endToEnd` covers most of the
   block flow; check it against the brief. (c) `MultiStageProductionIT.multiLevel` covers the multi-level order; the
   traceability report step needs checking against the brief.
-- **Demo seed**: only `SEED_FLEET_DEMO` exists (`ConstructionDemoSeedContributor`, `FleetDemoSeedIT`). There is no
-  quarry, crusher line, block plant or month of runs.
+- **Demo seed (MFG-4, built, unverified)**: `SEED_MANUFACTURING_DEMO` (`ManufacturingDemoSeedContributor`,
+  `ManufacturingDemoSeedIT`): one quarry, one crusher line, one block plant, recipes and a month of runs. Not run.
 
 ## Phase 4 items
 

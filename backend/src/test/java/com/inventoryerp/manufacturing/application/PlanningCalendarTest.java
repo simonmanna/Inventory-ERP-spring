@@ -58,7 +58,7 @@ class PlanningCalendarTest {
     @Test
     @DisplayName("load already placed pushes the operation away unless a parallel slot is free")
     void busyAndSlots() {
-        List<Instant[]> busy = List.of(new Instant[] {Instant.parse("2026-11-06T15:00:00Z"),
+        List<Instant[]> busy = List.<Instant[]>of(new Instant[] {Instant.parse("2026-11-06T15:00:00Z"),
                 Instant.parse("2026-11-06T17:00:00Z")});
         Instant anchor = Instant.parse("2026-11-06T17:00:00Z");
         assertThat(calendar(Set.of(), busy, 1).backward(anchor, 60).end())
@@ -77,7 +77,7 @@ class PlanningCalendarTest {
     @Test
     @DisplayName("a centre that never works gives no slot")
     void noCapacity() {
-        PlanningCalendar never = new PlanningCalendar(Map.of(6, day()), Set.of(), List.of(
+        PlanningCalendar never = new PlanningCalendar(Map.of(6, day()), Set.of(), List.<Instant[]>of(
                 new Instant[] {Instant.parse("2020-01-01T00:00:00Z"), Instant.parse("2040-01-01T00:00:00Z")}), 1);
         assertThat(never.forward(Instant.parse("2026-11-02T00:00:00Z"), 10)).isNull();
     }
