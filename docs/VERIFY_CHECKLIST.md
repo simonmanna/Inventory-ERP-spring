@@ -612,3 +612,23 @@ CTRL-2, migration `V52__document_numbering.sql`:
 - [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/procurement/purchase-requests` shows a draft, one per supplier.
 - [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
 - [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.
+
+## Phase 5 dashboards and KPIs (built, not compiled or run)
+
+Nothing here has been compiled. Start with `AnalyticsIT`, `KpiMathTest`, `AnalyticsViewTest`, `ModularityTests` and the
+tests of the services that gained overloads: `QuarryIT`, `CrushingIT`, `PrecastManufacturingIT`, `FleetCostingIT`,
+supplier performance tests and the manufacturing costing tests. Their routes must answer as before.
+
+- [ ] Sign in as Administrator after V100. The Analytics menu lists Dashboards Overview and ten dashboards.
+- [ ] `/analytics`: headline tiles per dashboard. Change the dates and a branch; the figures move and the URL keeps them.
+- [ ] For each dashboard, compare two tiles with the report they come from (`docs/spec/analytics-kpis.md` names it): for
+      example Extraction cost per tonne with `/quarry/reports`, Input-to-output yield with the crushing reports.
+- [ ] Click a tile with a drill-down: the list opens, pages, and each number opens its document.
+- [ ] Click a row in Extraction by site, Sales by customer and Branch performance: the list narrows to that row.
+- [ ] Add a role with `analytics:view` and `analytics:sales` only: the menu shows those two; `/analytics/finance` refuses.
+- [ ] Restrict a user to one branch with the Staff data access dialog: figures shrink, another branch gives 403, the branch list shows
+      one branch, Finance hides cash and says why, Maintenance says OEE is unavailable.
+- [ ] Switch a module off for the organization: its dashboard refuses, and the overview leaves it out.
+- [ ] Open a dashboard on a phone width: filters wrap, tables scroll sideways, the page does not.
+- [ ] With production volumes, time `/analytics/inventory` and `/analytics/finance` over a year: inventory runs one stock
+      health report per location for a branch view, finance one consolidation per month.
