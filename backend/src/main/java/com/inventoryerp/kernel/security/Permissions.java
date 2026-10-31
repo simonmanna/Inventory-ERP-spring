@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (492 permissions). Constant name = GROUP__ACTION.
+ * exactly (530 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -183,8 +183,16 @@ public final class Permissions {
     public static final String ROUTING__READ = "routing:read";
     public static final String ROUTING__CREATE = "routing:create";
     public static final String ROUTING__DELETE = "routing:delete";
+    public static final String CRUSHING__READ = "crushing:read";
+    public static final String CRUSHING__SETUP = "crushing:setup";
+    public static final String CRUSHING_RUN__RECORD = "crushing_run:record";
+    public static final String CRUSHING_RUN__POST = "crushing_run:post";
+    public static final String CRUSHING_SURVEY__RECORD = "crushing_survey:record";
+    public static final String CRUSHING_SURVEY__APPROVE = "crushing_survey:approve";
     public static final String WORK_ORDER__READ = "work_order:read";
     public static final String WORK_ORDER__MANAGE = "work_order:manage";
+    public static final String SHOP_FLOOR__APPROVE = "shop_floor:approve";
+    public static final String SHOP_FLOOR__MACHINE_DATA = "shop_floor:machine_data";
     public static final String INVENTORY_POSTING_RULE__READ = "inventory_posting_rule:read";
     public static final String INVENTORY_POSTING_RULE__UPDATE = "inventory_posting_rule:update";
     public static final String INVENTORY_POSTING_RULE__CREATE = "inventory_posting_rule:create";
@@ -497,12 +505,42 @@ public final class Permissions {
     public static final String FLEET_INCIDENT__CREATE = "fleet_incident:create";
     public static final String FLEET_INCIDENT__UPDATE = "fleet_incident:update";
     public static final String FLEET_INCIDENT__CHARGE = "fleet_incident:charge";
+    public static final String FLEET_FREIGHT__READ = "fleet_freight:read";
+    public static final String FLEET_FREIGHT__BILL = "fleet_freight:bill";
+    public static final String FLEET_FREIGHT__APPROVE_VARIANCE = "fleet_freight:approve_variance";
     public static final String WEIGHBRIDGE__READ = "weighbridge:read";
     public static final String WEIGHBRIDGE__WEIGH = "weighbridge:weigh";
     public static final String WEIGHBRIDGE__MANUAL_ENTRY = "weighbridge:manual_entry";
     public static final String WEIGHBRIDGE__APPROVE_EXCEPTION = "weighbridge:approve_exception";
     public static final String WEIGHBRIDGE__VOID = "weighbridge:void";
     public static final String WEIGHBRIDGE__CONFIGURE = "weighbridge:configure";
+    public static final String QUALITY__READ = "quality:read";
+    public static final String QUALITY__CONFIGURE = "quality:configure";
+    public static final String QUALITY__INSPECT = "quality:inspect";
+    public static final String QUALITY__HOLD = "quality:hold";
+    public static final String QUALITY__RELEASE = "quality:release";
+    public static final String QUALITY__DISPOSE = "quality:dispose";
+    public static final String QUALITY__NCR = "quality:ncr";
+    public static final String QUALITY__CAPA = "quality:capa";
+    public static final String QUARRY__REPORT = "quarry:report";
+    public static final String QUARRY__SETTINGS = "quarry:settings";
+    public static final String QUARRY_SITE__READ = "quarry_site:read";
+    public static final String QUARRY_SITE__CREATE = "quarry_site:create";
+    public static final String QUARRY_SITE__UPDATE = "quarry_site:update";
+    public static final String QUARRY_SITE__DELETE = "quarry_site:delete";
+    public static final String QUARRY_EXTRACTION__READ = "quarry_extraction:read";
+    public static final String QUARRY_EXTRACTION__CREATE = "quarry_extraction:create";
+    public static final String QUARRY_EXTRACTION__UPDATE = "quarry_extraction:update";
+    public static final String QUARRY_EXTRACTION__POST = "quarry_extraction:post";
+    public static final String QUARRY_EXTRACTION__PLAN = "quarry_extraction:plan";
+    public static final String QUARRY_EXTRACTION__HAUL = "quarry_extraction:haul";
+    public static final String QUARRY_BLASTING__READ = "quarry_blasting:read";
+    public static final String QUARRY_BLASTING__CREATE = "quarry_blasting:create";
+    public static final String QUARRY_BLASTING__UPDATE = "quarry_blasting:update";
+    public static final String QUARRY_BLASTING__REQUEST_EXPLOSIVE = "quarry_blasting:request_explosive";
+    public static final String QUARRY_BLASTING__APPROVE_EXPLOSIVE = "quarry_blasting:approve_explosive";
+    public static final String QUARRY_BLASTING__ISSUE_EXPLOSIVE = "quarry_blasting:issue_explosive";
+    public static final String QUARRY_BLASTING__MAGAZINE = "quarry_blasting:magazine";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -678,8 +716,16 @@ public final class Permissions {
             "routing:read",
             "routing:create",
             "routing:delete",
+            "crushing:read",
+            "crushing:setup",
+            "crushing_run:record",
+            "crushing_run:post",
+            "crushing_survey:record",
+            "crushing_survey:approve",
             "work_order:read",
             "work_order:manage",
+            "shop_floor:approve",
+            "shop_floor:machine_data",
             "inventory_posting_rule:read",
             "inventory_posting_rule:update",
             "inventory_posting_rule:create",
@@ -992,12 +1038,42 @@ public final class Permissions {
             "fleet_incident:create",
             "fleet_incident:update",
             "fleet_incident:charge",
+            "fleet_freight:read",
+            "fleet_freight:bill",
+            "fleet_freight:approve_variance",
             "weighbridge:read",
             "weighbridge:weigh",
             "weighbridge:manual_entry",
             "weighbridge:approve_exception",
             "weighbridge:void",
-            "weighbridge:configure");
+            "weighbridge:configure",
+            "quality:read",
+            "quality:configure",
+            "quality:inspect",
+            "quality:hold",
+            "quality:release",
+            "quality:dispose",
+            "quality:ncr",
+            "quality:capa",
+            "quarry:report",
+            "quarry:settings",
+            "quarry_site:read",
+            "quarry_site:create",
+            "quarry_site:update",
+            "quarry_site:delete",
+            "quarry_extraction:read",
+            "quarry_extraction:create",
+            "quarry_extraction:update",
+            "quarry_extraction:post",
+            "quarry_extraction:plan",
+            "quarry_extraction:haul",
+            "quarry_blasting:read",
+            "quarry_blasting:create",
+            "quarry_blasting:update",
+            "quarry_blasting:request_explosive",
+            "quarry_blasting:approve_explosive",
+            "quarry_blasting:issue_explosive",
+            "quarry_blasting:magazine");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

@@ -119,6 +119,7 @@ Behaviour notes:
 - **MRP demand**: open back-office orders (`Order` draft/confirmed, product lines), proforma documents due in the horizon, submitted/approved production requests not yet planned, remaining materials of draft/confirmed production orders, dependent demand of planned make orders, reorder point and safety stock. **Supply**: on hand (optionally one location) − active reservations of other sources + open PO remainders + open production output. Products without `ProductPlanning` are *make* when they have an active BOM, else *buy*, with `Product.minQuantity` as reorder point. A new run supersedes the previous run's unfirmed planned orders.
 - **Scheduling** is forward, minute-granular, in UTC, through `WorkCenterShift` windows (none = 24 h), skipping `WorkCenterClosure` days and honouring `parallelSlots` against work orders already scheduled at the centre.
 - **Quality**: once any active scrap reason exists, QC `wasteCategory` and work-order `scrapReasonCode` must be one of them. A QC plan (by BOM, else product) makes `recordQc` validate the checklist `[{key, value}]`.
+- **Generic quality (ADR-S013, module `quality`, `docs/spec/quality.md`)**: versioned specifications, inspection lots with per-sample results (sieve grading), hold / quarantine / release / reject / downgrade, NCR / CAPA, CoA and traceability. The checklist QC above is unchanged; both share the `QC-QUARANTINE` location. Stage gates (2.1) call `QualityGateService.gate`.
 - **Rework** consumes the reworked units from `QC-QUARANTINE` in a linked `orderKind = rework` order (QC required) and closes the parent.
 - **Variances** are analytic (`ProductionVariance`), written at completion when the order references a frozen standard; positive = unfavourable; no GL effect.
 - **Subcontracted operations** add an `outsourcing` cost component absorbed through overhead and raise a draft `SUBPR-` purchase request for the subcontractor.
@@ -165,3 +166,262 @@ all 100 routes + tenant isolation), `ManufacturingHardeningIT`, `MrpPlanningIT`,
 | GET | `/manufacturing/process-costing/reports/cost-of-production?from&to` |
 
 Tests: `ProcessCostCalculatorTest`, `StandardProcessCostingIT`. Web: Manufacturing → Standard Costs, Process Costing.
+
+## ADR-S011 — 2.1 multi-stage production & WIP between stages
+
+Design: [ADR-S011](../adr/ADR-S011-advanced-multistage-manufacturing.md) (covers all of Phase 2). Migration
+`V26__manufacturing_multistage.sql` (placeholder). Additive: orders without stages keep every Nest / ADR-S006 / S008
+behaviour; the single-leg `start`, `complete`, `qc` and `reverse` answer 400 `Order <code> is a multi-stage order; use
+its stage routes.` for a staged order, `cancel` only while it has no open stage posting. `ProductionOutput` gains
+`outputRole`; `GET /reports/wip-reconciliation` counts a staged order at its stage WIP.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/manufacturing/routings/:id/stage-setup` | `routing:read` |
+| PUT | `/api/v1/manufacturing/routings/:id/stage-setup` | `routing:create` |
+| GET | `/api/v1/manufacturing/boms/:id/stage-setup` | `bom:read` |
+| PUT | `/api/v1/manufacturing/boms/:id/stage-setup` | `bom:update` |
+| GET | `/api/v1/manufacturing/cost-allocation-rules` | `bom:read` |
+| PUT | `/api/v1/manufacturing/cost-allocation-rules/default` | `bom:update` |
+| POST | `/api/v1/manufacturing/multistage-orders` | `production_order:create` |
+| POST | `/api/v1/manufacturing/production-orders/:id/stages/initialize` | `production_order:create` |
+| GET | `/api/v1/manufacturing/production-orders/:id/stages` | `production_order:read` |
+| POST | `/api/v1/manufacturing/production-orders/:id/stages/reverse` (Idempotency-Key) | `production_order:cancel` |
+| POST | `/api/v1/manufacturing/production-orders/:id/child-orders` | `production_order:create` |
+| GET | `/api/v1/manufacturing/production-orders/:id/order-tree` | `production_order:read` |
+| POST | `/api/v1/manufacturing/production-stages/:id/issue` (Idempotency-Key) | `production_order:start` |
+| POST | `/api/v1/manufacturing/production-stages/:id/output` (Idempotency-Key) | `production_order:complete` |
+| POST | `/api/v1/manufacturing/production-stages/:id/conversion-costs` (Idempotency-Key) | `production_order:complete` |
+| POST | `/api/v1/manufacturing/production-stages/:id/qc-decision` (Idempotency-Key) | `production_order:qc` |
+| POST | `/api/v1/manufacturing/stage-postings/:id/reverse` (Idempotency-Key) | `production_order:cancel` |
+| GET | `/api/v1/manufacturing/reports/stage-wip` | `production:report` |
+
+Behaviour notes:
+
+- **Stages** = routing operations with an optional `RoutingStageSetup` (issue mode backflush / manual, intermediate
+  product + quantity per order unit, stage location, expected yield %, QC gate + checkpoint code, materials consumed).
+  Unassigned BOM components are consumed at the first stage; the last stage produces the order output.
+- **Postings** (`ProductionStagePosting` + lines) carry `sourceType = production_stage`, `sourceId = posting id` on
+  every stock move and journal; totals are recomputed from the non-reversed lines. Output postings may be partial;
+  `complete: true` closes the stage (earlier stages must be complete) and relieves all its WIP.
+- **Backflush** issues `qtyPlanned × processed ÷ planned gross` per posting (the rest at completion); manual issues and
+  intermediates are strict (never below zero). A posting relieves its own backflushed value plus the carried WIP pro
+  rata to planned gross units; normal loss (1 − expected yield) is absorbed, abnormal scrap written off.
+- **Intermediates** land in the stage location (or `QC-QUARANTINE` when gated) as stock; pass-through stages move cost
+  in the WIP sub-ledger. **Co-/by-products / waste** from `BomCoProduct` (per stage) valued by `JointCostAllocator`
+  (NRV / zero / legacy % carve-outs, then quantity / weight / market value / fixed %; sums exact).
+- **QC gate**: later stages blocked until `qc-decision` passed (or `StageCheckpointResults.recordResult` from the
+  quality module); `StageQcCheckpointHook` beans are told when a gated lot waits.
+- **Multi-level**: `child-orders` creates pegged child orders (recursive, net of stock optional) delivering into the
+  parent's production location; `order-tree` rolls status / progress up.
+- **Reversal**: last in, first out per order; `stages/reverse` reverses all and cancels the order.
+
+Web: order detail → Stages panel (timeline, per-stage Issue / Output / Cost / Pass-Fail QC, postings with reversal,
+child-order tree), BOM detail → stage set-up + co-products + allocation rule, Manufacturing → Stage WIP
+(`/manufacturing/stage-wip`: WIP per stage vs GL, intermediate stock, default allocation rule).
+
+Tests: `JointCostAllocatorTest`, `StageYieldCalculatorTest`, `OrderRollupTest`, `MultiStageProductionIT` (3-stage
+order with intermediate + co-products + GL, partial completion, LIFO reversal, stage gate + idempotent replay,
+multi-level pegging, concurrency on stage issue, allocation settings, tenant isolation, authz matrix of the 18 routes).
+
+Status (2.1): done. Gaps: per-lot gate release, curing-day hold (2.4), MRP awareness of stages / co-products (2.5),
+standard-governed outputs of a staged order post their difference to 5950 without per-element variances (2.8).
+
+## ADR-S014 — 2.4 Concrete block / precast manufacturing
+
+Design: [ADR-S014](../adr/ADR-S014-precast.md). Migration `V29__manufacturing_blocks_precast.sql` (placeholder).
+Additive: no existing route changes; the 2.1 engine gains a minimum-curing-days hold on QC gates
+(`RoutingStageSetup.minCuringDays`, `ProductionOrderStage.minCuringDays` / `qcPassDueAt`, `qcStatus = curing`) and an
+in-module `StageGateListener`. No new permission keys; `ManufacturingIT` matrix now 157 routes.
+
+| Method | Path (`/api/v1/manufacturing/precast`) | Permission |
+|---|---|---|
+| GET | `/product-specs` (`search, page, pageSize`) | `bom:read` |
+| PUT | `/product-specs/:productId` | `bom:update` |
+| GET | `/curing-areas` (`active`) | `bom:read` |
+| POST | `/curing-areas` | `bom:update` |
+| PATCH | `/curing-areas/:id` | `bom:update` |
+| GET | `/mix-designs` (`search, productId, status, page, pageSize`) | `bom:read` |
+| GET | `/mix-designs/:id` | `bom:read` |
+| POST | `/mix-designs` | `bom:create` |
+| PATCH | `/mix-designs/:id` (draft only) | `bom:update` |
+| POST | `/mix-designs/:id/activate` | `bom:activate` |
+| POST | `/mix-designs/:id/revise` | `bom:create` |
+| GET | `/mix-designs/:id/scale` (`basis = units / batches / cement_bags / volume_m3 / cycles / pallets, value, wholeBatches`) | `bom:read` |
+| GET | `/orders` (`status, productId, search, page, pageSize`) | `production_order:read` |
+| POST | `/orders` (mix design + basis + value → staged, confirmed order) | `production_order:create` |
+| GET | `/orders/:id` (stages, curing batches, costing, variance) | `production_order:read` |
+| POST | `/orders/:id/pressing-runs` (**Idempotency-Key**) | `production_order:complete` |
+| GET | `/curing-batches` (`status, curingAreaId, orderId, ready, search, page, pageSize`) | `production_order:read` |
+| GET | `/curing-batches/:id` | `production_order:read` |
+| POST | `/curing-batches/:id/readings` | `production_order:complete` |
+| POST | `/curing-batches/:id/move` | `production_order:complete` |
+| POST | `/curing-batches/:id/cube` (**Idempotency-Key**) | `production_order:complete` |
+| POST | `/curing-batches/:id/gate-decision` (**Idempotency-Key**) | `production_order:qc` |
+| POST | `/curing-batches/:id/final-inspection` | `production_order:qc` |
+| GET | `/curing-batches/:id/labels` | `production_order:read` |
+| GET | `/reports/cost-per-block` (`from, to, productId`) | `production:report` |
+| GET | `/reports/breakage` (`from, to, productId`) | `production:report` |
+
+Data model (V29): `PrecastProductSpec` (product 1:1 — block type, L × W × H mm, strength class / MPa, weight,
+units per pallet / per machine cycle, second-grade product), `PrecastCuringArea` (code, chamber / yard / shed,
+capacity in pallets, optional inventory location), `PrecastMixDesign` (BOM 1:1 — cement product + units per bag,
+batch m³, w/c ratio, minimum curing days, checkpoint code, default area, maturity target / datum),
+`PrecastCuringBatch` (`<order>-C01`; order, curing stage, pressing / cubing postings, batch number, quantity, broken at
+press, cycles, pallets, area, bay, shift, started / curing until, status `curing → cubed → released | failed`,
+`cancelled` when the pressing posting is reversed, maturity, good / second grade / broken, final lot),
+`PrecastCuringReading` (temperature readings and pallet moves). Every table has `organizationId` + RLS.
+
+Flow: mix design (draft → activate, BOM approvals apply) → `POST /orders` scales it (`BatchScaler`) and creates the
+staged order (pressing stage pass-through, curing stage gated with the mix design's checkpoint and minimum days) →
+pressing runs (stage output: backflush of the batch materials, breakage as scrap; one curing batch each; the last run
+completes pressing) → readings / moves → cubing after the minimum days (good → QC quarantine, second grade → NRV
+by-product, broken → scrap) → strength gate: quality lot release (bridge) or manual decision; a pass before curing
+ends waits as `curing` until `PrecastCuringJob` passes it → released blocks in finished goods → optional final lot
+(`final` plan, e.g. 28-day) → reports. Order status, WIP and GL are the 2.1 engine's.
+
+Tests: `BatchScalerTest`, `MaturityCalculatorTest` (incl. `CuringHold`), `PrecastManufacturingIT` (end to end with
+quality lot, GL balanced, WIP back to zero, cost per acceptable block, variance, labels, reports; curing hold +
+deferred gate + job; mix design versions and validation; idempotent replay, key required, contended cubing; tenant
+isolation; authorization matrix of the 26 routes).
+
+Web: Manufacturing → Precast: curing board (`/manufacturing/precast/curing`, phone layout: readings, moves, cube,
+gate, labels), precast orders (`/manufacturing/precast/orders`, pressing-run form, costing), mix designs with the
+scaling calculator (`/manufacturing/precast/mix-designs`), set-up (specs, curing areas), reports.
+
+Status (2.4): done. Gaps: per-batch (rather than per-stage) strength gate; maturity-based early release; seed data
+(Phase 7); reversing only a gate release leaves the batch `released`.
+## ADR-S015 — 2.7 shop-floor execution & data capture
+
+Design: [ADR-S015](../adr/ADR-S015-shop-floor.md) (final form of ADR-S011 §11). Migration
+`V30__manufacturing_shop_floor.sql` (placeholder). Additive: new tables `ShopFloorShift`, `ShopFloorDowntimeReason`,
+`ShopFloorWorkCenterProfile`, `ShopFloorShiftReport`, `ShopFloorClockEntry`, `ShopFloorDowntime`,
+`ShopFloorProductionReport`, `ShopFloorMeterReading`, `ShopFloorMachineEvent` (RLS, `organizationId` on every row). No
+existing route or table changes; the terminal calls `WorkOrderService` and `StageExecutionService`.
+
+All routes under `/api/v1/manufacturing/shop-floor`, flag `ENABLE_MANUFACTURING`:
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/dashboard` (live board) | `work_order:read` |
+| GET | `/work-centers/:id/queue` (terminal) | `work_order:read` |
+| POST | `/work-orders/:id/start` (start / resume; ends the pause stop) | `work_order:manage` |
+| POST | `/work-orders/:id/pause` (`reasonCode` → opens downtime) | `work_order:manage` |
+| POST | `/work-orders/:id/complete` (Idempotency-Key; labour costed) | `work_order:manage` |
+| GET / POST | `/clock-entries` (clock on; closes the person's open entry) | `work_order:read` / `work_order:manage` |
+| POST | `/clock-entries/:id/clock-off` | `work_order:manage` |
+| GET | `/production-reports` | `work_order:read` |
+| POST | `/production-reports` (Idempotency-Key; staged order → stage output posting) | `production_order:complete` |
+| POST | `/production-reports/:id/confirm` (Idempotency-Key; machine draft) | `production_order:complete` |
+| POST | `/production-reports/:id/reject` | `production_order:complete` |
+| GET / POST | `/downtime` (log open or closed stop) | `work_order:read` / `work_order:manage` |
+| POST | `/downtime/:id/end`, `/downtime/:id/confirm`, `/downtime/:id/reject` | `work_order:manage` |
+| GET / POST | `/meter-readings` (monotonic unless `isReset`) | `work_order:read` / `work_order:manage` |
+| GET | `/shift-reports`, `/shift-reports/:id` | `work_order:read` |
+| POST | `/shift-reports` (open for work centre + shift + date) | `work_order:manage` |
+| POST | `/shift-reports/:id/submit` | `work_order:manage` |
+| POST | `/shift-reports/:id/approve`, `/shift-reports/:id/reject` (approver ≠ submitter) | `shop_floor:approve` |
+| GET | `/oee?from&to&workCenterId` (≤ 93 days) | `production:report` |
+| GET | `/machine-adapters` | `work_center:read` |
+| GET | `/machine-events` | `work_order:read` |
+| POST | `/machine-data/poll` (`simulator` / `rest`), `/machine-data/push`, `/machine-data/csv` | `shop_floor:machine_data` |
+| GET / POST | `/shifts`; PATCH `/shifts/:id`; POST `/shifts/defaults` | `work_order:read` / `work_center:update` |
+| GET / POST | `/downtime-reasons`; PATCH `/downtime-reasons/:id`; POST `/downtime-reasons/defaults` | `work_order:read` / `work_center:update` |
+| GET / PUT | `/work-center-profiles`, `/work-center-profiles/:workCenterId` | `work_center:read` / `work_center:update` |
+
+Behaviour notes:
+
+- **Shift report** per work centre × shift × date (org time zone), created on first record; records are refused once
+  it is submitted ("… is submitted; reject it to reopen before changing its records.") or approved ("… is approved and
+  locked."). Submission needs no pending machine draft; approval by another user than the submitter.
+- **Production report**: multi-stage work order (its routing operation = a stage) → `StageExecutionService.output`
+  (`completesStage`, co-product `outputs` passed through; posting id kept); single-leg → `WorkOrder.qtyGood/qtyScrap`
+  incremented, scrap reason validated against the ADR-S006 scrap reasons. Stock / GL only in the stage engine.
+- **Machine data**: events unique per `(adapter, externalId)`; count → draft production report (single running work
+  order, else unassigned), `downtime` / `downtime_start` → draft machine stop (one open per work centre),
+  `downtime_stop` closes it; unknown machine / locked shift → event `error`. Confirming a count posts like an operator
+  report (row lock, idempotent).
+- **OEE**: `OeeCalculator` + `ShiftClock` (see ADR-S015 §10); snapshot stored on submit / approve; live for open
+  reports (elapsed part of the window).
+
+Web (tablet-first, large touch targets): Manufacturing → **Operator Terminal** (`/manufacturing/terminal`: pick work
+centre, clock on/off, start / stop with reason grid / resume / finish, report output + scrap, issue material on manual
+stages, log downtime, meter reading, confirm / reject machine drafts), **Shop-floor Live** (`/manufacturing/floor-board`,
+30 s refresh), **Shift Reports** (`/manufacturing/shift-reports`, list with filters + pagination, detail with OEE,
+output, downtime, crew, meters, submit / approve / reject), **OEE** (`/manufacturing/oee`), **Shop-floor Setup**
+(`/manufacturing/floor-setup`: shifts, reasons, work-centre profiles, machine data poll / CSV / events).
+
+Tests: `OeeCalculatorTest`, `ShiftClockTest`, `MachineEventParserTest`, `MachineAdaptersTest` (simulator, REST against
+a local HTTP server), `ShopFloorExecutionIT` (single-leg terminal flow with downtime, clock, idempotent output replay,
+meters, shift report four-eyes approval + locking, OEE; multi-stage output through the stage engine with GL balanced;
+simulator / push / CSV drafts, concurrent confirmation, rejection; set-up rules; tenant isolation; authz matrix of the
+41 routes); `ManufacturingIT` matrix now 172 routes.
+
+Status (2.7): done. Gaps / next: MQTT client not embedded (bridge to the push route); scheduled polling of the REST
+adapter (manual poll / gateway push for now); crew ↔ HR attendance linkage (Phase 4); OEE excludes shifts without any
+record; 2.8 can read run / down / output per shift from these tables.
+## ADR-S016 — 2.3 Crushing, screening & aggregate processing
+
+Design: [ADR-S016](../adr/ADR-S016-crushing.md). Migration `V31__manufacturing_crushing.sql` (placeholder; 10 tables +
+6 permissions granted to Administrator). Additive: no change to the 2.1 engine or any existing route. A posted crushing
+run **is** a multi-stage production order of the grading profile's system-managed BOM (feed issued from the feed
+stockpile, conversion per stage, sized fractions into their stockpiles at joint cost).
+
+Routes (36, all under `/api/v1/manufacturing/crushing`; **I** = `Idempotency-Key` required, *i* = accepted):
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/lookups`, `/lookups/products?search` | `crushing:read` |
+| GET | `/plants?includeInactive`, `/plants/:id` | `crushing:read` |
+| POST, PUT, DELETE | `/plants`, `/plants/:id` (whole form incl. circuit stages + units) | `crushing:setup` |
+| GET | `/grading-profiles?plantId&status`, `/grading-profiles/:id` | `crushing:read` |
+| POST, PUT, DELETE | `/grading-profiles`, `/grading-profiles/:id` (drafts) | `crushing:setup` |
+| POST | `/grading-profiles/:id/activate`, `/new-version`, `/archive` | `crushing:setup` |
+| GET | `/runs?plantId&status&shift&from&to&search&page&pageSize`, `/runs/:id`, `/runs/:id/preview` | `crushing:read` |
+| POST *i*, PUT, DELETE | `/runs`, `/runs/:id` (drafts) | `crushing_run:record` |
+| POST **I** | `/runs/:id/post`, `/runs/:id/reverse` (`{reason}`) | `crushing_run:post` |
+| GET | `/stockpiles?kind`, `/stockpile-surveys?stockpileId&status&page&pageSize`, `/stockpile-surveys/:id` | `crushing:read` |
+| POST *i*, PUT, DELETE | `/stockpile-surveys`, `/stockpile-surveys/:id` (drafts) | `crushing_survey:record` |
+| POST | `/stockpile-surveys/:id/submit` | `crushing_survey:record` |
+| POST **I** / POST / POST **I** | `/stockpile-surveys/:id/approve`, `/reject` (`{reason}`), `/reverse` (`{reason}`) | `crushing_survey:approve` |
+| GET | `/reports/yield`, `/reports/cost-per-tonne`, `/reports/plant-hours` (`from&to&plantId`, default month to date) | `production:report` |
+
+Data model: `CrushingPlant` (site, default feed stockpile, design t/h, diesel / kWh / labour rates, routing + circuit
+version), `CrushingPlantStage` (sequence → routing operation), `CrushingPlantUnit` (kind, work centre, t/h, kW, meter
+kind), `CrushingGradingProfile` (plant × feed, version, draft → active → archived, allocation method, expected recovery,
+BOM) + `CrushingGradingLine` (product, size label, role, stage, expected %, stocked, stockpile, valuation / NRV),
+`CrushingRun` (date, shift, operator, feed stockpile + tonnes + method, output method, recirculated t, hours, downtime,
+crew hours, draft → posted → reversed, production order, posted snapshot of yield / loss / cost) + `CrushingRunOutput`
+(expected vs actual t / %, value, unit cost) + `CrushingRunMeter` (engine hours / kWh start-end, diesel) +
+`CrushingRunCost` (manual + derived lines, stage posting), `CrushingStockpileSurvey` (volume × density, book snapshot,
+variance, draft → submitted → posted / rejected → reversed). All org-scoped with the `tenant_isolation` RLS policy.
+
+Business rules: a profile has exactly one main fraction (stocked, last stage, allocated), distinct products none the
+feed, Σ expected % ≤ 100 (rest = normal loss), a stocked line needs a stockpile at activation, co-products share the
+joint cost; one active profile per plant × feed. A run needs an active plant and the active profile version, a date not
+in the future, units of its own plant, meters that do not run backwards; on post the per-stage mass balance must hold
+(fractions of a stage ≤ what it receives) and the feed must be on hand (engine strict issue). Survey approval: never the
+submitter; the adjustment applies (surveyed − book at submission) to today's stock and is refused below zero.
+
+GL (posting engine): run → stage engine journals (`production_stage`): Dr WIP / Cr ROM stock (feed), Dr WIP / Cr overhead
+absorbed (diesel, electricity, labour, wear parts, maintenance), Dr stock / Cr WIP per stocked fraction, Dr scrap / Cr WIP
+for abnormal loss; reversal mirrors them. Survey → Dr stock / Cr stock adjustment income (gain) or Dr stock adjustment
+expense / Cr stock (loss), source `crushing_survey` / `crushing_survey_reversal`. Event `crushing.run.posted`. Quality:
+each stocked fraction of a posted run opens a final inspection lot (batch = run code, `stockControl = source`) when an
+active final plan exists for the product (sieve-analysis specification).
+
+Web: Production → Crushing Runs (`/manufacturing/crushing`, list + filters + pagination; `/runs/new`, `/runs/:id/edit`
+phone / tablet operator entry with sticky output / loss / yield totals; `/runs/:id` detail with post / reverse, GL),
+Crushing Plants (`/plants`, `/plants/:id` circuit editor + profiles), grading profile (`/profiles/new?plantId`,
+`/profiles/:id`: lines, activate, new version, archive), Aggregate Stockpiles (`/stockpiles`: stock per pile, surveys
+with submit / approve / reject / reverse), Crushing Reports (`/reports`). i18n for ti / lg / sw.
+
+Tests: `CrushingCalculatorTest` (split, meters, per-stage balance, yield, performance, survey variance, cost kinds),
+`CrushingIT` (circuit → routing / work centres / new routing version; profile rules, versioning, system BOM; run draft →
+preview → post with NRV by-product, unstocked waste, abnormal loss, GL balanced, idempotent replay, reports, reversal;
+validation; concurrent posts on scarce feed; survey with SoD, adjustment + GL, reversal, reject; tenant isolation; authz
+matrix of the 36 routes + operator cannot post). `ManufacturingIT` matrix now 167 routes.
+
+Status (2.3): done (2026-10-30). Gaps: no automatic feed from `quarry.extraction.posted`; belt-scale / PLC capture via
+2.7's SPI; fleet cost per hour / payroll actuals per run (2.8); normal loss is measured at the last stage's input (fractions
+leaving at an earlier stage are excluded from it); the quality lot of a reversed run is not cancelled automatically.

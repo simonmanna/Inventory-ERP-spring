@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import org.hibernate.annotations.Filter;
@@ -58,6 +59,9 @@ public class FleetComplianceDocument {
 
     @Column(name = "notes")
     private String notes;
+
+    @Column(name = "costAmount", precision = 18, scale = 2)
+    private BigDecimal costAmount;
 
     @Column(name = "createdBy")
     private String createdBy;

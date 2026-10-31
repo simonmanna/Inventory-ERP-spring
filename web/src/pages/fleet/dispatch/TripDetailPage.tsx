@@ -13,6 +13,7 @@ import { num } from '../fleet-format';
 import { DiscrepancyStatusPill, Item, TripStatusPill } from './dispatch-ui';
 import { carrierText } from './dispatch-format';
 import { TripActions } from './TripActions';
+import { WeighTicketsCard } from './WeighTicketsCard';
 
 const DISTANCE_SOURCE: Record<string, string> = {
   telematics: tx('GPS'), odometer: tx('Odometer'), site: tx('Site distance'), manual: tx('Entered'),
@@ -124,6 +125,8 @@ export function TripDetailPage() {
           <DataTable columns={columns} data={t.lines} getRowId={(l) => l.id} cellClassName="py-2 px-4" headerRowClassName="h-10" emptyMessage="—" />
         </CardContent>
       </Card>
+
+      <WeighTicketsCard tickets={t.weighbridgeTickets ?? []} weighbridge={t.weighbridge} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>

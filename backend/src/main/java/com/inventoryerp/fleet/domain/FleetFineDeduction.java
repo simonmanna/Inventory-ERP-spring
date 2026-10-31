@@ -63,6 +63,9 @@ public class FleetFineDeduction {
     @Column(name = "cancelReason")
     private String cancelReason;
 
+    @Column(name = "payrollInputId")
+    private String payrollInputId;
+
     @Column(name = "createdAt", nullable = false)
     private Instant createdAt;
 

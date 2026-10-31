@@ -29,6 +29,8 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   rental_agreement: tx('Rental Agreements'),
   // Fleet (ADR-S009) — odometer / hour-meter rollbacks and meter replacements.
   fleet_meter_correction: tx('Fleet Meter Corrections'),
+  // Quarry (ADR-S012) — explosive issues from a magazine (controlled stock).
+  quarry_explosive_issue: tx('Explosive Issues'),
 };
 
 export function entityTypeLabel(entityType: string): string {

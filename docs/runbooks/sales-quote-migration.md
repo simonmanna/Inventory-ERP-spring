@@ -1,6 +1,6 @@
-# Runbook — CRM → Sales quotation migration (V24, ADR-S011 phase S0)
+# Runbook — CRM → Sales quotation migration (V39, ADR-S011 phase S0)
 
-V24 copies `CrmQuotation` / `CrmQuotationLine` into `SalesQuotation` / `SalesQuotationLine` with the same ids,
+V39 copies `CrmQuotation` / `CrmQuotationLine` into `SalesQuotation` / `SalesQuotationLine` with the same ids,
 numbers, statuses, approval-request ids and converted-document references, moves the quote policy from
 `CrmSettings` to `SalesSettings`, and write-blocks the CRM tables. `/crm/quotations*` keeps its JSON (it delegates to
 `SalesQuotationService`).
@@ -46,16 +46,16 @@ Then click through `docs/VERIFY_CHECKLIST.md` → "Sales S0": open an old quotat
 check number / lines / status, revise it, approve a pending one.
 
 ## 2. Known differences
-- Audit rows written before V24 use entity `CrmQuotation`; new rows use `SalesQuotation`. Query both when tracing a
+- Audit rows written before V39 use entity `CrmQuotation`; new rows use `SalesQuotation`. Query both when tracing a
   quotation's history.
-- Revisions made before V24 have no snapshot (CRM overwrote them in place); snapshots start with the first revise
-  after V24.
+- Revisions made before V39 have no snapshot (CRM overwrote them in place); snapshots start with the first revise
+  after V39.
 - `CrmSettings` quote columns are still written (mirror) by `/crm/config/settings` but are no longer read.
 
 ## 3. Rollback (only if the release is withdrawn)
 
-1. Deploy the previous release (pre-V24 code). Do **not** run Flyway clean.
-2. Copy quotations created or changed after V24 back to CRM:
+1. Deploy the previous release (pre-V39 code). Do **not** run Flyway clean.
+2. Copy quotations created or changed after V39 back to CRM:
 
 ```sql
 BEGIN;
@@ -95,4 +95,4 @@ DROP TRIGGER "CrmQuotationLine_write_block" ON "CrmQuotationLine";
 COMMIT;
 ```
 
-3. The sales tables stay (unused by the old code) until the release is re-applied; the Flyway history keeps V24.
+3. The sales tables stay (unused by the old code) until the release is re-applied; the Flyway history keeps V39.

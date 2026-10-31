@@ -278,6 +278,20 @@ class LicensingIT extends ApiTestSupport {
     }
 
     @Test
+    void theQuarryModuleIsGatedByItsLicenceFeature() {
+        // ADR-S012: quarry is a sold vertical module; app.modules.quarry=true in the test profile.
+        applyLicence(licence("active", Instant.now().plus(Duration.ofDays(30)), 7,
+                List.of("crm", "accounting", "fleet"), 5, 25, 1));
+        var refused = as("GET", "/quarry/sites", null);
+        assertThat(refused.status()).isEqualTo(402);
+        assertThat(refused.body().path("message").asString()).isEqualTo("'quarry' is not included in your licence.");
+
+        applyLicence(licence("active", Instant.now().plus(Duration.ofDays(30)), 7,
+                List.of("crm", "accounting", "quarry"), 5, 25, 1));
+        assertThat(as("GET", "/quarry/sites", null).status()).isEqualTo(200);
+    }
+
+    @Test
     void aLicensedModuleIsNotRefusedByTheLicence() {
         applyLicence(licence("active", Instant.now().plus(Duration.ofDays(30)), 7,
                 List.of("crm", "accounting", "taskBoard"), 5, 25, 1));

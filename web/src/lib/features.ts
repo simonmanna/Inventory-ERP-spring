@@ -26,6 +26,7 @@ export const MODULE_FEATURES: ModuleFeature[] = [
   { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
   { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
   { key: 'fleet', label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance'), sections: ['Fleet'] },
+  { key: 'quarry', label: tx('Quarry & Extraction'), description: tx('Quarry sites, extraction logs into ROM stock, drilling and blasting, controlled explosives'), sections: ['Quarry'] },
   { key: 'repair', label: tx('Repair & Maintenance'), description: tx('Repair jobs, work tickets, and maintenance scheduling'), sections: ['Repair & Maintenance'] },
   { key: 'communication', label: tx('Communication'), description: tx('Unified inbox, channels, and messaging automation'), sections: ['Communication'] },
   { key: 'assets', label: tx('Fixed Assets'), description: tx('Fixed asset register, categories, and depreciation'), sections: ['Fixed Assets'] },

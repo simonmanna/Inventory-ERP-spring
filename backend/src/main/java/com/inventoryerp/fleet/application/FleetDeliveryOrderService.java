@@ -187,6 +187,7 @@ public class FleetDeliveryOrderService {
                 + " ORDER BY x.\"createdAt\"").params(FleetDb.org(), id)));
         o.put("charges", SqlRows.list(db.jdbc().sql("SELECT * FROM \"FleetDeliveryCharge\" WHERE \"organizationId\" = ?"
                 + " AND \"deliveryOrderId\" = ? ORDER BY \"createdAt\"").params(FleetDb.org(), id)));
+        o.put("weighbridgeTickets", FleetWeighbridgeRuleService.linkedTickets(db, "deliveryOrderId", id));
         o.putAll(progress(id));
         return o;
     }

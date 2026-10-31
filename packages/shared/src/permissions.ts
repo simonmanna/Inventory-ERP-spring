@@ -289,9 +289,36 @@ export const PERMISSIONS = {
     create: 'routing:create',
     delete: 'routing:delete',
   },
+  // ---- Crushing, screening & aggregate processing (manufacturing 2.3, ADR-S016) ----
+  // Route ↔ permission matrix: docs/spec/manufacturing.md §2.3. Reports use production:report.
+  crushing: {
+    /// Plants / circuits, grading profiles, runs, stockpiles and surveys (and the crushing form lookups).
+    read: 'crushing:read',
+    /// Plant & circuit set-up (crushers, screens, conveyors as work centres) and grading profiles.
+    setup: 'crushing:setup',
+  },
+  crushingRun: {
+    /// Record / edit / delete draft crushing runs (plant-operator entry).
+    record: 'crushing_run:record',
+    /// Post a run (feed out of the ROM stockpile, sized products into stockpiles at cost, GL) and reverse it.
+    post: 'crushing_run:post',
+  },
+  crushingSurvey: {
+    /// Record and submit stockpile surveys (volume × density = tonnes).
+    record: 'crushing_survey:record',
+    /// Approve (posts the stock adjustment + GL), reject or reverse a survey — never the person who submitted it.
+    approve: 'crushing_survey:approve',
+  },
   workOrder: {
     read: 'work_order:read',
     manage: 'work_order:manage',
+  },
+  // ---- Manufacturing 2.7 — shop-floor execution & data capture (ADR-S015) ----
+  shopFloor: {
+    /// Approve / reject submitted shift reports (supervisor).
+    approve: 'shop_floor:approve',
+    /// Feed machine data (poll adapters, push from a gateway / MQTT bridge, CSV import) — device accounts.
+    machineData: 'shop_floor:machine_data',
   },
   // ---- Configurable Inventory Posting Rules (M3) ----
   inventoryPostingRule: {
@@ -788,6 +815,15 @@ export const PERMISSIONS = {
     /// Charge a fine to a driver (payroll deduction) or to the company.
     charge: 'fleet_incident:charge',
   },
+  fleetFreight: {
+    /// Transporter freight bills (fleet 1.9): list and detail.
+    read: 'fleet_freight:read',
+    /// Generate bills from closed transporter trips, match the supplier invoice (AP bill + accrual), cancel,
+    /// capitalise inbound freight as landed cost.
+    bill: 'fleet_freight:bill',
+    /// Accept a supplier invoice outside the match tolerance.
+    approveVariance: 'fleet_freight:approve_variance',
+  },
   weighbridge: {
     read: 'weighbridge:read',
     /// Operator: register trucks, capture first / second weights, print tickets.
@@ -800,6 +836,68 @@ export const PERMISSIONS = {
     void: 'weighbridge:void',
     /// Stations, indicator devices, tolerances, tare validity.
     configure: 'weighbridge:configure',
+  },
+  // ---- Quality management (module quality, ADR-S013, construction-materials Track C Phase 2.6) ----
+  // Core-available (no module flag). Route ↔ permission matrix: docs/spec/quality.md §Permissions.
+  quality: {
+    /// Specifications, plans, lots, results, NCR / CAPA, traceability, reports, CoA print.
+    read: 'quality:read',
+    /// Specifications (versions, parameters, sieve envelopes) and inspection plans (sampling, hold policy).
+    configure: 'quality:configure',
+    /// Open lots, record test results, import laboratory results.
+    inspect: 'quality:inspect',
+    /// Put a lot on hold or move it into QC quarantine.
+    hold: 'quality:hold',
+    /// Release a lot (back to stock / next stage); a failed lot needs a concession reason.
+    release: 'quality:release',
+    /// Reject (scrap / return to supplier), downgrade to a second-grade product, cancel a lot.
+    dispose: 'quality:dispose',
+    /// Nonconformance reports.
+    ncr: 'quality:ncr',
+    /// Corrective / preventive actions.
+    capa: 'quality:capa',
+  },
+  // ---- Quarry & extraction (module quarry, ADR-S012, construction-materials Track C Phase 2.2) ----
+  // Route ↔ permission matrix: docs/spec/quarry.md §Routes. Every quarry role needs quarry_site:read (form lookups).
+  quarry: {
+    /// Extraction vs target, cost per tonne, losses and royalties reports.
+    report: 'quarry:report',
+    /// Cost-allocation rule, fallback rates, equipment rates, royalty / levy rates.
+    settings: 'quarry:settings',
+  },
+  quarrySite: {
+    /// Sites, zones / benches / faces, materials, stockpiles (and the quarry form lookups).
+    read: 'quarry_site:read',
+    create: 'quarry_site:create',
+    update: 'quarry_site:update',
+    delete: 'quarry_site:delete',
+  },
+  quarryExtraction: {
+    /// Daily extraction logs, losses, haulage, plans and the ROM stockpile view.
+    read: 'quarry_extraction:read',
+    create: 'quarry_extraction:create',
+    update: 'quarry_extraction:update',
+    /// Post / reverse an extraction log: raw stone into ROM stock with its cost, GL capitalisation.
+    post: 'quarry_extraction:post',
+    /// Extraction plans and production targets.
+    plan: 'quarry_extraction:plan',
+    /// Record haulage from the face to the ROM stockpile / crusher.
+    haul: 'quarry_extraction:haul',
+  },
+  quarryBlasting: {
+    /// Drilling & blasting records, magazines, explosive registry and issues.
+    read: 'quarry_blasting:read',
+    create: 'quarry_blasting:create',
+    /// Edit, fire, close or cancel a blast.
+    update: 'quarry_blasting:update',
+    /// Request explosives for a blast (goes to approval).
+    requestExplosive: 'quarry_blasting:request_explosive',
+    /// Approver permission of the default explosive-issue approval workflow (never the requester).
+    approveExplosive: 'quarry_blasting:approve_explosive',
+    /// Explosive issue authorisation: issue an approved request from the magazine and reconcile the unused return.
+    issueExplosive: 'quarry_blasting:issue_explosive',
+    /// Magazines (licence, keeper) and the controlled-explosive product registry.
+    magazine: 'quarry_blasting:magazine',
   },
 } as const;
 

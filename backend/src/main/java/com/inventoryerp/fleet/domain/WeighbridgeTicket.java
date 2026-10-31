@@ -231,6 +231,15 @@ public class WeighbridgeTicket {
     @Column(name = "goodsReceiptLineId")
     private String goodsReceiptLineId;
 
+    @Column(name = "tripFeedStatus")
+    private String tripFeedStatus;
+
+    @Column(name = "tripFeedMessage")
+    private String tripFeedMessage;
+
+    @Column(name = "tripFedAt")
+    private Instant tripFedAt;
+
     @Column(name = "notes")
     private String notes;
 

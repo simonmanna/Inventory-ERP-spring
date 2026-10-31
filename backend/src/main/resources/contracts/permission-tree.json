@@ -261,9 +261,25 @@
     "create": "routing:create",
     "delete": "routing:delete"
   },
+  "crushing": {
+    "read": "crushing:read",
+    "setup": "crushing:setup"
+  },
+  "crushingRun": {
+    "record": "crushing_run:record",
+    "post": "crushing_run:post"
+  },
+  "crushingSurvey": {
+    "record": "crushing_survey:record",
+    "approve": "crushing_survey:approve"
+  },
   "workOrder": {
     "read": "work_order:read",
     "manage": "work_order:manage"
+  },
+  "shopFloor": {
+    "approve": "shop_floor:approve",
+    "machineData": "shop_floor:machine_data"
   },
   "inventoryPostingRule": {
     "read": "inventory_posting_rule:read",
@@ -669,6 +685,11 @@
     "update": "fleet_incident:update",
     "charge": "fleet_incident:charge"
   },
+  "fleetFreight": {
+    "read": "fleet_freight:read",
+    "bill": "fleet_freight:bill",
+    "approveVariance": "fleet_freight:approve_variance"
+  },
   "weighbridge": {
     "read": "weighbridge:read",
     "weigh": "weighbridge:weigh",
@@ -676,5 +697,42 @@
     "approveException": "weighbridge:approve_exception",
     "void": "weighbridge:void",
     "configure": "weighbridge:configure"
+  },
+  "quality": {
+    "read": "quality:read",
+    "configure": "quality:configure",
+    "inspect": "quality:inspect",
+    "hold": "quality:hold",
+    "release": "quality:release",
+    "dispose": "quality:dispose",
+    "ncr": "quality:ncr",
+    "capa": "quality:capa"
+  },
+  "quarry": {
+    "report": "quarry:report",
+    "settings": "quarry:settings"
+  },
+  "quarrySite": {
+    "read": "quarry_site:read",
+    "create": "quarry_site:create",
+    "update": "quarry_site:update",
+    "delete": "quarry_site:delete"
+  },
+  "quarryExtraction": {
+    "read": "quarry_extraction:read",
+    "create": "quarry_extraction:create",
+    "update": "quarry_extraction:update",
+    "post": "quarry_extraction:post",
+    "plan": "quarry_extraction:plan",
+    "haul": "quarry_extraction:haul"
+  },
+  "quarryBlasting": {
+    "read": "quarry_blasting:read",
+    "create": "quarry_blasting:create",
+    "update": "quarry_blasting:update",
+    "requestExplosive": "quarry_blasting:request_explosive",
+    "approveExplosive": "quarry_blasting:approve_explosive",
+    "issueExplosive": "quarry_blasting:issue_explosive",
+    "magazine": "quarry_blasting:magazine"
   }
 }

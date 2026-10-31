@@ -164,10 +164,8 @@ class FleetWeighbridgeIT extends FleetSafetyTestSupport {
     @Test
     @DisplayName("outbound: simulator first / second weighing → net 20 050 kg = 20.05 t, within tolerance → completed")
     void outboundWithinTolerance() {
-        String deliveryOrder = "DO-" + sfx;
-        String trip = "TRIP-" + sfx;
-        JsonNode created = outbound(operator, 20, Map.of("deliveryOrderId", deliveryOrder, "tripId", trip,
-                "trailerPlate", "ut 12a"));
+        // Delivery order / trip links (real FleetDeliveryOrder / FleetLoad rows since 1.4b): FleetWeighbridgeDispatchIT.
+        JsonNode created = outbound(operator, 20, Map.of("trailerPlate", "ut 12a"));
         String id = created.get("id").asString();
         assertThat(created.get("ticketNumber").asString()).startsWith("WBT-");
         assertThat(created.get("status").asString()).isEqualTo("open");
@@ -203,10 +201,8 @@ class FleetWeighbridgeIT extends FleetSafetyTestSupport {
         CompletedTicket api = TenantContext.run(TenantStore.user(demoOrg, adminId), () -> service.completedTicket(id));
         assertThat(api.netQty()).isEqualByComparingTo("20.05");
         assertThat(api.uomId()).isEqualTo(ton);
-        assertThat(api.deliveryOrderId()).isEqualTo(deliveryOrder);
+        assertThat(api.deliveryOrderId()).isNull();
         assertThat(api.withinTolerance()).isTrue();
-        assertThat(TenantContext.run(TenantStore.user(demoOrg, adminId), () -> service.completedTicketsForTrip(trip)))
-                .extracting(CompletedTicket::id).containsExactly(id);
         assertThat(outboxCount("weighbridge.ticket.completed", id)).isEqualTo(1);
 
         JsonNode queue = ok(200, "GET", "/fleet/weighbridge/tickets?queue=completed&stationId=" + station, null);

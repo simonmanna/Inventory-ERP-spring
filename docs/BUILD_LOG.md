@@ -36,10 +36,10 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
 | 2.4, 2.1, 2.2, 2.3, 2.5 | session A | | not started by session B |
 | 4 fleet | in-progress (C) | | taken over by Track C on 2026-10-28; session B work never pushed (see Track C 1.1–1.9) |
 | 2.6 BI & dashboards | todo | | released by B 2026-10-28 (superseded by Track C) |
-| 2.8 subscriptions & deferrals | todo | | released by B 2026-10-28 |
+| 2.8 subscriptions & deferrals | claimed (C) | | released by B 2026-10-28 |
 | 2.9 projects & service billing | todo | | released by B 2026-10-28 |
 | 2.10 portals & payment gateways | todo | | released by B 2026-10-28 |
-| 2.7 intercompany & multi-company | todo | | |
+| 2.7 intercompany & multi-company | claimed (C) | | |
 | 2.x UI i18n | todo | | |
 | 2.x e-commerce connector | todo | | |
 | 3.3 scale & data lifecycle | todo | | |
@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: 1.4b weighbridge ↔ dispatch + Phase 1 E2E IT, and 1.9 costing & reports — in-progress (C), parallel worktrees
-Next action: merge 1.5 (worktree `wt/c-fuel`) into main (1.2 is committed on main), then start 1.3 dispatch + 1.6 maintenance.
+Current: Phase 4 — lanes A–F in parallel worktrees. From 2026-10-30 the user asked to skip compile/build: everything after bd3f34b is unverified until a full build is run
+Next action: merge lanes A–F, tag gaps-closed, then Phase 5.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -76,23 +76,43 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 1.1 vehicle & equipment registry | done | ebae379 a7aee65 3765aea | | fleet module + flag/licence/menu, ADR-S009, spec, V15 (7 tables, all 53 Phase 1 permissions), 32 routes, 6 screens, FleetPoliciesTest + FleetRegistryIT (14); full build 694 tests / 0 failed; license-server ITs need Docker |
 | 1.2 drivers & operators | done | c79aece 8daa231 9c3b53f | | V16 (9 fleet tables + hr `HrPayrollInput`), 37 routes, 9 screens + vehicle tab; eligibility policy, assignments, check-out/in with meters + photos, allowance rules, claims → expenses (Dr 6440 cc / Cr bank) or payroll (Dr 6440 / Cr 2185, settled by the run); additive hr `payroll-inputs` API + `ExpensesService.createPaidFromSource`; full build 719 tests / 0 failed |
 | 1.3 trips, delivery planning & dispatch | done | 90d00ea ce56add 7b65e6c 76c5619 | | V22, 55 routes, FleetDispatchIT (9) incl. stock issue once + concurrency, POD, discrepancy → credit note, transport charge |
-| 1.4 weighbridge | in-progress (C) | d29d681 0736c5e 0ffba5f | | 1.4a done: V23, 36 routes, FleetWeighbridgeIT (14), ASCII/TCP + simulator adapters, SoD exceptions, inbound → draft GRN; 1.4b (ticket ↔ trip, drives stock issue) next |
+| 1.4 weighbridge | done | d29d681 0736c5e 0ffba5f 03b7a9b e8d4ff8 dc9ce2e | | 1.4a (V23, 36 routes) + 1.4b (V24, 6 routes): ticket completion feeds the trip, drives the stock issue; void before dispatch only; dispatch rule; FleetPhase1EndToEndIT (3) GL-balanced |
 | 1.5 fuel & energy | done | c778199 c1cf1b8 53b0ab0 | | V19, 34 routes, FleetFuelIT + FuelPoliciesTest; merged with the 1.6/upstream CRM merge |
 | 1.6 maintenance | done | 8d23b3e 50e1954 ea4379e | | V18, 51 routes, FleetMaintenanceIT; dispatch check `FleetDispatchEligibilityService` |
 | 1.7 tyres, incidents, fines | done | a1c77e0 78da0fe f75e013 | | V20, tyres/incidents/insurance claims/fines; driver fine deductions = events + manual status until wired to hr in 1.9 |
 | 1.8 telematics SPI | done | a1c77e0 | | V21, mock provider, positions/distance API for 1.3 |
-| 1.9 fleet costing & reports | in-progress (C, worktree) | | fleet-complete | |
-| 2.1 multi-stage production & WIP | todo | | | |
-| 2.2 quarry & extraction | todo | | | |
-| 2.3 crushing & screening | todo | | | |
-| 2.4 block / precast manufacturing | todo | | | |
-| 2.5 advanced planning & scheduling | todo | | | |
-| 2.6 quality management | todo | | | |
-| 2.7 shop-floor execution & data capture | todo | | | |
-| 2.8 manufacturing costing & analytics | todo | | manufacturing-advanced-complete | |
-| 3 requirements verification | todo | | requirements-verified | |
-| 4.x gaps (one row per module, added in phase 3) | todo | | gaps-closed | |
+| 1.9 fleet costing & reports | done | 0c4b8e3 37ba653 a538e61 | fleet-complete | V25, 22 routes, TCO / delivery profitability / freight bills (once, GL balanced) / 8 reports with CSV-XLSX-PDF / ShedLock reminders / fine → payroll deduction / opt-in demo seed (`SEED_FLEET_DEMO`) |
+| 2.1 multi-stage production & WIP | done (C) | 8052424, dc2be71, 23b4c96 | | V26, ADR-S011; 18 routes, stage QC SPI for 2.6; branch build 894 tests green |
+| 2.2 quarry & extraction | done (C) | 91d1c52, 779bc31, 4e7c775 | | V28 + licence V4, ADR-S012; 80 routes, 19 permissions, ROM stockpile API for 2.3; main build 937 tests green (licence-server ITs need Docker) |
+| 2.3 crushing & screening | merged, not verified on main (C) | b5164dd, 01094db, f7a5a94 | | V31, ADR-S016; 36 routes; branch build 953 tests green; pushed on the user's instruction without a full build of the merged tree |
+| 2.4 block / precast manufacturing | done (C) | 6b43ea8, 746589f, 3ae57df | | V29, ADR-S014; 26 routes under /manufacturing/precast, curing hold on 2.1 gates; main build 949 tests green |
+| 2.5 advanced planning & scheduling | claimed (C) | | | |
+| 2.6 quality management | done (C) | c6b3f68, 608208a, 554c872 | | V27, ADR-S013; 45 routes; wired to 2.1 stage gates (QualityStageGateBridge); main build 917 tests green |
+| 2.7 shop-floor execution & data capture | merged, not verified on main (C) | 42dd59c, de1d082, 82f719e | | V30, ADR-S015; 41 routes; branch build 934 tests green; pushed on the user's instruction without a full build of the merged tree |
+| 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
+| 3 requirements verification | done (C) | 66219a2 | requirements-verified | 263 rows: 166 verified, 82 partial, 15 missing. By reading code only; nothing compiled or run |
+| 4.A manufacturing: MFG-1 2.5 planning, MFG-2 2.8 costing, MFG-3 E2E ITs, MFG-4 demo seed | in-progress (C, worktree) | | | |
+| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | in-progress (C, worktree) | | | |
+| 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | in-progress (C, worktree) | | | |
+| 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | in-progress (C, worktree) | | | |
+| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | in-progress (C, worktree) | | | |
+| 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | in-progress (C, worktree) | | | |
 | 4.x sales O2C (ADR-S011) | in-progress (owner session) | | | Step 0 docs on `phase/S0-sales-docs` (ADR-S011, `PRODUCT_ARCHITECTURE.md`, `spec/sales.md`, `spec/sales-postings.md`, `spec/credit.md`); S0 code waits for owner review; each phase S0–S10 gated by owner go-ahead. Covers ROADMAP 1.5 / 1.6. Do not touch `manufacturing/**` |
+| 4 all gaps closed | todo | | gaps-closed | |
 | 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
+
+### Phase 1 summary (fleet-complete, 2026-10-30)
+Module `fleet` (ADR-S009, flag `ENABLE_FLEET`, licence feature `fleet`), migrations V15–V16 and V18–V25 (V17 is the
+owner's CRM), ~300 routes, 55 permissions, screens under `/fleet`. Built by 9 agents in parallel worktrees, merged
+here. Covers: vehicle & equipment registry, drivers/operators + check-out/in + allowance claims (expenses / payroll),
+delivery orders from sales orders → load planning → dispatch board → trips → delivery note → POD → discrepancies →
+credit-note requests → transport charges on invoices, weighbridge (ASCII/TCP + simulator adapters, SoD exceptions,
+immutable tickets, inbound → GRN, ticket drives the stock issue), fuel (logs, cards, site tanks, dips, anomalies),
+fleet-owned maintenance (schedules, work orders, downtime, MTBF/MTTR, DVIR → defects → dispatch block), tyres,
+incidents, insurance claims, fines (company expense or payroll deduction), telematics SPI + mock, costing / TCO /
+delivery profitability / freight bills / reports / reminders. `FleetPhase1EndToEndIT` proves sales order → … →
+balanced GL. Full build: 867 tests / 0 failed. Owner review: GL account proposals and other choices in
+`docs/DECISIONS_FOR_OWNER.md`; click-through steps in `docs/VERIFY_CHECKLIST.md`. Known limits: one ticket per trip,
+own-fleet trip cost analytic only, telematics mock only, no vendor-binary weighbridge protocols.

@@ -226,11 +226,30 @@ export const EVENTS = {
   FleetTripClosed: 'fleet.trip.closed',
   FleetTripReturned: 'fleet.trip.returned',
   FleetDeliveryDiscrepancyDecided: 'fleet.delivery.discrepancy_decided',
+  // Fleet 1.9 — a transporter freight bill was matched to the supplier invoice (AP bill + accrual, or inbound landed
+  // cost); an expiry / service-due reminder was raised (communication rules can route it to email / WhatsApp); hr
+  // payroll included / re-opened inputs other modules queued (fleet settles fines deducted from drivers' pay).
+  FleetFreightBillMatched: 'fleet.freight_bill.matched',
+  FleetReminderDue: 'fleet.reminder.due',
+  HrPayrollInputsIncluded: 'hr.payroll.inputs_included',
+  HrPayrollInputsReopened: 'hr.payroll.inputs_reopened',
   // Fleet 1.4 weighbridge: a ticket completed (net weight final — drives the trip's loaded quantity / stock issue in
   // 1.4b and the GRN of inbound weighing), an out-of-tolerance exception raised for approval, a ticket voided.
   WeighbridgeTicketCompleted: 'weighbridge.ticket.completed',
   WeighbridgeExceptionRaised: 'weighbridge.exception.raised',
   WeighbridgeTicketVoided: 'weighbridge.ticket.voided',
+  // Quality management (ADR-S013): a lot opened, its results evaluated (pass / fail), a decision taken (2.1 / 2.4
+  // subscribe for stockControl = source lots), an NCR raised, a CAPA closed.
+  QualityLotCreated: 'quality.lot.created',
+  QualityLotEvaluated: 'quality.lot.evaluated',
+  QualityLotDecided: 'quality.lot.decided',
+  QualityNcrRaised: 'quality.ncr.raised',
+  QualityCapaClosed: 'quality.capa.closed',
+  // Quarry 2.2 (ADR-S012): an extraction log was posted — net tonnes received into a ROM stockpile at the cost per
+  // tonne (crushing 2.3, dashboards and alerts react to it).
+  QuarryExtractionPosted: 'quarry.extraction.posted',
+  // Crushing 2.3 (ADR-S016): a crushing run was posted — feed consumed, sized products received into stockpiles.
+  CrushingRunPosted: 'crushing.run.posted',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -531,6 +550,18 @@ export interface DomainEventMap {
   'fleet.trip.delivered': FleetTripEventPayload;
   'fleet.trip.closed': FleetTripEventPayload & { distanceKm: string | null; freightAmount: string | null };
   'fleet.trip.returned': FleetTripEventPayload & { reason: string };
+  'fleet.freight_bill.matched': {
+    organizationId: string; freightBillId: string; code: string; direction: 'outbound' | 'inbound';
+    transporterPartnerId: string; amount: string; varianceAmount: string; vendorBillId: string | null;
+    journalEntryId: string | null; tripCount: number;
+  };
+  'fleet.reminder.due': {
+    organizationId: string; itemType: 'compliance_document' | 'driver_document' | 'vehicle_tare' | 'service_due';
+    itemId: string; state: string; dueOn: string | null; vehicleId: string | null; driverId: string | null;
+    title: string; body: string;
+  };
+  'hr.payroll.inputs_included': HrPayrollInputsPayload;
+  'hr.payroll.inputs_reopened': HrPayrollInputsPayload;
   'fleet.delivery.discrepancy_decided': {
     organizationId: string; discrepancyId: string; code: string; loadId: string; deliveryOrderId: string;
     status: 'approved' | 'rejected'; differenceQty: string; creditNoteId: string | null;
@@ -538,6 +569,15 @@ export interface DomainEventMap {
 }
 
 /** A fleet trip (load) of a delivery order (fleet 1.3). */
+/** Payroll inputs of a run (fleet 1.9 hr wiring): each names the source document that queued it. */
+export interface HrPayrollInputsPayload {
+  organizationId: string;
+  runId: string;
+  runNumber: string | null;
+  inputs: Array<{ inputId: string; kind: 'earning' | 'deduction'; employeeId: string; amount: string; source: string;
+    sourceId: string }>;
+}
+
 export interface FleetTripEventPayload {
   organizationId: string;
   loadId: string;

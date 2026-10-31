@@ -117,12 +117,31 @@ app:
     orders: ${ENABLE_ORDERS:false}
     communication: ${ENABLE_COMMUNICATION:false}
     fleet: ${ENABLE_FLEET:false}
+    quarry: ${ENABLE_QUARRY:false}
   # Fleet 1.6: daily preventive-maintenance run (raises work orders for due service schedules; ShedLock).
   fleet:
     maintenance-due-cron: ${FLEET_MAINTENANCE_DUE_CRON:0 30 5 * * *}
+    # Fleet 1.9: daily expiry / service-due reminders (deduplicated per item per day; ShedLock).
+    reminders-cron: ${FLEET_REMINDERS_CRON:0 0 6 * * *}
     # Fleet 1.4 weighbridge: upper bound of any indicator read (each device has its own readTimeoutMs).
     weighbridge:
       max-read-timeout-ms: ${FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS:15000}
+  # Manufacturing 2.4 precast (ADR-S014): curing tick — passes gates whose minimum curing time ended, opens final lots.
+  # Quality management (ADR-S013): REST laboratory adapter (LabResultAdapter "rest"); blank URL = not configured.
+  quality:
+    lab:
+      rest:
+        base-url: ${QUALITY_LAB_REST_URL:}
+        token: ${QUALITY_LAB_REST_TOKEN:}
+        timeout-ms: ${QUALITY_LAB_REST_TIMEOUT_MS:10000}
+  manufacturing:
+    precast-curing-cron: ${PRECAST_CURING_CRON:0 */15 * * * *}
+    # Shop-floor machine data (ADR-S015): REST pull adapter (GET <url>/events?machine=&since=&until=, bearer token).
+    machine-data:
+      rest:
+        base-url: ${MFG_MACHINE_DATA_REST_URL:}
+        token: ${MFG_MACHINE_DATA_REST_TOKEN:}
+        timeout-ms: ${MFG_MACHINE_DATA_REST_TIMEOUT_MS:10000}
 
 logging:
   level:

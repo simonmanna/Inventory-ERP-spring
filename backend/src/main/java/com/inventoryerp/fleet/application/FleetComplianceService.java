@@ -16,6 +16,8 @@ import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.PageResult;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -81,6 +83,7 @@ public class FleetComplianceService {
                 "issuedOn", in.issuedOn(),
                 "expiresOn", in.expiresOn(),
                 "reminderLeadDays", in.reminderLeadDays() == null ? defaultLeadDays() : in.reminderLeadDays(),
+                "costAmount", money(in.costAmount()),
                 "status", "active",
                 "notes", FleetVehicleService.trim(in.notes()),
                 "createdBy", TenantContext.userId(),
@@ -105,6 +108,7 @@ public class FleetComplianceService {
         putIf(data, "issuedOn", in.issuedOn());
         putIf(data, "expiresOn", in.expiresOn());
         putIf(data, "reminderLeadDays", in.reminderLeadDays());
+        putIf(data, "costAmount", money(in.costAmount()));
         putIf(data, "notes", FleetVehicleService.trim(in.notes()));
         for (String f : clear) {
             data.put(f, null);
@@ -142,6 +146,7 @@ public class FleetComplianceService {
                 "issuedOn", in.issuedOn(),
                 "expiresOn", in.expiresOn(),
                 "reminderLeadDays", in.reminderLeadDays() == null ? old.get("reminderLeadDays") : in.reminderLeadDays(),
+                "costAmount", money(in.costAmount()),
                 "status", "active",
                 "notes", FleetVehicleService.trim(in.notes()),
                 "createdBy", TenantContext.userId(),
@@ -150,6 +155,11 @@ public class FleetComplianceService {
                 "updatedBy", TenantContext.userId()));
         audit.recordInTx(AuditInput.of("FleetComplianceDocument", id, "update", old, row));
         return decorate(row, today());
+    }
+
+    /** Premium / fee of a document (fleet 1.9 TCO), 2 decimals. */
+    private static BigDecimal money(BigDecimal v) {
+        return v == null ? null : v.setScale(2, RoundingMode.HALF_UP);
     }
 
     /** Soft delete. */

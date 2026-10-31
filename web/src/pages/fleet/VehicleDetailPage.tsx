@@ -31,6 +31,7 @@ import { VehicleInspectionsTab, VehicleMaintenanceTab } from './maintenance/Vehi
 import { VehicleFuelTab } from './VehicleFuelTab';
 import { VehicleTyresTab } from './VehicleTyresTab';
 import { VehicleTelematicsTab } from './VehicleTelematicsTab';
+import { VehicleCostTab } from './VehicleCostTab';
 
 /** Vehicle detail (fleet 1.1): overview, meters + corrections, compliance, status history, linked asset, files. */
 export function VehicleDetailPage() {
@@ -114,6 +115,7 @@ export function VehicleDetailPage() {
           {has(PERMISSIONS.fleetFuel.read) && <TabsTrigger value="fuel">{tx('Fuel')}</TabsTrigger>}
           {has(PERMISSIONS.fleetMaintenance.read) && <TabsTrigger value="tyres">{tx('Tyres')}</TabsTrigger>}
           <TabsTrigger value="telematics">{tx('Telematics')}</TabsTrigger>
+          {has(PERMISSIONS.fleet.report) && <TabsTrigger value="costs">{tx('Costs')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="overview"><OverviewTab v={v} /></TabsContent>
         <TabsContent value="meters"><VehicleMetersTab vehicle={v} /></TabsContent>
@@ -127,6 +129,7 @@ export function VehicleDetailPage() {
         <TabsContent value="fuel"><VehicleFuelTab vehicle={v} active={tab === 'fuel'} /></TabsContent>
         <TabsContent value="tyres"><VehicleTyresTab vehicle={v} active={tab === 'tyres'} /></TabsContent>
         <TabsContent value="telematics"><VehicleTelematicsTab vehicle={v} active={tab === 'telematics'} /></TabsContent>
+        {has(PERMISSIONS.fleet.report) && <TabsContent value="costs"><VehicleCostTab vehicle={v} active={tab === 'costs'} /></TabsContent>}
       </Tabs>
 
       <StatusDialog vehicle={v} open={statusOpen} onOpenChange={setStatusOpen} />

@@ -48,6 +48,9 @@ import { MrpPage } from '@/pages/manufacturing/MrpPage';
 import { ShopFloorPage } from '@/pages/manufacturing/ShopFloorPage';
 import { BomDetailPage } from '@/pages/manufacturing/BomDetailPage';
 import { EngineeringChangesPage } from '@/pages/manufacturing/EngineeringChangesPage';
+import { StageWipReportPage } from '@/pages/manufacturing/StageWipReportPage';
+import { precastRoutes } from '@/pages/manufacturing/precast/routes';
+import { shopFloorRoutes } from '@/pages/manufacturing/shop-floor/routes';
 import { ChartOfAccountsPage } from '@/pages/accounting/chart-of-accounts';
 import { AccountDetailPage } from '@/pages/accounting/AccountDetailPage';
 import { CashFlowReportPage } from '@/pages/accounting/cash-flow-report';
@@ -158,6 +161,9 @@ import { RentalCatalogPage } from '@/pages/rental/RentalCatalogPage';
 import { RentalReturnsPage } from '@/pages/rental/RentalReturnsPage';
 import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
+import { qualityRoutes } from '@/pages/quality/routes';
+import { quarryRoutes } from '@/pages/quarry/routes';
+import { crushingRoutes } from '@/pages/crushing/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -372,11 +378,18 @@ export function App() {
           <Route path="/manufacturing/engineering" element={<EngineeringChangesPage />} />
           <Route path="/manufacturing/standard-costs" element={<StandardCostsPage />} />
           <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
+          <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
+          {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}
+          {precastRoutes}
+          {/* Crushing & screening (ADR-S016) — screens in pages/crushing/routes.tsx */}
+          {crushingRoutes}
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />
           <Route path="/manufacturing/orders" element={<ProductionOrdersPage />} />
           <Route path="/manufacturing/orders/:id" element={<ProductionOrderDetailPage />} />
+          {/* Shop-floor execution & data capture (ADR-S015, 2.7) */}
+          {shopFloorRoutes}
           <Route path="/inventory" element={<InventoryItemsPage />} />
           <Route path="/inventory/items" element={<InventoryItemsPage />} />
           <Route path="/inventory/items/:productId" element={<InventoryDetailPage />} />
@@ -398,6 +411,10 @@ export function App() {
           <Route path="/rental/reports" element={<RequireReport reportId="rental.reports"><RentalReportsPage /></RequireReport>} />
           {/* Fleet & logistics (ADR-S009) — sub-modules 1.1–1.9 register their screens in pages/fleet/routes.tsx */}
           {fleetRoutes}
+          {/* Quality management (ADR-S013) — core-available, quality:* permissions */}
+          {qualityRoutes}
+          {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
+          {quarryRoutes}
           {/* Repair & Maintenance — static segments before /repair/orders/:id */}
           <Route path="/repair" element={<RepairDashboardPage />} />
           <Route path="/repair/orders" element={<RepairOrdersPage />} />

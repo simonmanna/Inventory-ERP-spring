@@ -867,10 +867,27 @@ public class StockService {
         BigDecimal carriedAvg = dec(fromItem, "runningAverageCost");
         BigDecimal carriedValue = carriedAvg.multiply(qty);
         if (bool(product, "batchTracking")) {
-            List<Map<String, Object>> batches = SqlRows.list(jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE"
+            // ADR-S013 (additive): a transfer that names a batch moves that lot only (quality quarantine / release);
+            // transfers without a batch number keep the oldest-first behaviour.
+            boolean oneLot = dto.batchNumber != null && !dto.batchNumber.isBlank();
+            var batchSpec = jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE"
                             + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                            + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true ORDER BY \"receivedAt\" ASC")
-                    .params(org, dto.productId, variantId, dto.fromLocationId));
+                            + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true"
+                            + (oneLot ? " AND \"batchNumber\" = ?" : "") + " ORDER BY \"receivedAt\" ASC")
+                    .params(org, dto.productId, variantId, dto.fromLocationId);
+            if (oneLot) {
+                batchSpec = batchSpec.param(dto.batchNumber);
+                BigDecimal inLot = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE"
+                                + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
+                                + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true AND \"batchNumber\" = ?")
+                        .params(org, dto.productId, variantId, dto.fromLocationId, dto.batchNumber)
+                        .query(BigDecimal.class).single();
+                if (inLot.compareTo(qty) < 0) {
+                    throw ApiException.badRequest("Insufficient stock in batch " + dto.batchNumber + " at source: available "
+                            + JsNumbers.dec(inLot) + ", requested " + JsNumbers.dec(qty));
+                }
+            }
+            List<Map<String, Object>> batches = SqlRows.list(batchSpec);
             BigDecimal remaining = qty;
             BigDecimal layerValue = Money.ZERO;
             for (Map<String, Object> batch : batches) {

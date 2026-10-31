@@ -467,7 +467,7 @@ public class HrPayrollService {
                 List<String> inputIds = new ArrayList<>();
                 double nonTaxableInputs = 0;
                 for (Map<String, Object> in : inputs) {
-                    if (!emp.get("id").equals(in.get("employeeId"))) {
+                    if (!emp.get("id").equals(in.get("employeeId")) || "deduction".equals(in.get("kind"))) {
                         continue;
                     }
                     double amount = SqlRows.dec(in, "amount").doubleValue();
@@ -544,7 +544,23 @@ public class HrPayrollService {
                     available -= installment;
                     deductionLines.add(line(orgId, "Advance " + adv.get("advanceCode"), installment, false, userId));
                 }
-                double totalDeductions = statutory + loanDeduction + advanceDeduction;
+                // Additive (fleet 1.9): deduction inputs (e.g. traffic fines charged to the driver) come off the net
+                // pay that is left; one that does not fit waits for a later run. None → the Nest calculation unchanged.
+                double inputDeductions = 0;
+                for (Map<String, Object> in : inputs) {
+                    if (!emp.get("id").equals(in.get("employeeId")) || !"deduction".equals(in.get("kind"))) {
+                        continue;
+                    }
+                    double amount = SqlRows.dec(in, "amount").doubleValue();
+                    if (amount > available + 1e-9) {
+                        continue;
+                    }
+                    inputDeductions += amount;
+                    available -= amount;
+                    deductionLines.add(line(orgId, in.get("name"), amount, false, userId));
+                    inputIds.add((String) in.get("id"));
+                }
+                double totalDeductions = statutory + loanDeduction + advanceDeduction + inputDeductions;
                 double netPay = gross - totalDeductions;
                 double otHoursRounded = jsRound(overtimeHours * 100) / 100;
                 if (otHoursRounded != Math.rint(otHoursRounded)) {
@@ -687,6 +703,11 @@ public class HrPayrollService {
             credit(lines, loanReceivable, loans, "Employee loan installments");
             credit(lines, advanceReceivable, advances, "Employee advance installments");
             credit(lines, salaryExpense, other, "Other deductions contra");
+            // Additive (fleet 1.9): deduction inputs credit their source's account (none → journal unchanged).
+            for (Map<String, Object> dc : payrollInputs.deductionCredits(id)) {
+                String account = dc.get("creditAccountId") == null ? salaryExpense : (String) dc.get("creditAccountId");
+                credit(lines, account, SqlRows.dec(dc, "amount").doubleValue(), "Payroll deductions withheld");
+            }
             Map<String, Object> journal = posting.post(new PostingRequest("GEN", Instant.now(),
                     "Payroll " + run.get("runNumber") + " — " + period.get("periodCode"), null, null, "payroll_run", id,
                     "primary", "payroll_run:" + id, null, null, null, lines));
