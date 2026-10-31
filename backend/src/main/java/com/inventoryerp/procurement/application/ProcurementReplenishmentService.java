@@ -55,7 +55,7 @@ public class ProcurementReplenishmentService {
             String neededBy = own.stream().map(Line::neededBy).min(String::compareTo).orElse(null);
             Map<String, Object> created = requests.create(new CreateInput(
                     NO_SUPPLIER.equals(group.getKey()) ? null : group.getKey(), null,
-                    "Replenishment: " + own.size() + " product(s) below minimum", neededBy, inputs));
+                    "Replenishment: " + own.size() + " product(s) below minimum", neededBy, inputs, null));
             replenishment.markRequisitioned(own.stream().map(Line::alertId).toList(), (String) created.get("id"),
                     (String) created.get("requestNumber"));
             log.info("Purchase request {} raised for {} replenishment alert(s)", created.get("requestNumber"),
