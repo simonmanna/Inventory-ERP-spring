@@ -58,6 +58,9 @@ One row per list item of [`construction-materials-erp.md`](construction-material
   traceability report step needs checking against the brief.
 - **Demo seed (MFG-4, built, unverified)**: `SEED_MANUFACTURING_DEMO` (`ManufacturingDemoSeedContributor`,
   `ManufacturingDemoSeedIT`): one quarry, one crusher line, one block plant, recipes and a month of runs. Not run.
+- **Construction demo organization (Phase 7.1, built, unverified)**: `SEED_CONSTRUCTION_DEMO` (`SeedRunner`, the
+  `ConstructionDemoPart` beans, `ConstructionDemoSeedIT`): organization `CMDEMO` with the full quarter of the brief. Not
+  compiled or run.
 
 ## Phase 4 items
 

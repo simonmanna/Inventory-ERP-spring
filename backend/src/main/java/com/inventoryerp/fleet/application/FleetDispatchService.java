@@ -623,7 +623,7 @@ public class FleetDispatchService {
         recheckOwn(t);
         Map<String, Object> data = Obj.of("status", "loading", "loadingStartedAt", Instant.now(), "updatedBy",
                 TenantContext.userId());
-        data.putAll(startMeter(t, odometer));
+        data.putAll(startMeter(t, odometer, Instant.now()));
         db.update(FleetLoad.class, id, data);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", t, Obj.of("status", "loading")));
         return get(id);
@@ -783,6 +783,15 @@ public class FleetDispatchService {
      */
     @Transactional
     public Map<String, Object> dispatch(String id, BigDecimal odometer) {
+        return dispatchAt(id, odometer, Instant.now());
+    }
+
+    /**
+     * {@link #dispatch} on a given moment: the stock issue, its journal entry, the trip times and the start reading all
+     * carry {@code at}. For the demo seed's past days; no route exposes it.
+     */
+    @Transactional
+    public Map<String, Object> dispatchAt(String id, BigDecimal odometer, Instant at) {
         Locked k = lockTrip(id);
         Map<String, Object> t = k.trip();
         Map<String, Object> order = k.order();
@@ -794,7 +803,7 @@ public class FleetDispatchService {
         assertAssigned(t);
         weighRules.assertDispatchable(t);
         recheckOwn(t);
-        Instant now = Instant.now();
+        Instant now = at;
         boolean moveStock = "dispatch".equals(order.get("stockMode"));
         if (moveStock) {
             credit.assertNotOnHold((String) order.get("partnerId"));
@@ -834,7 +843,7 @@ public class FleetDispatchService {
                 "deliveryNoteNumber", t.get("deliveryNoteNumber") != null ? t.get("deliveryNoteNumber")
                         : sequence.next("fleet_delivery_note", "DN-", 6),
                 "updatedBy", TenantContext.userId());
-        data.putAll(startMeter(t, odometer));
+        data.putAll(startMeter(t, odometer, now));
         Map<String, Object> after = db.update(FleetLoad.class, id, data);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "issue", Obj.of("status", t.get("status")),
                 Obj.of("status", "dispatched", "stockValue", JsNumbers.dec(total), "deliveryNoteNumber",
@@ -1194,11 +1203,11 @@ public class FleetDispatchService {
                 FleetDeliveryOrderService.today(), "dispatched");
     }
 
-    private Map<String, Object> startMeter(Map<String, Object> t, BigDecimal odometer) {
+    private Map<String, Object> startMeter(Map<String, Object> t, BigDecimal odometer, Instant at) {
         if (odometer == null || t.get("startReadingId") != null || t.get("vehicleId") == null) {
             return Map.of();
         }
-        Map<String, Object> r = meters.recordAutomated((String) t.get("vehicleId"), "odometer", odometer, Instant.now(),
+        Map<String, Object> r = meters.recordAutomated((String) t.get("vehicleId"), "odometer", odometer, at,
                 "trip", t.get("id") + ":start", "Trip " + t.get("code") + " start");
         return Obj.of("startOdometer", odometer, "startReadingId", r.get("id"));
     }

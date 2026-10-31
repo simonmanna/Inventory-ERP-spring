@@ -652,3 +652,20 @@ supplier performance tests and the manufacturing costing tests. Their routes mus
 - [ ] Open a dashboard on a phone width: filters wrap, tables scroll sideways, the page does not.
 - [ ] With production volumes, time `/analytics/inventory` and `/analytics/finance` over a year: inventory runs one stock
       health report per location for a branch view, finance one consolidation per month.
+
+## Phase 7 — Construction materials demo organization (built, not compiled or run)
+
+Written, never run. Run `ConstructionDemoSeedIT` (slow: it seeds the whole quarter), then start once on an empty
+throwaway database with `SEED_CONSTRUCTION_DEMO=true`, the `seed` profile and `ENABLE_FLEET`, `ENABLE_QUARRY`,
+`ENABLE_MANUFACTURING` and `ENABLE_HR` on (quality has no module switch). Sign in to organization `CMDEMO` as
+`admin@construction.test` (`SEED_ADMIN_PASSWORD`, default `Admin@123`); role users have password `Demo@123`.
+
+- A failure here is most likely a fixture or an unchecked rule in `FleetConstructionDemoSeed`, not the product. The first
+  things to suspect: stock running short at `KLA-YARD` (`DEPOT_STOCK`), the block lots released before the depot transfer,
+  and `orders.close` on short-weighed orders.
+- Fleet: 13 units, 15 drivers, 20 sites, about 460 own and 38 transporter trips, each closed.
+- Weighbridge: one completed ticket per closed trip, dated across the quarter; about one in twelve own tickets manual.
+- Journal: entries of `fleet_trip` in at least three calendar months; every entry balanced (the IT checks both).
+- Accounting: `wip` maps to 1420 on the account mapping screen.
+- Sales: one posted invoice per closed trip, older ones paid by bank, one in five half paid; newest month unpaid.
+- Driver app: `driver@construction.test` sees today's open delivery on `CM-T01`.

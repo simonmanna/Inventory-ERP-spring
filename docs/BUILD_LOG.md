@@ -100,7 +100,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
 | 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
 | 6 production hardening | todo | | v2.1.0-rc | |
-| 7 demo, docs, final report | todo | | v2.1.0 | |
+| 7 demo, docs, final report | demo org and guides merged, unverified; report pending (C) | a3cd947, 02a18eb, 1d8ff9a | | SEED_CONSTRUCTION_DEMO, off by default; never compiled or run |
 
 ### Phase 1 summary (fleet-complete, 2026-10-30)
 Module `fleet` (ADR-S009, flag `ENABLE_FLEET`, licence feature `fleet`), migrations V15–V16 and V18–V25 (V17 is the
