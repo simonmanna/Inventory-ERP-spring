@@ -38,8 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Mobile money collections from customers (INT-1). A collection is a row first, committed before the provider is called,
- * so a crash leaves something to reconcile. A successful collection becomes one customer receipt through
+ * Mobile money collections from customers (INT-1). A collection is a row first, committed before the provider is
+ * called, so a crash leaves something to reconcile. A successful collection becomes one customer receipt through
  * {@link PaymentService} (Dr mobile money, Cr receivable, via the posting engine); the row lock and {@code paymentId}
  * make that exactly once, however many polls and callbacks report it. The phone number is kept masked.
  */
@@ -129,8 +129,9 @@ public class MobileMoneyService {
     }
 
     /**
-     * Records the collection, commits, then asks the provider. A provider failure leaves it pending, with the error kept
-     * on the row, for a retry by refresh, callback or the poll job. Not {@code @Transactional}: the steps commit apart.
+     * Records the collection, commits, then asks the provider. A provider failure leaves it pending, with the error
+     * kept on the row, for a retry by refresh, callback or the poll job. Not {@code @Transactional}: the steps commit
+     * apart.
      */
     public Map<String, Object> collect(CollectionInput in) {
         String code = providers.configured();
@@ -192,7 +193,8 @@ public class MobileMoneyService {
         Object before = SqlRows.ts(Instant.now().minus(Duration.ofMinutes(1)));
         List<Map<String, Object>> pending = tx.execute(s -> SqlRows.list(jdbc.sql("SELECT id, \"createdBy\" FROM"
                 + " \"MobileMoneyCollection\" WHERE \"organizationId\" = ? AND status = 'pending' AND"
-                + " \"providerReference\" IS NOT NULL AND \"createdAt\" < ?::timestamp ORDER BY \"createdAt\" LIMIT 200")
+                + " \"providerReference\" IS NOT NULL AND \"createdAt\" < ?::timestamp ORDER BY \"createdAt\""
+                + " LIMIT 200")
                 .params(org(), before)));
         String organizationId = org();
         int done = 0;
@@ -241,11 +243,11 @@ public class MobileMoneyService {
         String id = UUID.randomUUID().toString();
         String reference = sequence.next("mobile_money", "MM-", 6);
         jdbc.sql("""
-                INSERT INTO "MobileMoneyCollection" (id, "organizationId", reference, provider, "partnerId", "msisdnMasked",
-                    amount, currency, "accountId", "invoiceId", "documentId", description, "createdBy", "updatedAt")
+                INSERT INTO "MobileMoneyCollection" (id, "organizationId", reference, provider, "partnerId",
+                    "msisdnMasked", amount, currency, "accountId", "invoiceId", "documentId", description, "createdBy", "updatedAt")
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())""")
-                .params(id, org, reference, code, in.partnerId(), mask(in.msisdn()), amount, currency, blank(in.accountId()),
-                        blank(in.invoiceId()), blank(in.documentId()), in.description(), TenantContext.userId())
+                .params(id, org, reference, code, in.partnerId(), mask(in.msisdn()), amount, currency,
+                        blank(in.accountId()), blank(in.invoiceId()), blank(in.documentId()), in.description(), TenantContext.userId())
                 .update();
         audit.recordInTx(AuditInput.of("MobileMoneyCollection", id, "create", null, Obj.of("reference", reference,
                 "partnerId", in.partnerId(), "amount", amount, "provider", code)));
@@ -288,7 +290,8 @@ public class MobileMoneyService {
         BigDecimal amount = SqlRows.dec(c, "amount");
         List<AllocationInput> allocations = null;
         if (c.get("invoiceId") != null || c.get("documentId") != null) {
-            allocations = List.of(new AllocationInput((String) c.get("documentId"), (String) c.get("invoiceId"), amount));
+            allocations = List.of(new AllocationInput((String) c.get("documentId"), (String) c.get("invoiceId"),
+                    amount));
         }
         return new PaymentInput((String) c.get("partnerId"), LocalDate.now(BusinessZone.get()).toString(), amount,
                 "mobile_money", (String) c.get("accountId"), (String) c.get("reference"), null, allocations, null, null,

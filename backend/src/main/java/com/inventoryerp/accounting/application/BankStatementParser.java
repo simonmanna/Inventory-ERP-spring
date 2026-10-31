@@ -25,9 +25,9 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
 /**
- * Bank statement files into lines (INT-3): CSV with a header row (column names recognised in English, comma, semicolon or
- * tab), SWIFT MT940 and ISO 20022 camt.053. Pure and unaware of the database. Amounts are signed: money in is positive,
- * as {@link BankReconciliationService} expects.
+ * Bank statement files into lines (INT-3): CSV with a header row (column names recognised in English, comma, semicolon
+ * or tab), SWIFT MT940 and ISO 20022 camt.053. Pure and unaware of the database. Amounts are signed: money in is
+ * positive, as {@link BankReconciliationService} expects.
  */
 public final class BankStatementParser {
 
@@ -235,7 +235,7 @@ public final class BankStatementParser {
         return null;
     }
 
-    /** {@code 1,234.50}, {@code 1.234,50}, {@code (50.00)}, {@code 50.00-}, {@code UGX 1 000}; null when not a number. */
+    /** {@code 1,234.50}, {@code 1.234,50}, {@code (50.00)}, {@code 50.00-}, {@code UGX 1 000}; else null. */
     static BigDecimal amount(String raw) {
         String v = raw == null ? "" : raw.trim();
         if (v.isEmpty()) {

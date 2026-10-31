@@ -20,9 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Imports a bank statement file (INT-3) through {@link BankReconciliationService#importStatement}. A line without a bank
- * reference gets a stable one from its date, amount, text and occurrence in the file, so importing the same file twice
- * adds nothing while two identical charges on one day both stay.
+ * Imports a bank statement file (INT-3) through {@link BankReconciliationService#importStatement}. A line without a
+ * bank reference gets a stable one from its date, amount, text and occurrence in the file, so importing the same file
+ * twice adds nothing while two identical charges on one day both stay.
  */
 @Service
 public class BankStatementFileService {

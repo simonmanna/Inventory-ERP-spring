@@ -96,8 +96,8 @@ class PortalIT extends ApiTestSupport {
         invoiceA = invoice(customerA, "posted");
         invoiceB = invoice(customerB, "posted");
         draftInvoiceA = invoice(customerA, "draft");
-        String location = ok(201, "POST", "/inventory/locations", Map.of("code", "PY-" + sfx, "name", "Portal yard " + sfx,
-                "type", "warehouse")).get("id").asString();
+        String location = ok(201, "POST", "/inventory/locations", Map.of("code", "PY-" + sfx, "name",
+                "Portal yard " + sfx, "type", "warehouse")).get("id").asString();
         tripA = trip(customerA, location);
         tripB = trip(customerB, location);
     }
@@ -167,7 +167,8 @@ class PortalIT extends ApiTestSupport {
     void accounts() {
         String supplier = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isSupplier\", \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, true, now())").params(supplier, demoOrg, "PS-" + sfx, "Supplier " + sfx).update();
+                + " VALUES (?, ?, ?, ?, true, now())").params(supplier, demoOrg, "PS-" + sfx, "Supplier " + sfx)
+                .update();
         assertThat(as("POST", "/portal-accounts", Map.of("partnerId", supplier, "email", "s" + sfx + "@customer.test",
                 "password", "Portal@12345", "firstName", "S")).status()).isEqualTo(400);
         assertThat(as("POST", "/portal-accounts", Map.of("partnerId", customerA, "email",

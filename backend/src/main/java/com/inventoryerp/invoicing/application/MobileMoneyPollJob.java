@@ -29,7 +29,8 @@ public class MobileMoneyPollJob {
     @Scheduled(cron = "${app.mobile-money.poll-cron:${MOBILE_MONEY_POLL_CRON:0 */2 * * * *}}")
     @SchedulerLock(name = "mobile-money-poll", lockAtMostFor = "PT5M")
     public void run() {
-        List<String> orgs = jdbc.sql("SELECT id FROM \"Organization\" WHERE \"deletedAt\" IS NULL").query(String.class).list();
+        List<String> orgs = jdbc.sql("SELECT id FROM \"Organization\" WHERE \"deletedAt\" IS NULL")
+                .query(String.class).list();
         for (String orgId : orgs) {
             try {
                 TenantContext.run(TenantStore.organization(orgId), () -> {

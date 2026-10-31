@@ -147,14 +147,14 @@ class MobileMoneyIT extends ApiTestSupport {
     void validation() {
         String invoice = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Invoice\" (id, \"organizationId\", \"invoiceNumber\", \"partnerId\", status,"
-                + " \"totalAmount\", \"amountResidual\", \"updatedAt\") VALUES (?, ?, ?, ?, 'posted'::\"InvoiceStatus\","
-                + " 100, 100, now())").params(invoice, demoOrg, "MMI-" + sfx, customer).update();
+                + " \"totalAmount\", \"amountResidual\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                + " 'posted'::\"InvoiceStatus\", 100, 100, now())").params(invoice, demoOrg, "MMI-" + sfx, customer).update();
         Map<String, Object> over = new LinkedHashMap<>(body("0772000121"));
         over.put("invoiceId", invoice);
         assertThat(call("POST", "/mobile-money/collections", over, key(UUID.randomUUID().toString())).status())
                 .isEqualTo(400);
-        assertThat(call("POST", "/mobile-money/collections", Map.of("partnerId", customer, "amount", 100, "msisdn", "abc"),
-                key(UUID.randomUUID().toString())).status()).isEqualTo(400);
+        assertThat(call("POST", "/mobile-money/collections", Map.of("partnerId", customer, "amount", 100,
+                "msisdn", "abc"), key(UUID.randomUUID().toString())).status()).isEqualTo(400);
     }
 
     @Test

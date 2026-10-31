@@ -21,8 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Driver web app (DRIVER-1): the signed-in user's driver profile, the units it may use and the fuel log and pre-trip
  * check on them. A thin, driver-scoped layer over {@link FleetFuelLogService} and {@link FleetInspectionService}:
- * rules stay there; this class resolves the driver from {@code HrEmployee.userId} (as {@code mine=true} does for trips),
- * refuses any unit that is not the driver's, and keeps drivers to their own records. Fuel logs stay drafts here.
+ * rules stay there; this class resolves the driver from {@code HrEmployee.userId} (as {@code mine=true} does for
+ * trips), refuses any unit that is not the driver's, and keeps drivers to their own records. Fuel logs stay drafts here.
  */
 @Service
 public class FleetDriverAppService {
@@ -52,8 +52,8 @@ public class FleetDriverAppService {
         String driverId = (String) driver.get("id");
         String org = FleetDb.org();
         List<Map<String, Object>> units = units(driverId);
-        long trips = db.jdbc().sql("SELECT count(*) FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND \"driverId\" = ?"
-                + " AND status IN " + LIVE_TRIP).params(org, driverId).query(Long.class).single();
+        long trips = db.jdbc().sql("SELECT count(*) FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND"
+                + " \"driverId\" = ? AND status IN " + LIVE_TRIP).params(org, driverId).query(Long.class).single();
         return Obj.of("driver", driver, "units", units, "liveTrips", trips);
     }
 

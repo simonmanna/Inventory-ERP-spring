@@ -19,8 +19,8 @@ import org.openpdf.text.pdf.PdfContentByte;
 import org.openpdf.text.pdf.PdfWriter;
 
 /**
- * Renders labels (INT-3) on a 100 × 60 mm stock: a PDF with one label per page for any printer, the barcode drawn from a
- * ZXing matrix as vector bars, or ZPL for a Zebra thermal printer, which draws its own barcode. Pure.
+ * Renders labels (INT-3) on a 100 × 60 mm stock: a PDF with one label per page for any printer, the barcode drawn from
+ * a ZXing matrix as vector bars, or ZPL for a Zebra thermal printer, which draws its own barcode. Pure.
  */
 public final class LabelRenderer {
 

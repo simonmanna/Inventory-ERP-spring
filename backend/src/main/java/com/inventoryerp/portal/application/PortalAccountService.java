@@ -96,7 +96,8 @@ public class PortalAccountService {
         List<Object> pageParams = new ArrayList<>(params);
         pageParams.add(size);
         pageParams.add((p - 1) * size);
-        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT a.id, a.\"partnerId\", a.status, a.\"createdAt\","
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT a.id, a.\"partnerId\", a.status,"
+                + " a.\"createdAt\","
                 + " p.code AS \"partnerCode\", p.name AS \"partnerName\", u.id AS \"userId\", u.email, u.\"firstName\","
                 + " u.\"lastName\", u.\"lastLoginAt\"" + from + where + " ORDER BY p.name, u.email LIMIT ? OFFSET ?")
                 .params(pageParams));
@@ -108,7 +109,8 @@ public class PortalAccountService {
     public List<Map<String, Object>> customers(String search) {
         String like = "%" + (search == null ? "" : search.trim().replace("%", "\\%").replace("_", "\\_")) + "%";
         return SqlRows.list(jdbc.sql("SELECT id, code, name, email, phone FROM \"Partner\" WHERE \"organizationId\" = ?"
-                + " AND \"isCustomer\" = true AND \"deletedAt\" IS NULL AND (name ILIKE ? OR code ILIKE ?) ORDER BY name"
+                + " AND \"isCustomer\" = true AND \"deletedAt\" IS NULL AND (name ILIKE ? OR code ILIKE ?)"
+                + " ORDER BY name"
                 + " LIMIT 20").params(org(), like, like));
     }
 
@@ -141,7 +143,8 @@ public class PortalAccountService {
             return a;
         }
         users.update((String) a.get("userId"), new UsersService.UpdateUser(null, null, null, active, null));
-        jdbc.sql("UPDATE \"PortalAccount\" SET status = ?, \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?")
+        jdbc.sql("UPDATE \"PortalAccount\" SET status = ?, \"updatedAt\" = now() WHERE id = ? AND"
+                + " \"organizationId\" = ?")
                 .params(status, id, org()).update();
         audit.recordInTx(AuditInput.of("PortalAccount", id, "update", Obj.of("status", a.get("status")),
                 Obj.of("status", status)));
@@ -168,7 +171,8 @@ public class PortalAccountService {
 
     /** The organization's portal role, created on first use. */
     private String portalRole() {
-        String id = jdbc.sql("SELECT id FROM \"Role\" WHERE \"organizationId\" = ? AND name = ? AND \"deletedAt\" IS NULL")
+        String id = jdbc.sql("SELECT id FROM \"Role\" WHERE \"organizationId\" = ? AND name = ? AND"
+                + " \"deletedAt\" IS NULL")
                 .params(org(), ROLE_NAME).query(String.class).optional().orElse(null);
         if (id != null) {
             return id;

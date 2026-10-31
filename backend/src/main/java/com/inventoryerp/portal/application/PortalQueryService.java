@@ -33,7 +33,8 @@ public class PortalQueryService {
     private static final String TRIP_COLUMNS = """
             SELECT t.id, t.code, t.status, t."plannedDate", t."loadingStartedAt", t."weighedAt", t."dispatchedAt",
                    t."departedAt", t."deliveredAt", t."plannedTonnes", t."loadedTonnes", t."deliveredTonnes",
-                   t."deliveryNoteNumber", t."vehicleId", o.code AS "deliveryOrderCode", o."sourceNumber" AS "orderNumber",
+                   t."deliveryNoteNumber", t."vehicleId", o.code AS "deliveryOrderCode",
+                   o."sourceNumber" AS "orderNumber",
                    s.name AS "siteName", COALESCE(v."registrationPlate", t."transporterPlate") AS "vehiclePlate",
                    e."firstName" AS "driverFirstName"
             FROM "FleetLoad" t
