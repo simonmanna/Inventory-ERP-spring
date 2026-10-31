@@ -3,12 +3,14 @@ package com.inventoryerp.portal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.kernel.security.PermissionService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -17,6 +19,9 @@ import tools.jackson.databind.JsonNode;
  * nothing.
  */
 class PortalIT extends ApiTestSupport {
+
+    @Autowired
+    PermissionService permissionService;
 
     final String sfx = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
     int seq;
@@ -160,6 +165,21 @@ class PortalIT extends ApiTestSupport {
         assertThat(call("GET", "/auth/permissions", null, adminToken).status()).isEqualTo(200);
         // A staff user without an account has no customer to act as.
         assertThat(as("GET", "/portal/orders", null).status()).isEqualTo(403);
+    }
+
+    @Test
+    @DisplayName("lockdown: a second permission on the portal role leaves routes without a permission closed")
+    void lockdownWithSecondPermission() {
+        String role = "UPDATE \"Role\" SET permissions = ? WHERE \"organizationId\" = ? AND name = 'Customer Portal'";
+        jdbc.sql(role).params(new String[] {"portal:customer", "partner:read"}, demoOrg).update();
+        permissionService.evictAll();
+        try {
+            assertThat(call("GET", "/auth/permissions", null, tokenA).status()).isEqualTo(403);
+            assertThat(call("GET", "/partners", null, tokenA).status()).isEqualTo(200);
+        } finally {
+            jdbc.sql(role).params(new String[] {"portal:customer"}, demoOrg).update();
+            permissionService.evictAll();
+        }
     }
 
     @Test
