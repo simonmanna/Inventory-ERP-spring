@@ -17,6 +17,9 @@ One row per list item of [`construction-materials-erp.md`](construction-material
 
 ## Summary
 
+> Final state after Phase 4 (2026-10-31): 164 rows verified by reading, 99 built but unverified, 0 open. The table
+> below is the Phase 3 snapshot; the Phase 4 item lists further down keep their old status. Row status is the current one.
+
 | Section | Rows | Verified | Partial | Missing |
 |---|---:|---:|---:|---:|
 | 2.1 Financial Management and Accounting | 15 | 10 | 5 | 0 |
@@ -58,6 +61,9 @@ One row per list item of [`construction-materials-erp.md`](construction-material
   traceability report step needs checking against the brief.
 - **Demo seed (MFG-4, built, unverified)**: `SEED_MANUFACTURING_DEMO` (`ManufacturingDemoSeedContributor`,
   `ManufacturingDemoSeedIT`): one quarry, one crusher line, one block plant, recipes and a month of runs. Not run.
+- **Construction demo organization (Phase 7.1, built, unverified)**: `SEED_CONSTRUCTION_DEMO` (`SeedRunner`, the
+  `ConstructionDemoPart` beans, `ConstructionDemoSeedIT`): organization `CMDEMO` with the full quarter of the brief. Not
+  compiled or run.
 
 ## Phase 4 items
 

@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import org.hibernate.annotations.Filter;
 
 /**
- * Table {@code "ProductionTarget"}: Production target per work centre, crushing plant or product for a period (ADR-S017).
+ * Table {@code "ProductionTarget"}: Production target per work centre, crushing plant or product for a period (ADR-S019).
  *
  * <p>Rows are read and written through JDBC; the entity carries the column list, the tenancy filter and
  * schema validation.

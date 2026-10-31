@@ -9,7 +9,7 @@ import java.time.Instant;
 import org.hibernate.annotations.Filter;
 
 /**
- * Table {@code "ProductionOrderPlanning"}: Due date, priority and schedule result of a production order (ADR-S017).
+ * Table {@code "ProductionOrderPlanning"}: Due date, priority and schedule result of a production order (ADR-S019).
  *
  * <p>Rows are read and written through JDBC; the entity carries the column list, the tenancy filter and
  * schema validation.

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
 
 /** One customer's credit position (SALES-1). */
 export interface CreditPosition {
@@ -60,7 +61,7 @@ export function useGrantCreditOverride(partnerId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { amount: number; coversHold: boolean; reason: string; expiresAt: string }) =>
-      (await api.post(`/credit-control/customers/${partnerId}/overrides`, input)).data,
+      idempotentPost(`/credit-control/customers/${partnerId}/overrides`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['credit-control'] }),
   });
 }

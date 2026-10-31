@@ -18,7 +18,7 @@ import {
 } from '@/features/manufacturing/api-planning';
 import { addDays, ymd } from './planning-ui';
 
-/** Shift plans (draft, publish, actual vs target) and period production targets (ADR-S017). */
+/** Shift plans (draft, publish, actual vs target) and period production targets (ADR-S019). */
 export function ShiftPlansPage() {
   const today = new Date();
   const [from, setFrom] = useState(ymd(today));

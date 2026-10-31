@@ -85,12 +85,13 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
             }
         }
 
-        // Customer portal (ADR-S050): such a login holds portal:customer and nothing else, so permissioned routes
-        // already refuse it; routes open to any signed-in user refuse it here, except its own session routes.
+        // Customer portal (ADR-S050): permissioned routes refuse such a login unless its role was given that
+        // permission; routes open to any signed-in user refuse it here, except its own session routes. The test is
+        // portal:customer without portal:manage, because Administrator holds every key, portal:customer included.
         if (auth != null && (required == null || required.value().length == 0)
                 && find(method, Public.class) == null && find(method, CustomerPortalReachable.class) == null) {
             List<String> granted = permissions.permissionsOf(auth.organizationId(), auth.sub());
-            if (granted.size() == 1 && Permissions.PORTAL__CUSTOMER.equals(granted.get(0))) {
+            if (granted.contains(Permissions.PORTAL__CUSTOMER) && !granted.contains(Permissions.PORTAL__MANAGE)) {
                 throw ApiException.forbidden("Customer portal logins cannot use this route");
             }
         }

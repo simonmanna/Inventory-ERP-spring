@@ -66,6 +66,30 @@ image normally runs on the new schema. If a migration must be undone: `scripts/r
 **destructive**: replaces the live database with the pre-upgrade dump and loses every write made since (asks for
 confirmation; `ROLLBACK_CONFIRM=yes` for automation).
 
+### 4a. Migrations V14 to V120 on an existing database
+
+Merge everything first, then migrate once. `out-of-order` is off, so a database that took a higher version cannot accept a
+lower one merged later. Reviewed by reading (Phase 6), not yet run:
+
+- **Expand only.** New tables and nullable columns. Nothing dropped, renamed or retyped, and no new `NOT NULL` without a
+  default, so the previous image keeps working on the new schema and `scripts/rollback.sh` (images only) stays valid.
+- **Existing tables that gain columns:** `Activity`, `ApprovalStep`, `ApprovalWorkflow`, `BankStatementLine`, `Deal`,
+  `InventoryLocation`, `ProductionOutput`, `PurchaseOrder`, `PurchaseRequest`. No POS table changes.
+- **Short exclusive locks:** each `ADD COLUMN`, and V95 swapping the check on `CrmSavedFilter`. V62 adds a foreign key on
+  `InventoryLocation`, which also locks `Branch` for a moment. Run it outside a shift.
+- **V120** builds 14 indexes inside the Flyway transaction, blocking writes to each table while it builds. On a large
+  copy, run them first with `CREATE INDEX CONCURRENTLY` under the same names: V120 uses `IF NOT EXISTS` and then skips them.
+- **Two POS-table indexes are a manual step, on purpose.** Not in a migration because a plain build blocks tills and
+  Flyway's default transactional lock can hang on `CONCURRENTLY`. Run them off-peak once volumes justify it:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Order_org_partner_idx" ON "Order" ("organizationId", "partnerId");
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("organizationId") WHERE "amountResidual" > 0;
+```
+
+  They serve the customer portal, credit exposure and the receivables aging. Check for an `INVALID` index afterwards
+  (`\d "Order"`) and drop and rebuild it if a build was interrupted.
+
 ## 5. Cut-over from POS-CAFE (Nest) to Spring
 
 1. Rehearse on a copy of the production database: start Spring against it — Flyway baselines at 2
@@ -95,6 +119,9 @@ confirmation; `ROLLBACK_CONFIRM=yes` for automation).
 - Restores always go into a **new** database (`POST /admin/backups/restore {scope:"database", backupFile,
   targetDatabase}`); switching the café to it is an operator step with the API stopped (`docs/legacy/backup-recovery.md`).
 - Several API instances: the scheduled jobs take a ShedLock lock (`backup:<job>`), so only one instance backs up.
+- Coverage of new data: `pg_dump` takes the whole database, so every table to V120 and the `reporting` schema are in the
+  archive without a table list to maintain. The automatic restore test compares `public` tables only: the restore drill
+  in `docs/VERIFY_CHECKLIST.md` checks `reporting` by hand.
 
 ## 7. Monitoring
 
@@ -104,9 +131,13 @@ confirmation; `ROLLBACK_CONFIRM=yes` for automation).
   Grafana on :3002).
 - Metrics: Micrometer HTTP (`http_server_requests_seconds{uri,status}`), JVM, GC, Hikari, process CPU, plus
   `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_event_publications_incomplete`,
-  `erp_backup_health` (0/1/2), `erp_backup_last_full_age_seconds`.
+  `erp_backup_health` (0/1/2), `erp_backup_last_full_age_seconds`, `erp_job_failures_total{task}` (a scheduled job failed
+  for one organization: replenishment scan, contract expiry, mobile money poll, alert scans, telematics sync) and
+  `erp_provider_failures_total{provider}` (mobile money). These jobs carry on with the next organization, so their
+  errors never reach the HTTP metrics.
 - Alerts (`alerts.yml`): API down, 5xx > 2 %, checkout p95 > 1.5 s, Hikari pending, heap > 90 %, GC > 10 %,
-  stock-posting backlog, open sync dead letters, stuck outbox, backup critical / older than 36 h.
+  stock-posting backlog, open sync dead letters, stuck outbox, failing scheduled job, failing external provider, backup
+  critical / older than 36 h.
 - `/api/v1/health/ready`: `critical.database` (503 when down) and `advisory.backup` (`degraded`, never 503).
 - Logs: JSON to stdout under `prod`; ship with Loki/Promtail or the Docker logging driver. Search by `requestId`.
 
@@ -120,6 +151,8 @@ system must be identical → scratch database dropped. Run it before every relea
 
 - Load suite: `tests/load/` (k6: checkout, tab edits, Z-report + trial balance, tables SSE fan-out);
   `tools/perf/checkout-smoke.mjs` without k6.
+- Construction routes: `tools/perf/construction-load.mjs` (dispatch board, weighbridge, production runs, stock, reports;
+  p95 < 300 ms). Start the API with `THROTTLE_ENABLED=false` or it measures 429s.
 - JVM: heap = 75 % of the container memory (`MaxRAMPercentage`), `ExitOnOutOfMemoryError`; give the API container
   ≥ 2 GB. `DB_POOL_SIZE` (default 20) must stay below Postgres `max_connections` minus maintenance headroom.
 - Index review: enable `pg_stat_statements` (`shared_preload_libraries`) on the server, run the load suite, then

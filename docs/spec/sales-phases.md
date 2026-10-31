@@ -36,7 +36,7 @@ Gates for every phase (from ADR-S011 / plan): `./gradlew build` green (Testconta
 **Goal.** Create the `sales` module and move quotations out of CRM without changing any existing route contract.
 
 **Deliverables**
-1. Migration `V120__sales_foundation.sql`
+1. Migration `V200__sales_foundation.sql`
    - `SalesSettings` (per organization): quote validity days, discount / amount approval thresholds, credit check
      flag, default terms, auto-win on conversion (copied from `CrmSettings`), plus new fields: flows enabled, five
      fulfilment / recognition policy defaults (stored only), reservation trigger.
@@ -136,7 +136,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - No change under `manufacturing/**`, `pos/**` billing path, `android/`.
 
 ## S1 — as built
-- `V121__sales_orders.sql`: `SalesOrder`, `SalesOrderLine` (ordered / closed-short + projection columns reserved,
+- `V201__sales_orders.sql`: `SalesOrder`, `SalesOrderLine` (ordered / closed-short + projection columns reserved,
   delivered, billable, invoiced, credited, returned), `SalesOrderRevision`, `SalesOrderChangeRequest`.
 - Services: `SalesOrderService` (draft CRUD, confirm with rate lock + customer credit-hold → on hold, hold / release,
   cancel only without deliveries / invoices / live DOs, close short to `max(delivered, billable, net invoiced)`,
@@ -153,7 +153,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   (that registry drives JPA document statuses); `branchId` optional until branch-scoped access lands.
 
 ## S2 — as built
-- `V122__sales_pricing.sql`: `Pricelist`, `PricelistItem` (product / category / all × customer / customer category ×
+- `V202__sales_pricing.sql`: `Pricelist`, `PricelistItem` (product / category / all × customer / customer category ×
   min qty × unit × delivery zone × branch × dates; fixed / % discount / % surcharge / cost + %; priority),
   `MarginFloor`, `PartnerCategory.pricelistId`, order thresholds in `SalesSettings`.
 - `SalesPricingEngine` (the single pricing policy, `@Primary` `QuotationPricingPort`): customer-bound rules → CRM
@@ -172,7 +172,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   engine's second tier (avoids a translation layer; one engine decides all prices).
 
 ## S3 — as built
-- `V123__credit.sql`: `CreditLimit` (customer × branch × currency, risk category, review date, validity),
+- `V203__credit.sql`: `CreditLimit` (customer × branch × currency, risk category, review date, validity),
   `CreditPolicy` (overdue days / action none-approval-hard, deposits reduce exposure, group limits, check points,
   auto-hold), immutable `CreditDecision` (trigger), `Partner.parentId` (customer groups), `SalesOrder.holdKind`,
   permissions `credit:read|manage|override`.
@@ -190,7 +190,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   checkout keeps its own `CreditStatus` check (frozen POS path) and only contributes its exposure; deposits join S6.
 
 ## S4 — as built
-- `V124__sales_atp.sql`: `SalesOrder.priority`, `SalesOrderLine.reservedLocationId` / `promiseAtRisk`,
+- `V204__sales_atp.sql`: `SalesOrder.priority`, `SalesOrderLine.reservedLocationId` / `promiseAtRisk`,
   `SalesSupplyPeg` (soft pegs of unreserved demand to expected supply).
 - `SalesAtpService`: ATP per product (per yard on hand / reserved / free, free purchase supply after other lines'
   pegs, earliest full-fill date, best / full-fill location, split proposal; production reported "not connected");
@@ -206,7 +206,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   stock transfers in transit are not yet counted as supply; variants are not reserved (aggregates / blocks have none).
 
 ## S5 — as built
-- `V125__sales_fulfilment.sql`: line projections `qtyLoaded`, `qtyDispatched` (net of returns, also `qtyDelivered`),
+- `V205__sales_fulfilment.sql`: line projections `qtyLoaded`, `qtyDispatched` (net of returns, also `qtyDelivered`),
   `qtyReceived` (POD), `qtyAccepted` (fleet billable after approved discrepancies); immutable
   `SalesFulfilmentDecision`; inbox `SalesProcessedEvent`; `SalesReconciliation` log.
 - Fleet owns the new port `DeliverySourcePort`; sales implements it (`SalesDeliverySource`) — fleet never depends on
@@ -230,7 +230,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   deferred (accountant).
 
 ## S6 — as built
-- `V126__sales_billing_deposits.sql`: `CustomerDeposit`, `DepositApplication`, `SalesInvoiceLink`,
+- `V206__sales_billing_deposits.sql`: `CustomerDeposit`, `DepositApplication`, `SalesInvoiceLink`,
   `MobileMoneyRequest`, settings `depositApplication` (manual | oldest_first) and `depositTaxPoint` (delivery |
   receipt), permissions `sales:invoice:create`, `sales:deposit:record|refund`.
 - Invoicing (owner of payments): `CustomerDepositService` — receipt P2 (Dr tender / Cr Customer Deposits 2350,
@@ -255,7 +255,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   sales-order invoices (still invoiced from the fleet delivery order as a charges-only invoice).
 
 ## S7 — as built
-- `V127__sales_returns.sql`: `SalesReturn` (RMA-, reason, physical return or claim, outcome, links to credit note /
+- `V207__sales_returns.sql`: `SalesReturn` (RMA-, reason, physical return or claim, outcome, links to credit note /
   refund / replacement / complaint / discrepancy), `SalesReturnLine` (claimed, received, disposition, credited),
   `CustomerComplaint` (CMP-), `SalesQualityCertificate`, `Product.qualitySpec`, permissions
   `sales:return:read|write|approve`, `sales:complaint:read|write`; events `sales.return.received|closed`.
@@ -275,7 +275,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   model does not keep as an open credit-note residual (pre-existing behaviour); use the refund outcome then.
 
 ## S8 — as built
-- `V128__sales_collections.sql`: `DunningLevel`, `DunningRun`, `DunningEntry`, `PromiseToPay`, settings
+- `V208__sales_collections.sql`: `DunningLevel`, `DunningRun`, `DunningEntry`, `PromiseToPay`, settings
   `dunningAutoRun` / `monthlyStatements`, permissions `sales:collections:read|manage`.
 - `SalesCollectionsService`: levels (sequence, from days overdue, channel e-mail with the statement PDF / letter /
   record only, template with {{customer}} {{amount}} {{days}}, late fee, credit hold); run = per customer the oldest
@@ -291,7 +291,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   communication module can be wired later.
 
 ## S9 — as built
-- `V129__sales_agreements_rebates_commissions.sql`: `SalesAgreement` (+`Line`), `SalesOrder.agreementId`,
+- `V209__sales_agreements_rebates_commissions.sql`: `SalesAgreement` (+`Line`), `SalesOrder.agreementId`,
   `RebateProgram`, `RebateAccrual`, `SalesCommissionRule`, `CommissionStatement`, `SalesTarget`; permissions
   `sales:agreement:read|manage`, `sales:rebate:manage`, `sales:commission:read|manage`, `sales:target:manage`.
   Licence key `salesAgreements` (install `LicenseFeatures` + licence server `Entitlements.KNOWN_FEATURES`) gates the
@@ -331,7 +331,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   notes carry no VAT (accountant question Q-S9-1).
 
 ## S10 — as built
-- `V130__sales_customer_portal.sql`: `CustomerPortalAccess` (token SHA-256, expiry, revoke, last used; no row policy —
+- `V210__sales_customer_portal.sql`: `CustomerPortalAccess` (token SHA-256, expiry, revoke, last used; no row policy —
   it is looked up by token before the organization is known), permission `sales:portal:manage`. Licence key
   `customerPortal` (install + licence server) gates portal administration and the portal itself.
 - `SalesAnalyticsService` (`/sales/analytics/*`, `sales:report:read`): dashboard (revenue this vs last month,

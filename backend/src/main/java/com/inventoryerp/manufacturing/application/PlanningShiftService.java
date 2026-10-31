@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Shift plans and production targets (Track C 2.5, ADR-S017). A shift plan says what a work centre should make in one
+ * Shift plans and production targets (Track C 2.5, ADR-S019). A shift plan says what a work centre should make in one
  * shift of one day; a draft can be edited or deleted, a published one is what the crew works to and is shown against
  * the
  * good output posted in that shift. A target is the period level: per work centre, crushing plant or product.

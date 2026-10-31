@@ -3,6 +3,7 @@ package com.inventoryerp.invoicing.web;
 import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.invoicing.application.CreditControlService.OverrideInput;
 import com.inventoryerp.kernel.crud.QueryParams;
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.web.PageResult;
@@ -66,6 +67,7 @@ public class CreditControlController {
     }
 
     @PostMapping("/customers/{partnerId}/overrides")
+    @Idempotent
     @RequirePermissions(Permissions.CREDIT_CONTROL__OVERRIDE)
     public Map<String, Object> grantOverride(@PathVariable String partnerId,
             @Valid @RequestBody CreditOverrideRequest dto) {

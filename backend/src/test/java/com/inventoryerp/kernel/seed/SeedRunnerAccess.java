@@ -16,7 +16,13 @@ public final class SeedRunnerAccess {
 
     public static void seed(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
             java.util.List<SeedContributor> contributors) {
-        SeedRunner runner = new SeedRunner(jdbc, passwords, txm, "", contributors);
+        SeedRunner runner = new SeedRunner(jdbc, passwords, txm, "", contributors, false, java.util.List.of());
         new TransactionTemplate(txm).executeWithoutResult(s -> runner.seed());
+    }
+
+    /** The construction demo organization (idempotent); returns its id. */
+    public static String seedConstruction(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
+            java.util.List<SeedContributor> contributors, java.util.List<ConstructionDemoPart> parts) {
+        return new SeedRunner(jdbc, passwords, txm, "", contributors, true, parts).seedConstructionOrganization();
     }
 }

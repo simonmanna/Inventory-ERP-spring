@@ -21,7 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Plan performance reports (Track C 2.5, ADR-S017): production vs plan per plan line, plan adherence (orders finished
+ * Plan performance reports (Track C 2.5, ADR-S019): production vs plan per plan line, plan adherence (orders finished
  * by
  * their due date, work orders finished by their planned end, shift plans met) and production vs target with the
  * pro-rata

@@ -1,5 +1,6 @@
 package com.inventoryerp.hr.application;
 
+import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.util.List;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -19,10 +20,12 @@ public class HrContractExpiryJob {
 
     private final JdbcClient jdbc;
     private final HrContractService contracts;
+    private final JobMetrics metrics;
 
-    public HrContractExpiryJob(JdbcClient jdbc, HrContractService contracts) {
+    public HrContractExpiryJob(JdbcClient jdbc, HrContractService contracts, JobMetrics metrics) {
         this.jdbc = jdbc;
         this.contracts = contracts;
+        this.metrics = metrics;
     }
 
     @Scheduled(cron = "0 20 1 * * *")
@@ -36,6 +39,7 @@ public class HrContractExpiryJob {
                 log.info("Employment contracts expired for {}: {}", orgId, expired);
             } catch (RuntimeException e) {
                 log.warn("Contract expiry failed for {}: {}", orgId, e.toString());
+                metrics.jobFailed("hr-contract-expiry");
             }
         }
     }

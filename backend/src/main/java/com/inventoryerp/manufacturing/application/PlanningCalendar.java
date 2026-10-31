@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Finite calendar of one work centre (ADR-S017), pure: weekly working windows, closures, the load already placed and
+ * Finite calendar of one work centre (ADR-S019), pure: weekly working windows, closures, the load already placed and
  * the parallel slots. A minute is usable when the centre works and fewer than {@code slots} operations occupy it.
  * {@link #forward} and {@link #backward} walk minute by minute, like {@link ShopFloorService}'s scheduler: no shifts
  * configured means the centre works around the clock. The business clock is UTC.

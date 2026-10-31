@@ -10,7 +10,7 @@ import java.time.Instant;
 import org.hibernate.annotations.Filter;
 
 /**
- * Table {@code "ProductionDemandPeg"}: Demand a plan line (and the order it generates) serves (ADR-S017).
+ * Table {@code "ProductionDemandPeg"}: Demand a plan line (and the order it generates) serves (ADR-S019).
  *
  * <p>Rows are read and written through JDBC; the entity carries the column list, the tenancy filter and
  * schema validation.

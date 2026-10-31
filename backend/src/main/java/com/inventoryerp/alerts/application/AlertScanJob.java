@@ -1,6 +1,7 @@
 package com.inventoryerp.alerts.application;
 
 import com.inventoryerp.alerts.spi.AlertTypes;
+import com.inventoryerp.kernel.health.JobMetrics;
 import java.util.List;
 import java.util.Map;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -25,10 +26,12 @@ public class AlertScanJob {
 
     private final JdbcClient jdbc;
     private final AlertEngine engine;
+    private final JobMetrics metrics;
 
-    public AlertScanJob(JdbcClient jdbc, AlertEngine engine) {
+    public AlertScanJob(JdbcClient jdbc, AlertEngine engine, JobMetrics metrics) {
         this.jdbc = jdbc;
         this.engine = engine;
+        this.metrics = metrics;
     }
 
     @Scheduled(cron = "${app.alerts.hourly-cron:0 10 * * * *}")
@@ -52,6 +55,7 @@ public class AlertScanJob {
                 log.info("alert scan {} org {}: {}", cadence, orgId, result.get("raised"));
             } catch (RuntimeException err) {
                 log.error("alert scan {} failed for org {}: {}", cadence, orgId, err.toString());
+                metrics.jobFailed("alerts-" + cadence + "-scan");
             }
         }
     }

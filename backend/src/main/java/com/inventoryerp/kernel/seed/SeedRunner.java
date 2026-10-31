@@ -2,10 +2,14 @@ package com.inventoryerp.kernel.seed;
 
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.Year;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,12 +30,20 @@ import org.springframework.transaction.support.TransactionTemplate;
  * fiscal period, branch {@code MAIN}, table zones, staff roles (Cashier/Waiter/Supervisor/Manager/Kitchen)
  * with demo staff + PINs, kitchen stations and POS tables. Later phases add the parts their modules
  * own (UoM, products + stock, chart of accounts, menu, DMS registry, approval workflows).
+ *
+ * <p>With {@code SEED_CONSTRUCTION_DEMO=true} a second organization {@code CMDEMO} follows, in its own tenant and never
+ * touching {@code DEMO}: see {@link #seedConstructionOrganization()}.
  */
 @Component
 @Profile("seed")
 public class SeedRunner implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SeedRunner.class);
+
+    /** Code of the construction demo organization (the sign-in's organization field). */
+    public static final String CONSTRUCTION_ORG_CODE = "CMDEMO";
+    /** Contributors up to this order are the base every organization needs: units, accounts, the MAIN warehouse. */
+    private static final int BASE_CONTRIBUTORS = 300;
 
     static final List<String> CASHIER_PERMS = List.of(
             "pos:read", "pos:checkout", "pos:hold", "pos:discount", "pos:void", "pos:kds",
@@ -81,12 +93,19 @@ public class SeedRunner implements ApplicationRunner {
     private final TransactionTemplate tx;
     private final String adminPassword;
     private final List<SeedContributor> contributors;
+    private final boolean constructionDemo;
+    private final List<ConstructionDemoPart> constructionParts;
 
     public SeedRunner(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
-            @Value("${SEED_ADMIN_PASSWORD:}") String adminPassword, List<SeedContributor> contributors) {
+            @Value("${SEED_ADMIN_PASSWORD:}") String adminPassword, List<SeedContributor> contributors,
+            @Value("${SEED_CONSTRUCTION_DEMO:false}") boolean constructionDemo,
+            List<ConstructionDemoPart> constructionParts) {
         this.jdbc = jdbc;
         this.contributors = contributors == null ? List.of()
                 : contributors.stream().sorted(java.util.Comparator.comparingInt(SeedContributor::order)).toList();
+        this.constructionDemo = constructionDemo;
+        this.constructionParts = constructionParts == null ? List.of() : constructionParts.stream()
+                .sorted(java.util.Comparator.comparingInt(ConstructionDemoPart::constructionOrder)).toList();
         this.passwords = passwords;
         this.tx = new TransactionTemplate(txm);
         this.adminPassword = adminPassword == null || adminPassword.isEmpty() ? "Admin@123" : adminPassword;
@@ -102,6 +121,93 @@ public class SeedRunner implements ApplicationRunner {
         tx.executeWithoutResult(s -> seed());
         log.info("Seed complete. Login -> organization: \"DEMO\", email: \"admin@demo.test\", password: \"{}\"",
                 adminPassword.equals("Admin@123") ? "Admin@123" : "<SEED_ADMIN_PASSWORD>");
+        if (constructionDemo) {
+            seedConstructionOrganization();
+            log.info("Construction demo complete. Login -> organization: \"{}\", email: \"admin@construction.test\"",
+                    CONSTRUCTION_ORG_CODE);
+        }
+    }
+
+    /**
+     * The opt-in construction materials demo: organization {@value #CONSTRUCTION_ORG_CODE} with its roles, users, two
+     * branches and base accounting data in one transaction, then each {@link ConstructionDemoPart} in the tenant of
+     * that organization. Runs after the {@code DEMO} transaction committed, so the POS demo never holds construction
+     * data. Skipped when the organization exists. Returns its id.
+     */
+    String seedConstructionOrganization() {
+        String existing = jdbc.sql("SELECT id FROM \"Organization\" WHERE code = ?").param(CONSTRUCTION_ORG_CODE)
+                .query(String.class).optional().orElse(null);
+        if (existing != null) {
+            log.warn("Construction demo skipped: organization {} exists.", CONSTRUCTION_ORG_CODE);
+            return existing;
+        }
+        String orgId = uuid();
+        String adminId = tx.execute(s -> constructionBase(orgId));
+        TenantStore store = TenantStore.user(orgId, adminId);
+        for (ConstructionDemoPart part : constructionParts) {
+            TenantContext.run(store, () -> {
+                TenantContext.setPermissions(List.copyOf(Permissions.ALL));
+                part.seedConstructionDemo(orgId);
+            });
+        }
+        return orgId;
+    }
+
+    private String constructionBase(String orgId) {
+        jdbc.sql("""
+                        INSERT INTO "Organization" (id, code, name, "currencyCode", timezone, "updatedAt")
+                        VALUES (?, ?, 'Construction Materials Demo', 'UGX', 'Africa/Kampala', now())""")
+                .params(orgId, CONSTRUCTION_ORG_CODE)
+                .update();
+        jdbc.sql("SELECT set_config('app.org_id', ?, true)").param(orgId).query(String.class).single();
+        String adminRoleId = role(orgId, "Administrator", "Full platform access", Permissions.ALL);
+        String adminId = user(orgId, "admin@construction.test", passwords.hash(adminPassword), "Admin", "Construction",
+                null, null);
+        link(adminRoleId, adminId);
+        jdbc.sql("""
+                        INSERT INTO "Tax" (id, "organizationId", name, code, type, rate, "updatedAt")
+                        VALUES (?, ?, 'No Tax', 'NOTAX', 'vat', 0, now()), (?, ?, 'VAT 18%', 'VAT18', 'vat', 18, now())""")
+                .params(uuid(), orgId, uuid(), orgId)
+                .update();
+        jdbc.sql("INSERT INTO \"ProductCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, 'General', now())")
+                .params(uuid(), orgId)
+                .update();
+        jdbc.sql("INSERT INTO \"PartnerCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, 'General', now())")
+                .params(uuid(), orgId)
+                .update();
+        // The three months of the demo can start in the previous year.
+        int year = Year.now().getValue();
+        for (int y = year - 1; y <= year; y++) {
+            jdbc.sql("""
+                            INSERT INTO "FiscalPeriod" (id, "organizationId", name, "startDate", "endDate", status, "updatedAt")
+                            VALUES (?, ?, ?, ?, ?, 'open', now())""")
+                    .params(uuid(), orgId, "FY" + y, Timestamp.valueOf(LocalDateTime.of(y, 1, 1, 0, 0)),
+                            Timestamp.valueOf(LocalDateTime.of(y, 12, 31, 0, 0)))
+                    .update();
+        }
+        Map<String, String> branches = new HashMap<>();
+        branches.put("QRY", branch(orgId, "QRY", "Quarry and plant"));
+        branches.put("KLA", branch(orgId, "KLA", "Kampala depot"));
+        for (ConstructionDemoRoles.Staff s : ConstructionDemoRoles.STAFF) {
+            String roleId = role(orgId, s.roleName(), s.description(), s.permissions());
+            String id = user(orgId, s.email(), passwords.hash("Demo@123"), s.firstName(), s.lastName(), null,
+                    branches.get(s.branchCode()));
+            link(roleId, id);
+        }
+        for (SeedContributor c : contributors) {
+            if (c.order() <= BASE_CONTRIBUTORS) {
+                c.seed(orgId);
+            }
+        }
+        return adminId;
+    }
+
+    private String branch(String orgId, String code, String name) {
+        String id = uuid();
+        jdbc.sql("INSERT INTO \"Branch\" (id, \"organizationId\", code, name, \"updatedAt\") VALUES (?, ?, ?, ?, now())")
+                .params(id, orgId, code, name)
+                .update();
+        return id;
     }
 
     void seed() {

@@ -8,7 +8,7 @@ import { tx } from '@/lib/i18n/tx';
 import { pct, qty, useAggregates, useCapacity } from '@/features/manufacturing/api-planning';
 import { addDays, ymd } from './planning-ui';
 
-/** Load vs capacity with the bottleneck, crushing circuits and the aggregate plan (ADR-S017). */
+/** Load vs capacity with the bottleneck, crushing circuits and the aggregate plan (ADR-S019). */
 export function CapacityPage() {
   const today = new Date();
   const [from, setFrom] = useState(ymd(today));

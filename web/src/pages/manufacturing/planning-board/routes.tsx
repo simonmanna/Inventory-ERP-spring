@@ -7,7 +7,7 @@ import { CapacityPage } from './CapacityPage';
 import { ShiftPlansPage } from './ShiftPlansPage';
 import { PlanPerformancePage } from './PlanPerformancePage';
 
-/** Advanced planning & scheduling screens (ADR-S017, manufacturing 2.5). */
+/** Advanced planning & scheduling screens (ADR-S019, manufacturing 2.5). */
 const read = PERMISSIONS.productionPlan.read;
 export const planningBoardRoutes = (
   <>

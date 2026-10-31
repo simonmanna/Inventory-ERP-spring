@@ -25,7 +25,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Capacity planning (Track C 2.5, ADR-S017). Load against capacity per work centre by day or week, in hours and in the
+ * Capacity planning (Track C 2.5, ADR-S019). Load against capacity per work centre by day or week, in hours and in the
  * centre's rate (t/h of a crushing unit, units per hour of the shop-floor profile), with the bottleneck flagged; per
  * crushing plant the circuit bottleneck (the stage with the lowest t/h, parallel units adding up, never above the
  * design

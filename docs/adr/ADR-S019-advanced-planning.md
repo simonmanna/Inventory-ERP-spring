@@ -1,9 +1,9 @@
-# ADR-S017: Advanced planning & scheduling (manufacturing 2.5)
+# ADR-S019: Advanced planning & scheduling (manufacturing 2.5)
 
 - Status: Accepted (autonomous, 2026-10-30). Built without compiling or running anything (Phase 4 lane rule).
 - Brief: [`AUTONOMOUS_BUILD_CONSTRUCTION.md`](../AUTONOMOUS_BUILD_CONSTRUCTION.md) Phase 2.5; item MFG-1 in
   [`GAP_ANALYSIS.md`](../requirements/GAP_ANALYSIS.md)
-- Spec: [`docs/spec/manufacturing.md`](../spec/manufacturing.md) "ADR-S017"
+- Spec: [`docs/spec/manufacturing.md`](../spec/manufacturing.md) "ADR-S019"
 - Migration: `V40__manufacturing_planning.sql`
 - Related: ADR-S006 (MRP, forward scheduler), ADR-S011 (stages, order pegs), ADR-S014 (curing), ADR-S015 (shifts,
   work-centre profile), ADR-S016 (crushing units and grading profiles)
