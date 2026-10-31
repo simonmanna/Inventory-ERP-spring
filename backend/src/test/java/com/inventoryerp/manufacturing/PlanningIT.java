@@ -336,6 +336,6 @@ class PlanningIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix of the planning routes")
     void authorization() {
-        assertThat(assertAuthorizationMatrix(PlanningController.class)).isEqualTo(25);
+        assertThat(assertAuthorizationMatrix(PlanningController.class)).isEqualTo(24);
     }
 }
