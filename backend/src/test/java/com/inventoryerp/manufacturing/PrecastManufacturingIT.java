@@ -46,10 +46,7 @@ class PrecastManufacturingIT extends MfgTestSupport {
     PrecastProductionService precast;
 
     void drainOutbox() {
-        for (int i = 0; i < 5; i++) {
-            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
-            outbox.tick();
-        }
+        drainOutboxFully();
     }
 
     Map<String, String> key(String k) {

@@ -64,6 +64,9 @@ public abstract class ApiTestSupport {
     protected List<com.inventoryerp.kernel.seed.SeedContributor> seedContributors;
 
     @Autowired
+    protected com.inventoryerp.kernel.events.OutboxWorker outboxWorker;
+
+    @Autowired
     @Qualifier("requestMappingHandlerMapping")
     protected RequestMappingHandlerMapping mappings;
 
@@ -75,6 +78,33 @@ public abstract class ApiTestSupport {
     protected String otherToken;
 
     public record Res(int status, JsonNode body, HttpResponse<String> raw) {}
+
+    /**
+     * Ships every outbox row written so far, however many earlier suites left behind (a demo seed leaves hundreds).
+     * The scheduled poller may hold some rows; wait for it instead of returning while they are claimed. Rows that
+     * already failed once are left to the poller so a broken handler cannot hang the suite.
+     */
+    protected void drainOutboxFully() {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
+        while (System.nanoTime() < deadline) {
+            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
+            if (outboxWorker.tick() > 0) {
+                continue;
+            }
+            long open = jdbc.sql("SELECT count(*) FROM \"EventOutbox\" WHERE status IN ('pending', 'claimed')"
+                    + " AND attempts = 0").query(Long.class).single();
+            if (open == 0) {
+                detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
+                return;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
 
     @BeforeAll
     void baseFixtures() {

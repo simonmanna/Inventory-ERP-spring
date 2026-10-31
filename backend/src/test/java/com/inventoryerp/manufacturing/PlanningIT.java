@@ -275,6 +275,16 @@ class PlanningIT extends MfgTestSupport {
         jdbc.sql("INSERT INTO \"ShopFloorShift\" (id, \"organizationId\", code, name, \"startMinute\", \"endMinute\","
                 + " \"updatedAt\") VALUES (?, ?, ?, 'Day', 480, 1020, now())").params(shift, demoOrg, "D" + suffix())
                 .update();
+        try {
+            shiftPlans(wc, shift);
+        } finally {
+            // The demo organization is shared: a lone day shift would stop later suites from seeding the 24-hour
+            // default pattern, so shop-floor tests would find no shift outside 08:00-17:00.
+            jdbc.sql("UPDATE \"ShopFloorShift\" SET \"isActive\" = false WHERE id = ?").param(shift).update();
+        }
+    }
+
+    private void shiftPlans(String wc, String shift) {
         String productId = product("SPLAN");
         Map<String, Object> body = Map.of("shiftDate", monday.toString(), "shiftId", shift, "workCenterId", wc,
                 "productId", productId, "targetQty", 500);

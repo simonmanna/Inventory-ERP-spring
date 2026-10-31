@@ -33,10 +33,7 @@ class MultiStageProductionIT extends MfgTestSupport {
     OutboxWorker outbox;
 
     void drainOutbox() {
-        for (int i = 0; i < 5; i++) {
-            detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
-            outbox.tick();
-        }
+        drainOutboxFully();
     }
 
     Map<String, String> key() {

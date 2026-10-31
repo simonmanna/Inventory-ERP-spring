@@ -51,3 +51,17 @@ cd backend && ./gradlew test --tests '*CashSession*'
 node contract-tests/run.mjs --module accounting     # parity (needs both stacks up)
 pnpm vitest run tests/e2e                           # E2E against API_URL (default http://localhost:3001)
 ```
+
+Without Testcontainers (an empty Postgres 16 you started yourself), keep `stringtype=unspecified` in the URL or enum
+inserts fail:
+
+```bash
+docker run -d --name erp-itdb -e POSTGRES_USER=erp -e POSTGRES_PASSWORD=erp -e POSTGRES_DB=erp \
+  -p 127.0.0.1:5499:5432 postgres:16 -c max_locks_per_transaction=1024
+IT_EXTERNAL_DB=true JDBC_DATABASE_URL='jdbc:postgresql://127.0.0.1:5499/erp?stringtype=unspecified' \
+  DB_USER=erp DB_PASSWORD=erp ./gradlew test
+```
+
+Integration suites share one database and the seeded `DEMO` organization. A suite that changes organization-wide
+setup (shifts, policies, approval rules) must undo it, and a suite waiting for event subscribers calls
+`drainOutboxFully()` (it waits for every pending outbox row, including rows an earlier suite left behind).

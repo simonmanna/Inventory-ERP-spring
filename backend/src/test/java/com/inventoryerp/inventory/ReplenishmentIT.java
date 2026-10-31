@@ -73,10 +73,7 @@ class ReplenishmentIT extends ApiTestSupport {
     }
 
     void drain() {
-        for (int i = 0; i < 5; i++) {
-            detachedWrites.awaitIdle(Duration.ofSeconds(10));
-            outbox.tick();
-        }
+        drainOutboxFully();
     }
 
     @Test
