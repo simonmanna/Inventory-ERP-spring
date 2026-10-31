@@ -201,6 +201,7 @@ import { StockMovementDetailPage } from '@/pages/inventory/StockMovementDetailPa
 import LocationsPage from '@/pages/inventory/LocationsPage';
 import { StockReservationsPage } from '@/pages/inventory/StockReservationsPage';
 import { ProductSpecsPage } from '@/pages/products/ProductSpecsPage';
+import { ReplenishmentPage } from '@/pages/inventory/ReplenishmentPage';
 import TerminalPage from '@/pages/pos/Terminal';
 import { TerminalWorkspace } from '@/pages/pos/TerminalWorkspace';
 import ReportsPage from '@/pages/pos/ReportsPage';
@@ -461,6 +462,7 @@ export function App() {
           <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
           <Route path="/inventory/locations" element={<LocationsPage />} />
           <Route path="/inventory/reservations" element={<StockReservationsPage />} />
+          <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
           <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
           <Route path="/procurement/purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="/procurement/purchase-orders/new" element={<PurchaseOrderCreatePage />} />

@@ -409,3 +409,11 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - [ ] `/products/specifications` → Grades: add C25. Attributes: add Strength (number, MPa), Size (choice 10 mm, 20 mm), one required.
 - [ ] Products tab: pick a product, set grade, standard and attributes. A required attribute left blank blocks Save; the server refuses it too.
 - [ ] A grade in use cannot be deleted. POS still sells the product and its JSON has no new field.
+
+## Phase 4 INV-3 — replenishment (built, not run)
+
+- [ ] `/inventory/replenishment` → Rules: add a rule with minimum 10 for a product with 6 in stock. Scan now: an alert shows available 6 and the suggested quantity.
+- [ ] Reserve stock on `/inventory/reservations` and scan: available drops by the reservation.
+- [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/purchase-requests` shows a draft, one per supplier.
+- [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
+- [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.

@@ -112,3 +112,11 @@ stock at standard with purchase price variance (account 5905); activation revalu
 
 Additive `GET /inventory/reservations/overview` (`StockReservationService.overview`, paged, with names and on-hand). The
 Nest list route is unchanged and POS does not call the new method. Screen: `/inventory/reservations`.
+
+## INV-3 replenishment (built, unverified)
+
+`ReplenishmentController` (8 routes on `/inventory/replenishment`: rules CRUD, `alerts`, `alerts/{id}/dismiss`, `scan`,
+`requisition`), `ReplenishmentService`, `ReplenishmentCalculator`, `ReplenishmentScanJob` (hourly), migration V97, permission
+`inventory:replenish`, event `inventory.replenishment.requested`. Procurement listens
+(`ProcurementReplenishmentSubscriber`) and raises draft purchase requests. Stock, ledger and POS are not touched: the scan
+only reads `StockItem` and `StockReservation`. Screen: `/inventory/replenishment`.

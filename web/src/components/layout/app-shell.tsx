@@ -261,6 +261,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/transfers', label: tx('Stock Transfers'), icon: Truck, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/reservations', label: tx('Stock Reservations'), icon: ClipboardCheck, permission: 'inventory:read' },
+      { to: '/inventory/replenishment', label: tx('Replenishment'), icon: ClipboardList, permission: 'inventory:read' },
       { to: '/inventory/locations', label: tx('Locations'), icon: MapPin, permission: PERMISSIONS.inventoryLocation.read },
       { to: '/inventory/cost-policies', label: tx('Costing Policy'), icon: Calculator, permission: PERMISSIONS.costingPolicy.read },
       { to: '/products', label: tx('Products'), icon: Package, permission: PERMISSIONS.products.view },

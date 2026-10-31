@@ -219,6 +219,8 @@ export const PERMISSIONS = {
   inventory: {
     read: 'inventory:read',
     move: 'inventory:move',
+    /// Replenishment rules, alerts and raising requisitions from them (INV-3).
+    replenish: 'inventory:replenish',
   },
   // ---- F.8 — Stock document wrappers + masters ----
   inventoryDoc: {

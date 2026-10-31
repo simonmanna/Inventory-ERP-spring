@@ -198,7 +198,8 @@
   },
   "inventory": {
     "read": "inventory:read",
-    "move": "inventory:move"
+    "move": "inventory:move",
+    "replenish": "inventory:replenish"
   },
   "inventoryDoc": {
     "create": "inventory_doc:create",
