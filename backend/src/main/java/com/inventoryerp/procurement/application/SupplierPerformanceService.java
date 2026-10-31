@@ -48,6 +48,15 @@ public class SupplierPerformanceService {
     /** The scorecard for {@code from..to} (default the last 90 days), best spend first. */
     @Transactional(readOnly = true)
     public Map<String, Object> report(String fromRaw, String toRaw, String partnerId) {
+        return report(fromRaw, toRaw, partnerId, null);
+    }
+
+    /**
+     * The scorecard limited to purchase orders of {@code branchIds} (null = every branch). Inspection lots carry no
+     * branch, so a limited scorecard has no quality measure.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> report(String fromRaw, String toRaw, String partnerId, String[] branchIds) {
         ZoneId zone = BusinessZone.get();
         LocalDate to = parseDate(toRaw) != null ? parseDate(toRaw) : LocalDate.now(zone);
         LocalDate from = parseDate(fromRaw) != null ? parseDate(fromRaw) : to.minusDays(90);
@@ -63,7 +72,7 @@ public class SupplierPerformanceService {
                 + " WHERE po.\"organizationId\" = ? AND po.\"deletedAt\" IS NULL"
                 + " AND po.status::text NOT IN ('draft', 'cancelled') AND po.\"orderDate\" >= ? AND po.\"orderDate\" "
                 + "< ?",
-                "po.\"partnerId\"", partnerId, start, end)) {
+                "po.\"partnerId\"", partnerId, start, end, branchIds)) {
             Map<String, Object> row = row(byPartner, r);
             row.put("orders", ((Number) r.get("orders")).longValue());
             row.put("spend", Money.dec(r.get("spend")));
@@ -76,7 +85,7 @@ public class SupplierPerformanceService {
                 + " FROM \"GoodsReceiptNote\" r JOIN \"PurchaseOrder\" po ON po.id = r.\"purchaseOrderId\""
                 + " AND po.\"organizationId\" = r.\"organizationId\" WHERE r.\"organizationId\" = ?"
                 + " AND r.status::text = 'posted' AND r.\"deletedAt\" IS NULL AND r.\"receivedAt\" >= ?"
-                + " AND r.\"receivedAt\" < ?", "po.\"partnerId\"", partnerId, start, end)) {
+                + " AND r.\"receivedAt\" < ?", "po.\"partnerId\"", partnerId, start, end, branchIds)) {
             Map<String, Object> row = row(byPartner, r);
             long dated = ((Number) r.get("dated")).longValue();
             row.put("receipts", ((Number) r.get("receipts")).longValue());
@@ -87,18 +96,20 @@ public class SupplierPerformanceService {
                 + " l.quantity)), 0) AS received, COALESCE(SUM(l.quantity), 0) AS ordered FROM \"PurchaseOrderLine\" l"
                 + " JOIN \"PurchaseOrder\" po ON po.id = l.\"purchaseOrderId\" WHERE po.\"organizationId\" = ?"
                 + " AND po.\"deletedAt\" IS NULL AND po.status::text NOT IN ('draft', 'cancelled')"
-                + " AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?", "po.\"partnerId\"", partnerId, start, end)) {
+                + " AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?", "po.\"partnerId\"", partnerId, start, end,
+                branchIds)) {
             BigDecimal ordered = Money.dec(r.get("ordered"));
             row(byPartner, r).put("fillRate", ordered.signum() == 0 ? null : Money.dec(r.get("received"))
                     .multiply(HUNDRED).divide(ordered, 1, RoundingMode.HALF_UP));
         }
-        for (Map<String, Object> r : query("SELECT l.\"supplierPartnerId\" AS \"partnerId\", count(*) AS lots,"
+        for (Map<String, Object> r : branchIds != null ? List.<Map<String, Object>>of() : query("SELECT"
+                + " l.\"supplierPartnerId\" AS \"partnerId\", count(*) AS lots,"
                 + " count(*) FILTER (WHERE l.result <> 'pending') AS evaluated,"
                 + " count(*) FILTER (WHERE l.result = 'pass') AS passed,"
                 + " COALESCE(SUM(l.\"rejectedQty\"), 0) AS \"rejectedQty\" FROM \"QualityInspectionLot\" l"
                 + " WHERE l.\"organizationId\" = ? AND l.status <> 'cancelled' AND l.\"supplierPartnerId\" IS NOT NULL"
                 + " AND l.\"createdAt\" >= ? AND l.\"createdAt\" < ?", "l.\"supplierPartnerId\"", partnerId, start,
-                end)) {
+                end, null)) {
             Map<String, Object> row = row(byPartner, r);
             row.put("inspectionLots", ((Number) r.get("lots")).longValue());
             row.put("qualityRate", rate(((Number) r.get("passed")).longValue(),
@@ -110,7 +121,8 @@ public class SupplierPerformanceService {
                 + "m.\"billedQuantity\"), 0)"
                 + " AS base FROM \"ThreeWayMatch\" m JOIN \"PurchaseOrder\" po ON po.id = m.\"purchaseOrderId\""
                 + " WHERE m.\"organizationId\" = ? AND m.\"billedUnitPrice\" IS NOT NULL AND po.\"deletedAt\" IS NULL"
-                + " AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?", "po.\"partnerId\"", partnerId, start, end)) {
+                + " AND po.\"orderDate\" >= ? AND po.\"orderDate\" < ?", "po.\"partnerId\"", partnerId, start, end,
+                branchIds)) {
             BigDecimal base = Money.dec(r.get("base"));
             BigDecimal variance = Money.dec(r.get("variance"));
             Map<String, Object> row = row(byPartner, r);
@@ -135,12 +147,16 @@ public class SupplierPerformanceService {
     }
 
     private List<Map<String, Object>> query(String sql, String partnerColumn, String partnerId, Timestamp start,
-            Timestamp end) {
+            Timestamp end, String[] branchIds) {
         List<Object> params = new ArrayList<>(List.of(org(), start, end));
         StringBuilder full = new StringBuilder(sql);
         if (partnerId != null && !partnerId.isEmpty()) {
             full.append(" AND ").append(partnerColumn).append(" = ?");
             params.add(partnerId);
+        }
+        if (branchIds != null) {
+            full.append(" AND po.\"branchId\" = ANY(?::text[])");
+            params.add(branchIds);
         }
         full.append(" GROUP BY 1");
         return SqlRows.list(jdbc.sql(full.toString()).params(params));
