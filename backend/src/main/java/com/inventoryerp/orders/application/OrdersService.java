@@ -798,8 +798,9 @@ public class OrdersService {
             return;
         }
         Object method = order.get("paymentMethod");
-        credit.assertCanSell((String) order.get("partnerId"), PosSql.dec(order.get("totalAmount")),
-                (String) order.get("id"), method == null ? null : String.valueOf(method));
+        credit.assertCanSell("pos_credit_sale", (String) order.get("partnerId"), PosSql.dec(order.get("totalAmount")),
+                "order", (String) order.get("id"), method == null ? null : String.valueOf(method),
+                (String) order.get("branchId"));
     }
 
     private static void assertEditable(Map<String, Object> order) {

@@ -94,6 +94,9 @@ class CreditIT extends ApiTestSupport {
         // E5: invoice 40M posted (billing projection written by invoicing in S6)
         String inv = ok(200, "POST", "/invoices", Map.of("partnerId", c, "issueDate", today, "dueDate", today, "lines",
                 List.of(Map.of("productId", product, "quantity", 40, "unitPrice", 1000000)))).get("id").asString();
+        // As S6 does: the invoice bills the sales order, which was credit-checked at confirmation (ADR-S022).
+        jdbc.sql("UPDATE \"Document\" SET \"sourceType\" = 'sales_order', \"sourceId\" = ? WHERE id = ?").params(so, inv)
+                .update();
         ok(200, "POST", "/invoices/" + inv + "/post", null);
         jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyInvoiced\" = 40 WHERE id = ?").param(line).update();
         e = exposure(c);
@@ -230,8 +233,9 @@ class CreditIT extends ApiTestSupport {
             JsonNode p = ok(200, "PUT", "/credit/policy", Map.of("checkpoints", List.of("quote_submit")));
             assertThat(p.get("checkpoints").toString()).contains("order_confirm");
         } finally {
+            // Restore the default (ADR-S022: every channel's check point on).
             ok(200, "PUT", "/credit/policy", Map.of("overdueAction", "approval", "checkpoints", List.of("quote_submit",
-                    "order_confirm", "amendment", "trip_dispatch")));
+                    "order_confirm", "amendment", "trip_dispatch", "pos_credit_sale", "delivery_order", "invoice_post")));
         }
     }
 

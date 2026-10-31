@@ -24,6 +24,12 @@ public class InvoicingCreditContributor implements CreditExposureContributor {
 
     @Override
     public Contribution contribute(String partnerId) {
+        return contribute(partnerId, null);
+    }
+
+    /** {@code excludeDocumentId}: the invoice being posted, which the check adds itself. */
+    @Override
+    public Contribution contribute(String partnerId, String excludeDocumentId) {
         String org = TenantContext.organizationId();
         Map<String, Object> r = jdbc.sql("""
                 SELECT COALESCE(sum("amountResidual") FILTER (WHERE "documentType"::text IN ('sales_invoice', 'debit_note')
@@ -35,11 +41,11 @@ public class InvoicingCreditContributor implements CreditExposureContributor {
                            AND "dueDate" < now()), 0) AS days,
                        COALESCE(sum("totalAmount") FILTER (WHERE "documentType"::text = 'sales_invoice'
                            AND status::text IN ('draft', 'submitted', 'approved')
-                           AND COALESCE("sourceType", '') <> 'sales_order'), 0) AS other,
+                           AND COALESCE("sourceType", '') <> 'sales_order' AND id <> ?), 0) AS other,
                        COALESCE(sum("amountResidual") FILTER (WHERE "documentType"::text = 'credit_note'
                            AND status::text IN ('posted', 'paid')), 0) AS credits
                   FROM "Document" WHERE "organizationId" = ? AND "partnerId" = ?""")
-                .params(org, partnerId).query().singleRow();
+                .params(excludeDocumentId == null ? "" : excludeDocumentId, org, partnerId).query().singleRow();
         BigDecimal onAccount = jdbc.sql("SELECT COALESCE(sum(\"unallocatedAmount\"), 0) FROM \"Payment\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND direction::text = 'inbound' AND status::text ="
                 + " 'posted'").params(org, partnerId).query(BigDecimal.class).single();

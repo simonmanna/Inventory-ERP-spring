@@ -11,6 +11,14 @@ public interface CreditExposureContributor {
 
     Contribution contribute(String partnerId);
 
+    /**
+     * The same, leaving out {@code excludeDocumentId} (the document being checked, whose amount the check adds itself,
+     * so it is never counted twice). Contributors that hold such documents override this.
+     */
+    default Contribution contribute(String partnerId, String excludeDocumentId) {
+        return contribute(partnerId);
+    }
+
     /** Bucket amounts plus the oldest overdue receivable. */
     record Contribution(BigDecimal undelivered, BigDecimal deliveredUninvoiced, BigDecimal receivables, BigDecimal other,
             BigDecimal deposits, BigDecimal credits, BigDecimal overdueAmount, int overdueDays) {

@@ -113,3 +113,20 @@ Random sequences of E1–E14 (valid by state machine) on random orders: after ev
 ## 8. API (planned, S3)
 `/credit/partners/{id}/exposure`, `/credit/limits`, `/credit/decisions`, `/credit/holds`, `/credit/review-queue`.
 Permissions: `credit:read`, `credit:manage`, `credit:override`.
+
+## 9. Central customer credit management (ADR-S022)
+
+The credit module is the only credit authority for every channel.
+
+- **Profile**: `Partner.creditLimit`, `creditHold`, `creditRiskCategory`. Branch / currency `CreditLimit` rows are
+  sub-limits that only lower it; the org-wide row mirrors the profile (V211).
+- **Exposure contributors**: sales (undelivered, delivered-not-invoiced), orders (unbilled credit `Order`s), fleet
+  (manual delivery orders not invoiced), invoicing (receivables, drafts, credits, deposits), pos (credit invoices). The
+  document being checked is left out (`CreditExposureContributor.contribute(partnerId, excludeDocumentId)`).
+- **Check points**: `quote_submit`, `order_confirm`, `amendment`, `trip_dispatch`, `pos_credit_sale`,
+  `delivery_order`, `invoice_post` (`CreditPolicy.checkpoints`); overdue rule on `overdueCheckpoints`. An invoice that
+  bills a sales order is not re-checked at posting.
+- **Reservation**: `check` locks the customer row until the caller's transaction commits its document.
+- **Overrides**: per document (`credit:override`) and per customer grant (`PartnerCreditOverride`, SoD, audited).
+- **Routes added**: `GET /credit/reconciliation` (`credit:read`).
+- **Tests**: `CentralCreditIT`, `CreditIT`, `CreditControlIT`.

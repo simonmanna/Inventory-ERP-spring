@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.core.application.PriceSnapshotService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
@@ -63,6 +64,7 @@ public class SalesOrderService {
     private final SalesPricingEngine engine;
     private final ApprovalsService approvals;
     private final CreditService credit;
+    private final PriceSnapshotService snapshots;
     private final SalesAtpService atp;
     private final DocumentBuilderService builder;
     private final SequenceService sequence;
@@ -72,7 +74,9 @@ public class SalesOrderService {
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
-            DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events) {
+            DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events,
+            PriceSnapshotService snapshots) {
+        this.snapshots = snapshots;
         this.credit = credit;
         this.atp = atp;
         this.engine = engine;
@@ -668,6 +672,7 @@ public class SalesOrderService {
         if ("confirm".equals(settings.settings().get("reservationTrigger"))) {
             atp.reserveOrder(id);
         }
+        snapshots.record("sales_order", id);
         publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
         if (hold) {
             publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));

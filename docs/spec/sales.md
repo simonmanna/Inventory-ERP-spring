@@ -228,3 +228,12 @@ branch scope.
 
 ## Deviations
 None yet (no parity routes involved).
+
+## Central pricing engine (ADR-S022)
+
+`SalesPricingEngine` prices every channel (sales directly; POS orders, invoices, manual delivery orders and CRM through
+`core.PricingEngine` / `PriceListService.resolve`). Tiers in `PricingPolicy.precedence` (default: agreement,
+customer_rule, crm_rule, customer_pricelist, category_pricelist, price_list, branch_default, org_default,
+standing_discount; catalogue list last). Every result carries `breakdown` (base, discount, net, tax, final, line totals).
+`PriceSnapshot` (insert-only) records each line at sales order confirmation, invoice posting, POS billing and manual
+delivery order creation. Routes added: `GET|PUT /sales/pricing/policy`. Tests: `CentralPricingIT`, `PriceListIT`.

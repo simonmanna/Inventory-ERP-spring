@@ -122,4 +122,19 @@ public class SalesPricingController {
     public Map<String, Object> resolve(@RequestBody Map<String, Object> b) {
         return engine.resolve(body(b));
     }
+
+    /** ADR-S022: the organization's pricing tier order ({@code precedence}) and the tiers available. */
+    @GetMapping("/pricing/policy")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public Map<String, Object> policy() {
+        return engine.pricingPolicy();
+    }
+
+    @PutMapping("/pricing/policy")
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> savePolicy(@RequestBody Map<String, Object> b) {
+        Object p = body(b).get("precedence");
+        return engine.savePrecedence(p instanceof java.util.List<?> l ? (java.util.List<String>) l : null);
+    }
 }

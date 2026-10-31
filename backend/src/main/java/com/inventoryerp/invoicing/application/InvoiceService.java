@@ -3,6 +3,7 @@ package com.inventoryerp.invoicing.application;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 
+import com.inventoryerp.core.application.PriceSnapshotService;
 import com.inventoryerp.accounting.application.JournalService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
@@ -76,13 +77,16 @@ public class InvoiceService {
     private final PaymentTermService terms;
     private final JournalService journals;
     private final CreditControlService credit;
+    private final PriceSnapshotService snapshots;
     private final BranchScopeService scopes;
     private final PriceListService priceLists;
     private final TransactionTemplate newTx;
 
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
-            BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm) {
+            BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm,
+            PriceSnapshotService snapshots) {
+        this.snapshots = snapshots;
         this.jdbc = jdbc;
         this.events = events;
         this.workflow = workflow;
@@ -469,6 +473,7 @@ public class InvoiceService {
         }
         doc.put("lines", builder.lines(id, false));
         workflow.transition("invoice", id, "post", null, doc);
+        snapshots.record("invoice", id);
         publish("invoice.posted", doc);
         return withLinesAndPartner(id);
     }
@@ -488,10 +493,13 @@ public class InvoiceService {
             boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
                     + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
                     .orElse(false));
-            if (!delivered) {
+            // A sales-order invoice was credit-checked at order confirmation; its value is already in the exposure.
+            boolean fromSalesOrder = "sales_order".equals(jdbc.sql("SELECT \"sourceType\" FROM \"Document\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(id, org()).query(String.class).optional().orElse(null));
+            if (!delivered && !fromSalesOrder) {
                 Object mode = doc.get("paymentMode");
-                credit.assertCanSell((String) doc.get("partnerId"), Money.dec(doc.get("totalAmount")), null,
-                        mode == null ? null : String.valueOf(mode));
+                credit.assertCanSell("invoice_post", (String) doc.get("partnerId"), Money.dec(doc.get("totalAmount")),
+                        "invoice", id, mode == null ? null : String.valueOf(mode), (String) doc.get("branchId"));
             }
         }
         return post(id);

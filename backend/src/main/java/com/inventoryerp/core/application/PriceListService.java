@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,9 +27,10 @@ import org.springframework.transaction.annotation.Transactional;
  * to one branch and a validity window. An item prices a product, a category or everything, optionally per unit, site,
  * delivery zone and minimum quantity, as a unit price, a discount off the catalogue price, or both.
  *
- * <p>{@link #resolve} picks: customer list over category list over default list; then list priority; then the branch
- * list, site, product, exact unit and largest quantity break that apply. Callers ask only for lines with no price of
- * their own, and POS never asks.
+ * <p>Pricing itself belongs to the one sales pricing engine (ADR-S022): {@link #resolve} asks {@link PricingEngine},
+ * where these lists are the {@code price_list} tier. {@link #namedListPrice} is that tier: customer list over category
+ * list over default list; then list priority; then the branch list, site, product, exact unit and largest quantity
+ * break that apply. Callers ask only for lines with no price of their own (a POS terminal price is kept).
  */
 @Service
 public class PriceListService {
@@ -52,11 +54,14 @@ public class PriceListService {
     private final JdbcClient jdbc;
     private final UomConversionService units;
     private final AuditService audit;
+    private final ObjectProvider<PricingEngine> engine;
 
-    public PriceListService(JdbcClient jdbc, UomConversionService units, AuditService audit) {
+    public PriceListService(JdbcClient jdbc, UomConversionService units, AuditService audit,
+            ObjectProvider<PricingEngine> engine) {
         this.jdbc = jdbc;
         this.units = units;
         this.audit = audit;
+        this.engine = engine;
     }
 
     private static String org() {
@@ -69,9 +74,26 @@ public class PriceListService {
 
     // ------------------------------------------------------------------ resolution
 
-    /** The price list price of one line, or {@code null} when no list applies. */
+    /**
+     * The price of one line from the central pricing engine, or {@code null} when only the catalogue price applies
+     * (the caller keeps its own catalogue fallback, in its own unit).
+     */
     @Transactional(readOnly = true)
     public ListPrice resolve(PriceQuery q) {
+        PricingEngine e = engine.getIfAvailable();
+        if (e == null) {
+            return namedListPrice(q);
+        }
+        PricingEngine.Quote quote = e.quote(q);
+        if (quote == null || "list".equals(quote.source())) {
+            return null;
+        }
+        return new ListPrice(quote.unitPrice(), quote.discountPercent(), quote.ruleId(), quote.ruleName());
+    }
+
+    /** The named price list tier: the list price of one line, or {@code null} when no list applies. */
+    @Transactional(readOnly = true)
+    public ListPrice namedListPrice(PriceQuery q) {
         Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT \"categoryId\", \"uomId\", \"salesUomId\" FROM \"Product\""
                 + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(q.productId(), org()));
         if (product == null) {

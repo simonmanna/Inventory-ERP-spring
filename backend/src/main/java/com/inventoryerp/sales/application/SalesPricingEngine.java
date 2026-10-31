@@ -5,6 +5,10 @@ import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 
+import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.PriceListService.ListPrice;
+import com.inventoryerp.core.application.PriceListService.PriceQuery;
+import com.inventoryerp.core.application.PricingEngine;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
@@ -13,6 +17,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import org.springframework.context.annotation.Primary;
@@ -20,16 +26,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Sales pricing policy (ADR-S011 phase S2, sales.md §6). Resolution order for one product line:
+ * The one sales pricing engine (ADR-S011 phase S2, ADR-S022) for every channel: sales quotations and orders directly,
+ * POS orders, invoices and manual delivery orders through {@link PricingEngine} ({@code PriceListService.resolve}).
+ * Tiers are tried in the organization's {@code PricingPolicy.precedence} (default below); the first tier that prices the
+ * line wins, the catalogue {@code list} price is always last:
  * <ol>
- *   <li>the sales agreement the document releases against ({@code agreementId}, active on the date, S9);</li>
- *   <li>customer-specific pricelist rules (rule bound to the customer or its category, any active pricelist);</li>
- *   <li>CRM customer price rules (ADR-S010, honoured as the {@code rule} tier);</li>
- *   <li>the customer's pricelist;</li>
- *   <li>the customer category's pricelist;</li>
- *   <li>the branch default pricelist, then the organization default pricelist;</li>
- *   <li>the customer's / category's standing discount;</li>
- *   <li>the product list price.</li>
+ *   <li>{@code agreement}: the sales agreement the document releases against (active on the date, S9);</li>
+ *   <li>{@code customer_rule}: pricelist rules bound to the customer or its category (any active pricelist);</li>
+ *   <li>{@code crm_rule}: CRM customer price rules (ADR-S010);</li>
+ *   <li>{@code customer_pricelist}, {@code category_pricelist}: the customer's, then its category's pricelist;</li>
+ *   <li>{@code price_list}: named price lists (SALES-3, {@link PriceListService#namedListPrice});</li>
+ *   <li>{@code branch_default}, {@code org_default}: the default pricelists;</li>
+ *   <li>{@code standing_discount}: the customer's / category's standing discount.</li>
  * </ol>
  * Inside a pricelist the best rule wins by priority, then product &gt; category &gt; all, then the highest minimum
  * quantity. Rules can be bound to a unit, a minimum quantity, a delivery zone, a branch and dates. Every result carries
@@ -37,16 +45,22 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @Primary
-public class SalesPricingEngine implements QuotationPricingPort {
+public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
 
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
+    /** Tiers in their default order (ADR-S022 §4); {@code list} is implicit and always last. */
+    public static final List<String> TIERS = List.of("agreement", "customer_rule", "crm_rule", "customer_pricelist",
+            "category_pricelist", "price_list", "branch_default", "org_default", "standing_discount");
+
     private final SalesDb db;
     private final UomConversionService uoms;
+    private final PriceListService namedLists;
 
-    public SalesPricingEngine(SalesDb db, UomConversionService uoms) {
+    public SalesPricingEngine(SalesDb db, UomConversionService uoms, PriceListService namedLists) {
         this.db = db;
         this.uoms = uoms;
+        this.namedLists = namedLists;
     }
 
     /** Pricing context of one line. */
@@ -103,7 +117,30 @@ public class SalesPricingEngine implements QuotationPricingPort {
                 r.taxInclusive(), r.description());
     }
 
-    /** {@code POST /sales/pricing/resolve}: price {@code lines [{productId, quantity, uomId}]}. */
+
+    /** A resolved line and whether a named list left the price at the catalogue price (discount only). */
+    private record Priced(Result result, boolean catalogueUnit) {}
+
+    /** {@link PricingEngine}: one line for POS orders, invoices, delivery orders and CRM (in the line's sales unit). */
+    @Override
+    @Transactional(readOnly = true)
+    public Quote quote(PriceQuery q) {
+        Map<String, Object> product = db.row("SELECT \"uomId\", \"salesUomId\" FROM \"Product\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", q.productId(), org());
+        if (product == null) {
+            return null;
+        }
+        String uomId = !blank(q.uomId()) ? q.uomId() : product.get("salesUomId") != null ? str(product.get("salesUomId"))
+                : str(product.get("uomId"));
+        BigDecimal qty = q.quantity() == null ? BigDecimal.ONE : q.quantity();
+        Priced p = price(new Context(q.partnerId(), q.productId(), qty, uomId, q.siteId(), q.branchId(), null, q.on()),
+                q);
+        Result r = p.result();
+        return new Quote(r.source(), p.catalogueUnit() ? null : r.unitPrice(), r.discountPercent(), r.itemId(),
+                r.pricelistName(), breakdown(r));
+    }
+
+    /** {@code POST /sales/pricing/resolve}: price {@code lines [{productId, quantity, uomId}]}, with the breakdown. */
     @Transactional(readOnly = true)
     @SuppressWarnings("unchecked")
     public Map<String, Object> resolve(Map<String, Object> in) {
@@ -114,8 +151,11 @@ public class SalesPricingEngine implements QuotationPricingPort {
             for (Object o : lines) {
                 Map<String, Object> l = (Map<String, Object>) o;
                 BigDecimal qty = l.get("quantity") == null ? BigDecimal.ONE : dec(l.get("quantity"));
-                out.add(resolve(new Context(partnerId, str(l.get("productId")), qty, str(l.get("uomId")),
-                        str(in.get("siteId")), str(in.get("branchId")), str(in.get("currencyCode")), on)).json());
+                Result r = resolve(new Context(partnerId, str(l.get("productId")), qty, str(l.get("uomId")),
+                        str(in.get("siteId")), str(in.get("branchId")), str(in.get("currencyCode")), on));
+                Map<String, Object> j = r.json();
+                j.put("breakdown", breakdown(r));
+                out.add(j);
             }
         }
         return Obj.of("partnerId", partnerId, "lines", out);
@@ -124,6 +164,11 @@ public class SalesPricingEngine implements QuotationPricingPort {
     /** Resolve one line. */
     @Transactional(readOnly = true)
     public Result resolve(Context c) {
+        return price(c, null).result();
+    }
+
+    /** {@code named}: the original query of a core caller, so the named-list tier sees its unit and site as given. */
+    private Priced price(Context c, PriceQuery named) {
         Map<String, Object> product = db.row("SELECT id, name, \"salesPrice\", \"costPrice\", \"categoryId\", \"taxId\","
                 + " \"taxInclusive\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL",
                 c.productId(), org());
@@ -147,75 +192,186 @@ public class SalesPricingEngine implements QuotationPricingPort {
         boolean incl = Boolean.TRUE.equals(product.get("taxInclusive"));
         String name = str(product.get("name"));
         Floor floor = floor(c, product, partnerCat, cost, on);
+        for (String tier : precedence()) {
+            Priced p = switch (tier) {
+                case "agreement" -> agreement(line, taxId, incl, name, floor);
+                case "customer_rule" -> c.partnerId() == null ? null
+                        : pricelist(line, bestItem(line, null, true), taxId, incl, name, floor);
+                case "crm_rule" -> crm(line, taxId, incl, name, floor);
+                case "customer_pricelist" -> partner == null || partner.get("pricelistId") == null ? null
+                        : pricelist(line, bestItem(line, str(partner.get("pricelistId")), false), taxId, incl, name, floor);
+                case "category_pricelist" -> partner == null || partner.get("catPricelistId") == null ? null
+                        : pricelist(line, bestItem(line, str(partner.get("catPricelistId")), false), taxId, incl, name,
+                                floor);
+                case "price_list" -> named(line, named, taxId, incl, name, floor);
+                case "branch_default" -> blank(c.branchId()) ? null
+                        : defaultList(line, c.branchId(), taxId, incl, name, floor);
+                case "org_default" -> defaultList(line, null, taxId, incl, name, floor);
+                case "standing_discount" -> standing(line, partner, taxId, incl, name, floor);
+                default -> null;
+            };
+            if (p != null) {
+                return p;
+            }
+        }
+        return new Priced(new Result(c.productId(), c.quantity(), list, list, BigDecimal.ZERO, "list", null, null, null,
+                taxId, incl, name, cost, floor.min, floor.price), false);
+    }
 
-        // 0. agreement price
-        if (!blank(c.agreementId())) {
-            Map<String, Object> a = db.row("SELECT l.id, l.\"uomId\", l.\"unitPrice\", l.\"discountPercent\", a.name FROM"
-                    + " \"SalesAgreementLine\" l JOIN \"SalesAgreement\" a ON a.id = l.\"agreementId\" WHERE a.id = ? AND"
-                    + " a.\"organizationId\" = ? AND a.status = 'active' AND a.\"startDate\" <= ? AND a.\"endDate\" >= ? AND"
-                    + " l.\"productId\" = ?", c.agreementId(), org(), on, on, c.productId());
-            if (a != null) {
-                BigDecimal agreed = blank(str(a.get("uomId"))) ? BigDecimal.ONE
-                        : uoms.factorToBase(c.productId(), str(a.get("uomId")));
-                BigDecimal unit = dec(a.get("unitPrice")).multiply(factor).divide(agreed, 6, RoundingMode.HALF_UP);
-                return new Result(c.productId(), c.quantity(), list, unit, dec(a.get("discountPercent")), "agreement",
-                        null, str(a.get("name")), str(a.get("id")), taxId, incl, name, cost, floor.min, floor.price);
-            }
+    private Priced agreement(Line l, String taxId, boolean incl, String name, Floor floor) {
+        Context c = l.c();
+        if (blank(c.agreementId())) {
+            return null;
         }
-        // 1. customer-specific pricelist rules
-        if (c.partnerId() != null) {
-            Map<String, Object> item = bestItem(line, null, true);
-            if (item != null) {
-                return result(line, item, taxId, incl, name, floor, 0);
-            }
+        Map<String, Object> a = db.row("SELECT l.id, l.\"uomId\", l.\"unitPrice\", l.\"discountPercent\", a.name FROM"
+                + " \"SalesAgreementLine\" l JOIN \"SalesAgreement\" a ON a.id = l.\"agreementId\" WHERE a.id = ? AND"
+                + " a.\"organizationId\" = ? AND a.status = 'active' AND a.\"startDate\" <= ? AND a.\"endDate\" >= ? AND"
+                + " l.\"productId\" = ?", c.agreementId(), org(), l.on(), l.on(), c.productId());
+        if (a == null) {
+            return null;
         }
-        // 2. CRM customer price rules
-        Map<String, Object> rule = crmRule(line);
-        if (rule != null) {
-            BigDecimal v = dec(rule.get("value"));
-            boolean fixed = "fixed_price".equals(rule.get("kind"));
-            return new Result(c.productId(), c.quantity(), list, fixed ? v.multiply(factor) : list, fixed ? BigDecimal.ZERO
-                    : v, "rule", null, str(rule.get("name")), str(rule.get("id")), taxId, incl, name, cost, floor.min,
-                    floor.price);
+        BigDecimal agreed = blank(str(a.get("uomId"))) ? BigDecimal.ONE
+                : uoms.factorToBase(c.productId(), str(a.get("uomId")));
+        BigDecimal unit = dec(a.get("unitPrice")).multiply(l.factor()).divide(agreed, 6, RoundingMode.HALF_UP);
+        return new Priced(new Result(c.productId(), c.quantity(), l.list(), unit, dec(a.get("discountPercent")),
+                "agreement", null, str(a.get("name")), str(a.get("id")), taxId, incl, name, l.cost(), floor.min,
+                floor.price), false);
+    }
+
+    private Priced pricelist(Line l, Map<String, Object> item, String taxId, boolean incl, String name, Floor floor) {
+        return item == null ? null : new Priced(result(l, item, taxId, incl, name, floor, 0), false);
+    }
+
+    private Priced defaultList(Line l, String branchId, String taxId, boolean incl, String name, Floor floor) {
+        Object id = branchId == null
+                ? value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" IS NULL AND"
+                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", id LIMIT 1",
+                        org())
+                : value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" = ? AND"
+                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", id LIMIT 1",
+                        org(), branchId);
+        return id == null ? null : pricelist(l, bestItem(l, str(id), false), taxId, incl, name, floor);
+    }
+
+    private Priced crm(Line l, String taxId, boolean incl, String name, Floor floor) {
+        Map<String, Object> rule = crmRule(l);
+        if (rule == null) {
+            return null;
         }
-        // 3-5. customer pricelist, category pricelist, branch default, organization default
-        List<String> lists = new ArrayList<>();
-        if (partner != null && partner.get("pricelistId") != null) {
-            lists.add(str(partner.get("pricelistId")));
+        Context c = l.c();
+        BigDecimal v = dec(rule.get("value"));
+        boolean fixed = "fixed_price".equals(rule.get("kind"));
+        return new Priced(new Result(c.productId(), c.quantity(), l.list(), fixed ? v.multiply(l.factor()) : l.list(),
+                fixed ? BigDecimal.ZERO : v, "rule", null, str(rule.get("name")), str(rule.get("id")), taxId, incl, name,
+                l.cost(), floor.min, floor.price), false);
+    }
+
+    /** SALES-3 named price lists, priced by {@link PriceListService#namedListPrice} in the caller's own unit. */
+    private Priced named(Line l, PriceQuery original, String taxId, boolean incl, String name, Floor floor) {
+        Context c = l.c();
+        PriceQuery q = original != null ? original : new PriceQuery(c.partnerId(), c.productId(), c.quantity(),
+                c.uomId(), c.branchId(), c.siteId(), l.on());
+        ListPrice lp = namedLists.namedListPrice(q);
+        if (lp == null) {
+            return null;
         }
-        if (partner != null && partner.get("catPricelistId") != null) {
-            lists.add(str(partner.get("catPricelistId")));
-        }
-        if (!blank(c.branchId())) {
-            Object b = value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" = ? AND"
-                    + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL", org(), c.branchId());
-            if (b != null) {
-                lists.add(str(b));
-            }
-        }
-        Object def = value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" IS NULL AND"
-                + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL", org());
-        if (def != null) {
-            lists.add(str(def));
-        }
-        for (String pl : lists) {
-            Map<String, Object> item = bestItem(line, pl, false);
-            if (item != null) {
-                return result(line, item, taxId, incl, name, floor, 0);
-            }
-        }
-        // 6. standing discount
+        BigDecimal unit = lp.unitPrice() != null ? lp.unitPrice() : l.list();
+        BigDecimal disc = lp.discountPercent() == null ? BigDecimal.ZERO : lp.discountPercent();
+        return new Priced(new Result(c.productId(), c.quantity(), l.list(), unit, disc, "price_list", lp.priceListId(),
+                lp.priceListName(), lp.priceListId(), taxId, incl, name, l.cost(), floor.min, floor.price),
+                lp.unitPrice() == null);
+    }
+
+    private Priced standing(Line l, Map<String, Object> partner, String taxId, boolean incl, String name, Floor floor) {
         BigDecimal standing = partner == null ? BigDecimal.ZERO : dec(partner.get("disc"));
         if (standing.signum() == 0 && partner != null) {
             standing = dec(partner.get("catDisc"));
         }
-        if (standing.signum() > 0) {
-            return new Result(c.productId(), c.quantity(), list, list, standing.min(HUNDRED), "customer", null, null,
-                    null, taxId, incl, name, cost, floor.min, floor.price);
+        if (standing.signum() <= 0) {
+            return null;
         }
-        // 7. list price
-        return new Result(c.productId(), c.quantity(), list, list, BigDecimal.ZERO, "list", null, null, null, taxId, incl,
-                name, cost, floor.min, floor.price);
+        Context c = l.c();
+        return new Priced(new Result(c.productId(), c.quantity(), l.list(), l.list(), standing.min(HUNDRED), "customer",
+                null, null, null, taxId, incl, name, l.cost(), floor.min, floor.price), false);
+    }
+
+    // ------------------------------------------------------------------ precedence and breakdown
+
+    /** The organization's tier order (ADR-S022 §4); the default when none is configured. */
+    public List<String> precedence() {
+        Map<String, Object> p = db.row("SELECT precedence FROM \"PricingPolicy\" WHERE \"organizationId\" = ?", org());
+        List<String> configured = p == null ? List.of() : SalesDb.strings(p.get("precedence"));
+        return configured.isEmpty() ? TIERS : configured;
+    }
+
+    /** {@code PUT /sales/pricing/policy}: an order of {@link #TIERS} (a subset skips the tiers left out). */
+    @Transactional
+    public Map<String, Object> savePrecedence(List<String> tiers) {
+        if (tiers == null || tiers.isEmpty()) {
+            throw ApiException.badRequest("precedence should not be empty");
+        }
+        if (new LinkedHashSet<>(tiers).size() != tiers.size()) {
+            throw ApiException.badRequest("precedence must not repeat a tier");
+        }
+        for (String t : tiers) {
+            if (!TIERS.contains(t)) {
+                throw ApiException.badRequest("Unknown pricing tier: " + t);
+            }
+        }
+        db.update("INSERT INTO \"PricingPolicy\" (\"organizationId\", precedence, \"updatedById\") VALUES (?, ?, ?)"
+                + " ON CONFLICT (\"organizationId\") DO UPDATE SET precedence = EXCLUDED.precedence, \"updatedById\" ="
+                + " EXCLUDED.\"updatedById\", \"updatedAt\" = now()", org(), tiers.toArray(String[]::new), SalesDb.user());
+        return pricingPolicy();
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> pricingPolicy() {
+        return Obj.of("precedence", precedence(), "tiers", TIERS, "last", "list");
+    }
+
+    /**
+     * Price breakdown of a resolved line (ADR-S022 §4): base (list) price, unit price, discount, net, tax and final
+     * price per unit and for the line. A tax-inclusive price carries its tax inside the net.
+     */
+    public Map<String, Object> breakdown(Result r) {
+        BigDecimal rate = BigDecimal.ZERO;
+        if (r.taxId() != null) {
+            Object v = value("SELECT rate FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL",
+                    r.taxId(), org());
+            rate = v == null ? BigDecimal.ZERO : dec(v);
+        }
+        BigDecimal net = r.net();
+        BigDecimal tax;
+        BigDecimal fin;
+        if (r.taxInclusive()) {
+            BigDecimal excl = net.divide(BigDecimal.ONE.add(rate.divide(HUNDRED, 10, RoundingMode.HALF_UP)), 6,
+                    RoundingMode.HALF_UP);
+            tax = net.subtract(excl);
+            fin = net;
+        } else {
+            tax = net.multiply(rate).divide(HUNDRED, 6, RoundingMode.HALF_UP);
+            fin = net.add(tax);
+        }
+        BigDecimal qty = r.quantity() == null ? BigDecimal.ONE : r.quantity();
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("source", r.source());
+        b.put("ruleId", r.itemId());
+        b.put("ruleName", r.pricelistName());
+        b.put("basePrice", JsNumbers.js(r.listPrice()));
+        b.put("unitPrice", JsNumbers.js(r.unitPrice()));
+        b.put("discountPercent", JsNumbers.js(r.discountPercent()));
+        b.put("discountAmount", JsNumbers.js(r.unitPrice().subtract(net).setScale(6, RoundingMode.HALF_UP)));
+        b.put("netPrice", JsNumbers.js(net));
+        b.put("taxId", r.taxId());
+        b.put("taxRate", JsNumbers.js(rate));
+        b.put("taxInclusive", r.taxInclusive());
+        b.put("taxAmount", JsNumbers.js(tax));
+        b.put("finalPrice", JsNumbers.js(fin));
+        b.put("quantity", JsNumbers.js(qty));
+        b.put("lineNet", JsNumbers.js(net.multiply(qty).setScale(2, RoundingMode.HALF_UP)));
+        b.put("lineTax", JsNumbers.js(tax.multiply(qty).setScale(2, RoundingMode.HALF_UP)));
+        b.put("lineTotal", JsNumbers.js(fin.multiply(qty).setScale(2, RoundingMode.HALF_UP)));
+        return b;
     }
 
     /**

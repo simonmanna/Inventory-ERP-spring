@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.PriceSnapshotService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.PriceListService;
@@ -99,11 +100,14 @@ public class FleetDeliveryOrderService {
     private final CreditControlService credit;
     private final BranchScopeService scopes;
     private final PriceListService priceLists;
+    private final PriceSnapshotService snapshots;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
             OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, List<DeliverySourcePort> sources,
-            CreditControlService credit, BranchScopeService scopes, PriceListService priceLists) {
+            CreditControlService credit, BranchScopeService scopes, PriceListService priceLists,
+            PriceSnapshotService snapshots) {
+        this.snapshots = snapshots;
         this.sources = sources;
         this.scopes = scopes;
         this.priceLists = priceLists;
@@ -267,11 +271,15 @@ public class FleetDeliveryOrderService {
         for (Line l : lines) {
             value = value.add(l.qty().multiply(l.unitPrice() == null ? BigDecimal.ZERO : l.unitPrice()));
         }
-        credit.assertCanSell(in.partnerId(), value, null, null);
+        credit.assertCanSell("delivery_order", in.partnerId(), value, "fleet_delivery_order", null, null,
+                blank(in.branchId()));
         Header h = new Header(in.partnerId(), blank(in.siteId()), blank(in.locationId()), in.requestedDate(),
                 in.windowFrom(), in.windowTo(), in.priority(), in.contactName(), in.contactPhone(),
                 blank(in.costCenterId()), blank(in.branchId()), in.notes());
-        return insert(h, "manual", null, null, "dispatch", null, null, null, lines);
+        Map<String, Object> created = insert(h, "manual", null, null, "dispatch", null, null, null, lines);
+        // A manual delivery order is priced once, here; invoicing uses the stored price (ADR-S022 §4).
+        snapshots.record("delivery_order", (String) created.get("id"));
+        return created;
     }
 
     /** From a confirmed back-office sales order (never a POS sale). */

@@ -53,6 +53,13 @@ public class CreditController {
         return svc.reviewQueue();
     }
 
+    /** ADR-S022 §6: central exposure against the retired SALES-1 formula and the V211 limit log. */
+    @GetMapping("/reconciliation")
+    @RequirePermissions(Permissions.CREDIT__READ)
+    public List<Map<String, Object>> reconciliation() {
+        return svc.reconciliation();
+    }
+
     @GetMapping("/decisions")
     @RequirePermissions(Permissions.CREDIT__READ)
     public List<Map<String, Object>> decisions(@RequestParam Map<String, String> q) {
