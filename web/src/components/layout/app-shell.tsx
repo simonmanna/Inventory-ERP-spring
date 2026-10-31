@@ -366,7 +366,10 @@ const NAV_SECTIONS: NavSection[] = [
     icon: Truck,
     items: [
       { to: '/procurement/rfqs', label: tx('Requests for Quotation'), icon: FileText, permission: PERMISSIONS.procurement.rfq.read },
+      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ShoppingCart, permission: 'purchase_request:read' },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
+      { to: '/procurement/budgets', label: tx('Procurement Budgets'), icon: Calculator, permission: 'procurement_budget:read' },
+      { to: '/procurement/delegations', label: tx('Purchasing Delegation'), icon: UserCog, permission: 'procurement_delegation:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
       { to: '/vendor-bills', label: tx('Vendor Bills'), icon: ReceiptText, permission: PERMISSIONS.expense.read },
       { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar },
@@ -610,6 +613,8 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/approvals', label: tx('Approvals'), icon: ShieldCheck, permission: 'approvals:read' },
       { to: '/approval-workflows', label: tx('Approval Workflows'), icon: Shield, permission: 'approvals:read' },
+      { to: '/approval-controls', label: tx('Approval Controls'), icon: Shield, permission: 'approvals:read' },
+      { to: '/settings/document-numbering', label: tx('Document Numbering'), icon: SettingsIcon, permission: 'document_numbering:read' },
       { to: '/approval-policies', label: tx('Approval Policies (legacy)'), icon: Shield, permission: 'approvals:read' },
       { to: '/staff', label: tx('Staff'), icon: UserCog, permission: PERMISSIONS.user.read },
       { to: '/staff/roles', label: tx('Roles & Permissions'), icon: Shield, permission: PERMISSIONS.role.read },

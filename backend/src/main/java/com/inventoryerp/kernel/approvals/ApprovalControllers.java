@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.json.JsonMapper;
 
 /** {@code /approvals}, {@code /approval-policies}, {@code /approval-workflows}. */
 public final class ApprovalControllers {
@@ -34,10 +36,14 @@ public final class ApprovalControllers {
             @NotNull(message = "each value in approverPermissions must be a string") List<String> approverPermissions,
             @NotNull(message = "must be an integer number") @Min(value = 1, message = "must not be less than 1") Integer requiredCount,
             BigDecimal minAmount,
-            BigDecimal maxAmount) {
+            BigDecimal maxAmount,
+            String branchId,
+            String departmentId,
+            @OneOf({"permission", "department_manager"}) String approverScope) {
 
         ApprovalAdminService.Step toStep() {
-            return new ApprovalAdminService.Step(stepOrder, name, approverPermissions, requiredCount, minAmount, maxAmount);
+            return new ApprovalAdminService.Step(stepOrder, name, approverPermissions, requiredCount, minAmount,
+                    maxAmount, branchId, departmentId, approverScope);
         }
     }
 
@@ -57,7 +63,9 @@ public final class ApprovalControllers {
             BigDecimal minAmount,
             Boolean enforceDistinctApprovers,
             Boolean isActive,
-            @NotNull(message = "must be an array") List<@Valid StepRequest> steps) {}
+            @NotNull(message = "must be an array") List<@Valid StepRequest> steps,
+            String branchId,
+            String departmentId) {}
 
     /** {@code DecideDto}. */
     public record DecideRequest(
@@ -156,10 +164,15 @@ public final class ApprovalControllers {
     public static class ApprovalWorkflowController {
         private final ApprovalAdminService admin;
         private final ApprovalBodies bodies;
+        private final ControlledConfigService changes;
+        private final JsonMapper mapper;
 
-        public ApprovalWorkflowController(ApprovalAdminService admin, ApprovalBodies bodies) {
+        public ApprovalWorkflowController(ApprovalAdminService admin, ApprovalBodies bodies,
+                ControlledConfigService changes, JsonMapper mapper) {
             this.admin = admin;
             this.bodies = bodies;
+            this.changes = changes;
+            this.mapper = mapper;
         }
 
         @GetMapping
@@ -177,22 +190,40 @@ public final class ApprovalControllers {
         @PostMapping
         @ResponseStatus(HttpStatus.CREATED)
         @RequirePermissions(Permissions.APPROVALS__MANAGE)
+        @SuppressWarnings("unchecked")
         public Map<String, Object> create(@Valid @RequestBody CreateWorkflowRequest dto) {
-            return admin.createWorkflow(dto.name(), dto.entityType(), dto.minAmount(), dto.enforceDistinctApprovers(),
-                    dto.isActive(), dto.steps().stream().map(StepRequest::toStep).toList());
+            Map<String, Object> held = changes.holdIfControlled(ApprovalConfigApplier.WORKFLOW_CREATE, null,
+                    mapper.convertValue(dto, LinkedHashMap.class));
+            if (held != null) {
+                return held;
+            }
+            return admin.createWorkflow(dto.name(), dto.entityType(), dto.minAmount(), dto.branchId(),
+                    dto.departmentId(), dto.enforceDistinctApprovers(), dto.isActive(),
+                    dto.steps().stream().map(StepRequest::toStep).toList());
         }
 
         @PatchMapping("/{id}")
         @RequirePermissions(Permissions.APPROVALS__MANAGE)
         public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> dto) {
-            ApprovalBodies.check(dto, "name", "entityType", "minAmount", "enforceDistinctApprovers", "isActive", "steps");
+            ApprovalBodies.check(dto, "name", "entityType", "minAmount", "branchId", "departmentId",
+                    "enforceDistinctApprovers", "isActive", "steps");
             List<ApprovalAdminService.Step> steps = dto.get("steps") == null ? null : bodies.steps(dto.get("steps"));
+            admin.findWorkflow(id);
+            Map<String, Object> held = changes.holdIfControlled(ApprovalConfigApplier.WORKFLOW_UPDATE, id, dto);
+            if (held != null) {
+                return held;
+            }
             return admin.updateWorkflow(id, new ApprovalAdminService.Patch(dto), steps);
         }
 
         @DeleteMapping("/{id}")
         @RequirePermissions(Permissions.APPROVALS__MANAGE)
         public Map<String, Object> remove(@PathVariable String id) {
+            admin.findWorkflow(id);
+            Map<String, Object> held = changes.holdIfControlled(ApprovalConfigApplier.WORKFLOW_DELETE, id, Map.of());
+            if (held != null) {
+                return held;
+            }
             admin.removeWorkflow(id);
             return Map.of("ok", true);
         }

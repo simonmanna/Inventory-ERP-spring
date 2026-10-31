@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { ENTITY_TYPE_LABELS, entityTypeLabel } from '@/lib/approval-entity-types';
+import { isHeldForApproval, useBranchChoices, useDepartmentChoices } from '@/features/approval-controls/api';
 import { usePermissionCatalog } from '@/features/staff/api';
 import { tx } from '@/lib/i18n/tx';
 
@@ -28,12 +29,17 @@ interface ApprovalStep {
   requiredCount: number;
   minAmount: number | null;
   maxAmount: number | null;
+  branchId: string | null;
+  departmentId: string | null;
+  approverScope: string;
 }
 interface ApprovalWorkflow {
   id: string;
   name: string;
   entityType: string;
   minAmount: number | null;
+  branchId: string | null;
+  departmentId: string | null;
   enforceDistinctApprovers: boolean;
   isActive: boolean;
   steps: ApprovalStep[];
@@ -47,6 +53,8 @@ type StepForm = {
   requiredCount: string;
   minAmount: string;
   maxAmount: string;
+  departmentId: string;
+  approverScope: string;
 };
 const emptyStep = (order: number): StepForm => ({
   stepOrder: order,
@@ -55,11 +63,15 @@ const emptyStep = (order: number): StepForm => ({
   requiredCount: '1',
   minAmount: '',
   maxAmount: '',
+  departmentId: '',
+  approverScope: 'permission',
 });
 const emptyForm = () => ({
   name: '',
   entityType: '',
   minAmount: '',
+  branchId: '',
+  departmentId: '',
   enforceDistinctApprovers: false,
   steps: [emptyStep(1)] as StepForm[],
 });
@@ -73,7 +85,9 @@ function fmtBand(min: number | null, max: number | null): string {
 
 const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
   Procurement: [
+    { key: 'purchase_request', label: tx('Purchase Requests') },
     { key: 'purchase_order', label: tx('Purchase Orders') },
+    { key: 'supplier_bill_approval', label: tx('Supplier Bill Approval') },
     { key: 'goods_receipt', label: tx('Goods Receipts') },
     { key: 'debit_note', label: tx('Debit Notes') },
     { key: 'vendor_bill', label: tx('Vendor Bills') },
@@ -85,6 +99,8 @@ const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
     { key: 'invoice_cancel', label: tx('Invoice Cancel') },
   ],
   Inventory: [
+    { key: 'stock_adjustment', label: tx('Stock Adjustments') },
+    { key: 'production_loss_writeoff', label: tx('Production Loss Write-offs') },
     { key: 'stock_out', label: tx('Stock-Out') },
     { key: 'waste', label: tx('Waste') },
     { key: 'inventory_count_submit', label: tx('Inventory Count Submit') },
@@ -95,6 +111,13 @@ const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
     { key: 'asset_transfer', label: tx('Asset Transfer') },
     { key: 'asset_revaluation', label: tx('Asset Revaluation') },
     { key: 'depreciation_run', label: tx('Depreciation') },
+  ],
+  Sales: [
+    { key: 'sales_order', label: tx('Sales Orders') },
+    { key: 'credit_override', label: tx('Credit Overrides') },
+  ],
+  Controls: [
+    { key: 'config_change', label: tx('Configuration Changes') },
   ],
   POS: [
     { key: 'pos_discount', label: tx('POS Discount Override') },
@@ -212,6 +235,10 @@ export function ApprovalWorkflowsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm());
+  const branches = useBranchChoices();
+  const departments = useDepartmentChoices();
+  const optionName = (options: { id: string; name: string }[] | undefined, id: string) =>
+    options?.find((o) => o.id === id)?.name ?? id;
 
   const list = useQuery<ApprovalWorkflow[]>({
     queryKey: ['approval-workflows'],
@@ -221,9 +248,9 @@ export function ApprovalWorkflowsPage() {
   const toggle = useMutation({
     mutationFn: async (vars: { id: string; isActive: boolean }) =>
       api.patch(`/approval-workflows/${vars.id}`, { isActive: vars.isActive }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['approval-workflows'] });
-      notify.success(tx('Workflow updated'));
+      notify.success(isHeldForApproval(res.data) ? tx('Held for approval') : tx('Workflow updated'));
     },
     onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
@@ -236,6 +263,8 @@ export function ApprovalWorkflowsPage() {
         name: form.name || form.entityType,
         entityType: form.entityType,
         minAmount: form.minAmount ? Number(form.minAmount) : null,
+        branchId: form.branchId || null,
+        departmentId: form.departmentId || null,
         enforceDistinctApprovers: form.enforceDistinctApprovers,
         isActive: true,
         steps: form.steps.map((s) => ({
@@ -245,23 +274,25 @@ export function ApprovalWorkflowsPage() {
           requiredCount: Number(s.requiredCount) || 1,
           minAmount: s.minAmount ? Number(s.minAmount) : null,
           maxAmount: s.maxAmount ? Number(s.maxAmount) : null,
+          departmentId: s.departmentId || null,
+          approverScope: s.approverScope,
         })),
       });
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['approval-workflows'] });
       setShowForm(false);
       setForm(emptyForm());
-      notify.success(tx('Workflow created'));
+      notify.success(isHeldForApproval(res.data) ? tx('Held for approval') : tx('Workflow created'));
     },
     onError: (err: any) => notify.error(err?.response?.data?.message ?? err.message),
   });
 
   const remove = useMutation({
     mutationFn: async (id: string) => api.delete(`/approval-workflows/${id}`),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['approval-workflows'] });
-      notify.success(tx('Workflow deleted'));
+      notify.success(isHeldForApproval(res.data) ? tx('Held for approval') : tx('Workflow deleted'));
     },
     onError: (err: any) => notify.error(err?.response?.data?.message ?? tx('Failed')),
   });
@@ -358,6 +389,28 @@ export function ApprovalWorkflowsPage() {
                   onChange={(e) => setForm((f) => ({ ...f, minAmount: e.target.value }))}
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label>{tx('Branch (optional)')}</Label>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  value={form.branchId}
+                  onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
+                >
+                  <option value="">{tx('All branches')}</option>
+                  {branches.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>{tx('Department (optional)')}</Label>
+                <select
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  value={form.departmentId}
+                  onChange={(e) => setForm((f) => ({ ...f, departmentId: e.target.value }))}
+                >
+                  <option value="">{tx('All departments')}</option>
+                  {departments.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
               <div className="flex items-end gap-2">
                 <input
                   id="sod"
@@ -413,6 +466,28 @@ export function ApprovalWorkflowsPage() {
                         permissions={s.approverPermissions}
                         onChange={(perms) => setStep(idx, { approverPermissions: perms })}
                       />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{tx('Decided by')}</Label>
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                        value={s.approverScope}
+                        onChange={(e) => setStep(idx, { approverScope: e.target.value })}
+                      >
+                        <option value="permission">{tx('Holders of the permissions')}</option>
+                        <option value="department_manager">{tx('Department manager')}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>{tx('Only for department')}</Label>
+                      <select
+                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                        value={s.departmentId}
+                        onChange={(e) => setStep(idx, { departmentId: e.target.value })}
+                      >
+                        <option value="">{tx('All departments')}</option>
+                        {departments.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
                     </div>
                     <div className="space-y-1.5">
                       <Label>{tx('Band Min (optional)')}</Label>
@@ -484,6 +559,12 @@ export function ApprovalWorkflowsPage() {
                       {w.enforceDistinctApprovers && (
                         <span className="text-[10px] uppercase tracking-wide text-amber-600">{tx('SoD')}</span>
                       )}
+                      {w.branchId && (
+                        <span className="text-xs text-muted-foreground">{optionName(branches.data, w.branchId)}</span>
+                      )}
+                      {w.departmentId && (
+                        <span className="text-xs text-muted-foreground">{optionName(departments.data, w.departmentId)}</span>
+                      )}
                     </div>
                     <ol className="mt-2 space-y-1">
                       {[...w.steps]
@@ -493,6 +574,7 @@ export function ApprovalWorkflowsPage() {
                             <span className="font-medium text-foreground">{s.stepOrder}. {s.name}</span>{' '}
                             — {s.requiredCount} {tx('approval')}{s.requiredCount > 1 ? 's' : ''} ·{' '}
                             {fmtBand(s.minAmount, s.maxAmount)}
+                            {s.approverScope === 'department_manager' && ` · ${tx('Department manager')}`}
                             {s.approverPermissions && s.approverPermissions.length > 0 && (
                               <span className="ml-1 text-[10px] text-muted-foreground/60">
                                 ({s.approverPermissions.join(', ')})

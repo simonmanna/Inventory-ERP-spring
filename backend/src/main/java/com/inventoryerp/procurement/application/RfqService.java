@@ -430,7 +430,7 @@ public class RfqService {
                 new BigDecimal((String) quote.get("exchangeRate")),
                         dto.paymentType() != null ? dto.paymentType() : "credit",
                 null, (String) quote.get("paymentTerms"), dto.warehouseId(), (String) r.get("purchaseRequestId"),
-                        poLines));
+                        poLines, null));
         jdbc.sql("UPDATE \"PurchaseRfq\" SET status = 'awarded', \"awardedAt\" = " + NOW + ", \"awardedBy\" = ?,"
                         + " \"awardedQuotationId\" = ?, \"purchaseOrderId\" = ?, \"updatedBy\" = ?, \"updatedAt\" = "
                         + NOW

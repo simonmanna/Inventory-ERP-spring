@@ -92,7 +92,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
 | 3 requirements verification | done (C) | 66219a2 | requirements-verified | 263 rows: 166 verified, 82 partial, 15 missing. By reading code only; nothing compiled or run |
 | 4.A manufacturing: MFG-1 2.5 planning, MFG-2 2.8 costing, MFG-3 E2E ITs, MFG-4 demo seed | in-progress (C, worktree) | | | |
-| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | in-progress (C, worktree) | | | |
+| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | merged, unverified (C) | 7223c0a..4750344 | | V50–V52; 25 routes; never compiled or run. SoD pairs are off per tenant until switched on; supplier-bill hook not yet called by lane D code |
 | 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | in-progress (C, worktree) | | | |
 | 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | merged, unverified (C) | d43915d..d280613 | | V70–V74; 27 routes; never compiled or run. Do not migrate a shared DB until every lane is merged: lanes use number blocks V40–V99 that merge out of order |
 | 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | in-progress (C, worktree) | | | |

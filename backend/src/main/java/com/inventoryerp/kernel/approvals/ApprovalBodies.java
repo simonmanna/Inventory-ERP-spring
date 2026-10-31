@@ -47,7 +47,7 @@ public class ApprovalBodies {
                 errors.add(b + " must be a boolean value");
             }
         }
-        for (String s : List.of("name", "entityType")) {
+        for (String s : List.of("name", "entityType", "branchId", "departmentId")) {
             if (dto.get(s) != null && !(dto.get(s) instanceof String)) {
                 errors.add(s + " must be a string");
             }

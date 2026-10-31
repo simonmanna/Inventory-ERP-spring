@@ -205,8 +205,54 @@ class OrdersIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("authorization matrix: 401 anonymous, 403 without the orders permission (11 routes)")
+    @DisplayName("approval: with a workflow billing waits, the creator cannot approve, a higher total needs a new approval")
+    void approval() {
+        String adminRole = jdbc.sql("SELECT r.id FROM \"Role\" r JOIN \"_UserRoles\" ur ON ur.\"A\" = r.id JOIN \"User\" u"
+                + " ON u.id = ur.\"B\" WHERE u.email = 'admin@demo.test' LIMIT 1").query(String.class).single();
+        String email = "order-approver-" + UUID.randomUUID().toString().substring(0, 8) + "@demo.test";
+        createUser(demoOrg, email, "Approver@123", adminRole);
+        String approver = login("DEMO", email, "Approver@123");
+        String workflow = ok(201, "POST", "/approval-workflows", Map.of("name", "Sales orders", "entityType",
+                "sales_order", "steps", List.of(Map.of("stepOrder", 1, "name", "Sales manager", "approverPermissions",
+                        List.of("orders:invoice"), "requiredCount", 1)))).get("id").asString();
+        try {
+            String id = create(Map.of("partnerId", customerId)).get("id").asString();
+            JsonNode pending = ok(200, "GET", "/orders/" + id + "/approval", null);
+            assertThat(pending.get("status").asString()).isEqualTo("pending");
+            String firstRequest = pending.get("id").asString();
+
+            Res early = as("POST", "/orders/" + id + "/invoice", Map.of("paymentMode", "credit"));
+            assertThat(early.status()).isEqualTo(400);
+            assertThat(early.body().get("message").asString()).contains("Approval required before invoicing");
+
+            Res own = as("POST", "/approvals/" + firstRequest + "/decide", Map.of("status", "approved"));
+            assertThat(own.status()).isEqualTo(400);
+            assertThat(own.body().get("message").asString()).isEqualTo("You cannot approve a request you created");
+            Res decided = call("POST", "/approvals/" + firstRequest + "/decide", Map.of("status", "approved"), approver);
+            assertThat(decided.status()).as(decided.raw().body()).isEqualTo(201);
+
+            ok(200, "POST", "/orders/" + id + "/items", Map.of("lines", List.of(Map.of("productId", productId,
+                    "quantity", 5))));
+            Res stale = as("POST", "/orders/" + id + "/invoice", Map.of("paymentMode", "credit"));
+            assertThat(stale.status()).isEqualTo(400);
+            JsonNode raised = ok(200, "GET", "/orders/" + id + "/approval", null);
+            assertThat(raised.get("id").asString()).isNotEqualTo(firstRequest);
+            assertThat(jdbc.sql("SELECT status::text FROM \"ApprovalRequest\" WHERE id = ?").param(firstRequest)
+                    .query(String.class).single()).isEqualTo("cancelled");
+
+            Res second = call("POST", "/approvals/" + raised.get("id").asString() + "/decide",
+                    Map.of("status", "approved"), approver);
+            assertThat(second.status()).as(second.raw().body()).isEqualTo(201);
+            Res billed = as("POST", "/orders/" + id + "/invoice", Map.of("paymentMode", "credit"));
+            assertThat(billed.status()).as(billed.raw().body()).isIn(200, 201);
+        } finally {
+            ok(200, "DELETE", "/approval-workflows/" + workflow, null);
+        }
+    }
+
+    @Test
+    @DisplayName("authorization matrix: 401 anonymous, 403 without the orders permission (13 routes)")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.orders")).isEqualTo(11);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.orders")).isEqualTo(13);
     }
 }

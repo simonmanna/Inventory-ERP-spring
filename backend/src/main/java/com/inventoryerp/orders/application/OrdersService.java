@@ -9,6 +9,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
 import com.inventoryerp.invoicing.domain.Invoice;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.shared.web.EntityJson;
@@ -48,9 +49,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * shared {@code Order} aggregate, no terminal coupling (no tables/KDS/cash sessions/merge-split). Pricing runs through
  * the DocumentBuilder tax engine so menu-item and product lines price identically; numbering, cancel/reopen and billing
  * reuse the POS spines. Line inputs are JS-shaped maps ({@code OrderLineInputDto}).
+ *
+ * <p>SALES-2: with a {@value #APPROVAL_ENTITY} workflow an order needs approval before it is billed here. The request
+ * is raised on create, or by the first billing attempt, and an approval stops counting once the order's total goes
+ * above what was approved. Only this service's billing is gated: POS routes are frozen.
  */
 @Service
 public class OrdersService {
+
+    public static final String APPROVAL_ENTITY = "sales_order";
 
     private final PosDb db;
     private final JdbcClient jdbc;
@@ -61,11 +68,12 @@ public class OrdersService {
     private final WorkflowService workflows;
     private final PosInvoiceService billing;
     private final PosOrdersService posOrders;
+    private final ApprovalsService approvals;
     private final TransactionTemplate tx;
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
-            PosOrdersService posOrders, PlatformTransactionManager txm) {
+            PosOrdersService posOrders, ApprovalsService approvals, PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -75,6 +83,7 @@ public class OrdersService {
         this.workflows = workflows;
         this.billing = billing;
         this.posOrders = posOrders;
+        this.approvals = approvals;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -221,7 +230,7 @@ public class OrdersService {
         for (Map<String, Object> l : maps(dto.get("lines"))) {
             resolved.add(Line.of(l));
         }
-        return tx.execute(st -> {
+        Map<String, Object> order = tx.execute(st -> {
             String orderNumber = nextOrderNumber();
             String partnerId = dto.get("partnerId") != null ? (String) dto.get("partnerId")
                     : posOrders.ensureWalkInCustomer(orgId);
@@ -251,6 +260,10 @@ public class OrdersService {
                     "lineCount", resolved.size())));
             return decorate(fresh);
         });
+        if (!resolved.isEmpty()) {
+            approvals.checkOrRequestApprovalOfAmount(APPROVAL_ENTITY, (String) order.get("id"), approvalSnapshot(order));
+        }
+        return order;
     }
 
     public Map<String, Object> updateHeader(String orderId, Map<String, Object> dto) {
@@ -363,7 +376,52 @@ public class OrdersService {
 
     /** Bill the order through the shared spine: deduct stock, post AR. */
     public Map<String, Object> generateInvoice(String orderId, Map<String, Object> dto) {
+        assertApproved(orderId);
         return billing.generateInvoice(orderId, dto);
+    }
+
+    // ─── approval ───
+
+    private static Map<String, Object> approvalSnapshot(Map<String, Object> order) {
+        return Obj.of("amount", order.get("totalAmount"), "orderNumber", order.get("orderNumber"), "partnerId",
+                order.get("partnerId"), "branchId", order.get("branchId"), "createdBy", order.get("createdBy"));
+    }
+
+    /** Stops billing while approval is pending. An order billing will refuse anyway gets its own error from there. */
+    private void assertApproved(String orderId) {
+        Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, org());
+        if (order == null || order.get("invoiceId") != null || "cancelled".equals(order.get("status"))
+                || "closed".equals(order.get("status"))) {
+            return;
+        }
+        Map<String, Object> gate = approvals.checkOrRequestApprovalOfAmount(APPROVAL_ENTITY, orderId,
+                approvalSnapshot(order));
+        if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+            throw ApiException.badRequest("Approval required before invoicing " + order.get("orderNumber")
+                    + ". Pending approval request " + gate.get("requestId") + ".");
+        }
+    }
+
+    /** The latest approval request of an order with its decisions; {@code null} when none was needed. */
+    public Map<String, Object> approval(String orderId) {
+        requireOrder(orderId);
+        return approvals.latestRequest(APPROVAL_ENTITY, orderId);
+    }
+
+    /** Raise the approval for the order as it stands now, for example after editing its lines. */
+    public Map<String, Object> requestApproval(String orderId) {
+        Map<String, Object> order = requireOrder(orderId);
+        assertEditable(order);
+        approvals.checkOrRequestApprovalOfAmount(APPROVAL_ENTITY, orderId, approvalSnapshot(order));
+        return approvals.latestRequest(APPROVAL_ENTITY, orderId);
+    }
+
+    private Map<String, Object> requireOrder(String orderId) {
+        Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, org());
+        if (order == null) {
+            throw ApiException.notFound("Order not found");
+        }
+        return order;
     }
 
     // ─── internals ───

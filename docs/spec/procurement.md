@@ -180,3 +180,19 @@ Screens `/procurement/price-agreements`, `/procurement/price-history`. Test: `Pr
 ## Phase 4 handling test (added, not run)
 
 PROC-6: `LandedCostVoucherIT.handlingByQuantity` asserts the seeded HANDLING component capitalizes, spreads by quantity and balances. No production code changed. The test was not run.
+## Budgets, spend control and delegation (PROC-3)
+
+Status: built, not compiled, not run. Tests in `ProcurementControlIT`. Decisions in `docs/DECISIONS_FOR_OWNER.md`.
+
+- `/procurement/budgets` (list, get, create, update draft, `activate`, `close`, `revise`, delete draft). Permissions `procurement_budget:read|manage`.
+- `POST /procurement/budget-check`: preview for forms, permission `purchase_request:read`.
+- `/procurement/delegations` (list, create, update, delete). Permissions `procurement_delegation:read|manage`, and `procurement_delegation:central` for central buyers.
+- `ProcurementBudgetService.enforce` locks the active budget rows in id order inside the document's transaction. A refusal is a 409 with code `PROCUREMENT_BUDGET_EXCEEDED`.
+- `POST /procurement/purchase-orders` and `POST /procurement/purchase-requests` accept an optional `departmentId`. Responses do not change.
+- The `purchase_order` approval snapshot now carries `branchId` and `departmentId`, so CTRL-1 conditions apply.
+
+## Purchase request approval (PROC-5)
+
+Status: built, not compiled, not run. Tests in `ProcurementControlIT`.
+
+Entity type `purchase_request`, raised on submit with snapshot `amount` (estimated value, base currency), `branchId`, `departmentId`. `PATCH .../approve` and `.../reject` decide the pending request through the engine. `PurchaseRequestApprovalSubscriber` applies inbox decisions, idempotently. `GET .../{id}/approval` returns the latest request with its decisions, or an empty body when no workflow applied. Without a workflow nothing changes.

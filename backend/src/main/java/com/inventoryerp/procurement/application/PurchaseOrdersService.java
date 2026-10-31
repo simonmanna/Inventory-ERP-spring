@@ -26,6 +26,8 @@ import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.sequence.SequenceService;
+import com.inventoryerp.procurement.application.ProcurementBudgetService.Doc;
+import com.inventoryerp.procurement.application.ProcurementBudgetService.DocLine;
 import com.inventoryerp.procurement.domain.GoodsReceiptLine;
 import com.inventoryerp.procurement.domain.GoodsReceiptNote;
 import com.inventoryerp.procurement.domain.PurchaseOrder;
@@ -34,6 +36,7 @@ import com.inventoryerp.procurement.domain.PurchasePayment;
 import com.inventoryerp.procurement.domain.PurchaseRequest;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
@@ -61,7 +64,7 @@ public class PurchaseOrdersService {
     /** {@code CreatePODto}. */
     public record CreateInput(String partnerId, String branchId, String description, String expectedDeliveryDate,
             String currencyCode, BigDecimal exchangeRate, String paymentType, String notes, String terms,
-            String warehouseId, String requestId, List<LineInput> lines) {}
+            String warehouseId, String requestId, List<LineInput> lines, String departmentId) {}
 
     /** {@code POLineDto}. */
     public record LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
@@ -95,6 +98,8 @@ public class PurchaseOrdersService {
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final CashSessionService cashSession;
+    private final ProcurementBudgetService budgets;
+    private final ProcurementDelegationService delegations;
     private final TransactionTemplate tx;
     private final TransactionTemplate newTx;
 
@@ -102,8 +107,11 @@ public class PurchaseOrdersService {
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
-            CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units) {
+            CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
+            ProcurementBudgetService budgets, ProcurementDelegationService delegations) {
         this.jdbc = jdbc;
+        this.budgets = budgets;
+        this.delegations = delegations;
         this.units = units;
         this.sequence = sequence;
         this.events = events;
@@ -166,22 +174,29 @@ public class PurchaseOrdersService {
             lineUnits.add(units.resolveLineUnit(ln.productId(), ln.unitOfMeasureId(), UnitRole.PURCHASE));
         }
 
+        // Spend control (PROC-3): both in base currency excluding tax. The budget check runs after the insert, under
+        // the budget row lock, and before the approval request, so a refused order leaves nothing behind.
+        List<DocLine> baseLines = baseLines(dto);
+        delegations.enforce(dto.branchId(), baseLines.stream().map(DocLine::amount).reduce(BigDecimal.ZERO,
+                BigDecimal::add));
+
         Map<String, Object> order = tx.execute(st -> {
             String id = UUID.randomUUID().toString();
             Map<String, Object> created = SqlRows.one(PurchaseOrder.class, jdbc.sql("INSERT INTO \"PurchaseOrder\" (id,"
                             + " \"organizationId\", \"orderNumber\", \"partnerId\", \"branchId\", description,"
                             + " \"orderDate\", \"expectedDeliveryDate\", \"currencyCode\", \"exchangeRate\", subtotal,"
                             + " \"taxAmount\", \"totalAmount\", status, \"paymentType\", \"paymentStatus\", notes, terms,"
-                            + " \"requestId\", \"createdBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, " + NOW
-                            + ", ?, ?, ?, ?, ?, ?, 'draft', ?::\"PaymentType\", ?::\"PaymentStatus\", ?, ?, ?, ?, " + NOW
-                            + ", " + NOW + ") RETURNING *")
+                            + " \"requestId\", \"departmentId\", \"createdBy\", \"createdAt\", \"updatedAt\")"
+                            + " VALUES (?, ?, ?,"
+                            + " ?, ?, ?, " + NOW + ", ?, ?, ?, ?, ?, ?, 'draft', ?::\"PaymentType\","
+                            + " ?::\"PaymentStatus\", ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                     .params(id, orgId, orderNumber, dto.partnerId(), dto.branchId(), dto.description(),
                             SqlRows.ts(ProcurementSql.date(dto.expectedDeliveryDate())),
                             dto.currencyCode() != null ? dto.currencyCode() : "USD",
                             dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE, num(sub), num(taxes),
                             num(total), dto.paymentType() != null ? dto.paymentType() : "cash",
                             "credit".equals(dto.paymentType()) ? "not_paid" : null, dto.notes(), dto.terms(),
-                            dto.requestId(), user()));
+                            dto.requestId(), dto.departmentId(), user()));
             List<Map<String, Object>> lines = new ArrayList<>();
             int idx = 0;
             for (LineInput ln : dto.lines()) {
@@ -196,11 +211,13 @@ public class PurchaseOrdersService {
                                 num(ln.quantity().doubleValue() * ln.unitPrice().doubleValue()), ++idx, ln.notes())));
             }
             created.put("lines", lines);
+            budgets.enforce(new Doc(ProcurementBudgetService.ORDER, id, dto.branchId(), dto.departmentId(), baseLines,
+                    dto.requestId()));
 
             // Approval gate: an active policy keeps the PO in draft; none → auto-approve to active.
             Map<String, Object> approvalResult = newTx.execute(s -> approvals.requestApproval("purchase_order", id,
                     defined("amount", JsNumbers.js(total), "partnerId", dto.partnerId(), "orderNumber", orderNumber,
-                            "createdBy", user()), null));
+                            "createdBy", user(), "branchId", dto.branchId(), "departmentId", dto.departmentId()), null));
             if (approvalResult == null) {
                 jdbc.sql("UPDATE \"PurchaseOrder\" SET status = 'active', \"updatedAt\" = " + NOW + " WHERE id = ?"
                         + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, orgId).update();
@@ -218,6 +235,13 @@ public class PurchaseOrdersService {
         events.publish("purchase_order.created", defined("organizationId", orgId, "orderId", order.get("id"),
                 "orderNumber", orderNumber, "partnerId", dto.partnerId()));
         return order;
+    }
+
+    /** Each line's value excluding tax, in base currency. */
+    private static List<DocLine> baseLines(CreateInput dto) {
+        BigDecimal rate = dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE;
+        return dto.lines().stream().map(l -> new DocLine(l.productId(), l.quantity().multiply(l.unitPrice())
+                .multiply(rate).setScale(6, RoundingMode.HALF_UP))).toList();
     }
 
     private boolean exists(String sql, Object... params) {

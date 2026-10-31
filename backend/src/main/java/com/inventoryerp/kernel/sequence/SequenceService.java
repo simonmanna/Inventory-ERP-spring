@@ -1,7 +1,9 @@
 package com.inventoryerp.kernel.sequence;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,7 +20,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Native Postgres SEQUENCE numbering per (organization, key) (port of {@code sequence.service.ts}):
  * {@code seq_<first 8 hex of org id>_<sanitized key>}, created lazily, formatted
  * {@code prefix + padStart(padding, '0')}. Called inside the consuming transaction the number is
- * reserved atomically with it (a rollback leaves a gap, never a duplicate).
+ * reserved atomically with it (a rollback leaves a gap, never a duplicate). A tenant's row in
+ * {@code DocumentNumberFormat} replaces the prefix and padding for keys of {@link DocumentNumberCatalog}; every other
+ * key, POS included, does not even look.
  */
 @Service
 public class SequenceService {
@@ -72,8 +76,55 @@ public class SequenceService {
         ensure(organizationId, key);
         long reserved = jdbc.sql("SELECT nextval('\"" + seqName(organizationId, key) + "\"')").query(Long.class).single();
         String digits = String.valueOf(reserved);
+        if (DocumentNumberCatalog.configurable(key)) {
+            String custom = customNumber(organizationId, key, digits);
+            if (custom != null) {
+                return custom;
+            }
+        }
         int pad = padding == null ? DEFAULT_PADDING : padding;
         return (prefix == null ? "" : prefix) + "0".repeat(Math.max(0, pad - digits.length())) + digits;
+    }
+
+    private record Format(String prefix, String suffix, int padding) {}
+
+    private String customNumber(String organizationId, String key, String digits) {
+        return jdbc.sql("SELECT prefix, suffix, padding FROM \"DocumentNumberFormat\" WHERE \"organizationId\" = ? AND"
+                        + " \"sequenceKey\" = ?")
+                .params(organizationId, DocumentNumberCatalog.baseKey(key))
+                .query((rs, n) -> new Format(rs.getString("prefix"), rs.getString("suffix"), rs.getInt("padding")))
+                .optional()
+                .map(f -> {
+                    LocalDate today = LocalDate.now(BusinessZone.get());
+                    return DocumentNumberCatalog.render(f.prefix(), f.suffix(), f.padding(), digits, keyYear(key, today),
+                            today.getMonthValue());
+                })
+                .orElse(null);
+    }
+
+    /** The year in the key ({@code po:2026}) when there is one: it is what separates yearly counters. */
+    private static int keyYear(String key, LocalDate today) {
+        String last = key.substring(key.lastIndexOf(':') + 1);
+        return last.matches("\\d{4}") ? Integer.parseInt(last) : today.getYear();
+    }
+
+    /** The number the next call would give, without taking it. */
+    long peekNext(String key) {
+        String name = seqName(TenantContext.organizationId(), key);
+        boolean exists = Boolean.TRUE.equals(jdbc.sql("SELECT to_regclass(?) IS NOT NULL").param("\"" + name + "\"")
+                .query(Boolean.class).single());
+        if (!exists) {
+            return 1;
+        }
+        return jdbc.sql("SELECT CASE WHEN is_called THEN last_value + 1 ELSE last_value END FROM \"" + name + "\"")
+                .query(Long.class).single();
+    }
+
+    /** Make {@code next} the next number. The caller has checked that this moves forward. */
+    void restart(String key, long next) {
+        String organizationId = TenantContext.organizationId();
+        ensure(organizationId, key);
+        jdbc.sql("ALTER SEQUENCE \"" + seqName(organizationId, key) + "\" RESTART WITH " + next).update();
     }
 
     private void ensure(String organizationId, String key) {
