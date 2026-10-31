@@ -651,6 +651,8 @@ export const PERMISSIONS = {
     document: 'hr:document',
     training: 'hr:training',
     report: 'hr:report',
+    /// Job openings, applicants, interviews and onboarding checklists (HR-1).
+    recruitment: 'hr:recruitment',
   },
   // ---- Communication platform — messaging + channels ----
   // NB: read/write/send are CAPABILITIES. Per-conversation ACCESS is enforced

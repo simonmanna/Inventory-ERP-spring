@@ -568,7 +568,8 @@
     "performance": "hr:performance",
     "document": "hr:document",
     "training": "hr:training",
-    "report": "hr:report"
+    "report": "hr:report",
+    "recruitment": "hr:recruitment"
   },
   "communication": {
     "conversationRead": "communication:conversation:read",
