@@ -10688,5 +10688,18 @@
   "Saved as a draft until you activate it.": "Eterekeddwa ng'ekiteeso okutuusa lw'onoogikola.",
   "Signed on": "Yateekebwako omukono nga",
   "Terminate": "Komya",
-  "Terminate contract": "Komya endagaano"
+  "Terminate contract": "Komya endagaano",
+  "Could not add the overtime rule": "Tekisobose kwongera tteeka lya ssaawa ez'enjawulo",
+  "Could not load the overtime rules": "Tekisobose kuleeta mateeka ga ssaawa ez'enjawulo",
+  "Holiday": "Olunaku olw'okuwummula",
+  "Holiday multiplier": "Omukubisa gw'olunaku olw'okuwummula",
+  "No overtime rules yet.": "Tewannabaawo mateeka ga ssaawa ez'enjawulo.",
+  "Overtime": "Essaawa ez'enjawulo",
+  "Overtime rule added": "Etteeka ly'essaawa ez'enjawulo lyongeddwako",
+  "Weekday": "Olunaku lw'okukola",
+  "Weekday multiplier": "Omukubisa gw'olunaku lw'okukola",
+  "Weekend": "Wikendi",
+  "Weekend days": "Ennaku za wikendi",
+  "Weekend multiplier": "Omukubisa gwa wikendi",
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Awatali tteeka, essaawa ez'enjawulo zisasulwa emirundi 1.5 egy'omuwendo gw'essaawa. Etteeka ly'ekitongole lisinga eryo erya bonna."
 }

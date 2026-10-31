@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { HrOvertimePanel } from './HrOvertimePanel';
 import { tx } from '@/lib/i18n/tx';
 
 const fmtPct = (r: number | null) => (r === null ? '—' : `${r * 100}%`);
@@ -79,6 +80,7 @@ export function HrPayrollSettingsPage() {
         <TabsList>
           <TabsTrigger value="components">{tx('Components')}</TabsTrigger>
           <TabsTrigger value="taxes">{tx('Tax tables')}</TabsTrigger>
+          <TabsTrigger value="overtime">{tx('Overtime')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="components" className="space-y-4">
@@ -150,6 +152,10 @@ export function HrPayrollSettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="overtime" className="space-y-4">
+          <HrOvertimePanel />
         </TabsContent>
       </Tabs>
 

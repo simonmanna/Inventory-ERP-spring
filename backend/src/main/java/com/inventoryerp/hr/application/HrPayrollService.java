@@ -36,11 +36,13 @@ import com.inventoryerp.pos.application.PosSql;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 import org.springframework.stereotype.Service;
 
 /**
@@ -72,14 +74,16 @@ public class HrPayrollService {
     private final PostingService posting;
     private final AccountDeterminationService accounts;
     private final HrPayrollInputService payrollInputs;
+    private final HrOvertimeService overtime;
 
     public HrPayrollService(HrDb hr, SequenceService seq, PostingService posting,
-            AccountDeterminationService accounts, HrPayrollInputService payrollInputs) {
+            AccountDeterminationService accounts, HrPayrollInputService payrollInputs, HrOvertimeService overtime) {
         this.hr = hr;
         this.seq = seq;
         this.posting = posting;
         this.accounts = accounts;
         this.payrollInputs = payrollInputs;
+        this.overtime = overtime;
     }
 
     private static String invalid(String what, Object v) {
@@ -429,6 +433,9 @@ public class HrPayrollService {
                     .and("(\"paidAt\" IS NULL AND \"approvedAt\" <= ?) OR \"paidAt\" <= ?", SqlRows.ts(runDate),
                             SqlRows.ts(runDate)).list(null);
             List<Map<String, Object>> loans = hr.where(HrEmployeeLoan.class).eq("status", "ACTIVE").list(null);
+            // Additive (HR-3): overtime rules; none → the Nest 1.5 multiplier and its Int-hours failure unchanged.
+            List<Map<String, Object>> overtimeRules = overtime.activeRules();
+            Predicate<LocalDate> holidays = overtimeRules.isEmpty() ? d -> false : overtime.holidays();
             List<Map<String, Object>> items = new ArrayList<>();
             for (Map<String, Object> emp : employees) {
                 Object payFreq = nz(emp.get("payFrequency"), "MONTHLY");
@@ -446,7 +453,10 @@ public class HrPayrollService {
                         ? (workedMin / 60) * (hourlyRate != 0 ? hourlyRate : baseSalary / MONTHLY_HOURS) : baseSalary;
                 double overtimeHours = overtimeMin / 60;
                 double otRate = hourlyRate != 0 ? hourlyRate : baseSalary / MONTHLY_HOURS;
-                double overtimePay = overtimeHours * otRate * 1.5;
+                Map<String, Object> overtimeRule = HrOvertimeCalculator.pick(overtimeRules, emp);
+                double overtimePay = overtimeRule == null ? overtimeHours * otRate * 1.5
+                        : overtime.weightedHours(overtimeRule, emp.get("id"), monthStart, monthEnd, holidays)
+                                .doubleValue() * otRate;
 
                 List<Map<String, Object>> allowanceLines = new ArrayList<>();
                 double allowancesTotal = 0;
@@ -563,7 +573,7 @@ public class HrPayrollService {
                 double totalDeductions = statutory + loanDeduction + advanceDeduction + inputDeductions;
                 double netPay = gross - totalDeductions;
                 double otHoursRounded = jsRound(overtimeHours * 100) / 100;
-                if (otHoursRounded != Math.rint(otHoursRounded)) {
+                if (overtimeRule == null && otHoursRounded != Math.rint(otHoursRounded)) {
                     // HrPayrollItem.overtimeHours is an Int column: Prisma rejects a fractional value (Nest 500).
                     throw new IllegalStateException("Invalid value for argument `overtimeHours`: Expected Int, provided"
                             + " Float.");
@@ -575,7 +585,7 @@ public class HrPayrollService {
                 data.put("baseSalary", decOf(baseAmount));
                 data.put("hourlyRate", decOf(hourlyRate));
                 data.put("regularHours", (int) jsRound(workedMin / 60));
-                data.put("overtimeHours", (int) otHoursRounded);
+                data.put("overtimeHours", (int) jsRound(otHoursRounded));
                 data.put("overtimePay", decOf(overtimePay));
                 data.put("allowancesTotal", decOf(allowancesTotal));
                 data.put("commissionAmount", BigDecimal.ZERO);

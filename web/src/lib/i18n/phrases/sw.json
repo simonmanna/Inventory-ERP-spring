@@ -10688,5 +10688,18 @@
   "Saved as a draft until you activate it.": "Imehifadhiwa kama rasimu hadi uiamilishe.",
   "Signed on": "Imesainiwa tarehe",
   "Terminate": "Sitisha",
-  "Terminate contract": "Sitisha mkataba"
+  "Terminate contract": "Sitisha mkataba",
+  "Could not add the overtime rule": "Imeshindwa kuongeza kanuni ya saa za ziada",
+  "Could not load the overtime rules": "Imeshindwa kupakia kanuni za saa za ziada",
+  "Holiday": "Sikukuu",
+  "Holiday multiplier": "Kizidisho cha sikukuu",
+  "No overtime rules yet.": "Hakuna kanuni za saa za ziada bado.",
+  "Overtime": "Saa za ziada",
+  "Overtime rule added": "Kanuni ya saa za ziada imeongezwa",
+  "Weekday": "Siku ya kazi",
+  "Weekday multiplier": "Kizidisho cha siku ya kazi",
+  "Weekend": "Wikendi",
+  "Weekend days": "Siku za wikendi",
+  "Weekend multiplier": "Kizidisho cha wikendi",
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Bila kanuni, saa za ziada hulipwa mara 1.5 ya kiwango cha saa. Kanuni ya idara hushinda ile ya jumla."
 }

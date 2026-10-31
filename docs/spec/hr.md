@@ -94,6 +94,12 @@ onboarding templates. Screens: `/hr/recruitment`, `/hr/onboarding`.
 `hr:contract`. One active contract per employee (unique partial index, activation locks the employee row).
 `HrEmployee.contractEndDate` follows the active contract. Screen: `/hr/contracts`.
 
+### HR-3 configurable overtime (built, unverified)
+
+`HrPayrollConfigController` (`/hr/payroll/overtime-rules`, 4 routes, `hr:payroll`), `HrOvertimeService`,
+`HrOvertimeCalculator`, migration V92. `HrPayrollService.calculateRun` uses the employee's rule when one applies; with no
+active rule the calculation is the Nest one. `overtimeHours` is an Int column: with a rule it stores the rounded hours.
+
 ## Status
 
 140/140 routes (`HrController`, 11 services in `com.inventoryerp.hr.application`).

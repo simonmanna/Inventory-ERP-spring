@@ -10688,5 +10688,18 @@
   "Saved as a draft until you activate it.": "ክሳብ እተንቅሖ ከም ረቂቕ ይዕቀብ።",
   "Signed on": "ዝተፈርመሉ ዕለት",
   "Terminate": "ኣቋርጽ",
-  "Terminate contract": "ውዕል ኣቋርጽ"
+  "Terminate contract": "ውዕል ኣቋርጽ",
+  "Could not add the overtime rule": "ሕጊ ተወሳኺ ሰዓታት ምውሳኽ ኣይተኻእለን",
+  "Could not load the overtime rules": "ሕግታት ተወሳኺ ሰዓታት ምጽዓን ኣይተኻእለን",
+  "Holiday": "በዓል",
+  "Holiday multiplier": "ኣባዝሒ በዓል",
+  "No overtime rules yet.": "ክሳብ ሕጂ ሕግታት ተወሳኺ ሰዓታት የለዉን።",
+  "Overtime": "ተወሳኺ ሰዓታት",
+  "Overtime rule added": "ሕጊ ተወሳኺ ሰዓታት ተወሲኹ",
+  "Weekday": "መዓልቲ ስራሕ",
+  "Weekday multiplier": "ኣባዝሒ መዓልቲ ስራሕ",
+  "Weekend": "ቀዳመ ሰንበት",
+  "Weekend days": "መዓልታት ቀዳመ ሰንበት",
+  "Weekend multiplier": "ኣባዝሒ ቀዳመ ሰንበት",
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "ብዘይ ሕጊ፣ ተወሳኺ ሰዓታት ብ1.5 ዕጽፊ ናይ ሰዓት ክፍሊት ይኽፈል። ሕጊ ክፍሊ ካብቲ ሓፈሻዊ ይበልጽ።"
 }

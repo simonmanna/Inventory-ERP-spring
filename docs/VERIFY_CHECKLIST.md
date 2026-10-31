@@ -367,3 +367,9 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - [ ] Activate a second contract for the same employee: the first becomes superseded.
 - [ ] Renew: a draft starts the day after the old end date. Terminate needs a reason.
 - [ ] Set an end date within 60 days: it appears under "Ending soon". The daily job at 01:20 expires it after the end date.
+
+## Phase 4 HR-3 — configurable overtime (built, not run)
+
+- [ ] `/hr/payroll/settings` → Overtime: add a rule, weekday 1.25, weekend 1.5, holiday 2, weekend days SUNDAY.
+- [ ] Record attendance overtime on a weekday, a Sunday and a holiday, calculate a run: overtime pay uses each multiplier.
+- [ ] With no active rule, overtime is 1.5 times the hourly rate, as before.
