@@ -115,6 +115,12 @@ public class FleetWorkOrderCostService {
     /** Issue a spare part from stock onto the work order (open / in progress). */
     @Transactional
     public Map<String, Object> issuePart(String workOrderId, PartIssueInput in) {
+        return issuePartAt(workOrderId, in, Instant.now());
+    }
+
+    /** {@link #issuePart} on a given moment (stock movement and journal entry). For the demo seed; no route uses it. */
+    @Transactional
+    public Map<String, Object> issuePartAt(String workOrderId, PartIssueInput in, Instant at) {
         Map<String, Object> w = workOrders.require(workOrderId, true);
         String code = FleetWorkOrderService.code(w);
         if (!MaintenancePolicies.acceptsParts((String) w.get("status"))) {
@@ -124,14 +130,14 @@ public class FleetWorkOrderCostService {
         String lineId = java.util.UUID.randomUUID().toString();
         StockMove.Issued issued = stock.issue(StockMove.of(in.productId(), in.locationId(), in.quantity())
                 .variant(trim(in.variantId())).skipGl().requireAvailable(true).moveType("internal_use")
-                .source(SOURCE, code).reference(code).notes("Work order " + code + " · " + w.get("title")));
+                .source(SOURCE, code).reference(code).notes("Work order " + code + " · " + w.get("title")).date(at));
         BigDecimal value = issued.totalValue().setScale(6, RoundingMode.HALF_UP);
         String key = "fleet:wo_part:" + lineId;
         String label = "Work order " + code + " · part " + productName(in.productId());
         String entry = null;
         if (value.signum() > 0) {
             entry = post("INV", w, label, key, value, maintenanceExpenseAccount(),
-                    stockPosting.stockAccount(in.productId(), value), true);
+                    stockPosting.stockAccount(in.productId(), value), true, at);
         }
         Map<String, Object> data = base(w, lineId, "part", trim(in.description()) == null ? label : in.description());
         data.put("productId", in.productId());
@@ -352,6 +358,11 @@ public class FleetWorkOrderCostService {
      */
     private String post(String journal, Map<String, Object> w, String label, String key, BigDecimal amount,
             String debit, String credit, boolean debitIsExpense) {
+        return post(journal, w, label, key, amount, debit, credit, debitIsExpense, Instant.now());
+    }
+
+    private String post(String journal, Map<String, Object> w, String label, String key, BigDecimal amount,
+            String debit, String credit, boolean debitIsExpense, Instant at) {
         String cc = (String) w.get("costCenterId");
         Map<String, Object> dims = new LinkedHashMap<>();
         dims.put("vehicleId", w.get("vehicleId"));
@@ -360,7 +371,7 @@ public class FleetWorkOrderCostService {
         List<Line> lines = new ArrayList<>();
         lines.add(new Line(debit, v, null, null, label, null, debitIsExpense ? cc : null, dims));
         lines.add(new Line(credit, null, v, null, label, null, debitIsExpense ? null : cc, dims));
-        Map<String, Object> je = posting.post(new PostingRequest(journal, Instant.now(), label, null, null, SOURCE,
+        Map<String, Object> je = posting.post(new PostingRequest(journal, at, label, null, null, SOURCE,
                 (String) w.get("id"), null, key, (String) w.get("branchId"), null, dims, lines));
         return (String) je.get("id");
     }
