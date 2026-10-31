@@ -62,7 +62,8 @@ public class VendorBillController {
     @GetMapping
     @RequirePermissions(Permissions.EXPENSE__READ)
     public PageResult<Map<String, Object>> list(@RequestParam Map<String, String> query) {
-        return bills.list(QueryParams.page(query), null, null);
+        return bills.list(QueryParams.page(query, "status", "partnerId"), null, null, query.get("status"),
+                query.get("partnerId"));
     }
 
     @GetMapping("/{id}")

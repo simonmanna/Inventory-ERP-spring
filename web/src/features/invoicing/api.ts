@@ -53,6 +53,8 @@ export interface Invoice {
 
 export interface InvoiceLine {
   id: string;
+  productId?: string | null;
+  accountId?: string | null;
   /** Odoo line type: 'product' | 'section' | 'note'. */
   lineType: string;
   /** GL account the line posts to (Odoo Account column). */
@@ -97,6 +99,8 @@ export interface InvoiceDetail extends Invoice {
 
 export interface InvoiceLineInput {
   productId?: string;
+  /** GL account override of a line (vendor bills: a service line without a product). */
+  accountId?: string;
   description?: string;
   quantity: number;
   unitPrice?: number;
@@ -407,7 +411,13 @@ export interface CreateExpenseInput {
   lines: InvoiceLineInput[];
 }
 
-export function useExpenses(params: { page?: number; pageSize?: number; search?: string }) {
+export function useExpenses(params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  partnerId?: string;
+}) {
   return useQuery({
     queryKey: ['expenses', params],
     queryFn: async () => (await api.get<PaginatedResult<Invoice>>('/vendor-bills', { params })).data,
@@ -425,18 +435,38 @@ export function useExpense(id: string | undefined) {
 export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: CreateExpenseInput) => (await api.post<Invoice>('/vendor-bills', input)).data,
+    mutationFn: (input: CreateExpenseInput) => idempotentPost<Invoice>('/vendor-bills', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['expenses'] }),
   });
+}
+
+export function useUpdateExpense() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, input }: { id: string; input: CreateExpenseInput }) =>
+      (await api.patch<Invoice>(`/vendor-bills/${id}`, input)).data,
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['expense', id] });
+    },
+  });
+}
+
+/** Override flags need `three_way_match:override` / `approvals:decide`; the API checks them. */
+export interface PostExpenseOptions {
+  override3WM?: boolean;
+  overrideApproval?: boolean;
 }
 
 export function usePostExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post<Invoice>(`/vendor-bills/${id}/post`)).data,
-    onSuccess: (_d, id) => {
+    mutationFn: ({ id, options }: { id: string; options?: PostExpenseOptions }) =>
+      idempotentPost<Invoice>(`/vendor-bills/${id}/post`, options ?? {}),
+    onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['expense', id] });
+      qc.invalidateQueries({ queryKey: ['ap-aging'] });
     },
   });
 }
@@ -444,10 +474,11 @@ export function usePostExpense() {
 export function useVoidExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post<Invoice>(`/vendor-bills/${id}/cancel`)).data,
+    mutationFn: (id: string) => idempotentPost<Invoice>(`/vendor-bills/${id}/cancel`),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['expense', id] });
+      qc.invalidateQueries({ queryKey: ['ap-aging'] });
     },
   });
 }
@@ -469,7 +500,37 @@ export function useCreateSupplierPayment() {
       qc.invalidateQueries({ queryKey: ['supplier-payments'] });
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['expense'] });
+      qc.invalidateQueries({ queryKey: ['ap-aging'] });
     },
+  });
+}
+
+export interface ApAgingBucketTotal {
+  label: string;
+  amount: string | number;
+}
+
+export type ApAgingBucketKey = 'current' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90p';
+
+export interface ApAgingPartner {
+  partnerId: string;
+  partnerName: string;
+  total: string | number;
+  buckets: Record<ApAgingBucketKey, string | number>;
+}
+
+export interface ApAging {
+  asOf: string;
+  buckets: Record<ApAgingBucketKey, ApAgingBucketTotal>;
+  total: string | number;
+  partners: ApAgingPartner[];
+  source: 'snapshot' | 'live';
+}
+
+export function useApAging(asOf?: string) {
+  return useQuery({
+    queryKey: ['ap-aging', asOf],
+    queryFn: async () => (await api.get<ApAging>('/reports/ap/aging', { params: asOf ? { asOf } : {} })).data,
   });
 }
 

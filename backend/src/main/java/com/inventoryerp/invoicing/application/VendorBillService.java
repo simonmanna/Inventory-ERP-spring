@@ -86,6 +86,13 @@ public class VendorBillService {
     /** Bills (search on number/reference, optional branch and {@code sort=field:dir,...}). */
     @Transactional(readOnly = true)
     public PageResult<Map<String, Object>> list(PageQuery q, String sort, String branchId) {
+        return list(q, sort, branchId, null, null);
+    }
+
+    /** {@link #list(PageQuery, String, String)} with optional document status and supplier filters. */
+    @Transactional(readOnly = true)
+    public PageResult<Map<String, Object>> list(PageQuery q, String sort, String branchId, String status,
+            String partnerId) {
         int page = Math.max(1, q.page() == null || q.page() == 0 ? 1 : q.page());
         int pageSize = Math.min(200, Math.max(1, q.pageSize() == null || q.pageSize() == 0 ? 25 : q.pageSize()));
         List<Object> params = new ArrayList<>(List.of(org()));
@@ -99,6 +106,14 @@ public class VendorBillService {
         if (branchId != null && !branchId.isEmpty()) {
             where.append(" AND \"branchId\" = ?");
             params.add(branchId);
+        }
+        if (status != null && !status.isEmpty()) {
+            where.append(" AND status::text = ?");
+            params.add(status);
+        }
+        if (partnerId != null && !partnerId.isEmpty()) {
+            where.append(" AND \"partnerId\" = ?");
+            params.add(partnerId);
         }
         List<Map<String, Object>> rows = SqlRows.list(Document.class, jdbc.sql("SELECT * FROM \"Document\" WHERE" + where
                 + " ORDER BY " + orderBy(sort) + " LIMIT " + pageSize + " OFFSET " + (page - 1) * pageSize).params(params));

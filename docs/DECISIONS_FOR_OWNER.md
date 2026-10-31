@@ -125,3 +125,11 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | 2.3 | Recirculated oversize | Measured per run (circulating load %), never stocked; oversize sent to a stockpile is an ordinary fraction | Model the recirculation loop as stock | — |
 | 2026-10-30 | 2.3 | Stockpile survey approval | Separate permission `crushing_survey:approve`, approver ≠ submitter (always); the approved variance is applied to today's stock via the inventory adjustment (ADJUSTMENT_GAIN / LOSS) | Generic approval engine workflow; replace the stock with the surveyed tonnes | ADR-S016 §5 |
 | 2026-10-30 | 2.3 | New permissions | `crushing:read`, `crushing:setup`, `crushing_run:record`, `crushing_run:post`, `crushing_survey:record`, `crushing_survey:approve` (Administrator); reports reuse `production:report` | Reuse production-order permissions | Roles |
+
+### Phase 4 lane D: finance and procurement (worktree c4-d-fin, 2026-10-30)
+
+| date | phase.item | question | decision taken | alternatives | how to change later |
+|---|---|---|---|---|---|
+| 2026-10-30 | 4.FIN-2 | Where do AP bills live on screen? | New routes `/vendor-bills` (the orphaned `expense-*.tsx` pages renamed and reworked); `/expenses` stays the expense register of the expenses module | Replace `/expenses` | Purchases menu in app-shell |
+| 2026-10-30 | 4.FIN-2 | AP aging visibility | Gated by `report:ar`, the permission the API route already uses; no report-catalog entry (same as `/tax-report`) | Add a catalog id so roles can hide it | Add to `packages/shared/src/reports.ts` + report-catalog.json |
+| 2026-10-30 | 4.FIN-2 | Post blocked by three-way match or pending approval | Detail page shows the server message and offers "Post with override" only to holders of `three_way_match:override` / `approvals:decide` | Hide overrides from the screen | vendor-bill-detail.tsx |

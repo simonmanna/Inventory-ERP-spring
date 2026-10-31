@@ -116,6 +116,10 @@ import { ExpensesPage } from '@/pages/expenses/ExpensesPage';
 import ExpensesReportPage from '@/pages/expenses/ExpensesReportPage';
 import ExpenseCategoriesPage from '@/pages/expenses/ExpenseCategoriesPage';
 import { SupplierPaymentsPage } from '@/pages/purchasing/supplier-payments';
+import { VendorBillsPage } from '@/pages/purchasing/vendor-bills';
+import { VendorBillEditPage } from '@/pages/purchasing/vendor-bill-edit';
+import { VendorBillDetailPage } from '@/pages/purchasing/vendor-bill-detail';
+import { ApAgingPage } from '@/pages/purchasing/ap-aging';
 import { JournalsPage } from '@/pages/accounting/journals';
 import { JournalDetailPage } from '@/pages/accounting/JournalDetailPage';
 import { JournalEditPage } from '@/pages/accounting/JournalEditPage';
@@ -289,6 +293,11 @@ export function App() {
           <Route path="/expenses/categories" element={<ExpenseCategoriesPage />} />
           <Route path="/expenses/reports" element={<RequireReport reportId="expenses.reports"><ExpensesReportPage /></RequireReport>} />
           <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
+          <Route path="/vendor-bills" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillsPage /></RequirePermission>} />
+          <Route path="/vendor-bills/new" element={<RequirePermission permission={PERMISSIONS.expense.create}><VendorBillEditPage /></RequirePermission>} />
+          <Route path="/vendor-bills/:id" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillDetailPage /></RequirePermission>} />
+          <Route path="/vendor-bills/:id/edit" element={<RequirePermission permission={PERMISSIONS.expense.update}><VendorBillEditPage /></RequirePermission>} />
+          <Route path="/ap-aging" element={<RequirePermission permission={PERMISSIONS.report.ar}><ApAgingPage /></RequirePermission>} />
           <Route path="/ar-aging" element={<RequireReport reportId="sales.ar-aging"><ArAgingPage /></RequireReport>} />
           <Route path="/accounts" element={<ChartOfAccountsPage />} />
           <Route path="/accounts/new" element={<AccountDetailPage />} />

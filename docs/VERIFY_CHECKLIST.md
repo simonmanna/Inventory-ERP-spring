@@ -353,3 +353,11 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane D: finance and procurement (nothing here was compiled or run)
+
+- FIN-2 Vendor bills
+  - `/vendor-bills` → New vendor bill: one product line and one service line with a GL account → Save draft → Edit → Post.
+  - Filter by status and supplier; search by number. A draft of a PO-linked bill with a mismatch shows the hold banner.
+  - Pay supplier from the bill (bank + named account), then `/ap-aging` falls by that amount; as-of date changes buckets.
+  - Void a posted, unpaid bill: the journal entry reverses.
