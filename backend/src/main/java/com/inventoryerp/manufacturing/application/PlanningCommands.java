@@ -33,7 +33,8 @@ public final class PlanningCommands {
             @Min(1) @Max(52) Integer forecastWeeks,
             Boolean includeStockPolicy,
             List<@NotBlank String> productIds,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            @Pattern(regexp = "run_rate|smoothed", message = "must be run_rate or smoothed") String forecastMethod) {}
 
     /** {@code PUT /manufacturing/planning/orders/{id}}: due date and priority of an order. */
     public record OrderPlanningInput(

@@ -41,6 +41,10 @@ public class PlanningDemandService {
 
     private static final int DEFAULT_DAYS = 30;
     private static final int DEFAULT_WEEKS = 4;
+    /** Sales run-rate of the last weeks: the original method and still the default. */
+    static final String RUN_RATE = "run_rate";
+    /** Weekly sales smoothed with their trend, aggregates and blocks included ({@link ForecastService}). */
+    static final String SMOOTHED = "smoothed";
 
     private final MfgDb db;
     private final BomService boms;
@@ -48,9 +52,11 @@ public class PlanningDemandService {
     private final ProductionPlanService plans;
     private final ProductionService production;
     private final PlanningPegService pegs;
+    private final ForecastService forecasts;
 
     public PlanningDemandService(MfgDb db, BomService boms, MrpPlanningService mrp, ProductionPlanService plans,
-            ProductionService production, PlanningPegService pegs) {
+            ProductionService production, PlanningPegService pegs, ForecastService forecasts) {
+        this.forecasts = forecasts;
         this.db = db;
         this.boms = boms;
         this.mrp = mrp;
@@ -91,8 +97,26 @@ public class PlanningDemandService {
 
     // ================================================================== demand
 
+    private static String method(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return RUN_RATE;
+        }
+        if (!RUN_RATE.equals(raw) && !SMOOTHED.equals(raw)) {
+            throw ApiException.badRequest("forecastMethod must be run_rate or smoothed");
+        }
+        return raw;
+    }
+
+    private static int weeks(Integer weeks, String method) {
+        if (weeks != null) {
+            return weeks;
+        }
+        return SMOOTHED.equals(method) ? ForecastService.DEFAULT_HISTORY_WEEKS : DEFAULT_WEEKS;
+    }
+
     /** Every requirement due by the end of the horizon (overdue ones included). */
-    List<Demand> collect(LocalDate from, LocalDate to, boolean forecast, int weeks, boolean stockPolicy) {
+    List<Demand> collect(LocalDate from, LocalDate to, boolean forecast, String method, int weeks,
+            boolean stockPolicy) {
         Horizon h = new Horizon(from, to);
         List<Demand> out = new ArrayList<>();
         Set<String> scheduledOrders = new HashSet<>();
@@ -141,7 +165,7 @@ public class PlanningDemandService {
                     dec(r, "quantity")));
         }
         if (forecast) {
-            out.addAll(forecast(h, weeks, out));
+            out.addAll(SMOOTHED.equals(method) ? smoothedForecast(h, weeks, out) : forecast(h, weeks, out));
         }
         if (stockPolicy) {
             for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT \"productId\", greatest(\"safetyStock\","
@@ -185,6 +209,24 @@ public class PlanningDemandService {
         return out;
     }
 
+    /** The smoothed horizon demand of each product, less the firm demand already known. */
+    private List<Demand> smoothedForecast(Horizon h, int weeks, List<Demand> firm) {
+        Map<String, BigDecimal> known = new HashMap<>();
+        for (Demand d : firm) {
+            known.merge(d.productId(), d.qty(), BigDecimal::add);
+        }
+        List<Demand> out = new ArrayList<>();
+        for (Map.Entry<String, BigDecimal> e : forecasts.horizonQuantities(h.from(), h.to(), weeks).entrySet()) {
+            BigDecimal net = e.getValue().subtract(known.getOrDefault(e.getKey(), BigDecimal.ZERO))
+                    .setScale(3, RoundingMode.HALF_UP);
+            if (net.signum() > 0) {
+                out.add(new Demand("forecast", null, null, "Forecast", e.getKey(), null, null, h.end(),
+                        DemandNetting.NORMAL, net));
+            }
+        }
+        return out;
+    }
+
     private static Instant later(Instant now, Instant date) {
         return date == null || date.isBefore(now) ? now : date;
     }
@@ -197,11 +239,12 @@ public class PlanningDemandService {
     /** The netted demand of a horizon: a row per requirement plus a line per product. */
     @Transactional(readOnly = true)
     public Map<String, Object> demand(String from, String to, Boolean includeForecast, Integer weeks,
-            Boolean includeStockPolicy) {
+            Boolean includeStockPolicy, String forecastMethod) {
         Horizon h = horizon(from, to);
+        String method = method(forecastMethod);
         List<Map<String, Object>> rows = new ArrayList<>();
         List<Map<String, Object>> products = new ArrayList<>();
-        netted(h, Boolean.TRUE.equals(includeForecast), weeks == null ? DEFAULT_WEEKS : weeks,
+        netted(h, Boolean.TRUE.equals(includeForecast), method, weeks(weeks, method),
                 !Boolean.FALSE.equals(includeStockPolicy), rows, products);
         return Obj.of("from", h.from().toString(), "to", h.to().toString(), "rows", rows, "products", products);
     }
@@ -212,16 +255,16 @@ public class PlanningDemandService {
         Horizon h = horizon(from, to);
         List<Map<String, Object>> rows = new ArrayList<>();
         List<Map<String, Object>> products = new ArrayList<>();
-        netted(h, Boolean.TRUE.equals(includeForecast), DEFAULT_WEEKS, true, rows, products);
+        netted(h, Boolean.TRUE.equals(includeForecast), RUN_RATE, DEFAULT_WEEKS, true, rows, products);
         rows.removeIf(r -> dec(r, "uncoveredQty").signum() <= 0);
         products.removeIf(p -> dec(p, "shortfallQty").signum() <= 0);
         products.sort(Comparator.comparing((Map<String, Object> p) -> dec(p, "shortfallQty")).reversed());
         return Obj.of("from", h.from().toString(), "to", h.to().toString(), "rows", rows, "products", products);
     }
 
-    private void netted(Horizon h, boolean forecast, int weeks, boolean stockPolicy, List<Map<String, Object>> rows,
-            List<Map<String, Object>> products) {
-        Map<String, List<Demand>> byProduct = group(collect(h.from(), h.to(), forecast, weeks, stockPolicy));
+    private void netted(Horizon h, boolean forecast, String method, int weeks, boolean stockPolicy,
+            List<Map<String, Object>> rows, List<Map<String, Object>> products) {
+        Map<String, List<Demand>> byProduct = group(collect(h.from(), h.to(), forecast, method, weeks, stockPolicy));
         Map<String, Map<String, Object>> names = names(byProduct.keySet());
         Map<String, String> partners = lookup("Partner", byProduct.values(), Demand::partnerId);
         Map<String, String> sites = lookup("FleetCustomerSite", byProduct.values(), Demand::siteId);
@@ -326,9 +369,10 @@ public class PlanningDemandService {
         production.requireLocation(dto.locationId());
         Horizon h = horizon(dto.dateFrom(), dto.dateTo());
         boolean forecast = Boolean.TRUE.equals(dto.includeForecast());
-        int weeks = dto.forecastWeeks() == null ? DEFAULT_WEEKS : dto.forecastWeeks();
+        String method = method(dto.forecastMethod());
+        int weeks = weeks(dto.forecastWeeks(), method);
         boolean stockPolicy = !Boolean.FALSE.equals(dto.includeStockPolicy());
-        Map<String, List<Demand>> byProduct = group(collect(h.from(), h.to(), forecast, weeks, stockPolicy));
+        Map<String, List<Demand>> byProduct = group(collect(h.from(), h.to(), forecast, method, weeks, stockPolicy));
         Instant now = Instant.now();
         List<Pending> pending = new ArrayList<>();
         List<Map<String, Object>> skipped = new ArrayList<>();

@@ -79,6 +79,7 @@ import {
   FileInput,
   ReceiptText,
   BellRing,
+  Database,
   Network,
   Inbox,
   CalendarCheck,
@@ -198,7 +199,7 @@ interface NavItem {
   reportId?: string | string[];
   badge?: string;
   /** Per-item feature gate, resolved the same way as section flags. */
-  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS';
+  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS' | 'VITE_ENABLE_ALERTS';
 }
 
 interface NavSection {
@@ -221,7 +222,12 @@ const flagEnabled = (flag?: string): boolean =>
   !flag || (import.meta.env as Record<string, string | undefined>)[flag] === 'true';
 
 const NAV_SECTIONS: NavSection[] = [
-  { items: [{ to: '/', label: tx('Dashboard'), icon: LayoutDashboard }] },
+  {
+    items: [
+      { to: '/', label: tx('Dashboard'), icon: LayoutDashboard },
+      { to: '/alerts', label: tx('Alerts & Exceptions'), icon: BellRing, permission: PERMISSIONS.alerts.read, flag: 'VITE_ENABLE_ALERTS' },
+    ],
+  },
   {
     title: 'POS',
     icon: Coffee,
@@ -360,6 +366,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/reports/branches', label: tx('Branch Performance'), icon: Network, permission: PERMISSIONS.report.accounting },
       { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read },
       { to: '/reports', label: tx('Report Center'), icon: BarChart3, permission: PERMISSIONS.report.accounting, reportId: 'accounting.report-center' },
+      { to: '/reports/bi-exports', label: tx('BI Exports'), icon: Database, permission: PERMISSIONS.bi.export },
     ],
   },
   {

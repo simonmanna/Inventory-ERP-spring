@@ -210,6 +210,13 @@
     "update": "inventory_location:update",
     "delete": "inventory_location:delete"
   },
+  "alerts": {
+    "read": "alerts:read",
+    "manage": "alerts:manage"
+  },
+  "bi": {
+    "export": "bi:export"
+  },
   "inventory": {
     "read": "inventory:read",
     "move": "inventory:move",

@@ -245,6 +245,8 @@ import ReservationsPage from '@/pages/tables/ReservationsPage';
 import TableReportsPage from '@/pages/tables/TableReportsPage';
 import ZonesPage from '@/pages/tables/ZonesPage';
 import ReportCenterPage from '@/pages/reports/ReportCenterPage';
+import { BiExportsPage } from '@/pages/reports/BiExportsPage';
+import { AlertsPage } from '@/pages/alerts/AlertsPage';
 import { BranchPerformancePage } from '@/pages/reports/BranchPerformancePage';
 import { SalesAnalysisPage } from '@/pages/reports/SalesAnalysisPage';
 import { ReportPermissionsPage } from '@/pages/settings/ReportPermissionsPage';
@@ -378,6 +380,8 @@ export function App() {
           <Route path="/tax-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><TaxReportPage /></RequirePermission>} />
           <Route path="/reports/sales-analysis" element={<RequirePermission permission={PERMISSIONS.report.ar}><SalesAnalysisPage /></RequirePermission>} />
           <Route path="/reports/branches" element={<RequirePermission permission={PERMISSIONS.report.accounting}><BranchPerformancePage /></RequirePermission>} />
+          <Route path="/reports/bi-exports" element={<RequirePermission permission={PERMISSIONS.bi.export}><BiExportsPage /></RequirePermission>} />
+          <Route path="/alerts" element={<RequirePermission permission={PERMISSIONS.alerts.read}><AlertsPage /></RequirePermission>} />
           <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
           <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
           <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />

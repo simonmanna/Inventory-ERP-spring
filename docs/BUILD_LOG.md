@@ -98,7 +98,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | merged, unverified (C) | f757092..fbec71a | | V80–V82; ADR-S050; 38 routes; never compiled or run. Portal read-only; mobile money mock only |
 | 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | merged, unverified (C) | c84fc26..810f3f7 | | V90–V97; 73 routes; never compiled or run |
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
-| 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |
+| 5 dashboards, KPIs, alerts, integrations | alerts, forecast, BI export merged, unverified; KPIs in progress (C) | 9968efc..4d36fda | tag bi-complete held until a full build passes | V110–V111; ADR-S021 |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
 

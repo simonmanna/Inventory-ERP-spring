@@ -495,7 +495,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 466 | Mobile money payment providers. | `present-partial (built, unverified)` | MobileMoneyProvider SPI + MockMobileMoneyProvider · `/mobile-money/*`, MobileMoneyService (receipt through PaymentService) · `/payments/mobile-money` · MobileMoneyIT, MobileMoneyProviderTest. No real provider | Verify by running it |
 | 467 | GPS and fleet tracking systems. | `present-partial (built, unverified)` | As fleet telematics above, RestTelematicsProvider | Verify by running it |
 | 468 | Production machinery and industrial data systems. | `present-verified` | manufacturing · machine adapters · ShopFloorExecutionIT, MachineAdaptersTest, MachineEventParserTest | — |
-| 469 | Business intelligence tools. | `present-partial` | `/metrics`, `/webhooks`, CSV exports (KernelIT). No BI connector or read model | Phase 5 integrations |
+| 469 | Business intelligence tools. | `present-partial (built, unverified)` | `reporting` views (V111), `/bi/datasets` CSV, `/reports/bi-exports`, plus `/metrics`, `/webhooks`. BiExportIT · docs/integrations.md | Verify by running it |
 | 470 | Customer-facing websites and applications. | `present-partial (built, unverified)` | Customer portal (452); webhooks and REST API | Verify by running it |
 | 471 | Notification and communication services. | `present-verified` | communication · `/communication/*`, MessagingProvider · `/communication*` · CommunicationIT, ProvidersTest | — |
 

@@ -3,6 +3,7 @@ package com.inventoryerp.manufacturing.web;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.manufacturing.application.ForecastService;
 import com.inventoryerp.manufacturing.application.PlanningCapacityService;
 import com.inventoryerp.manufacturing.application.PlanningCommands.BackwardInput;
 import com.inventoryerp.manufacturing.application.PlanningCommands.OrderPlanningInput;
@@ -50,9 +51,12 @@ public class PlanningController {
     private final PlanningCapacityService capacity;
     private final PlanningShiftService shifts;
     private final PlanningReportService reports;
+    private final ForecastService forecasts;
 
     public PlanningController(PlanningDemandService demand, PlanningPegService pegs, PlanningScheduleService schedule,
-            PlanningCapacityService capacity, PlanningShiftService shifts, PlanningReportService reports) {
+            PlanningCapacityService capacity, PlanningShiftService shifts, PlanningReportService reports,
+            ForecastService forecasts) {
+        this.forecasts = forecasts;
         this.demand = demand;
         this.pegs = pegs;
         this.schedule = schedule;
@@ -68,8 +72,18 @@ public class PlanningController {
     public Map<String, Object> demand(@RequestParam(required = false) String from,
             @RequestParam(required = false) String to, @RequestParam(required = false) Boolean includeForecast,
             @RequestParam(required = false) Integer forecastWeeks,
-            @RequestParam(required = false) Boolean includeStockPolicy) {
-        return demand.demand(from, to, includeForecast, forecastWeeks, includeStockPolicy);
+            @RequestParam(required = false) Boolean includeStockPolicy,
+            @RequestParam(required = false) String forecastMethod) {
+        return demand.demand(from, to, includeForecast, forecastWeeks, includeStockPolicy, forecastMethod);
+    }
+
+    /** Smoothed demand per product for a horizon; {@code family}: aggregate or block. Plans nothing by itself. */
+    @GetMapping("/forecast")
+    @RequirePermissions(Permissions.PRODUCTION_PLAN__READ)
+    public Map<String, Object> forecast(@RequestParam(required = false) String from,
+            @RequestParam(required = false) String to, @RequestParam(required = false) Integer weeks,
+            @RequestParam(required = false) String family) {
+        return forecasts.demandForecast(from, to, weeks, family);
     }
 
     @PostMapping("/plans/from-demand")
