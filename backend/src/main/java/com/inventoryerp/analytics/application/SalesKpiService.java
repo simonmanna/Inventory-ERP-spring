@@ -107,8 +107,9 @@ public class SalesKpiService {
         String product = v.filter().productId();
         List<Object> params = new ArrayList<>(List.of(org));
         StringBuilder docs = new StringBuilder("SELECT 'invoice' AS type, d.id, d.\"documentNumber\" AS number,"
-                + " d.\"issueDate\" AS date, d.\"partnerId\", d.\"branchId\", d.status::text AS status, d.\"totalAmount\""
-                + " AS total, d.\"amountResidual\" AS residual FROM \"Document\" d WHERE d.\"organizationId\" = ? AND"
+                + " d.\"issueDate\" AS date, d.\"partnerId\", d.\"branchId\", d.status::text AS status,"
+                + " d.\"totalAmount\" AS total, d.\"amountResidual\" AS residual FROM \"Document\" d WHERE"
+                + " d.\"organizationId\" = ? AND"
                 + " d.\"documentType\"::text = 'sales_invoice' AND d.status::text IN ('posted', 'paid')");
         documentFilters(docs, params, v, open, "d", product == null ? null : "EXISTS (SELECT 1 FROM \"DocumentLine\" dl"
                 + " WHERE dl.\"documentId\" = d.id AND dl.\"productId\" = ?)");

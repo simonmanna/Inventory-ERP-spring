@@ -193,7 +193,8 @@ public class InventoryKpiService {
         AnalyticsView.equal(where, params, "cl.\"productId\"", v.filter().productId());
         return SqlRows.one(jdbc.sql("SELECT count(*) AS lines, COALESCE(SUM(ABS(cl.variance) *"
                 + " COALESCE(p.\"costPrice\", 0)), 0) AS value FROM \"InventoryCountLine\" cl JOIN"
-                + " \"InventoryCountSession\" s ON s.id = cl.\"sessionId\" LEFT JOIN \"Product\" p ON p.id = cl.\"productId\"" + where).params(params));
+                + " \"InventoryCountSession\" s ON s.id = cl.\"sessionId\" LEFT JOIN \"Product\" p ON p.id ="
+                + " cl.\"productId\"" + where).params(params));
     }
 
     /** Posted stockpile surveys of the period: absolute variance value. */
