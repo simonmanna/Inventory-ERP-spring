@@ -370,3 +370,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - Auto-match pairs a -70 line with a supplier payment of 70 and a +90 line with a receipt of 90, within the tolerance.
   - Match by hand from the candidates; Exclude a bank charge with a reason; Undo returns either to unmatched.
   - Payments not on a statement falls as lines match. Check the book balance against `/accounts/cash-accounts/accounts`.
+- FIN-3 Statements, tax and close
+  - `/profit-and-loss` and `/cash-flow` for a month with known journals: figures match a hand calculation; cash flow closing equals the ledger.
+  - `/taxes`: add, edit and delete a rate.
+  - `/tax-report`: Tax return pack shows 13 boxes, says whether it agrees with the ledger, and Download CSV works.
+  - `/fiscal-periods` → Checklist: a draft journal shows as a warning; sign off a step, remove it; a closed period is read-only.

@@ -119,6 +119,13 @@ public class FinanceExtensionsController {
         return tax.summary(from, to, branchId);
     }
 
+    @GetMapping("/reports/tax/pack")
+    @RequirePermissions(Permissions.REPORT__ACCOUNTING)
+    public Map<String, Object> taxPack(@RequestParam(required = false) String from,
+            @RequestParam(required = false) String to, @RequestParam(required = false) String branchId) {
+        return tax.pack(from, to, branchId);
+    }
+
     // ------------------------------------------------------------------ statements
 
     @GetMapping("/reports/ar/customers/{partnerId}/statement")

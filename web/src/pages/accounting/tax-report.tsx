@@ -1,10 +1,14 @@
 import { useState } from 'react';
+import { Download } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useBranchOptions, useTaxSummary, type TaxSide, localDay } from '@/features/finance/api';
+import { useBranchOptions, useTaxPack, useTaxSummary, type TaxSide, localDay } from '@/features/finance/api';
+import { exportCSV } from '@/lib/export-csv';
 import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
@@ -15,6 +19,16 @@ export function TaxReportPage() {
   const [branchId, setBranchId] = useState('');
   const { data: branches } = useBranchOptions();
   const { data, isLoading } = useTaxSummary({ from, to, branchId: branchId || undefined });
+  const { data: pack } = useTaxPack({ from, to, branchId: branchId || undefined });
+
+  const downloadPack = () => {
+    if (!pack) return;
+    exportCSV(
+      `tax-return-${from}-${to}.csv`,
+      [tx('Box'), tx('Description'), tx('Amount')],
+      pack.boxes.map((b) => [String(b.box), b.label, b.amount]),
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -59,6 +73,43 @@ export function TaxReportPage() {
               tone={data.position === 'payable' ? 'text-red-600' : 'text-emerald-600'}
             />
           </div>
+          {pack && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-base">{tx('Tax return pack')}</CardTitle>
+                <div className="flex items-center gap-2 print:hidden">
+                  <Badge variant={pack.reconciled ? 'default' : 'destructive'}>
+                    {pack.reconciled
+                      ? tx('Agrees with the ledger')
+                      : tx('Differs from the ledger by {{amount}}', { amount: money(pack.glDifference) })}
+                  </Badge>
+                  <Button variant="outline" size="sm" onClick={downloadPack}>
+                    <Download className="mr-2 h-4 w-4" />{tx('Download CSV')}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">{tx('Box')}</TableHead>
+                      <TableHead>{tx('Description')}</TableHead>
+                      <TableHead className="text-right">{tx('Amount')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pack.boxes.map((b) => (
+                      <TableRow key={b.box}>
+                        <TableCell>{b.box}</TableCell>
+                        <TableCell>{b.label}</TableCell>
+                        <TableCell className="text-right">{money(b.amount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
           <SideTable title={tx('Output tax — sales')} side={data.output} />
           <SideTable title={tx('Input tax — purchases')} side={data.input} />
           <Card>

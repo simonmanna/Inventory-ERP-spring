@@ -110,3 +110,7 @@ Test: `VendorBillListIT`. Nothing was compiled or run.
 
 PROC-4: `GET /vendor-bills/payment-schedule?partnerId&from&to` (`expense:read`), `PUT /vendor-bills/{id}/payment-schedule` (`expense:update`), table `SupplierPaymentSchedule` (V70). A plan moves no money.
 Screen `/payment-schedule`. Test: `SupplierPaymentScheduleIT`. Nothing was compiled or run.
+
+## Phase 4 tax pack (built, unverified)
+
+FIN-3: `GET /reports/tax/pack?from&to&branchId` (`report:accounting`): 13 numbered boxes by VAT category plus a GL cross-check. Test: `TaxPackIT`. Nothing was compiled or run.

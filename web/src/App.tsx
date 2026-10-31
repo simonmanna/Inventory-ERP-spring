@@ -82,6 +82,7 @@ import { CurrencyPage } from '@/pages/accounting/currency';
 import { InventoryValuationPage } from '@/pages/accounting/inventory-valuation';
 import { InventoryGlTieOutPage } from '@/pages/accounting/inventory-gl-tieout';
 import { YearEndClosePage } from '@/pages/accounting/year-end-close';
+import { PeriodCloseChecklistPage } from '@/pages/accounting/period-close-checklist';
 import { TrialBalancePage } from '@/pages/accounting/trial-balance';
 import { BudgetsPage } from '@/pages/accounting/budgets';
 import { BudgetDetailPage } from '@/pages/accounting/budget-detail';
@@ -345,6 +346,7 @@ export function App() {
           <Route path="/pos-gl-reconciliation" element={<RequireReport reportId="accounting.pos-gl-recon"><PosGlReconciliationPage /></RequireReport>} />
           <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/fiscal-periods" element={<FiscalPeriodsPage />} />
+          <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
           <Route path="/taxes" element={<TaxesPage />} />
           <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />
           <Route path="/accounts/fiscal-positions" element={<FiscalPositionsPage />} />
