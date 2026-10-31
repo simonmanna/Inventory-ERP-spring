@@ -10753,5 +10753,15 @@
   "The priority sets the due time; you can change it on the case.": "ቀዳምነት ግዜ ገደብ ይውስን፤ ኣብቲ ጉዳይ ክትቅይሮ ትኽእል ኢኻ።",
   "Save segment": "ክፍሊ ዓቅብ",
   "Segment name": "ስም ክፍሊ",
-  "Segments": "ክፍልታት ዓማዊል"
+  "Segments": "ክፍልታት ዓማዊል",
+  "Consume": "ተጠቐም",
+  "Could not create the reservation": "ሕዛእቲ ምፍጣር ኣይተኻእለን",
+  "Could not load the reservations. Try again.": "ሕዛእትታት ምጽዓን ኣይተኻእለን። እንደገና ፈትን።",
+  "Could not update the reservation": "ሕዛእቲ ምምሕያሽ ኣይተኻእለን",
+  "More than is available to promise.": "ካብቲ ክትውዕል ዝከኣል ይበዝሕ።",
+  "No reservations.": "ሕዛእትታት የለዉን።",
+  "Product, source, reason…": "ፍርያት፣ ምንጪ፣ ምኽንያት…",
+  "Reserving again for the same reference and product replaces the quantity.": "ንተመሳሳሊ መወከሲን ፍርያትን ዳግማይ ምሓዝ ነቲ ብዝሒ ይትክእ።",
+  "Stock Reservations": "ሕዛእቲ ክምችት",
+  "Stock held for a document. Releasing or consuming acts on every reservation of that document.": "ንሰነድ ዝተሓዘ ክምችት። ምልቃቕ ወይ ምጥቃም ኣብ ኩሉ ሕዛእቲ ናይቲ ሰነድ ይሰርሕ።"
 }

@@ -107,3 +107,8 @@ Nest only for organisations that create a policy). Tests: `InventoryCostPolicyIT
 POST, POST `/{id}/approve`, `/{id}/activate` (Idempotency-Key), `/{id}/cancel`); permissions `standard_cost:read`,
 `manage`, `approve`. Daily job `standard-cost-activation` (00:20 UTC). Receipts of standard-governed products enter
 stock at standard with purchase price variance (account 5905); activation revalues on-hand stock (5960).
+
+## INV-1 reservation screen (built, unverified)
+
+Additive `GET /inventory/reservations/overview` (`StockReservationService.overview`, paged, with names and on-hand). The
+Nest list route is unchanged and POS does not call the new method. Screen: `/inventory/reservations`.

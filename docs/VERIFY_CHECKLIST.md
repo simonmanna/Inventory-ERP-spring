@@ -398,3 +398,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 
 - [ ] Run `CrmCustomerDataIT` (contacts, reminder job, saved filters, segments, product categories).
 - [ ] `/crm/customers`: filter by category, name a segment, save it, clear the filters, pick it from Segments.
+
+## Phase 4 INV-1 — stock reservation screen (built, not run)
+
+- [ ] `/inventory/reservations` → New reservation: pick a location and product, see on hand, reserved and available; reserve more than available: a warning shows, the save still works (soft reservation).
+- [ ] Filter by status and location. Release, then Consume on another row. Check `/inventory/reservations/atp` follows.

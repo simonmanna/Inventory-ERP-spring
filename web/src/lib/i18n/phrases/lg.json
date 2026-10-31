@@ -10753,5 +10753,15 @@
   "The priority sets the due time; you can change it on the case.": "Ekikulembera kiteekawo obudde; osobola okubukyusa ku nsonga.",
   "Save segment": "Tereka ekitundu",
   "Segment name": "Erinnya ly'ekitundu",
-  "Segments": "Ebitundu by'abaguzi"
+  "Segments": "Ebitundu by'abaguzi",
+  "Consume": "Kozesa",
+  "Could not create the reservation": "Tekisobose kukola kukwata",
+  "Could not load the reservations. Try again.": "Tekisobose kuleeta kukwata. Ddamu ogezeeko.",
+  "Could not update the reservation": "Tekisobose kukyusa kukwata",
+  "More than is available to promise.": "Kisukka ku kisobola okusuubizibwa.",
+  "No reservations.": "Tewali kukwata.",
+  "Product, source, reason…": "Ekintu, ensibuko, ensonga…",
+  "Reserving again for the same reference and product replaces the quantity.": "Okukwata nate ku kintu n'obujuliziro bye bimu kikyusa obungi.",
+  "Stock Reservations": "Okukwata Sitoowa",
+  "Stock held for a document. Releasing or consuming acts on every reservation of that document.": "Sitoowa ekwatiddwa ku kiwandiiko. Okuta oba okukozesa kukola ku kukwata kwonna okw'ekiwandiiko ekyo."
 }

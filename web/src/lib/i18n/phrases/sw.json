@@ -10753,5 +10753,15 @@
   "The priority sets the due time; you can change it on the case.": "Kipaumbele huweka muda wa mwisho; unaweza kuubadilisha kwenye kesi.",
   "Save segment": "Hifadhi sehemu",
   "Segment name": "Jina la sehemu",
-  "Segments": "Sehemu za wateja"
+  "Segments": "Sehemu za wateja",
+  "Consume": "Tumia",
+  "Could not create the reservation": "Imeshindwa kuunda uhifadhi",
+  "Could not load the reservations. Try again.": "Imeshindwa kupakia uhifadhi. Jaribu tena.",
+  "Could not update the reservation": "Imeshindwa kusasisha uhifadhi",
+  "More than is available to promise.": "Zaidi ya kiasi kinachoweza kuahidiwa.",
+  "No reservations.": "Hakuna uhifadhi.",
+  "Product, source, reason…": "Bidhaa, chanzo, sababu…",
+  "Reserving again for the same reference and product replaces the quantity.": "Kuhifadhi tena kwa kumbukumbu na bidhaa ile ile hubadilisha kiasi.",
+  "Stock Reservations": "Uhifadhi wa Bidhaa",
+  "Stock held for a document. Releasing or consuming acts on every reservation of that document.": "Bidhaa zilizohifadhiwa kwa hati. Kuachia au kutumia hufanya kazi kwa uhifadhi wote wa hati hiyo."
 }
