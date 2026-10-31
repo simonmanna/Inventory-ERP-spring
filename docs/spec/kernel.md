@@ -123,3 +123,15 @@ Bug fixes where the Nest code could never work (pending owner approval):
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.
+
+## Approval controls (CTRL-1)
+
+Status: built, not compiled, not run. Tests in `ApprovalControlsIT`.
+
+- **Conditions**: `ApprovalWorkflow` and `ApprovalStep` take `branchId` and `departmentId`, read from the snapshot keys of the same name. Without `departmentId` in the snapshot the requester's department is asked of `ApprovalOrgDirectory` (implemented by `hr`) and frozen on the snapshot. A conditioned workflow beats a general one, then `minAmount` decides as before.
+- **Hierarchy**: step `approverScope = department_manager`. See `docs/DECISIONS_FOR_OWNER.md` for the fallback.
+- **Limits**: `ApprovalLimitService`, `/approval-controls/limits`.
+- **Separation of duties**: `SegregationOfDutiesService`, `/approval-controls/sod-rules`. The pair key is also the approval entity type. `decide` refuses makers named in the snapshot key `makerIds` (comma separated) while the pair is enforced. Audit entity `SodCheck`.
+- **Hook for other modules**: `ControlledActionService.authorize(Action)` runs the approval gate, then separation of duties, and returns `Outcome`. Use `SegregationOfDutiesService.CREDIT_OVERRIDE` (lane C) and `SUPPLIER_BILL_APPROVAL` (lane D) as pair keys. The caller stops on `allowed == false` and reports `approvalRequestId`.
+- **Stale approvals**: `ApprovalsService.checkOrRequestApprovalOfAmount` cancels an approval given for a lower amount.
+- **Controlled changes**: `ControlledConfigService.holdIfControlled`, applied through `ConfigChangeApplier` beans on `approval.decided`.

@@ -24,7 +24,14 @@ public class ApprovalAdminService {
 
     /** One workflow step. */
     public record Step(Integer stepOrder, String name, List<String> approverPermissions, Integer requiredCount,
-            BigDecimal minAmount, BigDecimal maxAmount) {}
+            BigDecimal minAmount, BigDecimal maxAmount, String branchId, String departmentId, String approverScope) {
+
+        /** A step with no branch or department condition, decided by permission holders. */
+        public Step(Integer stepOrder, String name, List<String> approverPermissions, Integer requiredCount,
+                BigDecimal minAmount, BigDecimal maxAmount) {
+            this(stepOrder, name, approverPermissions, requiredCount, minAmount, maxAmount, null, null, null);
+        }
+    }
 
     /** Field-presence aware patch: {@code present} lists the JSON keys sent. */
     public record Patch(Map<String, Object> values) {
@@ -138,6 +145,13 @@ public class ApprovalAdminService {
     @Transactional
     public Map<String, Object> createWorkflow(String name, String entityType, BigDecimal minAmount,
             Boolean enforceDistinctApprovers, Boolean isActive, List<Step> steps) {
+        return createWorkflow(name, entityType, minAmount, null, null, enforceDistinctApprovers, isActive, steps);
+    }
+
+    /** A workflow that only applies to one branch and/or department (both {@code null} = everywhere). */
+    @Transactional
+    public Map<String, Object> createWorkflow(String name, String entityType, BigDecimal minAmount, String branchId,
+            String departmentId, Boolean enforceDistinctApprovers, Boolean isActive, List<Step> steps) {
         assertSteps(steps);
         String orgId = TenantContext.organizationId();
         ApprovalWorkflow w = new ApprovalWorkflow();
@@ -145,6 +159,8 @@ public class ApprovalAdminService {
         w.setName(name);
         w.setEntityType(entityType);
         w.setMinAmount(minAmount);
+        w.setBranchId(branchId);
+        w.setDepartmentId(departmentId);
         w.setEnforceDistinctApprovers(enforceDistinctApprovers != null && enforceDistinctApprovers);
         w.setIsActive(isActive == null || isActive);
         em.persist(w);
@@ -177,6 +193,14 @@ public class ApprovalAdminService {
         if (dto.has("minAmount")) {
             w.setMinAmount(dec(dto.get("minAmount")));
             scalar.put("minAmount", dto.get("minAmount"));
+        }
+        if (dto.has("branchId")) {
+            w.setBranchId((String) dto.get("branchId"));
+            scalar.put("branchId", dto.get("branchId"));
+        }
+        if (dto.has("departmentId")) {
+            w.setDepartmentId((String) dto.get("departmentId"));
+            scalar.put("departmentId", dto.get("departmentId"));
         }
         if (dto.has("enforceDistinctApprovers") && dto.get("enforceDistinctApprovers") != null) {
             w.setEnforceDistinctApprovers((Boolean) dto.get("enforceDistinctApprovers"));
@@ -217,6 +241,9 @@ public class ApprovalAdminService {
             row.setRequiredCount(s.requiredCount());
             row.setMinAmount(s.minAmount());
             row.setMaxAmount(s.maxAmount());
+            row.setBranchId(s.branchId());
+            row.setDepartmentId(s.departmentId());
+            row.setApproverScope(s.approverScope() == null ? "permission" : s.approverScope());
             em.persist(row);
         }
         em.flush();

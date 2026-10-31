@@ -26,6 +26,7 @@ import { PostingMonitorPage } from '@/pages/pos/PostingMonitorPage';
 import { ApprovalsPage } from '@/pages/approvals';
 import { ApprovalPoliciesPage } from '@/pages/approval-policies';
 import { ApprovalWorkflowsPage } from '@/pages/approval-workflows';
+import { ApprovalControlsPage } from '@/pages/approval-controls';
 import { RecurringPage } from '@/pages/recurring';
 import { WebhooksPage } from '@/pages/webhooks';
 import { FilesPage } from '@/pages/files';
@@ -344,6 +345,7 @@ export function App() {
           <Route path="/reports" element={<RequireReport reportId="accounting.report-center"><ReportCenterPage /></RequireReport>} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/approval-workflows" element={<ApprovalWorkflowsPage />} />
+          <Route path="/approval-controls" element={<ApprovalControlsPage />} />
           <Route path="/approval-policies" element={<ApprovalPoliciesPage />} />
           <Route path="/recurring" element={<RecurringPage />} />
           <Route path="/webhooks" element={<WebhooksPage />} />

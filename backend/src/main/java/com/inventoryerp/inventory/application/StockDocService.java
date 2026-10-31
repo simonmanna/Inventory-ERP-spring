@@ -16,6 +16,7 @@ import com.inventoryerp.inventory.domain.StockTransferReceipt;
 import com.inventoryerp.inventory.domain.WasteItem;
 import com.inventoryerp.inventory.domain.WasteRecord;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -80,6 +81,7 @@ public class StockDocService {
     private final SequenceService seq;
     private final StockService stock;
     private final ApprovalsService approvals;
+    private final SegregationOfDutiesService sod;
     private final StockPostingService stockPosting;
     private final AuditService audit;
     private final StaffAttribution staff;
@@ -87,13 +89,15 @@ public class StockDocService {
     private final TransactionTemplate tx;
 
     public StockDocService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
-            ApprovalsService approvals, StockPostingService stockPosting, AuditService audit, StaffAttribution staff,
+            ApprovalsService approvals, SegregationOfDutiesService sod, StockPostingService stockPosting,
+            AuditService audit, StaffAttribution staff,
             PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
         this.stock = stock;
         this.approvals = approvals;
+        this.sod = sod;
         this.stockPosting = stockPosting;
         this.audit = audit;
         this.staff = staff;
@@ -506,8 +510,14 @@ public class StockDocService {
             for (Map<String, Object> it : items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id)) {
                 magnitude += Math.abs(dec(it, "qtyDiff").doubleValue());
             }
+            List<String> makers = new ArrayList<>();
+            makers.add(str(pre, "performedById"));
+            makers.add(str(pre, "createdBy"));
             gateApproval("stock_adjustment", id, Obj.of("amount", JsNumbers.js(magnitude), "adjCode", pre.get("adjCode"),
-                    "reason", pre.get("reason")), "adjustment " + pre.get("adjCode"));
+                    "reason", pre.get("reason"), "makerIds", String.join(",", makers.stream()
+                            .filter(java.util.Objects::nonNull).distinct().toList())),
+                    "adjustment " + pre.get("adjCode"));
+            sod.assertSeparated(SegregationOfDutiesService.STOCK_ADJUSTMENT, "StockAdjustment", id, makers);
         }
         Map<String, Object> doc = adjustment(id);
         if (doc == null) {

@@ -602,6 +602,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/approvals', label: tx('Approvals'), icon: ShieldCheck, permission: 'approvals:read' },
       { to: '/approval-workflows', label: tx('Approval Workflows'), icon: Shield, permission: 'approvals:read' },
+      { to: '/approval-controls', label: tx('Approval Controls'), icon: Shield, permission: 'approvals:read' },
       { to: '/approval-policies', label: tx('Approval Policies (legacy)'), icon: Shield, permission: 'approvals:read' },
       { to: '/staff', label: tx('Staff'), icon: UserCog, permission: PERMISSIONS.user.read },
       { to: '/staff/roles', label: tx('Roles & Permissions'), icon: Shield, permission: PERMISSIONS.role.read },

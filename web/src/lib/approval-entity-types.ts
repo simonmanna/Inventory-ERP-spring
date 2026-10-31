@@ -31,6 +31,12 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   fleet_meter_correction: tx('Fleet Meter Corrections'),
   // Quarry (ADR-S012) — explosive issues from a magazine (controlled stock).
   quarry_explosive_issue: tx('Explosive Issues'),
+  // Controls (CTRL-1) — sensitive pairs and held configuration changes.
+  stock_adjustment: tx('Stock Adjustments'),
+  production_loss_writeoff: tx('Production Loss Write-offs'),
+  credit_override: tx('Credit Overrides'),
+  supplier_bill_approval: tx('Supplier Bill Approval'),
+  config_change: tx('Configuration Changes'),
 };
 
 export function entityTypeLabel(entityType: string): string {

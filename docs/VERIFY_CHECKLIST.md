@@ -353,3 +353,15 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane B — Approvals, procurement control, numbering
+
+**Nothing here was compiled or run.** Compile first, then run `ApprovalControlsIT` and the suites of the touched modules.
+
+CTRL-1, migration `V50__approval_controls.sql`:
+
+- `/approval-workflows`: create a workflow for one branch and another without a branch. A document of that branch uses the branch workflow. A step set to Department manager only takes that manager.
+- `/approval-controls` → Limits: add a limit for `purchase_order:approve` of 1,000. An approver with that permission is refused on a 5,000 request and the step stays open.
+- `/approval-controls` → Separation of duties: switch on Stock adjustment. The creator of an adjustment gets a 403 on approve; another user can post it. `/audit-log`, entity `SodCheck`, shows both.
+- Switch on Production loss write-off, then complete an order with zero output as the user who raised it: refused.
+- Add a workflow for Configuration Changes, then flip a pair. The change appears under Held changes, the requester cannot approve it, a second person can, and the switch then moves.

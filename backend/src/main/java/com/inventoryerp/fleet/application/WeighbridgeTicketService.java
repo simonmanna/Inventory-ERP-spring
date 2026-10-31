@@ -19,6 +19,7 @@ import com.inventoryerp.fleet.domain.WeighbridgeException;
 import com.inventoryerp.fleet.domain.WeighbridgeTicket;
 import com.inventoryerp.kernel.approvals.ApprovalAdminService;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -91,6 +92,7 @@ public class WeighbridgeTicketService {
     private final WeighbridgeUnits units;
     private final ApprovalsService approvals;
     private final ApprovalAdminService approvalAdmin;
+    private final SegregationOfDutiesService sod;
     private final GoodsReceiptsService goodsReceipts;
     private final SequenceService sequence;
     private final AuditService audit;
@@ -99,7 +101,8 @@ public class WeighbridgeTicketService {
     private final WeighbridgeTripFeed tripFeed;
 
     public WeighbridgeTicketService(FleetDb db, WeighbridgeStationService stations, WeighbridgeUnits units,
-            ApprovalsService approvals, ApprovalAdminService approvalAdmin, GoodsReceiptsService goodsReceipts,
+            ApprovalsService approvals, ApprovalAdminService approvalAdmin, SegregationOfDutiesService sod,
+            GoodsReceiptsService goodsReceipts,
             SequenceService sequence, AuditService audit, EventBus events, PlatformTransactionManager txm,
             WeighbridgeTripFeed tripFeed) {
         this.db = db;
@@ -107,6 +110,7 @@ public class WeighbridgeTicketService {
         this.units = units;
         this.approvals = approvals;
         this.approvalAdmin = approvalAdmin;
+        this.sod = sod;
         this.goodsReceipts = goodsReceipts;
         this.sequence = sequence;
         this.audit = audit;
@@ -1022,6 +1026,8 @@ public class WeighbridgeTicketService {
         Map<String, Object> t = lock((String) e.get("ticketId"));
         String actor = TenantContext.userId();
         if (operators(t, e).contains(actor)) {
+            sod.recordBlocked(SegregationOfDutiesService.WEIGHBRIDGE_EXCEPTION, "WeighbridgeException", exceptionId,
+                    actor, operators(t, e));
             throw ApiException.forbidden("A weighbridge operator cannot approve or reject the exception of their own"
                     + " ticket");
         }
