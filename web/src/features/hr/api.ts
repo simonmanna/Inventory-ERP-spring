@@ -1190,7 +1190,7 @@ export function useDeleteHrLoan() {
 
 // ── Performance reviews ────────────────────────────────────────────────────
 
-export function useHrReviews(params: { employeeId?: string } = {}) {
+export function useHrReviews(params: { employeeId?: string; take?: number; skip?: number } = {}) {
   return useQuery({
     queryKey: ['hr', 'reviews', params],
     queryFn: async () => (await api.get('/hr/reviews', { params })).data,

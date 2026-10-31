@@ -100,6 +100,10 @@ onboarding templates. Screens: `/hr/recruitment`, `/hr/onboarding`.
 `HrOvertimeCalculator`, migration V92. `HrPayrollService.calculateRun` uses the employee's rule when one applies; with no
 active rule the calculation is the Nest one. `overtimeHours` is an Int column: with a rule it stores the rounded hours.
 
+### HR-4 performance review screen (built, unverified)
+
+Screen `/hr/reviews` over the existing `/hr/reviews` routes; no backend change. `useHrReviews` also takes `take` / `skip`.
+
 ## Status
 
 140/140 routes (`HrController`, 11 services in `com.inventoryerp.hr.application`).

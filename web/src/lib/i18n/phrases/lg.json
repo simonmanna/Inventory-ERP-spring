@@ -10701,5 +10701,21 @@
   "Weekend": "Wikendi",
   "Weekend days": "Ennaku za wikendi",
   "Weekend multiplier": "Omukubisa gwa wikendi",
-  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Awatali tteeka, essaawa ez'enjawulo zisasulwa emirundi 1.5 egy'omuwendo gw'essaawa. Etteeka ly'ekitongole lisinga eryo erya bonna."
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Awatali tteeka, essaawa ez'enjawulo zisasulwa emirundi 1.5 egy'omuwendo gw'essaawa. Etteeka ly'ekitongole lisinga eryo erya bonna.",
+  "A rating runs from 1 (lowest) to 5 (highest).": "Okugereka kuva ku 1 (wansi) okutuuka ku 5 (waggulu).",
+  "Could not delete the review": "Tekisobose kusazaamu kukebera",
+  "Could not load the reviews": "Tekisobose kuleeta kukebera",
+  "Could not save the review": "Tekisobose kuterekera kukebera",
+  "Edit review": "Kyusa okukebera",
+  "KPI score": "Obubonero bwa KPI",
+  "New review": "Okukebera okuggya",
+  "No reviews yet.": "Tewannabaawo kukebera.",
+  "Performance reviews": "Okukebera emirimu",
+  "Period end": "Enkomerero y'ekiseera",
+  "Period start": "Entandikwa y'ekiseera",
+  "Rating": "Okugereka",
+  "Review deleted": "Okukebera kusaziddwamu",
+  "Review saved": "Okukebera kuterekeddwa",
+  "Review updated": "Okukebera kukyusiddwa",
+  "Scores, ratings and notes for each review period.": "Obubonero, okugereka n'ebiwandiiko ku buli kiseera ky'okukebera."
 }

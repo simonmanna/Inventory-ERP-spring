@@ -10701,5 +10701,21 @@
   "Weekend": "ቀዳመ ሰንበት",
   "Weekend days": "መዓልታት ቀዳመ ሰንበት",
   "Weekend multiplier": "ኣባዝሒ ቀዳመ ሰንበት",
-  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "ብዘይ ሕጊ፣ ተወሳኺ ሰዓታት ብ1.5 ዕጽፊ ናይ ሰዓት ክፍሊት ይኽፈል። ሕጊ ክፍሊ ካብቲ ሓፈሻዊ ይበልጽ።"
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "ብዘይ ሕጊ፣ ተወሳኺ ሰዓታት ብ1.5 ዕጽፊ ናይ ሰዓት ክፍሊት ይኽፈል። ሕጊ ክፍሊ ካብቲ ሓፈሻዊ ይበልጽ።",
+  "A rating runs from 1 (lowest) to 5 (highest).": "ደረጃ ካብ 1 (ዝተሓተ) ክሳብ 5 (ዝለዓለ) እዩ።",
+  "Could not delete the review": "ገምጋም ምድምሳስ ኣይተኻእለን",
+  "Could not load the reviews": "ገምጋማት ምጽዓን ኣይተኻእለን",
+  "Could not save the review": "ገምጋም ምዕቃብ ኣይተኻእለን",
+  "Edit review": "ገምጋም ኣርም",
+  "KPI score": "ነጥቢ KPI",
+  "New review": "ሓድሽ ገምጋም",
+  "No reviews yet.": "ክሳብ ሕጂ ገምጋም የለን።",
+  "Performance reviews": "ገምጋም ኣፈጻጽማ",
+  "Period end": "መወዳእታ እዋን",
+  "Period start": "መጀመሪ እዋን",
+  "Rating": "ደረጃ",
+  "Review deleted": "ገምጋም ተደምሲሱ",
+  "Review saved": "ገምጋም ተዓቂቡ",
+  "Review updated": "ገምጋም ተመሓይሹ",
+  "Scores, ratings and notes for each review period.": "ነጥብታት፣ ደረጃታትን መዘኻኸርታትን ንነፍሲ ወከፍ እዋን ገምጋም።"
 }

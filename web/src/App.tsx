@@ -195,6 +195,7 @@ import { HrSelfServicePage } from '@/pages/hr/HrSelfServicePage';
 import { HrRecruitmentPage } from '@/pages/hr/HrRecruitmentPage';
 import { HrOnboardingPage } from '@/pages/hr/HrOnboardingPage';
 import { HrContractsPage } from '@/pages/hr/HrContractsPage';
+import { HrReviewsPage } from '@/pages/hr/HrReviewsPage';
 import { StockLedgerPage } from '@/pages/inventory/StockLedgerPage';
 import { StockMovementDetailPage } from '@/pages/inventory/StockMovementDetailPage';
 import LocationsPage from '@/pages/inventory/LocationsPage';
@@ -437,6 +438,7 @@ export function App() {
           <Route path="/hr/recruitment" element={<HrRecruitmentPage />} />
           <Route path="/hr/onboarding" element={<HrOnboardingPage />} />
           <Route path="/hr/contracts" element={<HrContractsPage />} />
+          <Route path="/hr/reviews" element={<HrReviewsPage />} />
           <Route path="/hr/employees" element={<HrEmployeesPage />} />
           <Route path="/hr/employees/:id" element={<HrEmployeeDetailPage />} />
           <Route path="/hr/departments" element={<HrDepartmentsPage />} />

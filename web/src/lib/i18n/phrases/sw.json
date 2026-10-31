@@ -10701,5 +10701,21 @@
   "Weekend": "Wikendi",
   "Weekend days": "Siku za wikendi",
   "Weekend multiplier": "Kizidisho cha wikendi",
-  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Bila kanuni, saa za ziada hulipwa mara 1.5 ya kiwango cha saa. Kanuni ya idara hushinda ile ya jumla."
+  "Without a rule, overtime is paid at 1.5 times the hourly rate. A department rule beats the general one.": "Bila kanuni, saa za ziada hulipwa mara 1.5 ya kiwango cha saa. Kanuni ya idara hushinda ile ya jumla.",
+  "A rating runs from 1 (lowest) to 5 (highest).": "Ukadiriaji ni kutoka 1 (chini zaidi) hadi 5 (juu zaidi).",
+  "Could not delete the review": "Imeshindwa kufuta tathmini",
+  "Could not load the reviews": "Imeshindwa kupakia tathmini",
+  "Could not save the review": "Imeshindwa kuhifadhi tathmini",
+  "Edit review": "Hariri tathmini",
+  "KPI score": "Alama ya KPI",
+  "New review": "Tathmini mpya",
+  "No reviews yet.": "Hakuna tathmini bado.",
+  "Performance reviews": "Tathmini za utendaji",
+  "Period end": "Mwisho wa kipindi",
+  "Period start": "Mwanzo wa kipindi",
+  "Rating": "Ukadiriaji",
+  "Review deleted": "Tathmini imefutwa",
+  "Review saved": "Tathmini imehifadhiwa",
+  "Review updated": "Tathmini imesasishwa",
+  "Scores, ratings and notes for each review period.": "Alama, ukadiriaji na maelezo kwa kila kipindi cha tathmini."
 }

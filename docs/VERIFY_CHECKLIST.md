@@ -373,3 +373,8 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - [ ] `/hr/payroll/settings` → Overtime: add a rule, weekday 1.25, weekend 1.5, holiday 2, weekend days SUNDAY.
 - [ ] Record attendance overtime on a weekday, a Sunday and a holiday, calculate a run: overtime pay uses each multiplier.
 - [ ] With no active rule, overtime is 1.5 times the hourly rate, as before.
+
+## Phase 4 HR-4 — performance review screen (built, not run)
+
+- [ ] `/hr/reviews`: create a review with a rating, filter by employee, submit and approve it, edit it, delete it.
+- [ ] The menu entry shows only with `hr:performance`.
