@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phase 2 — 2.1, 2.2, 2.3, 2.4, 2.6, 2.7 merged; the 2.3 + 2.7 merge still needs a full build on main
-Next action: run the full build on main, then wave C (2.5 planning, 2.8 costing + Phase 2 E2E ITs + demo seed).
+Current: Phase 4 — lanes A–F in parallel worktrees. From 2026-10-30 the user asked to skip compile/build: everything after bd3f34b is unverified until a full build is run
+Next action: merge lanes A–F, tag gaps-closed, then Phase 5.
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -90,8 +90,14 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 2.6 quality management | done (C) | c6b3f68, 608208a, 554c872 | | V27, ADR-S013; 45 routes; wired to 2.1 stage gates (QualityStageGateBridge); main build 917 tests green |
 | 2.7 shop-floor execution & data capture | merged, not verified on main (C) | 42dd59c, de1d082, 82f719e | | V30, ADR-S015; 41 routes; branch build 934 tests green; pushed on the user's instruction without a full build of the merged tree |
 | 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
-| 3 requirements verification | todo | | requirements-verified | |
-| 4.x gaps (one row per module, added in phase 3) | todo | | gaps-closed | |
+| 3 requirements verification | done (C) | 66219a2 | requirements-verified | 263 rows: 166 verified, 82 partial, 15 missing. By reading code only; nothing compiled or run |
+| 4.A manufacturing: MFG-1 2.5 planning, MFG-2 2.8 costing, MFG-3 E2E ITs, MFG-4 demo seed | in-progress (C, worktree) | | | |
+| 4.B controls: CTRL-1, CTRL-2, PROC-3, PROC-5, SALES-2 | in-progress (C, worktree) | | | |
+| 4.C sales & branches: UOM-1, SALES-1, BR-1, BR-2, SALES-3, -4, -5 | in-progress (C, worktree) | | | |
+| 4.D finance & procurement: FIN-1, -2, -3, PROC-1, -2, -4, -6 | in-progress (C, worktree) | | | |
+| 4.E plant, field & integrations: CMMS-1, DRIVER-1, PORTAL-1, INT-1, -2, -3 | in-progress (C, worktree) | | | |
+| 4.F HR, CRM, inventory: HR-1..5, CRM-1, -2, INV-1..3 | in-progress (C, worktree) | | | |
+| 4 all gaps closed | todo | | gaps-closed | |
 | 5 dashboards, KPIs, alerts, integrations | todo | | bi-complete | |
 | 6 production hardening | todo | | v2.1.0-rc | |
 | 7 demo, docs, final report | todo | | v2.1.0 | |
