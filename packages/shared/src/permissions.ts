@@ -289,6 +289,26 @@ export const PERMISSIONS = {
     create: 'routing:create',
     delete: 'routing:delete',
   },
+  // ---- Crushing, screening & aggregate processing (manufacturing 2.3, ADR-S016) ----
+  // Route ↔ permission matrix: docs/spec/manufacturing.md §2.3. Reports use production:report.
+  crushing: {
+    /// Plants / circuits, grading profiles, runs, stockpiles and surveys (and the crushing form lookups).
+    read: 'crushing:read',
+    /// Plant & circuit set-up (crushers, screens, conveyors as work centres) and grading profiles.
+    setup: 'crushing:setup',
+  },
+  crushingRun: {
+    /// Record / edit / delete draft crushing runs (plant-operator entry).
+    record: 'crushing_run:record',
+    /// Post a run (feed out of the ROM stockpile, sized products into stockpiles at cost, GL) and reverse it.
+    post: 'crushing_run:post',
+  },
+  crushingSurvey: {
+    /// Record and submit stockpile surveys (volume × density = tonnes).
+    record: 'crushing_survey:record',
+    /// Approve (posts the stock adjustment + GL), reject or reverse a survey — never the person who submitted it.
+    approve: 'crushing_survey:approve',
+  },
   workOrder: {
     read: 'work_order:read',
     manage: 'work_order:manage',

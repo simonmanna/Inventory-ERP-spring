@@ -162,6 +162,7 @@ import { RentalReportsPage } from '@/pages/rental/RentalReportsPage';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
+import { crushingRoutes } from '@/pages/crushing/routes';
 import { RepairDashboardPage } from '@/pages/repair/RepairDashboardPage';
 import { RepairOrdersPage } from '@/pages/repair/RepairOrdersPage';
 import { RepairOrderCreatePage } from '@/pages/repair/RepairOrderCreatePage';
@@ -376,6 +377,8 @@ export function App() {
           <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
           {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}
           {precastRoutes}
+          {/* Crushing & screening (ADR-S016) — screens in pages/crushing/routes.tsx */}
+          {crushingRoutes}
           <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
           <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
           <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />

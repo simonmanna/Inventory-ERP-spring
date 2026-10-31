@@ -238,6 +238,8 @@ export const EVENTS = {
   // Quarry 2.2 (ADR-S012): an extraction log was posted — net tonnes received into a ROM stockpile at the cost per
   // tonne (crushing 2.3, dashboards and alerts react to it).
   QuarryExtractionPosted: 'quarry.extraction.posted',
+  // Crushing 2.3 (ADR-S016): a crushing run was posted — feed consumed, sized products received into stockpiles.
+  CrushingRunPosted: 'crushing.run.posted',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */

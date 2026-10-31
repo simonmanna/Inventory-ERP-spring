@@ -441,6 +441,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/precast/mix-designs', label: tx('Mix designs'), icon: ScrollText, permission: PERMISSIONS.bom.read },
       { to: '/manufacturing/precast/setup', label: tx('Precast set-up'), icon: SettingsIcon, permission: PERMISSIONS.bom.read },
       { to: '/manufacturing/precast/reports', label: tx('Precast reports'), icon: BarChart3, permission: PERMISSIONS.production.report },
+      // crushing & screening 2.3 (ADR-S016)
+      { to: '/manufacturing/crushing', label: tx('Crushing Runs'), icon: Factory, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/plants', label: tx('Crushing Plants'), icon: Boxes, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/stockpiles', label: tx('Aggregate Stockpiles'), icon: Layers, permission: PERMISSIONS.crushing.read },
+      { to: '/manufacturing/crushing/reports', label: tx('Crushing Reports'), icon: BarChart3, permission: PERMISSIONS.production.report },
       { to: '/manufacturing/resources', label: tx('Work Centres'), icon: Boxes },
       { to: '/manufacturing/reports', label: tx('Reports'), icon: BarChart3, reportId: 'manufacturing.reports' },
     ],

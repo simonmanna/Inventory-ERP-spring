@@ -127,8 +127,6 @@ app:
     weighbridge:
       max-read-timeout-ms: ${FLEET_WEIGHBRIDGE_MAX_READ_TIMEOUT_MS:15000}
   # Manufacturing 2.4 precast (ADR-S014): curing tick — passes gates whose minimum curing time ended, opens final lots.
-  manufacturing:
-    precast-curing-cron: ${PRECAST_CURING_CRON:0 */15 * * * *}
   # Quality management (ADR-S013): REST laboratory adapter (LabResultAdapter "rest"); blank URL = not configured.
   quality:
     lab:
@@ -137,6 +135,7 @@ app:
         token: ${QUALITY_LAB_REST_TOKEN:}
         timeout-ms: ${QUALITY_LAB_REST_TIMEOUT_MS:10000}
   manufacturing:
+    precast-curing-cron: ${PRECAST_CURING_CRON:0 */15 * * * *}
     # Shop-floor machine data (ADR-S015): REST pull adapter (GET <url>/events?machine=&since=&until=, bearer token).
     machine-data:
       rest:

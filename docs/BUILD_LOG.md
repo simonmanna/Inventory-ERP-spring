@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phase 2 — 2.1, 2.2, 2.4, 2.6 merged; 2.3 crushing, 2.7 shop floor in-progress (C, parallel worktrees)
-Next action: merge 2.3 / 2.4 / 2.7 as they finish, then wave C (2.5 planning, 2.8 costing + Phase 2 E2E ITs + demo seed).
+Current: Phase 2 — 2.1, 2.2, 2.3, 2.4, 2.6, 2.7 merged; the 2.3 + 2.7 merge still needs a full build on main
+Next action: run the full build on main, then wave C (2.5 planning, 2.8 costing + Phase 2 E2E ITs + demo seed).
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -84,11 +84,11 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 1.9 fleet costing & reports | done | 0c4b8e3 37ba653 a538e61 | fleet-complete | V25, 22 routes, TCO / delivery profitability / freight bills (once, GL balanced) / 8 reports with CSV-XLSX-PDF / ShedLock reminders / fine → payroll deduction / opt-in demo seed (`SEED_FLEET_DEMO`) |
 | 2.1 multi-stage production & WIP | done (C) | 8052424, dc2be71, 23b4c96 | | V26, ADR-S011; 18 routes, stage QC SPI for 2.6; branch build 894 tests green |
 | 2.2 quarry & extraction | done (C) | 91d1c52, 779bc31, 4e7c775 | | V28 + licence V4, ADR-S012; 80 routes, 19 permissions, ROM stockpile API for 2.3; main build 937 tests green (licence-server ITs need Docker) |
-| 2.3 crushing & screening | in-progress (C, worktree) | | | |
+| 2.3 crushing & screening | merged, not verified on main (C) | b5164dd, 01094db, f7a5a94 | | V31, ADR-S016; 36 routes; branch build 953 tests green; pushed on the user's instruction without a full build of the merged tree |
 | 2.4 block / precast manufacturing | done (C) | 6b43ea8, 746589f, 3ae57df | | V29, ADR-S014; 26 routes under /manufacturing/precast, curing hold on 2.1 gates; main build 949 tests green |
 | 2.5 advanced planning & scheduling | claimed (C) | | | |
 | 2.6 quality management | done (C) | c6b3f68, 608208a, 554c872 | | V27, ADR-S013; 45 routes; wired to 2.1 stage gates (QualityStageGateBridge); main build 917 tests green |
-| 2.7 shop-floor execution & data capture | in-progress (C, worktree) | | | |
+| 2.7 shop-floor execution & data capture | merged, not verified on main (C) | 42dd59c, de1d082, 82f719e | | V30, ADR-S015; 41 routes; branch build 934 tests green; pushed on the user's instruction without a full build of the merged tree |
 | 2.8 manufacturing costing & analytics | claimed (C) | | manufacturing-advanced-complete | |
 | 3 requirements verification | todo | | requirements-verified | |
 | 4.x gaps (one row per module, added in phase 3) | todo | | gaps-closed | |

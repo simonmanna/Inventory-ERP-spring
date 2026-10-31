@@ -261,6 +261,18 @@
     "create": "routing:create",
     "delete": "routing:delete"
   },
+  "crushing": {
+    "read": "crushing:read",
+    "setup": "crushing:setup"
+  },
+  "crushingRun": {
+    "record": "crushing_run:record",
+    "post": "crushing_run:post"
+  },
+  "crushingSurvey": {
+    "record": "crushing_survey:record",
+    "approve": "crushing_survey:approve"
+  },
   "workOrder": {
     "read": "work_order:read",
     "manage": "work_order:manage"
