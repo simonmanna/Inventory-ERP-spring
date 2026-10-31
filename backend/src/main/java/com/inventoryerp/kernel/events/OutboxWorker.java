@@ -22,12 +22,18 @@ import tools.jackson.databind.json.JsonMapper;
  * older than 30 s is considered stale and re-claimable. Polls every {@code OUTBOX_POLL_MS} (1 s).
  * The per-row ship / fail marks commit with {@code synchronous_commit = off}: losing one in a database crash only
  * re-delivers that row, which at-least-once delivery already allows, and it saves a WAL flush per event.
+ *
+ * <p>Deviation from Nest (PR-1): a failed row waits {@code nextAttemptAt} (5 s doubling to 15 min) and becomes
+ * {@code dead} after {@code OUTBOX_MAX_ATTEMPTS} (10) failures. In Nest a failing row was picked again on every poll
+ * and stayed pending forever, so fifty broken rows stalled delivery for every other event.
  */
 @Component
 public class OutboxWorker {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxWorker.class);
     private static final long STALE_CLAIM_MS = 30_000;
+    private static final long FIRST_BACKOFF_MS = 5_000;
+    private static final long MAX_BACKOFF_MS = 15 * 60_000;
 
     private record Claimed(String id, String eventName, String payload, int attempts) {}
 
@@ -36,14 +42,22 @@ public class OutboxWorker {
     private final JsonMapper mapper;
     private final TransactionTemplate tx;
     private final int batchSize;
+    private final int maxAttempts;
 
     public OutboxWorker(JdbcClient jdbc, OutboxHandlers handlers, JsonMapper mapper, PlatformTransactionManager txm,
-            @Value("${OUTBOX_BATCH:50}") int batchSize) {
+            @Value("${OUTBOX_BATCH:50}") int batchSize, @Value("${OUTBOX_MAX_ATTEMPTS:10}") int maxAttempts) {
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(txm);
         this.handlers = handlers;
         this.mapper = mapper;
         this.batchSize = batchSize;
+        this.maxAttempts = Math.max(1, maxAttempts);
+    }
+
+    /** Wait before attempt {@code failures + 1}: 5 s, 10 s, 20 s, ... capped at 15 min. */
+    static long backoffMs(int failures) {
+        long ms = FIRST_BACKOFF_MS << Math.min(Math.max(failures - 1, 0), 20);
+        return Math.min(ms, MAX_BACKOFF_MS);
     }
 
     @Scheduled(fixedDelayString = "${OUTBOX_POLL_MS:1000}", initialDelayString = "${OUTBOX_POLL_MS:1000}")
@@ -64,7 +78,8 @@ public class OutboxWorker {
                         SET "claimToken" = ?, "claimedAt" = NOW()
                         WHERE "id" IN (
                           SELECT "id" FROM "EventOutbox"
-                          WHERE ("status" = 'pending' OR ("status" = 'claimed' AND "claimedAt" < ?))
+                          WHERE (("status" = 'pending' AND ("nextAttemptAt" IS NULL OR "nextAttemptAt" <= NOW()))
+                                 OR ("status" = 'claimed' AND "claimedAt" < ?))
                           ORDER BY "createdAt" ASC
                           LIMIT ?
                           FOR UPDATE SKIP LOCKED
@@ -86,10 +101,21 @@ public class OutboxWorker {
                 } catch (RuntimeException err) {
                     String msg = err.toString();
                     msg = msg.length() > 500 ? msg.substring(0, 500) : msg;
-                    log.warn("Outbox row {} failed (attempt {}): {}", row.id(), row.attempts() + 1, msg);
-                    mark("""
-                                    UPDATE "EventOutbox" SET attempts = attempts + 1, "lastError" = ?, "claimToken" = NULL,
-                                           "claimedAt" = NULL WHERE id = ?""", msg, row.id());
+                    int failures = row.attempts() + 1;
+                    if (failures >= maxAttempts) {
+                        log.error("Outbox row {} ({}) is dead after {} attempts: {}", row.id(), row.eventName(),
+                                failures, msg);
+                        mark("""
+                                        UPDATE "EventOutbox" SET status = 'dead', attempts = ?, "lastError" = ?,
+                                               "claimToken" = NULL, "claimedAt" = NULL, "nextAttemptAt" = NULL
+                                        WHERE id = ?""", failures, msg, row.id());
+                    } else {
+                        log.warn("Outbox row {} failed (attempt {}): {}", row.id(), failures, msg);
+                        mark("""
+                                        UPDATE "EventOutbox" SET attempts = ?, "lastError" = ?, "claimToken" = NULL,
+                                               "claimedAt" = NULL, "nextAttemptAt" = ? WHERE id = ?""", failures, msg,
+                                Timestamp.from(Instant.now().plusMillis(backoffMs(failures))), row.id());
+                    }
                 }
             }
         } finally {

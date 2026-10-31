@@ -124,7 +124,10 @@ public class SequenceService {
     void restart(String key, long next) {
         String organizationId = TenantContext.organizationId();
         ensure(organizationId, key);
-        jdbc.sql("ALTER SEQUENCE \"" + seqName(organizationId, key) + "\" RESTART WITH " + next).update();
+        // setval, not ALTER SEQUENCE ... RESTART: the API's database role is not the owner of sequences created by
+        // migrations or by an earlier owner-run instance, and setval only needs UPDATE on the sequence.
+        jdbc.sql("SELECT setval(?::regclass, ?, false)").params("\"" + seqName(organizationId, key) + "\"", next)
+                .query(Long.class).single();
     }
 
     private void ensure(String organizationId, String key) {

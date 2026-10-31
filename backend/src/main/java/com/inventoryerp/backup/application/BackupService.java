@@ -51,6 +51,7 @@ import net.javacrumbs.shedlock.core.LockProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails;
 import org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
@@ -90,6 +91,7 @@ public class BackupService {
     private final SettingsService settings;
     private final Environment env;
     private final ObjectProvider<JdbcConnectionDetails> jdbcDetails;
+    private final ObjectProvider<FlywayConnectionDetails> ownerDetails;
     private final ObjectProvider<LockProvider> lockProvider;
     private final ObjectProvider<JavaMailSender> mail;
 
@@ -104,10 +106,12 @@ public class BackupService {
     private ThreadPoolTaskScheduler scheduler;
 
     public BackupService(SettingsService settings, Environment env, ObjectProvider<JdbcConnectionDetails> jdbcDetails,
-            ObjectProvider<LockProvider> lockProvider, ObjectProvider<JavaMailSender> mail) {
+            ObjectProvider<FlywayConnectionDetails> ownerDetails, ObjectProvider<LockProvider> lockProvider,
+            ObjectProvider<JavaMailSender> mail) {
         this.settings = settings;
         this.env = env;
         this.jdbcDetails = jdbcDetails;
+        this.ownerDetails = ownerDetails;
         this.lockProvider = lockProvider;
         this.mail = mail;
         this.config = defaults();
@@ -1601,9 +1605,17 @@ public class BackupService {
         pgEnv.put("PGHOST", u.getHost() == null || u.getHost().isEmpty() ? "localhost" : u.getHost().replaceAll("^\\[|]$", ""));
         pgEnv.put("PGPORT", u.getPort() > 0 ? String.valueOf(u.getPort()) : "5432");
         String overrideUser = envVar("PGUSER") == null ? null : envVar("PGUSER").trim();
+        // PR-1: the API's own role is subject to row-level security, which pg_dump refuses; use the migration owner.
+        FlywayConnectionDetails owner = ownerDetails.getIfAvailable();
+        String ownerUser = owner != null && owner.getUsername() != null ? owner.getUsername().trim()
+                : env.getProperty("spring.flyway.user", "").trim();
         if (overrideUser != null && !overrideUser.isEmpty()) {
             pgEnv.put("PGUSER", overrideUser);
             pgEnv.put("PGPASSWORD", envVar("PGPASSWORD") == null ? "" : envVar("PGPASSWORD"));
+        } else if (!ownerUser.isEmpty()) {
+            pgEnv.put("PGUSER", ownerUser);
+            String ownerPassword = owner != null ? owner.getPassword() : env.getProperty("spring.flyway.password", "");
+            pgEnv.put("PGPASSWORD", ownerPassword == null ? "" : ownerPassword);
         } else {
             pgEnv.put("PGUSER", details != null ? details.getUsername() : env.getProperty("spring.datasource.username", ""));
             String pw = details != null ? details.getPassword() : env.getProperty("spring.datasource.password", "");

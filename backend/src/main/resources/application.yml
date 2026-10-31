@@ -38,7 +38,14 @@ spring:
         order_updates: true
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    locations: classpath:db/migration,classpath:db/callback
+    # PR-1: migrations run as the schema owner; the API's own role (DB_USER) is not the owner, so row-level security
+    # applies to it. Both default to DB_USER (one role, RLS not enforced) for development.
+    user: ${FLYWAY_USER:${DB_USER:erp}}
+    password: ${FLYWAY_PASSWORD:${DB_PASSWORD:erp}}
+    placeholders:
+      approle: ${DB_USER:erp}
+      apppassword: ${DB_PASSWORD:erp}
     # Lets the app take over an existing POS-CAFE database: V1 (schema) + V2 (reference rows)
     # are already present there, so it starts at V3.
     baseline-on-migrate: true

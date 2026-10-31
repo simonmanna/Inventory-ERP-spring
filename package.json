@@ -25,7 +25,9 @@
       "postcss": ">=8.5.18",
       "dompurify": ">=3.4.12",
       "qs": ">=6.16.0",
-      "uuid": ">=11.1.1"
+      "uuid": ">=11.1.1",
+      "follow-redirects": ">=1.16.2",
+      "pptxgenjs>image-size": ">=2.0.3"
     }
   }
 }

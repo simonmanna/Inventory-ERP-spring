@@ -29,8 +29,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Replenishment rules and alerts (INV-3). A scan compares each rule's available stock (on hand less active
- * reservations) with its minimum and raises one live alert per rule; stock recovering resolves the alert. Asking for a
+ * Replenishment rules and alerts (INV-3). A scan compares each rule's stock position (on hand less active
+ * reservations, plus supply already ordered or requested for the location from {@link IncomingSupplyProvider}s) with
+ * its minimum and raises one live alert per rule; stock recovering resolves the alert. Asking for a
  * requisition marks alerts {@code requested} and publishes {@code inventory.replenishment.requested} in the same
  * transaction; procurement, which depends on inventory and not the other way round, raises a draft purchase request per
  * supplier and calls {@link #markRequisitioned}. Nothing here moves stock or posts to the ledger.
@@ -64,13 +65,23 @@ public class ReplenishmentService {
     private final AuditService audit;
     private final EventOutboxService outbox;
     private final NotificationsService notifications;
+    private final List<IncomingSupplyProvider> incomingSupply;
 
     public ReplenishmentService(JdbcClient jdbc, AuditService audit, EventOutboxService outbox,
-            NotificationsService notifications) {
+            NotificationsService notifications, List<IncomingSupplyProvider> incomingSupply) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.outbox = outbox;
         this.notifications = notifications;
+        this.incomingSupply = incomingSupply;
+    }
+
+    private BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (IncomingSupplyProvider p : incomingSupply) {
+            total = total.add(p.incoming(productId, locationId, onlyRule));
+        }
+        return total;
     }
 
     private static String org() {
@@ -304,6 +315,10 @@ public class ReplenishmentService {
         List<String> auto = new ArrayList<>();
         List<Map<String, Object>> rules = SqlRows.list(jdbc.sql(RULE_SELECT + " WHERE r.\"organizationId\" = ? AND"
                 + " r.\"isActive\" AND r.\"deletedAt\" IS NULL ORDER BY r.id").param(org()));
+        Map<Object, Long> rulesPerProduct = new java.util.HashMap<>();
+        for (Map<String, Object> rule : rules) {
+            rulesPerProduct.merge(rule.get("productId"), 1L, Long::sum);
+        }
         for (Map<String, Object> rule : rules) {
             String ruleId = (String) rule.get("id");
             BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE"
@@ -314,16 +329,24 @@ public class ReplenishmentService {
                     + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND status = 'active'")
                     .params(org(), rule.get("productId"), rule.get("locationId")).query(BigDecimal.class).single();
             BigDecimal available = onHand.subtract(reserved);
+            BigDecimal incoming = incoming((String) rule.get("productId"), (String) rule.get("locationId"),
+                    rulesPerProduct.get(rule.get("productId")) == 1L);
             BigDecimal min = SqlRows.dec(rule, "minQty");
-            BigDecimal suggested = ReplenishmentCalculator.suggest(available, min,
+            BigDecimal suggested = ReplenishmentCalculator.suggest(available.add(incoming), min,
                     rule.get("maxQty") == null ? null : SqlRows.dec(rule, "maxQty"),
                     rule.get("reorderQty") == null ? null : SqlRows.dec(rule, "reorderQty"));
             Map<String, Object> live = SqlRows.one(jdbc.sql("SELECT id, status FROM \"InventoryReplenishmentAlert\""
                     + " WHERE"
                     + " \"ruleId\" = ? AND \"organizationId\" = ? AND status IN " + LIVE + " FOR UPDATE")
                     .params(ruleId, org()));
+            boolean shortOnHand = available.compareTo(min) < 0;
+            if (suggested.signum() == 0 && shortOnHand && live != null && !"open".equals(live.get("status"))) {
+                // Covered by what this alert already ordered: keep it until the goods arrive.
+                continue;
+            }
             if (suggested.signum() == 0) {
-                // Stock is back: live alerts are over, and a dismissed one no longer silences the rule.
+                // Stock is back (or already on order): live alerts are over, and a dismissed one no longer silences the
+                // rule.
                 resolved += jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'resolved', \"resolvedAt\" = "
                         + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"ruleId\" = ? AND \"organizationId\" = ? AND"
                         + " status"
@@ -333,8 +356,8 @@ public class ReplenishmentService {
             if (live != null) {
                 if ("open".equals(live.get("status"))) {
                     jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET \"onHand\" = ?, reserved = ?, available = ?,"
-                            + " \"suggestedQty\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                            .params(onHand, reserved, available, suggested, live.get("id")).update();
+                            + " incoming = ?, \"suggestedQty\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                            .params(onHand, reserved, available, incoming, suggested, live.get("id")).update();
                     refreshed++;
                 }
                 continue;
@@ -344,11 +367,10 @@ public class ReplenishmentService {
             }
             String id = UUID.randomUUID().toString();
             int inserted = jdbc.sql("INSERT INTO \"InventoryReplenishmentAlert\" (id, \"organizationId\", \"ruleId\","
-                    + " \"productId\", \"locationId\", \"onHand\", reserved, available, \"minQty\", \"suggestedQty\")"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+                    + " \"productId\", \"locationId\", \"onHand\", reserved, available, incoming, \"minQty\","
+                    + " \"suggestedQty\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
                     .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved,
-                    available,
-                            min, suggested).update();
+                            available, incoming, min, suggested).update();
             if (inserted > 0) {
                 raised++;
                 if (Boolean.TRUE.equals(rule.get("autoRequisition"))) {

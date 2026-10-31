@@ -83,6 +83,21 @@ groups:
         annotations:
           summary: "Domain events are not being delivered"
 
+      - alert: EventOutboxDeadRows
+        expr: max(erp_outbox_dead{job="inventory-erp-api"}) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Some events failed every delivery attempt"
+          description: "A subscriber kept failing; its side effect did not happen. List them with GET /api/v1/admin/outbox/dead, fix the cause, then POST /api/v1/admin/outbox/{id}/retry."
+
+      - alert: EventOutboxBacklog
+        expr: max(erp_outbox_pending{job="inventory-erp-api"}) > 1000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "The event outbox is not keeping up"
+
       - alert: ScheduledJobFailing
         expr: sum by (task) (increase(erp_job_failures_total{job="inventory-erp-api"}[1h])) > 0
         for: 5m

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Server-wide backlog gauges for alerting (infra/monitoring/alerts.yml): POS stock-posting jobs not yet done, open
- * offline-sync dead letters, and undelivered domain events in the Modulith outbox. Each is one indexed count, evaluated
+ * offline-sync dead letters, undelivered domain events in the Modulith outbox and the EventOutbox backlog / dead rows. Each is one indexed count, evaluated
  * when Prometheus scrapes; a failing query reports {@code -1} instead of breaking the scrape.
  */
 @Component
@@ -33,6 +33,10 @@ public class BacklogMetrics implements MeterBinder {
                 () -> count("SELECT count(*) FROM \"SyncOpDeadLetter\" WHERE status = 'open'"));
         gauge(registry, "erp.event.publications.incomplete", "Domain events in the outbox not yet delivered",
                 () -> count("SELECT count(*) FROM event_publication WHERE completion_date IS NULL"));
+        gauge(registry, "erp.outbox.pending", "EventOutbox rows waiting to be shipped (incl. retries)",
+                () -> count("SELECT count(*) FROM \"EventOutbox\" WHERE status IN ('pending', 'claimed')"));
+        gauge(registry, "erp.outbox.dead", "EventOutbox rows that failed every attempt and need an operator",
+                () -> count("SELECT count(*) FROM \"EventOutbox\" WHERE status = 'dead'"));
     }
 
     private static void gauge(MeterRegistry registry, String name, String help, Supplier<Double> value) {

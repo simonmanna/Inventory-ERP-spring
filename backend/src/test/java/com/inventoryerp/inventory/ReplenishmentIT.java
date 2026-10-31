@@ -96,6 +96,43 @@ class ReplenishmentIT extends ApiTestSupport {
                 .hasSize(1);
     }
 
+    String openRequest(String product, String location, int qty) {
+        String request = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"PurchaseRequest\" (id, \"organizationId\", \"requestNumber\", status, \"updatedAt\")"
+                + " VALUES (?, ?, ?, 'submitted', now())").params(request, demoOrg, "PR-T" + suffix()).update();
+        jdbc.sql("INSERT INTO \"PurchaseRequestLine\" (id, \"organizationId\", \"purchaseRequestId\", \"productId\","
+                + " description, quantity, \"deliveryLocationId\") VALUES (?, ?, ?, ?, 'Sand', ?, ?)")
+                .params(UUID.randomUUID().toString(), demoOrg, request, product, qty, location).update();
+        return request;
+    }
+
+    @Test
+    @DisplayName("supply already requested for the location counts: no alert while it covers the minimum")
+    void incomingSupplyCounts() {
+        String p = product();
+        String l = location();
+        stock(p, l, 4);
+        rule(p, l, Map.of("maxQty", 30));
+        String elsewhere = location();
+        openRequest(p, elsewhere, 50);
+        ok(201, "POST", "/inventory/replenishment/scan", null);
+        JsonNode alert = liveAlert(l).get(0);
+        assertThat(new BigDecimal(alert.get("incoming").asString())).isEqualByComparingTo("0");
+        assertThat(new BigDecimal(alert.get("suggestedQty").asString())).isEqualByComparingTo("26");
+
+        String request = openRequest(p, l, 4);
+        ok(201, "POST", "/inventory/replenishment/scan", null);
+        alert = liveAlert(l).get(0);
+        assertThat(new BigDecimal(alert.get("incoming").asString())).isEqualByComparingTo("4");
+        assertThat(new BigDecimal(alert.get("suggestedQty").asString())).isEqualByComparingTo("22");
+
+        // 4 on hand + 6 on the way meets the minimum of 10: the open alert resolves.
+        jdbc.sql("UPDATE \"PurchaseRequestLine\" SET quantity = 6 WHERE \"purchaseRequestId\" = ?").param(request)
+                .update();
+        ok(201, "POST", "/inventory/replenishment/scan", null);
+        assertThat(liveAlert(l)).isEmpty();
+    }
+
     @Test
     @DisplayName("active reservations count against available stock")
     void reservationsCount() {

@@ -41,8 +41,12 @@ services:
     environment:
       PORT: 3000
       JDBC_DATABASE_URL: jdbc:postgresql://db:5432/${DB_NAME:-erp}?stringtype=unspecified
-      DB_USER: ${DB_USER:-erp}
-      DB_PASSWORD: ${DB_PASSWORD:-erp}
+      # Row-level security (docs/DATABASE.md section 6): migrations and backups run as the database owner, the API as
+      # its own role, which Flyway creates on first start (also on an existing volume) and which owns nothing.
+      FLYWAY_USER: ${DB_USER:-erp}
+      FLYWAY_PASSWORD: ${DB_PASSWORD:-erp}
+      DB_USER: ${DB_APP_USER:-erp_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:-erp_app}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       # Behind the web container's nginx: without this every client shares nginx's address, so the anonymous rate
       # limits (10 logins in 5 minutes) would apply to the whole site at once.

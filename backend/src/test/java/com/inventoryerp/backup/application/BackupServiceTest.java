@@ -50,6 +50,7 @@ class BackupServiceTest {
         StaticListableBeanFactory none = new StaticListableBeanFactory();
         return new BackupService(settings, env, none.getBeanProvider(
                 org.springframework.boot.jdbc.autoconfigure.JdbcConnectionDetails.class),
+                none.getBeanProvider(org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails.class),
                 none.getBeanProvider(net.javacrumbs.shedlock.core.LockProvider.class),
                 none.getBeanProvider(org.springframework.mail.javamail.JavaMailSender.class));
     }

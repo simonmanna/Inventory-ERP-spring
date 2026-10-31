@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Makes the licence drive the gating this install already has.
@@ -36,9 +35,11 @@ public class LicenseEntitlements {
     private static final Logger log = LoggerFactory.getLogger(LicenseEntitlements.class);
 
     private final JdbcClient jdbc;
+    private final com.inventoryerp.kernel.tenancy.InstallWide installWide;
 
-    public LicenseEntitlements(JdbcClient jdbc) {
+    public LicenseEntitlements(JdbcClient jdbc, com.inventoryerp.kernel.tenancy.InstallWide installWide) {
         this.jdbc = jdbc;
+        this.installWide = installWide;
     }
 
     /**
@@ -46,8 +47,12 @@ public class LicenseEntitlements {
      *
      * @return how many module rows were switched off
      */
-    @Transactional
     public int reconcile(LicenseState state) {
+        // Every organization's modules: outside the caller's tenant, whose row-level security would hide the others.
+        return installWide.run(() -> reconcileAll(state));
+    }
+
+    private int reconcileAll(LicenseState state) {
         // A trial grants everything, so there is nothing to take away; and while enforcement is off
         // the licence must not be quietly rewriting a developer's module setup either.
         if (state.mode() == LicenseMode.TRIAL || !state.licensed()) {

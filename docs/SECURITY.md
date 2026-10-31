@@ -71,7 +71,7 @@ control that exists in Nest; the items marked **(new)** are improvements Spring 
 - [x] Cross-tenant checks green (`otherToken` cases in each module IT; sync device scoping in `SyncIT`)
 - [x] Idempotency on money routes (missing key → 400; replay identical) — POS/treasury ITs; sync per-op keys (`SyncIT`, `SyncInventoryReplayIT`)
 - [x] No secrets in logs (`SecurityChecklistIT.noSecretsInLogs`: password, PIN, refresh token, device token)
-- [ ] RLS enforced on staging with non-superuser role
+- [x] RLS enforced with a non-owner role (V214, compose `erp_app`, whole IT suite runs under it — PR-1)
 - [x] Dependency scan clean / waivers documented (Trivy on SBOM, lockfile and images in CI; `.trivyignore` empty)
 - [x] Pen-test style checks: JWT alg confusion (`none`/RS256/HS512/ES256 headers) and forged signatures rejected,
       expired token rejected, uploads of HTML/SVG served as attachment with `nosniff` (`SecurityChecklistIT`,

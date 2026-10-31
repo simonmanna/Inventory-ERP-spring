@@ -200,6 +200,11 @@ class SalesFulfilmentIT extends ApiTestSupport {
         String t = assign(ok(201, "POST", "/fleet/delivery-orders/" + doId + "/plan-loads", Map.of("payloadT", 30))
                 .get("createdTripIds").get(0).asString());
         money("/fleet/trips/" + t + "/dispatch", null);
+        // The dispatch reaches the order through the outbox: wait for the projection before tampering with it.
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (System.currentTimeMillis() < deadline && qty(so).get("qtyDispatched").asDouble() < 5) {
+            drainOutboxFully();
+        }
         ok(200, "POST", "/sales/orders/" + so + "/rebuild", null);
         jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 1 WHERE \"orderId\" = ?").param(so).update();
         JsonNode fixed = ok(200, "POST", "/sales/orders/" + so + "/rebuild", null);

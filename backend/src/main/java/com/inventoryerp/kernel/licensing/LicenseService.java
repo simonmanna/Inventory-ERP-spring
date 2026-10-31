@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import com.inventoryerp.kernel.tenancy.InstallWide;
 
 /**
  * This installation's licence: what it is, and how it changes.
@@ -46,13 +47,14 @@ public class LicenseService {
     private final LicenseProperties properties;
     private final JdbcClient jdbc;
     private final String appVersion;
+    private final InstallWide installWide;
 
     private final Cache<String, LicenseState> snapshot =
             Caffeine.newBuilder().expireAfterWrite(SNAPSHOT_TTL).build();
 
     public LicenseService(LicenseInstallationRepository installations, LicenseFingerprint fingerprint,
             LicenseKeySet keySet, LicenseServerClient client, LicenseEntitlements entitlements,
-            LicenseProperties properties, JdbcClient jdbc,
+            LicenseProperties properties, JdbcClient jdbc, InstallWide installWide,
             @org.springframework.beans.factory.annotation.Value("${app.version:0.1.0}") String appVersion) {
         this.installations = installations;
         this.fingerprint = fingerprint;
@@ -62,6 +64,7 @@ public class LicenseService {
         this.properties = properties;
         this.jdbc = jdbc;
         this.appVersion = appVersion;
+        this.installWide = installWide;
     }
 
     // ---- reads ----
@@ -88,12 +91,13 @@ public class LicenseService {
      * Counts the authority caps. Deliberately counted across all organizations: the licence binds
      * the installation, so ten tenants of five users each are fifty users on one licence.
      */
-    @Transactional(readOnly = true)
     public Usage usage() {
-        return new Usage(
+        // Its own transaction with no tenant: inside a request the tenant row-level security policy would count the
+        // caller's organization only, and the caps would let every tenant fill the licence again.
+        return installWide.run(() -> new Usage(
                 count("SELECT count(*) FROM \"PosDevice\" WHERE \"revokedAt\" IS NULL"),
                 count("SELECT count(*) FROM \"User\" WHERE \"isActive\" = true AND \"deletedAt\" IS NULL"),
-                count("SELECT count(*) FROM \"Organization\" WHERE status = 'active' AND \"deletedAt\" IS NULL"));
+                count("SELECT count(*) FROM \"Organization\" WHERE status = 'active' AND \"deletedAt\" IS NULL")));
     }
 
     // ---- changes ----

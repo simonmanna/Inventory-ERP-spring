@@ -38,6 +38,9 @@ class BackupRestoreIT extends ApiTestSupport {
     ObjectProvider<JdbcConnectionDetails> jdbcDetails;
 
     @Autowired
+    ObjectProvider<org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails> ownerDetails;
+
+    @Autowired
     SettingsService settings;
 
     Path primary;
@@ -85,7 +88,7 @@ class BackupRestoreIT extends ApiTestSupport {
         MockEnvironment env = new MockEnvironment().withProperty("BACKUP_ENCRYPTION_PASSWORD", password)
                 .withProperty("app.jobs.enabled", "false");
         StaticListableBeanFactory none = new StaticListableBeanFactory();
-        service = new BackupService(settings, env, jdbcDetails,
+        service = new BackupService(settings, env, jdbcDetails, ownerDetails,
                 none.getBeanProvider(net.javacrumbs.shedlock.core.LockProvider.class),
                 none.getBeanProvider(org.springframework.mail.javamail.JavaMailSender.class));
         Map<String, Object> cfg = service.defaults();

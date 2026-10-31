@@ -75,19 +75,31 @@ tables are **soft** (set `deletedAt`, `updatedBy`) unless the Nest service hard-
 
 ## 6. Row-Level Security
 
-V1 contains RLS policies keyed on the GUC `app.org_id`. Nest ran as superuser (RLS bypassed,
-`RLS_ALLOW_SUPERUSER=true`). Spring sets `SET LOCAL app.org_id` at the start of every tenant
-transaction (P1) and production uses a non-superuser role:
+Tenancy is enforced twice: every org-scoped query filters on `organizationId` in code, and Postgres row-level
+security (RLS) backs it up.
+
+- **Policy** (`V214`): every table with an `organizationId` column (plus `Organization` on `id`) has
+  `tenant_isolation`. A transaction opened for a tenant (`TenantAwareTransactionManager` runs
+  `set_config('app.org_id', …, true)`) reads and writes only that tenant's rows (and global rows where the column is
+  nullable and NULL). A transaction without a tenant (jobs spanning organizations, login, bootstrap, seeds) is not
+  restricted. A new migration that adds an org-scoped table must enable RLS and add the same policy;
+  `TenantRowSecurityIT` fails otherwise.
+- **Roles**: RLS is enabled, not forced, so the table owner bypasses it. Flyway and backups connect as the owner
+  (`FLYWAY_USER` / `FLYWAY_PASSWORD`, default `DB_USER`); the API connects as `DB_USER`. When the two differ, the
+  `db/callback/afterMigrate.sql` callback creates `DB_USER` (`NOSUPERUSER NOBYPASSRLS`, password `DB_PASSWORD`) if
+  missing and grants it table, sequence and function rights plus `CREATE` on the schema (per-organization document
+  sequences are created at run time). It warns if the role is a superuser or bypasses RLS.
+- `docker-compose.yml` runs the API as `erp_app` (`DB_APP_USER` / `DB_APP_PASSWORD`); the integration tests run the
+  API as a non-owner role too, so the whole suite is an RLS acceptance run.
+- Backups run `pg_dump` as the owner (`BackupService` uses the Flyway credentials unless `PGUSER` is set): `pg_dump`
+  refuses tables whose RLS would apply to it.
+
+Existing database (one-time, as the owner), if you prefer to create the role yourself:
 
 ```sql
 CREATE ROLE erp_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO erp_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO erp_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO erp_app;
--- Flyway runs as the owner role (separate credentials: SPRING_FLYWAY_USER / SPRING_FLYWAY_PASSWORD).
+-- then start the API with FLYWAY_USER=<owner> DB_USER=erp_app; the callback grants the rest.
 ```
-
-Enabling RLS enforcement is gated by a staging acceptance run (cross-tenant test suite + full parity).
 
 ## 7. Seed
 
