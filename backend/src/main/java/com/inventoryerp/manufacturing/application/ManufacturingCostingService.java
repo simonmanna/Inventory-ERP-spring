@@ -409,6 +409,32 @@ public class ManufacturingCostingService {
      * per unit of the product, else its average stock cost, else its cost price; each row says which.
      */
     public Map<String, Object> margin(String from, String to, String groupBy) {
+        return margin(from, to, groupBy, new MarginScope(null, null, null));
+    }
+
+    /** Narrowing of {@link #margin(String, String, String)} for analytics (ADR-S020); null means no limit. */
+    public record MarginScope(String[] branchIds, String productId, String partnerId) {
+
+        private String where(String header, String lineProduct, List<Object> params) {
+            StringBuilder w = new StringBuilder();
+            if (branchIds != null) {
+                w.append(" AND ").append(header).append(".\"branchId\" = ANY(?::text[])");
+                params.add(branchIds);
+            }
+            if (productId != null && !productId.isBlank()) {
+                w.append(" AND ").append(lineProduct).append(" = ?");
+                params.add(productId);
+            }
+            if (partnerId != null && !partnerId.isBlank()) {
+                w.append(" AND ").append(header).append(".\"partnerId\" = ?");
+                params.add(partnerId);
+            }
+            return w.toString();
+        }
+    }
+
+    /** {@link #margin(String, String, String)} over a {@link MarginScope}. */
+    public Map<String, Object> margin(String from, String to, String groupBy, MarginScope scope) {
         Range r = range(from, to);
         String group = groupBy == null || groupBy.isBlank() ? "product" : groupBy;
         if (!List.of("product", "customer").contains(group)) {
@@ -425,19 +451,23 @@ public class ManufacturingCostingService {
         Map<String, Map<String, Object>> rows = new LinkedHashMap<>();
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal costTotal = BigDecimal.ZERO;
+        List<Object> params = new ArrayList<>(List.of(MfgDb.org(), r.start(), r.end()));
+        String invoiceWhere = scope.where("v", "i.\"productId\"", params);
+        params.addAll(List.of(MfgDb.org(), r.start(), r.end()));
+        String documentWhere = scope.where("d", "l.\"productId\"", params);
         for (Map<String, Object> s : SqlRows.list(db.jdbc().sql("""
                 SELECT i."productId", p.name AS "productName", v."partnerId", pa.name AS "partnerName", i.quantity,
                        i.subtotal FROM "InvoiceItem" i JOIN "Invoice" v ON v.id = i."invoiceId"
                 JOIN "Product" p ON p.id = i."productId" LEFT JOIN "Partner" pa ON pa.id = v."partnerId"
                 WHERE i."organizationId" = ? AND v.status IN ('posted',
-                        'paid') AND v."issueDate" >= ? AND v."issueDate" < ?
+                        'paid') AND v."issueDate" >= ? AND v."issueDate" < ?""" + invoiceWhere + """
+
                 UNION ALL
                 SELECT l."productId", p.name, d."partnerId", pa.name, l.quantity, l.subtotal
                 FROM "DocumentLine" l JOIN "Document" d ON d.id = l."documentId" JOIN "Product" p ON p.id = l."productId"
                 LEFT JOIN "Partner" pa ON pa.id = d."partnerId"
                 WHERE d."organizationId" = ? AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
-                  AND d."issueDate" >= ? AND d."issueDate" < ?
-                """).params(MfgDb.org(), r.start(), r.end(), MfgDb.org(), r.start(), r.end()))) {
+                  AND d."issueDate" >= ? AND d."issueDate" < ?""" + documentWhere).params(params))) {
             String productId = str(s, "productId");
             Object[] unit = unitCosts.computeIfAbsent(productId, k -> unitCost(k, produced.get(k)));
             BigDecimal sold = dec(s, "quantity");
