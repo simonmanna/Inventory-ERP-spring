@@ -506,6 +506,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/settings/dispatch', label: tx('Dispatch Settings'), icon: Settings2, permission: PERMISSIONS.fleet.settings },
       { to: '/fleet/freight-bills', label: tx('Freight Bills'), icon: ReceiptText, permission: PERMISSIONS.fleetFreight.read },
       // 1.6 maintenance
+      { to: '/fleet/plant', label: tx('Fixed Plant'), icon: Factory, permission: PERMISSIONS.fleetVehicle.read },
       { to: '/fleet/maintenance', label: tx('Services Due'), icon: CalendarClock, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/maintenance/work-orders', label: tx('Maintenance Work Orders'), icon: Wrench, permission: PERMISSIONS.fleetMaintenance.read },
       { to: '/fleet/inspections', label: tx('Inspections'), icon: ClipboardCheck, permission: PERMISSIONS.fleetMaintenance.read },

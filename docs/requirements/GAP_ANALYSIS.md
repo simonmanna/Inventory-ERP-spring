@@ -417,9 +417,9 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 396 | Fixed asset registration and asset classification. | `present-verified` | fixedasset · `/fixed-assets`, `/asset-categories` · `/fixed-assets*` · FixedAssetIT.categories/register | — |
-| 397 | Equipment registers and assigned locations. | `present-partial` | Fixed asset `location`; fleet units include mobile plant. `fixed_plant` kind accepted but no classes seeded (generator is seeded as mobile plant), no test uses it | Fixed plant register (CMMS-1) |
-| 398 | Preventive maintenance schedules. | `present-partial` | FleetServiceScheduleService, `/fleet/service-schedules` (FleetMaintenanceIT.scheduleToWorkOrder). Not proven for fixed plant | Fixed plant schedules (CMMS-1) |
-| 399 | Maintenance work orders. | `present-partial` | `/fleet/work-orders` (FleetMaintenanceIT). Not proven for fixed plant | Fixed plant work orders (CMMS-1) |
+| 397 | Equipment registers and assigned locations. | `present-partial (built, unverified)` | FleetPlantService, `/fleet/plant`, `/fleet/plant/classes`, PlantRegisterPage (by location), FleetPlantIT | Verify by running it |
+| 398 | Preventive maintenance schedules. | `present-partial (built, unverified)` | Fleet 1.6 schedules on plant units (hours / calendar), FleetPlantIT.scheduleWorkOrderCost | Verify by running it |
+| 399 | Maintenance work orders. | `present-partial (built, unverified)` | Fleet 1.6 work orders on plant units, FleetPlantIT.scheduleWorkOrderCost | Verify by running it |
 | 400 | Breakdown and repair records. | `present-verified` | fleet, fixedasset · `/fleet/defects`, `/fixed-assets/{id}/repairs` · `/fleet/defects`, `/fixed-assets/:id` · FleetMaintenanceIT, FixedAssetIT | — |
 | 401 | Spare parts inventory and consumption. | `present-verified` | fleet · work order parts · `/fleet/maintenance/work-orders/:id` · FleetMaintenanceIT.partsIssueReturnReverse | — |
 | 402 | Maintenance labour and service costs. | `present-verified` | fleet · work order labour and bills · FleetMaintenanceIT.labourAndBills | — |

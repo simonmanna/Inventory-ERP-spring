@@ -50,6 +50,11 @@ public class FleetDispatchEligibilityService {
         if (!VehicleStatusPolicy.isOperational(status)) {
             reasons.add("Vehicle " + code + " is " + VehicleStatusPolicy.label(status));
         }
+        Map<String, Object> category = db.byId(com.inventoryerp.fleet.domain.FleetVehicleCategory.class,
+                (String) v.get("categoryId"), false);
+        if (category != null && FleetPlantService.KIND.equals(category.get("kind"))) {
+            reasons.add("Vehicle " + code + " is fixed plant and cannot carry a load");
+        }
         List<Map<String, Object>> blocking = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         for (Map<String, Object> d : SqlRows.list(db.jdbc().sql("SELECT id, code, title, severity, status,"

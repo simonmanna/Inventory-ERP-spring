@@ -371,6 +371,29 @@ today; Phase 4 CMMS registers crushers, conveyors, screens, block machines and g
 for them without schema change. The services only use the unit view of `MaintainableUnits` (identity, class, cost
 centre, branch, lifetime meters, status hold / release); a separate plant register would implement that view.
 
+### CMMS-1 fixed plant (Phase 4, built, unverified: nothing compiled or run)
+
+Fixed plant is **not** a parallel model: crushers, conveyors, screens, block machines and fixed generators are
+`FleetVehicle` units of a class with `kind = fixed_plant`. `FleetCategoryService.ensureFixedPlantClasses` adds the classes
+`CRUSHER, CONVEYOR, SCREEN, BLOCK_MACHINE, GENSET` (hours meter) to any organization on first use of a `/fleet/plant`
+route; the road defaults and their count are unchanged. `FleetPlantService` + `FleetPlantController` (package
+`fleet.web.plant`):
+
+| Route | Purpose | Permission |
+|---|---|---|
+| `GET /fleet/plant` (`search, categoryId, status, branchId, locationId, page, pageSize`) | register by location: class, location, lifetime hours, linked asset, open work orders, open downtime | `fleet_vehicle:read` |
+| `POST /fleet/plant` | register (body = `VehicleInput`, 400 for a class that is not fixed plant) | `fleet_vehicle:create` |
+| `GET /fleet/plant/classes` | active fixed-plant classes (seeds the missing ones) | `fleet_vehicle:read` |
+| `GET /fleet/plant/by-asset/{assetId}` | unit linked to a fixed asset, `{unit: null}` when none | `fleet_vehicle:read` |
+| `GET /fleet/plant/costs` (`from, to, categoryId, branchId, locationId`) | cost per equipment: the 1.9 cost buckets, hours, cost per hour, work orders, downtime hours (open downtime counts to now) | `fleet:report` |
+
+Schedules, work orders, parts, labour, external bills, downtime, inspections, defects and reliability are the 1.6 routes
+on the same unit id. `FleetDispatchEligibilityService` refuses a fixed-plant unit (it can never carry a load).
+Depreciation and disposal stay in `fixedasset`: `FleetVehicle.assetId` links them, the vehicle detail shows book value,
+the asset detail links back (`PlantUnitLink`), and `fixed_asset.disposed` moves a linked **fixed-plant** unit to
+`disposed` (`FleetPlantAssetSubscriber`, idempotent; road vehicles stay manual). Screens: `/fleet/plant`,
+`/fleet/plant/costs`; registration, detail, schedules and work orders reuse the fleet screens. No migration needed.
+
 ### Routes (51, all under `/api/v1`, `@RequiresModule("fleet")`)
 
 | Group | Routes | Permission |

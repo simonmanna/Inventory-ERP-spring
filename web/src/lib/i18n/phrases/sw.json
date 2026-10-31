@@ -10627,5 +10627,18 @@
   "Weighbridge (tonnes)": "Mizani ya magari (tani)",
   "Yield and loss": "Mavuno na upotevu",
   "Abnormal loss written off": "Upotevu usio wa kawaida uliofutwa",
-  "Active profiles": "Wasifu hai"
+  "Active profiles": "Wasifu hai",
+  "Cost per equipment": "Gharama kwa kila kifaa",
+  "Could not load the plant register. Try again.": "Imeshindwa kupakia rejista ya mitambo. Jaribu tena.",
+  "Crushers, conveyors, screens, block machines and generators: one maintenance system with the trucks.": "Vinu, vyombo vya kusafirisha, chekecheke, mashine za matofali na jenereta: mfumo mmoja wa matengenezo pamoja na malori.",
+  "Depreciation, fuel and maintenance per piece of equipment, with running hours and downtime.": "Uchakavu, mafuta na matengenezo kwa kila kifaa, pamoja na saa za kazi na muda wa kusimama.",
+  "Fixed Plant": "Mitambo Isiyohamishika",
+  "Fixed Plant Costs": "Gharama za Mitambo Isiyohamishika",
+  "Maintained as fixed plant": "Hutunzwa kama mtambo usiohamishika",
+  "No equipment matches these filters.": "Hakuna kifaa kinacholingana na vichujio hivi.",
+  "No fixed plant registered yet.": "Bado hakuna mitambo isiyohamishika iliyosajiliwa.",
+  "Open work orders": "Maagizo ya kazi yaliyo wazi",
+  "Register plant": "Sajili mtambo",
+  "Search code, name, make…": "Tafuta msimbo, jina, chapa…",
+  "View equipment": "Tazama kifaa"
 }

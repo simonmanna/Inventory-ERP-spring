@@ -10627,5 +10627,18 @@
   "Weighbridge (tonnes)": "Munzaani wa mmotoka (ttani)",
   "Yield and loss": "Ebifunibwa n'ebifiiriddwa",
   "Abnormal loss written off": "Ebifiiriddwa ebitali bya bulijjo ebisaziddwamu",
-  "Active profiles": "Ebipimo ebikola"
+  "Active profiles": "Ebipimo ebikola",
+  "Cost per equipment": "Ensaasaanya ku buli kyuma",
+  "Could not load the plant register. Try again.": "Olukalala lw'ebyuma terusobodde kuggulibwa. Ddamu ogezeeko.",
+  "Crushers, conveyors, screens, block machines and generators: one maintenance system with the trucks.": "Ebimenya amayinja, ebitambuza, ebisengejja, ebyuma bya bulooka ne jenereeta: enkola y'okuddaabiriza emu n'emmotoka ennene.",
+  "Depreciation, fuel and maintenance per piece of equipment, with running hours and downtime.": "Okukendeera kw'omuwendo, amafuta n'okuddaabiriza ku buli kyuma, n'essaawa z'okukola n'ez'okuyimirira.",
+  "Fixed Plant": "Ebyuma Ebitakyuka Kifo",
+  "Fixed Plant Costs": "Ensaasaanya y'Ebyuma Ebitakyuka Kifo",
+  "Maintained as fixed plant": "Kiddaabirizibwa ng'ekyuma ekitakyuka kifo",
+  "No equipment matches these filters.": "Tewali kyuma kikwatagana na bino ebisengejja.",
+  "No fixed plant registered yet.": "Tewannabaawo byuma bitakyuka kifo ebiwandiisiddwa.",
+  "Open work orders": "Ebiragiro by'emirimu ebiggule",
+  "Register plant": "Wandiisa ekyuma",
+  "Search code, name, make…": "Noonya koodi, erinnya, ekika…",
+  "View equipment": "Laba ekyuma"
 }

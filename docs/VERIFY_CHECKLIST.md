@@ -353,3 +353,15 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane E — plant, field and integrations (built, unverified; nothing compiled or run)
+
+**CMMS-1 fixed plant** (`cd backend && ./gradlew test --tests 'com.inventoryerp.fleet.FleetPlantIT'`)
+
+- `/fleet/plant`: the page seeds five plant classes. Register a crusher through "Register plant" (class Crusher, a home
+  location, opening hours) and see it in the list, filtered by location.
+- Open the unit: Maintenance tab, add an hours schedule, read the meter past the lead, raise and start a work order. The
+  unit shows `in workshop`; issue a part and labour; complete it and it returns to active.
+- `/fleet/plant/costs`: maintenance, hours, cost per hour and downtime for the unit.
+- Link a fixed asset on the unit. The asset detail page shows the link; dispose the asset and the unit becomes `disposed`.
+- A trip assignment to the crusher is refused ("fixed plant and cannot carry a load").
