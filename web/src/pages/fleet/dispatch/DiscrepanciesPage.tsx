@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Scale } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import {
   DISCREPANCY_KIND_LABEL, DISCREPANCY_STATUS_LABEL, REASON_LABEL, useApproveDiscrepancy, useDiscrepancies,
   useRejectDiscrepancy, type Discrepancy,
 } from '@/features/fleet/dispatch-api';
+import { caseApi } from '@/features/crm/cases-api';
 import { num, toOptions } from '../fleet-format';
 import { DiscrepancyStatusPill, ReasonDialog } from './dispatch-ui';
 
@@ -38,6 +39,8 @@ export function DiscrepanciesPage() {
   const [approving, setApproving] = useState<Discrepancy | null>(null);
   const [rejecting, setRejecting] = useState<Discrepancy | null>(null);
   const canDecide = has(PERMISSIONS.fleetDispatch.approveDiscrepancy);
+  const canOpenCase = has(PERMISSIONS.crm.caseWrite);
+  const navigate = useNavigate();
   const rows = data?.data ?? [];
   const meta = data?.meta;
 
@@ -49,6 +52,15 @@ export function DiscrepanciesPage() {
       setRejecting(null);
     } catch (err) {
       notify.error(apiMessage(err, tx('Could not decide the discrepancy')));
+    }
+  };
+
+  const openCase = async (discrepancyId: string) => {
+    try {
+      const created = await caseApi.fromDiscrepancy(discrepancyId);
+      navigate(`/crm/cases/${created.id}`);
+    } catch (err) {
+      notify.error(apiMessage(err, tx('Could not open the case')));
     }
   };
 
@@ -67,10 +79,15 @@ export function DiscrepanciesPage() {
     { key: 'status', header: tx('Status'), render: (d) => <DiscrepancyStatusPill status={d.status} /> },
     {
       key: 'actions', header: '', className: 'text-right',
-      render: (d) => canDecide && d.status === 'pending' && (
+      render: (d) => (
         <div className="flex justify-end gap-1">
-          <Button size="sm" onClick={() => setApproving(d)}>{tx('Approve')}</Button>
-          <Button size="sm" variant="outline" onClick={() => setRejecting(d)}>{tx('Reject')}</Button>
+          {canDecide && d.status === 'pending' && (
+            <>
+              <Button size="sm" onClick={() => setApproving(d)}>{tx('Approve')}</Button>
+              <Button size="sm" variant="outline" onClick={() => setRejecting(d)}>{tx('Reject')}</Button>
+            </>
+          )}
+          {canOpenCase && <Button size="sm" variant="ghost" onClick={() => openCase(d.id)}>{tx('Open case')}</Button>}
         </div>
       ),
     },

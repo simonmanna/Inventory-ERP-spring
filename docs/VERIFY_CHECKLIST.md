@@ -549,3 +549,66 @@ CTRL-2, migration `V52__document_numbering.sql`:
 - SALES-5
   - `/reports/sales-analysis`: group by product, branch, customer, salesperson, month; totals agree with `/reports/ar/revenue-by-customer` for the same dates (ERP invoices).
 
+## Phase 4 HR-1 — recruitment and onboarding (built, not run)
+
+- [ ] `/hr/onboarding` → Templates: add "Safety induction", due after 3 days.
+- [ ] `/hr/recruitment`: create an opening (headcount 1), set it to open, add an applicant, schedule an interview.
+- [ ] Move the applicant to offer, hire: an employee appears, the opening closes, `/hr/onboarding` shows the task due 3 days after the hire date.
+- [ ] A second hire of the same applicant is refused; a required task cannot be skipped.
+
+## Phase 4 HR-2 — contract records (built, not run)
+
+- [ ] `/hr/contracts`: create a fixed-term contract, activate it: the employee detail shows the contract end date.
+- [ ] Activate a second contract for the same employee: the first becomes superseded.
+- [ ] Renew: a draft starts the day after the old end date. Terminate needs a reason.
+- [ ] Set an end date within 60 days: it appears under "Ending soon". The daily job at 01:20 expires it after the end date.
+
+## Phase 4 HR-3 — configurable overtime (built, not run)
+
+- [ ] `/hr/payroll/settings` → Overtime: add a rule, weekday 1.25, weekend 1.5, holiday 2, weekend days SUNDAY.
+- [ ] Record attendance overtime on a weekday, a Sunday and a holiday, calculate a run: overtime pay uses each multiplier.
+- [ ] With no active rule, overtime is 1.5 times the hourly rate, as before.
+
+## Phase 4 HR-4 — performance review screen (built, not run)
+
+- [ ] `/hr/reviews`: create a review with a rating, filter by employee, submit and approve it, edit it, delete it.
+- [ ] The menu entry shows only with `hr:performance`.
+
+## Phase 4 HR-5 — payroll cost allocation (built, not run)
+
+- [ ] `/hr/payroll/settings` → Cost allocation: split a department 100 % to one cost centre, one employee 50/50 across two.
+- [ ] Approve a run: the journal shows salaries debits per cost centre and branch, debits = credits.
+- [ ] The report on the same tab shows the amounts by department and cost centre. Reversing the run empties it.
+- [ ] With no splits at all, the journal has one salaries debit, as before.
+- [ ] Accounting: a cost-centre report for the period shows the same totals.
+
+## Phase 4 CRM-1 — complaints and service requests (built, not run)
+
+- [ ] `/crm/cases`: create a complaint; the due time follows the priority. Filter by status, type, priority, overdue.
+- [ ] On the case: add a note, assign an owner (they get a notification), start, resolve with a resolution, close.
+- [ ] `/fleet/delivery-discrepancies` → Open case: a high-priority delivery complaint opens with the customer and quantities; the button again opens the same case.
+- [ ] Approve the discrepancy: the case timeline shows the decision and any credit note; the case stays open.
+
+## Phase 4 CRM-2 — customer data tests and segments (built, not run)
+
+- [ ] Run `CrmCustomerDataIT` (contacts, reminder job, saved filters, segments, product categories).
+- [ ] `/crm/customers`: filter by category, name a segment, save it, clear the filters, pick it from Segments.
+
+## Phase 4 INV-1 — stock reservation screen (built, not run)
+
+- [ ] `/inventory/reservations` → New reservation: pick a location and product, see on hand, reserved and available; reserve more than available: a warning shows, the save still works (soft reservation).
+- [ ] Filter by status and location. Release, then Consume on another row. Check `/inventory/reservations/atp` follows.
+
+## Phase 4 INV-2 — product attributes and grades (built, not run)
+
+- [ ] `/products/specifications` → Grades: add C25. Attributes: add Strength (number, MPa), Size (choice 10 mm, 20 mm), one required.
+- [ ] Products tab: pick a product, set grade, standard and attributes. A required attribute left blank blocks Save; the server refuses it too.
+- [ ] A grade in use cannot be deleted. POS still sells the product and its JSON has no new field.
+
+## Phase 4 INV-3 — replenishment (built, not run)
+
+- [ ] `/inventory/replenishment` → Rules: add a rule with minimum 10 for a product with 6 in stock. Scan now: an alert shows available 6 and the suggested quantity.
+- [ ] Reserve stock on `/inventory/reservations` and scan: available drops by the reservation.
+- [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/procurement/purchase-requests` shows a draft, one per supplier.
+- [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
+- [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.

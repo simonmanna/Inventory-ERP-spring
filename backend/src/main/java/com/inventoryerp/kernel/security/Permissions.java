@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (513 permissions). Constant name = GROUP__ACTION.
+ * exactly (518 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -150,6 +150,7 @@ public final class Permissions {
     public static final String INVENTORY_LOCATION__DELETE = "inventory_location:delete";
     public static final String INVENTORY__READ = "inventory:read";
     public static final String INVENTORY__MOVE = "inventory:move";
+    public static final String INVENTORY__REPLENISH = "inventory:replenish";
     public static final String INVENTORY_DOC__CREATE = "inventory_doc:create";
     public static final String INVENTORY_DOC__READ = "inventory_doc:read";
     public static final String INVENTORY_DOC__UPDATE = "inventory_doc:update";
@@ -402,6 +403,8 @@ public final class Permissions {
     public static final String CRM__PRICING_MANAGE = "crm:pricing:manage";
     public static final String CRM__REPORT_READ = "crm:report:read";
     public static final String CRM__CONFIGURE = "crm:configure";
+    public static final String CRM__CASE_READ = "crm:case:read";
+    public static final String CRM__CASE_WRITE = "crm:case:write";
     public static final String DOCUMENT__CREATE = "document:create";
     public static final String DOCUMENT__READ = "document:read";
     public static final String DOCUMENT__UPDATE = "document:update";
@@ -432,6 +435,8 @@ public final class Permissions {
     public static final String HR__DOCUMENT = "hr:document";
     public static final String HR__TRAINING = "hr:training";
     public static final String HR__REPORT = "hr:report";
+    public static final String HR__RECRUITMENT = "hr:recruitment";
+    public static final String HR__CONTRACT = "hr:contract";
     public static final String COMMUNICATION__CONVERSATION_READ = "communication:conversation:read";
     public static final String COMMUNICATION__CONVERSATION_WRITE = "communication:conversation:write";
     public static final String COMMUNICATION__CONVERSATION_READ_ALL = "communication:conversation:read_all";
@@ -666,6 +671,7 @@ public final class Permissions {
             "inventory_location:delete",
             "inventory:read",
             "inventory:move",
+            "inventory:replenish",
             "inventory_doc:create",
             "inventory_doc:read",
             "inventory_doc:update",
@@ -918,6 +924,8 @@ public final class Permissions {
             "crm:pricing:manage",
             "crm:report:read",
             "crm:configure",
+            "crm:case:read",
+            "crm:case:write",
             "document:create",
             "document:read",
             "document:update",
@@ -948,6 +956,8 @@ public final class Permissions {
             "hr:document",
             "hr:training",
             "hr:report",
+            "hr:recruitment",
+            "hr:contract",
             "communication:conversation:read",
             "communication:conversation:write",
             "communication:conversation:read_all",

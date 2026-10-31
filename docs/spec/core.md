@@ -121,3 +121,8 @@ tables `PriceList`, `PriceListItem`, `PriceListAssignment` (V63). `PriceListServ
 `InvoiceService`, `OrdersService`, `FleetDeliveryOrderService` and `CrmPricingService` for lines with no price; POS never
 calls it. Screen: `/price-lists`. Test: `PriceListIT`.
 
+## INV-2 product attributes, specifications and grades (built, unverified)
+
+`ProductSpecController` (11 routes on `/product-grades`, `/product-attributes`, `/product-specifications`), `ProductSpecService`,
+migration V96 (`ProductGrade`, `ProductAttribute`, `ProductSpecification`, `ProductAttributeValue`), permissions
+`product:read` / `product:update`. `Product` itself is not changed. Screen: `/products/specifications`.

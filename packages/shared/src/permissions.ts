@@ -233,6 +233,8 @@ export const PERMISSIONS = {
   inventory: {
     read: 'inventory:read',
     move: 'inventory:move',
+    /// Replenishment rules, alerts and raising requisitions from them (INV-3).
+    replenish: 'inventory:replenish',
   },
   // ---- F.8 — Stock document wrappers + masters ----
   inventoryDoc: {
@@ -643,6 +645,9 @@ export const PERMISSIONS = {
     pricingManage: 'crm:pricing:manage',
     reportRead: 'crm:report:read',
     configure: 'crm:configure',
+    /// Customer complaints and service requests (CRM-1).
+    caseRead: 'crm:case:read',
+    caseWrite: 'crm:case:write',
   },
   document: {
     create: 'document:create',
@@ -691,6 +696,10 @@ export const PERMISSIONS = {
     document: 'hr:document',
     training: 'hr:training',
     report: 'hr:report',
+    /// Job openings, applicants, interviews and onboarding checklists (HR-1).
+    recruitment: 'hr:recruitment',
+    /// Employment contract records and renewals (HR-2).
+    contract: 'hr:contract',
   },
   // ---- Communication platform — messaging + channels ----
   // NB: read/write/send are CAPABILITIES. Per-conversation ACCESS is enforced

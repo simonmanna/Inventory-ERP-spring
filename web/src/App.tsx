@@ -221,9 +221,16 @@ import { HrTeamPage } from '@/pages/hr/HrTeamPage';
 import { HrDocumentsPage } from '@/pages/hr/HrDocumentsPage';
 import { HrTrainingPage } from '@/pages/hr/HrTrainingPage';
 import { HrSelfServicePage } from '@/pages/hr/HrSelfServicePage';
+import { HrRecruitmentPage } from '@/pages/hr/HrRecruitmentPage';
+import { HrOnboardingPage } from '@/pages/hr/HrOnboardingPage';
+import { HrContractsPage } from '@/pages/hr/HrContractsPage';
+import { HrReviewsPage } from '@/pages/hr/HrReviewsPage';
 import { StockLedgerPage } from '@/pages/inventory/StockLedgerPage';
 import { StockMovementDetailPage } from '@/pages/inventory/StockMovementDetailPage';
 import LocationsPage from '@/pages/inventory/LocationsPage';
+import { StockReservationsPage } from '@/pages/inventory/StockReservationsPage';
+import { ProductSpecsPage } from '@/pages/products/ProductSpecsPage';
+import { ReplenishmentPage } from '@/pages/inventory/ReplenishmentPage';
 import TerminalPage from '@/pages/pos/Terminal';
 import { TerminalWorkspace } from '@/pages/pos/TerminalWorkspace';
 import ReportsPage from '@/pages/pos/ReportsPage';
@@ -291,6 +298,7 @@ export function App() {
           <Route path="/suppliers/:partnerId/ledger" element={<SupplierLedgerPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/products/new" element={<ProductEditPage />} />
+          <Route path="/products/specifications" element={<ProductSpecsPage />} />
           <Route path="/products/:id/edit" element={<ProductEditPage />} />
           <Route path="/uom" element={<UomPage />} />
           <Route path="/menu" element={<MenuPage />} />
@@ -487,6 +495,10 @@ export function App() {
           <Route path="/hr/team" element={<HrTeamPage />} />
           <Route path="/hr/documents" element={<HrDocumentsPage />} />
           <Route path="/hr/training" element={<HrTrainingPage />} />
+          <Route path="/hr/recruitment" element={<HrRecruitmentPage />} />
+          <Route path="/hr/onboarding" element={<HrOnboardingPage />} />
+          <Route path="/hr/contracts" element={<HrContractsPage />} />
+          <Route path="/hr/reviews" element={<HrReviewsPage />} />
           <Route path="/hr/employees" element={<HrEmployeesPage />} />
           <Route path="/hr/employees/:id" element={<HrEmployeeDetailPage />} />
           <Route path="/hr/departments" element={<HrDepartmentsPage />} />
@@ -505,6 +517,8 @@ export function App() {
           <Route path="/inventory/ledger" element={<StockLedgerPage />} />
           <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
           <Route path="/inventory/locations" element={<LocationsPage />} />
+          <Route path="/inventory/reservations" element={<StockReservationsPage />} />
+          <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
           <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
           <Route path="/procurement/purchase-requests/new" element={<PurchaseRequestCreatePage />} />
           <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />

@@ -3,6 +3,7 @@ package com.inventoryerp.inventory.web;
 import com.inventoryerp.inventory.application.StockReservationService;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -72,6 +73,13 @@ public class StockReservationController {
     public Map<String, Object> atp(@RequestParam(required = false) String productId,
             @RequestParam(required = false) String locationId, @RequestParam(required = false) String variantId) {
         return reservations.availableToPromise(productId, locationId, variantId);
+    }
+
+    /** The reservations screen (INV-1): paged, with names; the list below keeps its Nest contract. */
+    @GetMapping("/overview")
+    @RequirePermissions(Permissions.INVENTORY__READ)
+    public PageResult<Map<String, Object>> overview(@RequestParam Map<String, String> query) {
+        return reservations.overview(query);
     }
 
     @GetMapping
