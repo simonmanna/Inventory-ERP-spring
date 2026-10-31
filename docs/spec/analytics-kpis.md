@@ -47,6 +47,7 @@ the same filters plus `page` and `pageSize` (default 25, at most 200). Both need
 | `/analytics/filter-options` | `analytics:view` | none | none |
 | `/analytics/quarry` | `analytics:quarry` | `quarry` | `extraction-logs` |
 | `/analytics/aggregates` | `analytics:aggregates` | `manufacturing` | `crushing-runs` |
+| `/analytics/blocks` | `analytics:blocks` | `manufacturing` | `precast-orders` |
 
 Administrators receive every analytics permission through V100. Other roles get them in Staff, Roles & Permissions.
 
@@ -83,3 +84,18 @@ Recirculated oversize is not feed or output here: runs store it apart.
 
 The product filter keeps runs that fed or produced the product, and each KPI then covers the whole run, so the
 per-product table is the place to read one product's tonnes.
+
+## Block manufacturing
+
+Source: `PrecastReportService.costPerBlock` and `breakage`, with a branch list added for analytics. An order counts in
+the period it was created, as in the precast reports, not the period it finished; the screen says so. The report reads at
+most 500 orders per period, and the screen warns when it reaches that limit.
+
+| KPI | Formula |
+|---|---|
+| Blocks produced | Σ good blocks posted at the cubing stage of those orders |
+| Blocks pressed | Σ good off the press + broken at the press |
+| Rejection rate | (broken at press + broken at cubing + second grade) ÷ blocks pressed × 100 |
+| Second grade | Σ by-product quantity |
+| Finished goods value | Σ value of the main output at cubing |
+| Cost per acceptable block | finished goods value ÷ blocks produced |
