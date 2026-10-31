@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.time.Instant;
@@ -25,10 +26,12 @@ public class FleetTelematicsSyncJob {
 
     private final FleetDb db;
     private final FleetTelematicsService telematics;
+    private final JobMetrics metrics;
 
-    public FleetTelematicsSyncJob(FleetDb db, FleetTelematicsService telematics) {
+    public FleetTelematicsSyncJob(FleetDb db, FleetTelematicsService telematics, JobMetrics metrics) {
         this.db = db;
         this.telematics = telematics;
+        this.metrics = metrics;
     }
 
     @Scheduled(cron = "${app.fleet.telematics.sync-cron:${FLEET_TELEMATICS_SYNC_CRON:0 */5 * * * *}}")
@@ -47,6 +50,7 @@ public class FleetTelematicsSyncJob {
                 });
             } catch (RuntimeException e) {
                 log.error("telematics sync failed for org {}: {}", orgId, e.toString());
+                metrics.jobFailed("fleet-telematics-sync");
             }
         }
     }

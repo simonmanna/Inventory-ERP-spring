@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.util.List;
@@ -20,10 +21,12 @@ public class MobileMoneyPollJob {
 
     private final JdbcClient jdbc;
     private final MobileMoneyService collections;
+    private final JobMetrics metrics;
 
-    public MobileMoneyPollJob(JdbcClient jdbc, MobileMoneyService collections) {
+    public MobileMoneyPollJob(JdbcClient jdbc, MobileMoneyService collections, JobMetrics metrics) {
         this.jdbc = jdbc;
         this.collections = collections;
+        this.metrics = metrics;
     }
 
     @Scheduled(cron = "${app.mobile-money.poll-cron:${MOBILE_MONEY_POLL_CRON:0 */2 * * * *}}")
@@ -38,6 +41,7 @@ public class MobileMoneyPollJob {
                 });
             } catch (RuntimeException e) {
                 log.error("mobile money poll failed for org {}: {}", orgId, e.toString());
+                metrics.jobFailed("mobile-money-poll");
             }
         }
     }

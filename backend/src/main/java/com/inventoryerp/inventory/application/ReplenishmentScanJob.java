@@ -1,5 +1,6 @@
 package com.inventoryerp.inventory.application;
 
+import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.util.List;
 import java.util.Map;
@@ -20,10 +21,12 @@ public class ReplenishmentScanJob {
 
     private final JdbcClient jdbc;
     private final ReplenishmentService replenishment;
+    private final JobMetrics metrics;
 
-    public ReplenishmentScanJob(JdbcClient jdbc, ReplenishmentService replenishment) {
+    public ReplenishmentScanJob(JdbcClient jdbc, ReplenishmentService replenishment, JobMetrics metrics) {
         this.jdbc = jdbc;
         this.replenishment = replenishment;
+        this.metrics = metrics;
     }
 
     @Scheduled(cron = "0 15 * * * *")
@@ -38,6 +41,7 @@ public class ReplenishmentScanJob {
                 log.info("Replenishment scan for {}: {}", orgId, out);
             } catch (RuntimeException e) {
                 log.warn("Replenishment scan failed for {}: {}", orgId, e.toString());
+                metrics.jobFailed("inventory-replenishment-scan");
             }
         }
     }

@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
@@ -65,15 +66,17 @@ public class MobileMoneyService {
     private final PaymentService payments;
     private final SequenceService sequence;
     private final AuditService audit;
+    private final JobMetrics metrics;
     private final TransactionTemplate tx;
 
     public MobileMoneyService(JdbcClient jdbc, MobileMoneyProviders providers, PaymentService payments,
-            SequenceService sequence, AuditService audit, PlatformTransactionManager txm) {
+            SequenceService sequence, AuditService audit, JobMetrics metrics, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.providers = providers;
         this.payments = payments;
         this.sequence = sequence;
         this.audit = audit;
+        this.metrics = metrics;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -148,6 +151,7 @@ public class MobileMoneyService {
             tx.executeWithoutResult(s -> apply(id, state));
         } catch (RuntimeException e) {
             log.warn("mobile money collection {} could not start: {}", row.get("reference"), e.toString());
+            metrics.providerFailed("mobile-money");
             tx.executeWithoutResult(s -> note(id, e.getMessage()));
         }
         return tx.execute(s -> get(id));
@@ -205,6 +209,7 @@ public class MobileMoneyService {
                 done++;
             } catch (RuntimeException e) {
                 log.warn("mobile money poll failed for {}: {}", p.get("id"), e.toString());
+                metrics.providerFailed("mobile-money");
             }
         }
         return done;
