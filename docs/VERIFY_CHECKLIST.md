@@ -353,3 +353,17 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 HR-1 — recruitment and onboarding (built, not run)
+
+- [ ] `/hr/onboarding` → Templates: add "Safety induction", due after 3 days.
+- [ ] `/hr/recruitment`: create an opening (headcount 1), set it to open, add an applicant, schedule an interview.
+- [ ] Move the applicant to offer, hire: an employee appears, the opening closes, `/hr/onboarding` shows the task due 3 days after the hire date.
+- [ ] A second hire of the same applicant is refused; a required task cannot be skipped.
+
+## Phase 4 HR-2 — contract records (built, not run)
+
+- [ ] `/hr/contracts`: create a fixed-term contract, activate it: the employee detail shows the contract end date.
+- [ ] Activate a second contract for the same employee: the first becomes superseded.
+- [ ] Renew: a draft starts the day after the old end date. Terminate needs a reason.
+- [ ] Set an end date within 60 days: it appears under "Ending soon". The daily job at 01:20 expires it after the end date.

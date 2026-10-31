@@ -205,8 +205,8 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 118 | Employee records and organizational structures. | `present-verified` | hr · `/hr/employees`, `/departments`, `/positions` · `/hr/employees*`, `/hr/departments`, `/hr/positions` · HrIT.orgMasters/identityAndLifecycle | — |
-| 119 | Recruitment and onboarding. | `missing` | No recruitment or onboarding entity, route or screen (grep in `hr`: empty) | Build recruitment and onboarding (HR-1) |
-| 120 | Contracts, job roles, and departmental assignments. | `present-partial` | Positions, departments and transfers verified (HrIT). Contract is a single `HrEmployee.contractEndDate`; no contract record | Contract records (HR-2) |
+| 119 | Recruitment and onboarding. | `present-partial (built, unverified)` | Built: `/hr/recruitment/*`, `/hr/onboarding/*` (V90, HrRecruitmentService, HrRecruitmentController), HrRecruitmentIT written, screens `/hr/recruitment`, `/hr/onboarding`. Nothing compiled or run | Build recruitment and onboarding (HR-1) |
+| 120 | Contracts, job roles, and departmental assignments. | `present-partial (built, unverified)` | Positions, departments, transfers verified (HrIT). Contract records built: `/hr/contracts` (V91, HrContractService, HrContractIT written, screen `/hr/contracts`); `HrEmployee.contractEndDate` follows the active contract. Nothing compiled or run | Contract records (HR-2) |
 | 121 | Attendance, shifts, and working schedules. | `present-verified` | hr · `/hr/attendance*`, `/hr/shifts`, `/hr/assignments` · `/hr/attendance`, `/hr/shifts` · HrIT.attendance | — |
 | 122 | Leave and absence management. | `present-verified` | hr · `/hr/leave/*` · `/hr/leave` · HrIT.leave | — |
 | 123 | Payroll processing and payslip generation. | `present-verified` | hr · `/hr/payroll/runs`, `/hr/payslips` · HrPayrollService · `/hr/payroll*`, `/hr/payslips` · HrIT.payroll | — |

@@ -74,6 +74,26 @@ _None. Any deviation from Nest behaviour must be listed here with the owner's ap
   (the generated `SOFT_DELETE` / `ORG_SCOPED` sets), unfiltered includes, `_count`, JS `Number()` / `take` / `skip`.
 - `HrPosAttendanceSubscriber` listens for `pos.pin.login` / `pos.pin.logoff` (bean only with `ENABLE_HR=true`).
 
+## Track C additions (not in Nest)
+
+### HR-1 recruitment and onboarding (built, unverified)
+
+New controller `HrRecruitmentController`, service `HrRecruitmentService`, rules `HrRecruitmentRules`, migration V90.
+Permission `hr:recruitment` (hire also needs `hr:employee`). Routes (22): `/hr/recruitment/openings` (list, get, create,
+patch, delete, `{id}/status`), `/hr/recruitment/applicants` (list, get, create, patch, `{id}/stage`, `{id}/hire`,
+`{id}/interviews`), `/hr/recruitment/interviews/{id}`, `/hr/onboarding/templates` (list, create, patch, delete),
+`/hr/onboarding/tasks` (list, create, patch), `/hr/onboarding/employees/{employeeId}/generate`.
+Applicant stages: applied → screening → interview → offer → hired, or rejected / withdrawn with a reason; `hired` is
+reached only by the hire route, which creates the employee through `HrOrgService.createEmployee` and copies the active
+onboarding templates. Screens: `/hr/recruitment`, `/hr/onboarding`.
+
+### HR-2 contract records (built, unverified)
+
+`HrContractController` (9 routes on `/hr/contracts`: list, `expiring`, get, create, patch, delete, `{id}/activate`,
+`{id}/terminate`, `{id}/renew`), `HrContractService`, `HrContractExpiryJob` (01:20 daily), migration V91, permission
+`hr:contract`. One active contract per employee (unique partial index, activation locks the employee row).
+`HrEmployee.contractEndDate` follows the active contract. Screen: `/hr/contracts`.
+
 ## Status
 
 140/140 routes (`HrController`, 11 services in `com.inventoryerp.hr.application`).

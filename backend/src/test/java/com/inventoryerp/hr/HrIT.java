@@ -471,6 +471,6 @@ class HrIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 anonymous on all routes, 403 without the hr permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.hr")).isEqualTo(162);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.hr")).isEqualTo(171);
     }
 }

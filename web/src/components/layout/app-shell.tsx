@@ -396,6 +396,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/hr/training', label: tx('Training'), icon: GraduationCap, permission: PERMISSIONS.hr.training },
       { to: '/hr/recruitment', label: tx('Recruitment'), icon: Users2, permission: PERMISSIONS.hr.recruitment },
       { to: '/hr/onboarding', label: tx('Onboarding'), icon: ClipboardList, permission: PERMISSIONS.hr.recruitment },
+      { to: '/hr/contracts', label: tx('Contracts'), icon: ScrollText, permission: PERMISSIONS.hr.contract },
       { to: '/hr/reports', label: tx('Reports'), icon: BarChart3, permission: PERMISSIONS.hr.report, reportId: 'hr.reports' },
       // No permission: both are scoped server-side to the caller's own record
       // (or their own reports), so gating them would mean handing every cashier
