@@ -350,3 +350,18 @@ Nothing in this lane was compiled or run.
 | 2026-10-30 | S2P W7 | Supplier score weights | On-time 35, in-full 25, quality 25, claims 15; missing data neutral; grades A ≥ 85, B ≥ 70, C ≥ 50 | Configurable weights | `ProcurementAnalyticsService.card` |
 | 2026-10-30 | S2P W7 | Portal link lifetime and limits | 14 days by default (1–90); one document and one supplier per link; 30 views / 10 actions per minute per IP; tokens hashed (SHA-256) | Supplier accounts (declined by owner) | `SupplierPortalService`, `@Throttle` on `SupplierPortalController` |
 | 2026-10-30 | S2P W7 | Replenishment output | Draft purchase request (a person submits it). Nightly only for rules marked automatic | Direct purchase orders | Rule `autoRaise` |
+
+### Consolidation of sales O2C, Source-to-Pay and the Phase 4 lanes (2026-10-31)
+
+| date | area | question | decision taken | alternatives | how to change later |
+|---|---|---|---|---|---|
+| 2026-10-31 | procurement | Two RFQ implementations (S2P wave 4, PROC-1) | S2P kept (13 routes: supplier list, close / decline, split award, award to orders, agreements); PROC-1 removed with V73 | Keep PROC-1 | Restore from commit 0a3fa71 |
+| 2026-10-31 | procurement | Two supplier price agreement models (S2P agreements + price history, PROC-2) | S2P kept; PROC-2 removed with V74 | Keep PROC-2 | Restore from commit c8add9b |
+| 2026-10-31 | procurement | Budgets: S2P commitments vs PROC-3 procurement budgets and delegation | Both kept: Phase 5 alerts read PROC-3 budgets; a PO is checked by both when both are configured | Retire PROC-3 | Remove `budgets.enforce` / `delegations.enforce` in `PurchaseOrdersService` |
+| 2026-10-31 | procurement | Replenishment: S2P reorder rules vs INV-3 stock alerts | Both kept (S2P plans purchase requests, INV-3 feeds Phase 5 alerts); S2P class renamed `PurchaseReplenishmentService` | One engine | — |
+| 2026-10-31 | sales | Two commission engines (sales S9, SALES-4) both paying through payroll | Sales S9 kept; SALES-4 removed with V64 (a salesperson would be paid twice) | Keep SALES-4 | Restore from commit e7a52ef |
+| 2026-10-31 | sales | Credit: sales S3 credit module vs SALES-1 credit control | Both kept: S3 governs sales orders and trip dispatch; SALES-1 governs POS orders, invoices and delivery orders. Limits are stored separately (S3 `CreditLimit`, SALES-1 `Partner.creditLimit`) | One limit store | Owner decision needed |
+| 2026-10-31 | sales | Pricing: S2 pricing engine vs SALES-3 named price lists | Both kept: S2 prices sales quotations / orders and applies CRM rules; SALES-3 prices POS orders, invoices and delivery orders | One engine | Owner decision needed |
+| 2026-10-31 | sales | Two customer portals | Both kept: PORTAL-1 (login) at `/portal`, S10 magic-link portal at `/sales-portal` | One portal | — |
+| 2026-10-31 | sales | Two mobile-money services | Both kept: INT-1 `MobileMoneyService` (receipts), S6 `SalesMobileMoneyService` (deposits) | One provider SPI | — |
+| 2026-10-31 | db | Migration order | Phase 1-6 V2-V120, Source-to-Pay V150-V156, sales V200-V210 | — | Never renumber after a deployment |
