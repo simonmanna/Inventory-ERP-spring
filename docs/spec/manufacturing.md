@@ -464,3 +464,22 @@ Status: built, **not compiled or run**. Migration `V41__manufacturing_costing.sq
 | `GET /reports/margin?groupBy=product\|customer` | `production:report` | Gross margin |
 
 Screens: `/manufacturing/costing`, `/manufacturing/costing/orders/:id`, linked from the production order page.
+
+## Demand forecast (Phase 5)
+
+`GET /manufacturing/planning/forecast?from=&to=&weeks=&family=` (`production_plan:read`), Forecast tab on
+`/manufacturing/planning`. Plans nothing by itself.
+
+- **History:** net weekly sales per product from posted sales invoices less credit notes, in base units, plus POS sales
+  less refunds. Complete Monday-based weeks only, 12 by default, 2 to 104. The older `/manufacturing/reports/forecast`
+  reads POS invoices only and is unchanged, because aggregates and blocks sell on sales invoices it never sees.
+- **Products:** active grading profile lines are `aggregate`, mix designs are `block`, plus anything else with an active
+  BOM.
+- **Method:** double exponential smoothing, alpha 0.3, beta 0.1 (`DemandForecastCalculator`). Never below zero. No
+  seasonal term. Confidence is `low` under 4 weeks with sales, `medium` when the mean error exceeds half the level.
+- **Planning:** `forecastMethod=smoothed` on `GET /manufacturing/planning/demand` and on
+  `POST /manufacturing/planning/plans/from-demand`. The smoothed horizon quantity, less firm demand, becomes a `forecast`
+  requirement. `run_rate` stays the default, so existing behaviour is unchanged. Without `forecastWeeks`, smoothed uses 12
+  weeks and run-rate 4.
+- **Aggregates without a BOM** show their demand and shortfall but are reported as skipped by plan-from-demand with
+  "No active BOM". Crushing is planned from that shortfall by hand.

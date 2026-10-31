@@ -612,3 +612,24 @@ CTRL-2, migration `V52__document_numbering.sql`:
 - [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/procurement/purchase-requests` shows a draft, one per supplier.
 - [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
 - [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.
+
+## Phase 5 alerts, forecast and BI (built, not run)
+
+Set `ENABLE_ALERTS=true` and `VITE_ENABLE_ALERTS=true`, then restart. Migrations V110 and V111 must apply; V111 fails at
+boot if a view names a missing column.
+
+- [ ] `/alerts` → Settings lists 9 types. Edit Expiring documents: threshold 60, weekly, In-app. Reload: it stayed.
+- [ ] Give a quarry site a licence expiring in 10 days. Scan now: one alert in the list, one bell for each `alerts:read` user.
+- [ ] Scan now again: nothing new, no second bell. Set the licence to yesterday and scan: a new critical alert.
+- [ ] Two sites at once: one bell with both lines, two rows in the list.
+- [ ] Each type with its data: a customer over limit, an approved budget overspent, a pending weighbridge exception, a curing batch ready, an overdue CAPA, a crushing week under the minimum yield, an overdue fleet service, an expiring employee document.
+- [ ] Switch a type off: Scan now leaves it out. Tick Email with no SMTP: the log shows `[DEV-EMAIL]`.
+- [ ] WhatsApp: a user whose e-mail matches a partner with a WhatsApp identity and channel gets the digest once.
+- [ ] Exception report totals match the list. Export CSV opens in a spreadsheet. A second organization sees none of it.
+- [ ] A user without `alerts:manage` has no Edit or Scan now; the routes answer 403.
+- [ ] With `app.jobs.enabled=true`, the logs show `alert scan hourly` and `alert scan daily`, and `/actuator/prometheus` shows `alerts_raised_total`.
+- [ ] `/manufacturing/planning` → Forecast: products with invoiced sales show next week, trend and period forecast. Family filter narrows them.
+- [ ] Demand tab: Include forecast, then Smoothed: a block product with history shows a Forecast row, less firm demand. Create plan from shortfall makes a pegged line; an aggregate with no BOM comes back as skipped.
+- [ ] With Smoothed off, the demand figures match the previous release.
+- [ ] `/reports/bi-exports`: every dataset downloads, with a header even when empty. A second organization's file has none of the first's rows.
+- [ ] Create the `bi_reader` role from `docs/integrations.md`: `SELECT` on a `reporting` view works and `SELECT` on `"Invoice"` is refused.
