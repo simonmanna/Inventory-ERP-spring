@@ -10,6 +10,8 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
 import com.inventoryerp.invoicing.domain.PaymentAllocation;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.ControlledActionService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -63,17 +65,20 @@ public class VendorBillService {
     private final DocumentBuilderService builder;
     private final ThreeWayMatchService twm;
     private final ApprovalsService approvals;
+    private final ControlledActionService controlled;
     private final AuditService audit;
     private final TransactionTemplate newTx;
 
     public VendorBillService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
-            ThreeWayMatchService twm, ApprovalsService approvals, AuditService audit, PlatformTransactionManager txm) {
+            ThreeWayMatchService twm, ApprovalsService approvals, ControlledActionService controlled, AuditService audit,
+            PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.events = events;
         this.workflow = workflow;
         this.builder = builder;
         this.twm = twm;
         this.approvals = approvals;
+        this.controlled = controlled;
         this.audit = audit;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -170,6 +175,9 @@ public class VendorBillService {
                 dto.dueDate(), null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                 dto.currencyId(), null, dto.reference(), dto.notes(), null, null, dto.branchId()), dto.lines());
         String id = (String) doc.get("id");
+        // Who entered the bill: the supplier-bill separation-of-duties pair needs it at posting.
+        jdbc.sql("UPDATE \"Document\" SET \"createdBy\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                .params(TenantContext.userId(), id, org()).update();
         syncPoLinks(id, dto.purchaseOrderIds(), Money.dec(doc.get("totalAmount")).doubleValue());
         double amount = Money.dec(doc.get("totalAmount")).doubleValue();
         Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(amount), "partnerId", doc.get("partnerId"),
@@ -314,6 +322,7 @@ public class VendorBillService {
                     + " WHERE id = ?").param(pending).update();
             audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));
         }
+        authorizePosting(id, doc);
         workflow.transition("vendor_bill", id, "post", null, doc);
         for (String po : links) {
             twm.recomputeForOrder(po);
@@ -327,6 +336,22 @@ public class VendorBillService {
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
         return out;
+    }
+
+    /**
+     * Sensitive pair: posting a supplier bill needs an approval when a {@code supplier_bill_approval} workflow exists,
+     * and whoever entered the bill may not clear it alone once the pair is switched on.
+     */
+    private void authorizePosting(String id, Map<String, Object> doc) {
+        Object total = doc.get("totalAmount");
+        ControlledActionService.Outcome outcome = controlled.authorize(new ControlledActionService.Action(
+                SegregationOfDutiesService.SUPPLIER_BILL_APPROVAL, "VendorBill", id,
+                total == null ? null : new BigDecimal(String.valueOf(total)), (String) doc.get("branchId"), null,
+                java.util.Arrays.asList((String) doc.get("createdBy"), (String) doc.get("updatedBy")), Obj.of("documentNumber", doc.get("documentNumber"))));
+        if (!outcome.allowed()) {
+            throw ApiException.badRequest("Approval required before posting bill " + doc.get("documentNumber")
+                    + ". Pending request " + outcome.approvalRequestId() + ".");
+        }
     }
 
     /** Void a posted bill (reversal, receipt quantities released). */

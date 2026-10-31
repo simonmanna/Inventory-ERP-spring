@@ -202,3 +202,9 @@ Nothing in this lane was compiled or run.
 | 2026-10-30 | INT-3 | Bank formats | CSV, MT940, camt.053 files uploaded by hand; no live bank feed | Bank API once a bank is chosen | — |
 | 2026-10-30 | INT-3 | Label printers | PDF for any printer and a ZPL file for Zebra printers; no direct network print | Print to port 9100 | — |
 | 2026-10-30 | INT-3 | Label stock | 100 × 60 mm, one size | Sizes per printer | — |
+
+### Supplier bill approval hook (coordinator, 2026-10-30)
+- `VendorBillService.post` now calls `ControlledActionService` with `supplier_bill_approval`. With no workflow and the
+  pair switched off (the default) posting behaves as before. Landed-cost bills skip it: their voucher approval stands in.
+- `create` now records `Document.createdBy` on bills, which was always null. It is the one visible change: bill JSON now
+  shows the creator. Never compiled or run.
