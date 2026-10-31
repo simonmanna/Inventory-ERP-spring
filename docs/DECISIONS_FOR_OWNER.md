@@ -125,3 +125,12 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | 2.3 | Recirculated oversize | Measured per run (circulating load %), never stocked; oversize sent to a stockpile is an ordinary fraction | Model the recirculation loop as stock | — |
 | 2026-10-30 | 2.3 | Stockpile survey approval | Separate permission `crushing_survey:approve`, approver ≠ submitter (always); the approved variance is applied to today's stock via the inventory adjustment (ADJUSTMENT_GAIN / LOSS) | Generic approval engine workflow; replace the stock with the surveyed tonnes | ADR-S016 §5 |
 | 2026-10-30 | 2.3 | New permissions | `crushing:read`, `crushing:setup`, `crushing_run:record`, `crushing_run:post`, `crushing_survey:record`, `crushing_survey:approve` (Administrator); reports reuse `production:report` | Reuse production-order permissions | Roles |
+
+### Phase 4 lane C: sales and branches (worktree c4-c-sales, 2026-10-30). Nothing here was compiled or run.
+
+| date | phase.item | question | decision taken | alternatives | how to change later |
+|---|---|---|---|---|---|
+| 2026-10-30 | UOM-1 | Where does density live? | The existing `ProductUomConversion` bridge (M3 → TON), entered on the product screen; no new `Product` column, so POS JSON is unchanged | A `Product.density` column | Move the value; the engine only reads the bridge |
+| 2026-10-30 | UOM-1 | Is a truckload one size? | One default per product (`tonnesPerTruckload`); line snapshots keep what a document meant; real loads come from the weighbridge | Per-vehicle size on each line | Add a vehicle-class table and pick on the line |
+| 2026-10-30 | UOM-1 | `/orders` line in truckloads | Stored in the sales unit because billing, stock and delivery read `OrderItem.quantity` that way; typed value kept in `OrderLineEntryUnit`. Quantity stays ≥ 1 per the existing DTO, so half a truckload must be typed in tonnes | Add a unit to `OrderItem` (POS frozen) | When POS opens up, move the snapshot to `OrderItem` |
+

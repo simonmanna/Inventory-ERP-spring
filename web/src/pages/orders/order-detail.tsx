@@ -107,6 +107,11 @@ function TabOverview({ data }: { data: OrderDetail }) {
                           <td className="px-5 py-2.5 text-muted-foreground">{String(l.lineNumber).padStart(2, '0')}</td>
                           <td className="px-3 py-2.5">
                             <span className="font-medium">{l.description}</span>
+                            {l.entryUomCode && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {tx('Entered as')} {l.entryQuantity} {l.entryUomCode}
+                              </span>
+                            )}
                             {l.note && <span className="block text-xs text-muted-foreground">{l.note}</span>}
                           </td>
                           <td className="px-3 py-2.5 text-right tabular-nums">{q}</td>

@@ -10627,5 +10627,15 @@
   "Weighbridge (tonnes)": "ሚዛን መካይን (ቶን)",
   "Yield and loss": "ምህርትን ክሳራን",
   "Abnormal loss written off": "ዘይልሙድ ክሳራ ዝተሰረዘ",
-  "Active profiles": "ንጡፋት መገለጽታት"
+  "Active profiles": "ንጡፋት መገለጽታት",
+  "Density (t per m³)": "ጽዕጋት (ቶን ኣብ m³)",
+  "Weight per piece (kg)": "ክብደት ንሓደ ቁራጽ (kg)",
+  "Weight per bag (kg)": "ክብደት ንሓደ ጆንያ (kg)",
+  "Truckload size (t)": "መጠን ሓንቲ መኪና ጽዕነት (t)",
+  "Density & Weights": "ጽዕጋትን ክብደትን",
+  "Could not load": "ክጽዓን ኣይከኣለን",
+  "Each material has its own density. Leave a field empty when it does not apply.": "ነፍሲ ወከፍ ኣቕሓ ናቱ ጽዕጋት ኣለዎ። ዘይምልከት እንተኾይኑ ባዶ ግደፎ።",
+  "Save density & weights": "ጽዕጋትን ክብደትን ዓቅብ",
+  "Equal to": "ማዕረ",
+  "Entered as": "ከምዚ ኣትዩ"
 }

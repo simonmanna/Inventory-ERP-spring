@@ -10627,5 +10627,15 @@
   "Weighbridge (tonnes)": "Munzaani wa mmotoka (ttani)",
   "Yield and loss": "Ebifunibwa n'ebifiiriddwa",
   "Abnormal loss written off": "Ebifiiriddwa ebitali bya bulijjo ebisaziddwamu",
-  "Active profiles": "Ebipimo ebikola"
+  "Active profiles": "Ebipimo ebikola",
+  "Density (t per m³)": "Obuzito ku m³ (t)",
+  "Weight per piece (kg)": "Obuzito bwa buli kitundu (kg)",
+  "Weight per bag (kg)": "Obuzito bwa buli nsawo (kg)",
+  "Truckload size (t)": "Obunene bw'emmotoka emu (t)",
+  "Density & Weights": "Obuzito n'ensengeka",
+  "Could not load": "Tekisobose kutikkibwa",
+  "Each material has its own density. Leave a field empty when it does not apply.": "Buli kintu kirina obuzito bwakyo. Leka ekifo nga kikalu bwe kiba tekikwatagana.",
+  "Save density & weights": "Tereka obuzito",
+  "Equal to": "Kyenkana",
+  "Entered as": "Yayingizibwa nga"
 }

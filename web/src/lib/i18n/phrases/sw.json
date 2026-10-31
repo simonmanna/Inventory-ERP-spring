@@ -10627,5 +10627,15 @@
   "Weighbridge (tonnes)": "Mizani ya magari (tani)",
   "Yield and loss": "Mavuno na upotevu",
   "Abnormal loss written off": "Upotevu usio wa kawaida uliofutwa",
-  "Active profiles": "Wasifu hai"
+  "Active profiles": "Wasifu hai",
+  "Density (t per m³)": "Msongamano (t kwa m³)",
+  "Weight per piece (kg)": "Uzito kwa kipande (kg)",
+  "Weight per bag (kg)": "Uzito kwa mfuko (kg)",
+  "Truckload size (t)": "Ukubwa wa lori moja (t)",
+  "Density & Weights": "Msongamano na Uzito",
+  "Could not load": "Imeshindwa kupakia",
+  "Each material has its own density. Leave a field empty when it does not apply.": "Kila nyenzo ina msongamano wake. Acha sehemu wazi isipohusika.",
+  "Save density & weights": "Hifadhi msongamano na uzito",
+  "Equal to": "Sawa na",
+  "Entered as": "Iliingizwa kama"
 }

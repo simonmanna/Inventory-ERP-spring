@@ -100,3 +100,11 @@ P2: 81/81 routes. `CoreIT` (CRUD contract, partners, products, UoM, payment term
 bootstrap/invite, authorization matrix, tenant isolation) + `UomConversionServiceTest` (port of
 `uom-conversion.service.spec.ts`). The listed `test/integration/audit/*` specs exercise inventory/POS flows
 and are ported with P3–P5. DEMO seed UoM/products follow with the accounting seed.
+
+## Density and construction units (UOM-1, ADR-S003 extension)
+
+Status: built, not compiled or run. `GET|PUT /products/:id/unit-profile`, `GET /products/:id/unit-equivalents`
+(`ProductUnitProfileController`, `product:read` / `product:update`). `ProductUnitProfileService` writes
+`ProductUomConversion` and `ProductUom`; `UomConversionService.conversionRate` is the non-throwing read. Seeds M3, BAG,
+TRUCK. Test: `ProductDensityIT`, `OrdersUnitsIT`.
+

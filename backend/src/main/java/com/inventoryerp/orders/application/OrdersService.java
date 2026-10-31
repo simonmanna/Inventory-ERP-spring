@@ -4,6 +4,9 @@ import static com.inventoryerp.pos.application.PosSql.NOW;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.core.application.UomConversionService;
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
@@ -29,6 +32,7 @@ import com.inventoryerp.pos.domain.OrderItemModifier;
 import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -61,11 +65,12 @@ public class OrdersService {
     private final WorkflowService workflows;
     private final PosInvoiceService billing;
     private final PosOrdersService posOrders;
+    private final UomConversionService units;
     private final TransactionTemplate tx;
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
-            PosOrdersService posOrders, PlatformTransactionManager txm) {
+            PosOrdersService posOrders, UomConversionService units, PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -75,6 +80,7 @@ public class OrdersService {
         this.workflows = workflows;
         this.billing = billing;
         this.posOrders = posOrders;
+        this.units = units;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -385,6 +391,11 @@ public class OrdersService {
         boolean carried;
         String punchedById;
         String punchedByName;
+        /** UOM-1: the unit typed on the line, the quantity and price as typed, and sales units per typed unit. */
+        String uomId;
+        BigDecimal entryQuantity;
+        BigDecimal entryUnitPrice;
+        BigDecimal entryFactor;
 
         static Line of(Map<String, Object> l) {
             Line r = new Line();
@@ -400,6 +411,7 @@ public class OrdersService {
             r.discountReason = (String) l.get("discountReason");
             r.note = (String) l.get("note");
             r.taxInclusive = (Boolean) l.get("taxInclusive");
+            r.uomId = (String) l.get("uomId");
             return r;
         }
 
@@ -490,6 +502,39 @@ public class OrdersService {
         }
     }
 
+    /**
+     * UOM-1: a line in another unit of the product is stored in the product's sales unit, because billing, stock and
+     * delivery all read {@code OrderItem.quantity} that way. Price and quantity convert so the line value is the same;
+     * what was typed is kept in {@code OrderLineEntryUnit}. A line in the sales unit passes through untouched.
+     */
+    private void applyEntryUnits(List<Line> lines) {
+        for (Line l : lines) {
+            if (l.carried || !PosSql.truthy(l.uomId) || !PosSql.truthy(l.productId) || l.quantity == null) {
+                continue;
+            }
+            LineUnit entered = units.resolveLineUnit(l.productId, l.uomId, UnitRole.SALES);
+            LineUnit sold = units.resolveLineUnit(l.productId, null, UnitRole.SALES);
+            if (entered.factor() == null || sold.factor() == null || entered.uomId().equals(sold.uomId())) {
+                l.uomId = null;
+                continue;
+            }
+            BigDecimal ratio = entered.factor().divide(sold.factor(), UomConversionService.DECIMAL_JS);
+            BigDecimal price = l.unitPrice;
+            if (price == null) {
+                BigDecimal list = jdbc.sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(l.productId, org()).query(BigDecimal.class).optional().orElse(null);
+                price = units.defaultUnitPrice(l.productId, entered, UnitRole.SALES, list);
+            }
+            l.entryQuantity = l.quantity;
+            l.entryUnitPrice = price == null ? BigDecimal.ZERO : price;
+            l.entryFactor = ratio;
+            l.quantity = l.quantity.multiply(ratio, UomConversionService.DECIMAL_JS).setScale(6, RoundingMode.HALF_UP);
+            if (price != null) {
+                l.unitPrice = price.divide(ratio, 6, RoundingMode.HALF_UP);
+            }
+        }
+    }
+
     /** Who writes these lines (denormalized name, like {@code PosOrdersService.actorStamp}). */
     private String[] actorStamp() {
         String userId = user();
@@ -516,19 +561,35 @@ public class OrdersService {
         TableStatus.lockFloorShared(jdbc, orgId);
         List<Line> all = new ArrayList<>();
         if (append) {
+            Map<Integer, Map<String, Object>> typed = new HashMap<>();
+            for (Map<String, Object> e : SqlRows.list(jdbc.sql("SELECT * FROM \"OrderLineEntryUnit\" WHERE \"orderId\" = ?"
+                    + " AND \"organizationId\" = ?").params(orderId, orgId))) {
+                typed.put(PosSql.intOf(e.get("lineNumber")), e);
+            }
             for (Map<String, Object> it : db.list(OrderItem.class, "\"orderId\" = ? AND \"organizationId\" = ?"
                     + " AND cancelled = false ORDER BY \"lineNumber\" ASC", orderId, orgId)) {
-                all.add(Line.ofItem(it));
+                Line carried = Line.ofItem(it);
+                Map<String, Object> e = typed.get(PosSql.intOf(it.get("lineNumber")));
+                if (e != null) {
+                    carried.uomId = (String) e.get("uomId");
+                    carried.entryQuantity = PosSql.dec(e.get("quantity"));
+                    carried.entryUnitPrice = PosSql.dec(e.get("unitPrice"));
+                    carried.entryFactor = PosSql.dec(e.get("factor"));
+                }
+                all.add(carried);
             }
         }
         all.addAll(resolved);
         resolveCatalog(all);
+        applyEntryUnits(all);
         List<LineInput> inputs = new ArrayList<>();
         all.forEach(l -> inputs.add(l.input()));
         Totals totals = builder.prepareLines(inputs);
         if (replace || append) {
             jdbc.sql("DELETE FROM \"OrderItem\" WHERE \"orderId\" = ? AND \"organizationId\" = ?").params(orderId, orgId)
                     .update();
+            jdbc.sql("DELETE FROM \"OrderLineEntryUnit\" WHERE \"orderId\" = ? AND \"organizationId\" = ?")
+                    .params(orderId, orgId).update();
         }
         String[] stamp = actorStamp();
         for (int i = 0; i < totals.prepared().size(); i++) {
@@ -554,6 +615,13 @@ public class OrdersService {
             data.put("punchedById", carried && src.punchedById != null ? src.punchedById : stamp[0]);
             data.put("punchedByName", carried && src.punchedByName != null ? src.punchedByName : stamp[1]);
             db.insert(OrderItem.class, data);
+            if (src != null && src.entryFactor != null) {
+                jdbc.sql("INSERT INTO \"OrderLineEntryUnit\" (id, \"organizationId\", \"orderId\", \"lineNumber\","
+                        + " \"uomId\", quantity, \"unitPrice\", factor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                        .params(UUID.randomUUID().toString(), orgId, orderId, p.lineNumber(), src.uomId,
+                                src.entryQuantity, src.entryUnitPrice, src.entryFactor)
+                        .update();
+            }
         }
         db.update(Order.class, Obj.of("subtotal", totals.subtotal(), "discountTotal", totals.discountTotal(),
                 "taxAmount", totals.taxAmount(), "totalAmount", totals.total(), "version", PosDb.raw("version + 1")),
@@ -563,7 +631,20 @@ public class OrdersService {
     private void withItemsAndInvoice(Map<String, Object> order) {
         List<Map<String, Object>> items = db.list(OrderItem.class, "\"orderId\" = ? AND cancelled = false"
                 + " ORDER BY \"lineNumber\" ASC", order.get("id"));
+        Map<Integer, Map<String, Object>> typed = new HashMap<>();
+        for (Map<String, Object> e : SqlRows.list(jdbc.sql("SELECT e.\"lineNumber\", e.\"uomId\", e.quantity,"
+                + " e.\"unitPrice\", u.code FROM \"OrderLineEntryUnit\" e JOIN \"UnitOfMeasure\" u ON u.id = e.\"uomId\""
+                + " WHERE e.\"orderId\" = ? AND e.\"organizationId\" = ?").params(order.get("id"), org()))) {
+            typed.put(PosSql.intOf(e.get("lineNumber")), e);
+        }
         for (Map<String, Object> it : items) {
+            Map<String, Object> e = typed.get(PosSql.intOf(it.get("lineNumber")));
+            if (e != null) {
+                it.put("entryUomId", e.get("uomId"));
+                it.put("entryUomCode", e.get("code"));
+                it.put("entryQuantity", PosSql.js(e.get("quantity")));
+                it.put("entryUnitPrice", PosSql.js(e.get("unitPrice")));
+            }
             it.put("modifiers", SqlRows.list(OrderItemModifier.class, jdbc.sql("SELECT * FROM \"OrderItemModifier\""
                     + " WHERE \"orderItemId\" = ? ORDER BY \"createdAt\", id").param(it.get("id"))));
         }

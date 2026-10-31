@@ -353,3 +353,14 @@ quality screens have their own sections above.
 **Doubts**: see the `present-partial` and `missing` rows. Most urgent to look at: user branch restriction is not
 enforced (`BranchScopeService` has no callers), locations have no branch, credit limits apply only on quotations and
 POS, and vendor bills, bank reconciliation, AP aging and stock reservations have no screen.
+
+## Phase 4 lane C: sales and branches (nothing compiled or run)
+
+- UOM-1
+  - `/uom`: M3, BAG, TRUCK exist.
+  - Product edit → Density & Weights: sand 1.6 t/m³, bag 50 kg, truck 30 t; save, reload, values stay.
+  - `/invoices/new`: line in TRUCK, price scales; post; stock falls by 30 t per truck.
+  - `/orders/new`: line in TRUCK; detail shows "Entered as 2 TRUCK"; bill it; stock falls by the tonnes.
+  - Inventory item detail: on hand shows the equivalents line.
+  - Weighbridge ticket for a delivery line in m³: tonnes convert with the density.
+

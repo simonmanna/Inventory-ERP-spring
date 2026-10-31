@@ -334,10 +334,10 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 287 | Tonnes and kilograms. | `present-verified` | core · UomSeed TON, KG · `/uom` · UomConversionServiceTest, FleetWeighbridgeIT | — |
-| 288 | Cubic metres and other volume measurements. | `present-partial` | Volume category seeds only L and ml, no m³. FleetLoadFactors recognises m³ units; density exists only on QuarryMaterial and stockpile surveys. No product density in sales, stock or invoicing | Seed m³; product density (UOM-1) |
+| 288 | Cubic metres and other volume measurements. | `present-partial (built, unverified)` | UOM-1: M3 seeded (V60, UomSeed); density is the ProductUomConversion bridge set by `PUT /products/:id/unit-profile`; bridges connect whole categories and chain (UomConversionService.bridgeRate); read by invoices, orders, delivery lines, WeighbridgeUnits, FleetLoadFactors · product edit · ProductDensityIT (not run) | Verify by running; nothing was compiled |
 | 289 | Pieces and individual blocks. | `present-verified` | core · UomSeed UNIT · ProductUnitsIT.perProductPackSizes | — |
-| 290 | Bags and other packaging units. | `present-verified` | core · ProductUom per-product pack sizes · product edit · ProductUnitsIT, UomConversionServiceTest (bag 50 kg) | No BAG seed; add with UOM-1 |
-| 291 | Truckloads and delivery-specific quantities. | `present-partial` | `/fleet/product-load-factors`, delivery order `plan-loads` (FleetDispatchIT). Truckload is a dispatch factor, not a sales or stock unit | Truckload unit (UOM-1) |
+| 290 | Bags and other packaging units. | `present-partial (built, unverified)` | core · ProductUom per-product pack sizes · product edit · ProductUnitsIT, UomConversionServiceTest; UOM-1 adds seeded BAG and `kgPerBag` · ProductDensityIT (not run) | Verify by running; nothing was compiled |
+| 291 | Truckloads and delivery-specific quantities. | `present-partial (built, unverified)` | UOM-1: seeded TRUCK with per-product `tonnesPerTruckload` (ProductUom), so it is a sales, invoice and delivery line unit; `/orders` lines accept `uomId` and keep the typed unit in OrderLineEntryUnit · ProductDensityIT, OrdersUnitsIT (not run). Stock documents stay in the base unit (ADR-S003) | Verify by running; nothing was compiled |
 
 ### 4.2 Inventory Costing
 
