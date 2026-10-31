@@ -216,6 +216,13 @@ export function useTopItems(fromDate: string, toDate: string, limit = 20) {
 
 // ---- POS Settings ----
 
+/** Sidebar visibility of optional Point of Sale pages. Absent = shown. */
+export interface PosNavVisibility {
+  showDashboard?: boolean;
+  showKitchenDisplay?: boolean;
+  showKitchenReports?: boolean;
+}
+
 export function usePosSettings() {
   return useQuery({
     queryKey: ['pos-settings'],
@@ -229,7 +236,7 @@ export function usePosSettings() {
       showClosingAmounts?: boolean;
       /** F-03: the ONE discount-approval threshold. Never hardcode it again. */
       discountApproval?: { tier1: number; tier1Amount?: number };
-    }>('/pos/settings')).data,
+    } & PosNavVisibility>('/pos/settings')).data,
     staleTime: 60_000,
   });
 }
@@ -237,7 +244,7 @@ export function usePosSettings() {
 export function useUpdatePosSettings() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { posMode?: string; sharedDrawer?: boolean; connectionMode?: 'offline' | 'online'; showClosingAmounts?: boolean }) =>
+    mutationFn: async (data: { posMode?: string; sharedDrawer?: boolean; connectionMode?: 'offline' | 'online'; showClosingAmounts?: boolean } & PosNavVisibility) =>
       (await api.patch('/pos/settings', data)).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pos-settings'] }),
   });

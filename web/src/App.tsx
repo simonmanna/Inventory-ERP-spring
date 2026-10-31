@@ -140,6 +140,7 @@ const ReturnsPage = lazy(() => import('@/pages/returns/ReturnsPage').then((m) =>
 const NewReturnPage = lazy(() => import('@/pages/returns/NewReturnPage').then((m) => ({ default: m.NewReturnPage })));
 const ReturnDetailPage = lazy(() => import('@/pages/returns/ReturnDetailPage').then((m) => ({ default: m.ReturnDetailPage })));
 const ReceivablesPage = lazy(() => import('@/pages/pos/ReceivablesPage').then((m) => ({ default: m.ReceivablesPage })));
+const PosSettingsPage = lazy(() => import('@/pages/pos/SettingsPage').then((m) => ({ default: m.PosSettingsPage })));
 const ExpensesPage = lazy(() => import('@/pages/expenses/ExpensesPage').then((m) => ({ default: m.ExpensesPage })));
 const ExpensesReportPage = lazy(() => import('@/pages/expenses/ExpensesReportPage'));
 const ExpenseCategoriesPage = lazy(() => import('@/pages/expenses/ExpenseCategoriesPage'));
@@ -271,6 +272,9 @@ export function App() {
             {/* POS terminal — full-screen cashier UI. Renders outside the app shell. */}
             <Route path="/pos/terminal" element={<TerminalWorkspace><TerminalPage /></TerminalWorkspace>} />
             <Route path="/pos/reports" element={<ReportsPage />} />
+            {/* POS Dashboard — the sales/KPI dashboard, reachable from the Point of Sale menu. */}
+            <Route path="/pos/dashboard" element={<DashboardPage />} />
+            <Route path="/pos/settings" element={<RequirePermission permission={PERMISSIONS.setting.update}><PosSettingsPage /></RequirePermission>} />
             {/* POS customer display — second monitor / pole display, no shell. */}
             <Route path="/pos/display" element={<DisplayPage />} />
             {/* KDS station configuration (admin, inside the shell). */}
