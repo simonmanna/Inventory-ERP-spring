@@ -118,6 +118,20 @@ public class OrdersController {
         return orders.reopenOrder(id);
     }
 
+    /** The order's approval request with its decisions; empty when none was needed. */
+    @GetMapping("/{id}/approval")
+    @RequirePermissions(Permissions.ORDERS__READ)
+    public Map<String, Object> approval(@PathVariable String id) {
+        return orders.approval(id);
+    }
+
+    /** Raise approval for the order as it stands, for example after an edit raised its total. */
+    @PostMapping("/{id}/request-approval")
+    @RequirePermissions(Permissions.ORDERS__UPDATE)
+    public Map<String, Object> requestApproval(@PathVariable String id) {
+        return orders.requestApproval(id);
+    }
+
     @PostMapping("/{id}/invoice")
     @Idempotent
     @RequirePermissions(Permissions.ORDERS__INVOICE)

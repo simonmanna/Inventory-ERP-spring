@@ -372,3 +372,5 @@ PROC-3, migration `V51__procurement_budgets_delegation.sql`:
 - `/procurement/delegations`: add a Central rule for a branch. A user without `procurement_delegation:central` cannot raise a purchase there. Add a Delegated rule with a limit: the delegate can buy up to it.
 
 PROC-5 (no migration): add a workflow for Purchase Requests, then raise and submit a PR at `/procurement/purchase-requests/new`. The requester cannot approve it. Each step moves on Approve or in `/approvals`, the card shows the step, and the last approval sets it to approved. Reject keeps the reason.
+
+SALES-2 (no migration; needs `ENABLE_ORDERS=true`): add a workflow for Sales Orders, create an order, open it, Billing tab. It shows the approval pending and Generate Invoice is disabled. Approve as another user, then add a line: billing asks again. Approve again and bill.

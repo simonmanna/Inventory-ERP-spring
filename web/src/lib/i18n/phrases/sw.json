@@ -10687,5 +10687,8 @@
   "Warn at %": "Onya kwa %",
   "Warns only": "Huonya tu",
   "When a document goes over": "Hati inapozidi",
-  "Waiting for approval, step {{step}}": "Inasubiri idhini, hatua {{step}}"
+  "Waiting for approval, step {{step}}": "Inasubiri idhini, hatua {{step}}",
+  "Order approval": "Idhini ya oda",
+  "Request approval again": "Omba idhini tena",
+  "Sales Orders": "Oda za mauzo"
 }

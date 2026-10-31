@@ -113,6 +113,7 @@ const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
     { key: 'depreciation_run', label: tx('Depreciation') },
   ],
   Sales: [
+    { key: 'sales_order', label: tx('Sales Orders') },
     { key: 'credit_override', label: tx('Credit Overrides') },
   ],
   Controls: [

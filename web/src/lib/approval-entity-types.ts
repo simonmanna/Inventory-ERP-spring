@@ -7,6 +7,7 @@ import { tx } from '@/lib/i18n/tx';
 export const ENTITY_TYPE_LABELS: Record<string, string> = {
   purchase_order: tx('Purchase Orders'),
   purchase_request: tx('Purchase Requests'),
+  sales_order: tx('Sales Orders'),
   goods_receipt: tx('Goods Receipts'),
   credit_note: tx('Credit Notes'),
   invoice_cancel: tx('Invoice Cancel'),

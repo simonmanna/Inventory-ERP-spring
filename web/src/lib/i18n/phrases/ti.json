@@ -10687,5 +10687,8 @@
   "Warn at %": "ኣብ % ኣጠንቅቕ",
   "Warns only": "ምጥንቃቕ ጥራይ",
   "When a document goes over": "ሰነድ ምስ ዝሓልፍ",
-  "Waiting for approval, step {{step}}": "ፍቓድ ይጽበ፡ ስጉምቲ {{step}}"
+  "Waiting for approval, step {{step}}": "ፍቓድ ይጽበ፡ ስጉምቲ {{step}}",
+  "Order approval": "ፍቓድ ትእዛዝ",
+  "Request approval again": "ፍቓድ ደጊምካ ሕተት",
+  "Sales Orders": "ትእዛዛት መሸጣ"
 }

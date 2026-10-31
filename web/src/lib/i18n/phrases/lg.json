@@ -10687,5 +10687,8 @@
   "Warn at %": "Labula ku %",
   "Warns only": "Kulabula bulabuzi",
   "When a document goes over": "Ekiwandiiko bwe kiyitawo",
-  "Waiting for approval, step {{step}}": "Kirindirira okukkirizibwa, omutendera {{step}}"
+  "Waiting for approval, step {{step}}": "Kirindirira okukkirizibwa, omutendera {{step}}",
+  "Order approval": "Okukkiriza oda",
+  "Request approval again": "Saba okukkirizibwa nate",
+  "Sales Orders": "Oda z'okutunda"
 }

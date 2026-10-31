@@ -131,6 +131,30 @@ export function useReopenOrder() {
   });
 }
 
+export interface OrderApproval {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  currentStep: number;
+}
+
+/** The order's approval request; null when no workflow applied. */
+export function useOrderApproval(id: string) {
+  return useQuery<OrderApproval | null>({
+    queryKey: [...ORDER_PREFIX, id, 'approval'],
+    queryFn: async () => (await api.get(`/orders/${id}/approval`)).data || null,
+  });
+}
+
+export function useRequestOrderApproval() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.post(`/orders/${id}/request-approval`)).data,
+    onSuccess: (_d, id) => {
+      qc.invalidateQueries({ queryKey: [...ORDER_PREFIX, id, 'approval'] });
+    },
+  });
+}
+
 export function useBillOrder() {
   const qc = useQueryClient();
   return useMutation({
