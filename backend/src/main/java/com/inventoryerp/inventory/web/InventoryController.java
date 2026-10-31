@@ -66,7 +66,8 @@ public class InventoryController {
             @OneOf(value = {"warehouse", "store", "virtual", "main_kitchen", "bar", "storage_room", "walkin_fridge",
                     "freezer", "dry_storage", "front_counter", "branch", "production"},
                     message = InventoryDtos.USER_LOCATION_TYPE_MESSAGE) String type,
-            Boolean isActive) {}
+            Boolean isActive,
+            String branchId) {}
 
     /** {@code UpdateLocationDto}. */
     public record UpdateLocationRequest(
@@ -75,7 +76,8 @@ public class InventoryController {
             @OneOf(value = {"warehouse", "store", "virtual", "main_kitchen", "bar", "storage_room", "walkin_fridge",
                     "freezer", "dry_storage", "front_counter", "branch", "production"},
                     message = InventoryDtos.USER_LOCATION_TYPE_MESSAGE) String type,
-            Boolean isActive) {}
+            Boolean isActive,
+            String branchId) {}
 
     /** {@code DirectStockInItemDto} / {@code DirectStockOutItemDto}. */
     public record DirectStockItem(
@@ -258,14 +260,14 @@ public class InventoryController {
     @Idempotent
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> directStockIn(@Valid @RequestBody DirectStockRequest dto) {
-        return directStock.directIn(direct(dto));
+        return directStock.directInChecked(direct(dto));
     }
 
     @PostMapping("/direct-stock/out")
     @Idempotent
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> directStockOut(@Valid @RequestBody DirectStockRequest dto) {
-        return directStock.directOut(direct(dto));
+        return directStock.directOutChecked(direct(dto));
     }
 
     private static DirectStockService.Request direct(DirectStockRequest dto) {

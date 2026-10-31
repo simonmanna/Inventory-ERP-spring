@@ -10656,5 +10656,8 @@
   "Extra amount": "Omuwendo ogwongezeddwa",
   "Also covers the hold": "Era lukwata n'okuyimirizibwa",
   "Grant override": "Waayo olukusa",
-  "covers hold": "lukwata okuyimirizibwa"
+  "covers hold": "lukwata okuyimirizibwa",
+  "Data access": "Olukusa lw'ebiwandiiko",
+  "No restriction: this user sees every branch and location.": "Tewali kkomo: omukozesa ono alaba amatabi n'ebifo byonna.",
+  "This user only sees the ticked branches and locations.": "Omukozesa ono alaba amatabi n'ebifo ebirondeddwa byokka."
 }

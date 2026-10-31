@@ -10656,5 +10656,8 @@
   "Extra amount": "Kiasi cha ziada",
   "Also covers the hold": "Pia linafunika usimamishaji",
   "Grant override": "Toa ruhusa",
-  "covers hold": "linafunika usimamishaji"
+  "covers hold": "linafunika usimamishaji",
+  "Data access": "Ufikiaji wa data",
+  "No restriction: this user sees every branch and location.": "Hakuna kizuizi: mtumiaji huyu anaona matawi na maeneo yote.",
+  "This user only sees the ticked branches and locations.": "Mtumiaji huyu anaona matawi na maeneo yaliyochaguliwa tu."
 }

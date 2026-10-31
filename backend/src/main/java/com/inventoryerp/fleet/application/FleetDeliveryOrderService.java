@@ -1,5 +1,7 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.BranchScopeService;
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.fleet.application.DispatchCommands.CloseOrderInput;
 import com.inventoryerp.fleet.application.DispatchCommands.DeliveryLineInput;
@@ -91,10 +93,13 @@ public class FleetDeliveryOrderService {
     private final InvoiceService invoices;
     private final FleetLoadFactors factors;
     private final CreditControlService credit;
+    private final BranchScopeService scopes;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
-            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, CreditControlService credit) {
+            OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, CreditControlService credit,
+            BranchScopeService scopes) {
+        this.scopes = scopes;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -129,6 +134,11 @@ public class FleetDeliveryOrderService {
                 where.append(" AND o.status = ?");
                 params.add(q.status());
             }
+        }
+        DataScope scope = scopes.scope();
+        if (scope.restricted()) {
+            where.append(" AND o.\"locationId\" = ANY(?::text[])");
+            params.add(scope.locationArray());
         }
         addEq(where, params, "o.\"partnerId\"", q.partnerId());
         addEq(where, params, "o.\"siteId\"", q.siteId());
@@ -174,7 +184,7 @@ public class FleetDeliveryOrderService {
     public Map<String, Object> get(String id) {
         Map<String, Object> o = SqlRows.one(db.jdbc().sql(SELECT + " WHERE o.id = ? AND o.\"organizationId\" = ?")
                 .params(id, FleetDb.org()));
-        if (o == null) {
+        if (o == null || !scopes.scope().allowsLocation((String) o.get("locationId"))) {
             throw ApiException.notFound("Delivery order not found");
         }
         o.put("site", o.get("siteId") == null ? null : SqlRows.one(db.jdbc().sql("SELECT * FROM \"FleetCustomerSite\""

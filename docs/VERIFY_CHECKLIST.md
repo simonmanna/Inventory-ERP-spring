@@ -370,4 +370,10 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
   - Put on hold: credit order refused, cash order accepted.
   - Grant an override as user A: user A's sale is still refused, user B's passes.
   - POS credit sale behaves as before.
+- BR-1 (high risk)
+  - Before any grant: log in as a normal user with an active branch set; every list shows what it showed before.
+  - POS sale and sync as a user with a grant: unchanged.
+  - `/inventory/locations`: set a branch on each yard.
+  - Staff → building icon: tick branch A for a clerk. The clerk sees only that branch's yards, stock, orders and invoices; a direct URL to branch B gives 404, a filter on it 403.
+  - Untick everything: the clerk sees everything again.
 

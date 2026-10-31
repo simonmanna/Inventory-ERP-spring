@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { locationsApi, type InventoryLocation } from "@/lib/api/locations";
+import { useBranchOptions } from "@/features/finance/api";
 import { tx } from '@/lib/i18n/tx';
 
 const LOCATION_TYPES = [
@@ -48,6 +49,8 @@ function LocationDialog({
   const [name, setName] = useState(location?.name ?? "");
   const [type, setType] = useState(location?.type ?? "warehouse");
   const [isActive, setIsActive] = useState(location?.isActive ?? true);
+  const [branchId, setBranchId] = useState(location?.branchId ?? "");
+  const { data: branches = [] } = useBranchOptions();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -63,12 +66,14 @@ function LocationDialog({
           name: name.trim(),
           type,
           isActive,
+          branchId: branchId || undefined,
         });
       } else {
         await locationsApi.create({
           code: code.trim(),
           name: name.trim(),
           type,
+          branchId: branchId || undefined,
         });
       }
       onSaved();
@@ -134,6 +139,23 @@ function LocationDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold uppercase text-gray-500">
+              {tx('Branch')}
+            </label>
+            <select
+              aria-label={tx('Branch')}
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+            >
+              <option value="">{tx('Not assigned')}</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
           </div>
 
           {isEdit && (

@@ -108,3 +108,9 @@ Status: built, not compiled or run. `GET|PUT /products/:id/unit-profile`, `GET /
 `ProductUomConversion` and `ProductUom`; `UomConversionService.conversionRate` is the non-throwing read. Seeds M3, BAG,
 TRUCK. Test: `ProductDensityIT`, `OrdersUnitsIT`.
 
+## User data scope (BR-1, ADR-S017)
+
+Status: built, not compiled or run. `GET|PUT /user-data-scopes/:userId` (`user:read` / `user:update`), table
+`UserDataScope` (V62). `BranchScopeService.scope()` returns the grant; `assertBranch`, `documentBranch` and
+`assertUnrestricted` are the helpers. Inventory uses it through `LocationScope`. Test: `UserDataScopeIT`.
+

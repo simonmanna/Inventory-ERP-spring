@@ -107,3 +107,9 @@ Nest only for organisations that create a policy). Tests: `InventoryCostPolicyIT
 POST, POST `/{id}/approve`, `/{id}/activate` (Idempotency-Key), `/{id}/cancel`); permissions `standard_cost:read`,
 `manage`, `approve`. Daily job `standard-cost-activation` (00:20 UTC). Receipts of standard-governed products enter
 stock at standard with purchase price variance (account 5905); activation revalues on-hand stock (5960).
+
+## Locations and branches (BR-1, ADR-S017)
+
+Status: built, not compiled or run. `InventoryLocation.branchId` (V62), accepted on create and update. Reads and stock
+documents go through `LocationScope`; `StockService` does not.
+

@@ -10656,5 +10656,8 @@
   "Extra amount": "ተወሳኺ መጠን",
   "Also covers the hold": "እገዳ'ውን ይሽፍን",
   "Grant override": "ምሕላፍ ሃብ",
-  "covers hold": "እገዳ ይሽፍን"
+  "covers hold": "እገዳ ይሽፍን",
+  "Data access": "መሰል ሓበሬታ",
+  "No restriction: this user sees every branch and location.": "ገደብ የለን፡ እዚ ተጠቃሚ ኩሉ ጨንፈርን ቦታን ይርኢ።",
+  "This user only sees the ticked branches and locations.": "እዚ ተጠቃሚ ዝተመልከቱ ጨናፍርን ቦታታትን ጥራይ ይርኢ።"
 }

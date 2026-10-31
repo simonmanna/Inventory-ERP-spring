@@ -9,6 +9,7 @@ import {
   Search,
   Hash,
   Users as UsersIcon,
+  Building2,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ import {
 import type { UserSummary } from '@/features/staff/types';
 import { UserDialog } from './UserDialog';
 import { SetPinDialog } from './SetPinDialog';
+import { DataAccessDialog } from './DataAccessDialog';
 import { tx } from '@/lib/i18n/tx';
 
 type LinkFilter = 'all' | 'linked' | 'unlinked';
@@ -53,6 +55,7 @@ export function StaffPage() {
   const [resetTarget, setResetTarget] = useState<UserSummary | null>(null);
   const [resetPassword, setResetPassword] = useState('');
   const [pinTarget, setPinTarget] = useState<UserSummary | null>(null);
+  const [scopeTarget, setScopeTarget] = useState<UserSummary | null>(null);
   const [linkFilter, setLinkFilter] = useState<LinkFilter>('all');
 
   const auth = useAuthStore();
@@ -223,7 +226,7 @@ export function StaffPage() {
     {
       key: 'actions',
       header: '',
-      className: 'w-52 text-right',
+      className: 'w-60 text-right',
       render: (u) => {
         const locked = u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
         return (
@@ -248,6 +251,17 @@ export function StaffPage() {
                 title={u.hasPin ? tx('Reset POS PIN') : tx('Set POS PIN')}
               >
                 <Hash className="h-4 w-4" />
+              </Button>
+            )}
+            {canUpdate && u.id !== meId && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setScopeTarget(u)}
+                aria-label={tx('Data access')}
+                title={tx('Data access')}
+              >
+                <Building2 className="h-4 w-4" />
               </Button>
             )}
             {canUpdate && (
@@ -371,6 +385,14 @@ export function StaffPage() {
       )}
 
       <UserDialog open={dialogOpen} onOpenChange={setDialogOpen} user={editing} />
+
+      {scopeTarget && (
+        <DataAccessDialog
+          userId={scopeTarget.id}
+          name={scopeTarget.firstName}
+          onClose={() => setScopeTarget(null)}
+        />
+      )}
 
       <SetPinDialog
         open={!!pinTarget}

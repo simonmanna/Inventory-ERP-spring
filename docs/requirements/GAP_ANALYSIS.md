@@ -166,7 +166,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
-| 72 | Multiple warehouses, stockyards, branches, and storage locations. | `present-verified` | inventory · `/inventory/locations` · LocationService · `/inventory/locations` · InventoryIT.locations | Location has no Branch link: see section 6 (BR-1) |
+| 72 | Multiple warehouses, stockyards, branches, and storage locations. | `present-partial (built, unverified)` | inventory · `/inventory/locations` with `branchId` (V62, BR-1) · LocationService · `/inventory/locations` · InventoryIT.locations, UserDataScopeIT (not run) | Verify by running; nothing was compiled |
 | 73 | Product categories, attributes, specifications, and grades. | `present-partial` | `/product-categories` (no test calls it), ProductVariant attributes, grades only on QuarryMaterial and quality specifications; precast `product-specs` (PrecastManufacturingIT.setupRules). No generic grade/specification on Product | Product attributes and grades; needs test (INV-2) |
 | 74 | Stock receipts, issues, transfers, and adjustments. | `present-verified` | inventory · `/inventory/direct-stock`, `/stock-outs`, `/transfers`, `/adjustments` · StockDocService · `/inventory/adjustments`, `/inventory/transfers` · InventoryIT.documents/transit | — |
 | 75 | Batch, lot, and serial number tracking where applicable. | `present-verified` | inventory · batches/serials on stock moves · `/inventory/items/:productId` · InventoryIT.batches/serials | — |
@@ -179,7 +179,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 82 | Stock movement history and audit trails. | `present-verified` | inventory · `/inventory/ledger` · LedgerDetailService · `/inventory/ledger*` · InventoryIT.avco | — |
 | 83 | Inventory aging and slow-moving stock reports. | `present-verified` | inventory · `/inventory/reports/stock-health` (aging, slow/dead) · InventoryReportsService · `/inventory/reports` · InventoryIT.reports | — |
 | 84 | Unit-of-measure configuration and conversions. | `present-verified` | core · `/uoms`, `/uom-categories`, ProductUom · UomConversionService · `/uom` · CoreIT.uoms, ProductUnitsIT, UomConversionServiceTest | — |
-| 85 | Inventory availability across branches and warehouses. | `present-verified` | inventory · `/inventory/items?locationId`, `/product-stock-levels`, `/reservations/atp` · `/inventory/items` · InventoryIT.reports/reservations | By location only until BR-1 links locations to branches |
+| 85 | Inventory availability across branches and warehouses. | `present-partial (built, unverified)` | inventory · `/inventory/items?locationId`, `/product-stock-levels`, `/reservations/atp` · `/inventory/items` · InventoryIT.reports/reservations. BR-1 links locations to branches; a branch-grouped stock figure comes with BR-2 | Verify by running; nothing was compiled |
 
 ### 2.4 Sales, Invoicing, and Customer Management
 
@@ -401,13 +401,13 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 376 | Centralized management of organizational units. | `present-verified` | core · `/branches`, `/organizations` · `/settings/company` · CoreIT.branches | — |
-| 377 | Branch-specific warehouses and stockyards. | `missing` | **InventoryLocation has no branch column** (V1 table and entity); a location only has `type`, which includes `branch` as a label | Add location to branch link (BR-1) |
+| 377 | Branch-specific warehouses and stockyards. | `present-partial (built, unverified)` | BR-1: `InventoryLocation.branchId` (V62), set on the location form · `/inventory/locations` · UserDataScopeIT (not run) | Verify by running; nothing was compiled |
 | 378 | Inter-branch inventory transfers. | `present-verified` | inventory · `/inventory/transfers` transit mode · StockDocService · `/inventory/transfers` · InventoryIT.transit | Between locations until BR-1 |
 | 379 | Branch-specific sales and pricing policies. | `missing` | CrmPriceRule has no branch column; CrmPricingService has no branch logic | Branch pricing (SALES-3) |
 | 380 | Centralized or delegated procurement. | `present-partial` | PO carries `branchId` (PurchaseOrdersService). No delegated or central purchasing rules | Delegation rules (PROC-3) |
 | 381 | Branch-level budgets and expense tracking. | `present-partial` | BudgetInput.branchId and expense posting tags exist; AccountingExtensionsIT.budgets only exercises cost centre scope | Needs test (BR-2) |
 | 382 | Consolidated financial and operational reporting. | `present-partial` | Financial: `/reports/accounting/consolidated` (AccountingExtensionsIT.consolidated). Operational consolidation not built | Operational consolidation (BR-2) |
-| 383 | User access restrictions by branch or location. | `missing` | **BranchScopeService has no callers**: nothing outside its own file references it, so no query is filtered by user branch | Enforce data-level branch scope (BR-1) |
+| 383 | User access restrictions by branch or location. | `present-partial (built, unverified)` | BR-1: explicit grants in `UserDataScope`, screen on Staff → Data access; BranchScopeService.scope enforced in inventory reads, stock documents, counts, `/orders`, `/invoices`, delivery orders · UserDataScopeIT (not run). Not yet scoped: accounting reports, procurement, HR, CRM. POS and sync never consult it | Verify by running; nothing was compiled |
 | 384 | Approval workflows for inter-branch transactions. | `present-verified` | inventory · `stock_transfer` approval gate, `/inventory/transfers/{id}/approve` · StockDocService · InventoryIT.transit | — |
 | 385 | Stock reconciliation at individual locations. | `present-verified` | inventory · `/inventory/counts`, `/inventory/reports/reconciliation` · `/inventory/count` · InventoryIT.counts/reports | — |
 | 386 | Performance comparison across branches and facilities. | `present-partial` | Side-by-side P&L and TB only; no stock, delivery or production comparison | Branch comparison (BR-2) |
@@ -483,7 +483,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 |---:|---|---|---|---|
 | 481 | Role-based access control. | `present-verified` | kernel · `@RequirePermissions`, `/roles` · `/staff/roles*` · KernelIT, ArchitectureTests, authorization matrix ITs | — |
 | 482 | Permission restrictions by module and transaction type. | `present-verified` | kernel · permission per route · `authorizationMatrix` in AccountingIT, InventoryIT, InvoicingIT, FleetCostingIT, QuarryIT | — |
-| 483 | Branch and warehouse access restrictions where supported. | `missing` | BranchScopeService has no callers; no user-to-location table | Enforce branch and warehouse scope (BR-1) |
+| 483 | Branch and warehouse access restrictions where supported. | `present-partial (built, unverified)` | BR-1: same as line 383; `user-data-scopes` routes, audited, no self-widening · Staff → Data access · UserDataScopeIT (not run). Not yet scoped: accounting reports, procurement, HR, CRM | Verify by running; nothing was compiled |
 | 484 | Approval requirements for sensitive transactions. | `present-verified` | kernel/approvals gates on bills, receipts, stock, weighbridge, explosives · `/approvals` · FleetWeighbridgeIT.exceptionThroughInbox, QuarryIT, ProcurementIT.receiptApprovalGate | — |
 | 485 | Audit trails for relevant business activities. | `present-verified` | kernel/audit · `/audit-logs` · `/audit-log` · KernelIT | — |
 | 486 | Controlled posting and reversal of financial transactions. | `present-verified` | accounting · PostingService, reversal routes · ReportingIT, AccountingIT.journalEntries, QuarryIT.reverseReleasesEvidence, CrushingIT.runLifecycle | — |

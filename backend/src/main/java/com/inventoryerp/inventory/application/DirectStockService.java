@@ -42,9 +42,11 @@ public class DirectStockService {
     private final StockService stock;
     private final SettingResolverService settings;
     private final StaffAttribution staff;
+    private final LocationScope scope;
 
     public DirectStockService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
-            SettingResolverService settings, StaffAttribution staff) {
+            SettingResolverService settings, StaffAttribution staff, LocationScope scope) {
+        this.scope = scope;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -61,6 +63,20 @@ public class DirectStockService {
         }
         staff.assertDirectStockApproval(org, TenantContext.userId(), TenantContext.permissions(), dto.approvedById(),
                 dto.approverPin());
+    }
+
+    /** {@link #directIn} from a user's screen (BR-1); offline sync calls {@link #directIn} and is not scoped. */
+    @Transactional
+    public Map<String, Object> directInChecked(Request dto) {
+        scope.assertAllowed(dto.locationId());
+        return directIn(dto);
+    }
+
+    /** {@link #directOut} from a user's screen (BR-1). */
+    @Transactional
+    public Map<String, Object> directOutChecked(Request dto) {
+        scope.assertAllowed(dto.locationId());
+        return directOut(dto);
     }
 
     /** Direct stock-in: a stock gain (Dr Stock Valuation / Cr Inventory Adjustment). */

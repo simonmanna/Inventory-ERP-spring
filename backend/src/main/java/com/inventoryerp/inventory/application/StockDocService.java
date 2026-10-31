@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 import static com.inventoryerp.inventory.application.StockService.NOW;
 
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.domain.InventoryLocation;
 import com.inventoryerp.inventory.domain.StockAdjustment;
@@ -83,12 +84,14 @@ public class StockDocService {
     private final StockPostingService stockPosting;
     private final AuditService audit;
     private final StaffAttribution staff;
+    private final LocationScope scope;
     private final TransactionTemplate newTx;
     private final TransactionTemplate tx;
 
     public StockDocService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
             ApprovalsService approvals, StockPostingService stockPosting, AuditService audit, StaffAttribution staff,
-            PlatformTransactionManager txm) {
+            LocationScope scope, PlatformTransactionManager txm) {
+        this.scope = scope;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -126,6 +129,7 @@ public class StockDocService {
     /** Create a pending stock-out (internal use / testing / sample / comp). */
     @Transactional
     public Map<String, Object> createStockOut(DocInput dto) {
+        scope.assertAllowed(dto.locationId());
         lookups.requireLocation(dto.locationId());
         staff.assertActiveStaff(org(), StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         Map<String, String> names = names(dto.items());
@@ -157,6 +161,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Stock-out not found");
         }
+        scope.assertAllowed(str(doc, "locationId"));
         List<Map<String, Object>> items = items("StockOutItem", StockOutItem.class, "stockOutId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         gateApproval("stock_out", id, Obj.of("amount", JsNumbers.js(dec(doc, "totalValue")), "lines", items.size(),
@@ -191,6 +196,7 @@ public class StockDocService {
     /** Create a pending waste record valued at the current running average. */
     @Transactional
     public Map<String, Object> createWaste(DocInput dto) {
+        scope.assertAllowed(dto.locationId());
         lookups.requireLocation(dto.locationId());
         staff.assertActiveStaff(org(), StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         LinkedHashSet<String> ids = new LinkedHashSet<>();
@@ -254,6 +260,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Waste record not found");
         }
+        scope.assertAllowed(str(doc, "locationId"));
         List<Map<String, Object>> items = items("WasteItem", WasteItem.class, "wasteId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         gateApproval("waste", id, Obj.of("amount", JsNumbers.js(dec(doc, "totalValue")), "lines", items.size(),
@@ -289,6 +296,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Waste record not found");
         }
+        scope.assertAllowed(str(doc, "locationId"));
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         if (cancel("WasteRecord", id) == 0) {
             throw ApiException.badRequest("Waste record was posted or cancelled concurrently");
@@ -305,7 +313,9 @@ public class StockDocService {
                 + where + " ORDER BY \"createdAt\" DESC LIMIT 500").params(params));
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
-            out.add(withLocation(withItems(r), false));
+            if (scope.permits(str(r, "locationId"))) {
+                out.add(withLocation(withItems(r), false));
+            }
         }
         return out;
     }
@@ -317,6 +327,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Waste record not found");
         }
+        scope.assertAllowed(str(doc, "locationId"));
         doc = withLocation(withItems(doc), false);
         List<Map<String, Object>> journals = new ArrayList<>();
         List<Map<String, Object>> ledger = new ArrayList<>();
@@ -432,6 +443,11 @@ public class StockDocService {
             sb.append(" AND ").append(a).append("\"category\"::text = ?");
             params.add(q.category());
         }
+        DataScope access = scope.current();
+        if (access.restricted()) {
+            sb.append(" AND ").append(a).append("\"locationId\" = ANY(?::text[])");
+            params.add(access.locationArray());
+        }
         if (q.locationId() != null) {
             sb.append(" AND ").append(a).append("\"locationId\" = ?");
             params.add(q.locationId());
@@ -456,6 +472,7 @@ public class StockDocService {
     public Map<String, Object> createAdjustment(DocInput dto, boolean embedded) {
         lookups.requireLocation(dto.locationId());
         if (!embedded) {
+            scope.assertAllowed(dto.locationId());
             staff.assertActiveStaff(org(), StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         }
         Set<String> seen = new HashSet<>();
@@ -512,6 +529,9 @@ public class StockDocService {
         Map<String, Object> doc = adjustment(id);
         if (doc == null) {
             throw ApiException.notFound("Adjustment not found");
+        }
+        if (!embedded) {
+            scope.assertAllowed(str(doc, "locationId"));
         }
         if (doc.get("postedAt") != null) {
             throw ApiException.badRequest("Document already posted");
@@ -578,6 +598,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Adjustment not found");
         }
+        scope.assertAllowed(str(doc, "locationId"));
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         if (cancel("StockAdjustment", id) == 0) {
             throw ApiException.badRequest("Adjustment was posted or cancelled concurrently");
@@ -593,6 +614,7 @@ public class StockDocService {
         if (dto.fromLocationId().equals(dto.toLocationId())) {
             throw ApiException.badRequest("Source and destination must differ");
         }
+        scope.assertEither(dto.fromLocationId(), dto.toLocationId());
         Map<String, Object> from = lookups.requireLocation(dto.fromLocationId());
         Map<String, Object> to = lookups.requireLocation(dto.toLocationId());
         if ("transit".equals(str(from, "type")) || "transit".equals(str(to, "type"))) {
@@ -636,6 +658,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
+        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
         List<Map<String, Object>> items = items("StockTransferItem", StockTransferItem.class, "transferId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         double magnitude = 0;
@@ -685,6 +708,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
+        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
         return withReceipts(withItems(doc), true);
     }
 
@@ -727,6 +751,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
+        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
         if (!"transit".equals(str(doc, "mode"))) {
             throw ApiException.badRequest(doc.get("transferCode")
                     + " is an immediate transfer; it has no dispatch or receipt stages");
@@ -971,6 +996,9 @@ public class StockDocService {
                         .param(org());
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(type, spec)) {
+            if (!reachable(kind, row)) {
+                continue;
+            }
             Map<String, Object> r = withItems(row);
             if ("adjustment".equals(kind)) {
                 r = withLocation(r, true);
@@ -981,6 +1009,11 @@ public class StockDocService {
             out.add(r);
         }
         return out;
+    }
+
+    private boolean reachable(String kind, Map<String, Object> row) {
+        return "transfer".equals(kind) ? scope.permits(str(row, "fromLocationId")) || scope.permits(str(row, "toLocationId"))
+                : scope.permits(str(row, "locationId"));
     }
 
     private int claim(String table, String id, String status) {

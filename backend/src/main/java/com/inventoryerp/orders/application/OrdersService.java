@@ -4,6 +4,8 @@ import static com.inventoryerp.pos.application.PosSql.NOW;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.core.application.BranchScopeService;
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
@@ -70,12 +72,13 @@ public class OrdersService {
     private final PosOrdersService posOrders;
     private final UomConversionService units;
     private final CreditControlService credit;
+    private final BranchScopeService scopes;
     private final TransactionTemplate tx;
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
             PosOrdersService posOrders, UomConversionService units, CreditControlService credit,
-            PlatformTransactionManager txm) {
+            BranchScopeService scopes, PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -87,6 +90,7 @@ public class OrdersService {
         this.posOrders = posOrders;
         this.units = units;
         this.credit = credit;
+        this.scopes = scopes;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -177,6 +181,15 @@ public class OrdersService {
             where.append(" AND \"openedAt\" <= ?");
             params.add(SqlRows.ts(end));
         }
+        DataScope scope = scopes.scope();
+        if (scope.restricted()) {
+            if (scope.branchIds().isEmpty()) {
+                where.append(" AND false");
+            } else {
+                where.append(" AND \"branchId\" IN (").append(PosSql.marks(scope.branchIds().size())).append(')');
+                params.addAll(scope.branchIds());
+            }
+        }
         if (f.search() != null && !f.search().trim().isEmpty()) {
             String search = f.search().trim();
             List<String> pIds = jdbc.sql("SELECT id FROM \"Partner\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
@@ -218,7 +231,7 @@ public class OrdersService {
 
     public Map<String, Object> getOrder(String orderId) {
         Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, org());
-        if (order == null) {
+        if (order == null || !scopes.scope().allowsBranch((String) order.get("branchId"))) {
             throw ApiException.notFound("Order not found");
         }
         withItemsAndInvoice(order);
@@ -244,7 +257,7 @@ public class OrdersService {
             data.put("status", "confirmed");
             data.put("transactionKind", dto.get("transactionKind") != null ? dto.get("transactionKind") : "sale");
             data.put("partnerId", partnerId);
-            data.put("branchId", dto.get("branchId"));
+            data.put("branchId", scopes.documentBranch((String) dto.get("branchId")));
             data.put("guestCount", dto.get("guestCount") == null ? null : PosSql.intOf(dto.get("guestCount")));
             data.put("notes", dto.get("notes"));
             data.put("paymentTermId", dto.get("paymentTermId"));
@@ -271,7 +284,7 @@ public class OrdersService {
     public Map<String, Object> updateHeader(String orderId, Map<String, Object> dto) {
         String orgId = org();
         Map<String, Object> existing = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, orgId);
-        if (existing == null) {
+        if (existing == null || !scopes.scope().allowsBranch((String) existing.get("branchId"))) {
             throw ApiException.notFound("Order not found");
         }
         assertEditable(existing);
@@ -302,7 +315,7 @@ public class OrdersService {
         String orgId = org();
         return tx.execute(st -> {
             Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, orgId);
-            if (order == null) {
+            if (order == null || !scopes.scope().allowsBranch((String) order.get("branchId"))) {
                 throw ApiException.notFound("Order not found");
             }
             assertEditable(order);
@@ -327,7 +340,7 @@ public class OrdersService {
         String orgId = org();
         return tx.execute(st -> {
             Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, orgId);
-            if (order == null) {
+            if (order == null || !scopes.scope().allowsBranch((String) order.get("branchId"))) {
                 throw ApiException.notFound("Order not found");
             }
             assertEditable(order);
@@ -387,6 +400,9 @@ public class OrdersService {
 
     /** Bill the order through the shared spine: deduct stock, post AR. */
     public Map<String, Object> generateInvoice(String orderId, Map<String, Object> dto) {
+        if (scopes.scope().restricted()) {
+            getOrder(orderId);
+        }
         return billing.generateInvoice(orderId, dto);
     }
 
@@ -684,7 +700,7 @@ public class OrdersService {
         jdbc.sql("SELECT id FROM \"Order\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(orderId, orgId)
                 .query().listOfRows();
         Map<String, Object> order = db.first(Order.class, "id = ? AND \"organizationId\" = ?", orderId, orgId);
-        if (order == null) {
+        if (order == null || !scopes.scope().allowsBranch((String) order.get("branchId"))) {
             throw ApiException.notFound("Order not found");
         }
         return order;

@@ -93,7 +93,7 @@ public class InventoryCountController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.INVENTORY_COUNT__COUNT)
     public Map<String, Object> start(@Valid @RequestBody StartCountRequest dto) {
-        return counts.start(dto.locationId(), dto.countType(), dto.notes(), dto.blind(), dto.scopeCategoryIds(),
+        return counts.startChecked(dto.locationId(), dto.countType(), dto.notes(), dto.blind(), dto.scopeCategoryIds(),
                 dto.scopeProductIds(), dto.restart());
     }
 
