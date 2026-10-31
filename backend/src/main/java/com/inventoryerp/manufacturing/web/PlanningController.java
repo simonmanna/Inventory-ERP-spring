@@ -35,7 +35,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Advanced planning &amp; scheduling (Track C 2.5, ADR-S017): demand and pegging, plans from demand, order priorities,
+ * Advanced planning &amp; scheduling (Track C 2.5, ADR-S019): demand and pegging, plans from demand, order priorities,
  * backward scheduling, the Gantt board, capacity and bottlenecks, the aggregate crushing plan, shift plans, targets and
  * the plan performance reports.
  */

@@ -18,7 +18,7 @@ import {
 } from '@/features/manufacturing/api-planning';
 import { addDays, demandTypeLabel, PriorityBadge, priorityOptions, ymd } from './planning-ui';
 
-/** Demand, shortfall and plan generation, then order priorities and backward scheduling (ADR-S017, 2.5). */
+/** Demand, shortfall and plan generation, then order priorities and backward scheduling (ADR-S019, 2.5). */
 export function PlanningWorkbenchPage() {
   return (
     <div className="space-y-4">

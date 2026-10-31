@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { tx } from '@/lib/i18n/tx';
 
-/** Shared bits of the advanced planning screens (ADR-S017). */
+/** Shared bits of the advanced planning screens (ADR-S019). */
 export const ymd = (d: Date) => d.toISOString().slice(0, 10);
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 

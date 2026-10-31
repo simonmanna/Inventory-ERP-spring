@@ -41,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
  * other reservations + open PO remainders + open production output); a shortfall or a breach of the reorder point
  * becomes a lot-sized planned order, due at its earliest demand and released lead-time days earlier. Planned make
  * orders explode into their components' demand at the release date. Planned orders are firmed into draft production
- * orders (make) or draft purchase requests (buy). ADR-S017: make quantities are grossed up for the BOM's expected
+ * orders (make) or draft purchase requests (buy). ADR-S019: make quantities are grossed up for the BOM's expected
  * yield, the release also leaves room for curing (the routing's stage curing days or the mix design's, the larger),
  * and co-products of open and planned orders count as receipts of the co-product.
  */

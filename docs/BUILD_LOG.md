@@ -61,8 +61,8 @@ Migrations: session B renumbers its migrations to the next free `V{n}` at merge 
   (kept both rental suites); full suite 669 tests, failures only the 00:00–06:00 UTC POS window + 2 rental tests fixed.
 
 ## Track C — Construction materials (brief: docs/AUTONOMOUS_BUILD_CONSTRUCTION.md)
-Current: Phases 6 and 7 — hardening review, demo data and guides. Everything after bd3f34b is unverified until a full build is run
-Next action: merge Phase 5, then Phases 6 and 7; run a full build and only then create the held tags.
+Current: all phases written and pushed; nothing after bd3f34b has been compiled or run
+Next action: owner decision on the critical permission gap, first full build, then the held tags and the final status line (docs/reports/CONSTRUCTION_ERP_REPORT.md, "Before release").
 
 Track C runs on the session B box (4 GB MacBook, Docker-free ITs on local Postgres 16, see "Environment notes").
 Multi-agent: one agent per sub-module. Up to two run at once: one in the main checkout, one in a git worktree
@@ -100,7 +100,7 @@ Session B's unpushed Tier 2 claims (2.6, 2.8, 2.9, 2.10) are released — they a
 | 4 all gaps closed | code merged, unverified (C) | | tag gaps-closed held until a full build passes | |
 | 5 dashboards, KPIs, alerts, integrations | code merged, unverified (C) | 3b951a1..7d9c326, 9968efc..4d36fda | tag bi-complete held until a full build passes | V100, V110–V111; ADR-S020, ADR-S021; 31 routes |
 | 6 production hardening | code review merged, unverified (C) | 6326250..7eec4c7 | tag v2.1.0-rc held: release.yml publishes images on v*.*.* | V120; 7 defects fixed; critical open finding: routes with no permission check, see DECISIONS_FOR_OWNER |
-| 7 demo, docs, final report | demo org and guides merged, unverified; report pending (C) | a3cd947, 02a18eb, 1d8ff9a | | SEED_CONSTRUCTION_DEMO, off by default; never compiled or run |
+| 7 demo, docs, final report | written, unverified (C) | a3cd947, 02a18eb, 1d8ff9a | tag v2.1.0 held: release.yml publishes images | report in docs/reports/CONSTRUCTION_ERP_REPORT.md; never compiled or run |
 
 ### Phase 1 summary (fleet-complete, 2026-10-30)
 Module `fleet` (ADR-S009, flag `ENABLE_FLEET`, licence feature `fleet`), migrations V15–V16 and V18–V25 (V17 is the
@@ -115,3 +115,5 @@ delivery profitability / freight bills / reports / reminders. `FleetPhase1EndToE
 balanced GL. Full build: 867 tests / 0 failed. Owner review: GL account proposals and other choices in
 `docs/DECISIONS_FOR_OWNER.md`; click-through steps in `docs/VERIFY_CHECKLIST.md`. Known limits: one ticket per trip,
 own-fleet trip cost analytic only, telematics mock only, no vendor-binary weighbridge protocols.
+
+STATUS: CODE WRITTEN, NOT COMPILED OR RUN. Held until a full build passes: tags manufacturing-advanced-complete, gaps-closed, bi-complete, v2.1.0-rc, v2.1.0.

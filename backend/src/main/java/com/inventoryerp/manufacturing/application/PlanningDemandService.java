@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Demand-driven planning (Track C 2.5, ADR-S017): the requirement of a horizon from the fleet delivery schedule,
+ * Demand-driven planning (Track C 2.5, ADR-S019): the requirement of a horizon from the fleet delivery schedule,
  * confirmed sales orders, approved proformas, a sales-history forecast and stock policy, netted against stock and open
  * production in priority order. What stays uncovered is the shortfall; a draft production plan can be made from it,
  * with every line pegged to the demand it serves. Other modules' tables are read, never written.

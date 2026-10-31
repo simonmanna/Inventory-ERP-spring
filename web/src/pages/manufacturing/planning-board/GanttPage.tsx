@@ -14,7 +14,7 @@ import { addDays, ymd } from './planning-ui';
 const DAY = 86_400_000;
 
 /**
- * Gantt board (ADR-S017): a lane per work centre. Dragging a bar moves the work order; the server snaps it to the first
+ * Gantt board (ADR-S019): a lane per work centre. Dragging a bar moves the work order; the server snaps it to the first
  * free working minute and answers with any sequence warnings, so the calendar is always respected.
  */
 export function GanttPage() {

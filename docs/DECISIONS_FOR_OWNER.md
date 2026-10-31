@@ -328,3 +328,8 @@ Nothing in this lane was compiled or run.
 | 2026-10-31 | 6 hardening | Client address behind nginx | `SERVER_FORWARD_HEADERS_STRATEGY=native` in compose. Tomcat trusts private-range proxies only, so a client cannot forge its address. Without it everyone shared one bucket of 10 logins in 5 minutes | Read `X-Forwarded-For` in the rate limiter | `docker-compose.yml`. A proxy on a public address needs `server.tomcat.remoteip.internal-proxies` |
 | 2026-10-31 | 6 hardening | Indexes on POS tables | `"Order"` and `"Invoice"` indexes are a manual `CONCURRENTLY` step, not a migration: a plain build blocks tills | Put them in V120 | `docs/OPERATIONS.md` 4a |
 | 2026-10-31 | 6 hardening | Mobile money callback signature | The HMAC covers the body only, not the organization or provider in the path, and the check ignores time. A replay is harmless (a finished collection ignores it) | Sign the path and a timestamp | When a real provider is chosen, follow its scheme |
+
+### Release tags held (coordinator, 2026-10-31)
+- `v2.1.0-rc` and `v2.1.0` were not pushed: `release.yml` publishes Docker images as `latest` on any `v*.*.*` tag, and
+  this code has never been compiled and has a critical permission gap open. `STATUS: CONSTRUCTION ERP COMPLETE` is not
+  set for the same reason. `manufacturing-advanced-complete`, `gaps-closed` and `bi-complete` wait for a full build.

@@ -36,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Backward scheduling, the Gantt board and manual rescheduling (Track C 2.5, ADR-S017). An order's open work orders are
+ * Backward scheduling, the Gantt board and manual rescheduling (Track C 2.5, ADR-S019). An order's open work orders are
  * placed backward from its due date, last operation first, through each centre's calendar and around the load already
  * there. Curing is a calendar lag, not machine time: a stage with minimum curing days keeps that gap between the end of
  * the previous operation and the start of its own operation (blocks cure between the press and cubing); on the first

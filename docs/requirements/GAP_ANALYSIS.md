@@ -17,6 +17,9 @@ One row per list item of [`construction-materials-erp.md`](construction-material
 
 ## Summary
 
+> Final state after Phase 4 (2026-10-31): 164 rows verified by reading, 99 built but unverified, 0 open. The table
+> below is the Phase 3 snapshot; the Phase 4 item lists further down keep their old status. Row status is the current one.
+
 | Section | Rows | Verified | Partial | Missing |
 |---|---:|---:|---:|---:|
 | 2.1 Financial Management and Accounting | 15 | 10 | 5 | 0 |

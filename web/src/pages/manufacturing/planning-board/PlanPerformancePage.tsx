@@ -31,7 +31,7 @@ function outcomeLabel(o: string) {
   }
 }
 
-/** Production vs plan, plan adherence, production vs target and the shortfall (ADR-S017). */
+/** Production vs plan, plan adherence, production vs target and the shortfall (ADR-S019). */
 export function PlanPerformancePage() {
   const today = new Date();
   const [from, setFrom] = useState(ymd(new Date(today.getFullYear(), today.getMonth(), 1)));

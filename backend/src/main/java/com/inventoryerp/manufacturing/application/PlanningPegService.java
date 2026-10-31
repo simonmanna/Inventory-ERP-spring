@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Demand pegs and the order planning record (ADR-S017): which customer delivery, sales order, forecast or stock policy
+ * Demand pegs and the order planning record (ADR-S019): which customer delivery, sales order, forecast or stock policy
  * a plan line and its production order serve. Confirming a plan carries the pegs to the generated order, whose due date
  * becomes the earliest pegged due date and whose priority the highest pegged priority.
  */

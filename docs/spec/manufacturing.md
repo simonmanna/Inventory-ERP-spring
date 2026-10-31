@@ -426,7 +426,7 @@ Status (2.3): done (2026-10-30). Gaps: no automatic feed from `quarry.extraction
 2.7's SPI; fleet cost per hour / payroll actuals per run (2.8); normal loss is measured at the last stage's input (fractions
 leaving at an earlier stage are excluded from it); the quality lot of a reversed run is not cancelled automatically.
 
-## ADR-S017 — 2.5 Advanced planning & scheduling
+## ADR-S019 — 2.5 Advanced planning & scheduling
 
 Status: built, **not compiled or run**. Migration `V40__manufacturing_planning.sql`. Tables `ProductionDemandPeg`,
 `ProductionOrderPlanning`, `ProductionShiftPlan`, `ProductionTarget`. No new permissions.

@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import org.hibernate.annotations.Filter;
 
 /**
- * Table {@code "ProductionShiftPlan"}: What one work centre should make in one shift of one day (ADR-S017).
+ * Table {@code "ProductionShiftPlan"}: What one work centre should make in one shift of one day (ADR-S019).
  *
  * <p>Rows are read and written through JDBC; the entity carries the column list, the tenancy filter and
  * schema validation.

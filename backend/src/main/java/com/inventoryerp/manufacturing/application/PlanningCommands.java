@@ -13,7 +13,7 @@ import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 
-/** Request bodies of the advanced planning routes (Track C 2.5, ADR-S017); they double as the service inputs. */
+/** Request bodies of the advanced planning routes (Track C 2.5, ADR-S019); they double as the service inputs. */
 public final class PlanningCommands {
 
     private PlanningCommands() {}

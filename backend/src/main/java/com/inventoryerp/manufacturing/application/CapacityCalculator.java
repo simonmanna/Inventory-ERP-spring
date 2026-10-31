@@ -6,7 +6,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
-/** Load against capacity (ADR-S017), pure: interval overlap, utilisation and the aggregate crushing plan. */
+/** Load against capacity (ADR-S019), pure: interval overlap, utilisation and the aggregate crushing plan. */
 public final class CapacityCalculator {
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);

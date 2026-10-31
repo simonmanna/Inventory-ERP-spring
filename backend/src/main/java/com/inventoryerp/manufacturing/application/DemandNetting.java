@@ -7,7 +7,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Demand ranking and netting (ADR-S017), pure. Firm customer demand (delivery schedule, confirmed sales orders,
+ * Demand ranking and netting (ADR-S019), pure. Firm customer demand (delivery schedule, confirmed sales orders,
  * proformas) comes before forecast, forecast before stock policy; within a class higher priority, then the earlier due
  * date, then the reference (stable). Supply is handed out in that order, so an urgent contractor delivery gets the
  * stock before a normal order and the shortfall lands on the least important demand.
