@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (490 permissions). Constant name = GROUP__ACTION.
+ * exactly (495 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -287,6 +287,11 @@ public final class Permissions {
     public static final String PROCUREMENT__PURCHASE_REQUEST__DELETE = "purchase_request:delete";
     public static final String PROCUREMENT__PURCHASE_REQUEST__APPROVE = "purchase_request:approve";
     public static final String PROCUREMENT__PURCHASE_REQUEST__SUBMIT = "purchase_request:submit";
+    public static final String PROCUREMENT__BUDGET__READ = "procurement_budget:read";
+    public static final String PROCUREMENT__BUDGET__MANAGE = "procurement_budget:manage";
+    public static final String PROCUREMENT__DELEGATION__READ = "procurement_delegation:read";
+    public static final String PROCUREMENT__DELEGATION__MANAGE = "procurement_delegation:manage";
+    public static final String PROCUREMENT__DELEGATION__CENTRAL = "procurement_delegation:central";
     public static final String PROCUREMENT__PURCHASE_ORDER__CREATE = "purchase_order:create";
     public static final String PROCUREMENT__PURCHASE_ORDER__READ = "purchase_order:read";
     public static final String PROCUREMENT__PURCHASE_ORDER__UPDATE = "purchase_order:update";
@@ -780,6 +785,11 @@ public final class Permissions {
             "purchase_request:delete",
             "purchase_request:approve",
             "purchase_request:submit",
+            "procurement_budget:read",
+            "procurement_budget:manage",
+            "procurement_delegation:read",
+            "procurement_delegation:manage",
+            "procurement_delegation:central",
             "purchase_order:create",
             "purchase_order:read",
             "purchase_order:update",

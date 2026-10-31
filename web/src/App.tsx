@@ -125,6 +125,9 @@ import { JournalEntryDetailPage } from '@/pages/accounting/journal-entry-detail'
 import { InventoryPostingRulesPage } from '@/pages/accounting/inventory-posting-rules';
 import { ProductEditPage } from '@/pages/products/ProductEditPage';
 import { PurchaseRequestsPage } from '@/pages/procurement/purchase-requests';
+import { PurchaseRequestCreatePage } from '@/pages/procurement/purchase-request-create';
+import { ProcurementBudgetsPage } from '@/pages/procurement/procurement-budgets';
+import { ProcurementDelegationsPage } from '@/pages/procurement/procurement-delegations';
 import { PurchaseOrdersPage } from '@/pages/procurement/purchase-orders';
 import { PurchaseOrderCreatePage } from '@/pages/procurement/purchase-order-create';
 import { PurchaseOrderDetailPage } from '@/pages/procurement/PurchaseOrderDetailPage';
@@ -452,6 +455,9 @@ export function App() {
           <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
           <Route path="/inventory/locations" element={<LocationsPage />} />
           <Route path="/procurement/purchase-requests" element={<PurchaseRequestsPage />} />
+          <Route path="/procurement/purchase-requests/new" element={<PurchaseRequestCreatePage />} />
+          <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />
+          <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
           <Route path="/procurement/purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="/procurement/purchase-orders/new" element={<PurchaseOrderCreatePage />} />
           <Route path="/procurement/purchase-orders/:id/receive" element={<PurchaseOrderReceivePage />} />

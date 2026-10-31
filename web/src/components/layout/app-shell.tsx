@@ -364,7 +364,10 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Purchases',
     icon: Truck,
     items: [
+      { to: '/procurement/purchase-requests', label: tx('Purchase Requests'), icon: ShoppingCart, permission: 'purchase_request:read' },
       { to: '/procurement/purchase-orders', label: tx('Purchases'), icon: ShoppingCart, permission: 'purchase_order:read' },
+      { to: '/procurement/budgets', label: tx('Procurement Budgets'), icon: Calculator, permission: 'procurement_budget:read' },
+      { to: '/procurement/delegations', label: tx('Purchasing Delegation'), icon: UserCog, permission: 'procurement_delegation:read' },
       { to: '/procurement/goods-receipts', label: tx('Goods Receipts'), icon: Truck, permission: 'goods_receipt:read' },
       // { to: '/procurement/three-way-match', label: tx('3-Way Match'), icon: Scale, permission: 'three_way_match:read' },
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },

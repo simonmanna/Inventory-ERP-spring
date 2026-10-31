@@ -36,7 +36,7 @@ public class PurchaseRequestsService {
 
     /** {@code CreatePRInput}. */
     public record CreateInput(String partnerId, String branchId, String description, String neededBy,
-            List<LineInput> lines) {}
+            List<LineInput> lines, String departmentId) {}
 
     /** One {@code PRLineDto}. */
     public record LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
@@ -46,11 +46,13 @@ public class PurchaseRequestsService {
     private final SequenceService sequence;
     private final EventBus events;
     private final AuditService audit;
+    private final ProcurementBudgetService budgets;
     private final TransactionTemplate tx;
 
     public PurchaseRequestsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
-            PlatformTransactionManager txm) {
+            ProcurementBudgetService budgets, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
+        this.budgets = budgets;
         this.sequence = sequence;
         this.events = events;
         this.audit = audit;
@@ -76,11 +78,12 @@ public class PurchaseRequestsService {
     private Map<String, Object> insert(String orgId, String requestNumber, CreateInput input) {
         String id = UUID.randomUUID().toString();
         Map<String, Object> pr = SqlRows.one(PurchaseRequest.class, jdbc.sql("INSERT INTO \"PurchaseRequest\" (id,"
-                        + " \"organizationId\", \"requestNumber\", \"requestedById\", \"partnerId\", \"branchId\", description,"
-                        + " \"neededBy\", status, \"createdBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
-                        + " 'draft', ?, " + NOW + ", " + NOW + ") RETURNING *")
-                .params(id, orgId, requestNumber, user(), input.partnerId(), input.branchId(), input.description(),
-                        SqlRows.ts(ProcurementSql.date(input.neededBy())), user()));
+                        + " \"organizationId\", \"requestNumber\", \"requestedById\", \"partnerId\", \"branchId\","
+                        + " \"departmentId\", description, \"neededBy\", status, \"createdBy\", \"createdAt\","
+                        + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, " + NOW + ", " + NOW
+                        + ") RETURNING *")
+                .params(id, orgId, requestNumber, user(), input.partnerId(), input.branchId(), input.departmentId(),
+                        input.description(), SqlRows.ts(ProcurementSql.date(input.neededBy())), user()));
         List<Map<String, Object>> lines = new ArrayList<>();
         int idx = 0;
         for (LineInput ln : input.lines()) {
@@ -164,10 +167,30 @@ public class PurchaseRequestsService {
         if (!"draft".equals(pr.get("status"))) {
             throw ApiException.badRequest("Cannot submit PR in status " + pr.get("status"));
         }
-        Map<String, Object> updated = update(id, "status = 'submitted'");
+        Map<String, Object> updated = tx.execute(st -> {
+            budgets.enforce(budgetDoc(pr));
+            return update(id, "status = 'submitted'");
+        });
         audit.record(AuditInput.of("PurchaseRequest", id, "update", null, Obj.of("status", "submitted")));
         events.publish("purchase_request.submitted", Obj.of("organizationId", org(), "requestId", id));
         return updated;
+    }
+
+    /** The request as the budgets see it: estimated value of each line, in base currency. */
+    private ProcurementBudgetService.Doc budgetDoc(Map<String, Object> pr) {
+        String id = (String) pr.get("id");
+        List<ProcurementBudgetService.DocLine> lines = lines(id).stream()
+                .map(l -> new ProcurementBudgetService.DocLine((String) l.get("productId"), SqlRows.dec(l, "quantity")
+                        .multiply(SqlRows.dec(l, "estimatedUnitPrice")))).toList();
+        return new ProcurementBudgetService.Doc(ProcurementBudgetService.REQUEST, id, (String) pr.get("branchId"),
+                departmentOf(id), lines, null);
+    }
+
+    /** The column is not on the entity, so it stays out of the route JSON. */
+    private String departmentOf(String id) {
+        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT \"departmentId\" FROM \"PurchaseRequest\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(id, org()));
+        return row == null ? null : (String) row.get("departmentId");
     }
 
     /** submitted → approved. */

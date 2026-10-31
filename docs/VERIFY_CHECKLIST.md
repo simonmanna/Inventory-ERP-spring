@@ -365,3 +365,8 @@ CTRL-1, migration `V50__approval_controls.sql`:
 - `/approval-controls` → Separation of duties: switch on Stock adjustment. The creator of an adjustment gets a 403 on approve; another user can post it. `/audit-log`, entity `SodCheck`, shows both.
 - Switch on Production loss write-off, then complete an order with zero output as the user who raised it: refused.
 - Add a workflow for Configuration Changes, then flip a pair. The change appears under Held changes, the requester cannot approve it, a second person can, and the switch then moves.
+
+PROC-3, migration `V51__procurement_budgets_delegation.sql`:
+
+- `/procurement/budgets`: create a block budget of 1,000 for a branch, activate. Submit a PR of 600: Reserved shows 600. A 500 purchase for that branch shows an alert and is refused. Convert the PR to a purchase: Committed 600, Reserved 0.
+- `/procurement/delegations`: add a Central rule for a branch. A user without `procurement_delegation:central` cannot raise a purchase there. Add a Delegated rule with a limit: the delegate can buy up to it.

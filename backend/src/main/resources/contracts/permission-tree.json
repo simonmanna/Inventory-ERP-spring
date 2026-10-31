@@ -400,6 +400,15 @@
       "approve": "purchase_request:approve",
       "submit": "purchase_request:submit"
     },
+    "budget": {
+      "read": "procurement_budget:read",
+      "manage": "procurement_budget:manage"
+    },
+    "delegation": {
+      "read": "procurement_delegation:read",
+      "manage": "procurement_delegation:manage",
+      "central": "procurement_delegation:central"
+    },
     "purchaseOrder": {
       "create": "purchase_order:create",
       "read": "purchase_order:read",

@@ -463,6 +463,17 @@ export const PERMISSIONS = {
       approve: 'purchase_request:approve',
       submit: 'purchase_request:submit',
     },
+    /// Procurement budgets and what is committed against them (PROC-3).
+    budget: {
+      read: 'procurement_budget:read',
+      manage: 'procurement_budget:manage',
+    },
+    /// Who may buy for a branch (PROC-3). `central` is the central buying team, which no branch rule restricts.
+    delegation: {
+      read: 'procurement_delegation:read',
+      manage: 'procurement_delegation:manage',
+      central: 'procurement_delegation:central',
+    },
     purchaseOrder: {
       create: 'purchase_order:create',
       read: 'purchase_order:read',

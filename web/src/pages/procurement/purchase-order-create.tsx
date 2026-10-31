@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { useBranchChoices, useDepartmentChoices, type BudgetCheck } from '@/features/approval-controls/api';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -32,6 +33,12 @@ export function PurchaseOrderCreatePage() {
   const [description, setDescription] = useState('');
   const [paymentType, setPaymentType] = useState<'cash' | 'credit'>('cash');
   const [warehouseId, setWarehouseId] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [searchParams] = useSearchParams();
+  const requestId = searchParams.get('requestId') ?? undefined;
+  const branches = useBranchChoices();
+  const departments = useDepartmentChoices();
   const [lines, setLines] = useState<Line[]>([{ description: '', quantity: 1, unitPrice: 0 }]);
 
   const partners = useQuery<Partner[]>({
@@ -63,6 +70,9 @@ export function PurchaseOrderCreatePage() {
         description,
         paymentType,
         warehouseId,
+        branchId: branchId || undefined,
+        departmentId: departmentId || undefined,
+        requestId,
         lines: lines.filter((l) => l.quantity > 0),
       })).data,
     onSuccess: (data: any) => {
@@ -74,6 +84,23 @@ export function PurchaseOrderCreatePage() {
   });
 
   const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
+
+  const budgetCheck = useQuery<BudgetCheck[]>({
+    queryKey: ['budget-check', branchId, departmentId, requestId, lines],
+    enabled: total > 0,
+    retry: false,
+    queryFn: async () => (await api.post('/procurement/budget-check', {
+      kind: 'purchase_order',
+      branchId: branchId || undefined,
+      departmentId: departmentId || undefined,
+      fromRequestId: requestId,
+      lines: lines.filter((l) => l.quantity > 0).map((l) => ({
+        productId: l.productId,
+        amount: Number(l.quantity || 0) * Number(l.unitPrice || 0),
+      })),
+    })).data,
+  });
+  const budgetAlerts = budgetCheck.data?.filter((b) => b.exceeded || b.warning) ?? [];
 
   const addLine = () => setLines([...lines, { description: '', quantity: 1, unitPrice: 0 }]);
   const removeLine = (idx: number) => setLines(lines.filter((_, i) => i !== idx));
@@ -103,6 +130,12 @@ export function PurchaseOrderCreatePage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">{tx('New Purchase')}</h1>
+
+      {budgetAlerts.map((b) => (
+        <p key={b.budgetId} className={b.exceeded && b.controlMode === 'block' ? 'rounded border border-destructive p-2 text-sm text-destructive' : 'rounded border border-amber-500 p-2 text-sm text-amber-700'}>
+          {b.name}: {Number(b.projected).toLocaleString()} / {Number(b.amount).toLocaleString()} ({Number(b.percent)}%)
+        </p>
+      ))}
 
       <Card>
         <CardHeader>
@@ -153,6 +186,28 @@ export function PurchaseOrderCreatePage() {
               {warehouses.data?.map((w) => (
                 <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
               ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">{tx('Branch')}</label>
+            <select
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
+            >
+              <option value="">{tx('Select a branch')}</option>
+              {branches.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">{tx('Department')}</label>
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
+            >
+              <option value="">{tx('All departments')}</option>
+              {departments.data?.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
         </CardContent>

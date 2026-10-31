@@ -27,6 +27,18 @@ export function useDepartmentChoices() {
   });
 }
 
+/** Which budgets a document would touch and how far it takes them. */
+export interface BudgetCheck {
+  budgetId: string;
+  name: string;
+  controlMode: 'warn' | 'block';
+  projected: number | string;
+  amount: number | string;
+  percent: number | string;
+  exceeded: boolean;
+  warning: boolean;
+}
+
 /** A write under controlled configuration answers this instead of the row. */
 export function isHeldForApproval(body: unknown): boolean {
   return !!(body as { pendingApproval?: boolean } | null)?.pendingApproval;
