@@ -369,3 +369,10 @@ Nothing in this lane was compiled or run.
 | 2026-10-31 | credit | Overdue rule for POS orders, invoices, delivery orders | Off by default (`overdueCheckpoints` = sales check points), so those channels behave as before | On | `PUT /credit/policy {"overdueCheckpoints": [...]}` |
 | 2026-10-31 | pricing | Where SALES-3 named lists sit in the precedence | After the customer / category pricelists, before the default pricelists; CRM customer rules rank above them | Other order | `PUT /sales/pricing/policy` |
 | 2026-10-31 | pricing | POS terminal prices | A line that arrives with a price keeps it (offline Android, cashier); the engine prices lines without one; cashier discount authority stays in POS `PricingPolicy` | Re-price on the server | — |
+
+### PR-0 production readiness (2026-10-31)
+
+| date | area | question | decision taken | alternatives | how to change later |
+|---|---|---|---|---|---|
+| 2026-10-31 | security | Routes any signed-in user could call (Phase 6 critical finding) | **Resolved** on the owner's "make it production ready" instruction: permissions on organization settings, invite, deactivate, feature-flag / module writes, webhooks and report exports; invite role must belong to the org and grant nothing the inviter lacks; webhook targets must be public addresses. Read routes stay open | Keep the Nest contract | `docs/roadmap/production-ready-plan.md` PR-0 |
+| 2026-10-31 | web | Main bundle over the 6 MB precache limit | Pages load lazily (one chunk each), all chunks precached so the POS still works offline | Raise the limit again | `vite.config.ts`, `components/page-loading.tsx` |

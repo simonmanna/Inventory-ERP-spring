@@ -152,3 +152,11 @@ Known limits after W8 (self-review):
   are visible and cancellable.
 - An order activated outside a transaction re-states its commitments right after the status change. Every later
   change re-syncs them.
+
+### Production-ready plan (owner instruction 2026-10-31)
+
+Plan and per-phase notes: `docs/roadmap/production-ready-plan.md`.
+
+| Phase | Status | Tests (full build) | Notes |
+|---|---|---|---|
+| PR-0 green CI | done | 1,379 / 0 failed | test isolation (outbox drain, shared shift), critical permission gap closed, i18n gate, lazy web pages |

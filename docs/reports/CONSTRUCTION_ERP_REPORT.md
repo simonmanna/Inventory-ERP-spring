@@ -9,13 +9,13 @@ The release tags and the `STATUS: CONSTRUCTION ERP COMPLETE` line are deliberate
 
 ## Before release
 
-1. **Fix the critical security finding.** Any signed-in user can call `POST /organizations/users/invite`, which accepts
+1. ~~**Fix the critical security finding.**~~ **Done in PR-0 (2026-10-31)**, see `docs/roadmap/production-ready-plan.md`. Any signed-in user can call `POST /organizations/users/invite`, which accepts
    any `roleId` and returns the invite token, so a cashier can create an Administrator. The same gap covers user
    deactivation, organization settings, feature flags, module enable, all `/webhooks/endpoints` (any URL, no SSRF
    guard) and `/reports/export/*` (trial balance). It was already in the code. It was left because existing routes must
    keep their contract. The fix is one `@RequirePermissions` per route plus an organization check on the role. This is
    the owner's decision and should be made before go-live.
-2. **Run the first full build** (GitHub CI runs it on every push to `main`: see the Actions tab, or use the run-book).
+2. ~~**Run the first full build**~~ **Done in PR-0: 1,379 tests, 0 failed.** (GitHub CI runs it on every push to `main`: see the Actions tab, or use the run-book).
    The first-build triage section of `docs/VERIFY_CHECKLIST.md` lists the likeliest failures. The JaCoCo 80 % gate may
    fail on the new `alerts`, `biexport` and `analytics` packages.
 3. **Then tag.** `.github/workflows/release.yml` runs on any `v*.*.*` tag, including `v2.1.0-rc`: it publishes Docker
