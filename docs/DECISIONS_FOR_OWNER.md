@@ -143,3 +143,7 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | INT-1 | Provider | Mock only until a provider is chosen (MTN, Airtel or an aggregator); a real adapter implements `MobileMoneyProvider` | — | `.env` |
 | 2026-10-30 | INT-1 | Stuck pending | A collection stays pending until the provider answers; no expiry, because a late success must still post | Expire after N hours | — |
 | 2026-10-30 | INT-1 | Callback URL | Carries the organization id, since row-level security needs the tenant before any lookup; the HMAC secret is shared across organizations | One secret per organization | `.env` |
+| 2026-10-30 | INT-3 | Ambiguous CSV dates | Day first (01/10/2026 = 1 October); month-first bank files would parse wrongly | A date-format option per bank | — |
+| 2026-10-30 | INT-3 | Bank formats | CSV, MT940, camt.053 files uploaded by hand; no live bank feed | Bank API once a bank is chosen | — |
+| 2026-10-30 | INT-3 | Label printers | PDF for any printer and a ZPL file for Zebra printers; no direct network print | Print to port 9100 | — |
+| 2026-10-30 | INT-3 | Label stock | 100 × 60 mm, one size | Sizes per printer | — |

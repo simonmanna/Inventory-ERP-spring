@@ -402,3 +402,12 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 - Set `MOBILE_MONEY_CALLBACK_SECRET` and post a signed callback (`docs/spec/invoicing.md`): the receipt appears once, however
   many times the callback repeats.
 
+**INT-3 bank files and labels** (migration `V82__label_printing.sql`; `./gradlew test --tests '*BankStatementParserTest'
+--tests '*LabelRendererTest' --tests '*LabelsAndBankFilesIT'`)
+
+- `/accounts/bank-import`: upload a real statement from the client's bank. Preview shows the lines and totals; check the signs
+  and dates. Import, then import again: the second run adds nothing.
+- `/labels`: pick products, Print PDF, scan the printed QR and Code 128 with a handheld scanner. Download ZPL and send it to a
+  Zebra printer, if the client has one.
+- Repeat for a stockpile and a weighbridge ticket.
+

@@ -468,8 +468,8 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 463 | Weighbridge hardware. | `present-verified` | fleet · `/fleet/weighbridge/devices` · FleetWeighbridgeIT.tcpDevice | Simulated device only; test on the client indicator |
-| 464 | Barcode scanners and label printers. | `present-partial` | `/products/resolve-barcode` (CoreIT), `scanner-debounce.ts`, precast labels. No label printer integration | Label printing (INT-3) |
-| 465 | Accounting and banking interfaces. | `present-partial` | Statement import takes JSON lines only; CSV and PDF exports. No bank feed or accounting interface | Bank import formats (INT-3) |
+| 464 | Barcode scanners and label printers. | `present-partial (built, unverified)` | `/products/resolve-barcode`, `scanner-debounce.ts`, precast labels; `/labels/*`, LabelService, LabelRenderer (ZXing QR and Code 128 as PDF, ZPL file) · `/labels` · LabelRendererTest, LabelsAndBankFilesIT | Verify by running it |
+| 465 | Accounting and banking interfaces. | `present-partial (built, unverified)` | BankStatementParser (CSV, MT940, camt.053), `/bank-reconciliation/import-file` · `/accounts/bank-import` · BankStatementParserTest, LabelsAndBankFilesIT. No live bank feed | Verify by running it |
 | 466 | Mobile money payment providers. | `present-partial (built, unverified)` | MobileMoneyProvider SPI + MockMobileMoneyProvider · `/mobile-money/*`, MobileMoneyService (receipt through PaymentService) · `/payments/mobile-money` · MobileMoneyIT, MobileMoneyProviderTest. No real provider | Verify by running it |
 | 467 | GPS and fleet tracking systems. | `present-partial (built, unverified)` | As fleet telematics above, RestTelematicsProvider | Verify by running it |
 | 468 | Production machinery and industrial data systems. | `present-verified` | manufacturing · machine adapters · ShopFloorExecutionIT, MachineAdaptersTest, MachineEventParserTest | — |

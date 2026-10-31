@@ -142,3 +142,13 @@ inventory and stock-posting flows and are ported with P3–P5. Parity scenarios 
 
 Tests: `CostCenterAccountingIT`. Web: Cost Centers (hierarchy fields), Cost Centre Accounting (P&L, matrix,
 hierarchy, allocation rules / runs, defaults & account rules).
+
+## INT-3 bank statement files (Phase 4, built, unverified: nothing compiled or run)
+
+`POST /bank-reconciliation/import-file` (multipart `file`; `bankAccountId, currencyCode, format` = auto, csv, mt940, camt053;
+`dryRun`; `bank_account:update`) parses with `BankStatementParser` and imports through the unchanged
+`BankReconciliationService.importStatement`. CSV: header row found in the first 30 rows, comma, semicolon or tab, one amount
+column or debit + credit columns, day-first dates, thousands in either style. MT940: `:61:` + `:86:`, reversals flipped.
+camt.053: `Ntry` elements, DTDs refused. A line without a bank reference gets a stable hash reference (date, amount, text,
+occurrence in the file), so a repeat import skips it and two identical charges stay. Screen: `/accounts/bank-import`.
+

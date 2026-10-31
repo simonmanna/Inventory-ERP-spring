@@ -844,6 +844,11 @@ export const PERMISSIONS = {
     /// Staff: open, disable and reset customer portal accounts.
     manage: 'portal:manage',
   },
+  // ---- Label printing (INT-3) ----
+  label: {
+    /// Print product, stockpile and weighbridge ticket labels (PDF or ZPL).
+    print: 'label:print',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

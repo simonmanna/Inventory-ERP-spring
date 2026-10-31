@@ -694,5 +694,8 @@
   "portal": {
     "customer": "portal:customer",
     "manage": "portal:manage"
+  },
+  "label": {
+    "print": "label:print"
   }
 }

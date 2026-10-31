@@ -256,6 +256,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/inventory', label: tx('Stock Levels'), icon: Package, permission: 'inventory:read' },
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read' },
+      { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print },
       { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read },
       { to: '/inventory/adjustments', label: tx('Stock Adjustments'), icon: Scale, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
@@ -311,6 +312,7 @@ const NAV_SECTIONS: NavSection[] = [
       // Cash Registers lives under POS only; Overview links to it from "Open registers".
       { to: '/payments', label: tx('Customer Receipts'), icon: HandCoins, permission: PERMISSIONS.payment.read },
       { to: '/payments/mobile-money', label: tx('Mobile Money'), icon: Smartphone, permission: PERMISSIONS.payment.read },
+      { to: '/accounts/bank-import', label: tx('Import Bank Statement'), icon: FileInput, permission: PERMISSIONS.bankAccount.update },
       { to: '/supplier-payments', label: tx('Supplier Payments'), icon: Truck, permission: PERMISSIONS.payment.read },
       { to: '/cash-flow/report', label: tx('Money Reports'), icon: BarChart3, permission: PERMISSIONS.account.read, reportId: 'money.reports' },
     ],

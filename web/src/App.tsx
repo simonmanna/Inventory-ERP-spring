@@ -106,6 +106,8 @@ import { CreditNoteCreatePage } from '@/pages/invoicing/credit-note-create';
 import { CreditNoteDetailPage } from '@/pages/invoicing/credit-note-detail';
 import { PaymentsPage } from '@/pages/invoicing/payments';
 import { MobileMoneyPage } from '@/pages/invoicing/MobileMoneyPage';
+import { BankImportPage } from '@/pages/money/BankImportPage';
+import { LabelPrintPage } from '@/pages/labels/LabelPrintPage';
 import { PaymentDetailPage } from '@/pages/invoicing/payment-detail';
 import { ReceiptsPage } from '@/pages/pos/ReceiptsPage';
 import { ReceiptDetailPage } from '@/pages/pos/ReceiptDetailPage';
@@ -284,6 +286,8 @@ export function App() {
           <Route path="/credit-notes/new" element={<CreditNoteCreatePage />} />
           <Route path="/credit-notes/:id" element={<CreditNoteDetailPage />} />
           <Route path="/payments" element={<PaymentsPage />} />
+          <Route path="/accounts/bank-import" element={<RequirePermission permission={PERMISSIONS.bankAccount.update}><BankImportPage /></RequirePermission>} />
+          <Route path="/labels" element={<RequirePermission permission={PERMISSIONS.label.print}><LabelPrintPage /></RequirePermission>} />
           <Route path="/payments/mobile-money" element={<RequirePermission permission={PERMISSIONS.payment.read}><MobileMoneyPage /></RequirePermission>} />
           <Route path="/payments/:id" element={<PaymentDetailPage />} />
           <Route path="/pos/receipts" element={<ReceiptsPage />} />
