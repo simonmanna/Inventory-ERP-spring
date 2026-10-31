@@ -100,3 +100,9 @@ P2: 81/81 routes. `CoreIT` (CRUD contract, partners, products, UoM, payment term
 bootstrap/invite, authorization matrix, tenant isolation) + `UomConversionServiceTest` (port of
 `uom-conversion.service.spec.ts`). The listed `test/integration/audit/*` specs exercise inventory/POS flows
 and are ported with P3–P5. DEMO seed UoM/products follow with the accounting seed.
+
+## INV-2 product attributes, specifications and grades (built, unverified)
+
+`ProductSpecController` (11 routes on `/product-grades`, `/product-attributes`, `/product-specifications`), `ProductSpecService`,
+migration V96 (`ProductGrade`, `ProductAttribute`, `ProductSpecification`, `ProductAttributeValue`), permissions
+`product:read` / `product:update`. `Product` itself is not changed. Screen: `/products/specifications`.

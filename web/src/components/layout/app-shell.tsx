@@ -264,6 +264,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/locations', label: tx('Locations'), icon: MapPin, permission: PERMISSIONS.inventoryLocation.read },
       { to: '/inventory/cost-policies', label: tx('Costing Policy'), icon: Calculator, permission: PERMISSIONS.costingPolicy.read },
       { to: '/products', label: tx('Products'), icon: Package, permission: PERMISSIONS.products.view },
+      { to: '/products/specifications', label: tx('Product specifications'), icon: ClipboardList, permission: PERMISSIONS.product.read },
       { to: '/uom', label: tx('Units of Measure'), icon: Ruler, permission: PERMISSIONS.uom.read },
       { to: '/inventory/reports', label: tx('Inventory Reports'), icon: BarChart3, permission: 'inventory:read', reportId: 'inventory.reports' },
     ],

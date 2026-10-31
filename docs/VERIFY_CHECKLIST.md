@@ -403,3 +403,9 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 
 - [ ] `/inventory/reservations` → New reservation: pick a location and product, see on hand, reserved and available; reserve more than available: a warning shows, the save still works (soft reservation).
 - [ ] Filter by status and location. Release, then Consume on another row. Check `/inventory/reservations/atp` follows.
+
+## Phase 4 INV-2 — product attributes and grades (built, not run)
+
+- [ ] `/products/specifications` → Grades: add C25. Attributes: add Strength (number, MPa), Size (choice 10 mm, 20 mm), one required.
+- [ ] Products tab: pick a product, set grade, standard and attributes. A required attribute left blank blocks Save; the server refuses it too.
+- [ ] A grade in use cannot be deleted. POS still sells the product and its JSON has no new field.

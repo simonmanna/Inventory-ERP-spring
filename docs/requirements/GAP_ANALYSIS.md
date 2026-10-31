@@ -167,7 +167,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
 | 72 | Multiple warehouses, stockyards, branches, and storage locations. | `present-verified` | inventory · `/inventory/locations` · LocationService · `/inventory/locations` · InventoryIT.locations | Location has no Branch link: see section 6 (BR-1) |
-| 73 | Product categories, attributes, specifications, and grades. | `present-partial` | `/product-categories` (no test calls it), ProductVariant attributes, grades only on QuarryMaterial and quality specifications; precast `product-specs` (PrecastManufacturingIT.setupRules). No generic grade/specification on Product | Product attributes and grades; needs test (INV-2) |
+| 73 | Product categories, attributes, specifications, and grades. | `present-partial (built, unverified)` | Built: `/product-grades`, `/product-attributes`, `/product-specifications` (V96, ProductSpecService), screen `/products/specifications`; ProductSpecIT written; `/product-categories` covered by CrmCustomerDataIT.productCategories. Variants, QuarryMaterial grades and precast `product-specs` unchanged. Nothing compiled or run | Product attributes and grades; needs test (INV-2) |
 | 74 | Stock receipts, issues, transfers, and adjustments. | `present-verified` | inventory · `/inventory/direct-stock`, `/stock-outs`, `/transfers`, `/adjustments` · StockDocService · `/inventory/adjustments`, `/inventory/transfers` · InventoryIT.documents/transit | — |
 | 75 | Batch, lot, and serial number tracking where applicable. | `present-verified` | inventory · batches/serials on stock moves · `/inventory/items/:productId` · InventoryIT.batches/serials | — |
 | 76 | Minimum and maximum stock levels. | `present-verified` | Product.minQuantity/maxQuantity · `/inventory/product-stock-levels` · `/inventory/items` · InventoryIT.reports | — |
@@ -433,7 +433,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 
 | Line | Requirement | Status | Evidence | Action |
 |---:|---|---|---|---|
-| 421 | Product categories and attributes. | `present-partial` | As 2.3 product categories and attributes | INV-2 |
+| 421 | Product categories and attributes. | `present-partial (built, unverified)` | As line 73: grades, attributes and specifications built, tests written, nothing run | INV-2 |
 | 422 | Units of measurement and conversion rules. | `present-verified` | core · `/uoms`, `/uom-categories` · `/uom` · CoreIT.uoms, ProductUnitsIT | Conversion rules extended by UOM-1 |
 | 423 | Inventory costing policies. | `present-verified` | inventory · `/inventory/cost-policies` · `/inventory/cost-policies` · InventoryCostPolicyIT | — |
 | 424 | Approval hierarchies and transaction limits. | `present-partial` | Amount-band workflows only; config routes untested | CTRL-1 |

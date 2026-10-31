@@ -10763,5 +10763,19 @@
   "Product, source, reason…": "Ekintu, ensibuko, ensonga…",
   "Reserving again for the same reference and product replaces the quantity.": "Okukwata nate ku kintu n'obujuliziro bye bimu kikyusa obungi.",
   "Stock Reservations": "Okukwata Sitoowa",
-  "Stock held for a document. Releasing or consuming acts on every reservation of that document.": "Sitoowa ekwatiddwa ku kiwandiiko. Okuta oba okukozesa kukola ku kukwata kwonna okw'ekiwandiiko ekyo."
+  "Stock held for a document. Releasing or consuming acts on every reservation of that document.": "Sitoowa ekwatiddwa ku kiwandiiko. Okuta oba okukozesa kukola ku kukwata kwonna okw'ekiwandiiko ekyo.",
+  "Attributes": "Ebifaananyi",
+  "Choice": "Okulonda",
+  "Choices, separated by commas": "Eby'okulonda, ebyawuddwa n'obukoma",
+  "Could not add the attribute": "Tekisobose kwongera kifaananyi",
+  "Could not load the attributes": "Tekisobose kuleeta bifaananyi",
+  "Could not load the grades": "Tekisobose kuleeta madaala",
+  "Grades": "Amadaala",
+  "Grades and attributes such as strength, size or packaging, set per product.": "Amadaala n'ebifaananyi ng'amaanyi, obunene oba okupakinga, ku buli kintu.",
+  "No attributes yet.": "Tewannabaawo bifaananyi.",
+  "No grades yet.": "Tewannabaawo madaala.",
+  "Pick a product.": "Londa ekintu.",
+  "Product specifications": "Ebikwata ku kintu",
+  "Specification saved": "Ebikwata ku kintu biterekeddwa",
+  "Yes / No": "Yee / Nedda"
 }

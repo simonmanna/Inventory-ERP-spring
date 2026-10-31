@@ -200,6 +200,7 @@ import { StockLedgerPage } from '@/pages/inventory/StockLedgerPage';
 import { StockMovementDetailPage } from '@/pages/inventory/StockMovementDetailPage';
 import LocationsPage from '@/pages/inventory/LocationsPage';
 import { StockReservationsPage } from '@/pages/inventory/StockReservationsPage';
+import { ProductSpecsPage } from '@/pages/products/ProductSpecsPage';
 import TerminalPage from '@/pages/pos/Terminal';
 import { TerminalWorkspace } from '@/pages/pos/TerminalWorkspace';
 import ReportsPage from '@/pages/pos/ReportsPage';
@@ -261,6 +262,7 @@ export function App() {
           <Route path="/suppliers/:partnerId/ledger" element={<SupplierLedgerPage />} />
           <Route path="/products" element={<ProductsPage />} />
           <Route path="/products/new" element={<ProductEditPage />} />
+          <Route path="/products/specifications" element={<ProductSpecsPage />} />
           <Route path="/products/:id/edit" element={<ProductEditPage />} />
           <Route path="/uom" element={<UomPage />} />
           <Route path="/menu" element={<MenuPage />} />
