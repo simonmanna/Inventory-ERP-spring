@@ -310,6 +310,23 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Crushing Reports: yield and loss, cost per tonne (product, plant, by kind), plant hours / throughput / utilisation.
 - Doubts: normal loss is measured on the last stage's input; system BOMs are active without the BOM approval gate.
 
+## MFG-1 — Advanced planning & scheduling (ADR-S017)
+
+Nothing here has been compiled or run. Run `PlanningIT`, `PlanningCalendarTest`, `DemandNettingTest` and
+`CapacityCalculatorTest` first. Migration `V40__manufacturing_planning.sql`.
+
+- `/manufacturing/planning-board`: Demand tab lists delivery orders in priority order with covered and uncovered
+  quantities. Pick a location, create a plan from the shortfall, confirm it at `/manufacturing/planning`.
+- Order priorities tab: the order from that plan shows the customer, the due date and the priority. Press Schedule.
+- `/manufacturing/gantt`: drag a bar onto a closed day or a night. It lands on the next working minute.
+- `/manufacturing/capacity`: load, bottleneck badge, crushing circuit t/h and the aggregate plan per grading profile.
+- `/manufacturing/shift-plans`: add a shift plan, publish it, confirm it can no longer be deleted; add a target.
+- `/manufacturing/plan-performance`: orders on time, production vs plan and target, shortfall.
+- Curing order: set minimum curing days on a stage and check the 7-day gap between the two bars.
+
+**Doubts**: curing and quarantined stock counts as supply; drag-and-drop was never tried in a browser;
+Tigrinya and Luganda phrases are machine-quality and need a native reader.
+
 ## Phase 3 — Requirements verification (`docs/requirements/GAP_ANALYSIS.md`)
 
 Nothing below was clicked, compiled or run in this pass: the matrix comes from reading code and existing tests. Use

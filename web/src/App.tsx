@@ -50,6 +50,7 @@ import { EngineeringChangesPage } from '@/pages/manufacturing/EngineeringChanges
 import { StageWipReportPage } from '@/pages/manufacturing/StageWipReportPage';
 import { precastRoutes } from '@/pages/manufacturing/precast/routes';
 import { shopFloorRoutes } from '@/pages/manufacturing/shop-floor/routes';
+import { planningBoardRoutes } from '@/pages/manufacturing/planning-board/routes';
 import { ChartOfAccountsPage } from '@/pages/accounting/chart-of-accounts';
 import { AccountDetailPage } from '@/pages/accounting/AccountDetailPage';
 import { CashFlowReportPage } from '@/pages/accounting/cash-flow-report';
@@ -386,6 +387,7 @@ export function App() {
           <Route path="/manufacturing/orders/:id" element={<ProductionOrderDetailPage />} />
           {/* Shop-floor execution & data capture (ADR-S015, 2.7) */}
           {shopFloorRoutes}
+          {planningBoardRoutes}
           <Route path="/inventory" element={<InventoryItemsPage />} />
           <Route path="/inventory/items" element={<InventoryItemsPage />} />
           <Route path="/inventory/items/:productId" element={<InventoryDetailPage />} />

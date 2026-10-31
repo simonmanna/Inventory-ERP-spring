@@ -404,7 +404,8 @@ class ManufacturingIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without token, 403 without permission")
     void authorization() {
-        // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(234);
+        // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3)
+        // + 25 planning routes (ADR-S017, 2.5).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(259);
     }
 }

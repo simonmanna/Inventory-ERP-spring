@@ -425,3 +425,25 @@ matrix of the 36 routes + operator cannot post). `ManufacturingIT` matrix now 16
 Status (2.3): done (2026-10-30). Gaps: no automatic feed from `quarry.extraction.posted`; belt-scale / PLC capture via
 2.7's SPI; fleet cost per hour / payroll actuals per run (2.8); normal loss is measured at the last stage's input (fractions
 leaving at an earlier stage are excluded from it); the quality lot of a reversed run is not cancelled automatically.
+
+## ADR-S017 — 2.5 Advanced planning & scheduling
+
+Status: built, **not compiled or run**. Migration `V40__manufacturing_planning.sql`. Tables `ProductionDemandPeg`,
+`ProductionOrderPlanning`, `ProductionShiftPlan`, `ProductionTarget`. No new permissions.
+
+| Route under `/manufacturing/planning` | Permission | Purpose |
+|---|---|---|
+| `GET /demand` | `production_plan:read` | Requirements netted against supply, per row and per product |
+| `POST /plans/from-demand` | `production_plan:create` | Draft plan with pegs for what stays uncovered |
+| `GET /pegs` | `production_plan:read` | Pegs by order, plan, customer or product |
+| `GET /orders`, `PUT /orders/{id}` | `production_plan:read`, `:update` | Priority board; due date and priority |
+| `POST /orders/{id}/schedule-backward` | `work_order:manage` | Backward schedule, forward fallback when late |
+| `POST /schedule-open-orders` | `work_order:manage` | All open orders with a due date, by priority |
+| `POST /work-orders/{id}/reschedule` | `work_order:manage` | Gantt drag |
+| `GET /gantt` | `work_order:read` | Lanes, bars, closed dates, unscheduled work |
+| `GET /capacity`, `GET /aggregates` | `production_plan:read` | Load vs capacity; aggregate crushing plan |
+| `GET, POST /shift-plans`, `PUT, DELETE /shift-plans/{id}`, `POST /shift-plans/{id}/publish` | `production_plan:*` | Shift plans |
+| `GET, POST /targets`, `PUT, DELETE /targets/{id}` | `production_plan:*` | Period targets |
+| `GET /reports/shortfall`, `/production-vs-plan`, `/plan-adherence`, `/production-vs-target` | `production:report` | Reports |
+
+Screens: `/manufacturing/planning-board`, `/gantt`, `/capacity`, `/shift-plans`, `/plan-performance`.
