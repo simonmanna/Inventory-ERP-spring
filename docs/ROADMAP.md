@@ -298,7 +298,7 @@ allocation rules and required reports (seed the Kampala / Mbarara example).
 | 2.1 | Warehouse management (WMS) | P1 | L (12 EW) | Bins/sub-locations, putaway rules, pick/pack/ship (1–3 step), waves, packages, ABC cycle counts |
 | 2.2 | Barcode / mobile warehouse app | P1 | M (6 EW) | Android module reusing the POS sync stack; receive, pick, count, transfer |
 | 2.3 | Replenishment & MRP | P1 | L (10 EW) | Min/max + reorder rules auto-creating RFQs/production; MRP run, capacity planning, subcontracting, by-products, scrap. Depends on 0.1 |
-| 2.4 | Analytic dimensions | P1 | M (4 EW) | Generic multi-dimension tags on journal/document lines (project, department, region…), dimension-filtered reports |
+| 2.4 | Analytic dimensions — **built 2026-10-31 (ADR-S025)** | P1 | M (4 EW) | Generic multi-dimension tags on journal/document lines (project, department, region…), dimension-filtered reports |
 | 2.5 | Customization platform | P1 | XL (16 EW) | Custom fields/objects (JSONB + metadata), print-template designer, workflow/automation rules, public API with OAuth clients + scopes. Needs ADR |
 | 2.6 | BI & dashboards | P2 | M (6 EW) | Pivot/graph views over reporting views, dashboard builder, scheduled report delivery; optional read-replica |
 | 2.7 | Intercompany & multi-company | P2 | L (8 EW) | Multi-company users, mirrored IC transactions, eliminations in consolidation (extends ADR-S005 #6) |

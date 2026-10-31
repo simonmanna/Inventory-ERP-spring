@@ -1852,3 +1852,137 @@ export function useDetailedAccountingReport(params: DetailedReportParams, enable
       ).data,
   });
 }
+
+/* ── Analytic dimensions (roadmap 2.4, ADR-S025) ──────────────── */
+
+export interface AnalyticDimensionValue {
+  id: string;
+  code: string;
+  name: string;
+  parentId: string | null;
+  isActive: boolean;
+  validFrom: string | null;
+  validTo: string | null;
+}
+
+export interface AnalyticDimension {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  valueCount?: number;
+  values?: AnalyticDimensionValue[];
+}
+
+export interface AnalyticSummaryRow {
+  value: string;
+  name: string;
+  parent: string | null;
+  income: string;
+  expense: string;
+  net: string;
+  rollupIncome: string;
+  rollupExpense: string;
+  rollupNet: string;
+  accounts: { accountId: string; code: string; name: string; section: string; amount: string }[];
+}
+
+export interface AnalyticSummary {
+  dimension: string;
+  dimensionName: string;
+  values: AnalyticSummaryRow[];
+  unassigned: { income: string; expense: string; net: string };
+  totals: { income: string; expense: string; net: string };
+}
+
+export interface AnalyticAccountRule {
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  dimension: string;
+  rule: 'required' | 'forbidden';
+}
+
+export function useAnalyticDimensions() {
+  return useQuery({
+    queryKey: ['analytic-dimensions'],
+    queryFn: async () => (await api.get<AnalyticDimension[]>('/analytic-dimensions', { params: { includeInactive: 'true' } })).data,
+  });
+}
+
+export function useAnalyticDimension(id: string | undefined) {
+  return useQuery({
+    queryKey: ['analytic-dimensions', id],
+    queryFn: async () => (await api.get<AnalyticDimension>(`/analytic-dimensions/${id}`)).data,
+    enabled: !!id,
+  });
+}
+
+function useDimensionMutation<T>(fn: (input: T) => Promise<unknown>, success: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['analytic-dimensions'] });
+      notify.success(success);
+    },
+  });
+}
+
+export function useCreateAnalyticDimension() {
+  return useDimensionMutation(
+    async (input: { code: string; name: string; description?: string }) => (await api.post('/analytic-dimensions', input)).data,
+    tx('Dimension created'),
+  );
+}
+
+export function useUpdateAnalyticDimension() {
+  return useDimensionMutation(
+    async ({ id, ...input }: { id: string; name?: string; isActive?: boolean }) =>
+      (await api.patch(`/analytic-dimensions/${id}`, input)).data,
+    tx('Dimension updated'),
+  );
+}
+
+export function useCreateAnalyticValue() {
+  return useDimensionMutation(
+    async ({ dimensionId, ...input }: { dimensionId: string; code: string; name: string; parentId?: string }) =>
+      (await api.post(`/analytic-dimensions/${dimensionId}/values`, input)).data,
+    tx('Value created'),
+  );
+}
+
+export function useUpdateAnalyticValue() {
+  return useDimensionMutation(
+    async ({ dimensionId, valueId, ...input }: { dimensionId: string; valueId: string; isActive?: boolean }) =>
+      (await api.patch(`/analytic-dimensions/${dimensionId}/values/${valueId}`, input)).data,
+    tx('Value updated'),
+  );
+}
+
+export function useAnalyticAccountRules(dimension?: string) {
+  return useQuery({
+    queryKey: ['analytic-dimensions', 'account-rules', dimension],
+    queryFn: async () =>
+      (await api.get<AnalyticAccountRule[]>('/analytic-dimensions/account-rules', { params: { dimension } })).data,
+  });
+}
+
+export function useSetAnalyticAccountRule() {
+  return useDimensionMutation(
+    async (input: { accountId: string; dimension: string; rule: 'required' | 'optional' | 'forbidden' }) =>
+      (await api.put(`/analytic-dimensions/account-rules/${input.accountId}`, { dimension: input.dimension, rule: input.rule }))
+        .data,
+    tx('Account rule saved'),
+  );
+}
+
+export function useAnalyticSummary(params: { dimension?: string; from?: string; to?: string; filter?: string }) {
+  return useQuery({
+    queryKey: ['analytic-dimensions', 'summary', params],
+    queryFn: async () => (await api.get<AnalyticSummary>('/analytic-dimensions/reports/summary', { params })).data,
+    enabled: !!params.dimension,
+  });
+}

@@ -131,8 +131,8 @@ public class InvoicingWorkflowsInitializer {
         String partnerId = (String) full.get("partnerId");
         post.add(new Line(g.counterAccount(), JsNumbers.dec(d(full.get("totalAmount"))), null, partnerId,
                 "Invoice " + full.get("documentNumber"), null, null, null));
-        g.itemByAccount().forEach((acc, amt) -> post.add(new Line(acc, null, JsNumbers.dec(amt), partnerId, "Revenue",
-                null, null, null)));
+        g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId,
+                "Revenue", null, it.costCenterId(), it.glDimensions())));
         g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
         var journal = journals.resolveSalesJournal((String) full.get("invoicingJournalId"));
         Map<String, Object> entry = posting.post(new PostingRequest(journal.getCode(), instant(full.get("issueDate")),
@@ -166,8 +166,8 @@ public class InvoicingWorkflowsInitializer {
                     List<Line> post = new ArrayList<>();
                     post.add(new Line(g.counterAccount(), null, JsNumbers.dec(d(full.get("totalAmount"))), partnerId,
                             "Credit note " + full.get("documentNumber"), null, null, null));
-                    g.itemByAccount().forEach((acc, amt) -> post.add(new Line(acc, JsNumbers.dec(amt), null, partnerId,
-                            "Revenue reversal", null, null, null)));
+                    g.itemLines().forEach(it -> post.add(new Line(it.accountId(), JsNumbers.dec(it.amount()), null,
+                            partnerId, "Revenue reversal", null, it.costCenterId(), it.glDimensions())));
                     g.taxByAccount().forEach((acc, amt) -> post.add(Line.debit(acc, JsNumbers.dec(amt),
                             "Output tax reversal")));
                     posting.post(new PostingRequest("SALES", instant(full.get("issueDate")),
@@ -281,16 +281,21 @@ public class InvoicingWorkflowsInitializer {
             String grni = determination.mapped("grni_accrued");
             Grouped g = builder.groupForPosting(partnerId, postable, "purchase", grni);
             List<MutableLine> post = new ArrayList<>();
-            g.itemByAccount().forEach((acc, amt) -> post.add(new MutableLine(acc, amt, null, partnerId,
-                    acc.equals(grni) ? "GRNI clearing" : "Expense")));
+            g.itemLines().forEach(it -> post.add(new MutableLine(it.accountId(), it.amount(), null, partnerId,
+                    it.accountId().equals(grni) ? "GRNI clearing" : "Expense", it.costCenterId(), it.glDimensions())));
             g.taxByAccount().forEach((acc, amt) -> post.add(new MutableLine(acc, amt, null, null, "Input tax")));
             if (priceVariance.signum() != 0) {
                 String ppv = priceVarianceAccount();
+                // The largest GRNI line absorbs the variance (lines split by analytic dimensions, ADR-S025).
+                MutableLine target = null;
                 for (MutableLine l : post) {
-                    if (l.accountId.equals(grni) && l.debit != null) {
-                        l.debit = l.debit.subtract(priceVariance);
-                        break;
+                    if (l.accountId.equals(grni) && l.debit != null
+                            && (target == null || l.debit.compareTo(target.debit) > 0)) {
+                        target = l;
                     }
+                }
+                if (target != null) {
+                    target.debit = target.debit.subtract(priceVariance);
                 }
                 post.add(priceVariance.signum() > 0
                         ? new MutableLine(ppv, priceVariance, null, null, "Purchase price variance")
@@ -348,17 +353,28 @@ public class InvoicingWorkflowsInitializer {
         final String partnerId;
         final String description;
 
+        final String costCenterId;
+        final Map<String, Object> dimensions;
+
         MutableLine(String accountId, BigDecimal debit, BigDecimal credit, String partnerId, String description) {
+            this(accountId, debit, credit, partnerId, description, null, null);
+        }
+
+        MutableLine(String accountId, BigDecimal debit, BigDecimal credit, String partnerId, String description,
+                String costCenterId, Map<String, Object> dimensions) {
             this.accountId = accountId;
             this.debit = debit;
             this.credit = credit;
             this.partnerId = partnerId;
             this.description = description;
+            this.costCenterId = costCenterId;
+            this.dimensions = dimensions;
         }
 
         Line toLine() {
             return new Line(accountId, debit == null ? null : JsNumbers.dec(debit),
-                    credit == null ? null : JsNumbers.dec(credit), partnerId, description, null, null, null);
+                    credit == null ? null : JsNumbers.dec(credit), partnerId, description, null, costCenterId,
+                    dimensions);
         }
     }
 

@@ -322,10 +322,10 @@ class InvoicingIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("authorization: invoicing (40 base + 10 ADR-S011 deposits / mobile money + 15 Phase 4) and expenses (18) "
-            + "routes answer 401 / 403")
+    @DisplayName("authorization: invoicing (40 base + 10 ADR-S011 deposits / mobile money + 15 Phase 4 + 2 ADR-S025"
+            + " line dimensions) and expenses (18) routes answer 401 / 403")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(65);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(67);
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(18);
     }
 }

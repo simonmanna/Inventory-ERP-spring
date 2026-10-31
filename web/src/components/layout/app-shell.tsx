@@ -364,6 +364,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read },
       { to: '/taxes', label: tx('Tax Rates'), icon: Percent, permission: PERMISSIONS.tax.read },
       { to: '/cost-centers', label: tx('Cost Centers'), icon: Users, permission: PERMISSIONS.costCenter.read },
+      { to: '/analytic-dimensions', label: tx('Analytic Dimensions'), icon: Users, permission: PERMISSIONS.analyticDimension.read },
       { to: '/cost-center-accounting', label: tx('Cost Centre Accounting'), icon: Network, permission: PERMISSIONS.costCenter.read },
       { to: '/currency', label: tx('Currency'), icon: Banknote, permission: PERMISSIONS.currency.read },
       { to: '/accounts/payment-terms', label: tx('Payment Terms'), icon: CalendarClock, permission: PERMISSIONS.account.read },

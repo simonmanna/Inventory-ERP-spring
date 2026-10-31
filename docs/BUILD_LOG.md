@@ -162,3 +162,4 @@ Plan and per-phase notes: `docs/roadmap/production-ready-plan.md`.
 | PR-0 green CI | done | 1,379 / 0 failed | test isolation (outbox drain, shared shift), critical permission gap closed, i18n gate, lazy web pages |
 | PR-1 part 1 hardening | done | 1,392 / 1 failed (async-timing flake in `SalesFulfilmentIT`, fixed; class green on rerun) | outbox dead letter, RLS enforced (whole IT suite as non-owner role), CVEs, whole-app authz matrix, incoming supply |
 | PR-2 year-end close | done | same run as PR-1 | ADR-S023, V216 |
+| PR-3 analytic dimensions | done | see commit | ADR-S025, V217 |

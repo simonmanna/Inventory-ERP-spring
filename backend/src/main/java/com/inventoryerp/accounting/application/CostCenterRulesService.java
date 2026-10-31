@@ -68,7 +68,8 @@ public class CostCenterRulesService {
             Instant postingDate) {
         String orgId = org();
         boolean configured = jdbc.sql("SELECT EXISTS (SELECT 1 FROM \"CostCenterDefault\" WHERE \"organizationId\" = ?)"
-                + " OR EXISTS (SELECT 1 FROM \"AccountDimensionRule\" WHERE \"organizationId\" = ?)")
+                + " OR EXISTS (SELECT 1 FROM \"AccountDimensionRule\" WHERE \"organizationId\" = ?"
+                + " AND dimension = 'costCenter')")
                 .params(orgId, orgId).query(Boolean.class).single();
         boolean splits = lines.stream().anyMatch(l -> l.dimensions() != null && l.dimensions().get(SPLIT_DIMENSION) != null);
         boolean anyCenter = headerCostCenterId != null || lines.stream().anyMatch(l -> l.costCenterId() != null);
@@ -258,7 +259,7 @@ public class CostCenterRulesService {
     public List<Map<String, Object>> listAccountRules() {
         return SqlRows.list(jdbc.sql("SELECT r.*, a.code AS \"accountCode\", a.name AS \"accountName\" FROM"
                 + " \"AccountDimensionRule\" r JOIN \"Account\" a ON a.id = r.\"accountId\" WHERE r.\"organizationId\" = ?"
-                + " ORDER BY a.code").param(org()));
+                + " AND r.dimension = 'costCenter' ORDER BY a.code").param(org()));
     }
 
     /** Set an account's cost-centre rule ({@code required} / {@code forbidden}); {@code optional} removes it. */

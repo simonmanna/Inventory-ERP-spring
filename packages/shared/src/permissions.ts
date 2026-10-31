@@ -1025,6 +1025,13 @@ export const PERMISSIONS = {
     /// Print product, stockpile and weighbridge ticket labels (PDF or ZPL).
     print: 'label:print',
   },
+  // ---- Analytic dimensions (roadmap 2.4, ADR-S025) ----
+  analyticDimension: {
+    /// Analytic dimensions, their values and account rules (read only).
+    read: 'analytic_dimension:read',
+    /// Create and change dimensions, values, account rules and the dimensions of document lines.
+    manage: 'analytic_dimension:manage',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

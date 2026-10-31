@@ -383,3 +383,6 @@ Nothing in this lane was compiled or run.
 | 2026-10-31 | PR-2 year close | Where does P&L go to retained earnings? | In each period close (existing CLOSING journal); the year close posts nothing and requires every period with postings closed | A separate year-end journal | ADR-S023 |
 | 2026-10-31 | PR-2 year close | Lock periods at year close? | Yes by default (`lockPeriods: false` keeps the year reopenable) | Never lock | `POST /fiscal-years/:id/close` |
 | 2026-10-31 | PR-2 year close | Sign-offs required to close | Stock count, depreciation and asset register, accountant review, tax computation: all four | Optional | `FiscalYearService.SIGN_OFFS` |
+| 2026-10-31 | PR-3 dimensions | Store dimension value codes or ids on ledger lines? | Codes, in the existing `dimensions` jsonb: no data migration, readable exports; a value code is frozen once posted | Ids with a join table | ADR-S025 |
+| 2026-10-31 | PR-3 dimensions | Undefined keys on postings (vehicleId, driverId, ...) | Pass through unvalidated; only keys that name a defined dimension are checked | Reject unknown keys | `AnalyticDimensionService.validate` |
+| 2026-10-31 | PR-3 dimensions | Dimensions on invoices and bills | Separate route `PUT /analytic-dimensions/documents/:id/lines` while draft, so the Nest invoice contract is untouched | Add a field to the invoice DTOs | ADR-S025 §6 |

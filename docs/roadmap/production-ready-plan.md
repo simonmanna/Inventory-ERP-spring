@@ -10,7 +10,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-0 | Green CI: order-dependent test failures, critical permission gap, web i18n gate, web bundle over the precache limit | S | **done 2026-10-31** |
 | PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | **part 1 done 2026-10-31** (see below); part 2 open |
 | PR-2 | 1.7 Year-end close | S | **done 2026-10-31** (ADR-S023) |
-| PR-3 | 2.4 Analytic dimensions | M | todo |
+| PR-3 | 2.4 Analytic dimensions | M | **done 2026-10-31** (ADR-S025) |
 | PR-4 | 2.1 Warehouse management | L | todo |
 | PR-5 | 2.3 Replenishment & MRP completion | L | todo |
 | PR-6 | 2.8 Subscriptions & deferrals | M | todo |
@@ -99,3 +99,16 @@ chunks stay precached, so the offline POS still works.
 `PUT /fiscal-years/:id/close-checklist/:key`, `GET /fiscal-years/:id/closing-balances`, `POST /fiscal-years/:id/close`,
 `POST /fiscal-years/:id/reopen`. Web: `/fiscal-years`, `/fiscal-years/:id`. Tests: `FiscalYearIT`,
 `FiscalYearPeriodsTest`.
+
+## PR-3 — as built (ADR-S025)
+
+`V217`: `AnalyticDimension`, `AnalyticDimensionValue`, `AccountDimensionRule` opened to any dimension code,
+`DocumentLine.dimensions`, GIN index on `JournalLine.dimensions`. Posting validates defined dimensions (active value,
+validity dates) and account rules (`required` / `forbidden`; closing journals exempt). Cost centre addressed as the
+reserved dimension `costCenter`. Invoice / credit note / vendor bill lines carry dimensions to their revenue / expense
+GL lines (split per value). Routes (`analytic_dimension:read|manage`, reports `report:accounting`):
+`GET|POST /analytic-dimensions`, `GET|PATCH|DELETE /analytic-dimensions/:id`, `GET|POST /analytic-dimensions/:id/values`,
+`PATCH|DELETE /analytic-dimensions/:id/values/:valueId`, `GET /analytic-dimensions/account-rules`,
+`PUT /analytic-dimensions/account-rules/:accountId`, `GET /analytic-dimensions/reports/summary|trial-balance|lines`,
+`GET|PUT /analytic-dimensions/documents/:documentId/lines`. Web: `/analytic-dimensions` (dimensions, values, account
+rules, P&L by value). Tests: `AnalyticDimensionIT`.

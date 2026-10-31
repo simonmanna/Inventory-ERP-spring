@@ -143,8 +143,8 @@ public class CreditNoteService {
         String partnerId = (String) cn.get("partnerId");
         Grouped g = builder.groupForPosting(partnerId, lines, "sales", null);
         List<Line> post = new ArrayList<>();
-        g.itemByAccount().forEach((acc, amt) -> post.add(new Line(acc, JsNumbers.dec(amt), null, partnerId,
-                "Revenue (credit)", null, null, null)));
+        g.itemLines().forEach(it -> post.add(new Line(it.accountId(), JsNumbers.dec(it.amount()), null, partnerId,
+                "Revenue (credit)", null, it.costCenterId(), it.glDimensions())));
         g.taxByAccount().forEach((acc, amt) -> post.add(Line.debit(acc, JsNumbers.dec(amt), "Tax (credit)")));
         BigDecimal total = Money.dec(cn.get("totalAmount"));
         post.add(new Line(g.counterAccount(), null, JsNumbers.dec(total), partnerId,

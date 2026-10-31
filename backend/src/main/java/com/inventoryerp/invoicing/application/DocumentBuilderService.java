@@ -101,9 +101,41 @@ public class DocumentBuilderService {
     public record Totals(List<PreparedLine> prepared, BigDecimal subtotal, BigDecimal taxAmount, BigDecimal total,
             BigDecimal discountTotal) {}
 
-    /** Accounts a document posts to. */
+    /**
+     * One revenue / expense posting line: account, the line's analytic dimensions (ADR-S025; {@code costCenter} is the
+     * cost centre id, the rest go to the GL line's {@code dimensions}) and the amount.
+     */
+    public record ItemLine(String accountId, Map<String, Object> dimensions, BigDecimal amount) {
+
+        /** Cost centre carried by the dimensions, or null. */
+        public String costCenterId() {
+            return dimensions == null ? null : (String) dimensions.get("costCenter");
+        }
+
+        /** Dimensions for the GL line (without the cost centre), or null. */
+        public Map<String, Object> glDimensions() {
+            if (dimensions == null) {
+                return null;
+            }
+            Map<String, Object> out = new java.util.TreeMap<>(dimensions);
+            out.remove("costCenter");
+            return out.isEmpty() ? null : out;
+        }
+    }
+
+    /**
+     * Accounts a document posts to. {@code itemLines} splits {@code itemByAccount} by line dimensions (one entry per
+     * account when no line carries dimensions).
+     */
     public record Grouped(String counterAccount, Map<String, BigDecimal> itemByAccount,
-            Map<String, BigDecimal> taxByAccount) {}
+            Map<String, BigDecimal> taxByAccount, List<ItemLine> itemLines) {
+
+        public Grouped(String counterAccount, Map<String, BigDecimal> itemByAccount,
+                Map<String, BigDecimal> taxByAccount) {
+            this(counterAccount, itemByAccount, taxByAccount, itemByAccount.entrySet().stream()
+                    .map(e -> new ItemLine(e.getKey(), null, e.getValue())).toList());
+        }
+    }
 
     private final JdbcClient jdbc;
     private final DmsTypeResolver dmsTypes;
@@ -301,6 +333,8 @@ public class DocumentBuilderService {
                 : determination.payableAccount(partner == null ? null : (String) partner.get("payableAccountId"));
         Map<String, BigDecimal> items = new LinkedHashMap<>();
         Map<String, BigDecimal> taxes = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> lineDims = lineDimensions(lines);
+        Map<String, ItemLine> split = new LinkedHashMap<>();
         for (Map<String, Object> line : lines) {
             Object lt = line.get("lineType");
             if (lt != null && !"product".equals(lt.toString())) {
@@ -327,6 +361,10 @@ public class DocumentBuilderService {
                     : determination.expenseAccount(lineAccount,
                             category == null ? null : (String) category.get("expenseAccountId"));
             items.merge(itemAcc, Money.dec(line.get("subtotal")), BigDecimal::add);
+            Map<String, Object> dims = lineDims.get((String) line.get("id"));
+            String splitKey = itemAcc + " " + (dims == null ? "" : com.inventoryerp.shared.web.EntityJson.toJson(dims));
+            split.merge(splitKey, new ItemLine(itemAcc, dims, Money.dec(line.get("subtotal"))),
+                    (a, b) -> new ItemLine(a.accountId(), a.dimensions(), a.amount().add(b.amount())));
             BigDecimal taxAmount = Money.dec(line.get("taxAmount"));
             if (line.get("taxId") != null && taxAmount.signum() != 0) {
                 Map<String, Object> t = SqlRows.one(jdbc.sql("SELECT \"accountId\", type::text AS type FROM \"Tax\" WHERE id = ?"
@@ -338,7 +376,35 @@ public class DocumentBuilderService {
                 }
             }
         }
-        return new Grouped(counter, items, taxes);
+        return new Grouped(counter, items, taxes, new ArrayList<>(split.values()));
+    }
+
+    /** Analytic dimensions of stored document lines by line id (ADR-S025); empty for unsaved (e.g. POS) lines. */
+    private Map<String, Map<String, Object>> lineDimensions(List<Map<String, Object>> lines) {
+        List<String> ids = lines.stream().map(l -> l.get("id")).filter(String.class::isInstance).map(String.class::cast)
+                .toList();
+        Map<String, Map<String, Object>> out = new java.util.HashMap<>();
+        if (ids.isEmpty()) {
+            return out;
+        }
+        jdbc.sql("SELECT id, dimensions::text AS d FROM \"DocumentLine\" WHERE \"organizationId\" = ? AND"
+                        + " id = ANY(?::text[]) AND dimensions IS NOT NULL").params(org(), ids.toArray(String[]::new))
+                .query((rs, n) -> {
+                    Object tree = com.inventoryerp.shared.web.EntityJson.parseJson(rs.getString("d"));
+                    Map<String, Object> m = new java.util.TreeMap<>();
+                    if (tree instanceof tools.jackson.databind.JsonNode node && node.isObject()) {
+                        node.properties().forEach(e -> {
+                            if (e.getValue().isString() && !e.getValue().asString().isBlank()) {
+                                m.put(e.getKey(), e.getValue().asString());
+                            }
+                        });
+                    }
+                    if (!m.isEmpty()) {
+                        out.put(rs.getString("id"), m);
+                    }
+                    return null;
+                }).list();
+        return out;
     }
 
     // ------------------------------------------------------------------ rows

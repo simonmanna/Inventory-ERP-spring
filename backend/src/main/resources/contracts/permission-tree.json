@@ -841,5 +841,9 @@
   },
   "label": {
     "print": "label:print"
+  },
+  "analyticDimension": {
+    "read": "analytic_dimension:read",
+    "manage": "analytic_dimension:manage"
   }
 }

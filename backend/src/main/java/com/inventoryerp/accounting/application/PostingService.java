@@ -52,11 +52,13 @@ public class PostingService {
     private final CurrencyService currency;
     private final AccountResolverService accounts;
     private final CostCenterRulesService costCenters;
+    private final AnalyticDimensionService analyticDimensions;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
             FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
-            CostCenterRulesService costCenters) {
+            CostCenterRulesService costCenters, AnalyticDimensionService analyticDimensions) {
         this.costCenters = costCenters;
+        this.analyticDimensions = analyticDimensions;
         this.em = em;
         this.jdbc = jdbc;
         this.events = events;
@@ -97,6 +99,7 @@ public class PostingService {
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
+        analyticDimensions.validate(lines, request.dimensions(), date, request.sourceType());
 
         int year = date.atOffset(ZoneOffset.UTC).getYear();
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
@@ -233,6 +236,7 @@ public class PostingService {
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
+        analyticDimensions.validate(lines, request.dimensions(), date, request.sourceType());
         Map<String, String> entryDims = normalizeDimensions(request.dimensions());
         JournalEntry entry = new JournalEntry();
         entry.setOrganizationId(organizationId);
