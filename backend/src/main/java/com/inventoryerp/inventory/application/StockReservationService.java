@@ -192,7 +192,8 @@ public class StockReservationService {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT r.*, p.code AS \"productCode\", p.name AS"
                 + " \"productName\", l.code AS \"locationCode\", l.name AS \"locationName\", COALESCE(s.quantity, 0) AS"
                 + " \"onHand\"" + from + " LEFT JOIN \"InventoryLocation\" l ON l.id = r.\"locationId\" LEFT JOIN"
-                + " \"StockItem\" s ON s.\"organizationId\" = r.\"organizationId\" AND s.\"productId\" = r.\"productId\""
+                + " \"StockItem\" s ON s.\"organizationId\" = r.\"organizationId\" AND s.\"productId\" ="
+                + " r.\"productId\""
                 + " AND s.\"variantKey\" = r.\"variantKey\" AND s.\"locationId\" = r.\"locationId\"" + where
                 + " ORDER BY r.\"createdAt\" DESC, r.id LIMIT ? OFFSET ?").params(paged));
         return PageResult.of(rows, page, pageSize, total);

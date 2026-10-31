@@ -54,8 +54,8 @@ class CrmCustomerDataIT extends ApiTestSupport {
     void reminders() {
         String due = "Call back " + sfx;
         String later = "Later " + sfx;
-        Instant past = Instant.now().minus(1, ChronoUnit.HOURS);
-        Instant future = Instant.now().plus(2, ChronoUnit.DAYS);
+        Instant past = Instant.now().truncatedTo(ChronoUnit.SECONDS).minus(1, ChronoUnit.HOURS);
+        Instant future = Instant.now().truncatedTo(ChronoUnit.SECONDS).plus(2, ChronoUnit.DAYS);
         String dueId = ok(201, "POST", "/crm/planner", Map.of("type", "call", "title", due, "partnerId", customer,
                 "dueAt", future.toString(), "remindAt", past.toString())).get("id").asString();
         String laterId = ok(201, "POST", "/crm/planner", Map.of("type", "call", "title", later, "partnerId", customer,

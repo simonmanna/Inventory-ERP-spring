@@ -11,7 +11,6 @@ import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
-import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.kernel.notifications.NotificationsService.SendInput;
 import com.inventoryerp.kernel.sequence.SequenceService;
@@ -97,7 +96,8 @@ public class CrmCaseService {
             throw ApiException.notFound("Case not found");
         }
         row.put("events", db.rows("SELECT e.*, NULLIF(trim(concat(u.\"firstName\", ' ', u.\"lastName\")), '') AS"
-                + " \"actorName\" FROM \"CrmCaseEvent\" e LEFT JOIN \"User\" u ON u.id = e.\"actorId\" WHERE e.\"caseId\""
+                + " \"actorName\" FROM \"CrmCaseEvent\" e LEFT JOIN \"User\" u ON u.id = e.\"actorId\" WHERE"
+                + " e.\"caseId\""
                 + " = ? AND e.\"organizationId\" = ? ORDER BY e.\"createdAt\" DESC, e.id", id, org()));
         return row;
     }
@@ -175,7 +175,8 @@ public class CrmCaseService {
 
     private static String describe(Map<String, Object> x) {
         String uom = x.get("uomCode") == null ? "" : " " + x.get("uomCode");
-        return "Dispatched " + x.get("dispatchedQty") + uom + ", delivered " + x.get("deliveredQty") + uom + ". Reason: "
+        return "Dispatched " + x.get("dispatchedQty") + uom + ", delivered " + x.get("deliveredQty") + uom + "."
+                + " Reason: "
                 + x.get("reason") + (x.get("notes") == null ? "" : ". " + x.get("notes"));
     }
 
@@ -297,7 +298,8 @@ public class CrmCaseService {
     // ------------------------------------------------------------------ helpers
 
     private void event(String caseId, String kind, String body, String from, String to) {
-        db.insert("CrmCaseEvent", Obj.of("caseId", caseId, "kind", kind, "body", body, "fromStatus", from, "toStatus", to,
+        db.insert("CrmCaseEvent", Obj.of("caseId", caseId, "kind", kind, "body", body, "fromStatus", from, "toStatus",
+                to,
                 "actorId", user()));
     }
 
@@ -317,7 +319,8 @@ public class CrmCaseService {
 
     private void notifyAssignee(Map<String, Object> row) {
         try {
-            notifications.send(new SendInput(org(), str(row.get("assigneeId")), "in_app", "crm", "Case " + row.get("code"),
+            notifications.send(new SendInput(org(), str(row.get("assigneeId")), "in_app", "crm", "Case "
+                    + row.get("code"),
                     str(row.get("subject")), Obj.of("kind", "crm.case.assigned", "caseId", row.get("id"), "link",
                             "/crm/cases/" + row.get("id"))));
         } catch (RuntimeException e) {

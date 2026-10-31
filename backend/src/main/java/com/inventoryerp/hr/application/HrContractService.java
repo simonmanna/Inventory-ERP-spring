@@ -122,7 +122,8 @@ public class HrContractService {
         Object type = nz(dto.get("contractType"), row.get("contractType"));
         LocalDate start = dto.containsKey("startDate") ? day(dto.get("startDate"), "startDate")
                 : (LocalDate) row.get("startDate");
-        LocalDate end = dto.containsKey("endDate") ? day(dto.get("endDate"), "endDate") : (LocalDate) row.get("endDate");
+        LocalDate end = dto.containsKey("endDate") ? day(dto.get("endDate"),
+                "endDate") : (LocalDate) row.get("endDate");
         assertTerms(type, start, end);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("contractType", type);

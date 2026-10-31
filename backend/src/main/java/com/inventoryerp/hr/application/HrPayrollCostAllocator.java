@@ -27,7 +27,8 @@ public final class HrPayrollCostAllocator {
     public record Cost(String employeeId, String departmentId, String branchId, BigDecimal amount) {}
 
     /** The part of an employee's cost charged to one cost centre ({@code costCenterId} null: unallocated). */
-    public record Share(String employeeId, String departmentId, String branchId, String costCenterId, BigDecimal amount) {
+    public record Share(String employeeId, String departmentId, String branchId, String costCenterId,
+            BigDecimal amount) {
         Share plus(BigDecimal more) {
             return new Share(employeeId, departmentId, branchId, costCenterId, amount.add(more));
         }

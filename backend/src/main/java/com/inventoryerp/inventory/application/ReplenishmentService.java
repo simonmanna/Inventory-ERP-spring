@@ -119,7 +119,8 @@ public class ReplenishmentService {
             where.append(" AND (p.code ILIKE ? OR p.name ILIKE ?)");
             params.addAll(List.of(like, like));
         }
-        return page(RULE_SELECT + where, " ORDER BY p.code, l.code", "SELECT count(*) FROM \"InventoryReplenishmentRule\" r"
+        return page(RULE_SELECT + where, " ORDER BY p.code, l.code", "SELECT count(*) FROM"
+                + " \"InventoryReplenishmentRule\" r"
                 + " JOIN \"Product\" p ON p.id = r.\"productId\"" + where, params, q);
     }
 
@@ -146,7 +147,8 @@ public class ReplenishmentService {
         assertExists("InventoryLocation", locationId, "Location not found");
         Levels levels = levels(dto, null);
         Long taken = jdbc.sql("SELECT count(*) FROM \"InventoryReplenishmentRule\" WHERE \"organizationId\" = ? AND"
-                + " \"productId\" = ? AND \"locationId\" = ? AND \"deletedAt\" IS NULL").params(org(), productId, locationId)
+                + " \"productId\" = ? AND \"locationId\" = ? AND \"deletedAt\" IS NULL").params(org(), productId,
+                locationId)
                 .query(Long.class).single();
         if (taken > 0) {
             throw ApiException.badRequest("This product already has a rule at this location");
@@ -181,7 +183,8 @@ public class ReplenishmentService {
         boolean active = dto.containsKey("isActive") ? Boolean.TRUE.equals(dto.get("isActive"))
                 : Boolean.TRUE.equals(row.get("isActive"));
         jdbc.sql("UPDATE \"InventoryReplenishmentRule\" SET \"minQty\" = ?, \"maxQty\" = ?, \"reorderQty\" = ?,"
-                + " \"supplierId\" = ?, \"leadTimeDays\" = ?, \"autoRequisition\" = ?, \"isActive\" = ?, \"updatedBy\" = ?,"
+                + " \"supplierId\" = ?, \"leadTimeDays\" = ?, \"autoRequisition\" = ?, \"isActive\" = ?, \"updatedBy\""
+                + " = ?,"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(levels.min(), levels.max(), levels.reorder(), supplierId, lead, auto, active,
                         TenantContext.userId(), id, org()).update();
@@ -198,7 +201,8 @@ public class ReplenishmentService {
                 + " \"updatedAt\" = " + NOW + " WHERE \"ruleId\" = ? AND \"organizationId\" = ? AND status = 'open'")
                 .params(id, org()).update();
         jdbc.sql("UPDATE \"InventoryReplenishmentRule\" SET \"deletedAt\" = " + NOW + ", \"isActive\" = false,"
-                + " \"updatedBy\" = ? WHERE id = ? AND \"organizationId\" = ?").params(TenantContext.userId(), id, org())
+                + " \"updatedBy\" = ? WHERE id = ? AND \"organizationId\" = ?").params(TenantContext.userId(), id,
+                org())
                 .update();
         audit.recordInTx(AuditInput.of("InventoryReplenishmentRule", id, "update", null, Obj.of("deleted", true)));
         return Obj.of("ok", true);
@@ -302,7 +306,8 @@ public class ReplenishmentService {
                 + " r.\"isActive\" AND r.\"deletedAt\" IS NULL ORDER BY r.id").param(org()));
         for (Map<String, Object> rule : rules) {
             String ruleId = (String) rule.get("id");
-            BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
+            BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE"
+                    + " \"organizationId\" = ?"
                     + " AND \"productId\" = ? AND \"locationId\" = ?").params(org(), rule.get("productId"),
                     rule.get("locationId")).query(BigDecimal.class).single();
             BigDecimal reserved = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE"
@@ -313,13 +318,15 @@ public class ReplenishmentService {
             BigDecimal suggested = ReplenishmentCalculator.suggest(available, min,
                     rule.get("maxQty") == null ? null : SqlRows.dec(rule, "maxQty"),
                     rule.get("reorderQty") == null ? null : SqlRows.dec(rule, "reorderQty"));
-            Map<String, Object> live = SqlRows.one(jdbc.sql("SELECT id, status FROM \"InventoryReplenishmentAlert\" WHERE"
+            Map<String, Object> live = SqlRows.one(jdbc.sql("SELECT id, status FROM \"InventoryReplenishmentAlert\""
+                    + " WHERE"
                     + " \"ruleId\" = ? AND \"organizationId\" = ? AND status IN " + LIVE + " FOR UPDATE")
                     .params(ruleId, org()));
             if (suggested.signum() == 0) {
                 // Stock is back: live alerts are over, and a dismissed one no longer silences the rule.
                 resolved += jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'resolved', \"resolvedAt\" = "
-                        + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"ruleId\" = ? AND \"organizationId\" = ? AND status"
+                        + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"ruleId\" = ? AND \"organizationId\" = ? AND"
+                        + " status"
                         + " IN ('open', 'requested', 'requisitioned', 'dismissed')").params(ruleId, org()).update();
                 continue;
             }
@@ -339,7 +346,8 @@ public class ReplenishmentService {
             int inserted = jdbc.sql("INSERT INTO \"InventoryReplenishmentAlert\" (id, \"organizationId\", \"ruleId\","
                     + " \"productId\", \"locationId\", \"onHand\", reserved, available, \"minQty\", \"suggestedQty\")"
                     + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
-                    .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved, available,
+                    .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved,
+                    available,
                             min, suggested).update();
             if (inserted > 0) {
                 raised++;
@@ -352,7 +360,8 @@ public class ReplenishmentService {
         if (raised > 0) {
             notifyPlanners(raised);
         }
-        return Obj.of("rules", rules.size(), "raised", raised, "refreshed", refreshed, "resolved", resolved, "requested",
+        return Obj.of("rules", rules.size(), "raised", raised, "refreshed", refreshed, "resolved", resolved,
+                "requested",
                 requested);
     }
 
@@ -382,7 +391,8 @@ public class ReplenishmentService {
     }
 
     private int request(List<String> ids) {
-        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(ALERT_SELECT + " WHERE a.\"organizationId\" = ? AND a.status"
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(ALERT_SELECT + " WHERE a.\"organizationId\" = ? AND"
+                + " a.status"
                 + " = 'open' AND a.id = ANY(?::text[]) FOR UPDATE OF a").params(org(), ids.toArray(String[]::new)));
         if (rows.isEmpty()) {
             return 0;
@@ -395,7 +405,8 @@ public class ReplenishmentService {
             Map<String, Object> line = new LinkedHashMap<>();
             line.put("alertId", a.get("id"));
             line.put("productId", a.get("productId"));
-            line.put("description", a.get("productCode") + " " + a.get("productName") + " for " + a.get("locationName"));
+            line.put("description", a.get("productCode") + " " + a.get("productName") + " for "
+                    + a.get("locationName"));
             line.put("quantity", SqlRows.dec(a, "suggestedQty").toPlainString());
             line.put("uomId", a.get("uomId"));
             line.put("supplierId", a.get("supplierId"));
@@ -428,9 +439,12 @@ public class ReplenishmentService {
     }
 
     private void notifyPlanners(int raised) {
-        List<String> users = jdbc.sql("SELECT DISTINCT u.id FROM \"User\" u JOIN \"_UserRoles\" ur ON ur.\"B\" = u.id JOIN"
-                + " \"Role\" r ON r.id = ur.\"A\" WHERE u.\"organizationId\" = ? AND u.\"isActive\" AND u.\"deletedAt\" IS"
-                + " NULL AND 'inventory:replenish' = ANY(r.permissions) LIMIT 25").param(org()).query(String.class).list();
+        List<String> users = jdbc.sql("SELECT DISTINCT u.id FROM \"User\" u JOIN \"_UserRoles\" ur ON ur.\"B\" = u.id"
+                + " JOIN"
+                + " \"Role\" r ON r.id = ur.\"A\" WHERE u.\"organizationId\" = ? AND u.\"isActive\" AND"
+                + " u.\"deletedAt\" IS"
+                + " NULL AND 'inventory:replenish' = ANY(r.permissions) LIMIT"
+                + " 25").param(org()).query(String.class).list();
         for (String user : users) {
             try {
                 notifications.send(new SendInput(org(), user, "in_app", "inventory", "Stock below minimum",

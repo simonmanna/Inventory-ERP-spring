@@ -43,7 +43,8 @@ public class ProcurementReplenishmentService {
         Map<String, List<Line>> bySupplier = new LinkedHashMap<>();
         for (Line l : lines) {
             if (waiting.contains(l.alertId())) {
-                bySupplier.computeIfAbsent(l.supplierId() == null ? NO_SUPPLIER : l.supplierId(), k -> new ArrayList<>())
+                bySupplier.computeIfAbsent(l.supplierId() == null ? NO_SUPPLIER : l.supplierId(),
+                        k -> new ArrayList<>())
                         .add(l);
             }
         }
@@ -57,7 +58,8 @@ public class ProcurementReplenishmentService {
                     "Replenishment: " + own.size() + " product(s) below minimum", neededBy, inputs));
             replenishment.markRequisitioned(own.stream().map(Line::alertId).toList(), (String) created.get("id"),
                     (String) created.get("requestNumber"));
-            log.info("Purchase request {} raised for {} replenishment alert(s)", created.get("requestNumber"), own.size());
+            log.info("Purchase request {} raised for {} replenishment alert(s)", created.get("requestNumber"),
+                    own.size());
         }
     }
 }

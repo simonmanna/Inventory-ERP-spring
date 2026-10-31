@@ -76,7 +76,8 @@ public class ProductSpecService {
         }
         String code = str(dto.get("code")).trim().toUpperCase();
         assertCodeFree("ProductGrade", code, "Grade");
-        Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ProductGrade\" (id, \"organizationId\", code, name,"
+        Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ProductGrade\" (id, \"organizationId\", code,"
+                + " name,"
                 + " description, sequence, \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *")
                 .params(UUID.randomUUID().toString(), org(), code, str(dto.get("name")), str(dto.get("description")),
                         intOf(dto.get("sequence"), 10), TenantContext.userId()));
@@ -87,8 +88,10 @@ public class ProductSpecService {
     @Transactional
     public Map<String, Object> updateGrade(String id, Map<String, Object> dto) {
         Map<String, Object> row = require("ProductGrade", id, "Grade not found");
-        Map<String, Object> out = SqlRows.one(jdbc.sql("UPDATE \"ProductGrade\" SET name = ?, description = ?, sequence = ?,"
-                + " \"isActive\" = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
+        Map<String, Object> out = SqlRows.one(jdbc.sql("UPDATE \"ProductGrade\" SET name = ?, description = ?,"
+                + " sequence = ?,"
+                + " \"isActive\" = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                + " \"organizationId\" = ?"
                 + " RETURNING *").params(dto.containsKey("name") ? str(dto.get("name")) : row.get("name"),
                 dto.containsKey("description") ? str(dto.get("description")) : row.get("description"),
                 intOf(dto.get("sequence"), (Integer) row.get("sequence")),
@@ -101,7 +104,8 @@ public class ProductSpecService {
     @Transactional
     public Map<String, Object> deleteGrade(String id) {
         require("ProductGrade", id, "Grade not found");
-        Long used = jdbc.sql("SELECT count(*) FROM \"ProductSpecification\" WHERE \"organizationId\" = ? AND \"gradeId\" = ?")
+        Long used = jdbc.sql("SELECT count(*) FROM \"ProductSpecification\" WHERE \"organizationId\" = ? AND"
+                + " \"gradeId\" = ?")
                 .params(org(), id).query(Long.class).single();
         if (used > 0) {
             throw ApiException.badRequest("This grade is used by " + used + " product(s); deactivate it instead");
@@ -137,12 +141,16 @@ public class ProductSpecService {
         String type = blank(dto.get("dataType")) ? "text" : str(dto.get("dataType"));
         String[] options = options(dto.get("options"), type);
         assertCategory(dto.get("categoryId"));
-        Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ProductAttribute\" (id, \"organizationId\", code, name,"
-                + " \"dataType\", unit, options, \"categoryId\", \"isRequired\", sequence, \"createdBy\") VALUES (?, ?, ?, ?,"
+        Map<String, Object> row = SqlRows.one(jdbc.sql("INSERT INTO \"ProductAttribute\" (id, \"organizationId\","
+                + " code, name,"
+                + " \"dataType\", unit, options, \"categoryId\", \"isRequired\", sequence, \"createdBy\") VALUES (?,"
+                + " ?, ?, ?,"
                 + " ?, ?, ?, ?, ?, ?, ?) RETURNING *")
-                .params(UUID.randomUUID().toString(), org(), code, str(dto.get("name")), type, str(dto.get("unit")), options,
+                .params(UUID.randomUUID().toString(), org(), code, str(dto.get("name")), type, str(dto.get("unit")),
+                options,
                         blank(dto.get("categoryId")) ? null : str(dto.get("categoryId")),
-                        Boolean.TRUE.equals(dto.get("isRequired")), intOf(dto.get("sequence"), 10), TenantContext.userId()));
+                        Boolean.TRUE.equals(dto.get("isRequired")), intOf(dto.get("sequence"), 10),
+                        TenantContext.userId()));
         audit.recordInTx(AuditInput.of("ProductAttribute", (String) row.get("id"), "create", null, row));
         return row;
     }
@@ -159,8 +167,10 @@ public class ProductSpecService {
         }
         Object category = dto.containsKey("categoryId") ? (blank(dto.get("categoryId")) ? null : str(dto.get("categoryId")))
                 : row.get("categoryId");
-        Map<String, Object> out = SqlRows.one(jdbc.sql("UPDATE \"ProductAttribute\" SET name = ?, unit = ?, options = ?,"
-                + " \"categoryId\" = ?, \"isRequired\" = ?, sequence = ?, \"isActive\" = ?, \"updatedBy\" = ?, \"updatedAt\" = "
+        Map<String, Object> out = SqlRows.one(jdbc.sql("UPDATE \"ProductAttribute\" SET name = ?, unit = ?, options ="
+                + " ?,"
+                + " \"categoryId\" = ?, \"isRequired\" = ?, sequence = ?, \"isActive\" = ?, \"updatedBy\" = ?,"
+                + " \"updatedAt\" = "
                 + NOW + " WHERE id = ? AND \"organizationId\" = ? RETURNING *")
                 .params(dto.containsKey("name") ? str(dto.get("name")) : row.get("name"),
                         dto.containsKey("unit") ? str(dto.get("unit")) : row.get("unit"), options, category,
@@ -196,11 +206,13 @@ public class ProductSpecService {
             params.add(q.get("gradeId"));
         }
         if (!blank(q.get("attributeId"))) {
-            where.append(" AND EXISTS (SELECT 1 FROM \"ProductAttributeValue\" v WHERE v.\"productId\" = s.\"productId\" AND"
+            where.append(" AND EXISTS (SELECT 1 FROM \"ProductAttributeValue\" v WHERE v.\"productId\" ="
+                    + " s.\"productId\" AND"
                     + " v.\"attributeId\" = ?");
             params.add(q.get("attributeId"));
             if (!blank(q.get("value"))) {
-                where.append(" AND (v.\"valueText\" = ? OR v.\"valueNumber\"::text = ? OR v.\"valueBoolean\"::text = ?)");
+                where.append(" AND (v.\"valueText\" = ? OR trim_scale(v.\"valueNumber\")::text = ? OR v.\"valueBoolean\"::text ="
+                        + " ?)");
                 params.addAll(List.of(q.get("value"), q.get("value"), q.get("value")));
             }
             where.append(')');
@@ -215,13 +227,16 @@ public class ProductSpecService {
     @Transactional(readOnly = true)
     public Map<String, Object> getSpecification(String productId) {
         Map<String, Object> product = requireProduct(productId);
-        Map<String, Object> spec = SqlRows.one(jdbc.sql("SELECT s.*, g.code AS \"gradeCode\", g.name AS \"gradeName\" FROM"
-                + " \"ProductSpecification\" s LEFT JOIN \"ProductGrade\" g ON g.id = s.\"gradeId\" WHERE s.\"organizationId\""
+        Map<String, Object> spec = SqlRows.one(jdbc.sql("SELECT s.*, g.code AS \"gradeCode\", g.name AS \"gradeName\""
+                + " FROM"
+                + " \"ProductSpecification\" s LEFT JOIN \"ProductGrade\" g ON g.id = s.\"gradeId\" WHERE"
+                + " s.\"organizationId\""
                 + " = ? AND s.\"productId\" = ?").params(org(), productId));
         List<Map<String, Object>> values = SqlRows.list(jdbc.sql("SELECT v.\"attributeId\", v.\"valueText\","
                 + " v.\"valueNumber\", v.\"valueBoolean\", a.code, a.name, a.\"dataType\", a.unit FROM"
                 + " \"ProductAttributeValue\" v JOIN \"ProductAttribute\" a ON a.id = v.\"attributeId\" WHERE"
-                + " v.\"organizationId\" = ? AND v.\"productId\" = ? ORDER BY a.sequence, a.code").params(org(), productId));
+                + " v.\"organizationId\" = ? AND v.\"productId\" = ? ORDER BY a.sequence, a.code").params(org(),
+                productId));
         Map<String, String> filter = new LinkedHashMap<>();
         filter.put("activeOnly", "true");
         if (product.get("categoryId") != null) {
@@ -235,7 +250,8 @@ public class ProductSpecService {
         if (product.get("categoryId") != null) {
             return listAttributes(filter);
         }
-        return SqlRows.list(jdbc.sql("SELECT * FROM \"ProductAttribute\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS"
+        return SqlRows.list(jdbc.sql("SELECT * FROM \"ProductAttribute\" WHERE \"organizationId\" = ? AND"
+                + " \"deletedAt\" IS"
                 + " NULL AND \"isActive\" AND \"categoryId\" IS NULL ORDER BY sequence, code").param(org()));
     }
 
@@ -251,10 +267,13 @@ public class ProductSpecService {
             }
         }
         List<Value> values = values(dto.get("attributes"), product);
-        jdbc.sql("INSERT INTO \"ProductSpecification\" (id, \"organizationId\", \"productId\", \"gradeId\", \"standardRef\","
-                + " specification, \"updatedBy\") VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (\"organizationId\", \"productId\")"
+        jdbc.sql("INSERT INTO \"ProductSpecification\" (id, \"organizationId\", \"productId\", \"gradeId\","
+                + " \"standardRef\","
+                + " specification, \"updatedBy\") VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (\"organizationId\","
+                + " \"productId\")"
                 + " DO UPDATE SET \"gradeId\" = EXCLUDED.\"gradeId\", \"standardRef\" = EXCLUDED.\"standardRef\","
-                + " specification = EXCLUDED.specification, \"updatedBy\" = EXCLUDED.\"updatedBy\", \"updatedAt\" = " + NOW)
+                + " specification = EXCLUDED.specification, \"updatedBy\" = EXCLUDED.\"updatedBy\", \"updatedAt\" = "
+                + NOW)
                 .params(UUID.randomUUID().toString(), org(), productId, gradeId, str(dto.get("standardRef")),
                         str(dto.get("specification")), TenantContext.userId()).update();
         jdbc.sql("DELETE FROM \"ProductAttributeValue\" WHERE \"organizationId\" = ? AND \"productId\" = ?")
@@ -275,7 +294,8 @@ public class ProductSpecService {
 
     private List<Value> values(Object raw, Map<String, Object> product) {
         Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
-        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT * FROM \"ProductAttribute\" WHERE \"organizationId\" = ?"
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT * FROM \"ProductAttribute\" WHERE"
+                + " \"organizationId\" = ?"
                 + " AND \"deletedAt\" IS NULL").param(org()))) {
             byId.put((String) a.get("id"), a);
         }
@@ -387,7 +407,8 @@ public class ProductSpecService {
     }
 
     private Map<String, Object> require(String table, String id, String message) {
-        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT * FROM \"" + table + "\" WHERE id = ? AND \"organizationId\""
+        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT * FROM \"" + table + "\" WHERE id = ? AND"
+                + " \"organizationId\""
                 + " = ? AND \"deletedAt\" IS NULL").params(id, org()));
         if (row == null) {
             throw ApiException.notFound(message);
@@ -400,7 +421,8 @@ public class ProductSpecService {
     }
 
     private void softDelete(String table, String id) {
-        jdbc.sql("UPDATE \"" + table + "\" SET \"deletedAt\" = " + NOW + ", \"isActive\" = false, \"updatedBy\" = ? WHERE id = ?"
+        jdbc.sql("UPDATE \"" + table + "\" SET \"deletedAt\" = " + NOW + ", \"isActive\" = false, \"updatedBy\" = ?"
+                + " WHERE id = ?"
                 + " AND \"organizationId\" = ?").params(TenantContext.userId(), id, org()).update();
     }
 }

@@ -19,6 +19,7 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useProducts } from '@/features/products/api';
+import { usePartners } from '@/features/partners/api';
 import { fmtQty } from '@/features/inventory/stock-levels';
 
 interface Rule {
@@ -150,7 +151,7 @@ function AlertsTab({ canEdit }: { canEdit: boolean }) {
       render: (a) => (
         <span className="flex flex-wrap items-center gap-1">
           <Badge className={TONE[a.status]}>{a.status}</Badge>
-          {a.requestNumber ? <Link className="text-primary hover:underline" to="/purchase-requests">{a.requestNumber}</Link> : null}
+          {a.requestNumber ? <Link className="text-primary hover:underline" to="/procurement/purchase-requests">{a.requestNumber}</Link> : null}
         </span>
       ),
     },
@@ -275,11 +276,8 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const { data: products } = useProducts({ page: 1, pageSize: 50, search: search || undefined });
-  const { data: suppliers } = useQuery({
-    queryKey: ['replenishment-suppliers'],
-    queryFn: async () =>
-      (await api.get<{ data: { id: string; name: string }[] }>('/partners', { params: { page: 1, pageSize: 200, isSupplier: true } })).data,
-  });
+  const { data: partners } = usePartners({ page: 1, pageSize: 1000 });
+  const suppliers = (partners?.data ?? []).filter((p) => p.isSupplier);
   const { data: locations } = useQuery({
     queryKey: ['inventory-locations-options'],
     queryFn: async () =>
@@ -355,7 +353,7 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
               <Label>{tx('Supplier')}</Label>
               <select className={SELECT} value={form.supplierId} onChange={(e) => set('supplierId', e.target.value)}>
                 <option value="">{tx('The product\'s supplier')}</option>
-                {(suppliers?.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div className="grid gap-1.5">

@@ -49,7 +49,8 @@ public class HrPayrollCostService {
             LEFT JOIN "CostCenter" c ON c.id = l."costCenterId"
             LEFT JOIN "Branch" b ON b.id = l."branchId"
             """;
-    private static final String REPORT_GROUP = " GROUP BY l.\"departmentId\", d.name, l.\"costCenterId\", c.code, c.name,"
+    private static final String REPORT_GROUP = " GROUP BY l.\"departmentId\", d.name, l.\"costCenterId\", c.code,"
+            + " c.name,"
             + " l.\"branchId\", b.name ORDER BY d.name NULLS LAST, c.code NULLS LAST, b.name NULLS LAST";
 
     private final HrDb hr;
@@ -88,8 +89,10 @@ public class HrPayrollCostService {
             hr.jdbc().sql("DELETE FROM \"HrCostAllocationRule\" WHERE \"organizationId\" = ? AND scope = ? AND"
                     + " \"targetId\" = ?").params(org(), scope, targetId).update();
             for (Map<String, Object> l : lines) {
-                hr.insert(HrCostAllocationRule.class, Obj.of("organizationId", org(), "scope", scope, "targetId", targetId,
-                        "costCenterId", l.get("costCenterId"), "percent", new BigDecimal(String.valueOf(l.get("percent"))),
+                hr.insert(HrCostAllocationRule.class, Obj.of("organizationId", org(), "scope", scope, "targetId",
+                        targetId,
+                        "costCenterId", l.get("costCenterId"), "percent",
+                        new BigDecimal(String.valueOf(l.get("percent"))),
                         "createdBy", user()));
             }
             hr.auditInTx(AuditInput.of("HrCostAllocationRule", String.valueOf(targetId), "update", null,
@@ -164,7 +167,8 @@ public class HrPayrollCostService {
      */
     List<Debit> allocate(String runId, List<Map<String, Object>> items, BigDecimal amount,
             Map<String, BigDecimal> redirected) {
-        List<Map<String, Object>> rules = hr.where(HrCostAllocationRule.class).list("percent DESC, \"costCenterId\" ASC");
+        List<Map<String, Object>> rules = hr.where(HrCostAllocationRule.class).list("percent DESC, \"costCenterId\""
+                + " ASC");
         Map<String, List<Rule>> byEmployee = new LinkedHashMap<>();
         Map<String, List<Rule>> byDepartment = new LinkedHashMap<>();
         for (Map<String, Object> r : rules) {
@@ -184,7 +188,8 @@ public class HrPayrollCostService {
             Map<String, Object> employee = employees.getOrDefault(employeeId, Map.of());
             BigDecimal cost = SqlRows.dec(item, "grossPay")
                     .subtract(redirected.getOrDefault(employeeId, BigDecimal.ZERO)).max(BigDecimal.ZERO);
-            costs.add(new Cost(employeeId, (String) employee.get("departmentId"), (String) employee.get("branchId"), cost));
+            costs.add(new Cost(employeeId, (String) employee.get("departmentId"), (String) employee.get("branchId"),
+                    cost));
         }
         List<Share> shares = HrPayrollCostAllocator.split(costs, byEmployee, byDepartment, amount);
         for (Share s : shares) {

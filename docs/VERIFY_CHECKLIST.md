@@ -414,6 +414,6 @@ POS, and vendor bills, bank reconciliation, AP aging and stock reservations have
 
 - [ ] `/inventory/replenishment` → Rules: add a rule with minimum 10 for a product with 6 in stock. Scan now: an alert shows available 6 and the suggested quantity.
 - [ ] Reserve stock on `/inventory/reservations` and scan: available drops by the reservation.
-- [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/purchase-requests` shows a draft, one per supplier.
+- [ ] Tick the alert, Raise requisition: status goes to requested, then requisitioned with a PR number within a minute; `/procurement/purchase-requests` shows a draft, one per supplier.
 - [ ] A rule with Automatic ticked does the same on a scan. Bring stock above the minimum and scan: the alert resolves.
 - [ ] Dismiss needs a reason, and the rule stays quiet until stock recovers.

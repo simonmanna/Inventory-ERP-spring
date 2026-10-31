@@ -172,7 +172,8 @@ public class HrRecruitmentService {
 
     public Map<String, Object> listApplicants(Map<String, String> query) {
         HrDb.Where w = hr.where(HrApplicant.class).eqIf("openingId", query.get("openingId"))
-                .eqIf("stage", query.get("stage")).search(query.get("q"), "code", "firstName", "lastName", "email", "phone");
+                .eqIf("stage", query.get("stage")).search(query.get("q"), "code", "firstName", "lastName", "email",
+                "phone");
         List<Map<String, Object>> rows = w.list("\"appliedOn\" DESC, code DESC", HrDb.take(query.get("take"), 50, 200),
                 HrDb.skip(query.get("skip")));
         hr.oneAll(rows, "opening", HrJobOpening.class, "openingId", "id", "code", "title");
@@ -257,7 +258,8 @@ public class HrRecruitmentService {
             if (("rejected".equals(to) || "withdrawn".equals(to)) && !truthy(dto.get("reason"))) {
                 throw ApiException.badRequest("A reason is required");
             }
-            Map<String, Object> out = hr.update(HrApplicant.class, id, Obj.of("stage", to, "stageReason", dto.get("reason"),
+            Map<String, Object> out = hr.update(HrApplicant.class, id, Obj.of("stage", to, "stageReason",
+                    dto.get("reason"),
                     "updatedBy", user()));
             hr.auditInTx(AuditInput.of("HrApplicant", id, "update", Obj.of("stage", from), Obj.of("stage", to,
                     "reason", dto.get("reason"))));
@@ -352,7 +354,8 @@ public class HrRecruitmentService {
         }
         return hr.insert(HrInterview.class, Obj.of("organizationId", org(), "applicantId", applicantId,
                 "scheduledAt", HrDb.jsDate(dto.get("scheduledAt")), "interviewer", dto.get("interviewer"),
-                "location", dto.get("location"), "status", "scheduled", "notes", dto.get("notes"), "createdBy", user()));
+                "location", dto.get("location"), "status", "scheduled", "notes", dto.get("notes"), "createdBy",
+                user()));
     }
 
     public Map<String, Object> updateInterview(String id, Map<String, Object> dto) {
