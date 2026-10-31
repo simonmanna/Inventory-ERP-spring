@@ -293,6 +293,13 @@ export const PERMISSIONS = {
     read: 'work_order:read',
     manage: 'work_order:manage',
   },
+  // ---- Manufacturing 2.7 — shop-floor execution & data capture (ADR-S015) ----
+  shopFloor: {
+    /// Approve / reject submitted shift reports (supervisor).
+    approve: 'shop_floor:approve',
+    /// Feed machine data (poll adapters, push from a gateway / MQTT bridge, CSV import) — device accounts.
+    machineData: 'shop_floor:machine_data',
+  },
   // ---- Configurable Inventory Posting Rules (M3) ----
   inventoryPostingRule: {
     read: 'inventory_posting_rule:read',

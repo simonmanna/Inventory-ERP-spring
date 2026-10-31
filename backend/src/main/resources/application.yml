@@ -136,6 +136,13 @@ app:
         base-url: ${QUALITY_LAB_REST_URL:}
         token: ${QUALITY_LAB_REST_TOKEN:}
         timeout-ms: ${QUALITY_LAB_REST_TIMEOUT_MS:10000}
+  manufacturing:
+    # Shop-floor machine data (ADR-S015): REST pull adapter (GET <url>/events?machine=&since=&until=, bearer token).
+    machine-data:
+      rest:
+        base-url: ${MFG_MACHINE_DATA_REST_URL:}
+        token: ${MFG_MACHINE_DATA_REST_TOKEN:}
+        timeout-ms: ${MFG_MACHINE_DATA_REST_TIMEOUT_MS:10000}
 
 logging:
   level:

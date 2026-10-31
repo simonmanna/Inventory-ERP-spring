@@ -262,3 +262,31 @@ Downtime → Report breakdown; Availability & Reliability shows availability / M
 - Labels: one per pallet with a scannable QR. Reports: cost per block by product, breakage by reason.
 - Doubts: the stage-level gate means a later pressing run of the same order delays the gate hold of earlier batches
   (recommend one order per day / shift); reversing only a gate release leaves the batch `released`.
+
+## Phase 2.7 — Shop-floor execution & data capture (ADR-S015)
+
+- `cd backend && ./gradlew test --tests 'com.inventoryerp.manufacturing.*'` (new: `ShopFloorExecutionIT`,
+  `OeeCalculatorTest`, `ShiftClockTest`, `MachineEventParserTest`, `MachineAdaptersTest`; `ManufacturingIT` matrix now
+  172 routes); web `pnpm web:typecheck`, `pnpm web:i18n`, `pnpm --filter @erp/web lint`.
+- Migration `V30__manufacturing_shop_floor.sql` (placeholder; renumbered at merge). New permissions
+  `shop_floor:approve`, `shop_floor:machine_data` (granted to Administrator by the migration).
+- Click-through (admin, `ENABLE_MANUFACTURING=true`, ideally on a tablet / phone width):
+  1. Manufacturing → Shop-floor Setup → Shifts: "Load Day / Evening / Night"; Downtime reasons: "Add standard
+     reasons"; Work centres: set an ideal rate (e.g. 120 t/h), machine code, meters `hours, kwh`.
+  2. Orders → a confirmed order whose routing operations have this work centre → Work orders → Generate (or
+     "Prepare work orders" on the terminal).
+  3. Operator Terminal → pick the work centre → Clock on → Start → Stop (pick "Mechanical breakdown") → the red
+     banner shows the stop; Shop-floor Live shows the centre **Down** → Resume → Report output (good + scrap + scrap
+     reason; on a staged order tick "completes the stage" → stock / WIP move, see the order's Stages panel) → Meter
+     reading → Finish.
+  4. Shop-floor Setup → Machine data → "Poll simulator" → the terminal lists machine counts / stops to confirm; confirm
+     one (correct the count), reject one.
+  5. Shift Reports → the shift's report: OEE tiles, output, downtime, crew, meters → Submit; as a *different* user with
+     `shop_floor:approve` → Approve (or Reject with a reason → open again). After approval the terminal refuses records
+     for that shift.
+  6. OEE → last 7 days: per work centre and per shift A / P / Q / OEE.
+- Expected GL: only staged-order output postings (Dr stock / Cr WIP etc., `sourceType = production_stage`) and the
+  work-order labour absorbed by the stage engine; nothing from downtime, clock entries, meters or machine drafts.
+- Doubts: four-eyes approval may be too strict for a one-supervisor plant; the REST adapter's gateway contract
+  (`GET /events?machine=&since=&until=`) is a proposal; OEE ignores shifts with no record at all.
+
