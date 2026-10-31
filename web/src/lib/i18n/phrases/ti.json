@@ -10688,5 +10688,9 @@
   "Send approved to payroll": "ዝጸደቑ ናብ ደሞዝ ስደድ",
   "No commission entries.": "መእተዊ ኮሚሽን የለን።",
   "Commission rules": "ሕግታት ኮሚሽን",
-  "No commission rules yet.": "ገና ሕጊ ኮሚሽን የለን።"
+  "No commission rules yet.": "ገና ሕጊ ኮሚሽን የለን።",
+  "Net sales": "ጽሩይ መሸጣ",
+  "Share %": "ኣካፍል %",
+  "Sales Analysis": "ትንተና መሸጣ",
+  "Net sales of posted ERP and POS invoices. Credit notes are not deducted.": "ጽሩይ መሸጣ ካብ ዝተመዝገቡ ERP ን POS ን ፋክቱራታት። ክረዲት ኖት ኣይጎድልን።"
 }

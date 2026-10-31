@@ -10688,5 +10688,9 @@
   "Send approved to payroll": "Tuma zilizoidhinishwa kwa mishahara",
   "No commission entries.": "Hakuna maingizo ya kamisheni.",
   "Commission rules": "Kanuni za kamisheni",
-  "No commission rules yet.": "Bado hakuna kanuni za kamisheni."
+  "No commission rules yet.": "Bado hakuna kanuni za kamisheni.",
+  "Net sales": "Mauzo halisi",
+  "Share %": "Sehemu %",
+  "Sales Analysis": "Uchambuzi wa Mauzo",
+  "Net sales of posted ERP and POS invoices. Credit notes are not deducted.": "Mauzo halisi ya ankara za ERP na POS zilizochapishwa. Noti za mkopo hazikatwi."
 }

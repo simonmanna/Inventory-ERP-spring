@@ -107,3 +107,8 @@ Status: built, not compiled or run. `CreditControlService` (exposure, `assertCan
 (V61). `POST /invoices/:id/post` calls `InvoiceService.postChecked`; `InvoiceService.post` is unchanged for opening
 balances. Screen: `/credit-control`. Test: `CreditControlIT`.
 
+## Sales analysis (SALES-5)
+
+Status: built, not compiled or run. `GET /reports/ar/sales-analysis` (`report:ar`, `SalesAnalysisService`), screen
+`/reports/sales-analysis`. Test: `SalesAnalysisIT`.
+

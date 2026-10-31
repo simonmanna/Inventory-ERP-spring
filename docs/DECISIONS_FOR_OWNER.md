@@ -153,4 +153,5 @@ says how. Significant ones also have an ADR.
 | 2026-10-30 | SALES-4 | How is it paid? | Approved entries become one taxable earning per employee through hr payroll inputs; payroll posts the expense. No separate accrual journal | Accrue at approval | Add an accrual account and pass it as `debitAccountId` |
 | 2026-10-30 | SALES-4 | Clawback | A cancelled invoice cancels entries not yet sent to payroll. Credit notes and entries already sent are not reversed automatically | Negative entries | Add a clawback step |
 | 2026-10-30 | SALES-4 | Who approves? | `commission:approve`, never the salesperson's own linked user | Manager only | `CrmCommissionService.approve` |
+| 2026-10-30 | SALES-5 | What counts as a sale? | Net line value of posted and paid ERP and POS invoices; credit notes are not deducted, and only documents stamped with a branch fall under one | Net of credit notes | `SalesAnalysisService` |
 

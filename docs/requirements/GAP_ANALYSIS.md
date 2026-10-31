@@ -198,7 +198,7 @@ CTRL-2, INT-1, INT-3, SALES-4, SALES-5. HR items share `HrController` and should
 | 105 | Sales returns and refunds. | `present-verified` | pos, invoicing · `/returns`, `/credit-notes` · sales returns · `/returns*` · SalesReturnsIT.returnLifecycle, FleetDispatchIT.returnsPutStockBack | — |
 | 106 | Salesperson commissions where required. | `present-partial (built, unverified)` | SALES-4: `/commissions` rules, calculation from posted invoices, approval, export to payroll inputs · `/commissions` · CrmCommissionTest, CrmCommissionIT (not run) | Verify by running; nothing was compiled |
 | 107 | Customer statements and account reconciliation. | `present-verified` | invoicing · `/reports/ar/customers/{id}/statement(.pdf)`, `/reports/accounting/tieout` · StatementService · `/statements`, `/tieout` · AccountingExtensionsIT.openingBalances, ReportingIT | — |
-| 108 | Sales analysis by product, branch, customer, and period. | `present-partial` | `/reports/ar/revenue-by-customer`, `/revenue-by-period` (InvoicingIT.arReports), Item Sales in `/reports`, `/crm/reports`. No by-branch cut; Item Sales tab has no test found | Sales analysis by product and branch (SALES-5) |
+| 108 | Sales analysis by product, branch, customer, and period. | `present-partial (built, unverified)` | SALES-5: `/reports/ar/sales-analysis` by product, category, branch, customer, salesperson, month with date, branch, product, customer, department filters · `/reports/sales-analysis` · SalesAnalysisIT (not run) | Verify by running; nothing was compiled |
 
 ### 2.5 Human Resources and Payroll
 

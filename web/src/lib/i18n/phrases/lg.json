@@ -10688,5 +10688,9 @@
   "Send approved to payroll": "Sindika ezikkiriziddwa mu musaala",
   "No commission entries.": "Tewali biwandiiko bya kamisoni.",
   "Commission rules": "Amateeka ga kamisoni",
-  "No commission rules yet.": "Tewali mateeka ga kamisoni."
+  "No commission rules yet.": "Tewali mateeka ga kamisoni.",
+  "Net sales": "Ebitundiddwa ebituufu",
+  "Share %": "Omugabo %",
+  "Sales Analysis": "Okwekenneenya ebitundiddwa",
+  "Net sales of posted ERP and POS invoices. Credit notes are not deducted.": "Ebitundiddwa ebituufu okuva mu invoyisi za ERP ne POS eziwandiikiddwa. Credit note tezisalwako."
 }
