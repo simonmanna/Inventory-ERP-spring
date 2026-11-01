@@ -1,5 +1,7 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.accounting.application.AccountingPolicyService;
+
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 
@@ -43,9 +45,11 @@ public class CostComponentService {
     };
 
     private final JdbcClient jdbc;
+    private final AccountingPolicyService policies;
 
-    public CostComponentService(JdbcClient jdbc) {
+    public CostComponentService(JdbcClient jdbc, AccountingPolicyService policies) {
         this.jdbc = jdbc;
+        this.policies = policies;
     }
 
     /** Seed the standard components once per organisation. */
@@ -65,6 +69,7 @@ public class CostComponentService {
     @Transactional
     public List<Map<String, Object>> list() {
         ensureDefaults();
+        policies.seedComponentDefaults();
         return SqlRows.list(jdbc.sql("SELECT c.*, a.code AS \"expenseAccountCode\", a.name AS \"expenseAccountName\""
                 + " FROM \"CostComponent\" c LEFT JOIN \"Account\" a ON a.id = c.\"expenseAccountId\""
                 + " WHERE c.\"organizationId\" = ? ORDER BY c.code").param(org()));
@@ -101,6 +106,9 @@ public class CostComponentService {
             throw ApiException.notFound("Cost component not found");
         }
         validate(in, false);
+        if ("capitalize".equals(in.treatment())) {
+            policies.assertCapitalisable("cost_component", id, "Cost component " + c.get("code"), false);
+        }
         jdbc.sql("UPDATE \"CostComponent\" SET name = COALESCE(?, name), kind = COALESCE(?, kind), treatment ="
                         + " COALESCE(?, treatment), \"defaultAllocationMethod\" = COALESCE(?, \"defaultAllocationMethod\"),"
                         + " \"expenseAccountId\" = COALESCE(?, \"expenseAccountId\"), description = COALESCE(?, description),"

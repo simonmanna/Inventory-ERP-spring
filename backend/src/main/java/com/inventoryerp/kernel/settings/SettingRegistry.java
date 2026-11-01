@@ -71,6 +71,18 @@ public final class SettingRegistry {
                 "FEFO", List.of("FEFO", "FIFO", "MANUAL", "SERIAL"), true, ALL_LEVELS);
         def("inventory.defaultCostingMethod", "inventory", "enum", "Default Costing Method (new products)", null,
                 "AVCO", List.of("AVCO", "FIFO", "STANDARD", "SPECIFIC"), false, ORG_ONLY);
+        // ---- Costing & valuation (Cost Management CM-2, ADR-S032) ----
+        def("costing.landedCost.enabled", "costing", "bool", "Landed Costs",
+                "Add additional costs (transport, customs, insurance, handling…) to the value of the goods they brought"
+                        + " in. When off, no new landed cost voucher can be created.",
+                true, null, false, ORG_ONLY);
+        def("costing.landedCost.defaultAllocationMethod", "costing", "enum", "Landed Cost Default Allocation",
+                "Basis used by a landed cost charge when neither the charge nor its cost component names one.",
+                "value", List.of("value", "quantity", "equal", "weight", "volume", "manual"), false, ORG_ONLY);
+        def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
+                "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
+                        + " report (default); enforce = a costing posting without a branch is refused.",
+                "warn", List.of("off", "warn", "enforce"), false, ORG_ONLY);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
         def("inventory.defaultExpiryTracking", "inventory", "bool", "Default Expiry Tracking (new products)", null,

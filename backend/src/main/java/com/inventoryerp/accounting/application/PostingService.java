@@ -53,6 +53,7 @@ public class PostingService {
     private final AccountResolverService accounts;
     private final CostCenterRulesService costCenters;
     private final AnalyticDimensionService analyticDimensions;
+    private CostingDimensionGuard costingDimensions;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
             FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
@@ -66,6 +67,12 @@ public class PostingService {
         this.fiscalPeriod = fiscalPeriod;
         this.currency = currency;
         this.accounts = accounts;
+    }
+
+    /** CM-2 (ADR-S032): branch dimension on costing postings; optional so hand-built engines in tests still work. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCostingDimensions(CostingDimensionGuard costingDimensions) {
+        this.costingDimensions = costingDimensions;
     }
 
     /** Post a balanced entry; returns the entry with {@code lines}. */
@@ -100,6 +107,9 @@ public class PostingService {
         boolean centersResolved = ruled != lines;
         lines = ruled;
         analyticDimensions.validate(lines, request.dimensions(), date, request.sourceType());
+        if (costingDimensions != null) {
+            costingDimensions.check(lines, request.branchId(), request.sourceType());
+        }
 
         int year = date.atOffset(ZoneOffset.UTC).getYear();
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,

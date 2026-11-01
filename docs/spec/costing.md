@@ -40,3 +40,7 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   stock ledger (`/inventory/cost-layers/:id/trace|distribution`), STANDARD landed cost split over lineage into the
   price-difference adjunct / WIP / COGS, adjunct release run, inventory revaluation and IAS 2 NRV documents
   (`/inventory/revaluations`). Tests: `AvcoLineageCalculatorTest` (5), `ValuationIntegrityIT` (5).
+- **CM-2** (done, ADR-S032, V225): governed accounting policy elections and cost eligibility (`/costing/policies`,
+  maker-checker, prospective, forbidden choices refused), Costing & Valuation settings façade (`/costing/settings`,
+  web `/costing/settings`), landed-cost on/off, branch dimension guard on costing postings + compliance report.
+  Tests: `CostingSettingsIT` (5).

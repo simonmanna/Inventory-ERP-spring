@@ -5,6 +5,9 @@ import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.AccountingPolicyService;
+import com.inventoryerp.kernel.settings.SettingResolverService;
+import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -112,12 +115,14 @@ public class LandedCostVoucherService {
     private final VendorBillService bills;
     private final TransactionTemplate tx;
     private final CostLineageService lineage;
+    private final AccountingPolicyService policies;
+    private final SettingResolverService settings;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
             ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
-            CostLineageService lineage) {
+            CostLineageService lineage, AccountingPolicyService policies, SettingResolverService settings) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -131,6 +136,8 @@ public class LandedCostVoucherService {
         this.bills = bills;
         this.tx = new TransactionTemplate(txm);
         this.lineage = lineage;
+        this.policies = policies;
+        this.settings = settings;
     }
 
     private static BigDecimal dp6(BigDecimal v) {
@@ -269,6 +276,9 @@ public class LandedCostVoucherService {
 
     /** Create a draft voucher. */
     public Map<String, Object> create(VoucherInput in) {
+        if (!settings.resolveBool("costing.landedCost.enabled", SettingContext.EMPTY)) {
+            throw ApiException.badRequest("Landed costs are switched off in Costing & Valuation settings");
+        }
         String id = UUID.randomUUID().toString();
         tx.executeWithoutResult(st -> {
             List<String> receipts = receipts(in);
@@ -758,6 +768,10 @@ public class LandedCostVoucherService {
             if (!CostComponentService.TREATMENTS.contains(treatment)) {
                 throw ApiException.badRequest("treatment must be one of the following values: capitalize, expense,"
                         + " recoverable_tax");
+            }
+            if ("capitalize".equals(treatment) && comp != null) {
+                policies.assertCapitalisable("cost_component", (String) comp.get("id"), "Cost component "
+                        + comp.get("code"), false);
             }
             if (!CostComponentService.METHODS.contains(method)) {
                 throw ApiException.badRequest("allocationMethod must be one of the following values: value, quantity,"
