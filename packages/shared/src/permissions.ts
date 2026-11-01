@@ -1123,6 +1123,45 @@ export const PERMISSIONS = {
     /// Post and reverse allocation runs (financial runs create journal entries).
     post: 'cost_allocation:post',
   },
+  // ---- Cost Management CM-8a … CM-11 (ADR-S038 … ADR-S042) ----
+  project: {
+    /// Projects, sites, WBS, budgets, forecasts, cost capture and the budget-vs-actual report (read only).
+    read: 'project:read',
+    /// Create and change projects, sites, WBS elements, budgets and cost-to-complete forecasts.
+    manage: 'project:manage',
+    /// Capture cost to a project (stock issues, timesheets, equipment, reclasses) and reverse it (journal entries).
+    post: 'project:post',
+  },
+  contract: {
+    /// Contract variations, progress claims, retentions, advances, subcontracts, revenue and onerous assessments.
+    read: 'contract:read',
+    /// Draft variations, claims, subcontracts, IFRS 15 criteria assessments and onerous-contract assessments.
+    manage: 'contract:manage',
+    /// Certify claims, release retentions, run revenue recognition, post onerous provisions (journal entries).
+    post: 'contract:post',
+    /// Approve variations and onerous-contract assessments (never your own).
+    approve: 'contract:approve',
+  },
+  profitability: {
+    /// Profitability facts by layer (actual / standard / estimate) and the GL reconciliation.
+    read: 'profitability:read',
+    /// Rebuild profitability facts for a period.
+    manage: 'profitability:manage',
+  },
+  costingClose: {
+    /// Cost close cockpit: gates, reconciliation dashboard, cost adjustment runs (read only).
+    read: 'costing_close:read',
+    /// Run the cost close, cost adjustment runs and lock a costing period.
+    manage: 'costing_close:manage',
+    /// Reopen a locked costing period (audited).
+    reopen: 'costing_close:reopen',
+  },
+  costSimulation: {
+    /// Cost scenarios and simulation results (read only).
+    read: 'cost_simulation:read',
+    /// Create cost scenarios and run simulations (never posts).
+    manage: 'cost_simulation:manage',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

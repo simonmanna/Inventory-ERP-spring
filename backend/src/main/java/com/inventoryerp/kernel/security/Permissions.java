@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (624 permissions). Constant name = GROUP__ACTION.
+ * exactly (638 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -635,6 +635,20 @@ public final class Permissions {
     public static final String COST_ALLOCATION__READ = "cost_allocation:read";
     public static final String COST_ALLOCATION__MANAGE = "cost_allocation:manage";
     public static final String COST_ALLOCATION__POST = "cost_allocation:post";
+    public static final String PROJECT__READ = "project:read";
+    public static final String PROJECT__MANAGE = "project:manage";
+    public static final String PROJECT__POST = "project:post";
+    public static final String CONTRACT__READ = "contract:read";
+    public static final String CONTRACT__MANAGE = "contract:manage";
+    public static final String CONTRACT__POST = "contract:post";
+    public static final String CONTRACT__APPROVE = "contract:approve";
+    public static final String PROFITABILITY__READ = "profitability:read";
+    public static final String PROFITABILITY__MANAGE = "profitability:manage";
+    public static final String COSTING_CLOSE__READ = "costing_close:read";
+    public static final String COSTING_CLOSE__MANAGE = "costing_close:manage";
+    public static final String COSTING_CLOSE__REOPEN = "costing_close:reopen";
+    public static final String COST_SIMULATION__READ = "cost_simulation:read";
+    public static final String COST_SIMULATION__MANAGE = "cost_simulation:manage";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -1261,7 +1275,21 @@ public final class Permissions {
             "costing_settings:manage",
             "cost_allocation:read",
             "cost_allocation:manage",
-            "cost_allocation:post");
+            "cost_allocation:post",
+            "project:read",
+            "project:manage",
+            "project:post",
+            "contract:read",
+            "contract:manage",
+            "contract:post",
+            "contract:approve",
+            "profitability:read",
+            "profitability:manage",
+            "costing_close:read",
+            "costing_close:manage",
+            "costing_close:reopen",
+            "cost_simulation:read",
+            "cost_simulation:manage");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

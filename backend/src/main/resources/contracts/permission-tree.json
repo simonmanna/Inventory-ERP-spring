@@ -900,5 +900,29 @@
     "read": "cost_allocation:read",
     "manage": "cost_allocation:manage",
     "post": "cost_allocation:post"
+  },
+  "project": {
+    "read": "project:read",
+    "manage": "project:manage",
+    "post": "project:post"
+  },
+  "contract": {
+    "read": "contract:read",
+    "manage": "contract:manage",
+    "post": "contract:post",
+    "approve": "contract:approve"
+  },
+  "profitability": {
+    "read": "profitability:read",
+    "manage": "profitability:manage"
+  },
+  "costingClose": {
+    "read": "costing_close:read",
+    "manage": "costing_close:manage",
+    "reopen": "costing_close:reopen"
+  },
+  "costSimulation": {
+    "read": "cost_simulation:read",
+    "manage": "cost_simulation:manage"
   }
 }

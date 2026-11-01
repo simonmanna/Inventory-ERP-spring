@@ -68,3 +68,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   branch dimensions, P&L-neutral against 5385), same-entity branch transfers with inter-branch clearing (1299, each
   branch balances) and capitalised transfer freight through lineage. Tests: `DistributionCostCalculatorTest` (4),
   `DistributionBranchScenarioIT` (2).
+- **CM-8a** (done, ADR-S038, V231): projects module — projects, sites, WBS, versioned budgets, cost-to-complete
+  forecasts; project cost sub-ledger (1460 Project WIP with project / WBS / site dimensions) captured by stock issue,
+  site delivery, timesheets × rate, equipment hours and reclass of posted cost; commitments; budget vs committed vs
+  actual vs EAC; WIP tie-out; free-text procurement project references converted to foreign keys. Tests:
+  `ProjectCostScenarioIT` (2).

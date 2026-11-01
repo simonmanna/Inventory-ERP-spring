@@ -107,6 +107,11 @@ public class PurchaseRequestsService {
         List<Map<String, Object>> lines = new ArrayList<>();
         int idx = 0;
         for (LineInput ln : input.lines()) {
+            if (ln.projectId() != null && !ln.projectId().isBlank() && jdbc.sql("SELECT count(*) FROM \"Project\""
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(ln.projectId(), orgId).query(Long.class)
+                    .single() == 0) {
+                throw ApiException.badRequest("Project not found");
+            }
             String lineId = UUID.randomUUID().toString();
             lines.add(SqlRows.one(PurchaseRequestLine.class, jdbc.sql("INSERT INTO \"PurchaseRequestLine\" (id,"
                             + " \"organizationId\", \"purchaseRequestId\", \"productId\", description, quantity,"
