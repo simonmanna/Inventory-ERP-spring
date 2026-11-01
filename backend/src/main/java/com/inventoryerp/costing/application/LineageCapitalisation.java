@@ -91,7 +91,7 @@ public class LineageCapitalisation {
             Distribution d = signed(lineage.distribute(layer.ledgerId(), s.amount().abs()), s.amount().signum());
             lineage.byTarget(d).forEach((target, part) -> {
                 if (part.signum() != 0) {
-                    out.add(new Part(layer, target, account(target), part, d));
+                    out.add(new Part(layer, target, accountFor(target), part, d));
                 }
             });
         }
@@ -167,7 +167,8 @@ public class LineageCapitalisation {
                 sourceId));
     }
 
-    private String account(String target) {
+    /** GL account of a lineage target (on hand / transfer → adjunct, wip, scrap, else cost of sales). */
+    public String accountFor(String target) {
         return switch (target) {
             case "on_hand", "transfer" -> lineage.priceDifferenceAccount();
             case "wip" -> determination.mapped("wip");

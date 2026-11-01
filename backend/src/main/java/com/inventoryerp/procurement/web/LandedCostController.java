@@ -14,6 +14,7 @@ import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.procurement.application.LandedCostService;
 import com.inventoryerp.procurement.application.LandedCostService.ChargeInput;
 import com.inventoryerp.procurement.application.LandedCostService.CreateInput;
+import com.inventoryerp.procurement.application.LandedCostVoucherService;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
@@ -53,9 +54,11 @@ public class LandedCostController {
             @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid LandedCostChargeRequest> charges) {}
 
     private final LandedCostService landedCosts;
+    private final LandedCostVoucherService vouchers;
 
-    public LandedCostController(LandedCostService landedCosts) {
+    public LandedCostController(LandedCostService landedCosts, LandedCostVoucherService vouchers) {
         this.landedCosts = landedCosts;
+        this.vouchers = vouchers;
     }
 
     @GetMapping
@@ -91,5 +94,17 @@ public class LandedCostController {
     @RequirePermissions(Permissions.PROCUREMENT__GOODS_RECEIPT__CANCEL)
     public Map<String, Object> cancel(@PathVariable String id) {
         return landedCosts.cancel(id);
+    }
+
+    /**
+     * Extension (Cost Management CM-6, ADR-S036; no Nest counterpart): reverse a posted per-receipt landed cost through
+     * the voucher engine — capitalisation out of stock, entry reversed, the share sold since back to COGS.
+     */
+    @PostMapping("/{id}/reverse")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.LANDED_COST__REVERSE)
+    public Map<String, Object> reverse(@PathVariable String id) {
+        vouchers.reverseReceipt(id);
+        return landedCosts.get(id);
     }
 }

@@ -402,6 +402,32 @@ public class LandedCostVoucherService {
             if (!"posted".equals(lc.get("status"))) {
                 throw ApiException.badRequest("Only a posted landed cost voucher can be reversed");
             }
+            reverseLocked(lc, "landed_cost_voucher");
+        });
+        return get(id);
+    }
+
+    /**
+     * Reverse a posted legacy (per-receipt) landed cost through the same engine as a voucher (Cost Management CM-6,
+     * ADR-S036): capitalisation taken back out of stock, entry reversed, the share sold since reclassed to COGS.
+     */
+    public void reverseReceipt(String id) {
+        tx.executeWithoutResult(st -> {
+            Map<String, Object> lc = SqlRows.one(jdbc.sql("SELECT id, code, status, \"journalEntryId\","
+                    + " \"costCenterId\", \"goodsReceiptId\" FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " AND coalesce(\"voucherType\", 'receipt') = 'receipt' FOR UPDATE").params(id, org()));
+            if (lc == null) {
+                throw ApiException.notFound("Landed cost not found");
+            }
+            if (!"posted".equals(lc.get("status"))) {
+                throw ApiException.badRequest("Only a posted landed cost can be reversed");
+            }
+            reverseLocked(lc, "landed_cost");
+        });
+    }
+
+    private void reverseLocked(Map<String, Object> lc, String sourceType) {
+            String id = (String) lc.get("id");
             List<Map<String, Object>> generated = SqlRows.list(jdbc.sql("SELECT DISTINCT d.id, d.\"documentNumber\","
                     + " d.status::text AS status, d.\"amountPaid\" FROM \"LandedCostCharge\" c JOIN \"Document\" d"
                     + " ON d.id = c.\"vendorBillId\" WHERE c.\"landedCostId\" = ? AND c.\"billMode\" = 'generate'")
@@ -424,8 +450,10 @@ public class LandedCostVoucherService {
                 Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, \"costingMethod\"::text AS"
                         + " \"costingMethod\", \"serialTracking\" FROM \"Product\" WHERE id = ?").param(a.get("productId")));
                 BigDecimal cap = Money.dec(a.get("capitalizedAmount"));
-                BigDecimal removed = layers.remove(a, product, (String) a.get("goodsReceiptId"),
-                        new LandedCostLayers.Source("landed_cost_voucher", (String) lc.get("code")));
+                String grnId = a.get("goodsReceiptId") != null ? (String) a.get("goodsReceiptId")
+                        : (String) lc.get("goodsReceiptId");
+                BigDecimal removed = layers.remove(a, product, grnId,
+                        new LandedCostLayers.Source(sourceType, (String) lc.get("code")));
                 jdbc.sql("UPDATE \"LandedCostAllocation\" SET \"reversedAmount\" = ? WHERE id = ?")
                         .params(removed, a.get("id")).update();
                 if (cap.subtract(removed).signum() > 0) {
@@ -466,9 +494,7 @@ public class LandedCostVoucherService {
                     + " \"reversalJournalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                     .params(user(), reversalId, id).update();
             audit.recordInTx(AuditInput.of("LandedCost", id, "update", null, Obj.of("kind",
-                    "landed_cost_voucher_reversed", "code", lc.get("code"))));
-        });
-        return get(id);
+                    sourceType + "_reversed", "code", lc.get("code"))));
     }
 
     // ------------------------------------------------------------------ computation

@@ -59,3 +59,7 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   split, units-of-production amortisation into ROM lineage), IAS 37 rehabilitation (initial / unwind / production /
   remeasurement / utilisation, roll-forward = GL, impairment indicator), extraction cost per tonne KPI, shared
   `LineageCapitalisation`. Tests: `QuarryRehabMovementsIT` (3).
+- **CM-6** (done, ADR-S036, V229): landed-cost accrual at receipt by rule (supplier → category → Incoterm →
+  default) through lineage to 2156, cleared in full where it went when the actual voucher posts (or reversed),
+  accrual reconciliation; legacy per-receipt landed cost reversible through the voucher engine. Tests:
+  `ImportLandedScenarioIT` (2).
