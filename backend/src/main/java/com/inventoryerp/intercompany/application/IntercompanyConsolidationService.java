@@ -19,6 +19,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,7 +65,21 @@ public class IntercompanyConsolidationService {
     }
 
     /** One member's ledger: net (debit − credit) per account and the eliminated part, in its own currency. */
-    private record Ledger(Map<String, BigDecimal> net, Map<String, BigDecimal> eliminated, Map<String, AccountMeta> meta) {}
+    private record Ledger(Map<String, BigDecimal> net, Map<String, BigDecimal> eliminated, Map<String, AccountMeta> meta,
+            Map<String, Trade> trade, String cogsAccountId, String stockAccountId) {}
+
+    /**
+     * What one member did with one counterpart in the range, in its own currency. As seller: intercompany revenue on
+     * the invoices and the cost of goods its stock issues booked for them. As buyer: purchase expense eliminated with
+     * the payable, goods received from the counterpart on purchase orders, and the part of them still on hand.
+     */
+    private static final class Trade {
+        BigDecimal revenue = BigDecimal.ZERO;
+        BigDecimal cost = BigDecimal.ZERO;
+        BigDecimal expense = BigDecimal.ZERO;
+        BigDecimal received = BigDecimal.ZERO;
+        BigDecimal onHand = BigDecimal.ZERO;
+    }
 
     /** A consolidated row under construction (keyed by account code). */
     private static final class Row {
@@ -107,6 +122,8 @@ public class IntercompanyConsolidationService {
             }
             return out;
         });
+
+        BigDecimal unrealised = costOfIntercompanySales(g, ledgers, rates);
 
         Map<String, Row> rows = new LinkedHashMap<>();
         for (Member m : g.members()) {
@@ -198,7 +215,9 @@ public class IntercompanyConsolidationService {
             BigDecimal group = profit.get(CONSOLIDATED);
             totals.put("nonControllingInterest", money(nci));
             totals.put("attributableToParent", money(group.subtract(nci)));
-            totals.put("intercompanyDifference", money(profit.get(ELIMINATIONS)));
+            // Profit eliminated beyond the unrealised profit in inventory = intercompany balances booked on one side only.
+            totals.put("unrealisedProfitInInventory", money(unrealised));
+            totals.put("intercompanyDifference", money(profit.get(ELIMINATIONS).add(unrealised)));
         } else {
             totals.put("net", columnMap(columns, net));
             // Unmatched intercompany balances (one side not booked yet, FX between members, tax on IC documents).
@@ -313,7 +332,145 @@ public class IntercompanyConsolidationService {
                 }
             }
         }
-        return new Ledger(net, eliminated, meta);
+        Map<String, String> icPartners = partners.partnersInGroup(org, g);
+        Map<String, Trade> trade = new HashMap<>();
+        String cogs = mapped(org, "cogs");
+        String stock = mapped(org, "stock_valuation");
+        if (!icPartners.isEmpty() && cogs != null && stock != null) {
+            trade(org, icPartners, range.toString(), rangeParams, from, to, meta, trade);
+            List<String> extra = new ArrayList<>();
+            for (String id : List.of(cogs, stock)) {
+                if (!net.containsKey(id)) {
+                    net.put(id, BigDecimal.ZERO);
+                    extra.add(id);
+                }
+            }
+            if (!extra.isEmpty()) {
+                meta = new HashMap<>(meta);
+                meta.putAll(accounts.meta(new HashSet<>(extra)));
+            }
+        }
+        return new Ledger(net, eliminated, meta, trade, cogs, stock);
+    }
+
+    private String mapped(String org, String key) {
+        return jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key = ?"
+                + " AND \"deletedAt\" IS NULL").params(org, key).query(String.class).optional().orElse(null);
+    }
+
+    /** Fills {@code trade} per counterpart organization (runs as the member's tenant). */
+    private void trade(String org, Map<String, String> icPartners, String range, List<Object> rangeParams, Instant from,
+            Instant to, Map<String, AccountMeta> meta, Map<String, Trade> trade) {
+        String[] ic = icPartners.keySet().toArray(String[]::new);
+        // Entries holding an intercompany AR (sale) or AP (purchase) line, with the partner and the control type.
+        String icEntries = "SELECT DISTINCT x.\"journalEntryId\" AS id, x.\"partnerId\", xa.\"controlAccountType\"::text"
+                + " AS kind FROM \"JournalLine\" x JOIN \"Account\" xa ON xa.id = x.\"accountId\" WHERE"
+                + " x.\"organizationId\" = ? AND x.\"partnerId\" = ANY (?) AND xa.\"controlAccountType\"::text IN ('ar', 'ap')";
+        List<Object> p = new ArrayList<>(List.of(org, ic, org));
+        p.addAll(rangeParams);
+        // Revenue (sales) and expense (purchases) on those entries.
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT ic.\"partnerId\", ic.kind, l.\"accountId\","
+                + " sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c FROM (" + icEntries + ") ic JOIN \"JournalLine\" l"
+                + " ON l.\"journalEntryId\" = ic.id JOIN \"JournalEntry\" e ON e.id = ic.id WHERE l.\"organizationId\" = ?"
+                + " AND e.status::text IN ('posted', 'reversed')" + range + " GROUP BY 1, 2, 3").params(p))) {
+            AccountMeta a = meta.get((String) r.get("accountId"));
+            if (a == null || !AccountClassification.isProfitAndLoss(a.classification())) {
+                continue;
+            }
+            Trade tr = trade.computeIfAbsent(icPartners.get((String) r.get("partnerId")), k -> new Trade());
+            BigDecimal dc = SqlRows.dec(r, "d").subtract(SqlRows.dec(r, "c"));
+            if ("ar".equals(r.get("kind")) && isIncome(a)) {
+                tr.revenue = tr.revenue.add(dc.negate());
+            } else if ("ap".equals(r.get("kind")) && !isIncome(a)) {
+                tr.expense = tr.expense.add(dc);
+            }
+        }
+        // Seller's cost: cost-of-sales lines of the other entries of the same source documents (the stock issue of an
+        // intercompany invoice).
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT ic.\"partnerId\", l.\"accountId\","
+                + " sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c FROM (" + icEntries + ") ic JOIN \"JournalEntry\" s"
+                + " ON s.id = ic.id JOIN \"JournalEntry\" e ON e.\"organizationId\" = s.\"organizationId\" AND"
+                + " e.\"sourceId\" = s.\"sourceId\" AND e.id <> s.id JOIN \"JournalLine\" l ON l.\"journalEntryId\" = e.id"
+                + " WHERE ic.kind = 'ar' AND s.\"sourceId\" IS NOT NULL AND l.\"organizationId\" = ? AND e.status::text IN"
+                + " ('posted', 'reversed')" + range + " GROUP BY 1, 2").params(p))) {
+            AccountMeta a = meta.get((String) r.get("accountId"));
+            if (a == null) {
+                a = accounts.meta(java.util.Set.of((String) r.get("accountId"))).get((String) r.get("accountId"));
+            }
+            if (a != null && "cogs".equals(a.reportSection())) {
+                Trade tr = trade.computeIfAbsent(icPartners.get((String) r.get("partnerId")), k -> new Trade());
+                tr.cost = tr.cost.add(SqlRows.dec(r, "d").subtract(SqlRows.dec(r, "c")));
+            }
+        }
+        // Buyer's goods received from the counterpart on purchase orders, and the share of them still on hand.
+        StringBuilder grRange = new StringBuilder();
+        List<Object> gp = new ArrayList<>(List.of(org, ic));
+        if (from != null) {
+            grRange.append(" AND g.\"receivedAt\" >= ?");
+            gp.add(Timestamp.from(from));
+        }
+        if (to != null) {
+            grRange.append(" AND g.\"receivedAt\" <= ?");
+            gp.add(Timestamp.from(to));
+        }
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT po.\"partnerId\", l.\"productId\", sum(l.quantity) AS q,"
+                + " sum(l.quantity * l.\"unitCost\") AS v, (SELECT COALESCE(sum(si.quantity), 0) FROM \"StockItem\" si"
+                + " WHERE si.\"organizationId\" = g.\"organizationId\" AND si.\"productId\" = l.\"productId\") AS onhand"
+                + " FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+                + " JOIN \"PurchaseOrder\" po ON po.id = g.\"purchaseOrderId\" WHERE g.\"organizationId\" = ?"
+                + " AND po.\"partnerId\" = ANY (?) AND g.status::text = 'posted' AND g.\"deletedAt\" IS NULL"
+                + " AND l.\"productId\" IS NOT NULL" + grRange + " GROUP BY po.\"partnerId\", l.\"productId\","
+                + " g.\"organizationId\"").params(gp))) {
+            BigDecimal q = SqlRows.dec(r, "q");
+            BigDecimal v = SqlRows.dec(r, "v");
+            BigDecimal share = q.signum() <= 0 ? BigDecimal.ZERO
+                    : SqlRows.dec(r, "onhand").max(BigDecimal.ZERO).divide(q, MC).min(BigDecimal.ONE);
+            Trade tr = trade.computeIfAbsent(icPartners.get((String) r.get("partnerId")), k -> new Trade());
+            tr.received = tr.received.add(v);
+            tr.onHand = tr.onHand.add(v.multiply(share, MC));
+        }
+    }
+
+    /**
+     * Cost side of intercompany sales (the revenue, receivable and payable are already eliminated). For each seller to
+     * buyer pair the buyer's column takes: cost of sales less (intercompany revenue - purchase expense eliminated with
+     * the payable - unrealised profit), and inventory less the unrealised profit, where unrealised profit = the
+     * seller's margin on the pair x the goods received from it that the buyer still holds. Goods the buyer consumed or
+     * resold count as realised. The two lines offset the buyer's eliminated payable, so the eliminations still net to
+     * zero. Known limit: on-hand is today's quantity per product (no product mapping between companies). Returns the
+     * unrealised profit in the group currency.
+     */
+    private BigDecimal costOfIntercompanySales(Group g, Map<String, Ledger> ledgers, Map<String, BigDecimal> rates) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (Member seller : g.members()) {
+            for (Member buyer : g.members()) {
+                if (seller.organizationId().equals(buyer.organizationId())) {
+                    continue;
+                }
+                Trade sold = ledgers.get(seller.organizationId()).trade().get(buyer.organizationId());
+                Ledger bl = ledgers.get(buyer.organizationId());
+                if (sold == null || sold.revenue.signum() <= 0 || bl.cogsAccountId() == null) {
+                    continue;
+                }
+                Trade bought = bl.trade().getOrDefault(seller.organizationId(), new Trade());
+                // Everything in the buyer's currency (rates translate each member into the group currency).
+                BigDecimal toBuyer = rates.get(seller.organizationId()).divide(rates.get(buyer.organizationId()), MC);
+                // Revenue the buyer expensed (services, mirrored bills) is already eliminated against that expense; the
+                // rest is goods, and the seller's cost of sales belongs to it.
+                BigDecimal goods = sold.revenue.multiply(toBuyer, MC).subtract(bought.expense);
+                if (goods.signum() <= 0) {
+                    continue;
+                }
+                BigDecimal margin = goods.subtract(sold.cost.multiply(toBuyer, MC)).divide(goods, MC)
+                        .max(BigDecimal.ZERO);
+                BigDecimal unrealised = bought.onHand.multiply(margin, MC).min(goods);
+                BigDecimal cost = goods.subtract(unrealised);
+                bl.eliminated().merge(bl.cogsAccountId(), cost, BigDecimal::add);
+                bl.eliminated().merge(bl.stockAccountId(), unrealised, BigDecimal::add);
+                total = total.add(unrealised.multiply(rates.get(buyer.organizationId()), MC));
+            }
+        }
+        return total;
     }
 
     /** Average of the rates dated in the period; the closing rate when there are none. */

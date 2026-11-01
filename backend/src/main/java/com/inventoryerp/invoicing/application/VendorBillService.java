@@ -1,6 +1,7 @@
 package com.inventoryerp.invoicing.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
@@ -30,6 +31,8 @@ import com.inventoryerp.shared.web.PageQuery;
 import com.inventoryerp.shared.web.PageResult;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -396,9 +399,12 @@ public class VendorBillService {
         return builder.document(id);
     }
 
-    private static void validateDates(String issueDate, String dueDate) {
+    private void validateDates(String issueDate, String dueDate) {
         Instant issue = EntityPatch.toInstant(issueDate);
-        if (issue.isAfter(Instant.now())) {
+        // Dates are stored as UTC wall time of the calendar day; "future" means after today in the company's zone,
+        // so a bill dated today in Kampala at 01:00 (still yesterday in UTC) is accepted.
+        LocalDate today = LocalDate.now(OrgDates.orgTimezone(jdbc, org()));
+        if (issue.atZone(ZoneOffset.UTC).toLocalDate().isAfter(today)) {
             throw ApiException.badRequest("Issue date cannot be in the future");
         }
         if (dueDate != null && EntityPatch.toInstant(dueDate).isBefore(issue)) {

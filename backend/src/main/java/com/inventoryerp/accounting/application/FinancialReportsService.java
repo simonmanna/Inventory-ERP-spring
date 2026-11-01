@@ -283,9 +283,14 @@ public class FinancialReportsService {
         Instant snap = findSnapshot("ReportBalanceSheetSnapshot", true, requested);
         if (snap != null) {
             Totals totals = new Totals();
-            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"reportSection\", balance FROM \"ReportBalanceSheetSnapshot\""
-                    + " WHERE \"organizationId\" = ? AND \"asOf\" = ? ORDER BY \"accountCode\" ASC").params(org(), FiscalPeriodControl.ts(snap)))) {
-                totals.accumulate((String) r.get("reportSection"), SqlRows.dec(r, "balance"));
+            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"reportSection\", \"normalBalance\", balance FROM"
+                    + " \"ReportBalanceSheetSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ? ORDER BY \"accountCode\" ASC")
+                    .params(org(), FiscalPeriodControl.ts(snap)))) {
+                // Snapshot rows hold the display balance (normal direction); recover the ledger net first.
+                String normal = (String) r.get("normalBalance");
+                BigDecimal net = AccountClassification.displayBalance(SqlRows.dec(r, "balance"), normal);
+                totals.accumulate((String) r.get("reportSection"),
+                        AccountClassification.balanceSheetBalance(net, (String) r.get("reportSection"), normal));
             }
             return summary(asOf, totals, "snapshot");
         }
@@ -323,7 +328,8 @@ public class FinancialReportsService {
             if (a == null || !a.isActive()) {
                 continue;
             }
-            BigDecimal display = AccountClassification.displayBalance(g.getValue()[0].subtract(g.getValue()[1]), a.normalBalance());
+            BigDecimal display = AccountClassification.balanceSheetBalance(g.getValue()[0].subtract(g.getValue()[1]),
+                    a.reportSection(), a.normalBalance());
             totals.accumulate(a.reportSection(), display);
             if (rowsBySection != null && AccountClassification.balanceSheetSideOf(a.reportSection()) != null) {
                 rowsBySection.computeIfAbsent(a.reportSection(), k -> new ArrayList<>()).add(body("accountId", a.id(),

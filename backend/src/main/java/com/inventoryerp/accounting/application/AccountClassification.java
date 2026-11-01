@@ -55,6 +55,22 @@ public final class AccountClassification {
         return "credit".equals(normalBalance) ? net.negate() : net;
     }
 
+    /**
+     * Balance-sheet amount of an account in its section's direction: assets debit − credit, liabilities and equity
+     * credit − debit, so a contra account (accumulated depreciation, a debit-balance liability) reduces its side
+     * instead of adding to it. Profit-and-loss sections keep {@link #displayBalance}.
+     */
+    public static BigDecimal balanceSheetBalance(BigDecimal net, String section, String normalBalance) {
+        String side = balanceSheetSideOf(section);
+        if ("asset".equals(side)) {
+            return net;
+        }
+        if ("liability".equals(side) || "equity".equals(side)) {
+            return net.negate();
+        }
+        return displayBalance(net, normalBalance);
+    }
+
     /** Revenue/expense are always operating; otherwise the account/category cash-flow class. */
     public static String cashFlowSectionOf(String classification, String cashFlowClass) {
         if (isProfitAndLoss(classification)) {

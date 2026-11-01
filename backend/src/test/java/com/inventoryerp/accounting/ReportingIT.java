@@ -108,6 +108,27 @@ class ReportingIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("balance sheet: accumulated depreciation (contra asset) reduces total assets and the sheet balances")
+    void balanceSheetContraAsset() {
+        String asOf = LocalDate.now(ZoneOffset.UTC).plusDays(1).toString();
+        JsonNode before = ok(200, "GET", "/reports/accounting/balance-sheet?asOf=" + asOf, null);
+        TenantContext.run(TenantContext.TenantStore.organization(demoOrg), () -> posting.post(new PostingRequest("GEN",
+                Instant.now().minus(Duration.ofHours(1)), "Depreciation", null, 1, "test", null, null, null, null, null,
+                null, List.of(PostingRequest.Line.debit(accountId("5600"), 1000000, "Depreciation"),
+                        PostingRequest.Line.credit(accountId("1490"), 1000000, "Depreciation")))));
+        JsonNode after = ok(200, "GET", "/reports/accounting/balance-sheet?asOf=" + asOf, null);
+        assertThat(after.get("balanced").asBoolean()).as(after.toString()).isTrue();
+        assertThat(new BigDecimal(after.get("totalAssets").asString())
+                .subtract(new BigDecimal(before.get("totalAssets").asString()))).isEqualByComparingTo("-1000000");
+        JsonNode detailed = ok(200, "GET", "/reports/accounting/balance-sheet/detailed?asOf=" + asOf, null);
+        assertThat(detailed.get("balanced").asBoolean()).isTrue();
+        Res rebuilt = as("POST", "/reports/accounting/rebuild-snapshots", null);
+        assertThat(rebuilt.status()).as(rebuilt.raw().body()).isEqualTo(201);
+        JsonNode snap = ok(200, "GET", "/reports/accounting/balance-sheet?asOf=" + asOf, null);
+        assertThat(snap.get("balanced").asBoolean()).as(snap.toString()).isTrue();
+    }
+
+    @Test
     @DisplayName("snapshots rebuild (201) then tie-out; POS → GL reconciliation window and guard")
     void snapshotsAndControls() {
         Res rebuilt = as("POST", "/reports/accounting/rebuild-snapshots", null);

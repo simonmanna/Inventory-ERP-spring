@@ -60,6 +60,28 @@ class VendorBillListIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("issue date: 'today' is the company's calendar day (UTC+14 company), a later day is refused")
+    void issueDateInCompanyZone() {
+        String tz = jdbc.sql("SELECT timezone FROM \"Organization\" WHERE id = ?").param(demoOrg).query(String.class)
+                .single();
+        jdbc.sql("UPDATE \"Organization\" SET timezone = 'Pacific/Kiritimati' WHERE id = ?").param(demoOrg).update();
+        String own = supplier();
+        try {
+            LocalDate local = LocalDate.now(java.time.ZoneId.of("Pacific/Kiritimati"));
+            Res ok = as("POST", "/vendor-bills", Map.of("partnerId", own, "issueDate", local.toString(), "lines",
+                    List.of(Map.of("description", "Haulage", "quantity", 1, "unitPrice", 5))));
+            assertThat(ok.status()).as(ok.raw().body()).isEqualTo(200);
+            Res future = as("POST", "/vendor-bills", Map.of("partnerId", own, "issueDate",
+                    local.plusDays(1).toString(), "lines",
+                    List.of(Map.of("description", "Haulage", "quantity", 1, "unitPrice", 5))));
+            assertThat(future.status()).isEqualTo(400);
+            assertThat(future.body().get("message").asString()).isEqualTo("Issue date cannot be in the future");
+        } finally {
+            jdbc.sql("UPDATE \"Organization\" SET timezone = ? WHERE id = ?").params(tz, demoOrg).update();
+        }
+    }
+
+    @Test
     @DisplayName("AP aging: a bill 40 days overdue lands in the 31-60 bucket of its supplier")
     void agingBucket() {
         String overdue = supplier();

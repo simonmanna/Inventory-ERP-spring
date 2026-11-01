@@ -12,7 +12,9 @@ import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.text.Collator;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -79,9 +81,14 @@ public class InventoryValuationService {
 
     private record AsOf(Instant date, boolean historical) {}
 
-    private static AsOf parseAsOf(String asOf) {
+    private AsOf parseAsOf(String asOf) {
         if (asOf == null || asOf.isEmpty()) {
-            return new AsOf(Instant.now(), false);
+            // "Now" for the ledger side includes documents dated today in the company's zone: those are stored at the
+            // UTC wall time of the day, which is still ahead of the UTC clock east of Greenwich (Kampala 00:00-03:00).
+            Instant now = Instant.now();
+            Instant endOfToday = LocalDate.now(OrgDates.orgTimezone(jdbc, TenantContext.organizationId()))
+                    .atTime(23, 59, 59, 999_000_000).toInstant(ZoneOffset.UTC);
+            return new AsOf(endOfToday.isAfter(now) ? endOfToday : now, false);
         }
         Instant date;
         // A bare date means "end of that day" (server-local, like `new Date('YYYY-MM-DDT23:59:59.999')`).

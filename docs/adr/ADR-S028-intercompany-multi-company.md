@@ -99,6 +99,16 @@ is filtered by `organizationId` (and RLS). Multi-company is built *on top of* th
   (b) **P&L lines of the entries that contain an (a) line** — intercompany revenue, expense and cost of the invoices,
   bills and credit notes between members.
   Tax lines are not eliminated (they are real balances with the tax authority).
+  (c) **Cost of intercompany goods** (amendment 2026-11-02, found with the MENA demo): when the buyer receives the goods
+  into stock (purchase order + receipt voucher) rather than expensing a mirrored bill, (a)+(b) removed the seller's
+  revenue but no cost, understating group profit by the whole sale. Per seller → buyer pair, *goods revenue* = IC
+  revenue − the buyer's purchase expense eliminated in (b); the seller's margin on it uses the cost-of-sales lines of the
+  other entries of the same source documents (the invoice's stock issue). The buyer's column then takes cost of sales
+  − (goods revenue − unrealised profit) and inventory − unrealised profit, where unrealised profit = margin × the value
+  received from the seller on purchase orders that the buyer still holds (today's on-hand per product, capped at the
+  quantity received). The eliminations still net to zero; `pl` totals add `unrealisedProfitInInventory`, and
+  `intercompanyDifference` excludes it. Limits: no product mapping between companies, on-hand is today's (not as of
+  `to`), goods the buyer consumed in production count as realised.
 - If both sides are booked the eliminations net to zero; otherwise the residual is shown as an `intercompanyDifference`
   row, and `GET /intercompany/reconciliation?asOf` lists each pair (X's receivable from Y vs Y's payable to X, in group
   currency) with its difference.

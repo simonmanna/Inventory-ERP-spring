@@ -249,6 +249,31 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         }
     }
 
+    @Test
+    @DisplayName("AP aging carries the payable a PO receipt vouchered, less PO payments; the matched bill adds nothing")
+    void agingIncludesReceiptVouchers() {
+        String own = partner("Aging Supplier " + suffix());
+        String product = stockProduct();
+        String poId = createPo(Map.of("partnerId", own), product, 10, 50).get("id").asString();
+        receive(poId, product, 4);
+        assertThat(agingTotal(own)).isEqualByComparingTo("200");
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 120, "method", "bank"));
+        assertThat(agingTotal(own)).isEqualByComparingTo("80");
+        jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+        Res rebuilt = as("POST", "/reports/accounting/rebuild-snapshots", null);
+        assertThat(rebuilt.status()).as(rebuilt.raw().body()).isEqualTo(201);
+        assertThat(agingTotal(own)).isEqualByComparingTo("80");
+    }
+
+    BigDecimal agingTotal(String partnerId) {
+        for (JsonNode p : ok(200, "GET", "/reports/ap/aging", null).get("partners")) {
+            if (partnerId.equals(p.get("partnerId").asString())) {
+                return new BigDecimal(p.get("total").asString());
+            }
+        }
+        return BigDecimal.ZERO;
+    }
+
     // ------------------------------------------------------------------ P0-5
 
     @Test

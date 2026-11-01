@@ -86,12 +86,19 @@ public class OrganizationsService {
                 ? p.adminPassword() : randomPassword());
 
         record Created(String orgId, String code, String name, String userId, String email) {}
+        String currency = p.currencyCode() == null ? "USD" : p.currencyCode();
         Created created = tx.execute(s -> {
+            // The Organization row references Currency: the reference currencies must exist first (empty database).
+            seedCurrencies();
+            boolean known = jdbc.sql("SELECT count(*) FROM \"Currency\" WHERE code = ?").param(currency)
+                    .query(Long.class).single() > 0;
+            if (!known) {
+                throw ApiException.badRequest("Unknown currency '" + currency + "'");
+            }
             String orgId = UUID.randomUUID().toString();
             jdbc.sql("INSERT INTO \"Organization\" (id, code, name, \"currencyCode\", timezone, \"updatedAt\")"
                             + " VALUES (?, ?, ?, ?, ?, now())")
-                    .params(orgId, p.organizationCode(), p.organizationName(),
-                            p.currencyCode() == null ? "USD" : p.currencyCode(),
+                    .params(orgId, p.organizationCode(), p.organizationName(), currency,
                             p.timezone() == null ? "UTC" : p.timezone())
                     .update();
             AccountingBootstrap accounting = accountingBootstrap.getIfAvailable();
@@ -330,8 +337,7 @@ public class OrganizationsService {
         return ts == null ? null : ts.toLocalDateTime().toInstant(ZoneOffset.UTC);
     }
 
-    private void seedAdminRoleAndMappings(String orgId) {
-        upsertPermissionCatalog(jdbc);
+    private void seedCurrencies() {
         for (Currency c : CURRENCIES) {
             jdbc.sql("INSERT INTO \"Currency\" (id, code, symbol, name, \"decimalPlaces\", \"updatedAt\")"
                             + " VALUES (gen_random_uuid()::text, ?, ?, ?, ?, now()) ON CONFLICT (code) DO UPDATE SET"
@@ -340,6 +346,10 @@ public class OrganizationsService {
                     .params(c.code(), c.symbol(), c.name(), c.decimalPlaces())
                     .update();
         }
+    }
+
+    private void seedAdminRoleAndMappings(String orgId) {
+        upsertPermissionCatalog(jdbc);
         jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, description, \"isSystem\", permissions, \"updatedAt\")"
                         + " VALUES (?, ?, 'Administrator', 'Full platform access', true, ?, now())")
                 .params(UUID.randomUUID().toString(), orgId, Permissions.ALL.toArray(String[]::new))

@@ -156,13 +156,35 @@ public class ReportSnapshotService {
         }
     }
 
+    /**
+     * Payables raised by purchase-order receipts (receipt vouchers, P1-7): the bill matched to such a receipt carries no
+     * residual, so the open amount lives on the PO — vouchered receipts less PO payments, aged from the first receipt.
+     * Same measure as the PO pay route ({@code PurchaseOrdersService.vouchered}). Two org parameters.
+     */
+    private static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.\"partnerId\", p.name AS \"partnerName\", v.at AS \"dueDate\","
+            + " v.at AS \"issueDate\", LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) AS \"amountResidual\" FROM (SELECT g.\"purchaseOrderId\" AS po,"
+            + " MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS amt"
+            + " FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+            + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
+            + " AND g.status::text = 'posted' AND g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL"
+            + " AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY g.\"purchaseOrderId\") v"
+            + " JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id = po.\"partnerId\""
+            + " LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\" WHERE"
+            + " \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id"
+            + " WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) > 0.005";
+
     private void rebuildApAging(String org, Instant asOf) {
         jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
+        // Bills with a residual plus the open receipt-voucher payables of purchase orders (same as ApAgingService).
         List<Map<String, Object>> bills = SqlRows.list(jdbc.sql("SELECT d.\"partnerId\", d.\"dueDate\", d.\"issueDate\","
                 + " d.\"amountResidual\", p.name AS pname FROM \"Document\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\""
                 + " WHERE d.\"organizationId\" = ? AND d.\"documentType\"::text = 'vendor_bill' AND d.status::text IN ('posted', 'paid')"
-                + " AND d.\"amountResidual\" > 0").param(org));
+                + " AND d.\"amountResidual\" > 0 UNION ALL SELECT v.\"partnerId\", v.\"dueDate\", v.\"issueDate\","
+                + " v.\"amountResidual\", v.\"partnerName\" AS pname FROM (" + RECEIPT_VOUCHER_PAYABLES + ") v")
+                .params(org, org, org));
         Map<Object, Map<String, Object>> buckets = new LinkedHashMap<>();
         for (Map<String, Object> bill : bills) {
             Instant due = (Instant) (bill.get("dueDate") != null ? bill.get("dueDate") : bill.get("issueDate"));

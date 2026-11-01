@@ -315,6 +315,65 @@ class IntercompanyIT extends ApiTestSupport {
 
     @Test
     @Order(6)
+    @DisplayName("consolidation, goods: IC sale received into stock — cost of sales and unrealised profit eliminated")
+    void consolidationGoods() {
+        JsonNode before = okAs(parent, 200, "GET", "/intercompany/consolidation?statement=pl", null).get("totals");
+        String parentUser = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = ?")
+                .params(parent.org(), email).query(String.class).single();
+        // Parent holds 10 units at cost 60 and sells them to the subsidiary at 100.
+        okAs(parent, 201, "POST", "/inventory/locations", Map.of("code", "WH-" + sfx, "name", "Parent store", "type",
+                "warehouse"));
+        // A direct invoice issues from the company's first warehouse: stock that one.
+        String parentWh = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type ="
+                + " 'warehouse' AND \"isActive\" AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" LIMIT 1")
+                .param(parent.org()).query(String.class).single();
+        String sold = okAs(parent, 201, "POST", "/products", Map.of("code", "AGG-" + sfx, "name", "Aggregate",
+                "productType", "stockable", "trackInventory", true, "costingMethod", "AVCO")).get("id").asString();
+        Res in = money(parent.token(), "POST", "/inventory/direct-stock/in", Map.of("locationId", parentWh,
+                "responsibleById", parentUser, "approvedById", parentUser, "items", List.of(Map.of("productId", sold,
+                        "quantity", 10, "unitCost", 60))));
+        assertThat(in.status()).as(in.raw().body()).isIn(200, 201);
+        String parentPartnerForSub = okAs(parent, 200, "GET", "/intercompany/partners", null).get(0).get("partnerId")
+                .asString();
+        JsonNode draft = okAs(parent, 200, "POST", "/invoices", Map.of("partnerId", parentPartnerForSub, "issueDate",
+                LocalDate.now().toString(), "lines", List.of(Map.of("productId", sold, "description", "Aggregate",
+                        "quantity", 10, "unitPrice", 100))));
+        Res post = money(parent.token(), "POST", "/invoices/" + draft.get("id").asString() + "/post", null);
+        assertThat(post.status()).as(post.raw().body()).isIn(200, 201);
+        drainOutboxFully();
+        // The subsidiary receives them on a purchase order from the parent and keeps them in stock.
+        String subPartnerForParent = jdbc.sql("SELECT \"partnerId\" FROM \"IntercompanyPartner\" WHERE"
+                + " \"organizationId\" = ? AND \"counterpartOrganizationId\" = ?").params(sub.org(), parent.org())
+                .query(String.class).single();
+        String subWh = okAs(sub, 201, "POST", "/inventory/locations", Map.of("code", "WS-" + sfx, "name", "Sub store",
+                "type", "warehouse")).get("id").asString();
+        String bought = okAs(sub, 201, "POST", "/products", Map.of("code", "RAW-" + sfx, "name", "Aggregate in",
+                "productType", "stockable", "trackInventory", true, "costingMethod", "AVCO")).get("id").asString();
+        String po = okAs(sub, 201, "POST", "/procurement/purchase-orders", Map.of("partnerId", subPartnerForParent,
+                "warehouseId", subWh, "paymentType", "credit", "lines", List.of(Map.of("productId", bought,
+                        "description", "Aggregate", "quantity", 10, "unitPrice", 100)))).get("id").asString();
+        Res rec = money(sub.token(), "POST", "/procurement/purchase-orders/" + po + "/receive", Map.of("warehouseId",
+                subWh, "lines", List.of(Map.of("productId", bought, "description", "Aggregate", "quantity", 10))));
+        assertThat(rec.status()).as(rec.raw().body()).isEqualTo(200);
+
+        JsonNode tb = okAs(parent, 200, "GET", "/intercompany/consolidation?statement=tb", null);
+        assertThat(dec(tb.get("totals").get("intercompanyDifference"))).as(tb.get("totals").toString())
+                .isEqualByComparingTo("0");
+        JsonNode after = okAs(parent, 200, "GET", "/intercompany/consolidation?statement=pl", null).get("totals");
+        // Margin 40 % on goods still held: 400 of the parent's 400 profit is unrealised for the group.
+        assertThat(dec(after.get("unrealisedProfitInInventory"))).as(after.toString()).isEqualByComparingTo("400");
+        assertThat(dec(after.get("intercompanyDifference"))).isEqualByComparingTo("0");
+        BigDecimal groupDelta = dec(after.get("netProfit").get("consolidated"))
+                .subtract(dec(before.get("netProfit").get("consolidated")));
+        BigDecimal parentDelta = dec(after.get("netProfit").get(parent.org()))
+                .subtract(dec(before.get("netProfit").get(parent.org())));
+        // The parent's stock-in income (600) and sale profit (400) less the unrealised 400 = 600 for the group.
+        assertThat(parentDelta).isEqualByComparingTo("1000");
+        assertThat(groupDelta).isEqualByComparingTo("600");
+    }
+
+    @Test
+    @Order(7)
     @DisplayName("authorization: every intercompany route needs a token and its permission")
     void authorization() {
         assertThat(assertAuthorizationMatrix(IntercompanyController.class)).isEqualTo(19);

@@ -268,6 +268,19 @@ class CoreIT extends ApiTestSupport {
         assertThat(badCode.body().get("message").asString())
                 .isEqualTo("organizationCode must be 2-32 chars, letters/digits/hyphens");
 
+        // A reference currency missing from Currency (empty database) is seeded before the Organization row.
+        jdbc.sql("DELETE FROM \"Currency\" WHERE code = 'INR' AND NOT EXISTS (SELECT 1 FROM \"Organization\" WHERE"
+                + " \"currencyCode\" = 'INR')").update();
+        Res inr = call("POST", "/organizations/bootstrap", Map.of("organizationCode", uniq("inr").toLowerCase(),
+                "organizationName", "Pune Co", "currencyCode", "INR", "adminEmail", "o@inr.test",
+                "adminFirstName", "O", "adminPassword", "Owner@12345"), (String) null);
+        assertThat(inr.status()).as(inr.raw().body()).isEqualTo(201);
+        Res unknown = call("POST", "/organizations/bootstrap", Map.of("organizationCode", uniq("xyz").toLowerCase(),
+                "organizationName", "X", "currencyCode", "XYZ", "adminEmail", "o@xyz.test", "adminFirstName", "O"),
+                (String) null);
+        assertThat(unknown.status()).isEqualTo(400);
+        assertThat(unknown.body().get("message").asString()).isEqualTo("Unknown currency 'XYZ'");
+
         String owner = login(code, "owner@boot.test", "Owner@12345");
         JsonNode me = call("GET", "/organizations/me", null, owner).body();
         assertThat(me.get("code").asString()).isEqualTo(code);

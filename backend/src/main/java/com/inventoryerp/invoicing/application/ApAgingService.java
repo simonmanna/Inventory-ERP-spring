@@ -24,6 +24,25 @@ public class ApAgingService {
     private static final long FALLBACK_EPSILON_MS = 60_000L;
     private static final List<String> BUCKETS = List.of("current", "b1_30", "b31_60", "b61_90", "b90p");
 
+    /**
+     * Payables raised by purchase-order receipts (receipt vouchers, P1-7): the bill matched to such a receipt carries no
+     * residual, so the open amount lives on the PO — vouchered receipts less PO payments, aged from the first receipt.
+     * Same measure as the PO pay route ({@code PurchaseOrdersService.vouchered}). Two org parameters.
+     */
+    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.\"partnerId\", p.name AS \"partnerName\", v.at AS \"dueDate\","
+            + " v.at AS \"issueDate\", LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) AS \"amountResidual\" FROM (SELECT g.\"purchaseOrderId\" AS po,"
+            + " MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS amt"
+            + " FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+            + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
+            + " AND g.status::text = 'posted' AND g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL"
+            + " AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY g.\"purchaseOrderId\") v"
+            + " JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id = po.\"partnerId\""
+            + " LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\" WHERE"
+            + " \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id"
+            + " WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) > 0.005";
+
     private final JdbcClient jdbc;
 
     public ApAgingService(JdbcClient jdbc) {
@@ -57,7 +76,8 @@ public class ApAgingService {
         for (Map<String, Object> bill : SqlRows.list(jdbc.sql("SELECT d.\"partnerId\", p.name AS \"partnerName\","
                 + " d.\"dueDate\", d.\"issueDate\", d.\"amountResidual\" FROM \"Document\" d LEFT JOIN \"Partner\" p"
                 + " ON p.id = d.\"partnerId\" WHERE d.\"organizationId\" = ? AND d.\"documentType\" = 'vendor_bill'"
-                + " AND d.status IN ('posted', 'paid') AND d.\"amountResidual\" > 0").param(org))) {
+                + " AND d.status IN ('posted', 'paid') AND d.\"amountResidual\" > 0 UNION ALL " + RECEIPT_VOUCHER_PAYABLES)
+                .params(org, org, org))) {
             Instant due = (Instant) (bill.get("dueDate") != null ? bill.get("dueDate") : bill.get("issueDate"));
             long days = Math.max(0, (long) Math.floor((requested.toEpochMilli() - due.toEpochMilli()) / 86_400_000.0));
             String bucket = days <= 0 ? "current" : days <= 30 ? "b1_30" : days <= 60 ? "b31_60" : days <= 90 ? "b61_90"
