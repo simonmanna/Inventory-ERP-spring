@@ -73,3 +73,9 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   site delivery, timesheets × rate, equipment hours and reclass of posted cost; commitments; budget vs committed vs
   actual vs EAC; WIP tie-out; free-text procurement project references converted to foreign keys. Tests:
   `ProjectCostScenarioIT` (2).
+- **CM-8b** (done, ADR-S039, V232): contract commercials — IFRS 15.35 criteria gating the over-time election,
+  variations (approved into price and budget, pending excluded), customer advances (2480), progress claims invoiced to
+  2470 with conditional retention (1475 contract asset) or time-only retention (receivable), subcontract valuations
+  (gross to 1460, 2485 retention payable, back-charges), cost-to-cost / point-in-time revenue runs (1470 / 4610,
+  5610), IAS 37 onerous assessments (indicator, 68A fulfilment cost, least net cost of exit, impairment first,
+  maker-checker, 2490). Tests: `ContractCalculatorTest` (3), `ContractRevenueScenarioIT` (2).

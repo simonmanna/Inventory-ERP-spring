@@ -353,7 +353,7 @@ public class ProjectCostService {
     }
 
     /** Budget vs committed vs actual vs EAC per WBS element and cost element, with the WIP tie-out. */
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<String, Object> report(String projectId) {
         Map<String, Object> p = projects.project(projectId, false);
         Map<String, Map<String, Object>> rows = new LinkedHashMap<>();
@@ -408,8 +408,9 @@ public class ProjectCostService {
     }
 
     /** Cost already released from project WIP to cost of revenue (contract revenue recognition, CM-8b). */
-    protected BigDecimal releasedFromWip(String projectId) {
-        return BigDecimal.ZERO;
+    public BigDecimal releasedFromWip(String projectId) {
+        return jdbc.sql("SELECT coalesce(sum(\"costThisPeriod\"), 0) FROM \"RevenueRecognitionRun\" WHERE"
+                + " \"projectId\" = ? AND status = 'posted'").param(projectId).query(BigDecimal.class).single();
     }
 
     private static Map<String, Object> row(Map<String, Map<String, Object>> rows, Map<String, Object> l) {

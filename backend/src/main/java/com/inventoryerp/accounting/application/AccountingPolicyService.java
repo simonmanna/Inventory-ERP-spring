@@ -253,7 +253,8 @@ public class AccountingPolicyService {
             throw ApiException.badRequest("A stripping-activity asset needs an approved IFRIC 20 assessment of the"
                     + " ore-body component (quarry costing, CM-5)");
         }
-        if ("project_revenue_recognition".equals(e.key()) && v.startsWith("over_time")) {
+        if ("project_revenue_recognition".equals(e.key()) && v.startsWith("over_time")
+                && !overTimeCriteriaMet(scopeType, scopeId)) {
             throw ApiException.badRequest("Over-time revenue needs the contract's IFRS 15.35 criteria assessment"
                     + " (contract commercials, CM-8b)");
         }
@@ -261,6 +262,13 @@ public class AccountingPolicyService {
             assertSubject(scopeType, scopeId);
         }
         return v;
+    }
+
+    /** A contract-scoped election backed by an approved IFRS 15.35 assessment meeting (a), (b) or (c) — CM-8b. */
+    private boolean overTimeCriteriaMet(String scopeType, String scopeId) {
+        return "contract".equals(scopeType) && jdbc.sql("SELECT count(*) FROM \"ContractCriteriaAssessment\" WHERE"
+                + " \"organizationId\" = ? AND \"projectId\" = ? AND status = 'approved' AND (\"criterionA\" OR"
+                + " \"criterionB\" OR \"criterionC\")").params(org(), scopeId).query(Long.class).single() > 0;
     }
 
     /** An approved IFRIC 20 assessment exists for the quarry (or, at organisation scope, for any quarry) — CM-5. */

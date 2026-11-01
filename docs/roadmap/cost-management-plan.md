@@ -1120,3 +1120,4 @@ Each ADR contains:
 | CM-6 | see git log | S036 | Accrual is an explicit step per receipt and is cleared in full (not netted) against the actual voucher. Bill tax lines await an owner decision. V229 |
 | CM-7 | see git log | S037 | Carrier rate cards extend `FleetTransporterRate`; in-transit stage and per-location accounts deferred; intercompany vs branch excluded by tenancy. V230 |
 | CM-8a | see git log | S038 | New `projects` module; cost sub-ledger with one 1460 WIP journal per capture; commitments at project level (no WBS); overhead via reclass until cycles get a project receiver; APIs only. V231 |
+| CM-8b | see git log | S039 | Claims bill through 2470 billings (net presentation in the position report); onerous formula uses the least net cost of exiting; IFRS 9 ECL, retention current/non-current split and provision discounting deferred. V232 |
