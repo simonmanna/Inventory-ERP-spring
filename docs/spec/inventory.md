@@ -125,3 +125,10 @@ Nest list route is unchanged and POS does not call the new method. Screen: `/inv
 `inventory:replenish`, event `inventory.replenishment.requested`. Procurement listens
 (`ProcurementReplenishmentSubscriber`) and raises draft purchase requests. Stock, ledger and POS are not touched: the scan
 only reads `StockItem` and `StockReservation`. Screen: `/inventory/replenishment`.
+
+## ADR-S026 extension — warehouse management (roadmap 2.1, PR-4)
+
+Bins, putaway rules and tasks, pick / pack / ship in one to three steps, packages, waves and ABC cycle counts under
+`/warehouse` (`warehouse:read|manage|operate`). Bins are a sub-ledger inside a location (`WarehouseBinStock`); the
+ledger, costing and GL are unchanged and the source document still posts every issue. Cycle counts open ordinary
+`cycle` sessions of the count service. Details and limits: `docs/adr/ADR-S026-warehouse-management.md`.

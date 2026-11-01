@@ -845,5 +845,10 @@
   "analyticDimension": {
     "read": "analytic_dimension:read",
     "manage": "analytic_dimension:manage"
+  },
+  "warehouse": {
+    "read": "warehouse:read",
+    "manage": "warehouse:manage",
+    "operate": "warehouse:operate"
   }
 }

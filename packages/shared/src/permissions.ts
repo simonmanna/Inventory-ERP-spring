@@ -1032,6 +1032,15 @@ export const PERMISSIONS = {
     /// Create and change dimensions, values, account rules and the dimensions of document lines.
     manage: 'analytic_dimension:manage',
   },
+  // ---- Warehouse management (roadmap 2.1, ADR-S026) ----
+  warehouse: {
+    /// Bins, bin stock, putaway rules, tasks, pick orders, waves and ABC classes (read only).
+    read: 'warehouse:read',
+    /// Warehouse settings, bins, putaway rules and ABC classification.
+    manage: 'warehouse:manage',
+    /// Floor work: putaway and move tasks, pick orders, waves, packing, shipping and cycle-count scheduling.
+    operate: 'warehouse:operate',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

@@ -369,6 +369,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read },
       { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
       { to: '/inventory/reservations', label: tx('Stock Reservations'), icon: ClipboardCheck, permission: 'inventory:read' },
+      { to: '/inventory/warehouse', label: tx('Warehouse Management'), icon: Warehouse, permission: PERMISSIONS.warehouse.read },
       { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print },
       { to: '/products', label: tx('Products'), icon: Package, permission: PERMISSIONS.products.view, group: 'Products' },
       { to: '/products/specifications', label: tx('Product Specifications'), icon: ClipboardList, permission: PERMISSIONS.product.read, group: 'Products' },

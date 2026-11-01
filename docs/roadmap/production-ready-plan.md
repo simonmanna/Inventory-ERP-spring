@@ -11,7 +11,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | **done 2026-11-01** (part 1 2026-10-31, part 2 below); Nest retirement waits on owner items |
 | PR-2 | 1.7 Year-end close | S | **done 2026-10-31** (ADR-S023) |
 | PR-3 | 2.4 Analytic dimensions | M | **done 2026-10-31** (ADR-S025) |
-| PR-4 | 2.1 Warehouse management | L | todo |
+| PR-4 | 2.1 Warehouse management | L | **done 2026-11-01** (ADR-S026) |
 | PR-5 | 2.3 Replenishment & MRP completion | L | todo |
 | PR-6 | 2.8 Subscriptions & deferrals | M | todo |
 | PR-7 | 2.9 Projects & service billing | M | todo |
@@ -115,3 +115,20 @@ GL lines (split per value). Routes (`analytic_dimension:read|manage`, reports `r
 `PUT /analytic-dimensions/account-rules/:accountId`, `GET /analytic-dimensions/reports/summary|trial-balance|lines`,
 `GET|PUT /analytic-dimensions/documents/:documentId/lines`. Web: `/analytic-dimensions` (dimensions, values, account
 rules, P&L by value). Tests: `AnalyticDimensionIT`.
+
+## PR-4 — as built (ADR-S026)
+
+`V218`: `WarehouseSettings`, `WarehouseBin` (zone / aisle / rack / bin tree), `WarehouseBinStock`,
+`WarehousePutawayRule`, `WarehouseTask`, `WarehousePickOrder` / `WarehousePickLine`, `WarehousePackage` /
+`WarehousePackageItem`, `WarehouseWave`, `WarehouseAbcClass` (all with the tenant RLS policy). Bins are a sub-ledger
+inside a location: the stock ledger and GL are untouched, the source document still posts the issue. Routes
+(`warehouse:read|manage|operate`):
+`GET|PUT /warehouse/locations/:id/settings`, `GET /warehouse/locations/:id/overview`,
+`GET /warehouse/locations/:id/abc`, `POST /warehouse/locations/:id/abc/classify`,
+`POST /warehouse/locations/:id/cycle-counts`, `GET|POST /warehouse/bins`, `GET|PATCH|DELETE /warehouse/bins/:id`,
+`GET /warehouse/bin-stock`, `GET|POST /warehouse/putaway-rules`, `PATCH|DELETE /warehouse/putaway-rules/:id`,
+`GET /warehouse/putaway/suggest`, `POST /warehouse/putaway/generate`, `GET|POST /warehouse/tasks`,
+`POST /warehouse/tasks/:id/complete|cancel`, `GET|POST /warehouse/pick-orders`, `GET /warehouse/pick-orders/:id`,
+`POST /warehouse/pick-orders/:id/release|pack|ship|cancel`, `GET|POST /warehouse/waves`, `GET /warehouse/waves/:id`,
+`POST /warehouse/waves/:id/release`. Web: `/inventory/warehouse` (overview, bins, putaway rules, tasks, pick orders and
+waves, ABC cycle counts). Tests: `WarehouseIT` (6 scenarios), `AbcClassifierTest`.

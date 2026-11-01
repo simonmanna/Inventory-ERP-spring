@@ -221,6 +221,7 @@ const LocationsPage = lazy(() => import('@/pages/inventory/LocationsPage'));
 const StockReservationsPage = lazy(() => import('@/pages/inventory/StockReservationsPage').then((m) => ({ default: m.StockReservationsPage })));
 const ProductSpecsPage = lazy(() => import('@/pages/products/ProductSpecsPage').then((m) => ({ default: m.ProductSpecsPage })));
 const ReplenishmentPage = lazy(() => import('@/pages/inventory/ReplenishmentPage').then((m) => ({ default: m.ReplenishmentPage })));
+const WarehousePage = lazy(() => import('@/pages/inventory/WarehousePage'));
 const TerminalPage = lazy(() => import('@/pages/pos/Terminal'));
 const TerminalWorkspace = lazy(() => import('@/pages/pos/TerminalWorkspace').then((m) => ({ default: m.TerminalWorkspace })));
 const ReportsPage = lazy(() => import('@/pages/pos/ReportsPage'));
@@ -526,6 +527,7 @@ export function App() {
             <Route path="/inventory/locations" element={<LocationsPage />} />
             <Route path="/inventory/reservations" element={<StockReservationsPage />} />
             <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
+            <Route path="/inventory/warehouse" element={<RequirePermission permission={PERMISSIONS.warehouse.read}><WarehousePage /></RequirePermission>} />
             <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />
             <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
             <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
