@@ -241,7 +241,7 @@ public class CostAbsorptionService {
     }
 
     /** The amounts an absorption would post now, without posting. */
-    List<Map<String, Object>> preview(String orderId) {
+    public List<Map<String, Object>> preview(String orderId) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Pending p : pending(orderId)) {
             out.add(Obj.of("workOrderId", p.workOrder().get("id"), "workOrderName", p.workOrder().get("name"), "kind",

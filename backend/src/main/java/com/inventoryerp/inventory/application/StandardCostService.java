@@ -201,6 +201,31 @@ public class StandardCostService {
         return jeId;
     }
 
+    /**
+     * Stage output of a governed product (ADR-S034): the difference between the stage's allocated value and the
+     * standard ({@code variance}, positive = unfavourable) goes to the yield / other variance account against WIP and
+     * is recorded in the variance register like a single-leg order's. A stage output carries no element split, so it
+     * is reported as yield.
+     */
+    public String postStageVariance(String orderId, String orderCode, String productId, BigDecimal variance,
+            BigDecimal quantity, BigDecimal standardTotal, String wipAccountId, Instant date, String sourceType,
+            String sourceId, String label) {
+        variance = variance.setScale(6, RoundingMode.HALF_UP);
+        if (variance.signum() == 0) {
+            return null;
+        }
+        String yieldAccount = varianceAccount("yield");
+        String v = JsNumbers.dec(variance.abs());
+        Map<String, Object> je = posting.post(PostingRequest.of("INV", date, "Stage standard-cost variance · "
+                + orderCode, sourceType, sourceId, null, variance.signum() > 0
+                        ? List.of(Line.debit(yieldAccount, v, label), Line.credit(wipAccountId, v, label))
+                        : List.of(Line.debit(wipAccountId, v, label), Line.credit(yieldAccount, v, label))));
+        String jeId = je == null ? null : (String) je.get("id");
+        recordVariance(productId, "yield", "production_order", orderId, quantity, standardTotal,
+                standardTotal.add(variance), variance, jeId);
+        return jeId;
+    }
+
     /** Reverse a variance entry (production order reversed). */
     public void reverseJournal(String journalEntryId, String description) {
         posting.reverse(journalEntryId, Instant.now(), description);

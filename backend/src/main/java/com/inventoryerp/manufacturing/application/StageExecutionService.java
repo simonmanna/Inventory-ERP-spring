@@ -872,14 +872,9 @@ public class StageExecutionService implements StageCheckpointResults {
         stockPosting.postProductionOutput(productId, stockValue, date, SOURCE, pid, label);
         BigDecimal variance = value.subtract(stockValue);
         if (variance.signum() != 0) {
-            String yieldAccount = accounts.ensureByCode("5950", "Yield & Other Production Variance",
-                    "cost_of_goods_sold", "production_yield_variance");
-            String wip = stockPosting.wipAccount();
-            String v = JsNumbers.dec(variance.abs());
-            posting.post(PostingRequest.of("INV", date, "Stage standard-cost variance · " + c.order.get("orderCode"),
-                    SOURCE, pid, null, variance.signum() > 0
-                            ? List.of(Line.debit(yieldAccount, v, label), Line.credit(wip, v, label))
-                            : List.of(Line.debit(wip, v, label), Line.credit(yieldAccount, v, label))));
+            // One variance engine (ADR-S034): same accounts and register as single-leg orders.
+            standards.postStageVariance(str(c.order, "id"), str(c.order, "orderCode"), productId, variance, qty,
+                    stockValue, stockPosting.wipAccount(), date, SOURCE, pid, label);
         }
         line(pid, c.stage, role, productId, qty, value, locationId, res.ledgerCode(), null, outputId, null, null);
         if (outputId != null) {

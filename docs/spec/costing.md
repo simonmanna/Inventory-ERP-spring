@@ -49,3 +49,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   and fleet tonnage / km / tonne-km, idempotent runs with reversal, allocation-engine exception register
   (ArchUnit). Web `/costing/allocation`. Tests: `AllocationCalculatorTest` (5), `AllocationCycleIT` (5),
   `AllocationExceptionRegisterTest` (1).
+- **CM-4** (done, ADR-S034, V227): governed normal capacity per work centre (maker-checker, yearly review), IAS 2.13
+  absorption settlement decomposed into volume / spending / rate error and treated by cause (low volume → 5970,
+  abnormal → 5972, high volume and favourable spending → period output through lineage, below materiality → COGS),
+  timing blockers, production cost-flow bridge, stage variances registered through `StandardCostService`, variance
+  component split. Tests: `AbsorptionSettlementCalculatorTest` (4), `AbsorptionSettlementCausesIT` (4).

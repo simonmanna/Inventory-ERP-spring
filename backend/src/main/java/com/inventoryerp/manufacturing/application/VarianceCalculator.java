@@ -38,6 +38,58 @@ public final class VarianceCalculator {
         return round(actualHours.subtract(standardHours).multiply(rate));
     }
 
+    /** Labour split (ADR-S034): rate and efficiency; together they explain actual cost − standard hours × rate. */
+    public record Labour(BigDecimal rate, BigDecimal efficiency) {}
+
+    /**
+     * {@code rate = actual cost − actual hours × standard rate}; {@code efficiency = (actual − standard hours) ×
+     * standard rate}.
+     */
+    public static Labour labour(BigDecimal actualHours, BigDecimal standardHours, BigDecimal actualCost,
+            BigDecimal standardRate) {
+        BigDecimal rate = actualCost.subtract(actualHours.multiply(standardRate));
+        return new Labour(round(rate), efficiency(actualHours, standardHours, standardRate));
+    }
+
+    /** Fixed overhead split (ADR-S034): spending and volume; together actual − standard hours × standard rate. */
+    public record Overhead(BigDecimal spending, BigDecimal volume) {}
+
+    /** {@code spending = actual − budget}; {@code volume = budget − standard hours × standard rate}. */
+    public static Overhead fixedOverhead(BigDecimal actual, BigDecimal budget, BigDecimal standardHours,
+            BigDecimal standardRate) {
+        return new Overhead(round(actual.subtract(budget)), round(budget.subtract(standardHours.multiply(
+                standardRate))));
+    }
+
+    /** One component of a mix: actual and standard quantity and standard unit cost. */
+    public record MixLine(BigDecimal actualQty, BigDecimal standardQty, BigDecimal standardUnit) {}
+
+    /** Material mix and yield split of the usage variance: {@code mix + yield = Σ (actual − standard qty) × std}. */
+    public record Mix(BigDecimal mix, BigDecimal yield) {}
+
+    /**
+     * Mix: each component's actual quantity against its standard share of the total actual quantity; yield: the
+     * total actual quantity in standard proportions against the standard quantities.
+     */
+    public static Mix mix(java.util.List<MixLine> lines) {
+        BigDecimal totalActual = BigDecimal.ZERO;
+        BigDecimal totalStandard = BigDecimal.ZERO;
+        for (MixLine l : lines) {
+            totalActual = totalActual.add(l.actualQty());
+            totalStandard = totalStandard.add(l.standardQty());
+        }
+        BigDecimal mix = BigDecimal.ZERO;
+        BigDecimal usage = BigDecimal.ZERO;
+        for (MixLine l : lines) {
+            BigDecimal inStandardMix = totalStandard.signum() == 0 ? BigDecimal.ZERO
+                    : totalActual.multiply(l.standardQty()).divide(totalStandard, 12, RoundingMode.HALF_UP);
+            mix = mix.add(l.actualQty().subtract(inStandardMix).multiply(l.standardUnit()));
+            usage = usage.add(l.actualQty().subtract(l.standardQty()).multiply(l.standardUnit()));
+        }
+        BigDecimal roundedMix = round(mix);
+        return new Mix(roundedMix, round(usage).subtract(roundedMix));
+    }
+
     public static BigDecimal round(BigDecimal v) {
         return v.setScale(SCALE, RoundingMode.HALF_UP);
     }
