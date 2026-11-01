@@ -15,7 +15,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-5 | 2.3 Replenishment & MRP completion | L | **done 2026-11-01** (ADR-S027) |
 | PR-6 | 2.8 Subscriptions & deferrals | M | todo |
 | PR-7 | 2.9 Projects & service billing | M | todo |
-| PR-8 | 2.7 Intercompany & multi-company | L | todo |
+| PR-8 | 2.7 Intercompany & multi-company | L | **done 2026-11-01** (ADR-S028) |
 | PR-9 | 2.10 Portals & payment gateways | M | todo |
 | PR-10 | 2.6 BI builder | M | todo |
 | PR-11 | 2.5 Customization platform (ADR first) | XL | todo |
@@ -152,3 +152,24 @@ operations, finite scheduling). PR-5 closes the gaps. `V219`:
 Web: `/inventory/replenishment` (route + source on rules, route and document link on alerts), `/manufacturing/mrp`
 (subcontract parameters with subcontractor, Capacity tab, Nightly run tab). Tests: `ReplenishmentMrpIT` (7 scenarios);
 `ReplenishmentIT`, `MrpPlanningIT` unchanged and green.
+
+## PR-8 — as built (ADR-S028)
+
+New module `intercompany`, `V220`: `CompanyGroup` / `CompanyGroupMember` (install-wide), `IntercompanyPartner`,
+`IntercompanySettings`, `IntercompanyTransaction`, `IntercompanyJournal` (tenant RLS). Each company stays an
+organization; cross-company reads run without a tenant, writes run as the company they belong to.
+
+- **Group + consent**: the parent creates the group; adding a company needs a same-e-mail account with
+  `intercompany:manage` there; ownership % per subsidiary.
+- **Company switching**: `GET /intercompany/companies`, `POST …/:organizationId/switch` → login-shaped tokens for the
+  twin account (`AuthService.issueTokensForSwitch`, `LoginAttempt` reason `company_switch`); company picker in the
+  user menu.
+- **Mirroring**: `invoice.posted` to an intercompany partner → draft (or posted) vendor bill in the other company,
+  logged in `IntercompanyTransaction` with retry.
+- **Intercompany journals**: `POST /intercompany/journals` (`Idempotency-Key` required) posts one entry per company in
+  one transaction; a refusal in either rolls back both.
+- **Reconciliation + consolidation**: `GET /intercompany/reconciliation`, `GET /intercompany/consolidation`
+  (pl | tb, per company, eliminations, consolidated, NCI / attributable to parent).
+
+Routes (`intercompany:read|manage|post|switch`): 19, listed in `docs/spec/intercompany.md`. Web: `/intercompany` (group,
+partners & settings, mirrored documents, journals, reconciliation, consolidation). Tests: `IntercompanyIT` (6).

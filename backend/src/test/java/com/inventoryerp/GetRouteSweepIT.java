@@ -26,7 +26,7 @@ class GetRouteSweepIT extends ApiTestSupport {
     @ValueSource(strings = {"pos", "hr", "backup", "sync", "analytics", "quarry", "crm", "expenses", "inventory",
         "accounting", "invoicing", "procurement", "sales", "core", "kernel", "documents", "fleet", "manufacturing",
         "rental", "repair", "communication", "task", "beverage", "fixedasset", "orders", "quality", "alerts", "credit",
-        "portal", "biexport"})
+        "portal", "biexport", "intercompany"})
     void noServerErrors(String module) {
         Set<String> expected = NEST_500.keySet();
         assertThat(sweepGetRoutes("com.inventoryerp." + module + ".").stream()

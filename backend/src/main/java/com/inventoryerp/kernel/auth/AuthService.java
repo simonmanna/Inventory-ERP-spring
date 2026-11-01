@@ -122,6 +122,27 @@ public class AuthService {
         });
     }
 
+    /**
+     * Company switch (ADR-S028 §2): tokens for {@code userId} in {@code organizationId}, the caller's twin account in
+     * another company of its group. The intercompany module has already checked the group, the e-mail and the MFA
+     * rule; this re-checks that the account is active and unlocked and records the sign-in like a login.
+     */
+    public Map<String, Object> issueTokensForSwitch(String organizationId, String userId, RequestInfo req) {
+        return TenantContext.run(TenantStore.organization(organizationId), () -> {
+            UserWithRoles user = users.byId(organizationId, userId, true).orElse(null);
+            if (user == null) {
+                throw ApiException.forbidden("You have no active account in this company");
+            }
+            if (user.lockedUntil() != null && user.lockedUntil().isAfter(Instant.now())) {
+                recordAttempt(organizationId, user.email(), false, false, req.ip(), req.userAgent(), "account_locked");
+                throw ApiException.forbidden("Account temporarily locked; try again later");
+            }
+            recordAttempt(organizationId, user.email(), true, false, req.ip(), req.userAgent(), "company_switch");
+            recordSuccessfulLogin(user);
+            return issueTokens(user, organizationId, req);
+        });
+    }
+
     /** Step 2: exchange the mfaToken + TOTP code for tokens. */
     public Map<String, Object> mfaLogin(String mfaToken, String code, RequestInfo req) {
         String key = "mfa:" + AuthenticationHashes.sha256(mfaToken);

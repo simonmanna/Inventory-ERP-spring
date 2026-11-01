@@ -95,6 +95,7 @@ const FiscalPeriodsPage = lazy(() => import('@/pages/accounting/fiscal-periods')
 const FiscalYearsPage = lazy(() => import('@/pages/accounting/fiscal-years'));
 const FiscalYearClosePage = lazy(() => import('@/pages/accounting/fiscal-year-close'));
 const AnalyticDimensionsPage = lazy(() => import('@/pages/accounting/analytic-dimensions'));
+const IntercompanyPage = lazy(() => import('@/pages/accounting/intercompany'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
@@ -395,6 +396,7 @@ export function App() {
             <Route path="/fiscal-years" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearsPage /></RequirePermission>} />
             <Route path="/fiscal-years/:id" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearClosePage /></RequirePermission>} />
             <Route path="/analytic-dimensions" element={<RequirePermission permission={PERMISSIONS.analyticDimension.read}><AnalyticDimensionsPage /></RequirePermission>} />
+            <Route path="/intercompany" element={<RequirePermission permission={PERMISSIONS.intercompany.read}><IntercompanyPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<TaxesPage />} />
             <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />

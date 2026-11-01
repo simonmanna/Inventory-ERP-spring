@@ -142,7 +142,7 @@ import { LicenseBanner } from '@/components/license/LicenseBanner';
 import { LicenseBlockedDialog } from '@/components/license/LicenseBlockedDialog';
 import { useLicense } from '@/features/license/api';
 import { api } from '@/lib/api';
-import { notify } from '@/lib/notify';
+import { apiMessage, notify } from '@/lib/notify';
 import { GlobalSearch } from '@/components/global-search';
 import { PushBootstrap } from '@/components/push-bootstrap';
 import { ThemePicker } from '@/components/theme-picker';
@@ -196,6 +196,61 @@ function BranchSwitcher() {
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+interface CompanyOption {
+  organizationId: string;
+  code: string;
+  name: string;
+  current: boolean;
+}
+
+/** Companies of the group where the user also has an account (ADR-S028 §2); hidden when there is only one. */
+function CompanySwitcher() {
+  const setSession = useAuthStore((s) => s.setSession);
+  const setCurrentBranch = useAuthStore((s) => s.setCurrentBranch);
+  const canSwitch = useAuthStore((s) => s.hasPermission)(PERMISSIONS.intercompany.switch);
+  const { data } = useQuery<CompanyOption[]>({
+    queryKey: ['intercompany-companies'],
+    queryFn: async () => (await api.get('/intercompany/companies')).data,
+    staleTime: 5 * 60_000,
+    enabled: canSwitch,
+  });
+  if (!data || data.length < 2) return null;
+  const current = data.find((c) => c.current)?.organizationId;
+
+  const onSelect = async (id: string) => {
+    if (id === current) return;
+    try {
+      const res = await api.post(`/intercompany/companies/${id}/switch`);
+      setSession(res.data);
+      setCurrentBranch(null);
+      window.location.assign('/');
+    } catch (err) {
+      notify.error(apiMessage(err, tx('Failed to switch company')));
+    }
+  };
+
+  return (
+    <>
+      <div className="px-2 py-1.5">
+        <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          {tx('Company')}
+        </label>
+        <Select value={current} onValueChange={onSelect}>
+          <SelectTrigger className="h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {data.map((c) => (
+              <SelectItem key={c.organizationId} value={c.organizationId}>{c.name} ({c.code})</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <DropdownMenuSeparator />
+    </>
   );
 }
 
@@ -442,6 +497,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/accounts/fiscal-positions', label: tx('Fiscal Positions'), icon: Landmark, permission: PERMISSIONS.account.read, group: 'Configuration' },
       { to: '/cost-centers', label: tx('Cost Centers'), icon: Users, permission: PERMISSIONS.costCenter.read, group: 'Configuration' },
       { to: '/analytic-dimensions', label: tx('Analytic Dimensions'), icon: Users, permission: PERMISSIONS.analyticDimension.read, group: 'Configuration' },
+      { to: '/intercompany', label: tx('Intercompany'), icon: Network, permission: PERMISSIONS.intercompany.read, group: 'Configuration' },
     ],
   },
   {
@@ -1224,6 +1280,7 @@ export function AppShell() {
                     </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  <CompanySwitcher />
                   <div className="px-2 py-1.5">
                     <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                       {tx('Active Branch')}

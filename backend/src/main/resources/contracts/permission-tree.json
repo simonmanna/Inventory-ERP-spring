@@ -850,5 +850,11 @@
     "read": "warehouse:read",
     "manage": "warehouse:manage",
     "operate": "warehouse:operate"
+  },
+  "intercompany": {
+    "read": "intercompany:read",
+    "manage": "intercompany:manage",
+    "post": "intercompany:post",
+    "switch": "intercompany:switch"
   }
 }

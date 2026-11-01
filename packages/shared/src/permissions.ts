@@ -1041,6 +1041,17 @@ export const PERMISSIONS = {
     /// Floor work: putaway and move tasks, pick orders, waves, packing, shipping and cycle-count scheduling.
     operate: 'warehouse:operate',
   },
+  // ---- Intercompany & multi-company (roadmap 2.7, ADR-S028) ----
+  intercompany: {
+    /// Company group, intercompany partners, settings, mirrored documents, reconciliation and consolidation (read only).
+    read: 'intercompany:read',
+    /// Manage the company group, intercompany partners and mirroring settings; retry mirrored documents.
+    manage: 'intercompany:manage',
+    /// Post intercompany journals (one entry in each company).
+    post: 'intercompany:post',
+    /// Switch to another company of the group where the same e-mail has an account.
+    switch: 'intercompany:switch',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;
