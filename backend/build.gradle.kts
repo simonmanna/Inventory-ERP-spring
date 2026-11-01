@@ -155,6 +155,27 @@ val fastTest by tasks.registering(Test::class) {
     }
 }
 
+// Accounting regression suite (Cost Management CM-0, plan Part F2): the costing / valuation / close integration tests
+// that guard GL integrity. Grows phase by phase; run before every costing merge: `./gradlew accountingRegression`.
+val accountingRegression by tasks.registering(Test::class) {
+    description = "Accounting & period-close regression suite (costing, valuation, landed cost, allocation)."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath.filter {
+        !it.name.startsWith("spring-modulith-observability") && !it.name.startsWith("spring-modulith-actuator")
+    }
+    useJUnitPlatform { excludeTags("perf") }
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+    environment("TESTCONTAINERS_REUSE_ENABLE", "true")
+    outputs.upToDateWhen { false }
+    filter {
+        listOf("*LandedCostVoucherIT", "*StandardProcessCostingIT", "*MultiStageProductionIT", "*QuarryIT",
+            "*CrushingIT", "*PrecastManufacturingIT", "*FleetCostingIT", "*CostCenterAccountingIT",
+            "*AdvancedCostingIT", "*InventoryCostPolicyIT", "*ManufacturingCostingIT", "*ReportingIT",
+            "com.inventoryerp.costing.*").forEach { includeTestsMatching(it) }
+    }
+}
+
 tasks.jacocoTestReport {
     reports { xml.required = true; html.required = true }
 }

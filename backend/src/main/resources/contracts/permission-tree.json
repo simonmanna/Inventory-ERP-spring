@@ -876,5 +876,10 @@
   "apiClient": {
     "read": "api_client:read",
     "manage": "api_client:manage"
+  },
+  "advancedCosting": {
+    "read": "advanced_costing:read",
+    "manage": "advanced_costing:manage",
+    "post": "advanced_costing:post"
   }
 }

@@ -20,7 +20,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-10 | 2.6 BI builder | M | todo |
 | PR-11 | 2.5 Customization platform (ADR first) | XL | **done 2026-11-01** (ADR-S029) |
 | PR-12 | 1.3 E-invoicing (URA EFRIS first, sandbox adapter) | L | todo |
-| PR-13 | 3.1 Advanced costing remainder | M | todo |
+| PR-13 | 3.1 Advanced costing remainder | M | **done 2026-11-01** (ADR-S030) |
 | PR-14 | 2.2 Barcode / mobile warehouse app | M | todo |
 | PR-15 | Release: regression, tags, deploy | S | todo |
 
@@ -193,4 +193,22 @@ ADR first, then `V221`: `CustomFieldDefinition` / `CustomFieldValue` (side table
 41 routes + `/oauth/token`, listed in `docs/spec/customization.md`. Web: `/settings/custom-fields`,
 `/custom-objects/:key`, `/settings/print-templates`, `/settings/automation`, `/settings/api-clients`, custom-fields
 panel on partners; 59 phrases ti/lg/sw. Tests: `CustomizationIT` (6), `TemplateEngineTest` (5).
+
+## PR-13 — as built (ADR-S030)
+
+New module `costing`, `V222`: `MaterialLedgerRun` / `MaterialLedgerLine`, `AbcActivity`, `AbcRun` /
+`AbcRunActivity` / `AbcRunResult` (tenant RLS).
+
+- **Material ledger**: sequential period runs per standard-costed product; the variance pool (carried + period
+  `StandardCostVariance`) is split by remaining stock (`MaterialLedgerCalculator`); posting moves the change in carried
+  variance between stock valuation and 5965 Material Ledger Revaluation; last posted run reversible.
+- **Variance analysis**: booked variances by kind (favourable / unfavourable, % of standard), product, supplier, month;
+  GL tie-out against the mapped variance accounts; production variances on read from manufacturing.
+- **Activity-based costing**: activities with GL resource pools (accounts, cost centre, %) and operational drivers
+  (5 customer, 4 product); runs assign pools (`AbcCalculator`) and report revenue, estimated COGS, activity cost and
+  margin per customer / product. Analytic only.
+
+16 routes under `/costing` (`advanced_costing:read|manage|post`; post / reverse need `Idempotency-Key`). Web:
+`/costing/advanced`; 35 phrases ti/lg/sw. Tests: `AdvancedCostingIT` (4), `MaterialLedgerCalculatorTest` (4),
+`AbcCalculatorTest` (4).
 

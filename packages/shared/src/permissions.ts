@@ -1083,6 +1083,15 @@ export const PERMISSIONS = {
     /// Create, change, rotate and revoke API clients.
     manage: 'api_client:manage',
   },
+  // ---- Advanced costing remainder (roadmap 3.1, ADR-S030) ----
+  advancedCosting: {
+    /// Material-ledger runs, variance analysis, activity-based costing activities and runs (read only).
+    read: 'advanced_costing:read',
+    /// Create material-ledger runs, activities and ABC runs.
+    manage: 'advanced_costing:manage',
+    /// Post and reverse material-ledger runs (journal entries).
+    post: 'advanced_costing:post',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;
