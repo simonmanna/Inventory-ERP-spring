@@ -103,6 +103,15 @@ public class PeriodCloseChecklistService {
         checks.add(check("unmatched_bank_lines", "No unmatched bank statement lines", false,
                 count("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ? AND status = 'unmatched'"
                         + " AND \"postedAt\" >= ? AND \"postedAt\" <= ?", org, start, end)));
+        // CM-10 (ADR-S041): costing activity in the period should sit in a locked costing period (cost close
+        // cockpit gates passed). Advisory here; the costing lock itself refuses later costing postings.
+        long costingUnlocked = count("SELECT count(*) FROM \"JournalEntry\" e WHERE e.\"organizationId\" = ? AND"
+                + " e.status::text <> 'draft' AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ? AND e.\"sourceType\" ="
+                + " ANY (?) AND NOT EXISTS (SELECT 1 FROM \"CostingPeriodLock\" l WHERE l.\"organizationId\" ="
+                + " e.\"organizationId\" AND l.status = 'locked' AND l.\"periodFrom\" <= e.\"postingDate\"::date AND"
+                + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, start, end,
+                CostingDimensionGuard.COSTING_SOURCES.toArray(String[]::new));
+        checks.add(check("costing_close", "Costing period closed (cost close cockpit)", false, costingUnlocked));
 
         Map<String, Map<String, Object>> signed = new HashMap<>();
         for (Map<String, Object> s : SqlRows.list(jdbc.sql("SELECT s.key, s.note, s.\"signedBy\", s.\"signedAt\","

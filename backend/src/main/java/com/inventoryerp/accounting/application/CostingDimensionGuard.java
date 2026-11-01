@@ -27,7 +27,9 @@ public class CostingDimensionGuard {
             "landed_cost_voucher_reversal", "inventory_revaluation", "inventory_nrv", "cost_release",
             "material_ledger_run", "standard_cost", "cost_policy", "production_variance", "cost_allocation",
             "absorption_settlement", "quarry_stripping", "quarry_rehab", "landed_cost_accrual",
-            "landed_cost_accrual_clearing", "delivery_cost_run", "branch_transfer");
+            "landed_cost_accrual_clearing", "delivery_cost_run", "branch_transfer", "project_issue",
+            "project_timesheet", "project_equipment", "project_reclass", "project_subcontract", "project_back_charge",
+            "progress_claim", "revenue_recognition", "onerous_contract", "cost_adjustment_run");
 
     private final SettingResolverService settings;
     private final JdbcClient jdbc;
@@ -38,10 +40,11 @@ public class CostingDimensionGuard {
     }
 
     /** Called by the posting engine after the lines are resolved. */
-    void check(List<NormalizedLine> lines, String requestBranchId, String sourceType) {
+    void check(List<NormalizedLine> lines, String requestBranchId, String sourceType, java.time.Instant date) {
         if (sourceType == null || !COSTING_SOURCES.contains(sourceType)) {
             return;
         }
+        assertCostingPeriodOpen(date);
         if (!"enforce".equals(settings.resolveString("costing.dimensionEnforcement", SettingContext.EMPTY))) {
             return;
         }
@@ -52,6 +55,24 @@ public class CostingDimensionGuard {
                         + " settings: branch dimension is enforced)");
             }
         }
+    }
+
+    /**
+     * CM-10 (ADR-S041): costing postings dated inside a locked costing period are refused until the period is
+     * reopened ({@code costing_close:reopen}, audited).
+     */
+    public void assertCostingPeriodOpen(java.time.Instant date) {
+        String org = TenantContext.optionalOrganizationId();
+        if (org == null || date == null) {
+            return;
+        }
+        java.sql.Date day = java.sql.Date.valueOf(date.atZone(java.time.ZoneOffset.UTC).toLocalDate());
+        jdbc.sql("SELECT \"periodFrom\", \"periodTo\" FROM \"CostingPeriodLock\" WHERE \"organizationId\" = ? AND"
+                + " status = 'locked' AND \"periodFrom\" <= ? AND \"periodTo\" >= ? LIMIT 1").params(org, day, day)
+                .query((rs, n) -> rs.getString(1) + " – " + rs.getString(2)).optional().ifPresent(p -> {
+                    throw ApiException.badRequest("The costing period " + p + " is locked; reopen it before posting"
+                            + " costing entries into it");
+                });
     }
 
     /** Costing journal lines without a branch in a period, grouped by source type. */

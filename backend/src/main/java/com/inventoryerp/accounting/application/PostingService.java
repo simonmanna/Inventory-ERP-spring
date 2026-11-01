@@ -108,7 +108,7 @@ public class PostingService {
         lines = ruled;
         analyticDimensions.validate(lines, request.dimensions(), date, request.sourceType());
         if (costingDimensions != null) {
-            costingDimensions.check(lines, request.branchId(), request.sourceType());
+            costingDimensions.check(lines, request.branchId(), request.sourceType(), date);
         }
 
         int year = date.atOffset(ZoneOffset.UTC).getYear();

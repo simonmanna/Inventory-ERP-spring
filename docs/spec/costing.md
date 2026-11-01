@@ -83,3 +83,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   from invoiced quantities, estimate from approved project budgets); CM1 / CM2 / CM3; exact ACTUAL reconciliation
   (segments + unallocated + out of scope = GL net income) with per-account listing; statistical allocations flagged
   and excluded. Tests: `ProfitabilityReconciliationIT` (2).
+- **CM-10** (done, ADR-S041, V234): cost close cockpit — nine ordered gates (landed cost, absorption,
+  allocation, NRV, quarry, revenue runs, cost adjustment, profitability, reconciliations) with the first blocking
+  gate; costing period lock refusing costing postings until reopened (`costing_close:reopen`, reason audited);
+  reconciliation dashboard; cost adjustment run cascading late WIP cost of completed orders to output layers by
+  lineage. Material-ledger rework (AD-3) deferred. Tests: `CostCloseIT` (2).
