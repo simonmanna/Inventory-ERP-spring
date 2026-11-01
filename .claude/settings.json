@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew compileJava*)",
+      "Bash(./gradlew compileTestJava*)",
+      "Bash(./gradlew fastTest*)",
+      "Bash(./gradlew test --tests*)",
+      "Bash(./gradlew build*)",
+      "Bash(./gradlew spotlessApply*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)"
+    ],
+    "deny": [
+      "Read(**/build/**)",
+      "Read(**/.gradle/**)",
+      "Read(**/node_modules/**)",
+      "Read(**/dist/**)",
+      "Read(**/var/**)",
+      "Read(.claude/worktrees/**)"
+    ]
+  }
+}
