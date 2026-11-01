@@ -83,6 +83,9 @@ public class AccountingPolicyService {
         put(new Election("project_revenue_recognition", "Contract revenue recognition", "IFRS 15.35",
                 List.of("organization", "contract"), List.of("point_in_time", "over_time_cost_to_cost"), null, null,
                 "point_in_time", "Over time only when the contract meets IFRS 15.35 (a), (b) or (c)."));
+        put(new Election("empty_leg_policy", "Empty return legs of owned-fleet deliveries", "IAS 2.10 / AD-10",
+                List.of("organization"), List.of("loaded_leg", "pooled"), null, null, "loaded_leg",
+                "loaded_leg = each trip carries its own empty return; pooled = empty km shared by loaded tonne-km."));
         put(new Election("cost_eligibility", "Cost eligibility for inventory", "IAS 2.10–2.16",
                 List.of("account", "cost_component", "cost_pool"), ELIGIBILITY, null, null, null,
                 "Only *_capitalisable classes can ever be absorbed or capitalised into inventory."));

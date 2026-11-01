@@ -986,7 +986,7 @@ public class StockService {
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null, "transfer_in",
                 newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType, dto.sourceId,
                 dto.notes, dto.responsibleById, dto.approvedById);
-        if (carriedValue.signum() > 0) {
+        if (carriedValue.signum() > 0 && !dto.skipGlPosting) {
             stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, Instant.now(),
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
                     dto.sourceId != null ? dto.sourceId : ledgerCode,

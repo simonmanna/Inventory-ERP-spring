@@ -27,7 +27,7 @@ public class CostingDimensionGuard {
             "landed_cost_voucher_reversal", "inventory_revaluation", "inventory_nrv", "cost_release",
             "material_ledger_run", "standard_cost", "cost_policy", "production_variance", "cost_allocation",
             "absorption_settlement", "quarry_stripping", "quarry_rehab", "landed_cost_accrual",
-            "landed_cost_accrual_clearing");
+            "landed_cost_accrual_clearing", "delivery_cost_run", "branch_transfer");
 
     private final SettingResolverService settings;
     private final JdbcClient jdbc;

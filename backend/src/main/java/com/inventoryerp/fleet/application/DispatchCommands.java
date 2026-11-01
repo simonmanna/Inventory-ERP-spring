@@ -163,7 +163,7 @@ public final class DispatchCommands {
             String driverId,
             String transporterPartnerId,
             String transporterRateId,
-            @OneOf({"per_trip", "per_tonne", "per_km"}) String freightBasis,
+            @OneOf({"per_trip", "per_tonne", "per_km", "per_m3", "per_tonne_km"}) String freightBasis,
             @DecimalMin("0") @Digits(integer = 12, fraction = 2) BigDecimal freightRate,
             @Size(max = 40) String transporterPlate,
             @Size(max = 120) String transporterDriverName) {}
@@ -230,12 +230,13 @@ public final class DispatchCommands {
     public record TransporterRateInput(
             @NotBlank String partnerId,
             @NotBlank @Size(max = 120) String name,
-            @NotBlank @OneOf({"per_trip", "per_tonne", "per_km"}) String basis,
+            @NotBlank @OneOf({"per_trip", "per_tonne", "per_km", "per_m3", "per_tonne_km"}) String basis,
             @NotNull @DecimalMin("0") @Digits(integer = 12, fraction = 2) BigDecimal rate,
             @Size(max = 80) String zone,
             LocalDate effectiveFrom,
             LocalDate effectiveTo,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            @DecimalMin("0") @Digits(integer = 12, fraction = 2) BigDecimal minimumCharge) {}
 
     public record TransporterRatePatch(
             @Size(max = 120) String name,

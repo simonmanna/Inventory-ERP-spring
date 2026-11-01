@@ -71,6 +71,12 @@ public class FleetDispatchSettingsService {
                 in.name().trim(), "basis", in.basis(), "rate", in.rate(), "zone", FleetVehicleService.trim(in.zone()),
                 "effectiveFrom", in.effectiveFrom(), "effectiveTo", in.effectiveTo(), "notes",
                 FleetVehicleService.trim(in.notes()), "createdBy", TenantContext.userId()));
+        if (in.minimumCharge() != null) {
+            // CM-7 (ADR-S037): a minimum charge per trip, applied after the basis × rate.
+            db.jdbc().sql("UPDATE \"FleetTransporterRate\" SET \"minimumCharge\" = ? WHERE id = ?")
+                    .params(in.minimumCharge(), row.get("id")).update();
+            row.put("minimumCharge", in.minimumCharge());
+        }
         audit.recordInTx(AuditInput.of("FleetTransporterRate", (String) row.get("id"), "create", null, row));
         return row;
     }

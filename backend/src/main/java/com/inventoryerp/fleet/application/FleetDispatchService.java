@@ -1070,8 +1070,11 @@ public class FleetDispatchService {
             BigDecimal tonnes = t.get("deliveredTonnes") != null ? (BigDecimal) t.get("deliveredTonnes")
                     : t.get("loadedTonnes") != null ? (BigDecimal) t.get("loadedTonnes")
                     : (BigDecimal) t.get("plannedTonnes");
+            BigDecimal minimum = t.get("transporterRateId") == null ? null : db.jdbc().sql("SELECT \"minimumCharge\""
+                    + " FROM \"FleetTransporterRate\" WHERE id = ?").param(t.get("transporterRateId"))
+                    .query(BigDecimal.class).optional().orElse(null);
             data.put("freightAmount", FreightCalculator.amount((String) t.get("freightBasis"),
-                    (BigDecimal) t.get("freightRate"), tonnes, km));
+                    (BigDecimal) t.get("freightRate"), tonnes, km, (BigDecimal) t.get("plannedM3"), minimum));
         }
         Map<String, Object> after = db.update(FleetLoad.class, id, data);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", t.get("status")), after));

@@ -6,13 +6,20 @@ import java.math.RoundingMode;
 
 /**
  * Third-party transporter freight of a trip (fleet 1.3): {@code per_trip} = the rate, {@code per_tonne} = rate × tonnes
- * carried, {@code per_km} = rate × trip distance; HALF_UP to 2 decimals.
+ * carried, {@code per_km} = rate × trip distance; CM-7 (ADR-S037) adds {@code per_m3} = rate × volume, {@code
+ * per_tonne_km} = rate × tonnes × km and a minimum charge per trip; HALF_UP to 2 decimals.
  */
 public final class FreightCalculator {
 
     private FreightCalculator() {}
 
     public static BigDecimal amount(String basis, BigDecimal rate, BigDecimal tonnes, BigDecimal km) {
+        return amount(basis, rate, tonnes, km, null, null);
+    }
+
+    /** As {@link #amount(String, BigDecimal, BigDecimal, BigDecimal)} with volume and a minimum charge. */
+    public static BigDecimal amount(String basis, BigDecimal rate, BigDecimal tonnes, BigDecimal km, BigDecimal m3,
+            BigDecimal minimum) {
         if (basis == null || rate == null) {
             return null;
         }
@@ -31,8 +38,22 @@ public final class FreightCalculator {
                 }
                 yield km;
             }
+            case "per_m3" -> {
+                if (m3 == null) {
+                    throw ApiException.badRequest("The freight is paid per m³ but the trip has no planned volume");
+                }
+                yield m3;
+            }
+            case "per_tonne_km" -> {
+                if (tonnes == null || km == null) {
+                    throw ApiException.badRequest("The freight is paid per tonne-km: the trip needs its tonnage and"
+                            + " distance");
+                }
+                yield tonnes.multiply(km);
+            }
             default -> throw ApiException.badRequest("Unknown freight basis " + basis);
         };
-        return rate.multiply(qty).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal amount = rate.multiply(qty).setScale(2, RoundingMode.HALF_UP);
+        return minimum != null && minimum.compareTo(amount) > 0 ? minimum.setScale(2, RoundingMode.HALF_UP) : amount;
     }
 }

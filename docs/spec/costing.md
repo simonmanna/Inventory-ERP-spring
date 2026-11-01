@@ -63,3 +63,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   default) through lineage to 2156, cleared in full where it went when the actual voucher posts (or reversed),
   accrual reconciliation; legacy per-receipt landed cost reversible through the voucher engine. Tests:
   `ImportLandedScenarioIT` (2).
+- **CM-7** (done, ADR-S037, V230): transporter rate cards per m³ / tonne-km with a minimum charge, empty return
+  legs (`loaded_leg` / `pooled` election), owned-fleet delivery cost runs into distribution (6460, customer / load /
+  branch dimensions, P&L-neutral against 5385), same-entity branch transfers with inter-branch clearing (1299, each
+  branch balances) and capitalised transfer freight through lineage. Tests: `DistributionCostCalculatorTest` (4),
+  `DistributionBranchScenarioIT` (2).
