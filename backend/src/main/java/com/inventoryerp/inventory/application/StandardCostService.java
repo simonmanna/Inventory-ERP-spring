@@ -78,9 +78,11 @@ public class StandardCostService {
     private final AccountResolverService accounts;
     private final AuditService audit;
     private final TransactionTemplate tx;
+    private final CostLineageService lineage;
 
     public StandardCostService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm) {
+            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm, CostLineageService lineage) {
+        this.lineage = lineage;
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
@@ -370,13 +372,16 @@ public class StandardCostService {
             BigDecimal std = SqlRows.dec(s, "totalCost");
             BigDecimal qty = BigDecimal.ZERO;
             BigDecimal before = BigDecimal.ZERO;
+            List<Object[]> quantDeltas = new java.util.ArrayList<>();
             for (Map<String, Object> q : jdbc.sql("SELECT id, \"variantKey\", \"locationId\", quantity,"
                     + " \"runningAverageCost\" FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                     + " FOR UPDATE").params(org(), productId).query().listOfRows()) {
                 BigDecimal qq = Money.dec(q.get("quantity"));
                 qty = qty.add(qq);
-                before = before.add(quantValue(productId, q, method, Boolean.TRUE.equals(product.get("batchTracking")),
-                        Money.dec(product.get("costPrice"))));
+                BigDecimal qv = quantValue(productId, q, method, Boolean.TRUE.equals(product.get("batchTracking")),
+                        Money.dec(product.get("costPrice")));
+                before = before.add(qv);
+                quantDeltas.add(new Object[] {q, qq.multiply(std).subtract(qv)});
                 jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                         .params(std, q.get("id")).update();
             }
@@ -397,6 +402,15 @@ public class StandardCostService {
                 Map<String, Object> posted = posting.post(PostingRequest.of("INV", Instant.now(), description,
                         "standard_cost", id, "inventory:standard_cost:" + org() + ":" + id, lines));
                 je = posted == null ? null : (String) posted.get("id");
+                // CM-1: the stock ledger carries the revaluation per quant (value-only rows, source standard_cost).
+                for (Object[] qd : quantDeltas) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> q = (Map<String, Object>) qd[0];
+                    String variant = (String) q.get("variantKey");
+                    lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
+                            (String) q.get("locationId"), null, (BigDecimal) qd[1], "standard_cost", id, null,
+                            "Standard cost revaluation v" + s.get("version"));
+                }
             }
             jdbc.sql("UPDATE \"ProductStandardCost\" SET status = 'superseded', \"updatedAt\" = " + NOW + " WHERE"
                     + " \"organizationId\" = ? AND \"productId\" = ? AND status = 'active'").params(org(), productId)

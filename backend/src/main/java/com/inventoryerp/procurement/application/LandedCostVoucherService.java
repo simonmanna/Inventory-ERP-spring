@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.VendorBillService;
@@ -110,11 +111,13 @@ public class LandedCostVoucherService {
     private final ShipmentService shipments;
     private final VendorBillService bills;
     private final TransactionTemplate tx;
+    private final CostLineageService lineage;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
-            ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm) {
+            ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
+            CostLineageService lineage) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -127,6 +130,7 @@ public class LandedCostVoucherService {
         this.shipments = shipments;
         this.bills = bills;
         this.tx = new TransactionTemplate(txm);
+        this.lineage = lineage;
     }
 
     private static BigDecimal dp6(BigDecimal v) {
@@ -404,17 +408,20 @@ public class LandedCostVoucherService {
                 }
             }
             Map<String, BigDecimal> unabsorbed = new LinkedHashMap<>();
+            List<Object[]> valueRows = new ArrayList<>();
             for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT * FROM \"LandedCostAllocation\" WHERE"
                     + " \"landedCostId\" = ? ORDER BY id").param(id))) {
                 Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, \"costingMethod\"::text AS"
                         + " \"costingMethod\", \"serialTracking\" FROM \"Product\" WHERE id = ?").param(a.get("productId")));
                 BigDecimal cap = Money.dec(a.get("capitalizedAmount"));
-                BigDecimal removed = layers.remove(a, product, (String) a.get("goodsReceiptId"));
+                BigDecimal removed = layers.remove(a, product, (String) a.get("goodsReceiptId"),
+                        new LandedCostLayers.Source("landed_cost_voucher", (String) lc.get("code")));
                 jdbc.sql("UPDATE \"LandedCostAllocation\" SET \"reversedAmount\" = ? WHERE id = ?")
                         .params(removed, a.get("id")).update();
                 if (cap.subtract(removed).signum() > 0) {
                     unabsorbed.merge((String) a.get("productId"), cap.subtract(removed), BigDecimal::add);
                 }
+                valueRows.add(new Object[] {a, product, cap, removed});
             }
             Instant now = Instant.now();
             String reversalId = null;
@@ -422,6 +429,26 @@ public class LandedCostVoucherService {
                 Map<String, Object> rev = posting.reverse((String) lc.get("journalEntryId"), now,
                         "Reversal of landed cost " + lc.get("code"));
                 reversalId = (String) rev.get("id");
+            }
+            // CM-1: the stock ledger follows the GL — the reversal takes the capitalisation out (source "reversal"),
+            // the reclass puts back the part sold since (it stays in cost of sales).
+            for (Object[] v : valueRows) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> a = (Map<String, Object>) v[0];
+                @SuppressWarnings("unchecked")
+                Map<String, Object> product = (Map<String, Object>) v[1];
+                BigDecimal cap = (BigDecimal) v[2];
+                BigDecimal removed = (BigDecimal) v[3];
+                String component = "STANDARD".equals(product.get("costingMethod")) ? "price_difference" : null;
+                if (reversalId != null) {
+                    lineage.recordValueOnly((String) a.get("productId"), (String) a.get("variantId"),
+                            (String) a.get("locationId"), (String) a.get("batchId"), cap.negate(), "reversal",
+                            (String) lc.get("journalEntryId"), component, "Landed cost " + lc.get("code") + " reversed");
+                }
+                lineage.recordValueOnly((String) a.get("productId"), (String) a.get("variantId"),
+                        (String) a.get("locationId"), (String) a.get("batchId"), cap.subtract(removed),
+                        "landed_cost_voucher_reversal", (String) lc.get("code"), component,
+                        "Landed cost " + lc.get("code") + " reversed · share sold since back to COGS");
             }
             stockPosting.postLandedReclass(unabsorbed, (String) lc.get("costCenterId"), now, (String) lc.get("code"),
                     "Landed cost " + lc.get("code") + " reversed · share sold since back to COGS");
@@ -496,13 +523,15 @@ public class LandedCostVoucherService {
                     }
                 }
                 default -> {
+                    ch.put("_voucherCode", lc.get("code"));
                     List<Alloc> parts = allocate(ch, base, units, write);
                     for (Alloc a : parts) {
                         allocs.add(a);
-                        BigDecimal exp = a.allocated().subtract(a.applied().capitalized());
-                        capitalized = capitalized.add(a.applied().capitalized());
+                        BigDecimal wip = a.applied().wip();
+                        BigDecimal exp = a.allocated().subtract(a.applied().capitalized()).subtract(wip);
+                        capitalized = capitalized.add(a.applied().capitalized()).add(wip);
                         expensed = expensed.add(exp);
-                        landed.add(new LandedLine(a.unit().group().productId(), a.applied().capitalized(), exp));
+                        landed.add(new LandedLine(a.unit().group().productId(), a.applied().capitalized(), exp, wip));
                     }
                 }
             }
@@ -572,7 +601,8 @@ public class LandedCostVoucherService {
             BigDecimal allocated = last ? base.subtract(so) : dp6(exact);
             so = so.add(allocated);
             BigDecimal rounding = last ? dp6(allocated.subtract(exact)) : Money.ZERO;
-            Applied applied = layers.apply(u.grnId(), u.group(), allocated, write);
+            Applied applied = layers.apply(u.grnId(), u.group(), allocated, write,
+                    new LandedCostLayers.Source("landed_cost_voucher", (String) ch.get("_voucherCode")));
             out.add(new Alloc((String) ch.get("id"), u, method, basis[i], Money.div(basis[i], basisTotal), allocated,
                     rounding, applied));
         }

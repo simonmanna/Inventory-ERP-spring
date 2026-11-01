@@ -36,3 +36,7 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
 
 - **CM-0** (done): ABC cost-centre roll-up + FK (V223), booked ABC cost of goods, `accountingRegression` suite,
   material ledger restricted to STANDARD items pending the CM-10 rework.
+- **CM-1** (done, ADR-S031, V224): value-only stock-ledger rows for every cost-only change, cost lineage over the
+  stock ledger (`/inventory/cost-layers/:id/trace|distribution`), STANDARD landed cost split over lineage into the
+  price-difference adjunct / WIP / COGS, adjunct release run, inventory revaluation and IAS 2 NRV documents
+  (`/inventory/revaluations`). Tests: `AvcoLineageCalculatorTest` (5), `ValuationIntegrityIT` (5).

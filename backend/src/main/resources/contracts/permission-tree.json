@@ -881,5 +881,24 @@
     "read": "advanced_costing:read",
     "manage": "advanced_costing:manage",
     "post": "advanced_costing:post"
+  },
+  "inventoryValuation": {
+    "read": "inventory_valuation:read",
+    "manage": "inventory_valuation:manage",
+    "post": "inventory_valuation:post"
+  },
+  "accountingPolicy": {
+    "read": "accounting_policy:read",
+    "manage": "accounting_policy:manage",
+    "approve": "accounting_policy:approve"
+  },
+  "costingSettings": {
+    "read": "costing_settings:read",
+    "manage": "costing_settings:manage"
+  },
+  "costAllocation": {
+    "read": "cost_allocation:read",
+    "manage": "cost_allocation:manage",
+    "post": "cost_allocation:post"
   }
 }

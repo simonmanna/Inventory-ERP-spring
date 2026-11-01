@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (613 permissions). Constant name = GROUP__ACTION.
+ * exactly (624 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -624,6 +624,17 @@ public final class Permissions {
     public static final String ADVANCED_COSTING__READ = "advanced_costing:read";
     public static final String ADVANCED_COSTING__MANAGE = "advanced_costing:manage";
     public static final String ADVANCED_COSTING__POST = "advanced_costing:post";
+    public static final String INVENTORY_VALUATION__READ = "inventory_valuation:read";
+    public static final String INVENTORY_VALUATION__MANAGE = "inventory_valuation:manage";
+    public static final String INVENTORY_VALUATION__POST = "inventory_valuation:post";
+    public static final String ACCOUNTING_POLICY__READ = "accounting_policy:read";
+    public static final String ACCOUNTING_POLICY__MANAGE = "accounting_policy:manage";
+    public static final String ACCOUNTING_POLICY__APPROVE = "accounting_policy:approve";
+    public static final String COSTING_SETTINGS__READ = "costing_settings:read";
+    public static final String COSTING_SETTINGS__MANAGE = "costing_settings:manage";
+    public static final String COST_ALLOCATION__READ = "cost_allocation:read";
+    public static final String COST_ALLOCATION__MANAGE = "cost_allocation:manage";
+    public static final String COST_ALLOCATION__POST = "cost_allocation:post";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -1239,7 +1250,18 @@ public final class Permissions {
             "api_client:manage",
             "advanced_costing:read",
             "advanced_costing:manage",
-            "advanced_costing:post");
+            "advanced_costing:post",
+            "inventory_valuation:read",
+            "inventory_valuation:manage",
+            "inventory_valuation:post",
+            "accounting_policy:read",
+            "accounting_policy:manage",
+            "accounting_policy:approve",
+            "costing_settings:read",
+            "costing_settings:manage",
+            "cost_allocation:read",
+            "cost_allocation:manage",
+            "cost_allocation:post");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

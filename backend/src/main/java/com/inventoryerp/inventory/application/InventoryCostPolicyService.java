@@ -68,9 +68,11 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
     private final PostingService posting;
     private final AccountDeterminationService determination;
     private final TransactionTemplate tx;
+    private final CostLineageService lineage;
 
     public InventoryCostPolicyService(JdbcClient jdbc, SequenceService seq, AuditService audit, PostingService posting,
-            AccountDeterminationService determination, PlatformTransactionManager txm) {
+            AccountDeterminationService determination, PlatformTransactionManager txm, CostLineageService lineage) {
+        this.lineage = lineage;
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -329,6 +331,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         int quants = 0;
         BigDecimal before = Money.ZERO;
         BigDecimal after = Money.ZERO;
+        List<Object[]> quantDeltas = new java.util.ArrayList<>();
         if (!"AVCO".equals(to) && !"FIFO".equals(to)) {
             return Obj.of("products", 0, "quants", 0, "valueBefore", 0, "valueAfter", 0, "difference", 0);
         }
@@ -352,6 +355,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                 quants++;
                 before = before.add(valueBefore);
                 after = after.add(valueAfter);
+                quantDeltas.add(new Object[] {productId, q, valueAfter.subtract(valueBefore)});
                 jdbc.sql("INSERT INTO \"InventoryCostMigrationLine\" (id, \"organizationId\", \"policyId\", \"productId\","
                                 + " \"locationId\", \"methodFrom\", \"methodTo\", quantity, \"valueBefore\", \"valueAfter\")"
                                 + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -367,7 +371,14 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
         String je = null;
         if (diff.abs().compareTo(CENT) >= 0) {
-            je = postRounding(diff, policyCode);
+            je = postRounding(diff, policyCode, effectiveInstant(p));
+            // CM-1: the stock ledger carries the re-costing per quant (value-only rows, source cost_policy).
+            for (Object[] qd : quantDeltas) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> q = (Map<String, Object>) qd[1];
+                lineage.recordValueOnly((String) qd[0], (String) q.get("variantId"), (String) q.get("locationId"), null,
+                        (BigDecimal) qd[2], "cost_policy", policyCode, null, "Costing method change " + policyCode);
+            }
         }
         return Obj.of("products", products, "quants", quants, "valueBefore", JsNumbers.dec(before), "valueAfter",
                 JsNumbers.dec(after), "difference", JsNumbers.dec(diff), "journalEntryId", je);
@@ -415,7 +426,15 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         return qty.multiply(avg);
     }
 
-    private String postRounding(BigDecimal diff, String policyCode) {
+    /** Posting date of a method change: its effective date (start of day, UTC), never earlier than today's lock. */
+    private static Instant effectiveInstant(Map<String, Object> p) {
+        Object from = p.get("effectiveFrom");
+        LocalDate day = from instanceof LocalDate d ? d : from instanceof java.sql.Date sd ? sd.toLocalDate()
+                : from == null ? null : LocalDate.parse(from.toString().substring(0, 10));
+        return day == null ? Instant.now() : day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+    }
+
+    private String postRounding(BigDecimal diff, String policyCode, Instant date) {
         String sv = determination.mapped("stock_valuation");
         String amount = JsNumbers.dec(diff.abs());
         String description = "Costing method change " + policyCode + " · rounding";
@@ -424,7 +443,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                         Line.credit(determination.mapped("stock_adjustment_income"), amount, description))
                 : List.of(Line.debit(determination.mapped("stock_adjustment_expense"), amount, description),
                         Line.credit(sv, amount, description));
-        Map<String, Object> je = posting.post(PostingRequest.of("INV", Instant.now(), description, "cost_policy",
+        Map<String, Object> je = posting.post(PostingRequest.of("INV", date, description, "cost_policy",
                 policyCode, "inventory:cost_policy:" + org() + ":" + policyCode, lines));
         return je == null ? null : (String) je.get("id");
     }

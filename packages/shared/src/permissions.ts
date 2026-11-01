@@ -1092,6 +1092,37 @@ export const PERMISSIONS = {
     /// Post and reverse material-ledger runs (journal entries).
     post: 'advanced_costing:post',
   },
+  // ---- Cost Management CM-1 … CM-3 (ADR-S031 … ADR-S033) ----
+  inventoryValuation: {
+    /// Cost lineage trace, adjunct balances, revaluation and NRV documents (read only).
+    read: 'inventory_valuation:read',
+    /// Create and delete draft inventory revaluations and NRV reviews.
+    manage: 'inventory_valuation:manage',
+    /// Post and reverse revaluations / NRV reviews; release price differences (journal entries).
+    post: 'inventory_valuation:post',
+  },
+  accountingPolicy: {
+    /// Accounting policy elections and cost eligibility (read only).
+    read: 'accounting_policy:read',
+    /// Propose policy elections and cost eligibility classifications.
+    manage: 'accounting_policy:manage',
+    /// Approve a proposed policy election (maker-checker; never your own proposal).
+    approve: 'accounting_policy:approve',
+  },
+  costingSettings: {
+    /// Costing & valuation settings page (read only).
+    read: 'costing_settings:read',
+    /// Change costing & valuation settings.
+    manage: 'costing_settings:manage',
+  },
+  costAllocation: {
+    /// Allocation cycles, runs, documents and statistical keys (read only).
+    read: 'cost_allocation:read',
+    /// Create and change allocation cycles, segments and statistical keys; preview runs.
+    manage: 'cost_allocation:manage',
+    /// Post and reverse allocation runs (financial runs create journal entries).
+    post: 'cost_allocation:post',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

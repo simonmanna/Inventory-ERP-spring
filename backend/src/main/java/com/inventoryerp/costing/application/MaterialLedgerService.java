@@ -6,6 +6,7 @@ import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Input;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Result;
+import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -46,9 +47,11 @@ public class MaterialLedgerService {
     private final AccountResolverService accounts;
     private final SequenceService sequence;
     private final AuditService audit;
+    private final CostLineageService lineage;
 
     public MaterialLedgerService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, SequenceService sequence, AuditService audit) {
+            AccountResolverService accounts, SequenceService sequence, AuditService audit, CostLineageService lineage) {
+        this.lineage = lineage;
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
@@ -235,10 +238,13 @@ public class MaterialLedgerService {
         String reval = accounts.ensureByCode("5965", "Material Ledger Revaluation", "cost_of_goods_sold",
                 "material_ledger_revaluation");
         List<PostingRequest.Line> lines = new ArrayList<>();
-        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT l.delta, p.name FROM \"MaterialLedgerLine\" l JOIN"
+        Map<String, BigDecimal> deltas = new LinkedHashMap<>();
+        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT l.delta, l.\"productId\", p.name FROM"
+                + " \"MaterialLedgerLine\" l JOIN"
                 + " \"Product\" p ON p.id = l.\"productId\" WHERE l.\"runId\" = ? AND l.\"organizationId\" = ? AND"
                 + " l.delta <> 0 ORDER BY p.name").params(id, org()))) {
             BigDecimal d = SqlRows.dec(l, "delta");
+            deltas.put((String) l.get("productId"), d);
             String text = "Actual cost revaluation · " + l.get("name");
             if (d.signum() > 0) {
                 lines.add(PostingRequest.Line.debit(stock, d, text));
@@ -255,6 +261,7 @@ public class MaterialLedgerService {
                     "Material ledger " + r.get("number") + " (" + from + " – " + to + ")", "material_ledger_run", id,
                     "material_ledger:" + id, lines));
             entryId = (String) entry.get("id");
+            deltas.forEach((productId, d) -> valueRows(productId, d, "material_ledger_run", id));
         }
         jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'posted', \"journalEntryId\" = ?, \"postedAt\" = now(),"
                 + " \"postedBy\" = ? WHERE id = ? AND \"organizationId\" = ?").params(entryId, TenantContext.userId(), id,
@@ -280,11 +287,53 @@ public class MaterialLedgerService {
             Map<String, Object> rev = posting.reverse((String) r.get("journalEntryId"), Instant.now(),
                     "Reversal of material ledger " + r.get("number"));
             reversal = (String) rev.get("id");
+            for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT \"productId\", delta FROM \"MaterialLedgerLine\""
+                    + " WHERE \"runId\" = ? AND \"organizationId\" = ? AND delta <> 0").params(id, org()))) {
+                valueRows((String) l.get("productId"), SqlRows.dec(l, "delta").negate(), "reversal",
+                        (String) r.get("journalEntryId"));
+            }
         }
         jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" = now()"
                 + " WHERE id = ? AND \"organizationId\" = ?").params(reversal, id, org()).update();
         audit.recordInTx(AuditInput.of("MaterialLedgerRun", id, "reopen", null, Obj.of("reversalEntryId", reversal)));
         return get(id);
+    }
+
+    /**
+     * CM-1 (ADR-S031): the stock ledger carries the material-ledger price difference as a value-only adjunct row
+     * ({@code price_difference}) so valuation and GL tie out; spread over the product's quants by quantity (the
+     * largest quant takes the rounding), or on its last location when nothing is on hand.
+     */
+    private void valueRows(String productId, BigDecimal delta, String referenceType, String referenceId) {
+        if (delta.signum() == 0) {
+            return;
+        }
+        List<Map<String, Object>> quants = SqlRows.list(jdbc.sql("SELECT \"variantKey\", \"locationId\", quantity FROM"
+                + " \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND quantity > 0 ORDER BY"
+                + " quantity DESC").params(org(), productId));
+        BigDecimal total = quants.stream().map(q -> SqlRows.dec(q, "quantity")).reduce(BigDecimal.ZERO,
+                BigDecimal::add);
+        if (total.signum() <= 0) {
+            String location = jdbc.sql("SELECT \"locationId\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                    + " \"productId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1").params(org(), productId)
+                    .query(String.class).optional().orElse(null);
+            if (location != null) {
+                lineage.recordValueOnly(productId, null, location, null, delta, referenceType, referenceId,
+                        "price_difference", "Material ledger actual-cost revaluation");
+            }
+            return;
+        }
+        BigDecimal rest = delta;
+        for (int i = quants.size() - 1; i >= 0; i--) {
+            Map<String, Object> q = quants.get(i);
+            BigDecimal part = i == 0 ? rest : delta.multiply(SqlRows.dec(q, "quantity")).divide(total, 2,
+                    java.math.RoundingMode.HALF_UP);
+            rest = rest.subtract(part);
+            String variant = (String) q.get("variantKey");
+            lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
+                    (String) q.get("locationId"), null, part, referenceType, referenceId, "price_difference",
+                    "Material ledger actual-cost revaluation");
+        }
     }
 
     private static java.sql.Timestamp ts(Instant i) {

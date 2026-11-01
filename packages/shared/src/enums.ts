@@ -164,6 +164,8 @@ export const STOCK_MOVE_TYPES = [
   // Posted reversal of a stock document (inverse movement, linked by referenceType).
   'reversal_in',
   'reversal_out',
+  // Value-only cost change (quantity 0) — Cost Management CM-1, ADR-S031.
+  'cost_adjustment',
 ] as const;
 export type StockMoveType = (typeof STOCK_MOVE_TYPES)[number];
 

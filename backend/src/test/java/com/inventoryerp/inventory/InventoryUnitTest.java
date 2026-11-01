@@ -220,7 +220,7 @@ class InventoryUnitTest {
                 default -> "acc-" + inv.getArgument(0);
             });
             JdbcClient jdbc = mock(JdbcClient.class, Answers.RETURNS_DEEP_STUBS);
-            svc = new StockPostingService(jdbc, posting, determination, new CostResolver(), rules);
+            svc = new StockPostingService(jdbc, posting, determination, new CostResolver(), rules, null);
         }
 
         @AfterEach

@@ -43,14 +43,16 @@ public class StockPostingService {
     private final AccountDeterminationService determination;
     private final CostResolver costResolver;
     private final InventoryPostingRuleService rules;
+    private final CostLineageService lineage;
 
     public StockPostingService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            CostResolver costResolver, InventoryPostingRuleService rules) {
+            CostResolver costResolver, InventoryPostingRuleService rules, CostLineageService lineage) {
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
         this.costResolver = costResolver;
         this.rules = rules;
+        this.lineage = lineage;
     }
 
     /** Parameters of {@link #postIssue}. */
@@ -242,7 +244,29 @@ public class StockPostingService {
     }
 
     /** One landed-cost line: share capitalised into stock and share already expensed. */
-    public record LandedLine(String productId, BigDecimal capitalized, BigDecimal expensed) {}
+    /**
+     * One product's landed charge: capitalised (stock, or the price-difference adjunct for STANDARD items), expensed
+     * (cost of sales) and — STANDARD only — the share consumed by open production orders (WIP).
+     */
+    public record LandedLine(String productId, BigDecimal capitalized, BigDecimal expensed, BigDecimal wip) {
+
+        public LandedLine(String productId, BigDecimal capitalized, BigDecimal expensed) {
+            this(productId, capitalized, expensed, BigDecimal.ZERO);
+        }
+    }
+
+    /**
+     * The account a landed charge capitalises into: the product's stock account, or for a STANDARD-costed product the
+     * inventory price-difference adjunct (the standard unit cost never moves; ADR-S031 AD-2b).
+     */
+    public String landedAccount(String productId, BigDecimal amount) {
+        String method = jdbc.sql("SELECT \"costingMethod\"::text FROM \"Product\" WHERE id = ?").param(productId)
+                .query(String.class).optional().orElse(null);
+        if ("STANDARD".equals(method)) {
+            return lineage.priceDifferenceAccount();
+        }
+        return stockAccount(productId, amount);
+    }
 
     /** Landed cost: Dr Stock Valuation (on hand) + Dr COGS (consumed) / Cr the charge account. */
     public Map<String, Object> postLandedCost(List<LandedLine> landed, String creditAccountId, Instant date,
@@ -254,21 +278,13 @@ public class StockPostingService {
             BigDecimal cap = Money.dec(l.capitalized());
             BigDecimal exp = Money.dec(l.expensed());
             if (cap.signum() > 0) {
-                List<Line> ruled = resolveLines("STOCK_IN", l.productId(), cap);
-                String stockAccount = null;
-                if (ruled != null) {
-                    for (Line r : ruled) {
-                        if (r.debit() != null && Money.dec(r.debit()).signum() > 0) {
-                            stockAccount = r.accountId();
-                            break;
-                        }
-                    }
-                }
-                if (stockAccount == null) {
-                    stockAccount = determination.mapped("stock_valuation");
-                }
-                lines.add(Line.debit(stockAccount, JsNumbers.dec(cap), description));
+                lines.add(Line.debit(landedAccount(l.productId(), cap), JsNumbers.dec(cap), description));
                 credit = credit.add(cap);
+            }
+            BigDecimal wip = Money.dec(l.wip());
+            if (wip.signum() > 0) {
+                lines.add(Line.debit(determination.mapped("wip"), JsNumbers.dec(wip), description + " · open WIP"));
+                credit = credit.add(wip);
             }
             if (exp.signum() > 0) {
                 cogsTotal = cogsTotal.add(exp);
@@ -309,12 +325,17 @@ public class StockPostingService {
         List<Line> lines = new ArrayList<>();
         BigDecimal cogsTotal = Money.ZERO;
         Map<String, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
+        BigDecimal wipTotal = Money.ZERO;
         for (LandedLine l : landed) {
             BigDecimal cap = Money.dec(l.capitalized());
             if (cap.signum() > 0) {
-                byAccount.merge(stockAccount(l.productId(), cap), cap, BigDecimal::add);
+                byAccount.merge(landedAccount(l.productId(), cap), cap, BigDecimal::add);
             }
             cogsTotal = cogsTotal.add(Money.dec(l.expensed()));
+            wipTotal = wipTotal.add(Money.dec(l.wip()));
+        }
+        if (wipTotal.signum() > 0) {
+            byAccount.merge(determination.mapped("wip"), wipTotal, BigDecimal::add);
         }
         byAccount.forEach((acc, v) -> lines.add(Line.debit(acc, JsNumbers.dec(v), description)));
         if (cogsTotal.signum() > 0) {
@@ -339,7 +360,8 @@ public class StockPostingService {
         BigDecimal total = Money.ZERO;
         for (Map.Entry<String, BigDecimal> e : unabsorbedByProduct.entrySet()) {
             if (e.getValue().signum() > 0) {
-                lines.add(Line.debit(stockAccount(e.getKey(), e.getValue()), JsNumbers.dec(e.getValue()), description));
+                lines.add(Line.debit(landedAccount(e.getKey(), e.getValue()), JsNumbers.dec(e.getValue()),
+                        description));
                 total = total.add(e.getValue());
             }
         }

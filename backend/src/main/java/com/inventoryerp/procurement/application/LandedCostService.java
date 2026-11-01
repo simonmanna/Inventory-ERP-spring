@@ -266,11 +266,12 @@ public class LandedCostService {
                         : dp6(Money.div(mul(total, basisOf(method, g)), basisTotal));
                 allocatedSoFar = allocatedSoFar.add(allocated);
 
-                Applied applied = layers.apply((String) grn.get("id"), g, allocated, true);
-                BigDecimal expensed = allocated.subtract(applied.capitalized());
-                capitalizedTotal = capitalizedTotal.add(applied.capitalized());
+                Applied applied = layers.apply((String) grn.get("id"), g, allocated, true,
+                        new LandedCostLayers.Source("landed_cost", (String) lc.get("code")));
+                BigDecimal expensed = allocated.subtract(applied.capitalized()).subtract(applied.wip());
+                capitalizedTotal = capitalizedTotal.add(applied.capitalized()).add(applied.wip());
                 expensedTotal = expensedTotal.add(expensed);
-                glLines.add(new LandedLine(g.productId(), applied.capitalized(), expensed));
+                glLines.add(new LandedLine(g.productId(), applied.capitalized(), expensed, applied.wip()));
 
                 String batchNumber = g.batchId() == null ? null : jdbc.sql("SELECT \"batchNumber\" FROM \"InventoryBatch\""
                         + " WHERE id = ? AND \"organizationId\" = ?").params(g.batchId(), orgId).query(String.class)

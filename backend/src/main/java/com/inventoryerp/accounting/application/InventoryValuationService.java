@@ -107,7 +107,8 @@ public class InventoryValuationService {
     public List<String> inventoryAccountIds() {
         String org = TenantContext.organizationId();
         Set<String> ids = new LinkedHashSet<>(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ?"
-                + " AND key IN ('stock_valuation', 'inventory')").param(org).query(String.class).list());
+                + " AND key IN ('stock_valuation', 'inventory', 'inventory_price_difference', 'inventory_nrv_allowance')")
+                .param(org).query(String.class).list());
         List<Map<String, Object>> rules = SqlRows.list(jdbc.sql("SELECT \"literalAccountId\", \"accountMappingKey\""
                 + " FROM \"InventoryPostingRule\" WHERE \"organizationId\" = ? AND \"isActive\" = true"
                 + " AND \"movementType\"::text = 'STOCK_IN' AND \"debitOrCredit\" = 'debit'").param(org));
@@ -155,7 +156,22 @@ public class InventoryValuationService {
                 + " FROM quant q"
                 + " LEFT JOIN lot l ON l.\"productId\" = q.\"productId\" AND l.\"locationId\" = q.\"locationId\" AND l.\"variantKey\" = q.\"variantKey\""
                 + " LEFT JOIN ser se ON se.\"productId\" = q.\"productId\" AND se.\"locationId\" = q.\"locationId\" AND se.\"variantKey\" = q.\"variantKey\""
-                + " GROUP BY q.\"productId\"").param("org", org));
+                + " GROUP BY q.\"productId\""
+                // CM-1 (ADR-S031): adjunct carrying-amount components held beside the quant cost — STANDARD price
+                // differences (landed cost, material ledger) and IAS 2 NRV allowances.
+                + " UNION ALL SELECT a.\"productId\", 0, SUM(a.\"totalValue\") FROM \"InventoryLedger\" a WHERE"
+                + " a.\"organizationId\" = :org AND a.\"valuationComponent\" IS NOT NULL GROUP BY a.\"productId\"")
+                .param("org", org)).stream().collect(java.util.stream.Collectors.groupingBy(
+                        r -> (String) r.get("product_id"), java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList())).entrySet().stream().map(e -> {
+                            Map<String, Object> m = new HashMap<>();
+                            m.put("product_id", e.getKey());
+                            m.put("qty", e.getValue().stream().map(r -> SqlRows.dec(r, "qty"))
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add));
+                            m.put("value", e.getValue().stream().map(r -> SqlRows.dec(r, "value"))
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add));
+                            return m;
+                        }).toList();
     }
 
     @Transactional(readOnly = true)
