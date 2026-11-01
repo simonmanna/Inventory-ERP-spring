@@ -169,6 +169,7 @@ const CostPoliciesPage = lazy(() => import('@/pages/costing/CostPoliciesPage').t
 const StandardCostsPage = lazy(() => import('@/pages/costing/StandardCostsPage').then((m) => ({ default: m.StandardCostsPage })));
 const AdvancedCostingPage = lazy(() => import('@/pages/costing/AdvancedCostingPage').then((m) => ({ default: m.AdvancedCostingPage })));
 const CostingSettingsPage = lazy(() => import('@/pages/costing/CostingSettingsPage').then((m) => ({ default: m.CostingSettingsPage })));
+const CostAllocationPage = lazy(() => import('@/pages/costing/CostAllocationPage').then((m) => ({ default: m.CostAllocationPage })));
 const ProcessCostingPage = lazy(() => import('@/pages/costing/ProcessCostingPage').then((m) => ({ default: m.ProcessCostingPage })));
 const CostCenterAccountingPage = lazy(() => import('@/pages/costing/CostCenterAccountingPage').then((m) => ({ default: m.CostCenterAccountingPage })));
 const SupplierPerformancePage = lazy(() => import('@/pages/procurement/supplier-performance').then((m) => ({ default: m.SupplierPerformancePage })));
@@ -457,6 +458,7 @@ export function App() {
             <Route path="/manufacturing/standard-costs" element={<StandardCostsPage />} />
             <Route path="/costing/advanced" element={<RequirePermission permission={PERMISSIONS.advancedCosting.read}><AdvancedCostingPage /></RequirePermission>} />
             <Route path="/costing/settings" element={<RequirePermission permission={PERMISSIONS.costingSettings.read}><CostingSettingsPage /></RequirePermission>} />
+            <Route path="/costing/allocation" element={<RequirePermission permission={PERMISSIONS.costAllocation.read}><CostAllocationPage /></RequirePermission>} />
             <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
             <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
             {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}

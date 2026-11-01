@@ -44,3 +44,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   maker-checker, prospective, forbidden choices refused), Costing & Valuation settings façade (`/costing/settings`,
   web `/costing/settings`), landed-cost on/off, branch dimension guard on costing postings + compliance report.
   Tests: `CostingSettingsIT` (5).
+- **CM-3** (done, ADR-S033, V226): `AllocationCalculator` (exact-sum rounding policies, reciprocal solver), allocation
+  cycles (sequential / reciprocal; financial = posted, statistical = memo), measured drivers incl. statistical keys
+  and fleet tonnage / km / tonne-km, idempotent runs with reversal, allocation-engine exception register
+  (ArchUnit). Web `/costing/allocation`. Tests: `AllocationCalculatorTest` (5), `AllocationCycleIT` (5),
+  `AllocationExceptionRegisterTest` (1).
