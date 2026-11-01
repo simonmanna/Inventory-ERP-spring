@@ -258,8 +258,8 @@ public class QuarrySiteService {
     private Map<String, Object> zoneData(ZoneInput in, String siteId, String selfId) {
         String kind = in.kind() == null ? "zone" : in.kind();
         String parentId = QuarryDb.text(in.parentId());
-        if ("zone".equals(kind) && parentId != null) {
-            throw ApiException.badRequest("A zone is the top level; only benches and faces have a parent");
+        if ("pit".equals(kind) && parentId != null) {
+            throw ApiException.badRequest("A pit is the top level of a site's areas");
         }
         if (parentId != null) {
             if (parentId.equals(selfId)) {
@@ -267,6 +267,11 @@ public class QuarrySiteService {
             }
             Map<String, Object> parent = zoneOfSite(parentId, siteId);
             String pk = (String) parent.get("kind");
+            // Areas (ADR-S035): site → pit → zone → bench → face; a zone is the top level or sits in a pit.
+            if ("zone".equals(kind) && !"pit".equals(pk)) {
+                throw ApiException.badRequest("A zone is the top level or sits in a pit; only benches and faces have"
+                        + " another parent");
+            }
             if ("bench".equals(kind) && !"zone".equals(pk)) {
                 throw ApiException.badRequest("A bench sits in a zone");
             }

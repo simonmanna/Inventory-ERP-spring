@@ -54,3 +54,8 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   abnormal → 5972, high volume and favourable spending → period output through lineage, below materiality → COGS),
   timing blockers, production cost-flow bridge, stage variances registered through `StandardCostService`, variance
   component split. Tests: `AbsorptionSettlementCalculatorTest` (4), `AbsorptionSettlementCausesIT` (4).
+- **CM-5** (done, ADR-S035, V228): quarry area dimension (site → pit → zone → bench → face, lifecycle, disturbed m²,
+  reserves, ore-body component), IFRIC 20 stripping-activity assets (assessment, maker-checker, election, strip-ratio
+  split, units-of-production amortisation into ROM lineage), IAS 37 rehabilitation (initial / unwind / production /
+  remeasurement / utilisation, roll-forward = GL, impairment indicator), extraction cost per tonne KPI, shared
+  `LineageCapitalisation`. Tests: `QuarryRehabMovementsIT` (3).

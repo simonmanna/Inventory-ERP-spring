@@ -26,7 +26,7 @@ public class CostingDimensionGuard {
     public static final Set<String> COSTING_SOURCES = Set.of("landed_cost", "landed_cost_voucher",
             "landed_cost_voucher_reversal", "inventory_revaluation", "inventory_nrv", "cost_release",
             "material_ledger_run", "standard_cost", "cost_policy", "production_variance", "cost_allocation",
-            "absorption_settlement");
+            "absorption_settlement", "quarry_stripping", "quarry_rehab");
 
     private final SettingResolverService settings;
     private final JdbcClient jdbc;

@@ -1116,3 +1116,4 @@ Each ADR contains:
 | CM-2 | `27388fc` | S032 | Accounts created on demand (`/costing/settings/accounts/ensure`), not by a per-org migration. Location-level accounts move to CM-7 |
 | CM-3 | `6ccea69` | S033 | `CostAllocationService` reimplementation deferred to CM-4. Hour drivers measured through statistical keys until work centres carry a cost centre |
 | CM-4 | see git log | S034 | Settlement lives in `costing` (reads manufacturing). Open orders block settlement (WIP target → CM-10). `CostAllocationService` reimplementation moved to CM-10. Migration V227 (numbering shifted by one from the plan) |
+| CM-5 | see git log | S035 | Areas extend `QuarryZone` (no new area table). Services in `costing` (module dependency direction). Rehab-asset depreciation → fixed-asset integration; crushing / block KPIs → CM-9. V228 |

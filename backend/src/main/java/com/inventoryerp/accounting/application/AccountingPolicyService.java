@@ -245,7 +245,8 @@ public class AccountingPolicyService {
         if (!e.values().contains(v)) {
             throw ApiException.badRequest("value must be one of the following values: " + String.join(", ", e.values()));
         }
-        if ("stripping_cost".equals(e.key()) && "stripping_asset".equals(v)) {
+        if ("stripping_cost".equals(e.key()) && "stripping_asset".equals(v)
+                && !strippingAssessed(scopeType, scopeId)) {
             throw ApiException.badRequest("A stripping-activity asset needs an approved IFRIC 20 assessment of the"
                     + " ore-body component (quarry costing, CM-5)");
         }
@@ -257,6 +258,14 @@ public class AccountingPolicyService {
             assertSubject(scopeType, scopeId);
         }
         return v;
+    }
+
+    /** An approved IFRIC 20 assessment exists for the quarry (or, at organisation scope, for any quarry) — CM-5. */
+    private boolean strippingAssessed(String scopeType, String scopeId) {
+        boolean quarry = "quarry".equals(scopeType);
+        return jdbc.sql("SELECT count(*) FROM \"QuarryStrippingAsset\" WHERE \"organizationId\" = ? AND status ="
+                + " 'approved'" + (quarry ? " AND \"siteId\" = ?" : "")).params(quarry ? List.of(org(), scopeId)
+                : List.of(org())).query(Long.class).single() > 0;
     }
 
     private void assertSubject(String scopeType, String scopeId) {

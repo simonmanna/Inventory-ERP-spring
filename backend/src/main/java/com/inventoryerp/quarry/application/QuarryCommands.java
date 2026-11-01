@@ -78,7 +78,7 @@ public final class QuarryCommands {
     public record ZoneInput(
             @NotBlank String siteId,
             String parentId,
-            @OneOf({"zone", "bench", "face"}) String kind,
+            @OneOf({"pit", "zone", "bench", "face"}) String kind,
             @Size(max = 30) String code,
             @NotBlank @Size(max = 120) String name,
             String materialId,
