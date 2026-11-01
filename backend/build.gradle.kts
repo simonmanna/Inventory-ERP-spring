@@ -131,6 +131,30 @@ val perfTest by tasks.registering(Test::class) {
     System.getProperty("perf.jfr")?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
 }
 
+// Inner dev loop (`./gradlew fastTest [--tests X]`): no JaCoCo, C1-only JIT for faster Spring startup, the
+// Testcontainers Postgres kept alive between runs (TESTCONTAINERS_REUSE_ENABLE), and the multi-minute seed /
+// architecture suites skipped. NOT the gate: `./gradlew build` still runs everything on a fresh container.
+// Reset the reused DB: docker rm -f $(docker ps -q --filter label=org.testcontainers.reuse.hash)
+val fastTest by tasks.registering(Test::class) {
+    description = "Fast inner-loop tests: reused DB container, no coverage, slow suites skipped."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    // Modulith actuator/observability analyse every class with ArchUnit at startup (~20 s blocked per context).
+    classpath = sourceSets.test.get().runtimeClasspath.filter {
+        !it.name.startsWith("spring-modulith-observability") && !it.name.startsWith("spring-modulith-actuator")
+    }
+    useJUnitPlatform { excludeTags("perf") }
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+    jvmArgs("-XX:TieredStopAtLevel=1")
+    environment("TESTCONTAINERS_REUSE_ENABLE", "true")
+    outputs.upToDateWhen { false }
+    filter {
+        isFailOnNoMatchingTests = false
+        listOf("*ConstructionDemoSeedIT", "*PosLakeviewSimIT", "*ManufacturingDemoSeedIT", "*FleetDemoSeedIT",
+            "*ArchitectureTests", "*ModularityTests").forEach { excludeTestsMatching(it) }
+    }
+}
+
 tasks.jacocoTestReport {
     reports { xml.required = true; html.required = true }
 }
