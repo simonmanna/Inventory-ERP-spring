@@ -1114,4 +1114,4 @@ Each ADR contains:
 | CM-0 | `9a28b19` | S030 amendment | done |
 | CM-1 | `c7be42c` | S031 | Lineage derived from the stock ledger instead of separate layer / consumption tables. The AVCO landed-cost split switch awaits owner approval. FG adjunct and multi-level roll-up moved to CM-10 |
 | CM-2 | `27388fc` | S032 | Accounts created on demand (`/costing/settings/accounts/ensure`), not by a per-org migration. Location-level accounts move to CM-7 |
-| CM-3 | (this commit) | S033 | `CostAllocationService` reimplementation deferred to CM-4. Hour drivers measured through statistical keys until work centres carry a cost centre |
+| CM-3 | `6ccea69` | S033 | `CostAllocationService` reimplementation deferred to CM-4. Hour drivers measured through statistical keys until work centres carry a cost centre |
