@@ -18,7 +18,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-8 | 2.7 Intercompany & multi-company | L | **done 2026-11-01** (ADR-S028) |
 | PR-9 | 2.10 Portals & payment gateways | M | todo |
 | PR-10 | 2.6 BI builder | M | todo |
-| PR-11 | 2.5 Customization platform (ADR first) | XL | todo |
+| PR-11 | 2.5 Customization platform (ADR first) | XL | **done 2026-11-01** (ADR-S029) |
 | PR-12 | 1.3 E-invoicing (URA EFRIS first, sandbox adapter) | L | todo |
 | PR-13 | 3.1 Advanced costing remainder | M | todo |
 | PR-14 | 2.2 Barcode / mobile warehouse app | M | todo |
@@ -173,3 +173,24 @@ organization; cross-company reads run without a tenant, writes run as the compan
 
 Routes (`intercompany:read|manage|post|switch`): 19, listed in `docs/spec/intercompany.md`. Web: `/intercompany` (group,
 partners & settings, mirrored documents, journals, reconciliation, consolidation). Tests: `IntercompanyIT` (6).
+
+## PR-11 — as built (ADR-S029)
+
+ADR first, then `V221`: `CustomFieldDefinition` / `CustomFieldValue` (side table, core payloads untouched),
+`CustomObjectDefinition` / `CustomObjectRecord`, `PrintTemplate` / `PrintTemplateVersion`, `AutomationRule` /
+`AutomationRun`, `ApiClient` (all tenant RLS). New module `customization` + `kernel.apiclients`.
+
+- **Custom fields & objects**: 9 field types (incl. select, multiselect, reference) on 11 core entities and every
+  custom object; values validated (unknown keys, types, choices, required, references in the same organization).
+- **Print templates**: logic-less Mustache-subset engine (`TemplateEngine`, escaped by default, nesting / size caps),
+  one normalized context per kind (company, document, partner, lines, custom fields), designer with field palette and
+  live preview, version history + restore, HTML or PDF (OpenPDF HTML worker) rendering.
+- **Automation rules**: 7 catalogued event triggers, AND conditions on the context, actions notify / email / webhook
+  (SSRF guard) / set_custom_field / create_task; one run per rule and event (idempotent redelivery), dry-run test.
+- **Public API**: OAuth 2.0 client credentials (`POST /oauth/token`), `type: client` JWTs with scopes = permission keys,
+  live scope check, client tokens refused on routes without a permission, rotate / revoke.
+
+41 routes + `/oauth/token`, listed in `docs/spec/customization.md`. Web: `/settings/custom-fields`,
+`/custom-objects/:key`, `/settings/print-templates`, `/settings/automation`, `/settings/api-clients`, custom-fields
+panel on partners; 59 phrases ti/lg/sw. Tests: `CustomizationIT` (6), `TemplateEngineTest` (5).
+

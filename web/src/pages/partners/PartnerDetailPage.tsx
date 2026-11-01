@@ -15,6 +15,7 @@ import { money, date, dateTime } from '@/lib/format';
 import { api } from '@/lib/api';
 import type { PaginatedResult } from '@erp/shared';
 import { useNavigate, useParams } from 'react-router-dom';
+import { CustomFieldsPanel } from '@/features/customization/CustomFieldInputs';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePartner, useCustomerStatement, type Partner } from '@/features/partners/api';
 import { useOpenCreditInvoices } from '@/pages/pos/api';
@@ -769,6 +770,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
 
         <TabsContent value="overview" className="mt-6">
           <TabOverview partner={partner} />
+          <div className="mt-4"><CustomFieldsPanel entity="partner" recordId={partnerId ?? ''} /></div>
         </TabsContent>
 
         <TabsContent value="contacts" className="mt-6">

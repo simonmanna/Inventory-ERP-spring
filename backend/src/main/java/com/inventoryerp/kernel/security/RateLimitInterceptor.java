@@ -56,7 +56,8 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         }
         AuthUser auth = (AuthUser) request.getAttribute(AuthUser.ATTRIBUTE);
         String tracker = auth != null
-                ? "user:" + (auth.organizationId() == null ? "-" : auth.organizationId()) + ":" + auth.sub()
+                ? "user:" + (auth.organizationId() == null ? "-" : auth.organizationId()) + ":"
+                        + (auth.isClient() ? "client:" + auth.clientId() : auth.sub())
                 : request.getRemoteAddr();
         Throttle override = AccessGuardInterceptor.find(method, Throttle.class);
         String route = method.getBeanType().getName() + "-" + method.getMethod().getName();

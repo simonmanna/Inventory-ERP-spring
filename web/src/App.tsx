@@ -96,6 +96,11 @@ const FiscalYearsPage = lazy(() => import('@/pages/accounting/fiscal-years'));
 const FiscalYearClosePage = lazy(() => import('@/pages/accounting/fiscal-year-close'));
 const AnalyticDimensionsPage = lazy(() => import('@/pages/accounting/analytic-dimensions'));
 const IntercompanyPage = lazy(() => import('@/pages/accounting/intercompany'));
+const CustomFieldsPage = lazy(() => import('@/pages/settings/custom-fields'));
+const CustomObjectRecordsPage = lazy(() => import('@/pages/settings/custom-object-records'));
+const PrintTemplatesPage = lazy(() => import('@/pages/settings/print-templates'));
+const AutomationRulesPage = lazy(() => import('@/pages/settings/automation-rules'));
+const ApiClientsPage = lazy(() => import('@/pages/settings/api-clients'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
@@ -397,6 +402,11 @@ export function App() {
             <Route path="/fiscal-years/:id" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearClosePage /></RequirePermission>} />
             <Route path="/analytic-dimensions" element={<RequirePermission permission={PERMISSIONS.analyticDimension.read}><AnalyticDimensionsPage /></RequirePermission>} />
             <Route path="/intercompany" element={<RequirePermission permission={PERMISSIONS.intercompany.read}><IntercompanyPage /></RequirePermission>} />
+            <Route path="/settings/custom-fields" element={<RequirePermission permission={PERMISSIONS.customization.read}><CustomFieldsPage /></RequirePermission>} />
+            <Route path="/custom-objects/:key" element={<RequirePermission permission={PERMISSIONS.customRecord.read}><CustomObjectRecordsPage /></RequirePermission>} />
+            <Route path="/settings/print-templates" element={<RequirePermission permission={PERMISSIONS.printTemplate.read}><PrintTemplatesPage /></RequirePermission>} />
+            <Route path="/settings/automation" element={<RequirePermission permission={PERMISSIONS.automation.read}><AutomationRulesPage /></RequirePermission>} />
+            <Route path="/settings/api-clients" element={<RequirePermission permission={PERMISSIONS.apiClient.read}><ApiClientsPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<TaxesPage />} />
             <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />

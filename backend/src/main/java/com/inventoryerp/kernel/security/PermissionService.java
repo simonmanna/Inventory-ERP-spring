@@ -49,6 +49,29 @@ public class PermissionService {
     /** Drop every cached entry (role or user changed). */
     public void evictAll() {
         cache.invalidateAll();
+        clientCache.invalidateAll();
+    }
+
+    private final Cache<String, List<String>> clientCache =
+            Caffeine.newBuilder().expireAfterWrite(Duration.ofSeconds(60)).maximumSize(5_000).build();
+
+    /**
+     * Scopes an API client still holds (ADR-S029 §5): the live row's scopes when it is active, not revoked and not
+     * expired, else none. Cached for at most 60 seconds; revoking or editing a client evicts the cache.
+     */
+    public List<String> clientScopes(String organizationId, String clientRowId) {
+        if (organizationId == null || clientRowId == null) {
+            return List.of();
+        }
+        return clientCache.get(organizationId + ":" + clientRowId, k -> jdbc.sql("""
+                        SELECT scopes FROM "ApiClient" WHERE id = ? AND "organizationId" = ? AND "isActive"
+                          AND "revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > now())""")
+                .params(clientRowId, organizationId)
+                .query((rs, n) -> {
+                    Array a = rs.getArray(1);
+                    return a == null ? List.<String>of() : List.of((String[]) a.getArray());
+                })
+                .optional().orElse(List.of()));
     }
 
     private List<String> load(String organizationId, String userId) {

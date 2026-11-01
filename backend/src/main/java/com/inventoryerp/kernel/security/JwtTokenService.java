@@ -93,6 +93,31 @@ public class JwtTokenService {
         return sign(claims, posSecret, posTtlSec);
     }
 
+    /** OAuth client-credentials token (ADR-S029 §5): access secret, {@code type: client}, granted scopes. */
+    public String signClient(String clientRowId, String organizationId, java.util.List<String> scopes, long ttlSec) {
+        Map<String, Object> claims = new LinkedHashMap<>();
+        claims.put("sub", clientRowId);
+        claims.put("organizationId", organizationId);
+        claims.put("type", "client");
+        claims.put("scope", String.join(" ", scopes));
+        return sign(claims, accessSecret, ttlSec);
+    }
+
+    /** Claims of a client token: row id, organization and scopes. */
+    public record ClientClaims(String clientRowId, String organizationId, java.util.List<String> scopes) {}
+
+    /** Verify a client token; throws {@link IllegalArgumentException} when invalid, expired or not a client token. */
+    public ClientClaims verifyClient(String token) {
+        TokenClaims c = verify(token, accessSecret);
+        if (!"client".equals(c.type())) {
+            throw new IllegalArgumentException("wrong token type");
+        }
+        JsonNode p = MAPPER.readTree(Base64.getUrlDecoder().decode(token.split("\\.", -1)[1]));
+        String scope = p.path("scope").asString("");
+        return new ClientClaims(c.sub(), c.organizationId(),
+                scope.isBlank() ? java.util.List.of() : java.util.List.of(scope.trim().split("\\s+")));
+    }
+
     /**
      * Verify a back-office access token. A missing {@code type} is accepted (tokens minted before the
      * claim existed); a mismatched one never is, so a POS or refresh token cannot stand in for it.

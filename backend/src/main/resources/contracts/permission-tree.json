@@ -856,5 +856,25 @@
     "manage": "intercompany:manage",
     "post": "intercompany:post",
     "switch": "intercompany:switch"
+  },
+  "customization": {
+    "read": "customization:read",
+    "manage": "customization:manage"
+  },
+  "customRecord": {
+    "read": "custom_record:read",
+    "write": "custom_record:write"
+  },
+  "printTemplate": {
+    "read": "print_template:read",
+    "manage": "print_template:manage"
+  },
+  "automation": {
+    "read": "automation:read",
+    "manage": "automation:manage"
+  },
+  "apiClient": {
+    "read": "api_client:read",
+    "manage": "api_client:manage"
   }
 }

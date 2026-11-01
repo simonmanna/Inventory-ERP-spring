@@ -71,6 +71,9 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
 
         // PermissionsGuard
         RequirePermissions required = find(method, RequirePermissions.class);
+        if (auth != null && auth.isClient()) {
+            return clientAllowed(request, method, auth, required);
+        }
         if (required != null && required.value().length > 0) {
             if (auth == null) {
                 throw ApiException.forbidden("Authentication required");
@@ -104,6 +107,33 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
                 throw new ApiException(HttpStatus.FORBIDDEN,
                         "Module '" + module.value() + "' is not enabled for this organization");
             }
+        }
+        return true;
+    }
+
+    /** API client (ADR-S029 §5): only permission-protected routes, only the token's scopes the client still holds. */
+    private boolean clientAllowed(HttpServletRequest request, HandlerMethod method, AuthUser auth,
+            RequirePermissions required) {
+        if (required == null || required.value().length == 0) {
+            if (find(method, Public.class) != null) {
+                return true;
+            }
+            throw ApiException.forbidden("API clients can only call permission-protected routes");
+        }
+        Object tokenScopes = request.getAttribute(AuthenticationFilter.CLIENT_SCOPES_ATTRIBUTE);
+        List<String> live = permissions.clientScopes(auth.organizationId(), auth.clientId());
+        List<String> granted = live.stream()
+                .filter(s -> tokenScopes instanceof List<?> l && l.contains(s)).toList();
+        TenantContext.setPermissions(granted);
+        for (String perm : required.value()) {
+            if (!granted.contains(perm)) {
+                throw ApiException.forbidden("Missing required permission(s): " + String.join(", ", required.value()));
+            }
+        }
+        RequiresModule module = find(method, RequiresModule.class);
+        if (module != null && !moduleAllowed(auth.organizationId(), module.value())) {
+            throw new ApiException(HttpStatus.FORBIDDEN,
+                    "Module '" + module.value() + "' is not enabled for this organization");
         }
         return true;
     }

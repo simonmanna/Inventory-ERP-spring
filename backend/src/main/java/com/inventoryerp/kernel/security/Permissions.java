@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (600 permissions). Constant name = GROUP__ACTION.
+ * exactly (610 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -611,6 +611,16 @@ public final class Permissions {
     public static final String INTERCOMPANY__MANAGE = "intercompany:manage";
     public static final String INTERCOMPANY__POST = "intercompany:post";
     public static final String INTERCOMPANY__SWITCH = "intercompany:switch";
+    public static final String CUSTOMIZATION__READ = "customization:read";
+    public static final String CUSTOMIZATION__MANAGE = "customization:manage";
+    public static final String CUSTOM_RECORD__READ = "custom_record:read";
+    public static final String CUSTOM_RECORD__WRITE = "custom_record:write";
+    public static final String PRINT_TEMPLATE__READ = "print_template:read";
+    public static final String PRINT_TEMPLATE__MANAGE = "print_template:manage";
+    public static final String AUTOMATION__READ = "automation:read";
+    public static final String AUTOMATION__MANAGE = "automation:manage";
+    public static final String API_CLIENT__READ = "api_client:read";
+    public static final String API_CLIENT__MANAGE = "api_client:manage";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -1213,7 +1223,17 @@ public final class Permissions {
             "intercompany:read",
             "intercompany:manage",
             "intercompany:post",
-            "intercompany:switch");
+            "intercompany:switch",
+            "customization:read",
+            "customization:manage",
+            "custom_record:read",
+            "custom_record:write",
+            "print_template:read",
+            "print_template:manage",
+            "automation:read",
+            "automation:manage",
+            "api_client:read",
+            "api_client:manage");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

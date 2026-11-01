@@ -1052,6 +1052,37 @@ export const PERMISSIONS = {
     /// Switch to another company of the group where the same e-mail has an account.
     switch: 'intercompany:switch',
   },
+  // ---- Customization platform (roadmap 2.5, ADR-S029) ----
+  customization: {
+    /// Custom field and custom object definitions (read only).
+    read: 'customization:read',
+    /// Create and change custom fields and custom objects.
+    manage: 'customization:manage',
+  },
+  customRecord: {
+    /// Read custom-field values and custom-object records.
+    read: 'custom_record:read',
+    /// Write custom-field values and custom-object records.
+    write: 'custom_record:write',
+  },
+  printTemplate: {
+    /// Print templates: list, preview and render documents.
+    read: 'print_template:read',
+    /// Create, edit, restore and delete print templates.
+    manage: 'print_template:manage',
+  },
+  automation: {
+    /// Automation rules and their runs (read only).
+    read: 'automation:read',
+    /// Create, change, test and delete automation rules.
+    manage: 'automation:manage',
+  },
+  apiClient: {
+    /// API clients (OAuth client credentials), read only.
+    read: 'api_client:read',
+    /// Create, change, rotate and revoke API clients.
+    manage: 'api_client:manage',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

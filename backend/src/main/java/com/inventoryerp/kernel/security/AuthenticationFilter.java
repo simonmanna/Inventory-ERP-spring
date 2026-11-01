@@ -98,6 +98,14 @@ public class AuthenticationFilter extends OncePerRequestFilter {
             } catch (RuntimeException invalid) {
                 // invalid token: continue unauthenticated, guards will reject if needed
             }
+            if (payload == null) {
+                try {
+                    proceedClient(request, jwt.verifyClient(token));
+                    return true;
+                } catch (RuntimeException notClient) {
+                    // not a client token either
+                }
+            }
             if (payload != null) {
                 AuthUser bearer = new AuthUser(payload.sub(), payload.organizationId(), payload.email());
                 AuthUser effective = bearer;
@@ -172,6 +180,19 @@ public class AuthenticationFilter extends OncePerRequestFilter {
             }
         }
         return true;
+    }
+
+    /** Request attribute holding the scopes granted to an API client token. */
+    public static final String CLIENT_SCOPES_ATTRIBUTE = "erp.clientScopes";
+
+    /** OAuth client token (ADR-S029 §5): no user; the guard grants the token's scopes still held by the client. */
+    private static void proceedClient(HttpServletRequest request, JwtTokenService.ClientClaims client) {
+        request.setAttribute(AuthUser.ATTRIBUTE, new AuthUser(null, client.organizationId(), null,
+                client.clientRowId()));
+        request.setAttribute(CLIENT_SCOPES_ATTRIBUTE, client.scopes());
+        TenantContext.set(new TenantStore(client.organizationId(), null, null, null, null, null));
+        MDC.put("organizationId", String.valueOf(client.organizationId()));
+        MDC.put("userId", "client:" + client.clientRowId());
     }
 
     private static void proceed(HttpServletRequest request, AuthUser identity, String posUserId) {
