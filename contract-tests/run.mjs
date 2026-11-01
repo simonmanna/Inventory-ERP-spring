@@ -22,7 +22,13 @@ const UUID_IN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 const ISO =/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 function normalize(v, key) {
   if (Array.isArray(v)) return v.map((x) => normalize(x));
-  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, normalize(v[k], k)]));
+  if (v && typeof v === 'object') {
+    // Maps keyed by row id (meta.categoryCounts): ids differ per database, so compare the entries as a sorted list.
+    const plain = Object.keys(v).filter((k) => !UUID.test(k)).sort().map((k) => [k, normalize(v[k], k)]);
+    const byId = Object.keys(v).filter((k) => UUID.test(k)).map((k) => normalize(v[k], 'value'))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))).map((x, i) => [`<uuid-key-${i}>`, x]);
+    return Object.fromEntries([...plain, ...byId]);
+  }
   if (typeof v === 'string') {
     if (VOLATILE_KEYS.has(key) || UUID.test(v)) return `<${key ?? 'value'}>`;
     if (ISO.test(v)) return '<timestamp>';

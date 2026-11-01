@@ -134,10 +134,9 @@ public class PosPrintLifecycleService {
         List<Delta> add = new ArrayList<>();
         List<Delta> remove = new ArrayList<>();
         List<Delta> same = new ArrayList<>();
+        PosModifiers.attach(jdbc, items, com.inventoryerp.pos.domain.OrderItemModifier.class, "OrderItemModifier",
+                "orderItemId");
         for (Map<String, Object> ln : items) {
-            ln.put("modifiers", SqlRows.list(com.inventoryerp.pos.domain.OrderItemModifier.class,
-                    jdbc.sql("SELECT * FROM \"OrderItemModifier\" WHERE \"orderItemId\" = ? ORDER BY \"createdAt\", id")
-                            .param(ln.get("id"))));
             double current = PosSql.num(ln.get("quantity"));
             double printed = PosSql.num(ln.get("kotPrintedQty"));
             if (current > printed + 0.000001) {

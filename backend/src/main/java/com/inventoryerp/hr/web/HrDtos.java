@@ -1,5 +1,7 @@
 package com.inventoryerp.hr.web;
 
+import com.inventoryerp.shared.validation.MaxLength;
+import com.inventoryerp.shared.validation.MinLength;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -33,11 +35,11 @@ final class HrDtos {
     public record ProvisionUserRequest(
             @NotNull(message = "must be an email") @Email(message = "must be an email") String email,
             @NotNull(message = STR)
-            @Size(min = 10, message = "password must be at least 10 characters")
-            @Size(max = 128, message = "must be shorter than or equal to 128 characters") String password,
+            @MinLength(value = 10, message = "password must be at least 10 characters")
+            @MaxLength(128) String password,
             @NotNull(message = STR)
-            @Size(min = 1, message = "must be longer than or equal to 1 characters")
-            @Size(max = 64, message = "must be shorter than or equal to 64 characters") String firstName,
+            @MinLength(1)
+            @MaxLength(64) String firstName,
             @Size(max = 64, message = "must be shorter than or equal to 64 characters") String lastName,
             @NotNull(message = "must be an array")
             @UniqueElements(message = "All roleIds's elements must be unique") List<String> roleIds,
@@ -46,13 +48,15 @@ final class HrDtos {
     /** {@code TerminateEmployeeDto}. */
     public record TerminateEmployeeRequest(
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String terminationDate,
-            @NotNull(message = STR) @Size(min = 3, message = MIN3) @Size(max = 500, message = MAX500) String reason,
+            @NotNull(message = STR) @MinLength(value = 3, message = MIN3)
+            @MaxLength(value = 500, message = MAX500) String reason,
             @NotNull(message = BOOL) Boolean disableAccount,
             Boolean resigned) {}
 
     /** {@code SuspendEmployeeDto}. */
     public record SuspendEmployeeRequest(
-            @NotNull(message = STR) @Size(min = 3, message = MIN3) @Size(max = 500, message = MAX500) String reason,
+            @NotNull(message = STR) @MinLength(value = 3, message = MIN3)
+            @MaxLength(value = 500, message = MAX500) String reason,
             @NotNull(message = BOOL) Boolean disableAccount) {}
 
     /** {@code ReactivateEmployeeDto}. */
@@ -67,7 +71,8 @@ final class HrDtos {
             @Pattern(regexp = UUID_RE, message = UUID_MSG) String toDepartmentId,
             @Pattern(regexp = UUID_RE, message = UUID_MSG) String toPositionId,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String effectiveDate,
-            @NotNull(message = STR) @Size(min = 3, message = MIN3) @Size(max = 500, message = MAX500) String reason) {}
+            @NotNull(message = STR) @MinLength(value = 3, message = MIN3)
+            @MaxLength(value = 500, message = MAX500) String reason) {}
 
     /** {@code ConfirmEmployeeDto}. */
     public record ConfirmEmployeeRequest(

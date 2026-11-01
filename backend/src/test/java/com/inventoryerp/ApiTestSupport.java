@@ -293,6 +293,42 @@ public abstract class ApiTestSupport {
      * Every route of controllers in {@code packagePrefix}: 401 without a token (unless public) and 403 with
      * the Nest message without its permission. Returns the number of checked routes.
      */
+    /**
+     * Every GET route of controllers under {@code packagePrefix}, called as the DEMO admin with path variables set to
+     * an unknown id; returns the routes that answered 5xx (or did not answer). Server-sent-event streams are skipped.
+     */
+    protected List<String> sweepGetRoutes(String packagePrefix) {
+        List<String> failures = new ArrayList<>();
+        for (var entry : mappings.getHandlerMethods().entrySet()) {
+            HandlerMethod hm = entry.getValue();
+            boolean stream = org.springframework.web.servlet.mvc.method.annotation.SseEmitter.class
+                    .isAssignableFrom(hm.getMethod().getReturnType())
+                    || entry.getKey().getProducesCondition().getProducibleMediaTypes().stream()
+                            .anyMatch(t -> t.isCompatibleWith(org.springframework.http.MediaType.TEXT_EVENT_STREAM));
+            if (!hm.getBeanType().getPackageName().startsWith(packagePrefix) || stream
+                    || !entry.getKey().getMethodsCondition().getMethods()
+                            .contains(org.springframework.web.bind.annotation.RequestMethod.GET)) {
+                continue;
+            }
+            for (String pattern : entry.getKey().getPatternValues()) {
+                String path = pattern.replace("/api/v1", "").replaceAll("\\{[^}]+}", UUID.randomUUID().toString());
+                try {
+                    HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
+                            + "/api/v1" + path)).timeout(java.time.Duration.ofSeconds(60))
+                            .header("Authorization", "Bearer " + adminToken).GET().build(),
+                            HttpResponse.BodyHandlers.ofString());
+                    if (r.statusCode() >= 500) {
+                        failures.add("GET " + pattern + " → " + r.statusCode() + " " + r.body());
+                    }
+                } catch (Exception e) {
+                    failures.add("GET " + pattern + " → " + e);
+                }
+            }
+        }
+        detachedWrites.awaitIdle(java.time.Duration.ofSeconds(10));
+        return failures;
+    }
+
     protected int assertAuthorizationMatrix(String packagePrefix) {
         return assertAuthorizationMatrix(type -> type.getPackageName().startsWith(packagePrefix));
     }

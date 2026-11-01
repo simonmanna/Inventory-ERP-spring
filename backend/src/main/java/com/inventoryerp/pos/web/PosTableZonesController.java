@@ -5,6 +5,7 @@ import static com.inventoryerp.pos.web.PosDtos.STR;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.pos.application.PosTableZonesService;
+import com.inventoryerp.shared.validation.MaxLength;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
@@ -34,7 +35,7 @@ public class PosTableZonesController {
     /** {@code CreateZoneBody}. */
     public record CreateZoneRequest(
             @Size(max = 40, message = MAX40) String key,
-            @NotNull(message = STR) @Size(max = 80, message = MAX80) String name,
+            @NotNull(message = STR) @MaxLength(value = 80, message = MAX80) String name,
             Integer sortOrder,
             @Size(max = 9, message = MAX9) String color,
             Boolean active) {}

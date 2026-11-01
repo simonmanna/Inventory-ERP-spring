@@ -8,6 +8,7 @@ import com.inventoryerp.core.domain.Product;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.pos.domain.Combo;
 import com.inventoryerp.pos.domain.ComboItem;
@@ -174,10 +175,14 @@ public class PosModifiersService {
     private List<Map<String, Object>> linkedGroups(String linkTable, String ownerCol, String ownerId) {
         String orgId = org();
         List<Map<String, Object>> groups = new ArrayList<>();
-        for (Map<String, Object> link : SqlRows.list(jdbc.sql("SELECT l.\"modifierGroupId\", l.\"sortOrder\" FROM \""
-                + linkTable + "\" l JOIN \"ModifierGroup\" g ON g.id = l.\"modifierGroupId\" WHERE l.\"" + ownerCol
-                + "\" = ? AND l.\"organizationId\" = ? AND l.\"deletedAt\" IS NULL AND g.\"isActive\" = true"
-                + " ORDER BY l.\"sortOrder\" ASC").params(ownerId, orgId))) {
+        // Master data a sale only reads: memoized inside a sale scope (quote and order create both validate lines).
+        List<Map<String, Object>> links = ReadMemo.get(() -> SqlRows.list(jdbc.sql("SELECT l.\"modifierGroupId\","
+                + " l.\"sortOrder\" FROM \"" + linkTable + "\" l JOIN \"ModifierGroup\" g"
+                + " ON g.id = l.\"modifierGroupId\" WHERE l.\"" + ownerCol + "\" = ? AND l.\"organizationId\" = ?"
+                + " AND l.\"deletedAt\" IS NULL"
+                + " AND g.\"isActive\" = true ORDER BY l.\"sortOrder\" ASC").params(ownerId, orgId)),
+                "pos.modifierLinks", linkTable, orgId, ownerId);
+        for (Map<String, Object> link : links) {
             Map<String, Object> g = db.first(ModifierGroup.class, "id = ?", link.get("modifierGroupId"));
             groups.add(groupView(g, link.get("sortOrder"), db.list(Modifier.class, "\"groupId\" = ? AND \"isActive\" = true"
                     + " ORDER BY \"sortOrder\" ASC", g.get("id"))));

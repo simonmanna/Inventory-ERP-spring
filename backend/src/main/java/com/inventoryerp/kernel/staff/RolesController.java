@@ -2,6 +2,7 @@ package com.inventoryerp.kernel.staff;
 
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.shared.validation.Length;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -30,7 +31,7 @@ public class RolesController {
     /** {@code CreateRoleDto}. */
     public record CreateRoleRequest(
             @NotNull(message = "must be a string")
-            @Size(min = 2, max = 64, message = "must be longer than or equal to 2 and shorter than or equal to 64 characters")
+            @Length(min = 2, max = 64)
             @Pattern(regexp = "^[A-Za-z0-9 _\\-.]+$", message = NAME_MESSAGE) String name,
             @Size(max = 250, message = "must be shorter than or equal to 250 characters") String description,
             @NotNull(message = "must be an array")
@@ -39,7 +40,7 @@ public class RolesController {
 
     /** {@code UpdateRoleDto}. */
     public record UpdateRoleRequest(
-            @Size(min = 2, max = 64, message = "must be longer than or equal to 2 and shorter than or equal to 64 characters")
+            @Length(min = 2, max = 64, nullable = true)
             @Pattern(regexp = "^[A-Za-z0-9 _\\-.]+$", message = NAME_MESSAGE) String name,
             @Size(max = 250, message = "must be shorter than or equal to 250 characters") String description,
             @UniqueElements(message = "All permissions's elements must be unique") List<String> permissions) {}

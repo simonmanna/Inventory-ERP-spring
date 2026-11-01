@@ -365,8 +365,10 @@ public class UomConversionService {
     }
 
     private Product product(String productId) {
-        return em.createQuery("select p from Product p where p.id = :id", Product.class).setParameter("id", productId)
-                .getResultList().stream().findFirst().orElse(null);
+        return com.inventoryerp.kernel.common.ReadMemo.get(() -> em.createQuery(
+                "select p from Product p where p.id = :id", Product.class).setParameter("id", productId)
+                .getResultList().stream().findFirst().orElse(null),
+                "uom.product", com.inventoryerp.kernel.tenancy.TenantContext.organizationId(), productId);
     }
 
     private ProductUom productUnit(String productId, String uomId) {

@@ -343,9 +343,11 @@ public class DocumentBuilderService {
             Map<String, Object> category = null;
             boolean stockable = false;
             if (line.get("productId") != null) {
-                Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT \"categoryId\", \"trackInventory\" FROM \"Product\""
+                Object productId = line.get("productId");
+                Map<String, Object> p = com.inventoryerp.kernel.common.ReadMemo.get(() -> SqlRows.one(jdbc.sql(
+                        "SELECT \"categoryId\", \"trackInventory\" FROM \"Product\""
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1")
-                        .params(line.get("productId"), org()));
+                        .params(productId, org())), "doc.productPosting", org(), productId);
                 if (p != null) {
                     stockable = Boolean.TRUE.equals(p.get("trackInventory"));
                     if (p.get("categoryId") != null) {

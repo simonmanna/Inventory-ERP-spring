@@ -37,11 +37,11 @@ export function DebitNoteCreatePage() {
 
   const partners = useQuery<Partner[]>({
     queryKey: ['partners-all'],
-    queryFn: async () => (await api.get<Partner[]>('/partners?pageSize=200')).data,
+    queryFn: async () => (await api.get<{ data: Partner[] }>('/partners?pageSize=200')).data.data ?? [],
   });
   const products = useQuery<Product[]>({
     queryKey: ['products'],
-    queryFn: async () => (await api.get<Product[]>('/products?pageSize=200')).data,
+    queryFn: async () => (await api.get<{ data: Product[] }>('/products?pageSize=200')).data.data ?? [],
   });
   const locations = useQuery<Location[]>({
     queryKey: ['inventory-locations'],

@@ -107,7 +107,28 @@ tasks.withType<Test> {
     maxHeapSize = "3g"
     // Application.main pins the JVM (and so the PgJDBC session TimeZone) to UTC; @SpringBootTest never runs main.
     systemProperty("user.timezone", "UTC")
+}
+
+tasks.test {
+    useJUnitPlatform { excludeTags("perf") }
     finalizedBy(tasks.jacocoTestReport)
+}
+
+// POS checkout latency / SQL count (PosCheckoutPerfIT). Not part of `build`: timings depend on the box.
+val perfTest by tasks.registering(Test::class) {
+    description = "Runs @Tag(\"perf\") tests."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("perf") }
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+    testLogging { showStandardStreams = true }
+    listOf("pos.checkout.assert", "pos.checkout.dumpSql", "pos.checkout.dumpTail", "pos.checkout.traceSql",
+        "pos.checkout.p95.ms", "pos.checkout.prodRttMs",
+        "pos.checkout.runs", "pos.checkout.warmup").forEach { key ->
+        System.getProperty(key)?.let { systemProperty(key, it) }
+    }
+    System.getProperty("perf.jfr")?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
 }
 
 tasks.jacocoTestReport {

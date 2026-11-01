@@ -6,6 +6,8 @@ import com.inventoryerp.kernel.security.AuthUser;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.pos.application.PosAuthService;
+import com.inventoryerp.shared.validation.Length;
+import com.inventoryerp.shared.validation.MinLength;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -26,16 +28,16 @@ public class PosAuthController {
 
     public record PinLoginRequest(
             @NotNull(message = STR) String userId,
-            @NotNull(message = STR) @Size(min = 4, max = 8, message = LEN48) String pin) {}
+            @NotNull(message = STR) @Length(min = 4, max = 8, message = LEN48) String pin) {}
 
     public record ChangePinRequest(
-            @NotNull(message = STR) @Size(min = 4, max = 8, message = LEN48) String currentPin,
-            @NotNull(message = STR) @Size(min = 4, max = 8, message = LEN48) String newPin) {}
+            @NotNull(message = STR) @Length(min = 4, max = 8, message = LEN48) String currentPin,
+            @NotNull(message = STR) @Length(min = 4, max = 8, message = LEN48) String newPin) {}
 
     public record ChangePasswordRequest(
-            @NotNull(message = STR) @Size(min = 1, message = "must be longer than or equal to 1 characters")
+            @NotNull(message = STR) @MinLength(1)
             String currentPassword,
-            @NotNull(message = STR) @Size(min = 8, message = "must be longer than or equal to 8 characters")
+            @NotNull(message = STR) @MinLength(8)
             String newPassword) {}
 
     private final PosAuthService svc;

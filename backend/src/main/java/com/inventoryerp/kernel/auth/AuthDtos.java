@@ -11,9 +11,9 @@ public final class AuthDtos {
     private AuthDtos() {}
 
     public record LoginRequest(
-            @NotBlank(message = "should not be empty") String organizationCode,
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String organizationCode,
             @NotNull(message = "must be an email") @Email(message = "must be an email") String email,
-            @NotBlank(message = "should not be empty") String password) {}
+            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String password) {}
 
     public record MfaLoginRequest(
             @NotNull(message = "must be a string") String mfaToken,

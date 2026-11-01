@@ -8,7 +8,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | Phase | Scope | Size | Status |
 |---|---|---|---|
 | PR-0 | Green CI: order-dependent test failures, critical permission gap, web i18n gate, web bundle over the precache limit | S | **done 2026-10-31** |
-| PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | **part 1 done 2026-10-31** (see below); part 2 open |
+| PR-1 | Release hardening: outbox retry limit / dead letter, RLS with a non-owner role, JaCoCo 80 %, dependency/CVE review, 401/403 matrix run, POS p95, known functional gaps, browser click-through, parity run, Nest retirement | M | **done 2026-11-01** (part 1 2026-10-31, part 2 below); Nest retirement waits on owner items |
 | PR-2 | 1.7 Year-end close | S | **done 2026-10-31** (ADR-S023) |
 | PR-3 | 2.4 Analytic dimensions | M | **done 2026-10-31** (ADR-S025) |
 | PR-4 | 2.1 Warehouse management | L | todo |
@@ -83,14 +83,17 @@ chunks stay precached, so the offline POS still works.
   (`IncomingSupplyProvider`, implemented by procurement; `V215` `incoming` on the alert). Commission clawback on credit
   notes was already done by the S9 engine (the gap was in the removed SALES-4). Portal write actions move to PR-9.
 
-## PR-1 part 2 — open
+## PR-1 part 2 — as built (2026-11-01)
 
-| Item | Why it is not done yet |
+| Item | Result |
 |---|---|
-| JaCoCo 80 % per `application` package | measured per package after the build; needs targeted tests package by package |
-| POS checkout p95 < 150 ms | needs profiling of the ~400 statements per checkout on a production-like box |
-| Browser click-through of every screen | needs the full stack running with Playwright |
-| Nest parity run, then Nest retirement | needs a live Nest + Postgres next to Spring |
+| JaCoCo 80 % per `application` package | **All 29 packages ≥ 80 %** (lowest `pos` 80.1 %). The gate `coverage.application.min` is raised from 0.55 to **0.80**. New suites: `GetRouteSweepIT` (every GET route of every module answers without a 5xx; five Nest-parity 500s listed in it), `PosFlowsIT`, `PosFlows2IT`, `PosFlows3IT`, `PosFlows4IT`, `HrUpdatesIT`, `SyncOpsIT`, `BackupJobsIT`, `CrmEditsIT`, `ExpensesFlowIT`, `AnalyticsDrillDownIT`, `InventoryReadsIT`. Backend 1,466 tests, 0 failed |
+| POS checkout p95 < 150 ms | Measured, not reliably met here. `PosCheckoutPerfIT` (`./gradlew perfTest`, not in `build`) counts SQL statements per request and splits DB from app time; `tools/perf/pos-checkout.mjs` drives the HTTP API. A 3-line cash sale went from **306 to ≈ 275 statements** (line modifiers loaded in one query, product / modifier-link reads memoized per sale). API + Postgres in Linux containers on the dev box (Docker Desktop, 8 vCPU): **p50 113–126 ms, p95 140–176 ms** over three 500-sale runs. The rest is 16 separate transactions per sale, which follow Nest's commit points; merging them changes behaviour and needs an owner decision. Confirm on the production server with `THROTTLE_ENABLED=false node tools/perf/pos-checkout.mjs --budget 150` |
+| Browser click-through of every screen | `tools/click-through/run.mjs` (Playwright, signs in through the form, opens every route of `App.tsx` + `pages/**/routes.tsx`, fails on page errors, console errors, `/api` 5xx/404, error boundary). All modules on: **409 routes, 335 pass, 0 fail**, 4 slow (live SSE pages), 70 parameterised routes without a link to follow. Fixed on the way: debit-note and goods-receipt create pages read paged lists as arrays (crash, and poisoned the shared `['products']` cache for the PO page); the rental dashboard put `new Date()` in a query key (endless refetch, 429 for the user) |
+| Nest parity run | All 24 scenarios against the reference: **584 ✓ / 96 ✗, zero unexplained** — `docs/audits/2026-11-01-pr1-parity-run.md`. Fixed: required-field length messages (`shared.validation.MaxLength` / `MinLength` / `Length`), login `must be a string`, manufacturing `should not be empty`, null optional fields in the report catalog; harness: UUID-keyed maps, batched `contract-tests/run-all.sh` for Nest's throttle, `TZ=UTC` |
+| Nest retirement | **Owner items**: decide D1, D3, repair Deviation 1, the `approvals/request` snapshot (O1) and the QR-order bug (F1, Nest's too); cut-over rehearsal + 7-day Z comparison on a production copy (`docs/OPERATIONS.md` §5) |
+
+Also: `pnpm web:i18n` was red after the sidebar commit (32 phrases × 3 languages untranslated, 7 stale) — translated and pruned.
 
 ## PR-2 — as built (ADR-S023)
 

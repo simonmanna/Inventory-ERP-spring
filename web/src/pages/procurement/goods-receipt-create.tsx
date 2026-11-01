@@ -55,7 +55,7 @@ export function GoodsReceiptCreatePage() {
   });
   const products = useQuery<Product[]>({
     queryKey: ['products'],
-    queryFn: async () => (await api.get<Product[]>('/products?pageSize=200')).data,
+    queryFn: async () => (await api.get<{ data: Product[] }>('/products?pageSize=200')).data.data ?? [],
   });
 
   // When PO loads, prefill lines from PO lines.

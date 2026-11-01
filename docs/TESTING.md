@@ -65,3 +65,15 @@ IT_EXTERNAL_DB=true JDBC_DATABASE_URL='jdbc:postgresql://127.0.0.1:5499/erp?stri
 Integration suites share one database and the seeded `DEMO` organization. A suite that changes organization-wide
 setup (shifts, policies, approval rules) must undo it, and a suite waiting for event subscribers calls
 `drainOutboxFully()` (it waits for every pending outbox row, including rows an earlier suite left behind).
+A suite that leaves an order open blocks every later shift close in `DEMO` (`OPEN_ORDERS`): cancel what the suite
+opened in `@AfterAll` (see `PosFlowsIT` / `PosFlows2IT`).
+
+## 5. Release checks outside `build`
+
+| Check | Command | What it proves |
+|---|---|---|
+| All parity scenarios | `contract-tests/run-all.sh` (see `contract-tests/README.md`) | Batches under Nest's login throttle; last result `docs/audits/2026-11-01-pr1-parity-run.md` |
+| GET sweep | part of `build` (`GetRouteSweepIT`) | Every GET route of every module answers without a 5xx |
+| POS checkout latency | `cd backend && ./gradlew perfTest` (`-Dpos.checkout.dumpSql=true`, `-Dpos.checkout.traceSql=<regex>`) | p50/p95, SQL statements per checkout, DB vs app time; `-Dpos.checkout.assert=true` enforces `pos.checkout.p95.ms` (150) |
+| POS checkout over HTTP | `THROTTLE_ENABLED=false` on the API, then `API_URL=… node tools/perf/pos-checkout.mjs --budget 150` | The same sale against a deployed stack; exit 1 over budget |
+| Browser click-through | `cd tools/click-through && npm install && npx playwright-core install chromium-headless-shell`, then `WEB_URL=http://localhost:8080 node run.mjs` | Every web route opens without page / console errors or `/api` 5xx/404 (build the web image with the `VITE_ENABLE_*` flags and the API with `ENABLE_*` on to reach every module) |

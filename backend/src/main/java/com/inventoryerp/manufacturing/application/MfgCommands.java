@@ -5,6 +5,7 @@ import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -37,7 +38,7 @@ public final class MfgCommands {
 
     /** {@code BomLineInputDto}: {@code quantity} is per ONE run of the BOM. */
     public record BomLineInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String componentProductId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String componentProductId,
             String componentVariantId,
             @NotNull(message = NUM) @Positive(message = POS) BigDecimal quantity,
             String uomId,
@@ -48,8 +49,8 @@ public final class MfgCommands {
 
     /** {@code CreateBomDto}. */
     public record CreateBom(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String name,
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String outputProductId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String name,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String outputProductId,
             String outputVariantId,
             @NotNull(message = NUM) @Positive(message = POS) BigDecimal outputQuantity,
             String outputUomId,
@@ -94,7 +95,7 @@ public final class MfgCommands {
 
     /** {@code ProductionMaterialInputDto} (ad-hoc material line). */
     public record MaterialInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String productId,
             String variantId,
             @NotNull(message = NUM) @Positive(message = POS) BigDecimal quantity,
             String uomId,
@@ -103,7 +104,7 @@ public final class MfgCommands {
 
     /** {@code ProductionOutputInputDto} (extra / byproduct output line). */
     public record OutputInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String productId,
             String variantId,
             @OneOf({"output", "byproduct"}) String kind,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = MIN0) BigDecimal qtyExpected,
@@ -137,7 +138,7 @@ public final class MfgCommands {
 
     /** {@code StartMaterialInputDto}: per-material actual consumption override. */
     public record StartMaterialInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String lineId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String lineId,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = MIN0) BigDecimal qtyConsumed,
             String batchNumber,
             /** ADR-S006 D: consume this BOM substitute instead (qtyConsumed is in component units). */
@@ -151,7 +152,7 @@ public final class MfgCommands {
 
     /** {@code CompleteOutputInputDto}: per-output actual produced override. */
     public record CompleteOutputInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String lineId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String lineId,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = MIN0) BigDecimal qtyProduced,
             String batchNumber,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String expiryDate) {}
@@ -192,7 +193,7 @@ public final class MfgCommands {
 
     /** {@code ProductionRequestLineInputDto}. */
     public record RequestLineInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String productId,
             String variantId,
             @NotNull(message = NUM) @Positive(message = POS) BigDecimal quantity,
             String uomId,
@@ -220,7 +221,7 @@ public final class MfgCommands {
 
     /** {@code ProductionPlanLineInputDto}. */
     public record PlanLineInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String productId,
             String variantId,
             String bomId,
             @NotNull(message = NUM) @Positive(message = POS) BigDecimal targetQty,
@@ -235,14 +236,14 @@ public final class MfgCommands {
 
     /** {@code CreateWorkCenterDto}. */
     public record CreateWorkCenter(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String code,
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String name,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String code,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String name,
             String description,
             Boolean isActive) {}
 
     /** {@code CreateResourceDto}. */
     public record CreateResource(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String name,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String name,
             String code,
             @NotNull(message = "must be one of the following values: machine, labour, space")
             @OneOf({"machine", "labour", "space"}) String kind,
@@ -256,7 +257,7 @@ public final class MfgCommands {
     /** {@code RoutingOperationInputDto}. */
     public record RoutingOperationInput(
             @NotNull(message = INT) @Min(value = 0, message = MIN0) Integer sequence,
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String name,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String name,
             String workCenterId,
             @Min(value = 0, message = MIN0) Integer durationMins,
             @Min(value = 0, message = MIN0) Integer setupMins,
@@ -268,7 +269,7 @@ public final class MfgCommands {
 
     /** {@code CreateRoutingDto}. */
     public record CreateRouting(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String name,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String name,
             String productId,
             String bomId,
             @NotNull(message = ARRAY) @ArrayMinSize(1) List<@Valid @NotNull RoutingOperationInput> operations) {}
@@ -356,7 +357,7 @@ public final class MfgCommands {
 
     /** One substitute of a BOM line: {@code ratio} units replace 1 unit of the component. */
     public record SubstituteInput(
-            @NotNull(message = STR) @Size(min = 1, message = EMPTY) String productId,
+            @NotNull(message = STR) @NotEmpty(message = EMPTY) String productId,
             @Positive(message = POS) BigDecimal ratio,
             Integer priority,
             String notes) {}

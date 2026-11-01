@@ -22,7 +22,9 @@ const STATUS_STYLES: Record<string, string> = {
 export function RentalDashboardPage() {
   const { data: agreements } = useRentalAgreements({ pageSize: 6 });
   const { data: units } = useRentalUnits({ pageSize: 1 });
-  const { data: utilization } = useRentalUtilization(new Date(Date.now() - 30 * 86_400_000).toISOString(), new Date().toISOString());
+  // Fixed per visit: a fresh timestamp on every render is a new query key, so the report would refetch forever.
+  const range = useMemo(() => ({ from: new Date(Date.now() - 30 * 86_400_000).toISOString(), to: new Date().toISOString() }), []);
+  const { data: utilization } = useRentalUtilization(range.from, range.to);
 
   const stats = useMemo(() => {
     const items = agreements?.items ?? [];

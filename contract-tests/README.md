@@ -15,6 +15,11 @@ Proves the Spring API answers exactly like the NestJS reference for the same req
    against `parity_spring` (`./gradlew bootRun` with `JDBC_DATABASE_URL=...parity_spring?stringtype=unspecified`).
    Use the **same JWT secrets** in both.
 3. Run: `NEST_URL=http://localhost:3000 SPRING_URL=http://localhost:3001 node contract-tests/run.mjs --module kernel`
+4. All scenarios: `contract-tests/run-all.sh` (`NEST_DIR`, `NEST_DB`, `SPRING_URL`). Nest allows 10 logins / 5 min and
+   100 anonymous requests / min per IP, so a one-pass run turns into 429s half way; the script runs batches of ≤ 8
+   logins and restarts Nest (`TZ=UTC`) before each. Start Spring with `THROTTLE_ENABLED=false`, the same `ENABLE_*`
+   flags as Nest, and call both on `127.0.0.1` (Node resolves `localhost` to `::1` for one side only). Last full
+   run and its triage: `docs/audits/2026-11-01-pr1-parity-run.md`.
 
 ## Scenarios
 

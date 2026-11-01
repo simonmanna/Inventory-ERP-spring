@@ -111,11 +111,6 @@ public class PosReceiptsService {
 
     // ─────────────────────────── resolution ───────────────────────────
 
-    private List<Map<String, Object>> modifiers(Class<?> entity, String table, String fk, Object id) {
-        return SqlRows.list(entity, jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"" + fk + "\" = ? ORDER BY \"createdAt\", id")
-                .param(id));
-    }
-
     /** Invoice (with items, modifiers, order type, partner, cashier, table) or the open-tab Order fallback. */
     public Map<String, Object> resolveInvoice(String invoiceId) {
         String orgId = org();
@@ -123,9 +118,7 @@ public class PosReceiptsService {
         if (inv != null) {
             List<Map<String, Object>> items = db.list(InvoiceItem.class, "\"invoiceId\" = ? ORDER BY \"lineNumber\" ASC",
                     invoiceId);
-            for (Map<String, Object> it : items) {
-                it.put("modifiers", modifiers(InvoiceItemModifier.class, "InvoiceItemModifier", "invoiceItemId", it.get("id")));
-            }
+            PosModifiers.attach(jdbc, items, InvoiceItemModifier.class, "InvoiceItemModifier", "invoiceItemId");
             inv.put("items", items);
             String orderType = jdbc.sql("SELECT \"orderType\"::text FROM \"Order\" WHERE \"invoiceId\" = ? LIMIT 1")
                     .param(invoiceId).query(String.class).optional().orElse(null);
@@ -159,9 +152,7 @@ public class PosReceiptsService {
         }
         List<Map<String, Object>> items = db.list(OrderItem.class, "\"orderId\" = ? AND cancelled = false"
                 + " ORDER BY \"lineNumber\" ASC", invoiceId);
-        for (Map<String, Object> it : items) {
-            it.put("modifiers", modifiers(OrderItemModifier.class, "OrderItemModifier", "orderItemId", it.get("id")));
-        }
+        PosModifiers.attach(jdbc, items, OrderItemModifier.class, "OrderItemModifier", "orderItemId");
         order.put("items", items);
         // Prisma drops an undefined id filter: with no partner the first partner of the org answers.
         Map<String, Object> partner = order.get("partnerId") == null

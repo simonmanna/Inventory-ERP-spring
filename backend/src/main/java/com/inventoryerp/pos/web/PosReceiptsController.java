@@ -8,6 +8,7 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.pos.application.PosReceiptsService;
 import com.inventoryerp.pos.application.PosSql;
+import com.inventoryerp.shared.validation.MaxLength;
 import com.inventoryerp.shared.web.ApiException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -39,8 +40,7 @@ public class PosReceiptsController {
     /** {@code ClosingStatementPrintDto}. */
     public record ClosingStatementPrintRequest(
             @NotNull(message = UUID_MSG) @Pattern(regexp = UUID_RE, message = UUID_MSG) String sessionId,
-            @NotNull(message = STR) @Size(max = 8000,
-                    message = "must be shorter than or equal to 8000 characters") String text) {}
+            @NotNull(message = STR) @MaxLength(8000) String text) {}
 
     /** {@code ReceiptSettingsDto}. */
     public record ReceiptSettingsRequest(

@@ -159,10 +159,7 @@ public class PosOrdersService {
     private List<Map<String, Object>> itemsWithModifiers(String orderId) {
         List<Map<String, Object>> items = db.list(OrderItem.class, "\"orderId\" = ? AND cancelled = false"
                 + " ORDER BY \"lineNumber\" ASC", orderId);
-        for (Map<String, Object> it : items) {
-            it.put("modifiers", SqlRows.list(OrderItemModifier.class, jdbc.sql("SELECT * FROM \"OrderItemModifier\""
-                    + " WHERE \"orderItemId\" = ? ORDER BY \"createdAt\", id").param(it.get("id"))));
-        }
+        PosModifiers.attach(jdbc, items, OrderItemModifier.class, "OrderItemModifier", "orderItemId");
         return items;
     }
 

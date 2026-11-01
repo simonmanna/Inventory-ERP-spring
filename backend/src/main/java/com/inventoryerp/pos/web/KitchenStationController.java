@@ -6,6 +6,7 @@ import static com.inventoryerp.pos.web.PosDtos.STR;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.pos.application.KitchenStationService;
+import com.inventoryerp.shared.validation.MaxLength;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -29,8 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class KitchenStationController {
 
     public record CreateStationRequest(
-            @NotNull(message = STR) @Size(max = 60, message = "must be shorter than or equal to 60 characters") String name,
-            @NotNull(message = STR) @Size(max = 32, message = "must be shorter than or equal to 32 characters") String code,
+            @NotNull(message = STR) @MaxLength(60) String name,
+            @NotNull(message = STR) @MaxLength(32) String code,
             String color,
             String icon,
             Integer displayOrder,

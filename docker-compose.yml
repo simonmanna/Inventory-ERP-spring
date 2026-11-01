@@ -51,6 +51,8 @@ services:
       # Behind the web container's nginx: without this every client shares nginx's address, so the anonymous rate
       # limits (10 logins in 5 minutes) would apply to the whole site at once.
       SERVER_FORWARD_HEADERS_STRATEGY: native
+      # Rate limits on (default). Only load measurements (tools/perf) switch them off.
+      THROTTLE_ENABLED: ${THROTTLE_ENABLED:-true}
       STORAGE_LOCAL_DIR: /app/var/uploads
       BACKUP_DIR: /app/backups
     volumes:

@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.common;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -18,9 +19,10 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class ContractCatalogs {
 
-    /** A configurable report ({@code REPORT_CATALOG} entry). */
-    public record Report(String id, String label, String group, String permission, String route, String tab,
-            String description) {}
+    /** A configurable report ({@code REPORT_CATALOG} entry); optional fields are left out when unset, as in Nest. */
+    public record Report(String id, String label, String group, String permission, String route,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String tab,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String description) {}
 
     /** Ledger subject of a business event ({@code EVENT_SUBJECT} entry). */
     public record EventSubject(String entityType, String idField) {}
