@@ -88,3 +88,7 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   gate; costing period lock refusing costing postings until reopened (`costing_close:reopen`, reason audited);
   reconciliation dashboard; cost adjustment run cascading late WIP cost of completed orders to output layers by
   lineage. Material-ledger rework (AD-3) deferred. Tests: `CostCloseIT` (2).
+- **CM-11** (done, ADR-S042, V235): non-posting cost simulation — versioned scenarios, pure `SimulationEngine`
+  (unit cost, CM1–CM3, margin, break-even; fixed pool re-spread exactly), results beside ACTUAL and STANDARD of a
+  profitability build; ArchUnit + isolation test prove no ledger writes. Tests: `SimulationEngineTest` (3),
+  `SimulationIsolationTest`, `SimulationIsolationIT` (1).

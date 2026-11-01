@@ -1123,3 +1123,4 @@ Each ADR contains:
 | CM-8b | see git log | S039 | Claims bill through 2470 billings (net presentation in the position report); onerous formula uses the least net cost of exiting; IFRS 9 ECL, retention current/non-current split and provision discounting deferred. V232 |
 | CM-9 | see git log | S040 | Segments = customer / product / project from GL dimensions; `layer=` on the legacy estimate reports and biexport feeds deferred. V233 |
 | CM-10 | see git log | S041 | Gates 1–9 + lock / reopen + WIP-to-output cost adjustment run; fiscal checklist item advisory; material-ledger rework (AD-3) and the cost-flow bridge gate deferred. V234 |
+| CM-11 | see git log | S042 | Segment-level what-if over a CM-9 build (material, FX share, fuel, energy, capacity, price, volume); BOM / absorption / fleet / quarry engine roll-ups deferred. V235 |
