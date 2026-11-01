@@ -503,3 +503,9 @@ Screens: `/manufacturing/costing`, `/manufacturing/costing/orders/:id`, linked f
   `ProductionRequestLine.deliveryLocationId` set (`ManufacturingReplenishmentService`).
 
 Tests: `ReplenishmentMrpIT`.
+
+## Cost Management CM-4 (ADR-S034)
+
+Stage standard-cost differences post through `StandardCostService.postStageVariance` (same 5950 / WIP lines, now in
+the variance register). Normal capacity and the IAS 2.13 absorption settlement live in `costing`
+(`/costing/normal-capacities`, `/costing/absorption-settlements`, `/costing/cost-flow-bridge`).

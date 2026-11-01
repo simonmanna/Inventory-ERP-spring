@@ -156,3 +156,11 @@ None (new module). Master-data `PATCH` replaces the editable fields (whole form)
 
 2.2 done (2026-10-30): all areas above built and tested. Not built: stockpile surveys / adjustments (2.3), actual
 payroll labour cost and fleet-tank fuel actually issued to plant (rates × hours / litres are used), demo seed data.
+
+## Cost Management CM-5 (ADR-S035)
+
+Areas gain a pit level and a lifecycle (`/quarry/areas`). IFRIC 20 stripping-activity assets
+(`/quarry/stripping-assets`), IAS 37 rehabilitation provisions with initial / unwind / production / remeasurement /
+utilisation movements (`/quarry/rehab-obligations`, `/quarry/rehab-roll-forward`) and the extraction cost-per-tonne
+KPI (`/quarry/cost-kpis`) are served by the `costing` module. A zone may now sit in a pit
+(`A zone is the top level or sits in a pit; only benches and faces have another parent`).

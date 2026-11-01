@@ -550,6 +550,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read, group: 'Costing' },
       { to: '/costing/advanced', label: tx('Advanced Costing'), icon: Calculator, permission: PERMISSIONS.advancedCosting.read, group: 'Costing' },
       { to: '/costing/allocation', label: tx('Cost Allocation'), icon: Layers, permission: PERMISSIONS.costAllocation.read, group: 'Costing' },
+      { to: '/costing/operations', label: tx('Cost operations'), icon: Layers, permission: PERMISSIONS.advancedCosting.read, group: 'Costing' },
       { to: '/costing/settings', label: tx('Costing & Valuation'), icon: Calculator, permission: PERMISSIONS.costingSettings.read, group: 'Costing' },
       { to: '/manufacturing/process-costing', label: tx('Process Costing'), icon: Layers, permission: PERMISSIONS.processCosting.read, group: 'Costing' },
       { to: '/manufacturing/costing', label: tx('Manufacturing Costing'), icon: Calculator, permission: PERMISSIONS.production.report, group: 'Costing' },

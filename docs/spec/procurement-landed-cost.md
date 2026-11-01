@@ -86,3 +86,10 @@ Postings:
 7. A foreign-currency charge at its own rate.
 8. Reconciliation report equals the GL.
 9. Concurrent voucher post versus GRN reversal: one wins, the other gets a clean 400.
+
+## Cost Management CM-6 (ADR-S036)
+
+- Landed cost accrued at receipt by rule (`/procurement/landed-cost-accrual-rules`, `/procurement/landed-cost-accruals`)
+  and cleared in full against the actual voucher; 2156 reconciles to the open accruals.
+- Legacy per-receipt landed costs can be reversed: `POST /procurement/landed-costs/:id/reverse` (extension,
+  `landed_cost:reverse`, Idempotency-Key), through the voucher engine.

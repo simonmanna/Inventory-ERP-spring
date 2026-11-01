@@ -1489,3 +1489,9 @@ additive service methods exist for it and no route exposes them: `FleetDispatchS
 `FleetWorkOrderCostService.issuePartAt`, which carry a past moment into the stock movement and its journal entry.
 `dispatch` and `issuePart` delegate to them with `Instant.now()`, so their behaviour is unchanged. Nothing was compiled or
 run.
+
+## Cost Management CM-7 (ADR-S037)
+
+- Transporter rates accept `per_m3` and `per_tonne_km` and an optional `minimumCharge`; trips record `emptyKm`.
+- Own-fleet delivery cost runs (`/costing/delivery-cost-runs`) charge delivered trips to 6460 with the customer,
+  under the `empty_leg_policy` election. Branch transfers live under `/costing/branch-transfers`.
