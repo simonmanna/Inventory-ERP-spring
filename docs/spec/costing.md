@@ -79,3 +79,7 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   (gross to 1460, 2485 retention payable, back-charges), cost-to-cost / point-in-time revenue runs (1470 / 4610,
   5610), IAS 37 onerous assessments (indicator, 68A fulfilment cost, least net cost of exit, impairment first,
   maker-checker, 2490). Tests: `ContractCalculatorTest` (3), `ContractRevenueScenarioIT` (2).
+- **CM-9** (done, ADR-S040, V233): profitability facts in three never-mixed layers (actual from the GL, standard
+  from invoiced quantities, estimate from approved project budgets); CM1 / CM2 / CM3; exact ACTUAL reconciliation
+  (segments + unallocated + out of scope = GL net income) with per-account listing; statistical allocations flagged
+  and excluded. Tests: `ProfitabilityReconciliationIT` (2).
