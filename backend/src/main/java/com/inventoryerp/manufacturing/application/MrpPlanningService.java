@@ -176,6 +176,7 @@ public class MrpPlanningService {
         int planned = 0;
         int make = 0;
         int late = 0;
+        int subcontract = 0;
         for (int level = 0; level <= MAX_LEVEL; level++) {
             List<String> atLevel = new ArrayList<>();
             for (String p : new ArrayList<>(demand.keySet())) {
@@ -198,7 +199,8 @@ public class MrpPlanningService {
                 if (prm.reorderPoint().signum() > 0 && projected.compareTo(prm.reorderPoint()) < 0) {
                     net = net.max(prm.reorderPoint().subtract(projected));
                 }
-                Map<String, Object> bom = "make".equals(prm.procurement()) ? boms.findActive(productId, "") : null;
+                boolean made = "make".equals(prm.procurement()) || "subcontract".equals(prm.procurement());
+                Map<String, Object> bom = made ? boms.findActive(productId, "") : null;
                 BigDecimal qty = net.signum() > 0 ? lotSize(bom == null ? net
                         : grossForYield(net, dec(bom, "expectedYieldPct")), prm) : BigDecimal.ZERO;
                 Map<String, Object> item = new LinkedHashMap<>();
@@ -219,14 +221,14 @@ public class MrpPlanningService {
                 }
                 Instant due = gross.stream().map(Demand::date).min(Comparator.naturalOrder()).orElse(now);
                 Instant release = due.minus(prm.leadTimeDays() + (bom == null ? 0 : curingDays(bom)), ChronoUnit.DAYS);
-                String kind = bom != null ? "make" : "buy";
+                String kind = bom == null ? "buy" : "subcontract".equals(prm.procurement()) ? "subcontract" : "make";
                 Map<String, Object> po = new LinkedHashMap<>();
                 po.put("runId", runId);
                 po.put("productId", productId);
                 po.put("kind", kind);
                 po.put("quantity", qty);
                 po.put("bomId", bom == null ? null : bom.get("id"));
-                po.put("supplierId", "buy".equals(kind) ? prm.supplierId() : null);
+                po.put("supplierId", "make".equals(kind) ? null : prm.supplierId());
                 po.put("locationId", prm.locationId() != null ? prm.locationId() : locationId);
                 po.put("dueDate", due);
                 po.put("releaseDate", release);
@@ -240,6 +242,9 @@ public class MrpPlanningService {
                 }
                 if (bom != null) {
                     make++;
+                    if ("subcontract".equals(kind)) {
+                        subcontract++;
+                    }
                     for (ExplodedMaterial m : BomService.explode(BomService.explodable(bom), qty).materials()) {
                         demand.computeIfAbsent(m.componentProductId(), k -> new ArrayList<>()).add(new Demand(
                                 m.qtyPlanned(), release, Obj.of("type", "planned_order", "id", plannedOrder.get("id"),
@@ -250,8 +255,8 @@ public class MrpPlanningService {
                 }
             }
         }
-        Map<String, Object> summary = Obj.of("products", done.size(), "plannedOrders", planned, "make", make,
-                "buy", planned - make, "late", late);
+        Map<String, Object> summary = Obj.of("products", done.size(), "plannedOrders", planned, "make",
+                make - subcontract, "subcontract", subcontract, "buy", planned - make, "late", late);
         db.update(MrpRun.class, runId, Obj.of("summary", new MfgDb.Json(summary), "completedAt", Instant.now()));
         return get(runId);
     }
@@ -285,6 +290,9 @@ public class MrpPlanningService {
         if ("make".equals(po.get("kind"))) {
             return firmMake(po, run);
         }
+        if ("subcontract".equals(po.get("kind"))) {
+            return firmSubcontract(po, run);
+        }
         return firmBuy(List.of(po), run).getFirst();
     }
 
@@ -303,6 +311,8 @@ public class MrpPlanningService {
             }
             if ("make".equals(po.get("kind"))) {
                 firmed.add(firmMake(po, run));
+            } else if ("subcontract".equals(po.get("kind"))) {
+                firmed.add(firmSubcontract(po, run));
             } else {
                 buys.computeIfAbsent(po.get("supplierId") == null ? "" : str(po, "supplierId"),
                         k -> new ArrayList<>()).add(po);
@@ -329,6 +339,26 @@ public class MrpPlanningService {
                 "MRP " + run.get("runNumber"), null, null));
         return db.update(MrpPlannedOrder.class, str(po, "id"), Obj.of("status", "firmed", "firmedDocType",
                 "production_order", "firmedDocId", order.get("id")));
+    }
+
+    /**
+     * Firm a subcontract planned order (PR-5): a draft production order (components are issued to and the output
+     * received from the subcontractor through it) plus a draft {@code SUBPR-} service purchase request to the
+     * subcontractor for the conversion, without a product so receiving it never adds stock.
+     */
+    private Map<String, Object> firmSubcontract(Map<String, Object> po, Map<String, Object> run) {
+        Map<String, Object> firmed = firmMake(po, run);
+        Map<String, Object> product = SqlRows.one(db.jdbc().sql("SELECT code, name FROM \"Product\" WHERE id = ?")
+                .param(po.get("productId")));
+        String label = "Subcontract " + (product == null ? po.get("productId") : product.get("code") + " "
+                + product.get("name")) + " · MRP " + run.get("runNumber");
+        Map<String, Object> pr = db.insert(PurchaseRequest.class, Obj.of("requestNumber",
+                seq.next("purchase_request", "SUBPR-", 5), "requestedById", TenantContext.userId(), "partnerId",
+                po.get("supplierId"), "description", label, "neededBy", po.get("dueDate"), "status", "draft",
+                "createdBy", TenantContext.userId()));
+        db.insert(PurchaseRequestLine.class, Obj.of("purchaseRequestId", pr.get("id"), "description", label,
+                "quantity", dec(po, "quantity"), "lineNumber", 0));
+        return db.update(MrpPlannedOrder.class, str(firmed, "id"), Obj.of("subcontractRequestId", pr.get("id")));
     }
 
     private List<Map<String, Object>> firmBuy(List<Map<String, Object>> group, Map<String, Object> run) {

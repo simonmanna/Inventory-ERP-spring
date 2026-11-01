@@ -165,3 +165,4 @@ Plan and per-phase notes: `docs/roadmap/production-ready-plan.md`.
 | PR-3 analytic dimensions | done | see commit | ADR-S025, V217 |
 | PR-1 part 2 release checks | done (retirement: owner) | 1,466 / 0 failed; JaCoCo gate 0.80, every application package ≥ 80 % | parity 584/96 all classified, click-through 409 routes 0 fail, checkout p95 140–176 ms (dev box) |
 | PR-4 warehouse management | done | 1,475 / 0 failed; JaCoCo gate 0.80 passes | ADR-S026, V218; 33 routes under `/warehouse`, web `/inventory/warehouse` |
+| PR-5 replenishment & MRP completion | done | 1,482 / 0 failed; JaCoCo gate 0.80 passes | ADR-S027, V219; rule routes buy / manufacture / transfer, MRP subcontract, rough-cut capacity, nightly MRP |

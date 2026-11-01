@@ -431,6 +431,6 @@ class ManufacturingIT extends MfgTestSupport {
     void authorization() {
         // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3)
         // + 25 planning (ADR-S017, 2.5, incl. the forecast route) + 9 costing routes (ADR-S018, 2.8).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(268);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(271);
     }
 }

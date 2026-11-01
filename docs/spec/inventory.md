@@ -132,3 +132,13 @@ Bins, putaway rules and tasks, pick / pack / ship in one to three steps, package
 `/warehouse` (`warehouse:read|manage|operate`). Bins are a sub-ledger inside a location (`WarehouseBinStock`); the
 ledger, costing and GL are unchanged and the source document still posts every issue. Cycle counts open ordinary
 `cycle` sessions of the count service. Details and limits: `docs/adr/ADR-S026-warehouse-management.md`.
+
+## ADR-S027 extension — replenishment routes (roadmap 2.3, PR-5)
+
+Rules take `route` (`buy` default, `manufacture`, `transfer` + `sourceLocationId`). Errors: 400 `route must be one of:
+buy, manufacture, transfer`, `A transfer rule needs a sourceLocationId`, `The source location must differ from the
+rule's location`, 404 `Source location not found`. A transfer alert is answered here with a pending stock transfer;
+buy / manufacture lines go out on `inventory.replenishment.requested` tagged with `route` and `locationId` (procurement
+and manufacturing each take their own). Alerts carry `route`, `documentType`, `documentId`, `documentNumber`. Incoming
+supply adds `TransferIncomingSupply` (inventory) and `ProductionIncomingSupply` (manufacturing). Details:
+`docs/adr/ADR-S027-replenishment-mrp-completion.md`.

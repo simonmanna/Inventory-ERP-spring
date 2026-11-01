@@ -71,6 +71,10 @@ public class MrpPlannedOrder {
     @Column(name = "firmedDocId")
     private String firmedDocId;
 
+    /** PR-5: the service purchase request raised to the subcontractor when a subcontract order is firmed. */
+    @Column(name = "subcontractRequestId")
+    private String subcontractRequestId;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "pegging", nullable = false)
     private String pegging;

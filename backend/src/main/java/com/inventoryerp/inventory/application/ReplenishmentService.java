@@ -44,20 +44,23 @@ public class ReplenishmentService {
     private static final String RULE_SELECT = """
             SELECT r.*, p.code AS "productCode", p.name AS "productName", p."uomId", l.code AS "locationCode",
                    l.name AS "locationName", COALESCE(r."supplierId", p."supplierId") AS "effectiveSupplierId",
-                   s.name AS "supplierName"
+                   s.name AS "supplierName", sl.code AS "sourceLocationCode", sl.name AS "sourceLocationName"
             FROM "InventoryReplenishmentRule" r
             JOIN "Product" p ON p.id = r."productId"
             JOIN "InventoryLocation" l ON l.id = r."locationId"
+            LEFT JOIN "InventoryLocation" sl ON sl.id = r."sourceLocationId"
             LEFT JOIN "Partner" s ON s.id = COALESCE(r."supplierId", p."supplierId")
             """;
     private static final String ALERT_SELECT = """
             SELECT a.*, p.code AS "productCode", p.name AS "productName", p."uomId", l.code AS "locationCode",
                    l.name AS "locationName", r."leadTimeDays", COALESCE(r."supplierId", p."supplierId") AS "supplierId",
-                   s.name AS "supplierName"
+                   s.name AS "supplierName", r."sourceLocationId", sl.name AS "sourceLocationName",
+                   r.route AS "ruleRoute"
             FROM "InventoryReplenishmentAlert" a
             JOIN "InventoryReplenishmentRule" r ON r.id = a."ruleId"
             JOIN "Product" p ON p.id = a."productId"
             JOIN "InventoryLocation" l ON l.id = a."locationId"
+            LEFT JOIN "InventoryLocation" sl ON sl.id = r."sourceLocationId"
             LEFT JOIN "Partner" s ON s.id = COALESCE(r."supplierId", p."supplierId")
             """;
 
@@ -66,14 +69,17 @@ public class ReplenishmentService {
     private final EventOutboxService outbox;
     private final NotificationsService notifications;
     private final List<IncomingSupplyProvider> incomingSupply;
+    private final StockDocService stockDocs;
 
     public ReplenishmentService(JdbcClient jdbc, AuditService audit, EventOutboxService outbox,
-            NotificationsService notifications, List<IncomingSupplyProvider> incomingSupply) {
+            NotificationsService notifications, List<IncomingSupplyProvider> incomingSupply,
+            StockDocService stockDocs) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.outbox = outbox;
         this.notifications = notifications;
         this.incomingSupply = incomingSupply;
+        this.stockDocs = stockDocs;
     }
 
     private BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
@@ -168,15 +174,16 @@ public class ReplenishmentService {
         if (supplierId != null) {
             assertExists("Partner", supplierId, "Supplier not found");
         }
+        Route route = route(dto, null, locationId);
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"InventoryReplenishmentRule\" (id, \"organizationId\", \"productId\", \"locationId\","
                 + " \"minQty\", \"maxQty\", \"reorderQty\", \"supplierId\", \"leadTimeDays\", \"autoRequisition\","
-                + " \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " \"createdBy\", route, \"sourceLocationId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(id, org(), productId, locationId, levels.min(), levels.max(), levels.reorder(), supplierId,
                         leadTime(dto.get("leadTimeDays"), 0), Boolean.TRUE.equals(dto.get("autoRequisition")),
-                        TenantContext.userId()).update();
+                        TenantContext.userId(), route.route(), route.sourceLocationId()).update();
         audit.recordInTx(AuditInput.of("InventoryReplenishmentRule", id, "create", null, Obj.of("productId", productId,
-                "locationId", locationId, "minQty", levels.min().toPlainString())));
+                "locationId", locationId, "minQty", levels.min().toPlainString(), "route", route.route())));
         return rule(id);
     }
 
@@ -193,14 +200,15 @@ public class ReplenishmentService {
                 : Boolean.TRUE.equals(row.get("autoRequisition"));
         boolean active = dto.containsKey("isActive") ? Boolean.TRUE.equals(dto.get("isActive"))
                 : Boolean.TRUE.equals(row.get("isActive"));
+        Route route = route(dto, row, (String) row.get("locationId"));
         jdbc.sql("UPDATE \"InventoryReplenishmentRule\" SET \"minQty\" = ?, \"maxQty\" = ?, \"reorderQty\" = ?,"
                 + " \"supplierId\" = ?, \"leadTimeDays\" = ?, \"autoRequisition\" = ?, \"isActive\" = ?, \"updatedBy\""
-                + " = ?,"
+                + " = ?, route = ?, \"sourceLocationId\" = ?,"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(levels.min(), levels.max(), levels.reorder(), supplierId, lead, auto, active,
-                        TenantContext.userId(), id, org()).update();
+                        TenantContext.userId(), route.route(), route.sourceLocationId(), id, org()).update();
         audit.recordInTx(AuditInput.of("InventoryReplenishmentRule", id, "update", null, Obj.of("minQty",
-                levels.min().toPlainString(), "isActive", active)));
+                levels.min().toPlainString(), "isActive", active, "route", route.route())));
         return rule(id);
     }
 
@@ -220,6 +228,35 @@ public class ReplenishmentService {
     }
 
     private record Levels(BigDecimal min, BigDecimal max, BigDecimal reorder) {}
+
+    /** How a rule is replenished (PR-5): bought, manufactured, or transferred from {@code sourceLocationId}. */
+    private record Route(String route, String sourceLocationId) {}
+
+    private static final List<String> ROUTES = List.of("buy", "manufacture", "transfer");
+
+    private Route route(Map<String, Object> dto, Map<String, Object> row, String locationId) {
+        String route = dto.containsKey("route") ? str(dto.get("route"))
+                : row == null ? null : (String) row.get("route");
+        if (route == null) {
+            route = "buy";
+        }
+        if (!ROUTES.contains(route)) {
+            throw ApiException.badRequest("route must be one of: buy, manufacture, transfer");
+        }
+        if (!"transfer".equals(route)) {
+            return new Route(route, null);
+        }
+        String source = dto.containsKey("sourceLocationId") ? str(dto.get("sourceLocationId"))
+                : row == null ? null : (String) row.get("sourceLocationId");
+        if (source == null) {
+            throw ApiException.badRequest("A transfer rule needs a sourceLocationId");
+        }
+        if (source.equals(locationId)) {
+            throw ApiException.badRequest("The source location must differ from the rule's location");
+        }
+        assertExists("InventoryLocation", source, "Source location not found");
+        return new Route(route, source);
+    }
 
     private static Levels levels(Map<String, Object> dto, Map<String, Object> row) {
         BigDecimal min = dto.containsKey("minQty") || row == null ? dec(dto.get("minQty"), "minQty")
@@ -368,9 +405,9 @@ public class ReplenishmentService {
             String id = UUID.randomUUID().toString();
             int inserted = jdbc.sql("INSERT INTO \"InventoryReplenishmentAlert\" (id, \"organizationId\", \"ruleId\","
                     + " \"productId\", \"locationId\", \"onHand\", reserved, available, incoming, \"minQty\","
-                    + " \"suggestedQty\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+                    + " \"suggestedQty\", route) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
                     .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved,
-                            available, incoming, min, suggested).update();
+                            available, incoming, min, suggested, rule.get("route")).update();
             if (inserted > 0) {
                 raised++;
                 if (Boolean.TRUE.equals(rule.get("autoRequisition"))) {
@@ -412,6 +449,12 @@ public class ReplenishmentService {
         return Obj.of("requested", requested);
     }
 
+    /**
+     * Answer open alerts by their rule's route (PR-5). Transfers are created here, in this transaction, as pending stock
+     * transfers (one per source and destination). Buy and manufacture lines go out in one
+     * {@code inventory.replenishment.requested} event, each line tagged with its {@code route}: procurement answers buy
+     * lines with draft purchase requests, manufacturing answers manufacture lines with a production request.
+     */
     private int request(List<String> ids) {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(ALERT_SELECT + " WHERE a.\"organizationId\" = ? AND"
                 + " a.status"
@@ -421,11 +464,20 @@ public class ReplenishmentService {
         }
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         List<Map<String, Object>> lines = new ArrayList<>();
+        Map<String, List<Map<String, Object>>> transfers = new LinkedHashMap<>();
         for (Map<String, Object> a : rows) {
-            jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'requested', \"updatedAt\" = " + NOW
-                    + " WHERE id = ?").param(a.get("id")).update();
+            String route = a.get("ruleRoute") == null ? "buy" : a.get("ruleRoute").toString();
+            jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'requested', route = ?, \"updatedAt\" = "
+                    + NOW + " WHERE id = ?").params(route, a.get("id")).update();
+            if ("transfer".equals(route)) {
+                transfers.computeIfAbsent(a.get("sourceLocationId") + "|" + a.get("locationId"),
+                        k -> new ArrayList<>()).add(a);
+                continue;
+            }
             Map<String, Object> line = new LinkedHashMap<>();
             line.put("alertId", a.get("id"));
+            line.put("route", route);
+            line.put("locationId", a.get("locationId"));
             line.put("productId", a.get("productId"));
             line.put("description", a.get("productCode") + " " + a.get("productName") + " for "
                     + a.get("locationName"));
@@ -435,12 +487,32 @@ public class ReplenishmentService {
             line.put("neededBy", today.plusDays(((Number) a.get("leadTimeDays")).longValue()).toString());
             lines.add(line);
         }
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("organizationId", org());
-        payload.put("requestedBy", TenantContext.userId());
-        payload.put("lines", lines);
-        outbox.publish(DomainEvents.INVENTORY_REPLENISHMENT_REQUESTED, payload);
+        for (List<Map<String, Object>> group : transfers.values()) {
+            raiseTransfer(group);
+        }
+        if (!lines.isEmpty()) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("organizationId", org());
+            payload.put("requestedBy", TenantContext.userId());
+            payload.put("lines", lines);
+            outbox.publish(DomainEvents.INVENTORY_REPLENISHMENT_REQUESTED, payload);
+        }
         return rows.size();
+    }
+
+    /** One pending stock transfer for alerts sharing a source and a destination; it still needs approval. */
+    private void raiseTransfer(List<Map<String, Object>> alerts) {
+        List<StockDocService.DocLine> items = new ArrayList<>();
+        for (Map<String, Object> a : alerts) {
+            items.add(new StockDocService.DocLine((String) a.get("productId"), null, null, null, null, null, null,
+                    null, SqlRows.dec(a, "suggestedQty")));
+        }
+        Map<String, Object> first = alerts.getFirst();
+        Map<String, Object> transfer = stockDocs.createTransfer(new StockDocService.DocInput(null,
+                (String) first.get("sourceLocationId"), (String) first.get("locationId"), "immediate", null, null, null,
+                null, "Replenishment: " + items.size() + " product(s) below minimum", items));
+        markDocumented(alerts.stream().map(a -> (String) a.get("id")).toList(), "stock_transfer",
+                (String) transfer.get("id"), (String) transfer.get("transferCode"));
     }
 
     /** Which of these alerts still wait for a purchase request (the event is delivered at least once). */
@@ -455,9 +527,24 @@ public class ReplenishmentService {
     @Transactional
     public void markRequisitioned(List<String> alertIds, String purchaseRequestId, String requestNumber) {
         jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'requisitioned', \"purchaseRequestId\" = ?,"
-                + " \"requestNumber\" = ?, \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND status ="
+                + " \"requestNumber\" = ?, \"documentType\" = 'purchase_request', \"documentId\" = ?,"
+                + " \"documentNumber\" = ?, \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND status ="
                 + " 'requested' AND id = ANY(?::text[])")
-                .params(purchaseRequestId, requestNumber, org(), alertIds.toArray(String[]::new)).update();
+                .params(purchaseRequestId, requestNumber, purchaseRequestId, requestNumber, org(),
+                        alertIds.toArray(String[]::new)).update();
+    }
+
+    /**
+     * These alerts were answered by a document other than a purchase request (PR-5): {@code production_request}
+     * (manufacturing) or {@code stock_transfer} (here).
+     */
+    @Transactional
+    public void markDocumented(List<String> alertIds, String documentType, String documentId,
+            String documentNumber) {
+        jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'requisitioned', \"documentType\" = ?,"
+                + " \"documentId\" = ?, \"documentNumber\" = ?, \"updatedAt\" = " + NOW + " WHERE"
+                + " \"organizationId\" = ? AND status = 'requested' AND id = ANY(?::text[])")
+                .params(documentType, documentId, documentNumber, org(), alertIds.toArray(String[]::new)).update();
     }
 
     private void notifyPlanners(int raised) {

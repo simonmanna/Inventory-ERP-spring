@@ -386,3 +386,8 @@ Nothing in this lane was compiled or run.
 | 2026-10-31 | PR-3 dimensions | Store dimension value codes or ids on ledger lines? | Codes, in the existing `dimensions` jsonb: no data migration, readable exports; a value code is frozen once posted | Ids with a join table | ADR-S025 |
 | 2026-10-31 | PR-3 dimensions | Undefined keys on postings (vehicleId, driverId, ...) | Pass through unvalidated; only keys that name a defined dimension are checked | Reject unknown keys | `AnalyticDimensionService.validate` |
 | 2026-10-31 | PR-3 dimensions | Dimensions on invoices and bills | Separate route `PUT /analytic-dimensions/documents/:id/lines` while draft, so the Nest invoice contract is untouched | Add a field to the invoice DTOs | ADR-S025 §6 |
+| 2026-11-01 | PR-5 replenishment | What does a transfer rule create? | A pending immediate stock transfer from the rule's source location; it still needs approval | Post the transfer at once | ADR-S027 §1 |
+| 2026-11-01 | PR-5 replenishment | What does a manufacture rule create? | One submitted production request (MRP / production plans pick it up) | A draft production order | ADR-S027 §1 |
+| 2026-11-01 | PR-5 MRP | Subcontracting a whole product | Draft production order + draft `SUBPR-` service request without a product line (receipt never adds stock) | Purchase the finished product | ADR-S027 §3 |
+| 2026-11-01 | PR-5 MRP | Capacity planning depth | Rough-cut (advisory) load per work centre per run; no levelling | Finite-capacity MRP | ADR-S027 §4 |
+| 2026-11-01 | PR-5 MRP | Nightly MRP | Off by default, per organization, 02:30 UTC, never firms | Always on / auto-firm | `MrpSettings` |

@@ -34,7 +34,7 @@ public class ProcurementReplenishmentService {
 
     /** One replenishment line of the event. */
     public record Line(String alertId, String productId, String description, BigDecimal quantity, String uomId,
-            String supplierId, String neededBy) {}
+            String supplierId, String neededBy, String locationId) {}
 
     /** One draft purchase request per supplier for the lines still waiting; all or nothing. */
     @Transactional
@@ -51,7 +51,8 @@ public class ProcurementReplenishmentService {
         for (Map.Entry<String, List<Line>> group : bySupplier.entrySet()) {
             List<Line> own = group.getValue();
             List<LineInput> inputs = own.stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
-                    l.uomId(), null, "Replenishment alert")).toList();
+                    l.uomId(), null, "Replenishment alert", l.neededBy(), l.locationId(), null, null, null,
+                    "reorder", l.alertId())).toList();
             String neededBy = own.stream().map(Line::neededBy).min(String::compareTo).orElse(null);
             Map<String, Object> created = requests.create(new CreateInput(
                     NO_SUPPLIER.equals(group.getKey()) ? null : group.getKey(), null,

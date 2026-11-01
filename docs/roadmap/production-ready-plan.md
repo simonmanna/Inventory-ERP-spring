@@ -12,7 +12,7 @@ push to `main`. Release tags (`v*`) publish Docker images and are created only a
 | PR-2 | 1.7 Year-end close | S | **done 2026-10-31** (ADR-S023) |
 | PR-3 | 2.4 Analytic dimensions | M | **done 2026-10-31** (ADR-S025) |
 | PR-4 | 2.1 Warehouse management | L | **done 2026-11-01** (ADR-S026) |
-| PR-5 | 2.3 Replenishment & MRP completion | L | todo |
+| PR-5 | 2.3 Replenishment & MRP completion | L | **done 2026-11-01** (ADR-S027) |
 | PR-6 | 2.8 Subscriptions & deferrals | M | todo |
 | PR-7 | 2.9 Projects & service billing | M | todo |
 | PR-8 | 2.7 Intercompany & multi-company | L | todo |
@@ -132,3 +132,23 @@ inside a location: the stock ledger and GL are untouched, the source document st
 `POST /warehouse/pick-orders/:id/release|pack|ship|cancel`, `GET|POST /warehouse/waves`, `GET /warehouse/waves/:id`,
 `POST /warehouse/waves/:id/release`. Web: `/inventory/warehouse` (overview, bins, putaway rules, tasks, pick orders and
 waves, ABC cycle counts). Tests: `WarehouseIT` (6 scenarios), `AbcClassifierTest`.
+
+## PR-5 — as built (ADR-S027)
+
+Most of 2.3 already existed (INV-3 rules, S2P reorder rules, time-phased MRP, co-products, scrap, subcontracted
+operations, finite scheduling). PR-5 closes the gaps. `V219`:
+
+- **Replenishment routes**: rule `route` = `buy` | `manufacture` | `transfer` (+ `sourceLocationId`). Transfer →
+  pending `TRF-` stock transfer in the same transaction; manufacture → submitted production request (source
+  `replenishment`, line delivery location) raised by manufacturing from the event; buy → draft purchase request as
+  before, now with delivery location and demand ref. Alerts keep `documentType` / `documentId` / `documentNumber`.
+  Incoming supply now also counts transfers into the location and production (open orders, unplanned request lines).
+- **MRP subcontract** procurement: explodes like make; firming = draft production order + draft `SUBPR-` service
+  request (no product line) to the subcontractor (`MrpPlannedOrder.subcontractRequestId`).
+- **Rough-cut capacity**: `GET /manufacturing/mrp/runs/:id/capacity?bucket=week|day` — planned routing load over
+  scheduled work orders and calendar capacity, bottleneck on total load.
+- **Nightly MRP**: `GET|PUT /manufacturing/mrp/settings`, `MrpAutoRunJob` 02:30 UTC; plans only.
+
+Web: `/inventory/replenishment` (route + source on rules, route and document link on alerts), `/manufacturing/mrp`
+(subcontract parameters with subcontractor, Capacity tab, Nightly run tab). Tests: `ReplenishmentMrpIT` (7 scenarios);
+`ReplenishmentIT`, `MrpPlanningIT` unchanged and green.

@@ -483,3 +483,23 @@ Screens: `/manufacturing/costing`, `/manufacturing/costing/orders/:id`, linked f
   weeks and run-rate 4.
 - **Aggregates without a BOM** show their demand and shortfall but are reported as skipped by plan-from-demand with
   "No active BOM". Crushing is planned from that shortfall by hand.
+
+## ADR-S027 — replenishment & MRP completion (roadmap 2.3, PR-5)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/manufacturing/mrp/runs/:id/capacity` | `production_plan:read` |
+| GET | `/api/v1/manufacturing/mrp/settings` | `production_plan:read` |
+| PUT | `/api/v1/manufacturing/mrp/settings` | `production_plan:update` |
+
+- Planning parameters accept `procurement: subcontract` (supplier = subcontractor). Planned order `kind: subcontract`
+  explodes like make; firming creates the draft production order and a draft `SUBPR-` service purchase request
+  (`subcontractRequestId`). Run `summary.subcontract` counts them (`make` excludes them).
+- Rough-cut capacity: routing load `setupMins + durationMins × qty ÷ BOM output` per in-house operation, spread from
+  release to due, over `GET /manufacturing/planning/capacity` data; `bucket` `week` (default) or `day`.
+- Settings: `autoRun`, `horizonDays` (1–730, 400 `horizonDays must be between 1 and 730`), `locationId`; nightly run at
+  02:30 UTC (`MrpAutoRunJob`), plans only.
+- Replenishment `manufacture` lines → one submitted production request, `sourceType = replenishment`,
+  `ProductionRequestLine.deliveryLocationId` set (`ManufacturingReplenishmentService`).
+
+Tests: `ReplenishmentMrpIT`.

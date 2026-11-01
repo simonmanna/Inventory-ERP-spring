@@ -39,11 +39,20 @@ public class ProcurementReplenishmentSubscriber {
         }
         List<Line> lines = new ArrayList<>();
         for (JsonNode l : p.path("lines")) {
+            // PR-5: manufacture lines belong to manufacturing; lines without a route predate it and are buys.
+            if (!"buy".equals(l.path("route").asString("buy"))) {
+                continue;
+            }
+            String location = l.path("locationId").asString("");
             String supplier = l.path("supplierId").asString("");
             String uom = l.path("uomId").asString("");
             lines.add(new Line(l.path("alertId").asString(""), l.path("productId").asString(""),
                     l.path("description").asString(""), new BigDecimal(l.path("quantity").asString("0")),
-                    uom.isEmpty() ? null : uom, supplier.isEmpty() ? null : supplier, l.path("neededBy").asString("")));
+                    uom.isEmpty() ? null : uom, supplier.isEmpty() ? null : supplier, l.path("neededBy").asString(""),
+                    location.isEmpty() ? null : location));
+        }
+        if (lines.isEmpty()) {
+            return;
         }
         String userId = p.path("requestedBy").asString("");
         TenantStore store = userId.isEmpty() ? TenantStore.organization(orgId) : TenantStore.user(orgId, userId);

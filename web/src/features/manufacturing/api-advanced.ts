@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 export interface PlannedOrder {
   id: string;
   productId: string;
-  kind: 'make' | 'buy';
+  kind: 'make' | 'buy' | 'subcontract';
   quantity: string;
   dueDate: string;
   releaseDate: string;
@@ -17,6 +17,7 @@ export interface PlannedOrder {
   status: 'planned' | 'firmed' | 'cancelled';
   firmedDocType?: string | null;
   firmedDocId?: string | null;
+  subcontractRequestId?: string | null;
   supplierId?: string | null;
   pegging: Array<{ type: string; id: string; qty: string }>;
 }
@@ -41,7 +42,7 @@ export interface MrpRun {
   status: string;
   horizonDays: number;
   startedAt: string;
-  summary: { products?: number; plannedOrders?: number; make?: number; buy?: number; late?: number };
+  summary: { products?: number; plannedOrders?: number; make?: number; subcontract?: number; buy?: number; late?: number };
   items?: MrpRunItem[];
   plannedOrders?: PlannedOrder[];
 }
@@ -49,7 +50,7 @@ export interface MrpRun {
 export interface PlanningParams {
   id?: string;
   productId: string;
-  procurement: 'make' | 'buy';
+  procurement: 'make' | 'buy' | 'subcontract';
   leadTimeDays: number;
   safetyStock: string | number;
   reorderPoint: string | number;
@@ -64,6 +65,61 @@ export interface PlanningParams {
 const get = async <T,>(url: string, params?: Record<string, unknown>) => (await api.get<T>(url, { params })).data;
 
 // ---- MRP ----
+export interface CapacityBucket {
+  from: string;
+  to: string;
+  capacityHours: string;
+  loadHours: string;
+  plannedLoadHours: string;
+  totalLoadHours: string;
+  totalUtilisationPct: string | null;
+  overloaded: boolean;
+}
+export interface MrpCapacity {
+  runId: string;
+  from: string;
+  to: string;
+  bucket: 'day' | 'week';
+  bottleneck: { workCenterId: string; name: string; utilisationPct: string } | null;
+  workCenters: Array<{
+    workCenterId: string;
+    code: string;
+    name: string;
+    capacityHours: string;
+    loadHours: string;
+    plannedLoadHours: string;
+    totalLoadHours: string;
+    totalUtilisationPct: string | null;
+    isBottleneck: boolean;
+    buckets: CapacityBucket[];
+  }>;
+}
+export interface MrpSettings {
+  autoRun: boolean;
+  horizonDays: number;
+  locationId: string | null;
+  lastAutoRunAt: string | null;
+  lastAutoRunId: string | null;
+}
+/** PR-5: rough-cut capacity of a run's planned orders on top of scheduled work. */
+export function useMrpCapacity(runId?: string, bucket: 'day' | 'week' = 'week') {
+  return useQuery({
+    queryKey: ['mrp-capacity', runId, bucket],
+    queryFn: () => get<MrpCapacity>(`/manufacturing/mrp/runs/${runId}/capacity`, { bucket }),
+    enabled: !!runId,
+  });
+}
+export function useMrpSettings() {
+  return useQuery({ queryKey: ['mrp-settings'], queryFn: () => get<MrpSettings>('/manufacturing/mrp/settings') });
+}
+export function useSaveMrpSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { autoRun?: boolean; horizonDays?: number; locationId?: string }) =>
+      (await api.put<MrpSettings>('/manufacturing/mrp/settings', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mrp-settings'] }),
+  });
+}
 export function useMrpRuns() {
   return useQuery({ queryKey: ['mrp-runs'], queryFn: () => get<MrpRun[]>('/manufacturing/mrp/runs', { limit: 20 }) });
 }

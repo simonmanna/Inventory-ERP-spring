@@ -36,6 +36,8 @@ interface Rule {
   leadTimeDays: number;
   autoRequisition: boolean;
   isActive: boolean;
+  route: 'buy' | 'manufacture' | 'transfer';
+  sourceLocationName: string | null;
 }
 
 interface Alert {
@@ -51,6 +53,10 @@ interface Alert {
   supplierName: string | null;
   status: string;
   requestNumber: string | null;
+  route: string;
+  documentType: string | null;
+  documentId: string | null;
+  documentNumber: string | null;
   statusReason: string | null;
   createdAt: string;
 }
@@ -69,6 +75,18 @@ const TONE: Record<string, string> = {
   dismissed: 'bg-muted text-muted-foreground',
 };
 const KEY = ['inventory-replenishment'];
+const ROUTES = [
+  { value: 'buy', label: 'Buy' },
+  { value: 'manufacture', label: 'Manufacture' },
+  { value: 'transfer', label: 'Transfer' },
+];
+const routeLabel = (r: string) => tx(ROUTES.find((x) => x.value === r)?.label ?? 'Buy');
+/** Where the document that answered an alert lives. */
+function documentLink(a: Alert): string {
+  if (a.documentType === 'stock_transfer') return '/inventory/transfers';
+  if (a.documentType === 'production_request') return '/manufacturing/planning';
+  return '/procurement/purchase-requests';
+}
 const qty = (v: number | string | null) => (v === null ? '—' : fmtQty(Number(v)));
 
 /** Rules that watch stock levels, the alerts they raise, and requisitions from those alerts (INV-3). */
@@ -144,6 +162,7 @@ function AlertsTab({ canEdit }: { canEdit: boolean }) {
     { key: 'available', header: tx('Available'), className: 'text-right', render: (a) => <span className="tabular-nums">{qty(a.available)}</span> },
     { key: 'min', header: tx('Minimum'), className: 'text-right', render: (a) => <span className="tabular-nums">{qty(a.minQty)}</span> },
     { key: 'suggested', header: tx('Suggested'), className: 'text-right', render: (a) => <span className="font-medium tabular-nums">{qty(a.suggestedQty)}</span> },
+    { key: 'route', header: tx('Route'), render: (a) => routeLabel(a.route) },
     { key: 'supplier', header: tx('Supplier'), render: (a) => a.supplierName ?? '—' },
     { key: 'when', header: tx('Raised'), render: (a) => <span className="whitespace-nowrap">{dateTime(a.createdAt)}</span> },
     {
@@ -151,7 +170,9 @@ function AlertsTab({ canEdit }: { canEdit: boolean }) {
       render: (a) => (
         <span className="flex flex-wrap items-center gap-1">
           <Badge className={TONE[a.status]}>{a.status}</Badge>
-          {a.requestNumber ? <Link className="text-primary hover:underline" to="/procurement/purchase-requests">{a.requestNumber}</Link> : null}
+          {a.documentNumber ?? a.requestNumber ? (
+            <Link className="text-primary hover:underline" to={documentLink(a)}>{a.documentNumber ?? a.requestNumber}</Link>
+          ) : null}
         </span>
       ),
     },
@@ -244,7 +265,12 @@ function RulesTab({ canEdit }: { canEdit: boolean }) {
     { key: 'min', header: tx('Minimum'), className: 'text-right', render: (r) => qty(r.minQty) },
     { key: 'max', header: tx('Maximum'), className: 'text-right', render: (r) => qty(r.maxQty) },
     { key: 'reorder', header: tx('Reorder qty'), className: 'text-right', render: (r) => qty(r.reorderQty) },
-    { key: 'supplier', header: tx('Supplier'), render: (r) => r.supplierName ?? '—' },
+    {
+      key: 'route', header: tx('Route'),
+      render: (r) => (r.route === 'transfer' && r.sourceLocationName
+        ? `${routeLabel(r.route)} ← ${r.sourceLocationName}` : routeLabel(r.route)),
+    },
+    { key: 'supplier', header: tx('Supplier'), render: (r) => (r.route === 'buy' ? r.supplierName ?? '—' : '—') },
     { key: 'lead', header: tx('Lead time (days)'), className: 'text-right', render: (r) => r.leadTimeDays },
     { key: 'auto', header: tx('Automatic'), render: (r) => (r.autoRequisition ? tx('Yes') : tx('No')) },
     {
@@ -285,10 +311,12 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
   });
   const [form, setForm] = useState({
     productId: '', locationId: '', minQty: '', maxQty: '', reorderQty: '', supplierId: '', leadTimeDays: '0', autoRequisition: false,
+    route: 'buy', sourceLocationId: '',
   });
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
   const min = Number(form.minQty);
-  const invalid = !form.productId || !form.locationId || !(min > 0) || (!!form.maxQty && Number(form.maxQty) < min);
+  const invalid = !form.productId || !form.locationId || !(min > 0) || (!!form.maxQty && Number(form.maxQty) < min)
+    || (form.route === 'transfer' && (!form.sourceLocationId || form.sourceLocationId === form.locationId));
   const create = useMutation({
     mutationFn: async () =>
       (
@@ -298,9 +326,11 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
           minQty: min,
           maxQty: form.maxQty ? Number(form.maxQty) : undefined,
           reorderQty: form.reorderQty ? Number(form.reorderQty) : undefined,
-          supplierId: form.supplierId || undefined,
+          supplierId: form.route === 'buy' ? form.supplierId || undefined : undefined,
           leadTimeDays: Number(form.leadTimeDays || 0),
           autoRequisition: form.autoRequisition,
+          route: form.route,
+          sourceLocationId: form.route === 'transfer' ? form.sourceLocationId : undefined,
         })
       ).data,
     onSuccess: () => {
@@ -316,7 +346,10 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{tx('New rule')}</DialogTitle>
-          <DialogDescription>{tx('With a maximum, the order fills up to it; otherwise it is the reorder quantity or the shortfall.')}</DialogDescription>
+          <DialogDescription>
+            {tx('With a maximum, the order fills up to it; otherwise it is the reorder quantity or the shortfall.')}{' '}
+            {tx('Buy raises a draft purchase request, Manufacture a production request, Transfer a pending stock transfer.')}
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
@@ -333,6 +366,24 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
               <option value="">{tx('Select…')}</option>
               {(locations ?? []).map((l) => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}
             </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label>{tx('Route')}</Label>
+              <select className={SELECT} value={form.route} onChange={(e) => set('route', e.target.value)}>
+                {ROUTES.map((r) => <option key={r.value} value={r.value}>{tx(r.label)}</option>)}
+              </select>
+            </div>
+            {form.route === 'transfer' ? (
+              <div className="grid gap-1.5">
+                <Label>{tx('Transfer from')}</Label>
+                <select className={SELECT} value={form.sourceLocationId} onChange={(e) => set('sourceLocationId', e.target.value)}>
+                  <option value="">{tx('Select…')}</option>
+                  {(locations ?? []).filter((l) => l.id !== form.locationId)
+                    .map((l) => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}
+                </select>
+              </div>
+            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
@@ -351,7 +402,8 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label>{tx('Supplier')}</Label>
-              <select className={SELECT} value={form.supplierId} onChange={(e) => set('supplierId', e.target.value)}>
+              <select className={SELECT} value={form.supplierId} disabled={form.route !== 'buy'}
+                onChange={(e) => set('supplierId', e.target.value)}>
                 <option value="">{tx('The product\'s supplier')}</option>
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
@@ -363,7 +415,7 @@ function RuleDialog({ onClose }: { onClose: () => void }) {
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.autoRequisition} onChange={(e) => set('autoRequisition', e.target.checked)} />
-            {tx('Raise the purchase request automatically')}
+            {tx('Raise the document automatically')}
           </label>
         </div>
         <DialogFooter>

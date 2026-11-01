@@ -6,7 +6,10 @@ import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.manufacturing.application.MfgCommands.FirmPlannedOrders;
 import com.inventoryerp.manufacturing.application.MfgCommands.MrpRunInput;
 import com.inventoryerp.manufacturing.application.MfgCommands.PlanningParams;
+import com.inventoryerp.manufacturing.application.MrpCapacityService;
 import com.inventoryerp.manufacturing.application.MrpPlanningService;
+import com.inventoryerp.manufacturing.application.MrpSettingsService;
+import com.inventoryerp.manufacturing.application.MrpSettingsService.SettingsInput;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -30,9 +33,33 @@ import org.springframework.web.bind.annotation.RestController;
 public class MrpPlanningController {
 
     private final MrpPlanningService mrp;
+    private final MrpCapacityService capacity;
+    private final MrpSettingsService settings;
 
-    public MrpPlanningController(MrpPlanningService mrp) {
+    public MrpPlanningController(MrpPlanningService mrp, MrpCapacityService capacity, MrpSettingsService settings) {
         this.mrp = mrp;
+        this.capacity = capacity;
+        this.settings = settings;
+    }
+
+    /** PR-5: rough-cut capacity of a run's planned orders over scheduled work. */
+    @GetMapping("/mrp/runs/{id}/capacity")
+    @RequirePermissions(Permissions.PRODUCTION_PLAN__READ)
+    public Map<String, Object> capacity(@PathVariable String id, @RequestParam(required = false) String bucket) {
+        return capacity.runCapacity(id, bucket);
+    }
+
+    /** PR-5: nightly run settings. */
+    @GetMapping("/mrp/settings")
+    @RequirePermissions(Permissions.PRODUCTION_PLAN__READ)
+    public Map<String, Object> settings() {
+        return settings.get();
+    }
+
+    @PutMapping("/mrp/settings")
+    @RequirePermissions(Permissions.PRODUCTION_PLAN__UPDATE)
+    public Map<String, Object> updateSettings(@RequestBody SettingsInput dto) {
+        return settings.update(dto);
     }
 
     @GetMapping("/planning-params")

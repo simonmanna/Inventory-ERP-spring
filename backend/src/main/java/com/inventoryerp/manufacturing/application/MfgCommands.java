@@ -290,7 +290,7 @@ public final class MfgCommands {
 
     /** Planning parameters of one product. */
     public record PlanningParams(
-            @OneOf({"make", "buy"}) String procurement,
+            @OneOf({"make", "buy", "subcontract"}) String procurement,
             @Min(value = 0, message = MIN0) Integer leadTimeDays,
             @DecimalMin(value = "0", message = MIN0) BigDecimal safetyStock,
             @DecimalMin(value = "0", message = MIN0) BigDecimal reorderPoint,
