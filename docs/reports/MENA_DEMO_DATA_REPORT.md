@@ -205,7 +205,8 @@ The figures are from the reports for 1 Oct – 30 Nov 2026. Two corrections were
 **Fixed on 2026-11-02:** bugs 1, 2, 3 (supplier bill date and stock tie-out), 4 and 6. Each fix has a regression
 test; the affected test classes (invoicing, procurement, accounting, fixed assets, intercompany, core; 256 tests)
 pass. The one failure in that run is `ReportingIT` FX revaluation on the *reused* test database, a known artefact
-of re-running against it; it passes on a fresh container. The fixes are not committed yet.
+of re-running against it; it passes on a fresh container. The full `./gradlew build` (JaCoCo gate included) is
+green; the fixes are in commit `8887beb`.
 
 - **1:** `AccountClassification.balanceSheetBalance` is used for the live and the snapshot balance sheet.
 - **2:** `OrganizationsService` seeds currencies before the organization row; an unknown currency now gets a 400.
