@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -60,6 +59,14 @@ export function HrPayrollGeneralPanel() {
         requireSeparateApprover: form.requireSeparateApprover,
         lockPeriodOnApproval: form.lockPeriodOnApproval,
         payslipNote: form.payslipNote ?? '',
+        engine: form.engine,
+        absenceDeduction: form.absenceDeduction,
+        lateDeduction: form.lateDeduction,
+        requireOvertimeApproval: form.requireOvertimeApproval,
+        gratuityDaysPerYear: Number(form.gratuityDaysPerYear || 0),
+        varianceThresholdPct: Number(form.varianceThresholdPct || 0),
+        wpsEmployerId: form.wpsEmployerId ?? '',
+        wpsBankCode: form.wpsBankCode ?? '',
       },
       {
         onSuccess: () => notify.success(tx('Payroll settings saved')),
@@ -93,10 +100,12 @@ export function HrPayrollGeneralPanel() {
           </div>
           <div className="grid gap-1.5">
             <Label>{tx('Calculation engine')}</Label>
-            <div className="flex h-9 items-center gap-2 text-sm">
-              <Badge variant="outline">{form.engine}</Badge>
-              <span className="text-muted-foreground">{tx('The decimal engine (v2) arrives with the statutory packs.')}</span>
-            </div>
+            <select className={selectClass} value={form.engine} aria-label={tx('Calculation engine')}
+              onChange={(e) => set('engine', e.target.value as PayrollSettings['engine'])}>
+              <option value="v1">{tx('v1 — classic (as before)')}</option>
+              <option value="v2">{tx('v2 — decimal engine with proration, statutory packs and employer contributions')}</option>
+            </select>
+            <p className="text-xs text-muted-foreground">{tx('Engine v2 is needed for the country packs, pay elements and remittance schedules.')}</p>
           </div>
         </CardContent>
       </Card>
@@ -158,6 +167,37 @@ export function HrPayrollGeneralPanel() {
               <span className="block text-muted-foreground">{tx('No new run for an approved period until its run is reversed.')}</span>
             </span>
           </label>
+          {([
+            ['requireOvertimeApproval', tx('Pay approved overtime only'), tx('Overtime is paid once approved in Time review.')],
+            ['absenceDeduction', tx('Deduct absences'), tx('Days marked ABSENT without approved leave are unpaid.')],
+            ['lateDeduction', tx('Deduct lateness'), tx('Late minutes are deducted at the hourly rate.')],
+          ] as const).map(([key, title, help]) => (
+            <label key={key} className="flex items-start gap-3 text-sm">
+              <input type="checkbox" className="mt-1" checked={Boolean(form[key])} onChange={(e) => set(key, e.target.checked)} />
+              <span>
+                <span className="font-medium">{title}</span>
+                <span className="block text-muted-foreground">{help}</span>
+              </span>
+            </label>
+          ))}
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="variance">{tx('Variance alert above %')}</Label>
+              <Input id="variance" type="number" min={0} value={String(form.varianceThresholdPct ?? 10)} onChange={(e) => set('varianceThresholdPct', e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="gratuity">{tx('Contract gratuity (days per year)')}</Label>
+              <Input id="gratuity" type="number" min={0} value={String(form.gratuityDaysPerYear ?? 0)} onChange={(e) => set('gratuityDaysPerYear', e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="wpsEmployer">{tx('WPS employer id')}</Label>
+              <Input id="wpsEmployer" value={form.wpsEmployerId ?? ''} onChange={(e) => set('wpsEmployerId', e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="wpsBank">{tx('WPS bank routing code')}</Label>
+              <Input id="wpsBank" value={form.wpsBankCode ?? ''} onChange={(e) => set('wpsBankCode', e.target.value)} />
+            </div>
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="note">{tx('Payslip note')}</Label>
             <Textarea id="note" rows={2} value={form.payslipNote ?? ''} onChange={(e) => set('payslipNote', e.target.value)} />

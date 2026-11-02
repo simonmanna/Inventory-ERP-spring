@@ -788,6 +788,8 @@ export const PERMISSIONS = {
     /// dateOfBirth. Separated from `hr:read` so an HR directory user cannot
     /// see everyone's salary and bank account.
     compensation: 'hr:compensation',
+    /// Approve salary revisions (HP-1); the proposer cannot approve a revision they proposed.
+    compensationApprove: 'hr:compensation_approve',
     /// Control of the Employee<->User identity spine: link, unlink, provision
     /// an account, change roles/status, terminate, suspend, transfer.
     access: 'hr:access',
@@ -800,6 +802,10 @@ export const PERMISSIONS = {
     /// Payroll settings, pay groups and period unlock (HP-0).
     payrollSettings: 'hr:payroll_settings',
     payslip: 'hr:payslip',
+    /// Separations, final settlement and gratuity provision (HP-6).
+    separation: 'hr:separation',
+    /// Review cycles, goals and appraisals (HP-9).
+    talent: 'hr:talent',
     advance: 'hr:advance',
     loan: 'hr:loan',
     taxTable: 'hr:tax_table',

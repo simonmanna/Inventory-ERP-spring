@@ -75,7 +75,7 @@ class HrPayrollSetupIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("settings: defaults until saved, validated, audited, engine v2 refused until HP-2")
+    @DisplayName("settings: defaults until saved, validated, audited")
     void settings() {
         withoutSettings(() -> {
             JsonNode d = ok(200, "GET", "/hr/payroll/settings", null);
@@ -83,7 +83,7 @@ class HrPayrollSetupIT extends ApiTestSupport {
             assertThat(d.get("engine").asString()).isEqualTo("v1");
             assertThat(d.get("requireSeparateApprover").asBoolean()).isTrue();
 
-            assertThat(as("PUT", "/hr/payroll/settings", Map.of("engine", "v2")).status()).isEqualTo(400);
+            assertThat(as("PUT", "/hr/payroll/settings", Map.of("engine", "v9")).status()).isEqualTo(400);
             assertThat(as("PUT", "/hr/payroll/settings", Map.of("statutoryPack", "XX")).status()).isEqualTo(400);
             assertThat(as("PUT", "/hr/payroll/settings", Map.of("roundingScale", 7)).status()).isEqualTo(400);
             assertThat(as("PUT", "/hr/payroll/settings", Map.of("weekendDays", "FUNDAY")).status()).isEqualTo(400);

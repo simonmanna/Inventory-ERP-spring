@@ -230,6 +230,15 @@ const HrRecruitmentPage = lazy(() => import('@/pages/hr/HrRecruitmentPage').then
 const HrOnboardingPage = lazy(() => import('@/pages/hr/HrOnboardingPage').then((m) => ({ default: m.HrOnboardingPage })));
 const HrContractsPage = lazy(() => import('@/pages/hr/HrContractsPage').then((m) => ({ default: m.HrContractsPage })));
 const HrReviewsPage = lazy(() => import('@/pages/hr/HrReviewsPage').then((m) => ({ default: m.HrReviewsPage })));
+const HrCompensationPage = lazy(() => import('@/pages/hr/HrCompensationPage').then((m) => ({ default: m.HrCompensationPage })));
+const HrPayrollOperationsPage = lazy(() => import('@/pages/hr/HrPayrollOperationsPage').then((m) => ({ default: m.HrPayrollOperationsPage })));
+const HrLeavePoliciesPage = lazy(() => import('@/pages/hr/HrLeavePoliciesPage').then((m) => ({ default: m.HrLeavePoliciesPage })));
+const HrTimeReviewPage = lazy(() => import('@/pages/hr/HrTimeReviewPage').then((m) => ({ default: m.HrTimeReviewPage })));
+const HrSeparationsPage = lazy(() => import('@/pages/hr/HrSeparationsPage').then((m) => ({ default: m.HrSeparationsPage })));
+const HrRequestsPage = lazy(() => import('@/pages/hr/HrRequestsPage').then((m) => ({ default: m.HrRequestsPage })));
+const HrMyRequestsPage = lazy(() => import('@/pages/hr/HrMyRequestsPage').then((m) => ({ default: m.HrMyRequestsPage })));
+const HrTalentPage = lazy(() => import('@/pages/hr/HrTalentPage').then((m) => ({ default: m.HrTalentPage })));
+const HrWorkforceAnalyticsPage = lazy(() => import('@/pages/hr/HrWorkforceAnalyticsPage').then((m) => ({ default: m.HrWorkforceAnalyticsPage })));
 const StockLedgerPage = lazy(() => import('@/pages/inventory/StockLedgerPage').then((m) => ({ default: m.StockLedgerPage })));
 const StockMovementDetailPage = lazy(() => import('@/pages/inventory/StockMovementDetailPage').then((m) => ({ default: m.StockMovementDetailPage })));
 const LocationsPage = lazy(() => import('@/pages/inventory/LocationsPage'));
@@ -543,6 +552,15 @@ export function App() {
             <Route path="/hr/onboarding" element={<HrOnboardingPage />} />
             <Route path="/hr/contracts" element={<HrContractsPage />} />
             <Route path="/hr/reviews" element={<HrReviewsPage />} />
+            <Route path="/hr/compensation" element={<HrCompensationPage />} />
+            <Route path="/hr/payroll/operations" element={<HrPayrollOperationsPage />} />
+            <Route path="/hr/leave/policies" element={<HrLeavePoliciesPage />} />
+            <Route path="/hr/time/review" element={<HrTimeReviewPage />} />
+            <Route path="/hr/separations" element={<HrSeparationsPage />} />
+            <Route path="/hr/requests" element={<HrRequestsPage />} />
+            <Route path="/hr/me/requests" element={<HrMyRequestsPage />} />
+            <Route path="/hr/talent" element={<HrTalentPage />} />
+            <Route path="/hr/analytics" element={<HrWorkforceAnalyticsPage />} />
             <Route path="/hr/employees" element={<HrEmployeesPage />} />
             <Route path="/hr/employees/:id" element={<HrEmployeeDetailPage />} />
             <Route path="/hr/departments" element={<HrDepartmentsPage />} />

@@ -6,6 +6,7 @@ import com.inventoryerp.hr.application.HrAnalyticsService;
 import com.inventoryerp.hr.application.HrAttendanceService;
 import com.inventoryerp.hr.application.HrDb;
 import com.inventoryerp.hr.application.HrDocumentsService;
+import com.inventoryerp.hr.application.HrEssService;
 import com.inventoryerp.hr.application.HrLeaveService;
 import com.inventoryerp.hr.application.HrLifecycleService;
 import com.inventoryerp.hr.application.HrLifecycleService.Change;
@@ -14,6 +15,7 @@ import com.inventoryerp.hr.application.HrOrgService;
 import com.inventoryerp.hr.application.HrPayrollService;
 import com.inventoryerp.hr.application.HrReportsService;
 import com.inventoryerp.hr.application.HrSelfService;
+import com.inventoryerp.hr.application.HrTalentService;
 import com.inventoryerp.hr.application.HrTimesheetService;
 import com.inventoryerp.hr.web.HrDtos.ConfirmEmployeeRequest;
 import com.inventoryerp.hr.web.HrDtos.LinkUserRequest;
@@ -32,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -69,10 +72,13 @@ public class HrController {
     private final HrDocumentsService documents;
     private final HrAnalyticsService analytics;
 
+    private final HrEssService ess;
+    private final HrTalentService talent;
+
     public HrController(HrOrgService org, HrAttendanceService attendance, HrTimesheetService timesheets,
             HrLeaveService leave, HrPayrollService payroll, HrReportsService reports, HrAccessService access,
             HrLifecycleService lifecycle, HrSelfService self, HrDocumentsService documents,
-            HrAnalyticsService analytics) {
+            HrAnalyticsService analytics, HrEssService ess, HrTalentService talent) {
         this.org = org;
         this.attendance = attendance;
         this.timesheets = timesheets;
@@ -84,6 +90,8 @@ public class HrController {
         this.self = self;
         this.documents = documents;
         this.analytics = analytics;
+        this.ess = ess;
+        this.talent = talent;
     }
 
     // ─── self-service ───
@@ -1002,5 +1010,89 @@ public class HrController {
     @RequirePermissions(Permissions.HR__PERFORMANCE)
     public Map<String, Object> deleteReview(@PathVariable String id) {
         return reports.deleteReview(id);
+    }
+
+    // ─── self-service additions (HP-8): payslip / earnings PDFs, requests, claims, inbox, appraisals ───
+
+    @GetMapping("/me/payslips/{id}/pdf")
+    public ResponseEntity<byte[]> myPayslipPdf(@PathVariable String id) {
+        return HrPayrollOpsController.file(ess.myPayslipPdf(id));
+    }
+
+    @GetMapping("/me/earnings/{year}")
+    public Map<String, Object> myEarnings(@PathVariable int year) {
+        return ess.myAnnualSummary(year);
+    }
+
+    @GetMapping("/me/earnings/{year}/pdf")
+    public ResponseEntity<byte[]> myEarningsPdf(@PathVariable int year) {
+        return HrPayrollOpsController.file(ess.myAnnualCertificate(year));
+    }
+
+    @GetMapping("/me/profile-requests")
+    public Map<String, Object> myProfileRequests() {
+        return ess.myProfileRequests();
+    }
+
+    @PostMapping("/me/profile-requests")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> requestProfileChange(@RequestBody Map<String, Object> dto) {
+        return ess.requestProfileChange(dto);
+    }
+
+    @PostMapping("/me/profile-requests/{id}/cancel")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> cancelProfileRequest(@PathVariable String id) {
+        return ess.cancelProfileRequest(id);
+    }
+
+    @GetMapping("/me/claims")
+    public Map<String, Object> myClaims() {
+        return ess.myClaims();
+    }
+
+    @PostMapping("/me/claims")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> submitClaim(@RequestBody Map<String, Object> dto) {
+        return ess.submitClaim(dto);
+    }
+
+    @PostMapping("/me/claims/{id}/cancel")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> cancelClaim(@PathVariable String id) {
+        return ess.cancelClaim(id);
+    }
+
+    @GetMapping("/me/approvals")
+    public Map<String, Object> approvals() {
+        return ess.approvals();
+    }
+
+    @PostMapping("/me/approvals/claims/{id}/approve")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> managerApproveClaim(@PathVariable String id, @RequestBody Map<String, Object> dto) {
+        return ess.reviewClaim(id, true, dto, true);
+    }
+
+    @PostMapping("/me/approvals/claims/{id}/reject")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> managerRejectClaim(@PathVariable String id, @RequestBody Map<String, Object> dto) {
+        return ess.reviewClaim(id, false, dto, true);
+    }
+
+    @GetMapping("/me/appraisals")
+    public Map<String, Object> myAppraisals() {
+        return talent.myAppraisals((String) ess.selfId());
+    }
+
+    @GetMapping("/me/appraisals/{id}")
+    public Map<String, Object> myAppraisal(@PathVariable String id) {
+        return ess.ownAppraisal(talent, id);
+    }
+
+    @PostMapping("/me/appraisals/{id}/submit")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> submitMyAppraisal(@PathVariable String id, @RequestBody Map<String, Object> dto) {
+        return talent.submit(id, dto, (String) ess.selfId());
     }
 }

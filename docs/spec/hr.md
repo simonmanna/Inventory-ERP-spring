@@ -55,6 +55,10 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 1. HP-0 (owner-approved plan, 2026-11-02): `POST /hr/payroll/runs` and `POST /hr/payroll/runs/:id/calculate` answer
    400 `Payroll period is locked` when the period status is `LOCKED`; Nest ignored the period status. Maker-checker
    and lock-on-approval apply only after an organisation saves payroll settings.
+2. HP-4: `POST /hr/leave/balances/adjust` adds the delta as a decimal (Nest concatenated strings: "2.5" + 1 = "2.51",
+   negative deltas 500). Item 1 of "kept on purpose" below no longer applies.
+3. HP-2: runs calculated with engine v2 store whole overtime hours, include the period's last day and fill
+   `bonusAmount`-type earnings as result lines; v1 runs keep the Nest behaviour (items 2 and 6 below).
 
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
@@ -135,6 +139,30 @@ Engine hooks in `HrPayrollService`: run on a group period pays only its members 
 create / calculate refuse a `LOCKED` period; with saved settings, approve is refused (403) to the user who calculated
 the run and locks the period; reversing an approved run reopens it. Without a settings row nothing is enforced.
 Screens: `/hr/payroll/settings` tabs General and Pay groups. Tests: `HrPayrollSetupIT` (5), `HrPayCalendarTest` (3).
+
+### HP-1 … HP-10 ERP-grade HR & payroll (built 2026-11-02, ADR-S048)
+
+New tables are JDBC rows through `HrRows` (no JPA). All behaviour is opt-in: with no saved payroll settings (or
+`engine = v1`) payroll is the Nest calculation.
+
+| Phase | Controller (routes) | Service(s) | Migration |
+|---|---|---|---|
+| HP-1 compensation | `HrCompensationController` `/hr/compensation` (21) | `HrCompensationService`, `HrFormula` | V242 |
+| HP-2 engine v2 | `HrPayrollOpsController` `/hr/payroll/runs/{id}/lines`, `/variance`, `/hr/payroll/inputs` | `HrPayrollEngineV2`, `HrPayrollCalculator` | V243 |
+| HP-3 statutory packs | `/hr/payroll/statutory-rates`, `/hr/payroll/remittances`, `/remittances/pay` | `HrStatutory` (UG, AE) | V244 |
+| HP-4 leave policies | `HrLeavePolicyController` `/hr/leave/policies`, `/accruals/run`, `/year-end`, `/encashments`, `/ledger`, `/count-days`, `/calendar` (11) | `HrLeavePolicyService` | V245 |
+| HP-5 time to pay | `HrTimePayController` `/hr/time` (3) | `HrTimePayService` | V246 |
+| HP-6 separation | `HrSeparationController` `/hr/separations` (11) | `HrSeparationService` | V247 |
+| HP-7 pay out | `/hr/payroll/runs/{id}/bank-file`, `/settle`, `/payslips/email`, `/hr/payslips/{id}/pdf`, `/hr/employees/{id}/pay-info`, `/earnings/{year}[/pdf]` | `HrPayrollOpsService`, `HrPayslipPdf` | V248 |
+| HP-8 self-service | `HrEssController` `/hr/me/*`, `/hr/profile-requests`, `/hr/claims` (21) | `HrEssService` | V249 |
+| HP-9 talent | `HrTalentController` `/hr/talent` (19) | `HrTalentService` | V250 |
+| HP-10 reports | `HrWorkforceReportsController` `/hr/analytics` (8) | `HrWorkforceReportsService` | — |
+
+Jobs (`HrPayrollJobs`): base-salary sync 01:30 daily; leave accrual 02:00 on the 1st (year-end rollover on 1 January);
+gratuity provision 23:00 on the last day of the month. Permissions `hr:compensation_approve`, `hr:separation`,
+`hr:talent`. Screens: `/hr/compensation`, `/hr/payroll/operations`, `/hr/leave/policies`, `/hr/time/review`,
+`/hr/separations`, `/hr/requests`, `/hr/me/requests`, `/hr/talent`, `/hr/analytics`.
+Tests: `HrPayrollEngineTest`, `HrPayrollV2IT`, `HrPeopleOpsIT`.
 
 ## Status
 

@@ -14,6 +14,13 @@ export interface PayrollSettings {
   requireSeparateApprover: boolean;
   lockPeriodOnApproval: boolean;
   payslipNote: string | null;
+  absenceDeduction: boolean;
+  lateDeduction: boolean;
+  requireOvertimeApproval: boolean;
+  gratuityDaysPerYear: number | string;
+  wpsEmployerId: string | null;
+  wpsBankCode: string | null;
+  varianceThresholdPct: number | string;
   configured: boolean;
 }
 

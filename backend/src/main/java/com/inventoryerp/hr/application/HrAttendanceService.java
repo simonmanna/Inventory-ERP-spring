@@ -42,8 +42,11 @@ public class HrAttendanceService {
 
     private final HrDb hr;
 
-    public HrAttendanceService(HrDb hr) {
+    private final HrPayrollSetupService setup;
+
+    public HrAttendanceService(HrDb hr, HrPayrollSetupService setup) {
         this.hr = hr;
+        this.setup = setup;
     }
 
     private ZoneId timeZone() {
@@ -333,6 +336,8 @@ public class HrAttendanceService {
         }
         Instant date = HrDb.attendanceDay(dto.get("date") instanceof String s ? s : HrDb.jsDate(dto.get("date")),
                 timeZone());
+        // Additive (HP-5): no edits inside a locked payroll period once payroll settings are saved.
+        setup.assertDateOpen(String.valueOf(dto.get("employeeId")), date);
         Map<String, Object> existing = dayRow(dto.get("employeeId"), date);
         if (existing != null) {
             String id = (String) existing.get("id");

@@ -55,6 +55,27 @@ public class HrPayrollSettings {
     @Column(name = "payslipNote")
     private String payslipNote;
 
+    @Column(name = "absenceDeduction", nullable = false)
+    private Boolean absenceDeduction;
+
+    @Column(name = "lateDeduction", nullable = false)
+    private Boolean lateDeduction;
+
+    @Column(name = "requireOvertimeApproval", nullable = false)
+    private Boolean requireOvertimeApproval;
+
+    @Column(name = "gratuityDaysPerYear", nullable = false, precision = 6, scale = 2)
+    private BigDecimal gratuityDaysPerYear;
+
+    @Column(name = "wpsEmployerId")
+    private String wpsEmployerId;
+
+    @Column(name = "wpsBankCode")
+    private String wpsBankCode;
+
+    @Column(name = "varianceThresholdPct", nullable = false, precision = 6, scale = 2)
+    private BigDecimal varianceThresholdPct;
+
     @Column(name = "createdBy")
     private String createdBy;
 
