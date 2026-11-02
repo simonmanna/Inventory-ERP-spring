@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.openpdf)
     implementation(libs.zxing)
     implementation(libs.commons.csv)
+    implementation(libs.poi.ooxml)
     // Only the Apache-client PushService is used; the AsyncHttpClient-based PushAsyncService (and its CVEs) is not.
     implementation(libs.web.push) { exclude(group = "org.asynchttpclient") }
     constraints {
@@ -175,7 +176,7 @@ val accountingRegression by tasks.registering(Test::class) {
             "*AbsorptionSettlementCausesIT", "*QuarryRehabMovementsIT",
             "*ImportLandedScenarioIT", "*DistributionBranchScenarioIT",
             "*ProjectCostScenarioIT", "*ContractRevenueScenarioIT", "*ProfitabilityReconciliationIT",
-            "*CostCloseIT", "*SimulationIsolationIT",
+            "*CostCloseIT", "*SimulationIsolationIT", "*ReportEngineIT",
             "com.inventoryerp.costing.*").forEach { includeTestsMatching(it) }
     }
 }

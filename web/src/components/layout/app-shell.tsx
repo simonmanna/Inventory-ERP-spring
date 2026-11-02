@@ -469,6 +469,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fiscal-years', label: tx('Fiscal Years'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/year-end-close', label: tx('Year-End Close'), icon: Lock, permission: PERMISSIONS.fiscalPeriod.update, group: 'Entries' },
+      { to: '/reports/library', label: tx('Report Library'), icon: BookOpen, permission: PERMISSIONS.reportLibrary.read, group: 'Statements' },
       { to: '/profit-and-loss', label: tx('Profit & Loss'), icon: TrendingUp, permission: PERMISSIONS.report.accounting, reportId: 'accounting.profit-and-loss', group: 'Statements' },
       { to: '/balance-sheet', label: tx('Balance Sheet'), icon: Landmark, permission: PERMISSIONS.report.accounting, reportId: 'accounting.balance-sheet', group: 'Statements' },
       { to: '/cash-flow', label: tx('Cash Flow Statement'), icon: TrendingDown, permission: PERMISSIONS.report.accounting, reportId: 'accounting.cash-flow-statement', group: 'Statements' },

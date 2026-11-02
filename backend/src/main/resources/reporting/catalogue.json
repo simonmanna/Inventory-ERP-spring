@@ -1,0 +1,922 @@
+[
+ {
+  "id": "legacy.trial-balance",
+  "category": "FINANCIAL_STATEMENTS",
+  "title": "Trial Balance",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/trial-balance",
+  "apiRoute": "/reports/accounting/trial-balance",
+  "description": "Debit and credit balances of every account for a period."
+ },
+ {
+  "id": "legacy.profit-and-loss",
+  "category": "FINANCIAL_STATEMENTS",
+  "title": "Profit & Loss (classic)",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/profit-and-loss",
+  "apiRoute": "/reports/accounting/profit-and-loss",
+  "description": "Section totals: revenue, cost of sales, expenses, net profit."
+ },
+ {
+  "id": "legacy.balance-sheet",
+  "category": "FINANCIAL_STATEMENTS",
+  "title": "Balance Sheet (classic)",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/balance-sheet",
+  "apiRoute": "/reports/accounting/balance-sheet",
+  "description": "Assets, liabilities and equity by report section."
+ },
+ {
+  "id": "legacy.cash-flow",
+  "category": "FINANCIAL_STATEMENTS",
+  "title": "Cash Flow Statement",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/cash-flow",
+  "apiRoute": "/reports/accounting/cash-flow",
+  "description": "Operating, investing and financing cash flows."
+ },
+ {
+  "id": "legacy.year-end",
+  "category": "FINANCIAL_STATEMENTS",
+  "title": "Year-End Closing Balances",
+  "level": "FINANCIAL",
+  "permission": "fiscal_period:read",
+  "webRoute": "/year-end-close",
+  "apiRoute": "/fiscal-years/{id}/closing-balances",
+  "description": "Closing balances and retained earnings transfer of a fiscal year."
+ },
+ {
+  "id": "legacy.general-ledger",
+  "category": "GENERAL_LEDGER",
+  "title": "General Ledger",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/general-ledger",
+  "apiRoute": "/reports/accounting/general-ledger",
+  "description": "All posted journal lines, paged."
+ },
+ {
+  "id": "legacy.account-ledger",
+  "category": "GENERAL_LEDGER",
+  "title": "Account Ledger",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/accounts",
+  "apiRoute": "/reports/accounting/account-ledger/{accountId}",
+  "description": "Activity and running balance of one account."
+ },
+ {
+  "id": "legacy.detailed",
+  "category": "GENERAL_LEDGER",
+  "title": "Detailed Accounting Report",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/accounting-detailed-report",
+  "apiRoute": "/reports/accounting/detailed",
+  "description": "Account activity filtered by branch, cost center, journal and partner."
+ },
+ {
+  "id": "legacy.analytic-trial-balance",
+  "category": "GENERAL_LEDGER",
+  "title": "Analytic Trial Balance",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/analytic-dimensions",
+  "apiRoute": "/analytic-dimensions/reports/trial-balance",
+  "description": "Trial balance by analytic dimension value."
+ },
+ {
+  "id": "legacy.opening-balances",
+  "category": "GENERAL_LEDGER",
+  "title": "Opening Balances",
+  "level": "FINANCIAL",
+  "permission": "opening_balance:read",
+  "webRoute": "/opening-balances",
+  "apiRoute": "/opening-balances",
+  "description": "Opening balances loaded per account and partner."
+ },
+ {
+  "id": "legacy.ar-aging",
+  "category": "ACCOUNTS_RECEIVABLE",
+  "title": "AR Aging",
+  "level": "FINANCIAL",
+  "permission": "report:ar",
+  "webRoute": "/ar-aging",
+  "apiRoute": "/reports/ar/aging",
+  "description": "Outstanding customer invoices by aging bucket."
+ },
+ {
+  "id": "legacy.ar-outstanding",
+  "category": "ACCOUNTS_RECEIVABLE",
+  "title": "Customer Outstanding Invoices",
+  "level": "OPERATIONAL",
+  "permission": "report:ar",
+  "webRoute": "/ar-aging",
+  "apiRoute": "/reports/ar/outstanding",
+  "description": "Unpaid and partially paid invoices."
+ },
+ {
+  "id": "legacy.ar-customer-balances",
+  "category": "ACCOUNTS_RECEIVABLE",
+  "title": "Customer Balances",
+  "level": "FINANCIAL",
+  "permission": "report:ar",
+  "webRoute": "/ar-aging",
+  "apiRoute": "/reports/ar/customer-balances",
+  "description": "Receivable balance per customer."
+ },
+ {
+  "id": "legacy.customer-statement",
+  "category": "ACCOUNTS_RECEIVABLE",
+  "title": "Customer Statement",
+  "level": "FINANCIAL",
+  "permission": "report:ar",
+  "webRoute": "/statements",
+  "apiRoute": "/reports/ar/customers/{partnerId}/statement",
+  "description": "Opening balance, invoices, receipts and closing balance (PDF)."
+ },
+ {
+  "id": "legacy.credit-reconciliation",
+  "category": "ACCOUNTS_RECEIVABLE",
+  "title": "Credit Limit Reconciliation",
+  "level": "OPERATIONAL",
+  "permission": "credit:read",
+  "webRoute": "/credit-control",
+  "apiRoute": "/credit/reconciliation",
+  "description": "Credit exposure against limits."
+ },
+ {
+  "id": "legacy.revenue-by-customer",
+  "category": "ANALYSIS",
+  "title": "Revenue by Customer",
+  "level": "MANAGEMENT",
+  "permission": "report:ar",
+  "webRoute": "/reports/sales-analysis",
+  "apiRoute": "/reports/ar/revenue-by-customer",
+  "description": "Invoiced revenue per customer."
+ },
+ {
+  "id": "legacy.revenue-by-period",
+  "category": "ANALYSIS",
+  "title": "Revenue by Period",
+  "level": "MANAGEMENT",
+  "permission": "report:ar",
+  "webRoute": "/reports/sales-analysis",
+  "apiRoute": "/reports/ar/revenue-by-period",
+  "description": "Invoiced revenue trend by period."
+ },
+ {
+  "id": "legacy.sales-analysis",
+  "category": "ANALYSIS",
+  "title": "Sales Analysis",
+  "level": "MANAGEMENT",
+  "permission": "report:ar",
+  "webRoute": "/reports/sales-analysis",
+  "apiRoute": "/reports/ar/sales-analysis",
+  "description": "Sales by product, customer and branch."
+ },
+ {
+  "id": "legacy.sales-profitability",
+  "category": "ANALYSIS",
+  "title": "Sales Profitability",
+  "level": "MANAGEMENT",
+  "permission": "sales:report:read",
+  "webRoute": "/sales/analytics",
+  "apiRoute": "/sales/analytics/profitability",
+  "description": "Margin by product, customer and salesperson."
+ },
+ {
+  "id": "legacy.ap-aging",
+  "category": "ACCOUNTS_PAYABLE",
+  "title": "AP Aging",
+  "level": "FINANCIAL",
+  "permission": "report:ar",
+  "webRoute": "/ap-aging",
+  "apiRoute": "/reports/ap/aging",
+  "description": "Outstanding supplier bills by aging bucket."
+ },
+ {
+  "id": "legacy.supplier-statement",
+  "category": "ACCOUNTS_PAYABLE",
+  "title": "Supplier Statement",
+  "level": "FINANCIAL",
+  "permission": "report:ar",
+  "webRoute": "/statements",
+  "apiRoute": "/reports/ap/suppliers/{partnerId}/statement",
+  "description": "Opening, bills, payments and closing balance (PDF)."
+ },
+ {
+  "id": "legacy.supplier-ledger",
+  "category": "ACCOUNTS_PAYABLE",
+  "title": "Supplier Ledger",
+  "level": "OPERATIONAL",
+  "permission": "expense:read",
+  "webRoute": "/suppliers",
+  "apiRoute": "/vendor-bills/suppliers/{partnerId}/ledger",
+  "description": "Complete supplier transaction history."
+ },
+ {
+  "id": "legacy.grni",
+  "category": "ACCOUNTS_PAYABLE",
+  "title": "Goods Received Not Invoiced",
+  "level": "FINANCIAL",
+  "permission": "goods_receipt:read",
+  "webRoute": "/procurement/reports/grni",
+  "apiRoute": "/procurement/reports/grni",
+  "description": "Received goods awaiting supplier invoices, against the GRNI account."
+ },
+ {
+  "id": "legacy.supplier-performance",
+  "category": "ACCOUNTS_PAYABLE",
+  "title": "Supplier Performance",
+  "level": "MANAGEMENT",
+  "permission": "purchase_order:read",
+  "webRoute": "/procurement/analytics",
+  "apiRoute": "/procurement/reports/supplier-performance",
+  "description": "On-time, quality and price performance per supplier."
+ },
+ {
+  "id": "legacy.procurement-spend",
+  "category": "ANALYSIS",
+  "title": "Procurement Spend Analysis",
+  "level": "MANAGEMENT",
+  "permission": "procurement_analytics:read",
+  "webRoute": "/procurement/analytics",
+  "apiRoute": "/procurement/analytics/spend",
+  "description": "Spend by supplier, category and period."
+ },
+ {
+  "id": "legacy.money-reports",
+  "category": "CASH_AND_BANK",
+  "title": "Money Reports",
+  "level": "OPERATIONAL",
+  "permission": "account:read",
+  "webRoute": "/cash-flow/report",
+  "apiRoute": "/accounts/cash-flow/report",
+  "description": "Cash, bank and mobile money movements by account."
+ },
+ {
+  "id": "legacy.cash-activity",
+  "category": "CASH_AND_BANK",
+  "title": "Cash and Bank Activity",
+  "level": "OPERATIONAL",
+  "permission": "account:read",
+  "webRoute": "/cash-flow/report",
+  "apiRoute": "/accounts/cash-flow/activity",
+  "description": "Receipts and payments per cash, bank and MoMo account."
+ },
+ {
+  "id": "legacy.bank-reconciliation",
+  "category": "CASH_AND_BANK",
+  "title": "Bank Reconciliation",
+  "level": "FINANCIAL",
+  "permission": "bank_account:read",
+  "webRoute": "/bank-reconciliation",
+  "apiRoute": "/bank-reconciliation/summary",
+  "description": "Bank statement against GL bank balance; unmatched lines."
+ },
+ {
+  "id": "legacy.cash-sessions-daily",
+  "category": "CASH_AND_BANK",
+  "title": "Cashier Shift Report",
+  "level": "OPERATIONAL",
+  "permission": "cash_session:read",
+  "webRoute": "/accounts/cash-accounts/settlements",
+  "apiRoute": "/cash-sessions/report/daily",
+  "description": "Opening, closing, expected and counted cash per session."
+ },
+ {
+  "id": "legacy.pos-gl-reconciliation",
+  "category": "CASH_AND_BANK",
+  "title": "POS to GL Reconciliation",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/pos-gl-reconciliation",
+  "apiRoute": "/reports/accounting/pos-gl-reconciliation",
+  "description": "POS takings against posted ledger amounts."
+ },
+ {
+  "id": "legacy.tax-summary",
+  "category": "TAX",
+  "title": "Tax Summary",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/tax-report",
+  "apiRoute": "/reports/tax/summary",
+  "description": "Output tax, input tax and net payable by tax rate."
+ },
+ {
+  "id": "legacy.tax-pack",
+  "category": "TAX",
+  "title": "Tax Pack",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/tax-report",
+  "apiRoute": "/reports/tax/pack",
+  "description": "Invoice-level tax detail for filing."
+ },
+ {
+  "id": "legacy.payroll-register",
+  "category": "TAX",
+  "title": "Payroll Register (PAYE)",
+  "level": "OPERATIONAL",
+  "permission": "hr:report",
+  "webRoute": "/hr/reports",
+  "apiRoute": "/hr/reports/payroll-register/{runId}",
+  "description": "Gross pay, PAYE and statutory deductions per payroll run."
+ },
+ {
+  "id": "legacy.quarry-royalties",
+  "category": "TAX",
+  "title": "Quarry Royalties",
+  "level": "FINANCIAL",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/reports/royalties",
+  "description": "Royalties due by site and material."
+ },
+ {
+  "id": "legacy.fa-register",
+  "category": "FIXED_ASSETS",
+  "title": "Fixed Asset Register",
+  "level": "FINANCIAL",
+  "permission": "fixed_asset:read",
+  "webRoute": "/fixed-assets/register",
+  "apiRoute": "/fixed-assets-dashboard/summary",
+  "description": "All registered assets with cost and book value."
+ },
+ {
+  "id": "legacy.fa-reports",
+  "category": "FIXED_ASSETS",
+  "title": "Fixed Asset Reports",
+  "level": "FINANCIAL",
+  "permission": "asset_report:read",
+  "webRoute": "/fixed-assets",
+  "apiRoute": "/fixed-assets-dashboard/reports/{type}",
+  "description": "Depreciation, acquisitions, disposals and book value by category."
+ },
+ {
+  "id": "legacy.inventory-valuation",
+  "category": "INVENTORY",
+  "title": "Inventory Valuation",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/inventory-valuation",
+  "apiRoute": "/reports/inventory/valuation",
+  "description": "Stock quantity and value per product and location."
+ },
+ {
+  "id": "legacy.inventory-gl-tieout",
+  "category": "INVENTORY",
+  "title": "Inventory GL Reconciliation",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/inventory-gl-tieout",
+  "apiRoute": "/reports/inventory/gl-tieout",
+  "description": "Inventory subledger against the inventory control accounts."
+ },
+ {
+  "id": "legacy.stock-movement",
+  "category": "INVENTORY",
+  "title": "Stock Movement Report",
+  "level": "OPERATIONAL",
+  "permission": "inventory:read",
+  "webRoute": "/inventory/reports",
+  "apiRoute": "/inventory/reports/movements",
+  "description": "Receipts, issues, transfers and adjustments."
+ },
+ {
+  "id": "legacy.movement-analysis",
+  "category": "INVENTORY",
+  "title": "Stock Movement Analysis",
+  "level": "MANAGEMENT",
+  "permission": "inventory:read",
+  "webRoute": "/inventory/reports",
+  "apiRoute": "/inventory/reports/movement-analysis",
+  "description": "Fast, slow and non-moving stock."
+ },
+ {
+  "id": "legacy.stock-health",
+  "category": "INVENTORY",
+  "title": "Stock Health",
+  "level": "MANAGEMENT",
+  "permission": "inventory:read",
+  "webRoute": "/inventory/reports",
+  "apiRoute": "/inventory/reports/stock-health",
+  "description": "Ageing, cover and obsolescence indicators."
+ },
+ {
+  "id": "legacy.inventory-ledger",
+  "category": "INVENTORY",
+  "title": "Inventory Ledger",
+  "level": "OPERATIONAL",
+  "permission": "inventory:read",
+  "webRoute": "/inventory/ledger",
+  "apiRoute": "/inventory/ledger",
+  "description": "Every valued stock movement with cost layers."
+ },
+ {
+  "id": "legacy.inventory-revaluations",
+  "category": "INVENTORY",
+  "title": "Inventory Revaluations",
+  "level": "FINANCIAL",
+  "permission": "inventory_valuation:read",
+  "webRoute": "/inventory/cost-policies",
+  "apiRoute": "/inventory/revaluations",
+  "description": "Revaluation documents and their postings."
+ },
+ {
+  "id": "legacy.price-differences",
+  "category": "INVENTORY",
+  "title": "Purchase Price Differences",
+  "level": "FINANCIAL",
+  "permission": "inventory_valuation:read",
+  "webRoute": "/inventory/cost-policies",
+  "apiRoute": "/inventory/price-differences",
+  "description": "Invoice vs receipt price differences and their absorption."
+ },
+ {
+  "id": "legacy.landed-by-shipment",
+  "category": "INVENTORY",
+  "title": "Landed Cost by Shipment",
+  "level": "FINANCIAL",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-reports/by-shipment",
+  "description": "Customs, freight and other landed costs per shipment."
+ },
+ {
+  "id": "legacy.landed-by-item",
+  "category": "INVENTORY",
+  "title": "Landed Cost by Item",
+  "level": "FINANCIAL",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-reports/by-item",
+  "description": "Landed cost allocated per item."
+ },
+ {
+  "id": "legacy.landed-by-supplier",
+  "category": "INVENTORY",
+  "title": "Landed Cost by Supplier",
+  "level": "FINANCIAL",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-reports/by-supplier",
+  "description": "Landed cost per supplier and cost component."
+ },
+ {
+  "id": "legacy.landed-clearing",
+  "category": "INVENTORY",
+  "title": "Landed Cost Clearing",
+  "level": "FINANCIAL",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-reports/clearing",
+  "description": "Open balances of landed cost clearing accounts."
+ },
+ {
+  "id": "legacy.landed-accrual-recon",
+  "category": "INVENTORY",
+  "title": "Landed Cost Accrual Reconciliation",
+  "level": "FINANCIAL",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-accruals/reconciliation",
+  "description": "Estimated vs actual landed cost (variance)."
+ },
+ {
+  "id": "legacy.standard-cost-variances",
+  "category": "COST_ACCOUNTING",
+  "title": "Standard Cost Variances",
+  "level": "FINANCIAL",
+  "permission": "standard_cost:read",
+  "webRoute": "/manufacturing/standard-costs",
+  "apiRoute": "/inventory/standard-costs/variances",
+  "description": "Purchase and production variances against standard cost."
+ },
+ {
+  "id": "legacy.cost-center-pl",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost Center P&L",
+  "level": "FINANCIAL",
+  "permission": "cost_center:read",
+  "webRoute": "/cost-center-accounting",
+  "apiRoute": "/cost-centers/reports/profit-and-loss",
+  "description": "Income and expenses by cost center."
+ },
+ {
+  "id": "legacy.cost-center-matrix",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost Center Matrix",
+  "level": "MANAGEMENT",
+  "permission": "cost_center:read",
+  "webRoute": "/cost-center-accounting",
+  "apiRoute": "/cost-centers/reports/matrix",
+  "description": "Accounts by cost center matrix."
+ },
+ {
+  "id": "legacy.variance-analysis",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost Variance Analysis",
+  "level": "MANAGEMENT",
+  "permission": "advanced_costing:read",
+  "webRoute": "/costing/advanced",
+  "apiRoute": "/costing/variance-analysis",
+  "description": "Price, usage, efficiency and volume variances."
+ },
+ {
+  "id": "legacy.cost-flow-bridge",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost Flow Bridge",
+  "level": "FINANCIAL",
+  "permission": "advanced_costing:read",
+  "webRoute": "/costing/operations",
+  "apiRoute": "/costing/cost-flow-bridge",
+  "description": "Incurred to absorbed to settled cost, with under/over absorption."
+ },
+ {
+  "id": "legacy.cost-close",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost Close Cockpit",
+  "level": "FINANCIAL",
+  "permission": "costing_close:read",
+  "webRoute": "/costing/operations",
+  "apiRoute": "/costing/close/dashboard",
+  "description": "Close gates, reconciliations and locks per costing period."
+ },
+ {
+  "id": "legacy.payroll-cost",
+  "category": "COST_ACCOUNTING",
+  "title": "Payroll Cost Report",
+  "level": "MANAGEMENT",
+  "permission": "hr:payroll",
+  "webRoute": "/hr/reports",
+  "apiRoute": "/hr/payroll/cost-report",
+  "description": "Payroll cost by department and cost center."
+ },
+ {
+  "id": "legacy.mfg-cost-summary",
+  "category": "COST_ACCOUNTING",
+  "title": "Production Cost Summary",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/costing",
+  "apiRoute": "/manufacturing/costing/reports/summary",
+  "description": "Material, labour and overhead per production order."
+ },
+ {
+  "id": "legacy.mfg-margin",
+  "category": "COST_ACCOUNTING",
+  "title": "Production Margin",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/costing",
+  "apiRoute": "/manufacturing/costing/reports/margin",
+  "description": "Margin of manufactured products."
+ },
+ {
+  "id": "legacy.mfg-variances",
+  "category": "COST_ACCOUNTING",
+  "title": "Manufacturing Variances",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/reports",
+  "apiRoute": "/manufacturing/reports/variances",
+  "description": "Actual vs standard production cost."
+ },
+ {
+  "id": "legacy.stage-wip",
+  "category": "COST_ACCOUNTING",
+  "title": "Work in Progress by Stage",
+  "level": "FINANCIAL",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/reports",
+  "apiRoute": "/manufacturing/reports/stage-wip",
+  "description": "Value of unfinished production by stage."
+ },
+ {
+  "id": "legacy.process-cost",
+  "category": "COST_ACCOUNTING",
+  "title": "Cost of Production (Process)",
+  "level": "FINANCIAL",
+  "permission": "process_costing:read",
+  "webRoute": "/manufacturing/process-costing",
+  "apiRoute": "/manufacturing/process-costing/reports/cost-of-production",
+  "description": "Equivalent units and cost per process period."
+ },
+ {
+  "id": "legacy.budget-vs-actual",
+  "category": "BUDGETING",
+  "title": "Budget vs Actual",
+  "level": "MANAGEMENT",
+  "permission": "budget:read",
+  "webRoute": "/budgets",
+  "apiRoute": "/budgets/{id}/vs-actual",
+  "description": "Actual against budget with variances."
+ },
+ {
+  "id": "legacy.project-report",
+  "category": "BUDGETING",
+  "title": "Project Budget and Cost",
+  "level": "MANAGEMENT",
+  "permission": "project:read",
+  "webRoute": null,
+  "apiRoute": "/projects/{id}/report",
+  "description": "Project budget, committed and actual cost, forecast."
+ },
+ {
+  "id": "legacy.profitability",
+  "category": "ANALYSIS",
+  "title": "Profitability Layers",
+  "level": "MANAGEMENT",
+  "permission": "profitability:read",
+  "webRoute": "/costing/advanced",
+  "apiRoute": "/costing/profitability/runs",
+  "description": "Actual, standard and estimated profitability reconciled to the GL."
+ },
+ {
+  "id": "legacy.landed-product-profitability",
+  "category": "ANALYSIS",
+  "title": "Landed Product Profitability",
+  "level": "MANAGEMENT",
+  "permission": "landed_cost:read",
+  "webRoute": "/procurement/landed-cost-reports",
+  "apiRoute": "/procurement/landed-cost-reports/product-profitability",
+  "description": "Margin per product after landed cost."
+ },
+ {
+  "id": "legacy.contract-position",
+  "category": "ANALYSIS",
+  "title": "Contract Position",
+  "level": "MANAGEMENT",
+  "permission": "contract:read",
+  "webRoute": null,
+  "apiRoute": "/projects/{id}/contract-position",
+  "description": "Contract revenue, claims, retentions and margin."
+ },
+ {
+  "id": "legacy.finance-analytics",
+  "category": "ANALYSIS",
+  "title": "Finance Analytics",
+  "level": "MANAGEMENT",
+  "permission": "analytics:finance",
+  "webRoute": "/analytics",
+  "apiRoute": "/analytics/finance/documents",
+  "description": "Finance dashboards and KPI tiles."
+ },
+ {
+  "id": "legacy.branch-comparison",
+  "category": "CONSOLIDATION",
+  "title": "Branch Performance",
+  "level": "MANAGEMENT",
+  "permission": "report:accounting",
+  "webRoute": "/reports/branches",
+  "apiRoute": "/reports/branches/comparison",
+  "description": "Revenue, expenses and profit per branch."
+ },
+ {
+  "id": "legacy.consolidated",
+  "category": "CONSOLIDATION",
+  "title": "Branch Consolidation",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/consolidated-report",
+  "apiRoute": "/reports/accounting/consolidated",
+  "description": "Combined branch statements."
+ },
+ {
+  "id": "legacy.ic-reconciliation",
+  "category": "CONSOLIDATION",
+  "title": "Intercompany Reconciliation",
+  "level": "FINANCIAL",
+  "permission": "intercompany:read",
+  "webRoute": "/intercompany",
+  "apiRoute": "/intercompany/reconciliation",
+  "description": "Due-to / due-from between companies."
+ },
+ {
+  "id": "legacy.ic-consolidation",
+  "category": "CONSOLIDATION",
+  "title": "Group Consolidation",
+  "level": "FINANCIAL",
+  "permission": "intercompany:read",
+  "webRoute": "/intercompany",
+  "apiRoute": "/intercompany/consolidation",
+  "description": "Consolidated statements with eliminations."
+ },
+ {
+  "id": "legacy.branch-transfer-clearing",
+  "category": "CONSOLIDATION",
+  "title": "Branch Transfer Clearing",
+  "level": "FINANCIAL",
+  "permission": "inventory_valuation:read",
+  "webRoute": "/costing/operations",
+  "apiRoute": "/costing/branch-transfers/clearing",
+  "description": "Goods in transit between branches of one entity."
+ },
+ {
+  "id": "legacy.audit-log",
+  "category": "AUDIT",
+  "title": "Audit Trail",
+  "level": "OPERATIONAL",
+  "permission": "audit_log:read",
+  "webRoute": "/audit-log",
+  "apiRoute": "/audit-logs",
+  "description": "Who changed what and when."
+ },
+ {
+  "id": "legacy.tieout",
+  "category": "AUDIT",
+  "title": "Subledger Tie-Out",
+  "level": "FINANCIAL",
+  "permission": "report:accounting",
+  "webRoute": "/tieout",
+  "apiRoute": "/reports/accounting/tieout",
+  "description": "AR, AP and inventory subledgers against control accounts."
+ },
+ {
+  "id": "legacy.exception-report",
+  "category": "AUDIT",
+  "title": "Exception Report",
+  "level": "OPERATIONAL",
+  "permission": "alerts:read",
+  "webRoute": "/alerts",
+  "apiRoute": "/alerts/exception-report",
+  "description": "Raised alerts and exceptions by type."
+ },
+ {
+  "id": "legacy.quarry-rehab",
+  "category": "ADVANCED",
+  "title": "Quarry Rehabilitation Provision",
+  "level": "FINANCIAL",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/rehab-roll-forward",
+  "description": "IAS 37 rehabilitation provision roll-forward."
+ },
+ {
+  "id": "legacy.quarry-cost-per-tonne",
+  "category": "QUARRY",
+  "title": "Quarry Cost per Tonne",
+  "level": "MANAGEMENT",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/reports/cost-per-tonne",
+  "description": "Extraction cost per tonne by site and material."
+ },
+ {
+  "id": "legacy.quarry-cost-kpis",
+  "category": "QUARRY",
+  "title": "Quarry Cost KPIs",
+  "level": "MANAGEMENT",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/cost-kpis",
+  "description": "Drilling, blasting, loading and hauling cost indicators."
+ },
+ {
+  "id": "legacy.quarry-extraction",
+  "category": "QUARRY",
+  "title": "Extraction vs Target",
+  "level": "MANAGEMENT",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/reports/extraction-vs-target",
+  "description": "Extracted tonnes against plan."
+ },
+ {
+  "id": "legacy.quarry-losses",
+  "category": "QUARRY",
+  "title": "Quarry Losses",
+  "level": "MANAGEMENT",
+  "permission": "quarry:report",
+  "webRoute": "/quarry/reports",
+  "apiRoute": "/quarry/reports/losses",
+  "description": "Material losses and their value."
+ },
+ {
+  "id": "legacy.crushing-cost",
+  "category": "QUARRY",
+  "title": "Crushing Cost per Tonne",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/crushing/reports",
+  "apiRoute": "/manufacturing/crushing/reports/cost-per-tonne",
+  "description": "Crushing and processing cost per tonne."
+ },
+ {
+  "id": "legacy.crushing-yield",
+  "category": "QUARRY",
+  "title": "Crushing Yield",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/crushing/reports",
+  "apiRoute": "/manufacturing/crushing/reports/yield",
+  "description": "Input vs output by product grade."
+ },
+ {
+  "id": "legacy.plant-hours",
+  "category": "QUARRY",
+  "title": "Plant Hours and Utilisation",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/crushing/reports",
+  "apiRoute": "/manufacturing/crushing/reports/plant-hours",
+  "description": "Running, idle and breakdown hours of plant."
+ },
+ {
+  "id": "legacy.block-cost",
+  "category": "QUARRY",
+  "title": "Block Cost per Unit",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/precast/reports",
+  "apiRoute": "/manufacturing/precast/reports/cost-per-block",
+  "description": "Production cost per block type."
+ },
+ {
+  "id": "legacy.block-breakage",
+  "category": "QUARRY",
+  "title": "Block Breakage",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/precast/reports",
+  "apiRoute": "/manufacturing/precast/reports/breakage",
+  "description": "Breakage and waste in block production."
+ },
+ {
+  "id": "legacy.production-vs-plan",
+  "category": "QUARRY",
+  "title": "Production vs Plan",
+  "level": "MANAGEMENT",
+  "permission": "production:report",
+  "webRoute": "/manufacturing/reports",
+  "apiRoute": "/manufacturing/planning/reports/production-vs-plan",
+  "description": "Produced quantity against plan."
+ },
+ {
+  "id": "legacy.fleet-vehicle-costs",
+  "category": "QUARRY",
+  "title": "Fleet Operating Cost",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/vehicle-costs",
+  "description": "Fuel, maintenance, labour and ownership cost per vehicle."
+ },
+ {
+  "id": "legacy.fleet-fuel",
+  "category": "QUARRY",
+  "title": "Fuel Consumption Cost",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/fuel",
+  "description": "Fuel usage and cost by vehicle and machine."
+ },
+ {
+  "id": "legacy.fleet-transport-cost",
+  "category": "QUARRY",
+  "title": "Haulage Cost Analysis",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/transport-cost",
+  "description": "Transport cost per tonne and per delivery."
+ },
+ {
+  "id": "legacy.fleet-delivery-profitability",
+  "category": "QUARRY",
+  "title": "Delivery Profitability",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/delivery-profitability",
+  "description": "Revenue less material, fuel and delivery cost."
+ },
+ {
+  "id": "legacy.fleet-utilisation",
+  "category": "QUARRY",
+  "title": "Equipment Utilisation",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/utilisation",
+  "description": "Utilisation against ownership cost."
+ },
+ {
+  "id": "legacy.fleet-tonnes",
+  "category": "QUARRY",
+  "title": "Tonnes Delivered",
+  "level": "MANAGEMENT",
+  "permission": "fleet:report",
+  "webRoute": "/fleet/reports",
+  "apiRoute": "/fleet/reports/tonnes",
+  "description": "Tonnes delivered by vehicle, customer and site."
+ }
+]

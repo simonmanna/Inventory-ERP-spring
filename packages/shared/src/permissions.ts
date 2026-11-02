@@ -1162,6 +1162,14 @@ export const PERMISSIONS = {
     /// Create cost scenarios and run simulations (never posts).
     manage: 'cost_simulation:manage',
   },
+  reportLibrary: {
+    /// Financial report library and engine (FR-0): catalogue, run, drill, export, own saved views.
+    read: 'report_library:read',
+    /// Statement layouts, views shared with everyone, and other users' report runs.
+    manage: 'report_library:manage',
+    /// Scheduled report delivery (e-mail and in-app).
+    schedule: 'report_library:schedule',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

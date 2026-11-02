@@ -924,5 +924,10 @@
   "costSimulation": {
     "read": "cost_simulation:read",
     "manage": "cost_simulation:manage"
+  },
+  "reportLibrary": {
+    "read": "report_library:read",
+    "manage": "report_library:manage",
+    "schedule": "report_library:schedule"
   }
 }
