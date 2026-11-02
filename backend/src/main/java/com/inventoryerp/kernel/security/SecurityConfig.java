@@ -71,7 +71,7 @@ public class SecurityConfig {
                 .securityContext(s -> s.disable())
                 .anonymous(a -> a.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .headers(h -> h.frameOptions(f -> f.deny())
+                .headers(h -> h.frameOptions(f -> f.sameOrigin())
                         .referrerPolicy(r -> r.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
                 .authorizeHttpRequests(a -> a.anyRequest().permitAll())
                 .addFilterBefore(authenticationFilter, AuthorizationFilter.class)

@@ -20,6 +20,7 @@ import { notify } from '@/lib/notify';
 import { formatMoney, date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 
 interface POLine {
   id: string; productId: string | null; description: string;
@@ -253,6 +254,8 @@ export function PurchaseOrderDetailPage() {
               <CardContent><p className="text-sm text-muted-foreground whitespace-pre-wrap">{data.notes}</p></CardContent>
             </Card>
           )}
+
+          <AttachmentPanel resType="purchase_order" resId={data.id} />
         </div>
 
         {/* Right: details */}

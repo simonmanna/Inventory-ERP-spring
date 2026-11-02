@@ -26,12 +26,28 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * File storage + signed downloads (port of {@code files.service.ts}). Keys are
  * {@code <orgId>/<yyyy-mm-dd>/<32 hex><ext>}; download URLs are HMAC-SHA256(JWT_ACCESS_SECRET) over
- * {@code id:expires}, valid one hour.
+ * {@code id:expires:organizationId}, valid one hour.
+ *
+ * <p>DM-0 hardening (ADR-S044, deviation from Nest): a signed URL is only issued for a file of the caller's
+ * organization and the token is bound to the file's organization; executable and active-content uploads are refused.
  */
 @Service
 public class FilesService {
 
     private static final long SIGN_TTL_MS = 60 * 60 * 1000;
+
+    /** Extensions never accepted (executables, scripts, active web content). */
+    static final java.util.Set<String> BLOCKED_EXTENSIONS = java.util.Set.of(".exe", ".dll", ".bat", ".cmd", ".com",
+            ".msi", ".scr", ".ps1", ".vbs", ".vbe", ".js", ".mjs", ".jar", ".sh", ".php", ".html", ".htm", ".xhtml",
+            ".hta", ".jsp", ".asp", ".aspx", ".cpl", ".lnk", ".reg");
+
+    /** Content types a browser may render inline from a signed URL (no script execution). */
+    public static final java.util.Set<String> INLINE_TYPES = java.util.Set.of("application/pdf", "image/png",
+            "image/jpeg", "image/gif", "image/webp", "text/plain", "text/csv", "audio/mpeg", "video/mp4");
+
+    /** File metadata. */
+    public record FileMeta(String id, String organizationId, String filename, String contentType, long byteSize,
+            String storageKey) {}
 
     /** A resolved download. */
     public record Download(String filename, String contentType, InputStream stream) {}
@@ -65,6 +81,9 @@ public class FilesService {
         String name = filename == null ? "" : filename;
         int dot = name.lastIndexOf('.');
         String ext = dot <= 0 ? "" : name.substring(dot).toLowerCase().replaceAll("[^.a-z0-9]", "");
+        if (BLOCKED_EXTENSIONS.contains(ext) || (contentType != null && isActiveContent(contentType))) {
+            throw ApiException.badRequest("File type not allowed");
+        }
         byte[] rnd = new byte[16];
         random.nextBytes(rnd);
         String key = orgId + "/" + JsonConfig.toJsIso(Instant.now()).substring(0, 10) + "/" + HexFormat.of().formatHex(rnd) + ext;
@@ -93,10 +112,16 @@ public class FilesService {
         return out;
     }
 
-    /** {@code {url, expiresAt}}. */
+    /** {@code {url, expiresAt}}; only for a file of the caller's organization (when there is a tenant). */
     public Map<String, Object> signDownload(String fileId) {
+        String fileOrg = jdbc.sql("SELECT \"organizationId\" FROM \"File\" WHERE id = ?").param(fileId)
+                .query(String.class).optional().orElse("");
+        String currentOrg = TenantContext.optionalOrganizationId();
+        if (currentOrg != null && !fileOrg.isEmpty() && !fileOrg.equals(currentOrg)) {
+            throw ApiException.notFound("File not found");
+        }
         long exp = System.currentTimeMillis() + SIGN_TTL_MS;
-        String sig = hmac(fileId + ":" + exp);
+        String sig = hmac(fileId + ":" + exp + ":" + fileOrg);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("url", "/api/v1/files/" + fileId + "/download?token=" + sig + "&expires=" + exp);
         out.put("expiresAt", JsonConfig.toJsIso(Instant.ofEpochMilli(exp)));
@@ -109,18 +134,23 @@ public class FilesService {
         if (Double.isNaN(exp) || Double.isInfinite(exp) || System.currentTimeMillis() > exp) {
             throw ApiException.badRequest("Signed URL has expired");
         }
-        String expected = hmac(fileId + ":" + jsNumberString(exp));
-        if (!expected.equals(token)) {
-            throw ApiException.badRequest("Invalid signed URL token");
-        }
         record Row(String filename, String contentType, String storageKey, String visibility, String organizationId) {}
-        Row file = jdbc.sql("""
+        Row found = jdbc.sql("""
                         SELECT filename, "contentType", "storageKey", visibility::text AS visibility, "organizationId"
                         FROM "File" WHERE id = ? AND "deletedAt" IS NULL LIMIT 1""")
                 .param(fileId)
                 .query((rs, n) -> new Row(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5)))
                 .optional()
-                .orElseThrow(() -> ApiException.notFound("File not found"));
+                .orElse(null);
+        String expected = hmac(fileId + ":" + jsNumberString(exp) + ":" + (found == null ? "" : found.organizationId()));
+        if (token == null || !MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8),
+                token.getBytes(StandardCharsets.UTF_8))) {
+            throw ApiException.badRequest("Invalid signed URL token");
+        }
+        if (found == null) {
+            throw ApiException.notFound("File not found");
+        }
+        Row file = found;
         String currentOrg = TenantContext.optionalOrganizationId();
         if ("private".equals(file.visibility()) && currentOrg != null && !file.organizationId().equals(currentOrg)) {
             throw ApiException.notFound("File not found");
@@ -163,6 +193,49 @@ public class FilesService {
             query.setParameter("oid", ownerId);
         }
         return EntityJson.list(query.getResultList());
+    }
+
+    /** Metadata of a live file of the current organization, or {@code null}. */
+    public FileMeta meta(String fileId) {
+        return jdbc.sql("""
+                        SELECT id, "organizationId", filename, "contentType", "byteSize", "storageKey" FROM "File"
+                        WHERE id = ? AND "organizationId" = ? AND "deletedAt" IS NULL""")
+                .params(fileId, TenantContext.organizationId())
+                .query((rs, n) -> new FileMeta(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getLong(5), rs.getString(6)))
+                .optional().orElse(null);
+    }
+
+    /** Metadata of a live file in any organization (internal jobs, public share links). */
+    public FileMeta metaUnscoped(String fileId) {
+        return jdbc.sql("""
+                        SELECT id, "organizationId", filename, "contentType", "byteSize", "storageKey" FROM "File"
+                        WHERE id = ? AND "deletedAt" IS NULL""")
+                .param(fileId)
+                .query((rs, n) -> new FileMeta(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getLong(5), rs.getString(6)))
+                .optional().orElse(null);
+    }
+
+    /** Open the bytes of a file resolved by {@link #meta} / {@link #metaUnscoped}. */
+    public InputStream open(FileMeta file) {
+        return storage.get(file.storageKey());
+    }
+
+    /** A download of a resolved file. */
+    public Download download(FileMeta file) {
+        return new Download(file.filename(), file.contentType(), storage.get(file.storageKey()));
+    }
+
+    /** Maximum upload size in bytes ({@code UPLOAD_MAX_BYTES}). */
+    public long maxBytes() {
+        return maxBytes;
+    }
+
+    static boolean isActiveContent(String contentType) {
+        String t = contentType.toLowerCase();
+        return t.startsWith("text/html") || t.startsWith("application/xhtml") || t.contains("javascript")
+                || t.startsWith("application/x-msdownload") || t.startsWith("application/x-sh");
     }
 
     static String sanitizeFilename(String name) {

@@ -1,6 +1,5 @@
 package com.inventoryerp.kernel.files;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -111,6 +110,9 @@ public class FileStorageConfig {
         private final String accessKey;
         private final String secretKey;
         private final RestClient http = RestClient.create();
+        private final java.net.http.HttpClient streamClient = java.net.http.HttpClient.newHttpClient();
+
+        private record Signed(URI uri, String amzDate, String payloadHash, String auth) {}
 
         S3Storage(String bucket, String region, String endpoint, String accessKey, String secretKey) {
             this.bucket = bucket;
@@ -130,10 +132,28 @@ public class FileStorageConfig {
             send(HttpMethod.PUT, key, bytes, contentType);
         }
 
+        /** Streams the object (DM-0: no longer buffered in memory). */
         @Override
         public InputStream get(String key) {
-            byte[] body = send(HttpMethod.GET, key, new byte[0], null);
-            return new ByteArrayInputStream(body == null ? new byte[0] : body);
+            Signed signed = sign(HttpMethod.GET, key, new byte[0]);
+            var req = java.net.http.HttpRequest.newBuilder(signed.uri()).GET()
+                    .header("x-amz-date", signed.amzDate())
+                    .header("x-amz-content-sha256", signed.payloadHash())
+                    .header("Authorization", signed.auth())
+                    .build();
+            try {
+                var res = streamClient.send(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+                if (res.statusCode() >= 300) {
+                    res.body().close();
+                    throw new IllegalStateException("S3 GET " + key + " failed: HTTP " + res.statusCode());
+                }
+                return res.body();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
         }
 
         @Override
@@ -146,6 +166,19 @@ public class FileStorageConfig {
         }
 
         private byte[] send(HttpMethod method, String key, byte[] payload, String contentType) {
+            Signed signed = sign(method, key, payload);
+            var spec = http.method(method).uri(signed.uri())
+                    .header("x-amz-date", signed.amzDate())
+                    .header("x-amz-content-sha256", signed.payloadHash())
+                    .header("Authorization", signed.auth());
+            if (method == HttpMethod.PUT) {
+                spec = spec.header("Content-Type", contentType == null ? "application/octet-stream" : contentType)
+                        .body(payload);
+            }
+            return spec.retrieve().body(byte[].class);
+        }
+
+        private Signed sign(HttpMethod method, String key, byte[] payload) {
             String path = "/" + bucket + "/" + encodePath(key);
             URI uri = URI.create(endpoint + path);
             ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
@@ -165,14 +198,7 @@ public class FileStorageConfig {
             String signature = hex(hmac(kSigning, stringToSign));
             String auth = "AWS4-HMAC-SHA256 Credential=" + accessKey + "/" + scope + ", SignedHeaders=" + signedHeaders
                     + ", Signature=" + signature;
-            var spec = http.method(method).uri(uri)
-                    .header("x-amz-date", amzDate)
-                    .header("x-amz-content-sha256", payloadHash)
-                    .header("Authorization", auth);
-            if (method == HttpMethod.PUT) {
-                spec = spec.header("Content-Type", contentType == null ? "application/octet-stream" : contentType).body(payload);
-            }
-            return spec.retrieve().body(byte[].class);
+            return new Signed(uri, amzDate, payloadHash, auth);
         }
 
         private static String encodePath(String key) {

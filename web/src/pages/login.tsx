@@ -121,8 +121,14 @@ interface LoginResponse {
 
 type View = 'login' | 'mfa' | 'forgot' | 'forgot-sent';
 
-/** Organization code sent with every sign-in; never prompted for. */
-const DEFAULT_ORG_CODE = 'DEMO';
+const ORG_STORAGE_KEY = 'login.organizationCode';
+const readSavedOrg = (): string => {
+  try {
+    return localStorage.getItem(ORG_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+};
 
 /**
  * Public demo build (VITE_DEMO_MODE=true): the sign-in card shows the demo
@@ -141,10 +147,12 @@ const toLoginEmail = (value: string): string => {
 export function LoginPage() {
   const { t } = useTranslation();
   const [view, setView] = useState<View>('login');
-  // Single-tenant deployment: the organization is fixed, so the field is not
-  // shown. Override with VITE_ORG_CODE at build time for another tenant.
-  const orgCode = (import.meta.env.VITE_ORG_CODE as string | undefined) ?? DEFAULT_ORG_CODE;
-  const [email, setEmail] = useState(DEMO_MODE ? DEMO_LOGIN.username : 'admin@demo.test');
+  // The organization code is a visible field. VITE_ORG_CODE (build time) only
+  // prefills it; otherwise it starts empty, or with the last code used here.
+  const [orgCode, setOrgCode] = useState<string>(
+    () => (import.meta.env.VITE_ORG_CODE as string | undefined) ?? readSavedOrg(),
+  );
+  const [email, setEmail] = useState(DEMO_MODE ? DEMO_LOGIN.username : '');
   const [password, setPassword] = useState(DEMO_MODE ? DEMO_LOGIN.password : '');
   const [mfaToken, setMfaToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
@@ -154,8 +162,13 @@ export function LoginPage() {
 
   const login = useMutation({
     mutationFn: async () =>
-      (await api.post<LoginResponse>('/auth/login', { organizationCode: orgCode, email: toLoginEmail(email), password })).data,
+      (await api.post<LoginResponse>('/auth/login', { organizationCode: orgCode.trim(), email: toLoginEmail(email), password })).data,
     onSuccess: (data) => {
+      try {
+        localStorage.setItem(ORG_STORAGE_KEY, orgCode.trim());
+      } catch {
+        /* storage unavailable */
+      }
       if ((data as any).requiresMfa) {
         setMfaToken((data as any).mfaToken);
         setView('mfa');
@@ -294,6 +307,16 @@ export function LoginPage() {
                                 </div>
                               </div>
                             )}
+                            <Field label={tx('Organization')}>
+                              <Input
+                                value={orgCode}
+                                onChange={(e) => setOrgCode(e.target.value)}
+                                autoComplete="organization"
+                                required
+                                className="h-12 rounded-xl bg-white/5 border-white/15 text-white placeholder:text-white/30 focus:border-sky-400 focus:ring-sky-400/40"
+                                placeholder={tx('Organization code')}
+                              />
+                            </Field>
                             <Field label={DEMO_MODE ? tx('Username') : t('auth.email')}>
                               <Input
                                 type={DEMO_MODE ? 'text' : 'email'}
@@ -388,6 +411,16 @@ export function LoginPage() {
                             className="space-y-4"
                             onSubmit={(e) => { e.preventDefault(); forgot.mutate(); }}
                           >
+                            <Field label={tx('Organization')}>
+                              <Input
+                                value={orgCode}
+                                onChange={(e) => setOrgCode(e.target.value)}
+                                autoComplete="organization"
+                                required
+                                className="h-12 rounded-xl bg-white/5 border-white/15 text-white placeholder:text-white/30 focus:border-sky-400 focus:ring-sky-400/40"
+                                placeholder={tx('Organization code')}
+                              />
+                            </Field>
                             <Field label={t('auth.email')}>
                               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="h-12 rounded-xl bg-white/5 border-white/15 text-white placeholder:text-white/30 focus:border-sky-400 focus:ring-sky-400/40" />
                             </Field>
