@@ -30,8 +30,9 @@ python report.py        # reports/*.json
 ```
 
 Phases (`python run.py <phase>`): `setup opening production quarry intercompany hq showroom quotations fixups
-fixups2`. Each step is recorded in `state.json`; a re-run skips finished steps (Idempotency-Key per step).
+fixups2 crm`. Each step is recorded in `state.json`; a re-run skips finished steps (Idempotency-Key per step).
 `fixups*` hold the corrections made after the first verification (kept so the audit trail tells the story).
 
 Files: `data.py` masters and prices, `opening.py` 31 Oct 2026 position, `scenarios.py` the business story,
-`flows.py` reusable document flows, `report.py` the report pack. Results: `docs/reports/MENA_DEMO_DATA_REPORT.md`.
+`flows.py` reusable document flows, `crm.py` CRM story (reps, teams, tags, leads, pipeline incl. won/lost,
+planner activities, cases, quotations linked to opportunities), `report.py` the report pack. Results: `docs/reports/MENA_DEMO_DATA_REPORT.md`.
