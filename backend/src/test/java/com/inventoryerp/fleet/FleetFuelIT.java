@@ -345,11 +345,18 @@ class FleetFuelIT extends ApiTestSupport {
         JsonNode detail = ok(200, "GET", "/fleet/fuel-logs/" + credit.get("id").asString(), null);
         String payEntry = detail.get("journal").get(0).get("id").asString();
         assertBalanced(payEntry);
-        // Paid in Expenses, yet the expense line carries the vehicle's cost centre and the fuel account.
-        Map<String, Object> payDebit = jdbc.sql("SELECT \"accountId\", \"costCenterId\" FROM \"JournalLine\" WHERE"
+        // ADR-S051: the CREDIT expense was accrued at approval, so the expense line (fuel account + the vehicle's
+        // cost centre) is in the accrual entry and the payment clears the supplier payable.
+        String accrual = jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"sourceType\" = 'expense_accrual' AND"
+                + " \"sourceId\" = ? AND status = 'posted'").param(expenseId).query(String.class).single();
+        Map<String, Object> accrualDebit = jdbc.sql("SELECT \"accountId\", \"costCenterId\" FROM \"JournalLine\" WHERE"
+                + " \"journalEntryId\" = ? AND debit > 0").param(accrual).query().singleRow();
+        assertThat(accrualDebit.get("costCenterId")).isEqualTo(costCenter);
+        assertThat(accrualDebit.get("accountId")).isEqualTo(mapped("fleet_fuel_expense"));
+        Map<String, Object> payDebit = jdbc.sql("SELECT \"accountId\", \"partnerId\" FROM \"JournalLine\" WHERE"
                 + " \"journalEntryId\" = ? AND debit > 0").param(payEntry).query().singleRow();
-        assertThat(payDebit.get("costCenterId")).isEqualTo(costCenter);
-        assertThat(payDebit.get("accountId")).isEqualTo(mapped("fleet_fuel_expense"));
+        assertThat(payDebit.get("accountId")).isEqualTo(mapped("accounts_payable"));
+        assertThat(payDebit.get("partnerId")).isEqualTo(supplier);
 
         // Reversal voids the expense and mirrors its payment entry.
         JsonNode reversed = money("/fleet/fuel-logs/" + cash.get("id").asString() + "/reverse",

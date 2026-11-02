@@ -59,6 +59,15 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   more than the residual → `Payment amount <a> exceeds the outstanding balance of <r>`). Edits re-post the accrual,
   void / delete reverse it. Expenses approved before the change keep the pay-time Dr expense posting. Nest posts
   nothing until payment and always pays the full residual. Test: `ExpenseAccrualIT`.
+- **ADR-S052 (EX-1 … EX-6, owner-approved 2026-11-02): expenses to ERP grade.** Additive fields on `Expense`
+  (branch / department / cost centre / project, tax, currency, receipt no., due date, paid-by, claimant, capitalise,
+  prepaid months) and `ExpenseCategory` (code, default tax / cost centre, receipt / approval rules, reimbursable,
+  budget control, capitalise); allocation lines; status `RETURNED` with `POST /expenses/:id/return` and `/submit`;
+  payer SoD pair `expense_payment`; GL budget check and spending limits (409 `EXPENSE_BUDGET_EXCEEDED` /
+  `EXPENSE_LIMIT_EXCEEDED`); employee-paid expenses accrue to 2189. 55 Spring-native routes: `/expense-limits`,
+  `/expense-settings`, `/expense-claims`, `/expense-advances`, `/petty-cash-funds`, `/expense-recurrences`,
+  `/expense-prepayments`, `/expense-accruals`, `/expense-schedules/run`, `/expense-reports/*`. Nest has none of
+  this; the 18 Nest routes keep their contract. Tests: `ExpenseControlsIT`, `ExpenseClaimsIT`, `ExpenseTreasuryIT`.
 
 ## Status
 

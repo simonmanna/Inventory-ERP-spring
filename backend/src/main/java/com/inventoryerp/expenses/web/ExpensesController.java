@@ -1,7 +1,9 @@
 package com.inventoryerp.expenses.web;
 
 import com.inventoryerp.expenses.application.ExpensesService;
+import com.inventoryerp.expenses.application.ExpensesService.Allocation;
 import com.inventoryerp.expenses.application.ExpensesService.CreateInput;
+import com.inventoryerp.expenses.application.ExpensesService.Details;
 import com.inventoryerp.expenses.application.ExpensesService.PayInput;
 import com.inventoryerp.expenses.application.ExpensesService.UpdateInput;
 import com.inventoryerp.kernel.idempotency.Idempotent;
@@ -9,9 +11,13 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -51,7 +57,34 @@ public class ExpensesController {
             String createdBy,
             String paymentMethod,
             String accountId,
-            String paymentReference) {}
+            String paymentReference,
+            // EX-1 (ADR-S052)
+            String branchId, String departmentId, String costCenterId, String projectId, String receiptNumber,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
+            @OneOf({"COMPANY", "EMPLOYEE"}) String paidBy, String claimantId, String currencyCode,
+            @Positive(message = POSITIVE) BigDecimal exchangeRate, @Positive(message = POSITIVE) BigDecimal foreignAmount,
+            String taxId, @PositiveOrZero BigDecimal taxAmount, Boolean capitalize,
+            @Valid List<AllocationRequest> allocations,
+            @Min(1) @Max(120) Integer prepaidMonths, @Pattern(regexp = ISO_DATE, message = DATE_MSG) String prepaidStart) {
+
+        Details details() {
+            return new Details(branchId, departmentId, costCenterId, projectId, receiptNumber, dueDate, paidBy,
+                    claimantId, currencyCode, exchangeRate, foreignAmount, taxId, taxAmount, capitalize,
+                    allocations == null ? null : allocations.stream().map(AllocationRequest::input).toList(),
+                    prepaidMonths, prepaidStart);
+        }
+    }
+
+    /** One allocation line: {@code amount} or {@code percent} of the net. */
+    public record AllocationRequest(@Positive(message = POSITIVE) BigDecimal amount,
+            @Positive(message = POSITIVE) @DecimalMax("100") BigDecimal percent, String accountId, String costCenterId,
+            String costAllocationRuleId, String branchId, String departmentId, String projectId, String description) {
+
+        Allocation input() {
+            return new Allocation(amount, percent, accountId, costCenterId, costAllocationRuleId, branchId, departmentId,
+                    projectId, description);
+        }
+    }
 
     /** {@code UpdateExpenseDto}. */
     public record UpdateExpenseRequest(
@@ -62,7 +95,26 @@ public class ExpensesController {
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String expenseDate,
             String notes,
             String supplierId,
-            @OneOf({"CASH", "CREDIT"}) String paymentType) {}
+            @OneOf({"CASH", "CREDIT"}) String paymentType,
+            // EX-1 (ADR-S052)
+            String branchId, String departmentId, String costCenterId, String projectId, String receiptNumber,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
+            @OneOf({"COMPANY", "EMPLOYEE"}) String paidBy, String claimantId, String currencyCode,
+            @Positive(message = POSITIVE) BigDecimal exchangeRate, @Positive(message = POSITIVE) BigDecimal foreignAmount,
+            String taxId, @PositiveOrZero BigDecimal taxAmount, Boolean capitalize,
+            @Valid List<AllocationRequest> allocations,
+            @Min(1) @Max(120) Integer prepaidMonths, @Pattern(regexp = ISO_DATE, message = DATE_MSG) String prepaidStart) {
+
+        Details details() {
+            return new Details(branchId, departmentId, costCenterId, projectId, receiptNumber, dueDate, paidBy,
+                    claimantId, currencyCode, exchangeRate, foreignAmount, taxId, taxAmount, capitalize,
+                    allocations == null ? null : allocations.stream().map(AllocationRequest::input).toList(),
+                    prepaidMonths, prepaidStart);
+        }
+    }
+
+    /** Return-for-correction body (EX-2). */
+    public record ReturnExpenseRequest(@NotNull(message = STR) String reason) {}
 
     /** {@code PayExpenseDto}. */
     public record PayExpenseRequest(String paidBy, @NotNull(message = STR) String paymentMethod,
@@ -127,14 +179,30 @@ public class ExpensesController {
     public Map<String, Object> create(@Valid @RequestBody CreateExpenseRequest dto) {
         return expenses.create(new CreateInput(dto.title(), dto.description(), dto.amount(), dto.categoryId(),
                 dto.expenseDate(), dto.notes(), dto.supplierId(), dto.paymentType(), dto.paymentMethod(), dto.accountId(),
-                dto.paymentReference()));
+                dto.paymentReference()), null, dto.details());
     }
 
     @PatchMapping("/{id}")
     @RequirePermissions(Permissions.EXPENSE__UPDATE)
     public Map<String, Object> update(@PathVariable String id, @Valid @RequestBody UpdateExpenseRequest dto) {
         return expenses.update(id, new UpdateInput(dto.title(), dto.description(), dto.amount(), dto.categoryId(),
-                dto.expenseDate(), dto.notes(), dto.supplierId(), dto.paymentType()));
+                dto.expenseDate(), dto.notes(), dto.supplierId(), dto.paymentType()), dto.details());
+    }
+
+    /** EX-2: send a draft back to its raiser for correction. */
+    @PostMapping("/{id}/return")
+    @RequirePermissions(Permissions.EXPENSE__APPROVE)
+    public Map<String, Object> returnForCorrection(@PathVariable String id,
+            @Valid @RequestBody ReturnExpenseRequest dto) {
+        return expenses.returnForCorrection(id, dto.reason());
+    }
+
+    /** EX-2: resubmit a returned expense for approval. */
+    @PostMapping("/{id}/submit")
+    @Idempotent
+    @RequirePermissions(Permissions.EXPENSE__CREATE)
+    public Map<String, Object> submit(@PathVariable String id) {
+        return expenses.submit(id);
     }
 
     @PostMapping("/{id}/approve")

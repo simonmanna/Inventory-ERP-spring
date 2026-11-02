@@ -8,6 +8,17 @@ export interface ExpenseCategory {
   isActive?: boolean;
   ledgerAccountId?: string | null;
   ledgerAccount?: { id: string; name: string; code: string } | null;
+  // ADR-S052 controls
+  code?: string | null;
+  defaultTaxId?: string | null;
+  defaultCostCenterId?: string | null;
+  receiptRequired?: boolean;
+  approvalRequired?: boolean;
+  approvalThreshold?: number | null;
+  reimbursable?: boolean;
+  budgetControl?: 'none' | 'warn' | 'block';
+  canCapitalise?: boolean;
+  assetAccountId?: string | null;
 }
 
 export const expenseCategoriesApi = {

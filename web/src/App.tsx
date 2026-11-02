@@ -150,6 +150,11 @@ const PosSettingsPage = lazy(() => import('@/pages/pos/SettingsPage').then((m) =
 const ExpensesPage = lazy(() => import('@/pages/expenses/ExpensesPage').then((m) => ({ default: m.ExpensesPage })));
 const ExpensesReportPage = lazy(() => import('@/pages/expenses/ExpensesReportPage'));
 const ExpenseCategoriesPage = lazy(() => import('@/pages/expenses/ExpenseCategoriesPage'));
+const ExpenseClaimsPage = lazy(() => import('@/pages/expenses/ExpenseClaimsPage'));
+const PettyCashPage = lazy(() => import('@/pages/expenses/PettyCashPage'));
+const ExpenseSchedulesPage = lazy(() => import('@/pages/expenses/ExpenseSchedulesPage'));
+const ExpenseControlsPage = lazy(() => import('@/pages/expenses/ExpenseControlsPage'));
+const ExpenseInsightsPage = lazy(() => import('@/pages/expenses/ExpenseInsightsPage'));
 const SupplierPaymentsPage = lazy(() => import('@/pages/purchasing/supplier-payments').then((m) => ({ default: m.SupplierPaymentsPage })));
 const VendorBillsPage = lazy(() => import('@/pages/purchasing/vendor-bills').then((m) => ({ default: m.VendorBillsPage })));
 const VendorBillEditPage = lazy(() => import('@/pages/purchasing/vendor-bill-edit').then((m) => ({ default: m.VendorBillEditPage })));
@@ -350,6 +355,11 @@ export function App() {
             <Route path="/pos/receivables" element={<ReceivablesPage />} />
             <Route path="/expenses" element={<ExpensesPage />} />
             <Route path="/expenses/categories" element={<ExpenseCategoriesPage />} />
+            <Route path="/expenses/claims" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseClaimsPage /></RequirePermission>} />
+            <Route path="/expenses/petty-cash" element={<RequirePermission permission={PERMISSIONS.expense.read}><PettyCashPage /></RequirePermission>} />
+            <Route path="/expenses/schedules" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseSchedulesPage /></RequirePermission>} />
+            <Route path="/expenses/controls" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseControlsPage /></RequirePermission>} />
+            <Route path="/expenses/insights" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseInsightsPage /></RequirePermission>} />
             <Route path="/expenses/reports" element={<RequireReport reportId="expenses.reports"><ExpensesReportPage /></RequireReport>} />
             <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
             <Route path="/vendor-bills" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillsPage /></RequirePermission>} />

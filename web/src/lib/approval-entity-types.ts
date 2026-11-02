@@ -20,6 +20,7 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   vendor_bill: tx('Vendor Bills'),
   // F.5b — newly gated flows
   expense: tx('Expenses'),
+  expense_claim: tx('Expense Claims'),
   stock_out: tx('Stock-Out'),
   waste: tx('Waste'),
   debit_note: tx('Debit Notes'),
@@ -38,6 +39,7 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   production_loss_writeoff: tx('Production Loss Write-offs'),
   credit_override: tx('Credit Overrides'),
   supplier_bill_approval: tx('Supplier Bill Approval'),
+  expense_payment: tx('Expense Payment'),
   config_change: tx('Configuration Changes'),
 };
 

@@ -49,6 +49,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Ban,
+  RotateCcw,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 
@@ -73,6 +74,8 @@ import { Link } from "react-router-dom";
 
 import { formatCurrency } from "@/lib/utils";
 import { tx } from '@/lib/i18n/tx';
+import { ExpenseExtraFields, extraFromExpense, extraToBody } from './ExpenseExtraFields';
+import { expenseFlowApi } from '@/lib/api/expenseExtras';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface Supplier {
@@ -134,6 +137,13 @@ const STATUS_CONFIG: Record<
     text: "text-indigo-700",
     dot: "bg-indigo-400",
     border: "border-indigo-200",
+  },
+  RETURNED: {
+    label: tx('Returned'),
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    dot: "bg-amber-400",
+    border: "border-amber-200",
   },
   REJECTED: {
     label: tx('Rejected'),
@@ -370,6 +380,7 @@ function ExpenseFormDialog({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [extra, setExtra] = useState(() => extraFromExpense(expense as any));
   const isCash = form.watch("paymentType") === "CASH";
   const isEdit = !!expense;
 
@@ -397,6 +408,7 @@ function ExpenseFormDialog({
         notes: data.notes || undefined,
         supplierId: data.supplierId || undefined,
         paymentType: data.paymentType,
+        ...extraToBody(extra, !!expense),
       };
 
       if (!isEdit) {
@@ -577,6 +589,9 @@ function ExpenseFormDialog({
                   />
                 </div>
               </div>
+
+              {/* SECTION: EX-1 accounting, tax & controls (ADR-S052) */}
+              <ExpenseExtraFields value={extra} onChange={setExtra} />
 
               {/* SECTION: Amount & Payment Grid */}
               <div className="grid grid-cols-2 md:grid-cols-2 gap-2">
@@ -1176,6 +1191,7 @@ function PayExpenseDialog({
     paidBy: "",
     accountId: accounts[0]?.id ?? "",
     paymentNotes: "",
+    amount: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1194,6 +1210,7 @@ function PayExpenseDialog({
         paidBy: form.paidBy,
         paymentMethod: form.paymentMethod,
         reference: form.reference || undefined,
+        ...(form.amount ? { amount: parseFloat(form.amount) } : {}),
         paymentNotes: form.paymentNotes || undefined,
         accountId: form.accountId,
       });
@@ -1328,6 +1345,22 @@ function PayExpenseDialog({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-gray-500 mb-1">
+                {tx('Amount to pay (blank = full balance)')}
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={form.amount}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, amount: e.target.value }))
+                }
+                placeholder={tx('Full balance')}
+                className="w-full px-3 py-2 rounded-none border border-gray-300 focus:border-[#3c8dbc] bg-white text-sm"
+              />
             </div>
 
             <div>
@@ -1713,6 +1746,26 @@ export function ExpensesPage() {
     }
   };
 
+  const handleReturn = async (expense: Expense) => {
+    const reason = prompt(tx('Return "{{title}}" to its raiser for correction. Reason:', { title: expense.title }));
+    if (!reason || !reason.trim()) return;
+    try {
+      await expenseFlowApi.returnForCorrection(expense.id, reason.trim());
+      load();
+    } catch (e: any) {
+      alert(e.response?.data?.message || e.message);
+    }
+  };
+
+  const handleResubmit = async (expense: Expense) => {
+    try {
+      await expenseFlowApi.submit(expense.id);
+      load();
+    } catch (e: any) {
+      alert(e.response?.data?.message || e.message);
+    }
+  };
+
   const handleVoid = async (expense: Expense) => {
     const reason = prompt(
       `Void "${expense.title}"?\nThis reverses ALL underlying payments.\n\nReason:`,
@@ -2082,7 +2135,8 @@ export function ExpensesPage() {
                               <Eye className="w-4 h-4" />
                             </button>
                             {(exp.status === "DRAFT" ||
-                              exp.status === "APPROVED") &&
+                              exp.status === "APPROVED" ||
+                              exp.status === "RETURNED") &&
                               ((exp as any).paymentStatus ?? "UNPAID") ===
                                 "UNPAID" && (
                                 <button
@@ -2124,7 +2178,23 @@ export function ExpensesPage() {
                                 >
                                   <XCircle className="w-4 h-4" />
                                 </button>
+                                <button
+                                  onClick={() => handleReturn(exp)}
+                                  className="p-1.5 text-amber-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"
+                                  title={tx('Return for correction')}
+                                >
+                                  <RotateCcw className="w-4 h-4" />
+                                </button>
                               </>
+                            )}
+                            {exp.status === "RETURNED" && (
+                              <button
+                                onClick={() => handleResubmit(exp)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors"
+                                title={(exp as any).approvalNotes || tx('Resubmit')}
+                              >
+                                {tx('Resubmit')}
+                              </button>
                             )}
                             {(exp.status === "APPROVED" ||
                               exp.status === "POSTED") &&

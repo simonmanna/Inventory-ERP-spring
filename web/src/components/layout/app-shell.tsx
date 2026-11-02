@@ -522,6 +522,11 @@ const NAV_SECTIONS: NavSection[] = [
     icon: FileText,
     items: [
       { to: '/expenses', label: tx('Expenses'), icon: FileText, permission: PERMISSIONS.expense.read },
+      { to: '/expenses/claims', label: tx('Claims & Advances'), icon: FileText, permission: PERMISSIONS.expense.read },
+      { to: '/expenses/petty-cash', label: tx('Petty Cash'), icon: FileText, permission: PERMISSIONS.expense.read },
+      { to: '/expenses/schedules', label: tx('Recurring & Accruals'), icon: FileText, permission: PERMISSIONS.expense.read },
+      { to: '/expenses/insights', label: tx('Expense Analysis'), icon: BarChart3, permission: PERMISSIONS.expense.read, group: 'Reporting' },
+      { to: '/expenses/controls', label: tx('Limits & Settings'), icon: Tag, permission: PERMISSIONS.expense.read, group: 'Configuration' },
       { to: '/expenses/reports', label: tx('Expense Reports'), icon: BarChart3, permission: PERMISSIONS.expense.read, reportId: 'expenses.reports', group: 'Reporting' },
       { to: '/expenses/categories', label: tx('Expense Categories'), icon: Tag, permission: PERMISSIONS.expense.read, group: 'Configuration' },
     ],

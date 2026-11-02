@@ -33,6 +33,8 @@ public class SegregationOfDutiesService {
     public static final String PRODUCTION_LOSS_WRITE_OFF = "production_loss_writeoff";
     public static final String CREDIT_OVERRIDE = "credit_override";
     public static final String SUPPLIER_BILL_APPROVAL = "supplier_bill_approval";
+    /** EX-2 (ADR-S052): whoever raised, approved or claims an expense cannot also pay it. */
+    public static final String EXPENSE_PAYMENT = "expense_payment";
 
     public static final String AUDIT_ENTITY = "SodCheck";
 
@@ -50,7 +52,9 @@ public class SegregationOfDutiesService {
                 new Pair(PRODUCTION_LOSS_WRITE_OFF, "Production loss write-off", "Runs the production order",
                         "Writes off the loss", false),
                 new Pair(CREDIT_OVERRIDE, "Credit override", "Raises the sale", "Overrides the credit hold", false),
-                new Pair(SUPPLIER_BILL_APPROVAL, "Supplier bill approval", "Enters the bill", "Approves it", false))) {
+                new Pair(SUPPLIER_BILL_APPROVAL, "Supplier bill approval", "Enters the bill", "Approves it", false),
+                new Pair(EXPENSE_PAYMENT, "Expense payment", "Raises, approves or claims the expense", "Pays it",
+                        false))) {
             PAIRS.put(p.key(), p);
         }
     }

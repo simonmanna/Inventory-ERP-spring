@@ -6,6 +6,7 @@ import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -25,6 +26,17 @@ public class ExpenseCategoriesService {
 
     /** Create / update body. */
     public record CategoryInput(String name, String icon, String description, String ledgerAccountId, Boolean isActive) {}
+
+    /**
+     * Category controls (EX-1 / EX-2, ADR-S052); every field optional. {@code budgetControl}: none | warn | block.
+     * {@code approvalThreshold}: expenses at or above it need a manual approval even when no workflow applies.
+     */
+    public record Controls(String code, String defaultTaxId, String defaultCostCenterId, Boolean receiptRequired,
+            Boolean approvalRequired, BigDecimal approvalThreshold, Boolean reimbursable, String budgetControl,
+            Boolean canCapitalise, String assetAccountId) {
+
+        static final Controls NONE = new Controls(null, null, null, null, null, null, null, null, null, null);
+    }
 
     private final JdbcClient jdbc;
 
@@ -82,6 +94,12 @@ public class ExpenseCategoriesService {
 
     @Transactional
     public Map<String, Object> create(CategoryInput dto) {
+        return create(dto, Controls.NONE);
+    }
+
+    /** Create with category controls. */
+    @Transactional
+    public Map<String, Object> create(CategoryInput dto, Controls c) {
         String name = dto.name() == null ? null : dto.name().trim();
         if (name == null || name.isEmpty()) {
             throw ApiException.badRequest("Name is required");
@@ -92,14 +110,22 @@ public class ExpenseCategoriesService {
                         + " \"createdBy\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, now())")
                 .params(id, org(), name, dto.icon(), dto.description(), dto.ledgerAccountId(), TenantContext.userId())
                 .update();
+        applyControls(id, c == null ? Controls.NONE : c);
         return withLedger(List.of(row(id))).getFirst();
     }
 
     @Transactional
     public Map<String, Object> update(String id, CategoryInput dto) {
+        return update(id, dto, Controls.NONE);
+    }
+
+    /** Update with category controls (absent fields untouched; '' clears an id / code). */
+    @Transactional
+    public Map<String, Object> update(String id, CategoryInput dto, Controls c) {
         if (row(id) == null) {
             throw ApiException.notFound("Expense category not found");
         }
+        applyControls(id, c == null ? Controls.NONE : c);
         if (EntityPatch.present("ledgerAccountId", dto.ledgerAccountId())) {
             assertLedgerValid(dto.ledgerAccountId());
         }
@@ -130,6 +156,71 @@ public class ExpenseCategoriesService {
         jdbc.sql("UPDATE \"ExpenseCategory\" SET " + set + " WHERE id = ? AND \"organizationId\" = ?"
                 + " AND \"deletedAt\" IS NULL").params(params).update();
         return findOne(id);
+    }
+
+    private void applyControls(String id, Controls c) {
+        List<Object> params = new ArrayList<>();
+        StringBuilder set = new StringBuilder();
+        if (EntityPatch.present("code", c.code())) {
+            String code = emptyToNull(c.code() == null ? null : c.code().trim());
+            if (code != null && jdbc.sql("SELECT count(*) FROM \"ExpenseCategory\" WHERE \"organizationId\" = ? AND"
+                    + " lower(code) = lower(?) AND id <> ? AND \"deletedAt\" IS NULL").params(org(), code, id)
+                    .query(Long.class).single() > 0) {
+                throw ApiException.conflict("Expense category code " + code + " is already used");
+            }
+            add(set, params, "code", code);
+        }
+        if (EntityPatch.present("defaultTaxId", c.defaultTaxId())) {
+            String tax = emptyToNull(c.defaultTaxId());
+            if (tax != null && jdbc.sql("SELECT count(*) FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND"
+                    + " \"deletedAt\" IS NULL").params(tax, org()).query(Long.class).single() == 0) {
+                throw ApiException.badRequest("Tax not found");
+            }
+            add(set, params, "defaultTaxId", tax);
+        }
+        if (EntityPatch.present("defaultCostCenterId", c.defaultCostCenterId())) {
+            String cc = emptyToNull(c.defaultCostCenterId());
+            if (cc != null && jdbc.sql("SELECT count(*) FROM \"CostCenter\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(cc, org()).query(Long.class).single() == 0) {
+                throw ApiException.badRequest("Cost center not found");
+            }
+            add(set, params, "defaultCostCenterId", cc);
+        }
+        if (EntityPatch.present("assetAccountId", c.assetAccountId())) {
+            assertLedgerValid(c.assetAccountId());
+            add(set, params, "assetAccountId", emptyToNull(c.assetAccountId()));
+        }
+        if (c.budgetControl() != null) {
+            if (!List.of("none", "warn", "block").contains(c.budgetControl())) {
+                throw ApiException.badRequest("budgetControl must be one of the following values: none, warn, block");
+            }
+            add(set, params, "budgetControl", c.budgetControl());
+        }
+        if (EntityPatch.present("approvalThreshold", c.approvalThreshold())) {
+            if (c.approvalThreshold() != null && c.approvalThreshold().signum() < 0) {
+                throw ApiException.badRequest("approvalThreshold must not be negative");
+            }
+            add(set, params, "approvalThreshold", c.approvalThreshold());
+        }
+        for (Object[] flag : new Object[][] {{"receiptRequired", c.receiptRequired()},
+                {"approvalRequired", c.approvalRequired()}, {"reimbursable", c.reimbursable()},
+                {"canCapitalise", c.canCapitalise()}}) {
+            if (flag[1] != null) {
+                add(set, params, (String) flag[0], flag[1]);
+            }
+        }
+        if (set.isEmpty()) {
+            return;
+        }
+        params.add(id);
+        params.add(org());
+        jdbc.sql("UPDATE \"ExpenseCategory\" SET " + set.substring(2) + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(params).update();
+    }
+
+    private static void add(StringBuilder set, List<Object> params, String column, Object value) {
+        set.append(", \"").append(column).append("\" = ?");
+        params.add(value);
     }
 
     private static String emptyToNull(String s) {

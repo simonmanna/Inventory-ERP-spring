@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.application.TreasuryGuards;
 import com.inventoryerp.expenses.domain.Expense;
 import com.inventoryerp.expenses.domain.ExpensePayment;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -22,6 +23,7 @@ import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -49,6 +51,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * supplier is the line's partner), journal source {@code expense_accrual}. Its payments, full or partial, then clear
  * the payable (Dr payable / Cr cash-bank). A CASH expense still posts Dr expense / Cr cash-bank at once, and a CREDIT
  * expense approved before ADR-S051 (no accrual entry) keeps the old pay-time Dr expense posting.
+ *
+ * <p>EX-1 / EX-2 (ADR-S052): branch, department, cost centre, project, tax, currency, receipt and paid-by fields;
+ * allocation lines that split the debit; category controls (receipt required, approval required / threshold,
+ * reimbursable, budget control, capitalise); returned-for-correction and resubmission; payer separation of duties;
+ * spending limits; GL budget check when an expense is recognised. An expense paid by an employee accrues to the
+ * employee reimbursement payable instead of the supplier's.
  */
 @Service
 public class ExpensesService {
@@ -82,6 +90,26 @@ public class ExpensesService {
 
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 
+    /** One allocation line (EX-1): {@code amount} or {@code percent} of the net; ids override the expense's tags. */
+    public record Allocation(BigDecimal amount, BigDecimal percent, String accountId, String costCenterId,
+            String costAllocationRuleId, String branchId, String departmentId, String projectId, String description) {}
+
+    /**
+     * EX-1 fields of an expense, all optional. {@code paidBy}: COMPANY | EMPLOYEE (EMPLOYEE → reimbursed to
+     * {@code claimantId}, default the raiser). {@code taxAmount} defaults to the tax-inclusive share of {@code taxId}'s
+     * rate. When {@code foreignAmount} and {@code exchangeRate} are sent, {@code amount} must equal their product.
+     * {@code allocations}: null keeps the current lines, an empty list removes them.
+     */
+    public record Details(String branchId, String departmentId, String costCenterId, String projectId,
+            String receiptNumber, String dueDate, String paidBy, String claimantId, String currencyCode,
+            BigDecimal exchangeRate, BigDecimal foreignAmount, String taxId, BigDecimal taxAmount, Boolean capitalize,
+            List<Allocation> allocations, Integer prepaidMonths, String prepaidStart) {
+
+        /** No EX-1 field sent. */
+        public static final Details NONE = new Details(null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+    }
+
     /** Journal source of the approval-time accrual of a CREDIT expense (ADR-S051). */
     public static final String ACCRUAL_SOURCE = "expense_accrual";
 
@@ -94,12 +122,22 @@ public class ExpensesService {
     private final TransactionTemplate newTx;
     private final ObjectProvider<ExpensePostingTagger> taggers;
     private final AccountResolverService accounts;
+    private final ExpenseControlService controls;
+    private final SegregationOfDutiesService sod;
+    private final PettyCashService pettyCash;
+    private final ExpensePrepaymentService prepayments;
 
     public ExpensesService(JdbcClient jdbc, EventBus events, SequenceService sequence, AuditService audit,
             ApprovalsService approvals, PostingService posting, PlatformTransactionManager txm,
-            ObjectProvider<ExpensePostingTagger> taggers, AccountResolverService accounts) {
+            ObjectProvider<ExpensePostingTagger> taggers, AccountResolverService accounts,
+            ExpenseControlService controls, SegregationOfDutiesService sod, PettyCashService pettyCash,
+            ExpensePrepaymentService prepayments) {
         this.taggers = taggers;
         this.accounts = accounts;
+        this.controls = controls;
+        this.sod = sod;
+        this.pettyCash = pettyCash;
+        this.prepayments = prepayments;
         this.jdbc = jdbc;
         this.events = events;
         this.sequence = sequence;
@@ -137,7 +175,8 @@ public class ExpensesService {
         int limit = Math.min(200, Math.max(1, JsNumbers.orDefault(q.get("limit"), 15)));
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" \"organizationId\" = ? AND \"deletedAt\" IS NULL");
-        for (String f : List.of("categoryId", "supplierId")) {
+        for (String f : List.of("categoryId", "supplierId", "branchId", "departmentId", "costCenterId", "projectId",
+                "claimantId", "paidBy")) {
             if (notBlank(q.get(f))) {
                 where.append(" AND \"").append(f).append("\" = ?");
                 params.add(q.get(f));
@@ -146,6 +185,10 @@ public class ExpensesService {
         if (notBlank(q.get("status"))) {
             where.append(" AND status::text = ?");
             params.add(q.get("status"));
+        }
+        if (notBlank(q.get("paymentStatus"))) {
+            where.append(" AND \"paymentStatus\"::text = ?");
+            params.add(q.get("paymentStatus"));
         }
         if (notBlank(q.get("paymentType"))) {
             where.append(" AND \"paymentType\"::text = ?");
@@ -194,6 +237,13 @@ public class ExpensesService {
 
     private Map<String, Object> loaded(Map<String, Object> exp) {
         exp.put("category", category(exp.get("categoryId")));
+        exp.put("allocations", allocations((String) exp.get("id")).stream().map(a -> {
+            Map<String, Object> m = new LinkedHashMap<>(a);
+            m.put("amount", JsNumbers.js(Money.dec(a.get("amount"))));
+            m.put("percent", a.get("percent") == null ? null : JsNumbers.js(Money.dec(a.get("percent"))));
+            return m;
+        }).toList());
+        exp.put("approvalRequest", approvals.latestRequest("expense", (String) exp.get("id")));
         exp.put("payments", SqlRows.list(ExpensePayment.class, jdbc.sql("SELECT * FROM \"ExpensePayment\" WHERE"
                 + " \"expenseId\" = ? ORDER BY \"createdAt\" DESC").param(exp.get("id"))));
         return decorate(List.of(exp)).getFirst();
@@ -375,7 +425,7 @@ public class ExpensesService {
     /** Create an expense; CASH pays immediately, CREDIT goes through the approval engine. */
     @Transactional
     public Map<String, Object> create(CreateInput dto) {
-        return create(dto, null);
+        return create(dto, null, Details.NONE);
     }
 
     /**
@@ -384,6 +434,12 @@ public class ExpensesService {
      */
     @Transactional
     public Map<String, Object> create(CreateInput dto, PostingTags tags) {
+        return create(dto, tags, Details.NONE);
+    }
+
+    /** {@link #create(CreateInput, PostingTags)} with the EX-1 fields. */
+    @Transactional
+    public Map<String, Object> create(CreateInput dto, PostingTags tags, Details details) {
         String actorId = requireActor();
         boolean isCash = "CASH".equals(dto.paymentType());
         if (isCash && (dto.paymentMethod() == null || dto.paymentMethod().isEmpty() || dto.accountId() == null
@@ -399,7 +455,17 @@ public class ExpensesService {
         String[] created = insertExpense(dto, actorId, isCash, isCash ? actorId : null, category);
         String id = created[0];
         String code = created[1];
+        applyDetails(id, details == null ? Details.NONE : details, category, true);
+        Map<String, Object> fresh = expense(id);
+        assertCategoryRules(fresh, category);
+        if (tags == null) {
+            controls.checkLimits(fresh);
+        }
         if (isCash) {
+            if (needsManualApproval(category, Money.dec(fresh.get("amount")))) {
+                throw ApiException.badRequest("Expenses in category " + category.get("name") + " need approval before"
+                        + " they are paid: record it as a CREDIT expense");
+            }
             if (!TenantContext.has("expense:post")) {
                 throw ApiException.forbidden("Paying an expense on creation requires expense:post; save it as a credit"
                         + " expense instead");
@@ -410,16 +476,50 @@ public class ExpensesService {
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", code));
         BusinessOutcome.record(jdbc, Obj.of("id", id, "expenseCode", code), isCash);
         if (!isCash) {
-            Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(dto.amount()), "categoryId",
-                    category == null ? null : category.get("id"), "title", dto.title().trim());
-            Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval("expense", id, snapshot));
-            if (gate == null || !Boolean.TRUE.equals(gate.get("needsApproval"))) {
-                jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = NULL, \"updatedAt\" = " + NOW
-                        + " WHERE id = ?").param(id).update();
-                postAccrual(expense(id), category, tags != null ? tags : tagsFor(id), false);
-            }
+            routeForApproval(id, category, tags != null ? tags : tagsFor(id), false);
         }
         return loadDecorated(id);
+    }
+
+    /** The approval snapshot (EX-2): what workflow conditions and the saved request copy are evaluated against. */
+    private static Map<String, Object> approvalSnapshot(Map<String, Object> exp) {
+        return Obj.of("amount", JsNumbers.js(Money.dec(exp.get("amount"))), "categoryId", exp.get("categoryId"),
+                "title", exp.get("title"), "branchId", exp.get("branchId"), "departmentId", exp.get("departmentId"),
+                "costCenterId", exp.get("costCenterId"), "projectId", exp.get("projectId"), "paidBy",
+                exp.get("paidBy"), "claimantId", exp.get("claimantId"), "supplierId", exp.get("supplierId"));
+    }
+
+    /**
+     * Send a CREDIT expense through the approval engine: a pending request keeps it DRAFT; no workflow → APPROVED and
+     * accrued, unless its category asks for a manual approval (EX-2) — then it stays DRAFT for {@link #approve}.
+     */
+    private void routeForApproval(String id, Map<String, Object> category, PostingTags tags, boolean resubmit) {
+        Map<String, Object> exp = expense(id);
+        Map<String, Object> snapshot = approvalSnapshot(exp);
+        Map<String, Object> gate = newTx.execute(s -> resubmit
+                ? approvals.checkOrRequestApprovalOfAmount("expense", id, snapshot)
+                : approvals.checkOrRequestApproval("expense", id, snapshot));
+        boolean pending = gate != null && Boolean.TRUE.equals(gate.get("needsApproval"));
+        if (!pending && (gate != null || !needsManualApproval(category, Money.dec(exp.get("amount"))))) {
+            jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = NULL, \"updatedAt\" = " + NOW
+                    + " WHERE id = ?").param(id).update();
+            postAccrual(expense(id), category, tags, false);
+        } else if (resubmit) {
+            jdbc.sql("UPDATE \"Expense\" SET status = 'DRAFT', \"updatedAt\" = " + NOW + " WHERE id = ?").param(id)
+                    .update();
+        }
+    }
+
+    /** Category approval rule (EX-2): approval required, or amount at / above the category threshold. */
+    private static boolean needsManualApproval(Map<String, Object> category, BigDecimal amount) {
+        if (category == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(category.get("approvalRequired"))) {
+            return true;
+        }
+        Object threshold = category.get("approvalThreshold");
+        return threshold != null && amount.compareTo(Money.dec(threshold)) >= 0;
     }
 
     /** Inserts the expense row (+ audit); returns {@code [id, expenseCode]}. */
@@ -521,14 +621,29 @@ public class ExpensesService {
                 + " AND \"deletedAt\" IS NULL").params(id, org()));
     }
 
+    /** EX-3: a claim line is approved, returned and paid through its claim, never on its own. */
+    private static void notClaimLine(Map<String, Object> exp) {
+        if (exp != null && exp.get("claimId") != null) {
+            throw ApiException.badRequest("This expense is a line of an expense claim: act on the claim instead");
+        }
+    }
+
     /** Edit an unpaid draft / approved expense. */
     @Transactional
     public Map<String, Object> update(String id, UpdateInput dto) {
+        return update(id, dto, Details.NONE);
+    }
+
+    /** {@link #update(String, UpdateInput)} with the EX-1 fields; a RETURNED expense may be edited too. */
+    @Transactional
+    public Map<String, Object> update(String id, UpdateInput dto, Details details) {
+        Details d = details == null ? Details.NONE : details;
         Map<String, Object> exp = expense(id);
         if (exp == null) {
             throw ApiException.notFound("Expense not found");
         }
-        if (!List.of("DRAFT", "APPROVED").contains(String.valueOf(exp.get("status")))
+        notClaimLine(exp);
+        if (!List.of("DRAFT", "APPROVED", "RETURNED").contains(String.valueOf(exp.get("status")))
                 || !"UNPAID".equals(String.valueOf(exp.get("paymentStatus")))) {
             throw ApiException.badRequest("Only unpaid draft/approved expenses can be edited");
         }
@@ -575,12 +690,24 @@ public class ExpensesService {
         }
         params.add(id);
         String accrual = accrualEntry(id);
-        boolean reAccrue = accrual != null && data.keySet().stream()
-                .anyMatch(k -> List.of("amount", "expenseDate", "supplierId", "categoryId", "title").contains(k));
+        boolean reAccrue = accrual != null && (touched(d) || data.keySet().stream()
+                .anyMatch(k -> List.of("amount", "expenseDate", "supplierId", "categoryId", "title").contains(k)));
+        if (reAccrue && prepayments.hasReleases(id)) {
+            throw ApiException.badRequest("Prepaid releases are already posted for this expense: void it and enter it"
+                    + " again");
+        }
         if (reAccrue) {
             posting.reverse(accrual, null, "Expense " + exp.get("expenseCode") + " edited: accrual re-posted");
         }
         jdbc.sql("UPDATE \"Expense\" SET " + set + " WHERE id = ?").params(params).update();
+        Map<String, Object> editedCategory = categoryRow(expense(id).get("categoryId"));
+        applyDetails(id, d, editedCategory, false);
+        Map<String, Object> afterEdit = expense(id);
+        assertCategoryRules(afterEdit, editedCategory);
+        if (data.containsKey("amount") || data.containsKey("categoryId") || data.containsKey("expenseDate")
+                || EntityPatch.present("branchId", d.branchId()) || EntityPatch.present("claimantId", d.claimantId())) {
+            controls.checkLimits(afterEdit);
+        }
         if (reAccrue) {
             Map<String, Object> edited = expense(id);
             postAccrual(edited, categoryRow(edited.get("categoryId")), tagsFor(id), true);
@@ -600,6 +727,7 @@ public class ExpensesService {
         if (exp == null) {
             throw ApiException.notFound("Expense not found");
         }
+        notClaimLine(exp);
         if (!"DRAFT".equals(String.valueOf(exp.get("status")))) {
             throw ApiException.badRequest("Only draft expenses can be approved");
         }
@@ -624,6 +752,67 @@ public class ExpensesService {
         accrueOnApproval(id);
         audit.recordInTx(AuditInput.of("Expense", id, "approve", null, Obj.of("approvedBy", approverId, "reason",
                 approvalNotes)));
+        notifyRaiser(exp, "notifyOnDecision", "approved", approvalNotes);
+        return loadDecorated(id);
+    }
+
+    private void notifyRaiser(Map<String, Object> exp, String setting, String what, String note) {
+        String to = exp.get("claimantId") != null ? (String) exp.get("claimantId") : (String) exp.get("createdById");
+        controls.notify(setting, to, "Expense " + exp.get("expenseCode") + " " + what, (String) exp.get("title")
+                + (note == null || note.isBlank() ? "" : " — " + note), Obj.of("expenseId", exp.get("id"), "status",
+                what));
+    }
+
+    /**
+     * Send a DRAFT expense back to its raiser for correction (EX-2): the pending approval request is cancelled and the
+     * expense becomes RETURNED; the raiser edits it and calls {@link #submit}.
+     */
+    @Transactional
+    public Map<String, Object> returnForCorrection(String id, String reason) {
+        Map<String, Object> exp = expense(id);
+        if (exp == null) {
+            throw ApiException.notFound("Expense not found");
+        }
+        notClaimLine(exp);
+        if (!"DRAFT".equals(String.valueOf(exp.get("status")))) {
+            throw ApiException.badRequest("Only draft expenses can be returned for correction");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("A reason is required to return an expense");
+        }
+        String actorId = requireActor();
+        if (actorId.equals(exp.get("createdById"))) {
+            throw ApiException.forbidden("The person who raised an expense cannot return it");
+        }
+        String pending = pendingRequest(id);
+        if (pending != null) {
+            approvals.decide(pending, "rejected", "Returned for correction: " + reason);
+        }
+        jdbc.sql("UPDATE \"Expense\" SET status = 'RETURNED', \"approvalNotes\" = ?, \"updatedAt\" = " + NOW
+                + " WHERE id = ?").params(reason, id).update();
+        audit.recordInTx(AuditInput.of("Expense", id, "reject", null, Obj.of("reason", reason, "returned", true)));
+        publish("expense.returned", Obj.of("expenseId", id));
+        notifyRaiser(exp, "notifyOnDecision", "returned for correction", reason);
+        return loadDecorated(id);
+    }
+
+    /** Resubmit a RETURNED expense to the approval engine (EX-2). */
+    @Transactional
+    public Map<String, Object> submit(String id) {
+        Map<String, Object> exp = expense(id);
+        if (exp == null) {
+            throw ApiException.notFound("Expense not found");
+        }
+        notClaimLine(exp);
+        if (!"RETURNED".equals(String.valueOf(exp.get("status")))) {
+            throw ApiException.badRequest("Only returned expenses can be resubmitted");
+        }
+        Map<String, Object> category = categoryRow(exp.get("categoryId"));
+        assertCategoryRules(exp, category);
+        controls.checkLimits(exp);
+        routeForApproval(id, category, tagsFor(id), true);
+        audit.recordInTx(AuditInput.of("Expense", id, "update", null, Obj.of("resubmitted", true)));
+        publish("expense.submitted", Obj.of("expenseId", id));
         return loadDecorated(id);
     }
 
@@ -640,6 +829,7 @@ public class ExpensesService {
         if (exp == null) {
             throw ApiException.notFound("Expense not found");
         }
+        notClaimLine(exp);
         if (!"DRAFT".equals(String.valueOf(exp.get("status")))) {
             throw ApiException.badRequest("Only draft expenses can be rejected");
         }
@@ -654,6 +844,7 @@ public class ExpensesService {
             values.put("reason", reason);
             audit.recordInTx(AuditInput.of("Expense", id, "reject", null, values));
         }
+        notifyRaiser(exp, "notifyOnDecision", "rejected", reason);
         return loadDecorated(id);
     }
 
@@ -664,6 +855,7 @@ public class ExpensesService {
         if (exp0 == null) {
             throw ApiException.notFound("Expense not found");
         }
+        notClaimLine(exp0);
         Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval("expense", id,
                 Obj.of("amount", JsNumbers.js(Money.dec(exp0.get("amount"))))));
         if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
@@ -687,10 +879,18 @@ public class ExpensesService {
         if ("PAID".equals(String.valueOf(exp.get("paymentStatus")))) {
             throw ApiException.badRequest("Expense is already fully paid");
         }
+        List<String> makers = new ArrayList<>();
+        for (String k : List.of("createdById", "approvedById", "claimantId")) {
+            if (exp.get(k) != null) {
+                makers.add((String) exp.get(k));
+            }
+        }
+        sod.assertSeparated(SegregationOfDutiesService.EXPENSE_PAYMENT, "Expense", id, makers);
         Map<String, Object> category = categoryRow(exp.get("categoryId"));
         recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(), category,
                 null, dto.amount());
         publish("expense.paid", Obj.of("expenseId", id));
+        notifyRaiser(exp, "notifyOnPayment", "paid", null);
         Map<String, Object> result = loadDecorated(id);
         BusinessOutcome.record(jdbc, Obj.of("id", id, "paid", true), true);
         return result;
@@ -722,6 +922,7 @@ public class ExpensesService {
             jdbc.sql("UPDATE \"ExpensePayment\" SET status = 'void', \"voidReason\" = ? WHERE id = ?")
                     .params(voidReason, p.get("id")).update();
         }
+        prepayments.cancelFor(id, "Void expense " + exp.get("expenseCode") + ": " + voidReason);
         String accrual = accrualEntry(id);
         if (accrual != null) {
             posting.reverse(accrual, null, "Void expense " + exp.get("expenseCode") + ": " + voidReason);
@@ -745,6 +946,7 @@ public class ExpensesService {
         if (!"UNPAID".equals(String.valueOf(exp.get("paymentStatus"))) && !"VOID".equals(String.valueOf(exp.get("status")))) {
             throw ApiException.badRequest("Only unpaid or voided expenses can be deleted");
         }
+        prepayments.cancelFor(id, "Deleted expense " + exp.get("expenseCode"));
         String accrual = accrualEntry(id);
         if (accrual != null) {
             posting.reverse(accrual, null, "Deleted expense " + exp.get("expenseCode"));
@@ -753,6 +955,119 @@ public class ExpensesService {
                 .update();
         audit.recordInTx(AuditInput.of("Expense", id, "delete"));
         return Obj.of("id", id, "deleted", true);
+    }
+
+    // ------------------------------------------------------------------ EX-3 claim lines (ExpenseClaimService)
+
+    /**
+     * Insert one line of an expense claim: an employee-paid CREDIT expense in DRAFT, owned by {@code claimId}, with
+     * category rules applied but no approval routing (the claim is approved as a whole). Returns the expense id.
+     */
+    @Transactional
+    public String createClaimLine(CreateInput dto, Details details, String claimId, String claimantId) {
+        String actorId = requireActor();
+        Map<String, Object> category = dto.categoryId() != null && !dto.categoryId().isEmpty()
+                ? categoryRow(dto.categoryId()) : null;
+        if (dto.categoryId() != null && !dto.categoryId().isEmpty() && category == null) {
+            throw ApiException.badRequest("Category not found");
+        }
+        String id = insertExpense(dto, actorId, false, null, category)[0];
+        Details d = details == null ? Details.NONE : details;
+        applyDetails(id, new Details(d.branchId(), d.departmentId(), d.costCenterId(), d.projectId(),
+                d.receiptNumber(), d.dueDate(), "EMPLOYEE", claimantId, d.currencyCode(), d.exchangeRate(),
+                d.foreignAmount(), d.taxId(), d.taxAmount(), d.capitalize(), d.allocations(), d.prepaidMonths(),
+                d.prepaidStart()), category, true);
+        jdbc.sql("UPDATE \"Expense\" SET \"claimId\" = ?, \"claimantId\" = ? WHERE id = ?").params(claimId, claimantId, id)
+                .update();
+        assertCategoryRules(expense(id), category);
+        return id;
+    }
+
+    /** Lines of a claim (live rows), oldest first, in the decorated expense shape. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> claimLines(String claimId) {
+        return decorate(SqlRows.list(Expense.class, jdbc.sql("SELECT * FROM \"Expense\" WHERE \"claimId\" = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", \"expenseCode\"")
+                .params(claimId, org())).stream().peek(r -> r.put("category", category(r.get("categoryId")))).toList());
+    }
+
+    /** Spending limits for a claim line (EX-2 limits apply to claims on submit). */
+    void checkClaimLineLimits(String expenseId) {
+        controls.checkLimits(expense(expenseId));
+    }
+
+    /** Remove a claim line (draft / returned claim): soft delete, nothing was posted. */
+    void deleteClaimLine(String expenseId) {
+        jdbc.sql("UPDATE \"Expense\" SET \"deletedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(expenseId, org()).update();
+        audit.recordInTx(AuditInput.of("Expense", expenseId, "delete"));
+    }
+
+    /** Set the status of every live line of a claim (DRAFT, REJECTED, CANCELLED). */
+    void setClaimLinesStatus(String claimId, String status, String notes) {
+        jdbc.sql("UPDATE \"Expense\" SET status = ?::\"ExpenseStatus\", \"approvalNotes\" = COALESCE(?, \"approvalNotes\"),"
+                + " \"updatedAt\" = " + NOW + " WHERE \"claimId\" = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                .params(status, notes, claimId, org()).update();
+    }
+
+    /** Approve one claim line: APPROVED + accrual (Dr expense / Cr employee reimbursement payable). */
+    void approveClaimLine(String expenseId, String approverId, String notes) {
+        jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = ?, \"approvalNotes\" = ?, \"updatedAt\" = "
+                + NOW + " WHERE id = ?").params(approverId, notes, expenseId).update();
+        Map<String, Object> exp = expense(expenseId);
+        postAccrual(exp, categoryRow(exp.get("categoryId")), null, false);
+    }
+
+    /** Pay {@code amount} of an approved claim line from a cash-equivalent account (Dr reimbursement payable / Cr cash). */
+    void payClaimLine(String expenseId, String payerId, String method, String accountId, String reference,
+            BigDecimal amount) {
+        Map<String, Object> exp = expense(expenseId);
+        recordPayment(exp, payerId, method, accountId, reference, null, categoryRow(exp.get("categoryId")), null, amount);
+    }
+
+    /** Residual (amount − paid) of an expense. */
+    BigDecimal residual(String expenseId) {
+        Map<String, Object> exp = expense(expenseId);
+        return Money.dec(exp.get("amount")).subtract(Money.dec(exp.get("amountPaid")));
+    }
+
+    /**
+     * Clear {@code amount} of an accrued expense's payable against a non-cash account (EX-3: an employee advance):
+     * Dr the accrued payable / Cr {@code creditAccountId}, recorded as a payment with method {@code method}.
+     * Returns the journal entry id.
+     */
+    String settleAgainst(String expenseId, BigDecimal amount, String creditAccountId, String method, String reference,
+            String actorId) {
+        Map<String, Object> exp = expense(expenseId);
+        Map<String, Object> payable = accruedPayable(expenseId);
+        if (payable == null) {
+            throw ApiException.badRequest("Expense " + exp.get("expenseCode") + " is not accrued");
+        }
+        BigDecimal residual = Money.dec(exp.get("amount")).subtract(Money.dec(exp.get("amountPaid")));
+        if (amount.signum() <= 0 || amount.compareTo(residual) > 0) {
+            throw ApiException.badRequest("Settlement amount must be between 0 and the outstanding balance of "
+                    + JsNumbers.dec(residual));
+        }
+        String paymentId = UUID.randomUUID().toString();
+        String value = JsNumbers.dec(amount);
+        String title = (String) exp.get("title");
+        Map<String, Object> entry = posting.post(PostingRequest.of("GEN", Instant.now(), "Expense " + exp.get("expenseCode")
+                + " - " + title + " (" + method.toLowerCase() + ")", "expense_payment", expenseId,
+                "expense_payment:" + paymentId, List.of(new Line((String) payable.get("accountId"), value, null,
+                        (String) payable.get("partnerId"), title, null, null, null),
+                        Line.credit(creditAccountId, value, "Settled: " + title))));
+        jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
+                        + " \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
+                        + " ?, 'posted', " + NOW + ")")
+                .params(paymentId, org(), expenseId, amount, method, reference, creditAccountId, actorId, entry.get("id"))
+                .update();
+        BigDecimal newPaid = Money.dec(exp.get("amountPaid")).add(amount);
+        jdbc.sql("UPDATE \"Expense\" SET \"amountPaid\" = ?, \"paymentStatus\" = ?::\"ExpensePaymentStatus\", \"paidAt\" = "
+                        + NOW + ", status = 'POSTED', \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(newPaid, newPaid.compareTo(Money.dec(exp.get("amount"))) >= 0 ? "PAID" : "PARTIALLY_PAID",
+                        expenseId)
+                .update();
+        return (String) entry.get("id");
     }
 
     // ------------------------------------------------------------------ internals
@@ -778,7 +1093,7 @@ public class ExpensesService {
                 : explicitTags != null ? explicitTags : tagsFor((String) expense.get("id"));
         String debit = payable != null ? (String) payable.get("accountId")
                 : tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
-                : resolveExpenseAccountId(category);
+                : baseDebitAccount(expense, category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
                     + " before paying expenses");
@@ -791,18 +1106,28 @@ public class ExpensesService {
             throw ApiException.badRequest("Pay expenses from an active cash, bank or mobile-money account");
         }
         TreasuryGuards.assertNotDrawerAccount(jdbc, org, (String) credit.get("id"), "An expense payment");
+        pettyCash.assertCanSpend((String) credit.get("id"), amount);
         TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), amount, (String) credit.get("name"));
         String paymentId = UUID.randomUUID().toString();
         String title = (String) expense.get("title");
         String value = JsNumbers.dec(amount);
-        Line debitLine = payable != null
-                ? new Line(debit, value, null, (String) payable.get("partnerId"), title, null, null, null)
-                : tags == null ? Line.debit(debit, value, title)
-                : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(), tags.dimensions());
+        List<Line> lines = new ArrayList<>();
+        if (payable != null) {
+            lines.add(new Line(debit, value, null, (String) payable.get("partnerId"), title, null, null, null));
+        } else {
+            if (tags == null) {
+                controls.checkBudget(expense, category, debit, net(expense).multiply(amount)
+                        .divide(Money.dec(expense.get("amount")), 6, RoundingMode.HALF_UP));
+            }
+            lines.addAll(debitLines(expense, category, tags, amount));
+        }
+        lines.add(Line.credit((String) credit.get("id"), value, "Paid: " + title));
         Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
                 "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, List.of(debitLine,
-                        Line.credit((String) credit.get("id"), value, "Paid: " + title))));
+                "expense_payment:" + paymentId, lines));
+        if (payable == null && tags == null) {
+            prepayments.ensureSchedule(expense, resolveExpenseAccountId(category), net(expense));
+        }
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"paymentNotes\", \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?,"
                         + " ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', " + NOW + ")")
@@ -861,16 +1186,20 @@ public class ExpensesService {
         }
         String id = (String) exp.get("id");
         String debit = tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
-                : resolveExpenseAccountId(category);
+                : baseDebitAccount(exp, category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
                     + " before approving expenses");
         }
-        String supplierId = (String) exp.get("supplierId");
+        if (tags == null) {
+            controls.checkBudget(exp, category, debit, net(exp));
+        }
+        boolean employee = "EMPLOYEE".equals(exp.get("paidBy"));
+        String supplierId = employee ? null : (String) exp.get("supplierId");
         String payable = supplierId == null ? null : jdbc.sql("SELECT \"payableAccountId\" FROM \"Partner\" WHERE id = ?"
                 + " AND \"organizationId\" = ?").params(supplierId, org()).query(String.class).optional().orElse(null);
         if (payable == null) {
-            payable = accounts.byMapping("accounts_payable");
+            payable = employee ? reimbursementPayable() : accounts.byMapping("accounts_payable");
         }
         String value = JsNumbers.dec(Money.dec(exp.get("amount")));
         String title = (String) exp.get("title");
@@ -880,13 +1209,341 @@ public class ExpensesService {
         Instant date = d instanceof java.sql.Timestamp t ? t.toInstant()
                 : d instanceof java.time.LocalDateTime l ? l.toInstant(ZoneOffset.UTC)
                 : d instanceof Instant i ? i : EntityPatch.toInstant(String.valueOf(d));
-        Line debitLine = tags == null ? Line.debit(debit, value, title)
-                : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(), tags.dimensions());
+        List<Line> lines = new ArrayList<>(debitLines(exp, category, tags, Money.dec(exp.get("amount"))));
+        lines.add(new Line(payable, null, value, supplierId, "Payable: " + title, null, null, null));
         Map<String, Object> entry = posting.post(PostingRequest.of("GEN", date, "Expense " + exp.get("expenseCode")
                 + " - " + title + " (accrued)", ACCRUAL_SOURCE, id, ACCRUAL_SOURCE + ":" + id + ":" + (seq + 1),
-                List.of(debitLine, new Line(payable, null, value, supplierId, "Payable: " + title, null, null, null))));
+                lines));
         audit.recordInTx(AuditInput.of("Expense", id, "post", null, Obj.of("accrualJournalEntryId", entry.get("id"),
                 "amount", value)));
+        if (tags == null) {
+            prepayments.ensureSchedule(exp, resolveExpenseAccountId(category), net(exp));
+        }
+    }
+
+    // ------------------------------------------------------------------ EX-1 details, allocations, debit lines
+
+    /** Employee reimbursement payable (created with its mapping on first use). */
+    String reimbursementPayable() {
+        return accounts.ensureByCode("2189", "Employee Reimbursements Payable", "current_liability",
+                "employee_reimbursement_payable");
+    }
+
+    private static boolean touched(Details d) {
+        for (java.lang.reflect.RecordComponent c : Details.class.getRecordComponents()) {
+            try {
+                if (EntityPatch.present(c.getName(), c.getAccessor().invoke(d))) {
+                    return true;
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        return false;
+    }
+
+    private List<Map<String, Object>> allocations(String expenseId) {
+        return SqlRows.list(jdbc.sql("SELECT * FROM \"ExpenseAllocation\" WHERE \"expenseId\" = ? AND"
+                + " \"organizationId\" = ? ORDER BY \"lineNo\"").params(expenseId, org()));
+    }
+
+    /** Net of tax. */
+    static BigDecimal net(Map<String, Object> exp) {
+        return Money.dec(exp.get("amount")).subtract(Money.dec(exp.get("taxAmount")));
+    }
+
+    private boolean exists(String table, String id) {
+        return id == null || jdbc.sql("SELECT count(*) FROM \"" + table + "\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()).query(Long.class).single() > 0;
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    /**
+     * Write the EX-1 fields of an expense (on create: every non-null field plus category defaults; on update: the
+     * fields sent) and its allocation lines; validates references, tax, currency and the allocation total.
+     */
+    private void applyDetails(String id, Details d, Map<String, Object> category, boolean creating) {
+        Map<String, Object> exp = expense(id);
+        Map<String, Object> set = new LinkedHashMap<>();
+        for (String[] ref : new String[][] {{"branchId", d.branchId(), "Branch"},
+                {"costCenterId", d.costCenterId(), "CostCenter"}, {"projectId", d.projectId(), "Project"},
+                {"claimantId", d.claimantId(), "User"}}) {
+            if (EntityPatch.present(ref[0], ref[1])) {
+                String v = blankToNull(ref[1]);
+                if (!exists(ref[2], v)) {
+                    throw ApiException.badRequest(ref[2].replaceAll("([a-z])([A-Z])", "$1 $2") + " not found");
+                }
+                set.put(ref[0], v);
+            }
+        }
+        for (String[] f : new String[][] {{"departmentId", d.departmentId()}, {"receiptNumber", d.receiptNumber()},
+                {"currencyCode", d.currencyCode()}}) {
+            if (EntityPatch.present(f[0], f[1])) {
+                set.put(f[0], blankToNull(f[1]));
+            }
+        }
+        if (EntityPatch.present("dueDate", d.dueDate())) {
+            set.put("dueDate", blankToNull(d.dueDate()) == null ? null : SqlRows.ts(EntityPatch.toInstant(d.dueDate())));
+        }
+        if (d.paidBy() != null) {
+            if (!List.of("COMPANY", "EMPLOYEE").contains(d.paidBy())) {
+                throw ApiException.badRequest("paidBy must be one of the following values: COMPANY, EMPLOYEE");
+            }
+            set.put("paidBy", d.paidBy());
+        }
+        if (d.capitalize() != null) {
+            set.put("capitalize", d.capitalize());
+        }
+        if (EntityPatch.present("prepaidMonths", d.prepaidMonths())) {
+            if (d.prepaidMonths() != null && (d.prepaidMonths() < 1 || d.prepaidMonths() > 120)) {
+                throw ApiException.badRequest("prepaidMonths must be between 1 and 120");
+            }
+            set.put("prepaidMonths", d.prepaidMonths());
+        }
+        if (EntityPatch.present("prepaidStart", d.prepaidStart())) {
+            set.put("prepaidStart", blankToNull(d.prepaidStart()) == null ? null
+                    : java.sql.Date.valueOf(java.time.LocalDate.parse(d.prepaidStart().substring(0, 10))));
+        }
+        if (EntityPatch.present("exchangeRate", d.exchangeRate())) {
+            set.put("exchangeRate", d.exchangeRate());
+        }
+        if (EntityPatch.present("foreignAmount", d.foreignAmount())) {
+            set.put("foreignAmount", d.foreignAmount());
+        }
+        boolean taxSent = EntityPatch.present("taxId", d.taxId()) || EntityPatch.present("taxAmount", d.taxAmount());
+        String taxId = EntityPatch.present("taxId", d.taxId()) ? blankToNull(d.taxId()) : (String) exp.get("taxId");
+        if (creating && taxId == null && d.taxAmount() == null && category != null) {
+            taxId = (String) category.get("defaultTaxId");
+            taxSent = taxId != null;
+        }
+        if (creating && !set.containsKey("costCenterId") && category != null && category.get("defaultCostCenterId") != null) {
+            set.put("costCenterId", category.get("defaultCostCenterId"));
+        }
+        BigDecimal amount = Money.dec(exp.get("amount"));
+        if (taxSent || (EntityPatch.present("amount", null) && exp.get("taxId") != null)) {
+            BigDecimal tax = d.taxAmount();
+            if (tax == null && taxId != null) {
+                Map<String, Object> t = SqlRows.one(jdbc.sql("SELECT rate FROM \"Tax\" WHERE id = ? AND"
+                        + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(taxId, org()));
+                if (t == null) {
+                    throw ApiException.badRequest("Tax not found");
+                }
+                BigDecimal rate = Money.dec(t.get("rate"));
+                tax = amount.multiply(rate).divide(new BigDecimal("100").add(rate), 2, RoundingMode.HALF_UP);
+            }
+            tax = tax == null ? BigDecimal.ZERO : tax;
+            if (tax.signum() < 0 || tax.compareTo(amount) >= 0) {
+                throw ApiException.badRequest("Tax amount must be at least 0 and less than the expense amount");
+            }
+            set.put("taxId", taxId);
+            set.put("taxAmount", tax);
+        }
+        if (!set.isEmpty()) {
+            StringBuilder sql = new StringBuilder("\"updatedAt\" = " + NOW);
+            List<Object> params = new ArrayList<>();
+            set.forEach((k, v) -> {
+                sql.append(", \"").append(k).append("\" = ?");
+                params.add(v);
+            });
+            params.add(id);
+            jdbc.sql("UPDATE \"Expense\" SET " + sql + " WHERE id = ?").params(params).update();
+        }
+        if (creating && set.get("claimantId") == null && "EMPLOYEE".equals(set.get("paidBy"))) {
+            jdbc.sql("UPDATE \"Expense\" SET \"claimantId\" = \"createdById\" WHERE id = ?").param(id).update();
+        }
+        if (d.allocations() != null) {
+            writeAllocations(id, d.allocations());
+        }
+    }
+
+    private void writeAllocations(String id, List<Allocation> lines) {
+        jdbc.sql("DELETE FROM \"ExpenseAllocation\" WHERE \"expenseId\" = ? AND \"organizationId\" = ?")
+                .params(id, org()).update();
+        if (lines.isEmpty()) {
+            return;
+        }
+        boolean byPercent = lines.getFirst().percent() != null && lines.getFirst().amount() == null;
+        int n = 0;
+        for (Allocation a : lines) {
+            n++;
+            if (byPercent ? a.percent() == null || a.amount() != null : a.amount() == null) {
+                throw ApiException.badRequest("Allocation lines must all use either amount or percent");
+            }
+            if (!exists("CostCenter", blankToNull(a.costCenterId())) || !exists("Branch", blankToNull(a.branchId()))
+                    || !exists("Project", blankToNull(a.projectId()))) {
+                throw ApiException.badRequest("Allocation line " + n + ": cost center, branch or project not found");
+            }
+            if (a.accountId() != null && jdbc.sql("SELECT count(*) FROM \"Account\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? AND \"isPostable\" AND \"isActive\" AND \"deletedAt\" IS NULL")
+                    .params(a.accountId(), org()).query(Long.class).single() == 0) {
+                throw ApiException.badRequest("Allocation line " + n + ": account must be a postable, active account");
+            }
+            jdbc.sql("INSERT INTO \"ExpenseAllocation\" (id, \"organizationId\", \"expenseId\", \"lineNo\", amount,"
+                            + " percent, \"accountId\", \"costCenterId\", \"costAllocationRuleId\", \"branchId\","
+                            + " \"departmentId\", \"projectId\", description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                    .params(UUID.randomUUID().toString(), org(), id, n, byPercent ? BigDecimal.ONE : a.amount(),
+                            a.percent(), blankToNull(a.accountId()), blankToNull(a.costCenterId()),
+                            blankToNull(a.costAllocationRuleId()), blankToNull(a.branchId()),
+                            blankToNull(a.departmentId()), blankToNull(a.projectId()), a.description())
+                    .update();
+        }
+    }
+
+    /**
+     * Category and allocation rules on the saved row: receipt required, reimbursable for EMPLOYEE, capitalise allowed,
+     * EMPLOYEE = CREDIT, currency product, and allocation lines that add up to the net (percent lines are re-spread).
+     */
+    private void assertCategoryRules(Map<String, Object> exp, Map<String, Object> category) {
+        String id = (String) exp.get("id");
+        BigDecimal amount = Money.dec(exp.get("amount"));
+        String cat = category == null ? null : (String) category.get("name");
+        if (category != null && Boolean.TRUE.equals(category.get("receiptRequired"))
+                && blankToNull((String) exp.get("receiptNumber")) == null) {
+            throw ApiException.badRequest("Category " + cat + " requires a receipt: enter the receipt or invoice number");
+        }
+        boolean employee = "EMPLOYEE".equals(exp.get("paidBy"));
+        if (employee && category != null && Boolean.FALSE.equals(category.get("reimbursable"))) {
+            throw ApiException.badRequest("Category " + cat + " is not reimbursable");
+        }
+        if (employee && !"CREDIT".equals(String.valueOf(exp.get("paymentType")))) {
+            throw ApiException.badRequest("An expense paid by an employee is reimbursed later: record it as CREDIT");
+        }
+        if (exp.get("prepaidMonths") != null && Boolean.TRUE.equals(exp.get("capitalize"))) {
+            throw ApiException.badRequest("An expense is either prepaid or capitalised, not both");
+        }
+        if (exp.get("prepaidMonths") != null && !allocations(id).isEmpty()) {
+            throw ApiException.badRequest("A prepaid expense is released to one cost centre: remove the allocation lines");
+        }
+        if (Boolean.TRUE.equals(exp.get("capitalize")) && (category == null
+                || !Boolean.TRUE.equals(category.get("canCapitalise")))) {
+            throw ApiException.badRequest("Only expenses in a category that allows capitalisation can be capitalised");
+        }
+        if (exp.get("foreignAmount") != null && exp.get("exchangeRate") != null) {
+            BigDecimal expected = Money.dec(exp.get("foreignAmount")).multiply(Money.dec(exp.get("exchangeRate")))
+                    .setScale(2, RoundingMode.HALF_UP);
+            if (expected.subtract(amount).abs().compareTo(new BigDecimal("0.01")) > 0) {
+                throw ApiException.badRequest("Amount " + JsNumbers.dec(amount) + " must equal foreignAmount × exchangeRate ("
+                        + expected.toPlainString() + ")");
+            }
+        }
+        List<Map<String, Object>> allocs = allocations(id);
+        if (allocs.isEmpty()) {
+            return;
+        }
+        BigDecimal net = net(exp);
+        if (allocs.getFirst().get("percent") != null) {
+            BigDecimal total = allocs.stream().map(a -> Money.dec(a.get("percent"))).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (total.subtract(new BigDecimal("100")).abs().compareTo(new BigDecimal("0.0001")) > 0) {
+                throw ApiException.badRequest("Allocation percentages must add up to 100 (got " + total.stripTrailingZeros()
+                        .toPlainString() + ")");
+            }
+            BigDecimal left = net;
+            for (int i = 0; i < allocs.size(); i++) {
+                Map<String, Object> a = allocs.get(i);
+                BigDecimal part = i == allocs.size() - 1 ? left
+                        : net.multiply(Money.dec(a.get("percent"))).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+                left = left.subtract(part);
+                if (part.signum() <= 0) {
+                    throw ApiException.badRequest("Allocation line " + (i + 1) + " is zero");
+                }
+                jdbc.sql("UPDATE \"ExpenseAllocation\" SET amount = ? WHERE id = ?").params(part, a.get("id")).update();
+            }
+            return;
+        }
+        BigDecimal total = allocs.stream().map(a -> Money.dec(a.get("amount"))).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (total.subtract(net).abs().compareTo(new BigDecimal("0.005")) > 0) {
+            throw ApiException.badRequest("Allocation lines must add up to the net amount " + JsNumbers.dec(net)
+                    + " (got " + JsNumbers.dec(total) + ")");
+        }
+    }
+
+    /** The account the net of an expense debits: the category's asset account when capitalised, else the expense one. */
+    private String baseDebitAccount(Map<String, Object> exp, Map<String, Object> category) {
+        if (exp.get("prepaidMonths") != null) {
+            return prepayments.prepaidAccount();
+        }
+        if (Boolean.TRUE.equals(exp.get("capitalize"))) {
+            if (category != null && category.get("assetAccountId") != null) {
+                return (String) category.get("assetAccountId");
+            }
+            return accounts.byMapping("fixed_asset_valuation");
+        }
+        return resolveExpenseAccountId(category);
+    }
+
+    private static Map<String, Object> dims(Object departmentId, Object projectId, Object ruleId) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        if (departmentId != null) {
+            d.put("departmentId", departmentId);
+        }
+        if (projectId != null) {
+            d.put("projectId", projectId);
+        }
+        if (ruleId != null) {
+            d.put("costAllocationRuleId", ruleId);
+        }
+        return d.isEmpty() ? null : d;
+    }
+
+    private static Object either(Object a, Object b) {
+        return a != null ? a : b;
+    }
+
+    /**
+     * Debit lines for {@code gross} of an expense (its whole amount, or a payment's share of it): a source module's
+     * tags give one line as before; otherwise the net is spread over the allocation lines (or one line with the
+     * expense's branch / cost centre / department / project) and the tax share goes to {@code tax_receivable}.
+     */
+    private List<Line> debitLines(Map<String, Object> exp, Map<String, Object> category, PostingTags tags,
+            BigDecimal gross) {
+        String title = (String) exp.get("title");
+        if (tags != null) {
+            String acc = tags.expenseAccountId() != null ? tags.expenseAccountId() : baseDebitAccount(exp, category);
+            return List.of(new Line(acc, JsNumbers.dec(gross), null, null, title, tags.branchId(), tags.costCenterId(),
+                    tags.dimensions()));
+        }
+        BigDecimal amount = Money.dec(exp.get("amount"));
+        BigDecimal taxTotal = Money.dec(exp.get("taxAmount"));
+        BigDecimal tax = gross.compareTo(amount) == 0 ? taxTotal
+                : taxTotal.multiply(gross).divide(amount, 2, RoundingMode.HALF_UP);
+        BigDecimal net = gross.subtract(tax);
+        String base = baseDebitAccount(exp, category);
+        List<Line> lines = new ArrayList<>();
+        List<Map<String, Object>> allocs = allocations((String) exp.get("id"));
+        if (allocs.isEmpty()) {
+            Map<String, Object> d = dims(exp.get("departmentId"), exp.get("projectId"), null);
+            lines.add(exp.get("branchId") == null && exp.get("costCenterId") == null && d == null
+                    ? Line.debit(base, JsNumbers.dec(net), title)
+                    : new Line(base, JsNumbers.dec(net), null, null, title, (String) exp.get("branchId"),
+                            (String) exp.get("costCenterId"), d));
+        } else {
+            BigDecimal allocTotal = allocs.stream().map(a -> Money.dec(a.get("amount"))).reduce(BigDecimal.ZERO,
+                    BigDecimal::add);
+            BigDecimal left = net;
+            for (int i = 0; i < allocs.size(); i++) {
+                Map<String, Object> a = allocs.get(i);
+                BigDecimal part = i == allocs.size() - 1 ? left
+                        : net.multiply(Money.dec(a.get("amount"))).divide(allocTotal, 2, RoundingMode.HALF_UP);
+                left = left.subtract(part);
+                if (part.signum() == 0) {
+                    continue;
+                }
+                String acc = a.get("accountId") != null ? (String) a.get("accountId") : base;
+                lines.add(new Line(acc, JsNumbers.dec(part), null, null,
+                        a.get("description") != null ? (String) a.get("description") : title,
+                        (String) either(a.get("branchId"), exp.get("branchId")),
+                        (String) either(a.get("costCenterId"), exp.get("costCenterId")),
+                        dims(either(a.get("departmentId"), exp.get("departmentId")),
+                                either(a.get("projectId"), exp.get("projectId")), a.get("costAllocationRuleId"))));
+            }
+        }
+        if (tax.signum() > 0) {
+            lines.add(Line.debit(accounts.byMapping("tax_receivable"), JsNumbers.dec(tax), "Input tax: " + title));
+        }
+        return lines;
     }
 
     /** The first tagger claiming the expense, or null (no tagger registered / none owns it). */
@@ -980,6 +1637,10 @@ public class ExpensesService {
             Map<String, Object> m = new LinkedHashMap<>(r);
             m.put("amount", JsNumbers.js(Money.dec(r.get("amount"))));
             m.put("amountPaid", JsNumbers.js(Money.dec(r.get("amountPaid"))));
+            if (r.containsKey("taxAmount")) {
+                m.put("taxAmount", JsNumbers.js(Money.dec(r.get("taxAmount"))));
+                m.put("netAmount", JsNumbers.js(Money.dec(r.get("amount")).subtract(Money.dec(r.get("taxAmount")))));
+            }
             @SuppressWarnings("unchecked")
             Map<String, Object> cat = (Map<String, Object>) r.get("category");
             m.put("category", cat == null ? null : Obj.of("id", cat.get("id"), "name", cat.get("name"), "icon",

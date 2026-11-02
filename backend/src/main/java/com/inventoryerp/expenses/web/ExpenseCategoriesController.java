@@ -2,10 +2,14 @@ package com.inventoryerp.expenses.web;
 
 import com.inventoryerp.expenses.application.ExpenseCategoriesService;
 import com.inventoryerp.expenses.application.ExpenseCategoriesService.CategoryInput;
+import com.inventoryerp.expenses.application.ExpenseCategoriesService.Controls;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import jakarta.validation.Valid;
+import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -26,11 +30,16 @@ public class ExpenseCategoriesController {
 
     /** {@code CreateExpenseCategoryDto}. */
     public record CreateCategoryRequest(@NotNull(message = "must be a string") String name, String icon,
-            String description, String ledgerAccountId) {}
+            String description, String ledgerAccountId, String code, String defaultTaxId, String defaultCostCenterId,
+            Boolean receiptRequired, Boolean approvalRequired, @PositiveOrZero BigDecimal approvalThreshold,
+            Boolean reimbursable, @OneOf({"none", "warn", "block"}) String budgetControl, Boolean canCapitalise,
+            String assetAccountId) {}
 
     /** {@code UpdateExpenseCategoryDto}. */
     public record UpdateCategoryRequest(String name, String icon, String description, String ledgerAccountId,
-            Boolean isActive) {}
+            Boolean isActive, String code, String defaultTaxId, String defaultCostCenterId, Boolean receiptRequired,
+            Boolean approvalRequired, @PositiveOrZero BigDecimal approvalThreshold, Boolean reimbursable,
+            @OneOf({"none", "warn", "block"}) String budgetControl, Boolean canCapitalise, String assetAccountId) {}
 
     private final ExpenseCategoriesService categories;
 
@@ -54,14 +63,19 @@ public class ExpenseCategoriesController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.EXPENSE__UPDATE)
     public Map<String, Object> create(@Valid @RequestBody CreateCategoryRequest dto) {
-        return categories.create(new CategoryInput(dto.name(), dto.icon(), dto.description(), dto.ledgerAccountId(), null));
+        return categories.create(new CategoryInput(dto.name(), dto.icon(), dto.description(), dto.ledgerAccountId(), null),
+                new Controls(dto.code(), dto.defaultTaxId(), dto.defaultCostCenterId(), dto.receiptRequired(),
+                        dto.approvalRequired(), dto.approvalThreshold(), dto.reimbursable(), dto.budgetControl(),
+                        dto.canCapitalise(), dto.assetAccountId()));
     }
 
     @PatchMapping("/{id}")
     @RequirePermissions(Permissions.EXPENSE__UPDATE)
     public Map<String, Object> update(@PathVariable String id, @Valid @RequestBody UpdateCategoryRequest dto) {
         return categories.update(id, new CategoryInput(dto.name(), dto.icon(), dto.description(), dto.ledgerAccountId(),
-                dto.isActive()));
+                dto.isActive()), new Controls(dto.code(), dto.defaultTaxId(), dto.defaultCostCenterId(),
+                dto.receiptRequired(), dto.approvalRequired(), dto.approvalThreshold(), dto.reimbursable(),
+                dto.budgetControl(), dto.canCapitalise(), dto.assetAccountId()));
     }
 
     @DeleteMapping("/{id}")

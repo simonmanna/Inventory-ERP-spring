@@ -32,6 +32,7 @@ import {
   type LedgerAccountOption,
 } from "@/lib/api/expenseCategories";
 import { tx } from '@/lib/i18n/tx';
+import { lookupsApi, type Row } from '@/lib/api/expenseExtras';
 
 const NONE = "__none__";
 
@@ -69,6 +70,37 @@ function CategoryDialog({
         ]
       : accounts;
   const [isActive, setIsActive] = useState(category?.isActive ?? true);
+  // ADR-S052 category controls
+  const [ctl, setCtl] = useState({
+    code: category?.code ?? "",
+    receiptRequired: !!category?.receiptRequired,
+    approvalRequired: !!category?.approvalRequired,
+    approvalThreshold: category?.approvalThreshold != null ? String(category.approvalThreshold) : "",
+    reimbursable: category?.reimbursable ?? true,
+    budgetControl: category?.budgetControl ?? "none",
+    canCapitalise: !!category?.canCapitalise,
+    assetAccountId: category?.assetAccountId ?? "",
+    defaultCostCenterId: category?.defaultCostCenterId ?? "",
+    defaultTaxId: category?.defaultTaxId ?? "",
+  });
+  const [centers, setCenters] = useState<Row[]>([]);
+  const [taxes, setTaxes] = useState<Row[]>([]);
+  useEffect(() => {
+    lookupsApi.costCenters().then(setCenters);
+    lookupsApi.taxes().then(setTaxes);
+  }, []);
+  const controls = {
+    code: ctl.code.trim(),
+    receiptRequired: ctl.receiptRequired,
+    approvalRequired: ctl.approvalRequired,
+    approvalThreshold: ctl.approvalThreshold ? Number(ctl.approvalThreshold) : null,
+    reimbursable: ctl.reimbursable,
+    budgetControl: ctl.budgetControl,
+    canCapitalise: ctl.canCapitalise,
+    assetAccountId: ctl.assetAccountId,
+    defaultCostCenterId: ctl.defaultCostCenterId,
+    defaultTaxId: ctl.defaultTaxId,
+  };
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -85,14 +117,16 @@ function CategoryDialog({
           description: description.trim(),
           ledgerAccountId: ledgerAccountId === NONE ? "" : ledgerAccountId,
           isActive,
-        });
+          ...controls,
+        } as any);
       } else {
         await expenseCategoriesApi.create({
           name: name.trim(),
           icon: icon.trim() || undefined,
           description: description.trim() || undefined,
           ledgerAccountId: ledgerAccountId === NONE ? undefined : ledgerAccountId,
-        });
+          ...Object.fromEntries(Object.entries(controls).filter(([, v]) => v !== "" && v !== null)),
+        } as any);
       }
       onSaved();
     } catch (e: any) {
@@ -154,6 +188,62 @@ function CategoryDialog({
               className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
               placeholder={tx('What belongs in this category (optional)')}
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 rounded border p-3 bg-slate-50">
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Code')}</label>
+              <Input value={ctl.code} onChange={(e) => setCtl({ ...ctl, code: e.target.value })} placeholder="TRV" />
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Budget control')}</label>
+              <select className="w-full h-9 rounded-md border border-input bg-white px-2 text-sm" value={ctl.budgetControl}
+                onChange={(e) => setCtl({ ...ctl, budgetControl: e.target.value as any })}>
+                <option value="none">{tx('None')}</option>
+                <option value="warn">{tx('Warn when over budget')}</option>
+                <option value="block">{tx('Block when over budget')}</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Default cost centre')}</label>
+              <select className="w-full h-9 rounded-md border border-input bg-white px-2 text-sm" value={ctl.defaultCostCenterId}
+                onChange={(e) => setCtl({ ...ctl, defaultCostCenterId: e.target.value })}>
+                <option value="">{tx('None')}</option>
+                {centers.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Default tax')}</label>
+              <select className="w-full h-9 rounded-md border border-input bg-white px-2 text-sm" value={ctl.defaultTaxId}
+                onChange={(e) => setCtl({ ...ctl, defaultTaxId: e.target.value })}>
+                <option value="">{tx('None')}</option>
+                {taxes.map((t) => <option key={t.id} value={t.id}>{t.name} ({Number(t.rate)}%)</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Approval from amount')}</label>
+              <Input type="number" min={0} value={ctl.approvalThreshold} placeholder={tx('none')}
+                onChange={(e) => setCtl({ ...ctl, approvalThreshold: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase text-gray-500">{tx('Asset account (capital purchases)')}</label>
+              <select className="w-full h-9 rounded-md border border-input bg-white px-2 text-sm" value={ctl.assetAccountId}
+                onChange={(e) => setCtl({ ...ctl, assetAccountId: e.target.value })}>
+                <option value="">{tx('Fixed asset mapping')}</option>
+                {options.map((a) => <option key={a.id} value={a.id}>{a.code}{a.name ? ` · ${a.name}` : ""}</option>)}
+              </select>
+            </div>
+            {([
+              ["receiptRequired", tx('Receipt required')],
+              ["approvalRequired", tx('Always needs approval')],
+              ["reimbursable", tx('Employees can be reimbursed')],
+              ["canCapitalise", tx('Can be capitalised')],
+            ] as const).map(([k, label]) => (
+              <label key={k} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={(ctl as any)[k]} onChange={(e) => setCtl({ ...ctl, [k]: e.target.checked })} />
+                {label}
+              </label>
+            ))}
           </div>
 
           <div>

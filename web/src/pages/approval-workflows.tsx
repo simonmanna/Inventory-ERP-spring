@@ -94,6 +94,8 @@ const ENTITY_TYPE_GROUPS: Record<string, { key: string; label: string }[]> = {
   ],
   Expenses: [
     { key: 'expense', label: tx('Expenses') },
+    { key: 'expense_claim', label: tx('Expense Claims') },
+    { key: 'expense_payment', label: tx('Expense Payment') },
     { key: 'credit_note', label: tx('Credit Notes') },
     { key: 'supplier_payment', label: tx('Supplier Payments') },
     { key: 'invoice_cancel', label: tx('Invoice Cancel') },
