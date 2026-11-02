@@ -310,7 +310,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   // ── Sell ──
   {
-    zone: 'Sell',
+    zone: 'Sales',
     title: 'CRM',
     icon: Users,
     items: [
@@ -327,7 +327,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Order-to-cash (ADR-S011). Quotations live in CRM, deliveries in Fleet; both follow their module's switch.
-    zone: 'Sell',
+    zone: 'Sales',
     title: 'Sales',
     icon: ShoppingCart,
     items: [
@@ -352,7 +352,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Sell',
+    zone: 'Sales',
     title: 'POS',
     icon: Coffee,
     items: [
@@ -382,7 +382,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   // ── Buy & Stock ──
   {
-    zone: 'Buy & Stock',
+    zone: 'Procurement & Inventory',
     title: 'Purchases',
     icon: Truck,
     items: [
@@ -415,7 +415,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Buy & Stock',
+    zone: 'Procurement & Inventory',
     title: 'Inventory',
     icon: Package,
     items: [
@@ -440,7 +440,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   // ── Finance ──
   {
-    zone: 'Finance',
+    zone: 'Finance and Accounting',
     title: 'Cash & Bank',
     icon: Wallet,
     items: [
@@ -458,7 +458,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Finance',
+    zone: 'Finance and Accounting',
     title: 'Accounting',
     icon: Calculator,
     items: [
@@ -502,7 +502,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Finance',
+    zone: 'Finance and Accounting',
     title: 'Reports',
     icon: BookOpen,
     items: [
@@ -517,7 +517,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Finance',
+    zone: 'Finance and Accounting',
     title: 'Expenses',
     icon: FileText,
     items: [
@@ -527,7 +527,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Finance',
+    zone: 'Finance and Accounting',
     title: 'Fixed Assets',
     icon: Landmark,
     items: [
@@ -538,7 +538,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   // ── Make & Operate ──
   {
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Production',
     icon: Factory,
     items: [
@@ -583,7 +583,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Quality management (ADR-S013): core-available, no module flag — items gated by quality:read.
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Quality',
     icon: ShieldCheck,
     items: [
@@ -600,7 +600,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Quarry & extraction (ADR-S012, Track C 2.2): sites, extraction into ROM stock, blasting, controlled explosives.
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Quarry',
     icon: Mountain,
     items: [
@@ -621,7 +621,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Fleet & logistics (ADR-S009), goods-movement half: dispatch, trips, weighbridge.
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Logistics',
     icon: RouteIcon,
     items: [
@@ -643,7 +643,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     // Fleet & logistics (ADR-S009), asset half: vehicles, maintenance, fuel, compliance.
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Fleet',
     icon: Truck,
     items: [
@@ -681,7 +681,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Rentals',
     icon: KeyRound,
     items: [
@@ -694,7 +694,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    zone: 'Make & Operate',
+    zone: 'Manufacturing & Operations',
     title: 'Repair & Maintenance',
     icon: Wrench,
     items: [
