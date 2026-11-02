@@ -482,6 +482,7 @@ public final class Permissions {
     public static final String HR__READ = "hr:read";
     public static final String HR__EMPLOYEE = "hr:employee";
     public static final String HR__COMPENSATION = "hr:compensation";
+    public static final String HR__COMPENSATION_APPROVE = "hr:compensation_approve";
     public static final String HR__ACCESS = "hr:access";
     public static final String HR__ATTENDANCE = "hr:attendance";
     public static final String HR__SHIFT = "hr:shift";
@@ -491,6 +492,8 @@ public final class Permissions {
     public static final String HR__PAYROLL = "hr:payroll";
     public static final String HR__PAYROLL_SETTINGS = "hr:payroll_settings";
     public static final String HR__PAYSLIP = "hr:payslip";
+    public static final String HR__SEPARATION = "hr:separation";
+    public static final String HR__TALENT = "hr:talent";
     public static final String HR__ADVANCE = "hr:advance";
     public static final String HR__LOAN = "hr:loan";
     public static final String HR__TAX_TABLE = "hr:tax_table";
@@ -1127,6 +1130,7 @@ public final class Permissions {
             "hr:read",
             "hr:employee",
             "hr:compensation",
+            "hr:compensation_approve",
             "hr:access",
             "hr:attendance",
             "hr:shift",
@@ -1136,6 +1140,8 @@ public final class Permissions {
             "hr:payroll",
             "hr:payroll_settings",
             "hr:payslip",
+            "hr:separation",
+            "hr:talent",
             "hr:advance",
             "hr:loan",
             "hr:tax_table",

@@ -78,10 +78,11 @@ public class HrPayrollService {
     private final HrOvertimeService overtime;
     private final HrPayrollCostService costs;
     private final HrPayrollSetupService setup;
+    private final HrPayrollEngineV2 engineV2;
 
     public HrPayrollService(HrDb hr, SequenceService seq, PostingService posting,
             AccountDeterminationService accounts, HrPayrollInputService payrollInputs, HrOvertimeService overtime,
-            HrPayrollCostService costs, HrPayrollSetupService setup) {
+            HrPayrollCostService costs, HrPayrollSetupService setup, HrPayrollEngineV2 engineV2) {
         this.hr = hr;
         this.seq = seq;
         this.posting = posting;
@@ -90,6 +91,7 @@ public class HrPayrollService {
         this.overtime = overtime;
         this.costs = costs;
         this.setup = setup;
+        this.engineV2 = engineV2;
     }
 
     private static String invalid(String what, Object v) {
@@ -452,7 +454,15 @@ public class HrPayrollService {
             List<Map<String, Object>> overtimeRules = overtime.activeRules();
             Predicate<LocalDate> holidays = overtimeRules.isEmpty() ? d -> false : overtime.holidays();
             List<Map<String, Object>> items = new ArrayList<>();
-            for (Map<String, Object> emp : employees) {
+            // Additive (HP-2): with engine v2 the decimal engine computes the items; otherwise the Nest loop below.
+            boolean v2 = engineV2.enabled();
+            if (v2) {
+                items.addAll(engineV2.calculate(id, period, employees, inputs, userId));
+            } else {
+                hr.jdbc().sql("UPDATE \"HrPayrollRun\" SET engine = NULL WHERE id = ? AND \"organizationId\" = ?")
+                        .params(id, orgId).update();
+            }
+            for (Map<String, Object> emp : v2 ? List.<Map<String, Object>>of() : employees) {
                 Object payFreq = nz(emp.get("payFrequency"), "MONTHLY");
                 double baseSalary = truthy(emp.get("baseSalary")) && num(emp.get("baseSalary")) != 0
                         ? num(emp.get("baseSalary")) : 0;
@@ -724,14 +734,19 @@ public class HrPayrollService {
                             "Payroll inputs settled"));
                 }
             }
-            credit(lines, netPayPayable, net, "Net pay payable");
-            credit(lines, payePayable, tax, "PAYE tax payable");
-            credit(lines, pensionPayable, pension, "Pension payable");
-            credit(lines, ssfPayable, ssf, "Social security payable");
-            credit(lines, insurancePayable, insurance, "Insurance payable");
-            credit(lines, loanReceivable, loans, "Employee loan installments");
-            credit(lines, advanceReceivable, advances, "Employee advance installments");
-            credit(lines, salaryExpense, other, "Other deductions contra");
+            if (engineV2.isV2Run(id)) {
+                // HP-2: per statutory payable, employer contributions, element deductions from the result lines.
+                engineV2.journalLines(id, lines, salaryExpense, netPayPayable, loanReceivable, advanceReceivable);
+            } else {
+                credit(lines, netPayPayable, net, "Net pay payable");
+                credit(lines, payePayable, tax, "PAYE tax payable");
+                credit(lines, pensionPayable, pension, "Pension payable");
+                credit(lines, ssfPayable, ssf, "Social security payable");
+                credit(lines, insurancePayable, insurance, "Insurance payable");
+                credit(lines, loanReceivable, loans, "Employee loan installments");
+                credit(lines, advanceReceivable, advances, "Employee advance installments");
+                credit(lines, salaryExpense, other, "Other deductions contra");
+            }
             // Additive (fleet 1.9): deduction inputs credit their source's account (none → journal unchanged).
             for (Map<String, Object> dc : payrollInputs.deductionCredits(id)) {
                 String account = dc.get("creditAccountId") == null ? salaryExpense : (String) dc.get("creditAccountId");
@@ -764,6 +779,7 @@ public class HrPayrollService {
             Map<String, Object> run2 = hr.update(HrPayrollRun.class, id, Obj.of("status", "APPROVED",
                     "journalEntryId", journal.get("id"), "glPosted", true, "updatedBy", userId));
             setup.onApproved(run.get("periodId"), userId);
+            engineV2.onApproved(id);
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "post", Obj.of("status", run.get("status"), "glPosted", false),
                     Obj.of("status", "APPROVED", "journalEntryId", journal.get("id"), "periodId", run.get("periodId"),
                             "approvedBy", userId, "employeeCount", runItems.size())));
@@ -841,6 +857,7 @@ public class HrPayrollService {
             payrollInputs.reopenRun(id);
             costs.clearRun(id);
             setup.onReversed(run.get("periodId"));
+            engineV2.onReversed(id);
             Map<String, Object> reversed = hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
                     "glPosted", false, "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "cancel", Obj.of("status", status,

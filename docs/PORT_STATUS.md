@@ -41,7 +41,7 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | Phase | Scope | Status |
 |---|---|---|
 | HP-0 | Payroll settings, pay groups + calendars, period lock, maker-checker (ADR-S047, V241, 14 routes) | done — `HrPayrollSetupIT`, `HrPayCalendarTest` |
-| HP-1..HP-10 | Compensation, engine v2, UG + AE statutory packs, leave, time→pay, separation, payslips/bank files, ESS, talent, reports | not started |
+| HP-1..HP-10 | Compensation, engine v2, UG + AE statutory packs, leave, time→pay, separation, payslips / bank / WPS files, ESS, talent, reports (ADR-S048, V242–V250, 108 routes) | done — `HrPayrollEngineTest`, `HrPayrollV2IT`, `HrPeopleOpsIT` |
 
 ## kernel
 

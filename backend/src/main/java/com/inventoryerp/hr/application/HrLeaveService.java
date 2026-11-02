@@ -144,7 +144,8 @@ public class HrLeaveService {
             Object delta = nz(dto.get("adjustedDays"), 0);
             BigDecimal next;
             try {
-                next = new BigDecimal(decString(balance.get("adjustedDays")) + PosSql.jsString(delta));
+                // HP-4 (listed deviation): decimal addition; Nest concatenated the strings ("2.5" + 1 = "2.51").
+                next = new BigDecimal(decString(balance.get("adjustedDays"))).add(new BigDecimal(PosSql.jsString(delta)));
             } catch (NumberFormatException e) {
                 throw new IllegalStateException("Invalid value for argument `adjustedDays`: invalid decimal.", e);
             }

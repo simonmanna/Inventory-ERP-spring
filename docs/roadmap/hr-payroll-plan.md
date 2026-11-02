@@ -2,8 +2,8 @@
 
 > **Status (2026-11-02):** owner chose **Uganda + UAE** as the first statutory packs (§5 Q1). Q2–Q4 run on the
 > recommended defaults until the owner says otherwise: engine v2 is a listed deviation with v1 selectable per
-> organisation; maker-checker is a setting, default on; phase order as proposed. **HP-0 built** (ADR-S047). One
-> independently tested PR per phase, owner review before the next phase.
+> organisation; maker-checker is a setting, default on; phase order as proposed. **HP-0 built** (ADR-S047);
+> **HP-1 … HP-10 built 2026-11-02 in one go at owner request** (ADR-S048).
 
 ## 1. What exists today (audit)
 
@@ -95,16 +95,16 @@ expenses against payroll.
 | Phase | Scope | Exit gate | Size |
 |---|---|---|---|
 | **HP-0** Foundations ✅ | Payroll settings per org (engine v1/v2, statutory pack, proration basis: calendar / working / fixed-30 days, rounding), pay groups + pay calendars, period lock, new permissions, ADR | Settings + pay group CRUD tested; v1 runs unchanged (existing ITs green) | M |
-| **HP-1** Compensation | Salary grades / bands, salary structures (element templates), per-employee pay elements with effective dates, salary revisions with approval + history, employee compensation tab | Revision effective mid-period visible to engine context; authz + tenancy tests | M |
-| **HP-2** Engine v2 | BigDecimal calculator, FORMULA elements, proration (join / leave / unpaid leave / absence), employer contributions, one-off inputs (bonus, commission, arrears), retro pay from back-dated revisions, fixes P10, maker-checker REVIEWED step, variance report, off-cycle runs, per-element GL | `PayrollCalculatorTest` golden cases; journal balanced to the cent on 500-employee run; v1 vs v2 parity on the simple case | L |
-| **HP-3** Statutory packs | SPI + first packs (§5 Q1), effective-dated rate tables, reliefs / caps / tiers, remittance schedules, remittance payment posting, year-end tax certificate | Published-rate worked examples per pack as golden tests | L |
-| **HP-4** Leave pro | Accrual policies (monthly / annual, pro-rata, tenure tiers), working-day counting (weekends, holidays, half-days), carry-forward + expiry year-end job, encashment (to payroll input), approval workflow, leave calendar, fix balance-adjust bug | Accrual / rollover golden tests; ESS leave flow | M |
-| **HP-5** Time → pay | Attendance / timesheet lock per period, overtime approval, late / absence policies → payroll inputs | Locked period rejects edits; approved OT reaches the run | M |
-| **HP-6** Separation | Offboarding checklist, final settlement (pro-rata, leave encashment, notice, gratuity / EOSB per pack, loan / advance recovery), settlement off-cycle run, IAS 19 gratuity provision accrual | Settlement worked examples per pack; provision reconciles to GL | M |
-| **HP-7** Pay out | Payslip PDF (OpenPDF, org branding, multi-language), ESS download + email, bank files (generic CSV, WPS SIF, mobile-money bulk), payment reconciliation clearing net-pay payable | PDF snapshot test; SIF format test; payable cleared to zero | M |
-| **HP-8** ESS + workflows | Profile change requests with approval, payslip / tax cert downloads, claims → payroll input, manager approvals inbox | Web click-through clean | M |
-| **HP-9** Talent | Review cycles, goals / KPIs, weighted scoring, 360 input, training needs from reviews | ITs + screens | M |
-| **HP-10** Reports | Payroll register, variance, statutory schedules, headcount / turnover / attrition, cost by department, salary audit trail; all in the FR report engine (ADR-S043) | Reports reconcile to GL | S–M |
+| **HP-1** Compensation ✅ | Salary grades / bands, salary structures (element templates), per-employee pay elements with effective dates, salary revisions with approval + history, employee compensation tab | Revision effective mid-period visible to engine context; authz + tenancy tests | M |
+| **HP-2** Engine v2 ✅ | BigDecimal calculator, FORMULA elements, proration (join / leave / unpaid leave / absence), employer contributions, one-off inputs (bonus, commission, arrears), retro pay from back-dated revisions, fixes P10, maker-checker REVIEWED step, variance report, off-cycle runs, per-element GL | `PayrollCalculatorTest` golden cases; journal balanced to the cent on 500-employee run; v1 vs v2 parity on the simple case | L |
+| **HP-3** Statutory packs ✅ | SPI + first packs (§5 Q1), effective-dated rate tables, reliefs / caps / tiers, remittance schedules, remittance payment posting, year-end tax certificate | Published-rate worked examples per pack as golden tests | L |
+| **HP-4** Leave pro ✅ | Accrual policies (monthly / annual, pro-rata, tenure tiers), working-day counting (weekends, holidays, half-days), carry-forward + expiry year-end job, encashment (to payroll input), approval workflow, leave calendar, fix balance-adjust bug | Accrual / rollover golden tests; ESS leave flow | M |
+| **HP-5** Time → pay ✅ | Attendance / timesheet lock per period, overtime approval, late / absence policies → payroll inputs | Locked period rejects edits; approved OT reaches the run | M |
+| **HP-6** Separation ✅ | Offboarding checklist, final settlement (pro-rata, leave encashment, notice, gratuity / EOSB per pack, loan / advance recovery), settlement off-cycle run, IAS 19 gratuity provision accrual | Settlement worked examples per pack; provision reconciles to GL | M |
+| **HP-7** Pay out ✅ | Payslip PDF (OpenPDF, org branding, multi-language), ESS download + email, bank files (generic CSV, WPS SIF, mobile-money bulk), payment reconciliation clearing net-pay payable | PDF snapshot test; SIF format test; payable cleared to zero | M |
+| **HP-8** ESS + workflows ✅ | Profile change requests with approval, payslip / tax cert downloads, claims → payroll input, manager approvals inbox | Web click-through clean | M |
+| **HP-9** Talent ✅ | Review cycles, goals / KPIs, weighted scoring, 360 input, training needs from reviews | ITs + screens | M |
+| **HP-10** Reports ✅ | Payroll register, variance, statutory schedules, headcount / turnover / attrition, cost by department, salary audit trail; all in the FR report engine (ADR-S043) | Reports reconcile to GL | S–M |
 
 Order: HP-0 → HP-1 → HP-2 → HP-3 are the critical path (a correct, compliant payroll). HP-4 … HP-10 may be reordered
 by the owner. Each phase: migration `V24x__hr_*.sql`, ADR, spec section, ITs extending `ApiTestSupport`, JaCoCo ≥ 80 %

@@ -47,10 +47,10 @@ public class HrPayrollSetupService {
             Obj.of("code", "NONE", "name", "No statutory pack", "countryCode", null, "currencyCode", null,
                     "description", "Tax tables and deduction components as configured", "available", true),
             Obj.of("code", "UG", "name", "Uganda", "countryCode", "UG", "currencyCode", "UGX",
-                    "description", "PAYE, NSSF (5 % employee, 10 % employer), Local Service Tax", "available", false),
+                    "description", "PAYE, NSSF (5 % employee, 10 % employer), Local Service Tax", "available", true),
             Obj.of("code", "AE", "name", "United Arab Emirates", "countryCode", "AE", "currencyCode", "AED",
                     "description", "No income tax, GPSSA pension for UAE nationals, end-of-service gratuity, WPS",
-                    "available", false));
+                    "available", true));
 
     private final HrDb hr;
 
@@ -74,9 +74,6 @@ public class HrPayrollSetupService {
         Map<String, Object> data = new LinkedHashMap<>();
         if (dto.containsKey("engine")) {
             oneOf("engine", dto.get("engine"), ENGINES);
-            if ("v2".equals(dto.get("engine"))) {
-                throw ApiException.badRequest("Payroll engine v2 is not available yet");
-            }
             data.put("engine", dto.get("engine"));
         }
         if (dto.containsKey("statutoryPack")) {
@@ -105,7 +102,8 @@ public class HrPayrollSetupService {
             }
             data.put("roundingScale", n.intValue());
         }
-        for (String f : List.of("requireSeparateApprover", "lockPeriodOnApproval")) {
+        for (String f : List.of("requireSeparateApprover", "lockPeriodOnApproval", "absenceDeduction", "lateDeduction",
+                "requireOvertimeApproval")) {
             if (dto.containsKey(f)) {
                 if (!(dto.get(f) instanceof Boolean)) {
                     throw ApiException.badRequest(f + " must be a boolean");
@@ -115,6 +113,25 @@ public class HrPayrollSetupService {
         }
         if (dto.containsKey("payslipNote")) {
             data.put("payslipNote", blank(dto.get("payslipNote")));
+        }
+        for (String f : List.of("wpsEmployerId", "wpsBankCode")) {
+            if (dto.containsKey(f)) {
+                data.put(f, blank(dto.get(f)));
+            }
+        }
+        if (dto.containsKey("gratuityDaysPerYear")) {
+            BigDecimal days = decimal("gratuityDaysPerYear", dto.get("gratuityDaysPerYear"));
+            if (days.signum() < 0 || days.compareTo(BigDecimal.valueOf(60)) > 0) {
+                throw ApiException.badRequest("gratuityDaysPerYear must be from 0 to 60");
+            }
+            data.put("gratuityDaysPerYear", days);
+        }
+        if (dto.containsKey("varianceThresholdPct")) {
+            BigDecimal pct = decimal("varianceThresholdPct", dto.get("varianceThresholdPct"));
+            if (pct.signum() < 0 || pct.compareTo(BigDecimal.valueOf(1000)) > 0) {
+                throw ApiException.badRequest("varianceThresholdPct must be from 0 to 1000");
+            }
+            data.put("varianceThresholdPct", pct);
         }
         return hr.inTx(() -> {
             Map<String, Object> saved;
@@ -155,6 +172,13 @@ public class HrPayrollSetupService {
         d.put("requireSeparateApprover", true);
         d.put("lockPeriodOnApproval", true);
         d.put("payslipNote", null);
+        d.put("absenceDeduction", false);
+        d.put("lateDeduction", false);
+        d.put("requireOvertimeApproval", false);
+        d.put("gratuityDaysPerYear", BigDecimal.ZERO);
+        d.put("wpsEmployerId", null);
+        d.put("wpsBankCode", null);
+        d.put("varianceThresholdPct", BigDecimal.TEN);
         return d;
     }
 
@@ -444,6 +468,12 @@ public class HrPayrollSetupService {
 
     // ------------------------------------------------------------------ payroll engine hooks (package-private)
 
+    /** The saved settings, or the defaults when none were saved (for engine v2, pay out and reports). */
+    Map<String, Object> effectiveSettings() {
+        Map<String, Object> row = settingsRow();
+        return row == null ? defaults() : row;
+    }
+
     /** The saved settings row, or {@code null}: no row means the Nest behaviour. */
     Map<String, Object> settingsRow() {
         return hr.where(HrPayrollSettings.class).first();
@@ -452,6 +482,22 @@ public class HrPayrollSetupService {
     void assertPeriodOpen(Map<String, Object> period) {
         if (LOCKED.equals(period.get("status"))) {
             throw ApiException.badRequest("Payroll period is locked");
+        }
+    }
+
+    /** HP-5: refuse attendance / time changes on a day inside a locked period that pays the employee. */
+    void assertDateOpen(String employeeId, Instant day) {
+        if (settingsRow() == null) {
+            return;
+        }
+        Long locked = hr.jdbc().sql("SELECT count(*) FROM \"HrPayrollPeriod\" p WHERE p.\"organizationId\" = ? AND"
+                + " p.\"deletedAt\" IS NULL AND p.status = 'LOCKED' AND p.\"startDate\" <= ? AND p.\"endDate\" >= ? AND"
+                + " (p.\"payGroupId\" IS NULL OR p.\"payGroupId\" = (SELECT coalesce(e.\"payGroupId\", (SELECT g.id FROM"
+                + " \"HrPayGroup\" g WHERE g.\"organizationId\" = p.\"organizationId\" AND g.\"isDefault\" AND"
+                + " g.\"deletedAt\" IS NULL)) FROM \"HrEmployee\" e WHERE e.id = ?))").params(org(), SqlRows.ts(day),
+                SqlRows.ts(day), employeeId).query(Long.class).single();
+        if (locked > 0) {
+            throw ApiException.badRequest("This day is in a locked payroll period");
         }
     }
 

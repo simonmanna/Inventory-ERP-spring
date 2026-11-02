@@ -472,6 +472,38 @@ export const ACCOUNT_MAPPING_REGISTRY: readonly AccountMappingDef[] = [
       required: true,
       description: 'Loans extended to employees, recoverable from future pay.',
     },
+    {
+      key: 'employer_contribution_expense',
+      label: 'Employer Contributions Expense',
+      group: 'hr',
+      expectedCategories: ['operating_expense'],
+      required: false,
+      description: 'Employer NSSF / pension cost of payroll (HP-2). Unmapped: salaries expense.',
+    },
+    {
+      key: 'local_service_tax_payable',
+      label: 'Local Service Tax Payable',
+      group: 'hr',
+      expectedCategories: ['current_liability'],
+      required: false,
+      description: 'Uganda Local Service Tax withheld for the local government (HP-3). Unmapped: PAYE payable.',
+    },
+    {
+      key: 'gratuity_expense',
+      label: 'Gratuity Expense',
+      group: 'hr',
+      expectedCategories: ['operating_expense'],
+      required: false,
+      description: 'End-of-service gratuity cost (HP-6). Unmapped: salaries expense.',
+    },
+    {
+      key: 'gratuity_provision',
+      label: 'Gratuity Provision',
+      group: 'hr',
+      expectedCategories: ['current_liability'],
+      required: false,
+      description: 'End-of-service benefit obligation (IAS 19), accrued monthly (HP-6).',
+    },
   ];
 
 export const ACCOUNT_MAPPING_KEYS: string[] = ACCOUNT_MAPPING_REGISTRY.map((m) => m.key);
