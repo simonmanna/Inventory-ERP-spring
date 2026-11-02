@@ -1,6 +1,6 @@
 # Cost accounting to production — roadmap PC-0 … PC-9
 
-- Status: **approved in principle** (owner, 2026-11-03), subject to phase gates. Decisions: see below.
+- Status: **approved in principle** (owner, 2026-11-03), subject to phase gates. **PC-0 exit met 2026-11-03** ([record](../audits/pc0-accounting-baseline.md)). Decisions: see below.
 - Builds on:
   - [`cost-management-plan.md`](cost-management-plan.md): CM-0 … CM-11, built; APIs only for CM-8 … CM-11.
   - [`landed-cost-plan.md`](landed-cost-plan.md): LC-0 … LC-7, LC-0 in progress.
@@ -85,6 +85,7 @@ analysis.**
 
 | Source | Item | Phase |
 |---|---|---|
+| PC-0 V1 | NRV allowance release posts to NRV expense, not cost of sales as ADR-S031 states (P&L total equal) | Owner decision; fix in PC-1 if approved |
 | LC-0 G1 | No realised FX on payments, system-wide | PC-0 (owner decision) |
 | LC-0 G2 / G3 | `CurrencyService.getRate` throws inside a transaction, so a foreign-currency voucher rolls back; a table rate overrides the document's own rate | PC-0 (owner approval) |
 | LC-0 F2, F5–F7 | AVCO / lot landed cost ignores lineage: transfers, WIP, returns, closed orders | PC-1 |

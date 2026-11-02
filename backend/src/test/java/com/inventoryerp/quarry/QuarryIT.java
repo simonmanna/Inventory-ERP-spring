@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Quarry 2.2 over HTTP: master data, extraction log → ROM stock with cost (loads × capacity, weighbridge tonnage,
@@ -35,6 +37,7 @@ import tools.jackson.databind.JsonNode;
  * concurrent issues on scarce stock, reconcile, blast cost absorbed per tonne), reports, tenant isolation, validation
  * and the authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 class QuarryIT extends ApiTestSupport {
 
     @Autowired

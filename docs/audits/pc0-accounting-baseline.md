@@ -39,12 +39,20 @@ them.
 | G1–G3 resolved | ✅ fixed (ADR-S054) |
 | Baseline captured before the shared changes | ✅ §1 |
 | Regression after the change: full `./gradlew build` | see §4 |
-| Cost-flow GL trace for **every** costing posting path (`docs/audits/costing-gl-trace.md`) and `CostingAuditIT` | ⏳ **open**: the landed-cost trace is done; the other paths (production, settlement, revaluation, NRV, standard change, release, adjustment run, quarry, fleet, projects) are the remaining PC-0 deliverable |
+| Cost-flow GL trace for every costing posting path | ✅ [`costing-gl-trace.md`](costing-gl-trace.md): every row exact or guarded except return to supplier (LC-1) |
+| `CostingAuditIT` (exact classification) | ✅ 13 scenarios: sale, waste, customer return, transfer, count gain/loss, production, absorption, revaluation up/down, NRV write-down, recovery, sale, standard activation; 1 `@Disabled` (V1) |
+| Uniform books check on every accounting-regression suite | ✅ `BooksGuard` on 24 suites (entries balance, tie-out unchanged), all green |
 
-**PC-0 is therefore not closed.** PC-1 does not start until the cost-flow trace and `CostingAuditIT` exist and pass
-(owner execution boundary).
+**PC-0 exit criteria are met.** Open owner decisions do not block PC-1:
+- **V1:** NRV allowance release classification.
+- **D-PC3:** bill tax lines.
 
 ## 4. Regression after the change
+
+**PC-0 close build (2026-11-03):** 1,679 tests, the same 2 pre-existing failures, 4 skipped (2 LC-1 landed cases,
+V1 release, one existing skip). Formatting and coverage are as below.
+
+**LC-0 / PC-0 FX build:**
 
 Full `./gradlew build` of the combined LC-0 + PC-0 branch, fresh database (2026-11-03):
 

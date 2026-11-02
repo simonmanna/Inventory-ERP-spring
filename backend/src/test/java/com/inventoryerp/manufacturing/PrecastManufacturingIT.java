@@ -24,6 +24,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Concrete block / precast manufacturing (ADR-S014, Phase 2.4) on Postgres: block spec, curing area, mix design
@@ -32,6 +34,7 @@ import tools.jackson.databind.JsonNode;
  * goods → cost per acceptable block, variance, reports, labels; GL balanced; deferred gate pass by the curing job;
  * idempotent replay; contended cubing; tenant isolation and the authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 class PrecastManufacturingIT extends MfgTestSupport {
 
     static final String BASE = "/manufacturing/precast";

@@ -13,11 +13,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Configurable costing policy (ADR-S007 §1). Activation tests use a category-scoped policy on a fresh category so the
  * shared demo organisation keeps its legacy behaviour for every other test class.
  */
+@ExtendWith(BooksGuard.class)
 class InventoryCostPolicyIT extends ApiTestSupport {
 
     String warehouse;

@@ -49,8 +49,8 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 | Phase | Scope | Status |
 |---|---|---|
-| LC-0 | Accounting audit: implementation map, GL trace, `LandedCostAuditIT`; tax recoverability on charges (V290, `landed_cost:override_tax`, `costing.landedCost.taxRecoverableDefault`) | in progress — gate |
-| PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); bill-tax impact analysis for review | in progress — gate |
+| LC-0 | Accounting audit: implementation map, GL trace, `LandedCostAuditIT`; tax recoverability on charges (V290, `landed_cost:override_tax`, `costing.landedCost.taxRecoverableDefault`) | done — `LandedCostAuditIT` |
+| PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); cost-flow GL trace, `CostingAuditIT`, `BooksGuard` on 24 regression suites; bill-tax impact analysis for review | done — gate met ([record](audits/pc0-accounting-baseline.md)); V1 + D-PC3 await owner |
 
 ## kernel
 

@@ -13,6 +13,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * PC-0 (ADR-S054): shared currency handling and realised FX (owner decisions D-PC1 / D-PC2).
@@ -26,6 +28,7 @@ import tools.jackson.databind.JsonNode;
  * </ul>
  * Currencies are test-only codes so the global rate table cannot interfere with other classes.
  */
+@ExtendWith(BooksGuard.class)
 class SharedFxIT extends ApiTestSupport {
 
     static final String CUR = "QXA";

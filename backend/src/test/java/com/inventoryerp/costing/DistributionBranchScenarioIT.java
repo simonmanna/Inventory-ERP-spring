@@ -15,12 +15,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-7 (ADR-S037): a same-entity branch transfer with inter-branch clearing (each branch balances) and
  * capitalised transfer freight; guards; an owned-fleet delivery cost run with an empty return leg charged to
  * distribution with the customer dimension, idempotency, one run per period, reversal.
  */
+@ExtendWith(BooksGuard.class)
 class DistributionBranchScenarioIT extends ApiTestSupport {
 
     String sfx = UUID.randomUUID().toString().substring(0, 6);

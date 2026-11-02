@@ -21,6 +21,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Crushing, screening &amp; aggregate processing (Track C 2.3, ADR-S016) over HTTP: plant + circuit (work centres,
@@ -30,6 +32,7 @@ import tools.jackson.databind.JsonNode;
  * stockpile surveys with approval (segregation of duties, adjustment + GL, reversal), validation, concurrent posting
  * on scarce feed, tenant isolation and the authorization matrix of the crushing routes.
  */
+@ExtendWith(BooksGuard.class)
 class CrushingIT extends MfgTestSupport {
 
     final String sfx = UUID.randomUUID().toString().substring(0, 5).toUpperCase();

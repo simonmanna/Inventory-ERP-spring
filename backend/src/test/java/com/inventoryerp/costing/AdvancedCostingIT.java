@@ -20,11 +20,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * PR-13 (ADR-S030): material-ledger run over a standard-costed product (PPV pool split between stock and consumption,
  * posting, reversal), variance analysis with GL tie-out, activity-based costing per customer, authorization.
  */
+@ExtendWith(BooksGuard.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AdvancedCostingIT extends ApiTestSupport {

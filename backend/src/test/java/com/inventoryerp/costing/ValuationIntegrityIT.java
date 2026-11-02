@@ -20,11 +20,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-1 (ADR-S031): cost lineage, value-only stock ledger rows, inventory revaluation, IAS 2 NRV
  * allowance and release, landed cost on a STANDARD item split over lineage — each tying the stock sub-ledger to the GL.
  */
+@ExtendWith(BooksGuard.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ValuationIntegrityIT extends ApiTestSupport {

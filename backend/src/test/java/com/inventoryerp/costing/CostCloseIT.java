@@ -20,6 +20,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-10 (ADR-S041): the ordered close gates block in turn (allocation, revenue recognition,
@@ -27,6 +29,7 @@ import tools.jackson.databind.JsonNode;
  * run cascades late WIP cost of a completed order to its output layers by lineage (on hand → adjunct, sold → cost of
  * sales), once, and reverses.
  */
+@ExtendWith(BooksGuard.class)
 class CostCloseIT extends ApiTestSupport {
 
     @Autowired

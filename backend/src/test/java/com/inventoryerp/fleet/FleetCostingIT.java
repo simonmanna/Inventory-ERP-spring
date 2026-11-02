@@ -29,6 +29,8 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Fleet 1.9 — costing, delivery profitability, reports and transporter freight bills over HTTP on a seeded scenario:
@@ -39,6 +41,7 @@ import tools.jackson.databind.JsonNode;
  * draft bill + balanced accrual, Idempotency-Key replay), disputed → variance approval (permission), cancel with
  * reversal; inbound freight capitalised as landed cost on a posted receipt; tenant isolation; authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class FleetCostingIT extends ApiTestSupport {
 

@@ -8,7 +8,6 @@ import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,6 +23,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Landed cost LC-0 accounting audit (ADR-S053, {@code docs/audits/landed-cost-gl-trace.md}). Every scenario checks,
@@ -35,6 +36,7 @@ import tools.jackson.databind.JsonNode;
  * seed or demo balance can make a scenario pass. Cases the current engine cannot yet satisfy are {@code @Disabled} with
  * the phase that fixes them (LC-1: lineage-correct AVCO / transfers / WIP).
  */
+@ExtendWith(BooksGuard.class)
 class LandedCostAuditIT extends ApiTestSupport {
 
     @Autowired
@@ -205,7 +207,8 @@ class LandedCostAuditIT extends ApiTestSupport {
                 .params(demoOrg, mine.toArray(String[]::new)).query(BigDecimal.class).single();
     }
 
-    record Snap(Map<String, BigDecimal> balances, BigDecimal adjunct, BigDecimal tieOut, Timestamp at) {}
+    /** Balances before a step and the journal entries that already existed (new entries are the step's). */
+    record Snap(Map<String, BigDecimal> balances, BigDecimal adjunct, BigDecimal tieOut, String[] entries) {}
 
     /** Inventory sub-ledger minus GL for the organisation (other classes share it, so steps compare its movement). */
     BigDecimal tieOutDifference() {
@@ -216,8 +219,9 @@ class LandedCostAuditIT extends ApiTestSupport {
     Snap snap() {
         Map<String, BigDecimal> b = new LinkedHashMap<>();
         accounts().forEach((role, id) -> b.put(role, balance(id)));
-        Timestamp at = jdbc.sql("SELECT clock_timestamp()::timestamp(3)").query(Timestamp.class).single();
-        return new Snap(b, openAdjunct(), tieOutDifference(), at);
+        String[] entries = jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ?").param(demoOrg)
+                .query(String.class).list().toArray(String[]::new);
+        return new Snap(b, openAdjunct(), tieOutDifference(), entries);
     }
 
     /**
@@ -228,9 +232,9 @@ class LandedCostAuditIT extends ApiTestSupport {
      */
     void assertBooks(Snap s, Map<String, String> expected) {
         List<String> unbalanced = jdbc.sql("SELECT e.id FROM \"JournalEntry\" e JOIN \"JournalLine\" l ON"
-                        + " l.\"journalEntryId\" = e.id WHERE e.\"organizationId\" = ? AND e.\"createdAt\" >= ?"
+                        + " l.\"journalEntryId\" = e.id WHERE e.\"organizationId\" = ? AND NOT (e.id = ANY(?::text[]))"
                         + " GROUP BY e.id HAVING sum(l.\"baseDebit\") <> sum(l.\"baseCredit\")")
-                .params(demoOrg, s.at()).query(String.class).list();
+                .params(demoOrg, s.entries()).query(String.class).list();
         assertThat(unbalanced).as("unbalanced journal entries").isEmpty();
         assertThat(tieOutDifference().subtract(s.tieOut())).as("the step keeps inventory tied out to the GL")
                 .isBetween(new BigDecimal("-0.05"), new BigDecimal("0.05"));

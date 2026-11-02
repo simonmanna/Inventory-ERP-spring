@@ -16,6 +16,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-8b (ADR-S039): IFRS 15.35 criteria unlocking the over-time election; an approved and a pending
@@ -24,6 +26,7 @@ import tools.jackson.databind.JsonNode;
  * and release; customer retention release; onerous-contract assessment (indicator, exit penalty, maker-checker,
  * recognised then released); revenue run reversal; GL tie-outs; tenant isolation and the authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 class ContractRevenueScenarioIT extends ApiTestSupport {
 
     String sfx = UUID.randomUUID().toString().substring(0, 6);

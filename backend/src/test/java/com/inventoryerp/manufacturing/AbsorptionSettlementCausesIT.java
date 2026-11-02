@@ -21,12 +21,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-4 (ADR-S034, R3-2): governed normal capacity and the cause-based settlement of absorbed vs
  * actual overhead — timing and capacity blockers, low volume expensed, abnormal spending expensed, high volume and
  * favourable spending credited to the period's output layers only, reversal, idempotency, isolation.
  */
+@ExtendWith(BooksGuard.class)
 class AbsorptionSettlementCausesIT extends MfgTestSupport {
 
     static final String C = "/costing";

@@ -18,6 +18,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Landed cost vouchers (ADR-S007 §2–3, roadmap 1.8 acceptance tests): the UGX laptop import (customs, freight,
@@ -26,6 +28,7 @@ import tools.jackson.databind.JsonNode;
  * charges, duplicate supplier invoices, the approval workflow, reversal, FIFO lots, idempotent replay, GL balance and
  * tenant isolation.
  */
+@ExtendWith(BooksGuard.class)
 class LandedCostVoucherIT extends ApiTestSupport {
 
     @Autowired

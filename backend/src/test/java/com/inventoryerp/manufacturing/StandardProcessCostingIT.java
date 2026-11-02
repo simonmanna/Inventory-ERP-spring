@@ -11,6 +11,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Standard costing with GL variances and process costing (ADR-S008) on Testcontainers Postgres: standard activation
@@ -18,6 +20,7 @@ import tools.jackson.databind.JsonNode;
  * residual posted as variances, BOM roll-up → product standard, and a two-process cement line (weighted average) from
  * material issue through transfer to finished stock.
  */
+@ExtendWith(BooksGuard.class)
 class StandardProcessCostingIT extends MfgTestSupport {
 
     String today = LocalDate.now().toString();

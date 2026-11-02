@@ -12,12 +12,15 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost-centre accounting (ADR-S007 §4): hierarchy, account rules (required / forbidden), defaults, inline split
  * rules (60 / 40 of a 10,000,000 office cost, exact sum), periodic allocation runs (once per period, reversible),
  * validity dates, P&amp;L roll-up and the centre × account matrix, tenant isolation.
  */
+@ExtendWith(BooksGuard.class)
 class CostCenterAccountingIT extends ApiTestSupport {
 
     static String suffix() {

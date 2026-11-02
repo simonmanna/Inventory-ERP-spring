@@ -19,12 +19,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-6 (ADR-S036): landed cost accrued at receipt by rule, 40 % sold and released before the actual
  * voucher, the accrual cleared exactly where it went (adjunct / cost of sales) so 2156 returns to zero; reversal of an
  * unvouchered accrual; reversal of a legacy per-receipt landed cost through the voucher engine.
  */
+@ExtendWith(BooksGuard.class)
 class ImportLandedScenarioIT extends ApiTestSupport {
 
     @Autowired

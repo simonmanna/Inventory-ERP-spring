@@ -15,6 +15,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-8a (ADR-S038): a project with two sites and a WBS; versioned budgets; cost captured by every
@@ -22,6 +24,7 @@ import tools.jackson.databind.JsonNode;
  * posted subcontract bill line); open commitments; budget vs committed vs actual vs EAC; the WIP tie-out; reversal;
  * guards, idempotency, tenant isolation and the authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 class ProjectCostScenarioIT extends ApiTestSupport {
 
     String sfx = UUID.randomUUID().toString().substring(0, 6);

@@ -19,6 +19,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Multi-stage production &amp; WIP between stages (ADR-S011, Phase 2.1) on Testcontainers Postgres: a three-stage order
@@ -27,6 +29,7 @@ import tools.jackson.databind.JsonNode;
  * QC stage gate, multi-level child orders with pegging and roll-up, concurrency on stage issue, idempotent replay,
  * legacy-route guards, tenant isolation and the authorization matrix of the new routes.
  */
+@ExtendWith(BooksGuard.class)
 class MultiStageProductionIT extends MfgTestSupport {
 
     @Autowired

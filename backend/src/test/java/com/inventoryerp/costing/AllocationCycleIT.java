@@ -27,11 +27,14 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-3 (ADR-S033): a 3-step assessment (admin → workshop and plants by headcount, workshop → plants
  * equally) as a financial and a statistical cycle, a reciprocal cycle, idempotency, reversal, refusals, isolation.
  */
+@ExtendWith(BooksGuard.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AllocationCycleIT extends ApiTestSupport {

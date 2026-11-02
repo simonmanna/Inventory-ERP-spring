@@ -11,8 +11,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /** Manufacturing costing (Track C 2.8, ADR-S018): rates, absorption, variances, cost reports, margin. */
+@ExtendWith(BooksGuard.class)
 class ManufacturingCostingIT extends MfgTestSupport {
 
     static final String C = "/manufacturing/costing";

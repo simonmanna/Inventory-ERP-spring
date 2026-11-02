@@ -22,6 +22,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
+import org.junit.jupiter.api.extension.ExtendWith;
+import com.inventoryerp.BooksGuard;
 
 /**
  * Cost Management CM-9 (ADR-S040): on clean books, ACTUAL segments + unallocated + out of scope = GL net income
@@ -29,6 +31,7 @@ import tools.jackson.databind.JsonNode;
  * from approved project budgets; layers never mixed in one response; rebuild supersedes; tenant isolation and the
  * authorization matrix.
  */
+@ExtendWith(BooksGuard.class)
 class ProfitabilityReconciliationIT extends ApiTestSupport {
 
     @Autowired
