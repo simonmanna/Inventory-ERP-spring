@@ -128,6 +128,7 @@ import {
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
+import { REPORT_CATEGORIES, reportCategoryPath } from '@/features/reports/report-categories';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -469,7 +470,6 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fiscal-years', label: tx('Fiscal Years'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/year-end-close', label: tx('Year-End Close'), icon: Lock, permission: PERMISSIONS.fiscalPeriod.update, group: 'Entries' },
-      { to: '/reports/library', label: tx('Report Library'), icon: BookOpen, permission: PERMISSIONS.reportLibrary.read, group: 'Statements' },
       { to: '/profit-and-loss', label: tx('Profit & Loss'), icon: TrendingUp, permission: PERMISSIONS.report.accounting, reportId: 'accounting.profit-and-loss', group: 'Statements' },
       { to: '/balance-sheet', label: tx('Balance Sheet'), icon: Landmark, permission: PERMISSIONS.report.accounting, reportId: 'accounting.balance-sheet', group: 'Statements' },
       { to: '/cash-flow', label: tx('Cash Flow Statement'), icon: TrendingDown, permission: PERMISSIONS.report.accounting, reportId: 'accounting.cash-flow-statement', group: 'Statements' },
@@ -499,6 +499,21 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/cost-centers', label: tx('Cost Centers'), icon: Users, permission: PERMISSIONS.costCenter.read, group: 'Configuration' },
       { to: '/analytic-dimensions', label: tx('Analytic Dimensions'), icon: Users, permission: PERMISSIONS.analyticDimension.read, group: 'Configuration' },
       { to: '/intercompany', label: tx('Intercompany'), icon: Network, permission: PERMISSIONS.intercompany.read, group: 'Configuration' },
+    ],
+  },
+  {
+    zone: 'Finance',
+    title: 'Reports',
+    icon: BookOpen,
+    items: [
+      { to: '/reports/library', label: tx('Report Library'), icon: BookOpen, permission: PERMISSIONS.reportLibrary.read },
+      ...REPORT_CATEGORIES.map((c) => ({
+        to: reportCategoryPath(c.slug),
+        label: tx(c.title),
+        icon: c.icon,
+        permission: PERMISSIONS.reportLibrary.read,
+        group: 'Categories',
+      })),
     ],
   },
   {
@@ -970,12 +985,15 @@ export function AppShell() {
   useEffect(() => setMobileOpen(false), [location.pathname]);
 
   const allItems = sections.flatMap((s) => s.items);
+  // Longest matching link wins, so a nested item (a report category) titles the page over its parent.
   const current =
-    allItems.find(
-      (n) =>
-        n.to !== '/' &&
-        (location.pathname === n.to || location.pathname.startsWith(`${n.to}/`)),
-    )?.label ?? (location.pathname === '/' ? tx('Dashboard') : '');
+    allItems
+      .filter(
+        (n) =>
+          n.to !== '/' &&
+          (location.pathname === n.to || location.pathname.startsWith(`${n.to}/`)),
+      )
+      .sort((a, b) => b.to.length - a.to.length)[0]?.label ?? (location.pathname === '/' ? tx('Dashboard') : '');
 
   const logout = () => {
     clear();

@@ -4,18 +4,15 @@
  */
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpenCheck, ExternalLink, Search, Sparkles } from 'lucide-react';
+import { BookOpenCheck, ChevronRight, ExternalLink, Search, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useReportLibrary, type ReportDefinition } from '@/features/reports/library-api';
+import { LEVEL_STYLE, REPORT_CATEGORIES, reportCategoryPath } from '@/features/reports/report-categories';
 import { tx } from '@/lib/i18n/tx';
 
-const LEVEL_STYLE: Record<string, string> = {
-  FINANCIAL: 'bg-blue-50 text-blue-700 border-blue-200',
-  OPERATIONAL: 'bg-gray-50 text-gray-600 border-gray-200',
-  MANAGEMENT: 'bg-amber-50 text-amber-700 border-amber-200',
-};
+const slugFor = (code: string) => REPORT_CATEGORIES.find((c) => c.code === code)?.slug;
 
 function ReportLink({ r }: { r: ReportDefinition }) {
   const body = (
@@ -97,6 +94,11 @@ export function ReportLibraryPage() {
                 <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{c.code}</span>
                 <h2 className="text-sm font-semibold text-gray-900">{tx(c.title)}</h2>
                 <span className="ml-auto text-xs text-gray-400">{c.reports.length}</span>
+                {slugFor(c.code) && (
+                  <Link to={reportCategoryPath(slugFor(c.code) as string)} className="flex items-center text-xs text-blue-600 hover:underline">
+                    {tx('Open')} <ChevronRight className="h-3 w-3" />
+                  </Link>
+                )}
               </header>
               <div className="p-1.5">
                 {c.reports.map((r) => <ReportLink key={r.id} r={r} />)}

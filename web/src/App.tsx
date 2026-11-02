@@ -251,6 +251,7 @@ const BiExportsPage = lazy(() => import('@/pages/reports/BiExportsPage').then((m
 const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage').then((m) => ({ default: m.AlertsPage })));
 const BranchPerformancePage = lazy(() => import('@/pages/reports/BranchPerformancePage').then((m) => ({ default: m.BranchPerformancePage })));
 const ReportLibraryPage = lazy(() => import('@/pages/reports/ReportLibraryPage').then((m) => ({ default: m.ReportLibraryPage })));
+const ReportCategoryPage = lazy(() => import('@/pages/reports/ReportCategoryPage').then((m) => ({ default: m.ReportCategoryPage })));
 const ReportViewerPage = lazy(() => import('@/pages/reports/ReportViewerPage').then((m) => ({ default: m.ReportViewerPage })));
 const SalesAnalysisPage = lazy(() => import('@/pages/reports/SalesAnalysisPage').then((m) => ({ default: m.SalesAnalysisPage })));
 const ReportPermissionsPage = lazy(() => import('@/pages/settings/ReportPermissionsPage').then((m) => ({ default: m.ReportPermissionsPage })));
@@ -392,6 +393,7 @@ export function App() {
             <Route path="/reports/sales-analysis" element={<RequirePermission permission={PERMISSIONS.report.ar}><SalesAnalysisPage /></RequirePermission>} />
             <Route path="/reports/branches" element={<RequirePermission permission={PERMISSIONS.report.accounting}><BranchPerformancePage /></RequirePermission>} />
             <Route path="/reports/library" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportLibraryPage /></RequirePermission>} />
+            <Route path="/reports/library/category/:slug" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportCategoryPage /></RequirePermission>} />
             <Route path="/reports/library/:id" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportViewerPage /></RequirePermission>} />
             <Route path="/reports/bi-exports" element={<RequirePermission permission={PERMISSIONS.bi.export}><BiExportsPage /></RequirePermission>} />
             <Route path="/alerts" element={<RequirePermission permission={PERMISSIONS.alerts.read}><AlertsPage /></RequirePermission>} />
