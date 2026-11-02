@@ -72,9 +72,16 @@ class SecurityChecklistIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("uploaded HTML / SVG are served as attachments with nosniff, never rendered inline")
+    @DisplayName("HTML / script uploads are refused (DM-0); SVG is served as an attachment with nosniff")
     void activeContentUploads() throws Exception {
         for (String[] f : List.of(new String[] {"x.html", "text/html", "<script>alert(1)</script>"},
+                new String[] {"x.js", "application/javascript", "alert(1)"},
+                new String[] {"x.exe", "application/octet-stream", "MZ"})) {
+            HttpResponse<String> refused = upload(f[0], f[1], f[2]);
+            assertThat(refused.statusCode()).as(refused.body()).isEqualTo(400);
+            assertThat(mapper.readTree(refused.body()).get("message").asString()).isEqualTo("File type not allowed");
+        }
+        for (String[] f : List.<String[]>of(
                 new String[] {"x.svg", "image/svg+xml", "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>"})) {
             HttpResponse<String> up = upload(f[0], f[1], f[2]);
             assertThat(up.statusCode()).as(up.body()).isEqualTo(201);

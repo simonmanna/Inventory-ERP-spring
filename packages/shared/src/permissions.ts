@@ -1179,6 +1179,37 @@ export const PERMISSIONS = {
     /// Scheduled report delivery (e-mail and in-app).
     schedule: 'report_library:schedule',
   },
+  // ---- Document management (DMS, ADR-S044; Spring-native) ----
+  dms: {
+    /// Browse workspaces, preview / download documents, see record attachments.
+    documentRead: 'dms:document:read',
+    /// Upload, version, rename, tag, move, link and lock documents.
+    documentWrite: 'dms:document:write',
+    /// Delete (soft) and restore documents.
+    documentDelete: 'dms:document:delete',
+    /// Approve / reject documents waiting for approval.
+    documentApprove: 'dms:document:approve',
+    /// Create and revoke external share links.
+    documentShare: 'dms:document:share',
+    /// Workspaces, folders and workspace access rules.
+    workspaceManage: 'dms:workspace:manage',
+    /// Tags and tag categories.
+    tagManage: 'dms:tag:manage',
+    /// Ask a colleague for a document (document requests).
+    requestCreate: 'dms:request:create',
+  },
+  // ---- Helpdesk and correspondence (ADR-S045; Spring-native) ----
+  helpdesk: {
+    ticketRead: 'helpdesk:ticket:read',
+    ticketWrite: 'helpdesk:ticket:write',
+    ticketAssign: 'helpdesk:ticket:assign',
+    ticketClose: 'helpdesk:ticket:close',
+    /// Register dispatch of outgoing letters (method, tracking number).
+    letterDispatch: 'helpdesk:letter:dispatch',
+    /// Teams, stages, ticket types and letter templates.
+    teamManage: 'helpdesk:team:manage',
+    reportRead: 'helpdesk:report:read',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

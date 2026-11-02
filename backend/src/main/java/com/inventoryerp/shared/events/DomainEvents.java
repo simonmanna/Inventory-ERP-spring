@@ -207,4 +207,23 @@ public final class DomainEvents {
     public static final String QUALITY_CAPA_CLOSED = "quality.capa.closed";
     public static final String QUARRY_EXTRACTION_POSTED = "quarry.extraction.posted";
     public static final String CRUSHING_RUN_POSTED = "crushing.run.posted";
+    public static final String DMS_DOCUMENT_UPLOADED = "dms.document.uploaded";
+    public static final String DMS_DOCUMENT_VERSIONED = "dms.document.versioned";
+    public static final String DMS_DOCUMENT_MOVED = "dms.document.moved";
+    public static final String DMS_DOCUMENT_LINKED = "dms.document.linked";
+    public static final String DMS_DOCUMENT_DELETED = "dms.document.deleted";
+    public static final String DMS_DOCUMENT_APPROVED = "dms.document.approved";
+    public static final String DMS_DOCUMENT_REJECTED = "dms.document.rejected";
+    public static final String DMS_DOCUMENT_EXPIRING = "dms.document.expiring";
+    public static final String DMS_DOCUMENT_EXPIRED = "dms.document.expired";
+    public static final String DMS_REQUEST_CREATED = "dms.request.created";
+    public static final String DMS_REQUEST_FULFILLED = "dms.request.fulfilled";
+    public static final String DMS_SHARE_ACCESSED = "dms.share.accessed";
+    public static final String HELPDESK_TICKET_CREATED = "helpdesk.ticket.created";
+    public static final String HELPDESK_TICKET_ASSIGNED = "helpdesk.ticket.assigned";
+    public static final String HELPDESK_TICKET_STAGE_CHANGED = "helpdesk.ticket.stage_changed";
+    public static final String HELPDESK_TICKET_REPLIED = "helpdesk.ticket.replied";
+    public static final String HELPDESK_TICKET_CLOSED = "helpdesk.ticket.closed";
+    public static final String HELPDESK_LETTER_RECEIVED = "helpdesk.letter.received";
+    public static final String HELPDESK_LETTER_DISPATCHED = "helpdesk.letter.dispatched";
 }

@@ -1,4 +1,5 @@
 // src/pages/expenses/ExpensesPage.tsx
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { useState, useEffect, useCallback } from "react";
 import {
   Dialog,
@@ -1150,6 +1151,9 @@ function ExpenseDetailDialog({
                 )}
               </div>
             </div>
+
+            {/* SECTION: Receipts (DMS, ADR-S044) */}
+            <AttachmentPanel resType="expense" resId={expense.id} title={tx('Receipts & documents')} tags={['Receipt']} />
 
             {/* SECTION: Audit Trail */}
             <ExpenseAuditSection expenseId={expense.id} />

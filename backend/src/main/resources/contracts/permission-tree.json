@@ -934,5 +934,24 @@
     "read": "report_library:read",
     "manage": "report_library:manage",
     "schedule": "report_library:schedule"
+  },
+  "dms": {
+    "documentRead": "dms:document:read",
+    "documentWrite": "dms:document:write",
+    "documentDelete": "dms:document:delete",
+    "documentApprove": "dms:document:approve",
+    "documentShare": "dms:document:share",
+    "workspaceManage": "dms:workspace:manage",
+    "tagManage": "dms:tag:manage",
+    "requestCreate": "dms:request:create"
+  },
+  "helpdesk": {
+    "ticketRead": "helpdesk:ticket:read",
+    "ticketWrite": "helpdesk:ticket:write",
+    "ticketAssign": "helpdesk:ticket:assign",
+    "ticketClose": "helpdesk:ticket:close",
+    "letterDispatch": "helpdesk:letter:dispatch",
+    "teamManage": "helpdesk:team:manage",
+    "reportRead": "helpdesk:report:read"
   }
 }

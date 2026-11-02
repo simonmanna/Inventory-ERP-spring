@@ -272,6 +272,26 @@ export const EVENTS = {
   QuarryExtractionPosted: 'quarry.extraction.posted',
   // Crushing 2.3 (ADR-S016): a crushing run was posted — feed consumed, sized products received into stockpiles.
   CrushingRunPosted: 'crushing.run.posted',
+  // Document management (DMS, ADR-S044) and helpdesk / correspondence (ADR-S045) — Spring-native.
+  DmsDocumentUploaded: 'dms.document.uploaded',
+  DmsDocumentVersioned: 'dms.document.versioned',
+  DmsDocumentMoved: 'dms.document.moved',
+  DmsDocumentLinked: 'dms.document.linked',
+  DmsDocumentDeleted: 'dms.document.deleted',
+  DmsDocumentApproved: 'dms.document.approved',
+  DmsDocumentRejected: 'dms.document.rejected',
+  DmsDocumentExpiring: 'dms.document.expiring',
+  DmsDocumentExpired: 'dms.document.expired',
+  DmsRequestCreated: 'dms.request.created',
+  DmsRequestFulfilled: 'dms.request.fulfilled',
+  DmsShareAccessed: 'dms.share.accessed',
+  HelpdeskTicketCreated: 'helpdesk.ticket.created',
+  HelpdeskTicketAssigned: 'helpdesk.ticket.assigned',
+  HelpdeskTicketStageChanged: 'helpdesk.ticket.stage_changed',
+  HelpdeskTicketReplied: 'helpdesk.ticket.replied',
+  HelpdeskTicketClosed: 'helpdesk.ticket.closed',
+  HelpdeskLetterReceived: 'helpdesk.letter.received',
+  HelpdeskLetterDispatched: 'helpdesk.letter.dispatched',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -370,6 +390,25 @@ export interface PosPinLoginPayload {
 }
 
 export interface DomainEventMap {
+  'dms.document.uploaded': DmsEventPayload;
+  'dms.document.versioned': DmsEventPayload;
+  'dms.document.moved': DmsEventPayload;
+  'dms.document.linked': DmsEventPayload;
+  'dms.document.deleted': DmsEventPayload;
+  'dms.document.approved': DmsEventPayload;
+  'dms.document.rejected': DmsEventPayload;
+  'dms.document.expiring': DmsEventPayload;
+  'dms.document.expired': DmsEventPayload;
+  'dms.request.created': DmsEventPayload;
+  'dms.request.fulfilled': DmsEventPayload;
+  'dms.share.accessed': DmsEventPayload;
+  'helpdesk.ticket.created': HelpdeskEventPayload;
+  'helpdesk.ticket.assigned': HelpdeskEventPayload;
+  'helpdesk.ticket.stage_changed': HelpdeskEventPayload;
+  'helpdesk.ticket.replied': HelpdeskEventPayload;
+  'helpdesk.ticket.closed': HelpdeskEventPayload;
+  'helpdesk.letter.received': HelpdeskEventPayload;
+  'helpdesk.letter.dispatched': HelpdeskEventPayload;
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;
@@ -816,6 +855,22 @@ export interface FulfillmentEventPayload {
   strategy: string;
   documentType: string;
   documentId: string;
+  [key: string]: unknown;
+}
+
+/** Payload of `dms.*` events (ADR-S044). */
+export interface DmsEventPayload {
+  organizationId: string;
+  documentId?: string;
+  requestId?: string;
+  [key: string]: unknown;
+}
+
+/** Payload of `helpdesk.*` events (ADR-S045). */
+export interface HelpdeskEventPayload {
+  organizationId: string;
+  ticketId: string;
+  number: string;
   [key: string]: unknown;
 }
 

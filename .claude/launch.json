@@ -11,6 +11,33 @@
       "port": 3001
     },
     {
+      "name": "api-mena",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/ierp_mena?stringtype=unspecified' ENABLE_QUARRY=true ENABLE_FLEET=true ENABLE_ASSETS=true ENABLE_HR=true ./gradlew bootRun --console=plain"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "api-mena-seed",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/ierp_mena?stringtype=unspecified' LICENSE_ENFORCE=false THROTTLE_ENABLED=false PORT=3013 ENABLE_MANUFACTURING=true ENABLE_ORDERS=true ENABLE_QUARRY=true ENABLE_FLEET=true ENABLE_ASSETS=true ENABLE_HR=true ./gradlew bootRun --console=plain"
+      ],
+      "port": 3013
+    },
+    {
+      "name": "web-mena",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "-c",
+        "cd web && npx vite --config vite.config.mena.mts"
+      ],
+      "port": 5193
+    },
+    {
       "name": "web",
       "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
       "runtimeArgs": [

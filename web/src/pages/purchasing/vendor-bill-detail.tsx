@@ -34,6 +34,7 @@ import {
 } from '@/features/invoicing/api';
 import { useCashAccounts } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 
 const selectClass = 'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm';
 
@@ -260,6 +261,8 @@ export function VendorBillDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      <AttachmentPanel resType="vendor_bill" resId={bill.id} title={tx('Supplier documents')} />
 
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
         <DialogContent>

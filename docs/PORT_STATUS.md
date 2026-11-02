@@ -36,6 +36,21 @@ Health endpoints (`/api/v1/health*`) were completed in P0.
 `/opening-balances` (GET, POST), `/reports/tax/summary`, AR / AP statements (JSON, PDF, e-mail; 5), `/invoices/:id/pdf`
 and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
+**Document management and helpdesk (Spring-native, ADR-S044 / S045 / S046; not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| DM-0 | `/files` hardening (permissions, org-bound signed URLs, blocked file types, S3 streaming) | done — `DmsIT`, `SecurityChecklistIT` |
+| DM-1 | [dms](spec/dms.md) workspaces, folders, documents, versions, tags, access rules, bulk | done — `DmsIT` |
+| DM-2 | Record attachments (14 record types) + web `AttachmentPanel` on 7 record pages | done — `DmsIT` |
+| DM-3 | Documents app (web `/dms`) | done |
+| DM-4 | Surfacing module attachments read-only | done — `DmsIT` |
+| DM-5 | Full-text search + optional OCR (tesseract CLI) | done — `DmsIT` |
+| DM-6 | Expiry reminders, document requests, approvals | done — `DmsIT` |
+| DM-7 | External share links (public routes + `/share/:token`) | done — `DmsIT` |
+| HD-0..2, HD-5 | [helpdesk](spec/helpdesk.md) tickets, correspondence register, letter PDFs, web | done — `HelpdeskIT` |
+| HD-3, HD-4, HD-6 | IMAP e-mail ingestion, SLA policies, portal ticket form | not started |
+
 **HR and payroll to ERP grade (Spring-native, [plan](roadmap/hr-payroll-plan.md); not counted above):**
 
 | Phase | Scope | Status |

@@ -290,7 +290,10 @@ class FleetIncidentsIT extends FleetSafetyTestSupport {
         Res paid = money("POST", "/expenses/" + expenseId + "/pay", Map.of("paymentMethod", "BANK_TRANSFER",
                 "accountId", bank));
         assertThat(paid.status()).as(paid.raw().body()).isLessThan(300);
-        String entry = expensePaymentEntry(expenseId);
+        assertBalanced(expensePaymentEntry(expenseId));
+        // ADR-S051: the CREDIT charge is recognised at approval (accrual on the vehicle's centre); payment clears AP.
+        String entry = jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
+                + " 'expense_accrual' AND \"sourceId\" = ?").params(demoOrg, expenseId).query(String.class).single();
         assertBalanced(entry);
         assertThat(jdbc.sql("SELECT \"costCenterId\" FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND debit > 0")
                 .param(entry).query(String.class).single()).isEqualTo(cc);
