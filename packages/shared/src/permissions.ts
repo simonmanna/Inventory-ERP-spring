@@ -171,6 +171,7 @@ export const PERMISSIONS = {
     post: 'landed_cost:post',
     reverse: 'landed_cost:reverse',
     configure: 'landed_cost:configure',
+    overrideTax: 'landed_cost:override_tax',
   },
   // ---- ADR-S005 — accounting completion ----
   budget: {

@@ -95,7 +95,8 @@ public class PostingService {
         Journal journal = journal(request.journalCode());
         Instant date = request.date();
         fiscalPeriod.assertOpen(date);
-        BigDecimal rate = rate(request, date);
+        CurrencyService.Resolution fx = resolution(request, date);
+        BigDecimal rate = fx.rate();
         List<NormalizedLine> lines = new ArrayList<>(PostingMath.normalizeLines(request.lines(), rate));
         List<PostingMath.LineValidationError> errors = PostingMath.validateLines(lines);
         if (!errors.isEmpty()) {
@@ -137,6 +138,7 @@ public class PostingService {
         em.flush();
         em.refresh(entry);
         String entryId = entry.getId();
+        snapshotRate(organizationId, entryId, fx);
         AfterCommit.run(() -> {
             Map<String, Object> payload = new HashMap<>();
             payload.put("organizationId", organizationId);
@@ -235,7 +237,7 @@ public class PostingService {
         Journal journal = journal(request.journalCode());
         Instant date = request.date();
         fiscalPeriod.assertOpen(date);
-        BigDecimal rate = rate(request, date);
+        BigDecimal rate = resolution(request, date).rate();
         List<NormalizedLine> lines = new ArrayList<>(PostingMath.normalizeLines(request.lines(), rate));
         List<PostingMath.LineValidationError> errors = PostingMath.validateLines(lines);
         if (!errors.isEmpty()) {
@@ -355,20 +357,38 @@ public class PostingService {
         return journal;
     }
 
-    private BigDecimal rate(PostingRequest request, Instant date) {
+    /** The organisation's base (functional) currency code. */
+    public String baseCurrency() {
         String orgId = TenantContext.organizationId();
-        String baseCode = Optional.ofNullable(ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\""
+        return Optional.ofNullable(ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\""
                 + " WHERE id = ?").param(orgId).query(String.class).optional().orElse(null), "org.currencyCode", orgId))
                 .orElse("USD");
-        BigDecimal rate = Money.dec(request.exchangeRate() == null ? 1 : request.exchangeRate());
-        if (request.currencyId() != null && !request.currencyId().equals(baseCode)) {
-            try {
-                rate = currency.getRate(request.currencyId(), baseCode, date);
-            } catch (ApiException ignored) {
-                // No rate configured — keep the caller-supplied rate (or 1).
-            }
+    }
+
+    /**
+     * Rate of a posting, resolved before anything is written (owner decision D-PC1, ADR-S054): base currency keeps the
+     * caller's rate or 1 (unchanged); a foreign currency takes the explicit document rate, else the rate table, else
+     * the posting is refused and nothing is written.
+     */
+    private CurrencyService.Resolution resolution(PostingRequest request, Instant date) {
+        String baseCode = baseCurrency();
+        if (request.currencyId() == null || request.currencyId().equals(baseCode)) {
+            return new CurrencyService.Resolution(baseCode, baseCode,
+                    Money.dec(request.exchangeRate() == null ? 1 : request.exchangeRate()), "base", date);
         }
-        return rate;
+        return currency.resolve(request.currencyId(), baseCode, request.exchangeRate(), date);
+    }
+
+    /** Snapshot of the rate a foreign-currency entry was posted at: pair, rate, date and source. */
+    private void snapshotRate(String organizationId, String entryId, CurrencyService.Resolution fx) {
+        if ("base".equals(fx.source())) {
+            return;
+        }
+        jdbc.sql("INSERT INTO \"JournalEntryFxRate\" (id, \"organizationId\", \"journalEntryId\", \"fromCode\","
+                        + " \"toCode\", rate, \"rateDate\", source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .params(UUID.randomUUID().toString(), organizationId, entryId, fx.fromCode(), fx.toCode(), fx.rate(),
+                        FiscalPeriodControl.ts(fx.rateDate()), fx.source())
+                .update();
     }
 
     private void assertAccounts(List<NormalizedLine> lines, boolean systemContext) {

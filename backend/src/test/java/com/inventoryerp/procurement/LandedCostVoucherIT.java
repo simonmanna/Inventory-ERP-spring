@@ -495,7 +495,8 @@ class LandedCostVoucherIT extends ApiTestSupport {
         String ref = "INV-" + suffix();
         JsonNode v = voucher(List.of(grnId), List.of(
                 charge("kind", "freight", "amount", 100, "allocationMethod", "manual", "manualAllocations",
-                        Map.of(lineA, 70, lineB, 30), "supplierId", forwarder, "supplierInvoiceRef", ref, "taxAmount", 18),
+                        Map.of(lineA, 70, lineB, 30), "supplierId", forwarder, "supplierInvoiceRef", ref, "taxAmount", 18,
+                        "taxRecoverable", true),
                 charge("kind", "duty", "amount", 50, "appliesToLineIds", List.of(lineB)),
                 charge("costComponentId", component("DEMURRAGE"), "amount", 40, "costCenterId", cc),
                 charge("costComponentId", component("IMPORT_VAT"), "amount", 25)));

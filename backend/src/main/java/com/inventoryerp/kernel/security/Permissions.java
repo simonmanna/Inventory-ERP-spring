@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (641 permissions). Constant name = GROUP__ACTION.
+ * exactly (646 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -110,6 +110,7 @@ public final class Permissions {
     public static final String LANDED_COST__POST = "landed_cost:post";
     public static final String LANDED_COST__REVERSE = "landed_cost:reverse";
     public static final String LANDED_COST__CONFIGURE = "landed_cost:configure";
+    public static final String LANDED_COST__OVERRIDE_TAX = "landed_cost:override_tax";
     public static final String BUDGET__READ = "budget:read";
     public static final String BUDGET__CREATE = "budget:create";
     public static final String BUDGET__UPDATE = "budget:update";
@@ -758,6 +759,7 @@ public final class Permissions {
             "landed_cost:post",
             "landed_cost:reverse",
             "landed_cost:configure",
+            "landed_cost:override_tax",
             "budget:read",
             "budget:create",
             "budget:update",

@@ -27,6 +27,12 @@ public class CurrencyService {
 
     static final MathContext DECIMAL_JS = new MathContext(20, RoundingMode.HALF_UP);
 
+    /**
+     * The rate a posting uses (PC-0, ADR-S054): TO per 1 FROM, where it came from ({@code document}, {@code table} or
+     * {@code base}) and the date it applies to.
+     */
+    public record Resolution(String fromCode, String toCode, BigDecimal rate, String source, Instant rateDate) {}
+
     private final EntityManager em;
     private final JdbcClient jdbc;
 
@@ -67,6 +73,20 @@ public class CurrencyService {
     /** FX rate (TO per 1 FROM) valid at {@code asOf}. */
     @Transactional(readOnly = true)
     public BigDecimal getRate(String fromCode, String toCode, Instant asOf) {
+        BigDecimal rate = findRate(fromCode, toCode, asOf);
+        if (rate == null) {
+            throw ApiException.notFound("No FX rate for " + fromCode + "→" + toCode + " at or before "
+                    + FiscalPeriodControl.day(asOf));
+        }
+        return rate;
+    }
+
+    /**
+     * The table rate (TO per 1 FROM) at or before {@code asOf}, direct or the reciprocal of the inverse pair, or
+     * {@code null}. Never throws and opens no transaction of its own, so a missing rate cannot mark the caller's
+     * transaction rollback-only (LC-0 finding G2).
+     */
+    public BigDecimal findRate(String fromCode, String toCode, Instant asOf) {
         if (fromCode.equals(toCode)) {
             return BigDecimal.ONE;
         }
@@ -75,11 +95,30 @@ public class CurrencyService {
             return direct;
         }
         BigDecimal inverse = lookupRate(toCode, fromCode, asOf);
-        if (inverse != null && inverse.signum() != 0) {
-            return BigDecimal.ONE.divide(inverse, DECIMAL_JS);
+        return inverse != null && inverse.signum() != 0 ? BigDecimal.ONE.divide(inverse, DECIMAL_JS) : null;
+    }
+
+    /**
+     * Rate of a foreign-currency amount (owner decision D-PC1): an explicit document rate wins, else the rate table,
+     * else it is refused. A table rate never overrides a stated document rate. A rate of exactly 1 on a foreign currency
+     * is the legacy "not stated" default of documents and is treated as absent; a genuine 1:1 rate goes in the table.
+     */
+    public Resolution resolve(String fromCode, String toCode, Object explicitRate, Instant date) {
+        if (explicitRate != null) {
+            BigDecimal stated = Money.dec(explicitRate);
+            if (stated.signum() <= 0) {
+                throw ApiException.badRequest("exchangeRate must be greater than zero");
+            }
+            if (stated.compareTo(BigDecimal.ONE) != 0) {
+                return new Resolution(fromCode, toCode, stated, "document", date);
+            }
         }
-        throw ApiException.notFound("No FX rate for " + fromCode + "→" + toCode + " at or before "
-                + FiscalPeriodControl.day(asOf));
+        BigDecimal table = findRate(fromCode, toCode, date);
+        if (table == null) {
+            throw ApiException.badRequest("No exchange rate for " + fromCode + "→" + toCode + " on "
+                    + FiscalPeriodControl.day(date) + ": state the document's rate or add one to the rate table");
+        }
+        return new Resolution(fromCode, toCode, table, "table", date);
     }
 
     public BigDecimal convert(Object amount, String fromCode, String toCode, Instant asOf) {

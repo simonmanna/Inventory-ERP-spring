@@ -43,6 +43,15 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | HP-0 | Payroll settings, pay groups + calendars, period lock, maker-checker (ADR-S047, V241, 14 routes) | done — `HrPayrollSetupIT`, `HrPayCalendarTest` |
 | HP-1..HP-10 | Compensation, engine v2, UG + AE statutory packs, leave, time→pay, separation, payslips / bank / WPS files, ESS, talent, reports (ADR-S048, V242–V250, 108 routes) | done — `HrPayrollEngineTest`, `HrPayrollV2IT`, `HrPeopleOpsIT` |
 
+**Cost accounting to production:** roadmap [PC-0 … PC-9](roadmap/costing-production-ready-plan.md) (proposed 2026-11-03; LC-0 is part of PC-0).
+
+**Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| LC-0 | Accounting audit: implementation map, GL trace, `LandedCostAuditIT`; tax recoverability on charges (V290, `landed_cost:override_tax`, `costing.landedCost.taxRecoverableDefault`) | in progress — gate |
+| PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); bill-tax impact analysis for review | in progress — gate |
+
 ## kernel
 
 - [x] GET /api/v1/approval-policies — ApprovalPolicyController.list

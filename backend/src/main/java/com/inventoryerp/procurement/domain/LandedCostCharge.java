@@ -105,6 +105,13 @@ public class LandedCostCharge {
     @Column(name = "dueDate")
     private LocalDate dueDate;
 
+    @Column(name = "taxId")
+    private String taxId;
+
+    /** Tax is recoverable input tax (true), part of the charge (false), or unreviewed (null, ADR-S053). */
+    @Column(name = "taxRecoverable")
+    private Boolean taxRecoverable;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "landedCostId", insertable = false, updatable = false)
     private LandedCost landedCost;
@@ -321,5 +328,21 @@ public class LandedCostCharge {
 
     public void setDueDate(LocalDate dueDate) {
         this.dueDate = dueDate;
+    }
+
+    public String getTaxId() {
+        return taxId;
+    }
+
+    public void setTaxId(String taxId) {
+        this.taxId = taxId;
+    }
+
+    public Boolean getTaxRecoverable() {
+        return taxRecoverable;
+    }
+
+    public void setTaxRecoverable(Boolean taxRecoverable) {
+        this.taxRecoverable = taxRecoverable;
     }
 }

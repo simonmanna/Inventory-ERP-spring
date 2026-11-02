@@ -280,6 +280,8 @@ export interface ChargeDraft {
   exchangeRate?: number;
   amount: number;
   taxAmount?: number;
+  /** ADR-S053: true = recoverable input tax, false = part of the charge; omitted = the tax / organisation default. */
+  taxRecoverable?: boolean;
   treatment?: Treatment;
   allocationMethod?: AllocationMethod;
   expenseAccountId?: string;

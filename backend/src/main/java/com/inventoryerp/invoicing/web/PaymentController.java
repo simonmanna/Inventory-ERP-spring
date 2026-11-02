@@ -49,13 +49,15 @@ public class PaymentController {
             List<@Valid AllocationRequest> allocations,
             String cashSessionId,
             Boolean allowOverpayment,
-            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal withholdingAmount) {
+            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal withholdingAmount,
+            String currencyCode,
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate) {
 
         PaymentInput toInput() {
             return new PaymentInput(partnerId, paymentDate, amount, paymentMethod, accountId, reference, branchId,
                     allocations == null ? null : allocations.stream()
                             .map(a -> new AllocationInput(a.documentId(), a.invoiceId(), a.amount())).toList(),
-                    cashSessionId, allowOverpayment, withholdingAmount, null);
+                    cashSessionId, allowOverpayment, withholdingAmount, null, currencyCode, exchangeRate);
         }
     }
 

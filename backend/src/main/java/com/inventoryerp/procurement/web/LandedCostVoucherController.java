@@ -65,7 +65,9 @@ public class LandedCostVoucherController {
             Map<String, BigDecimal> manualAllocations,
             @OneOf({"generate", "link", "none"}) String billMode,
             String vendorBillId,
-            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate) {}
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
+            String taxId,
+            Boolean taxRecoverable) {}
 
     /** Create / replace body. */
     public record VoucherRequest(
@@ -90,7 +92,7 @@ public class LandedCostVoucherController {
                         c.supplierId(), c.supplierInvoiceRef(), c.invoiceDate(), c.currencyCode(), c.exchangeRate(),
                         c.amount(), c.taxAmount(), c.treatment(), c.allocationMethod(), c.expenseAccountId(),
                         c.creditAccountId(), c.costCenterId(), c.appliesToLineIds(), c.manualAllocations(), c.billMode(),
-                        c.vendorBillId(), c.dueDate())).toList());
+                        c.vendorBillId(), c.dueDate(), c.taxId(), c.taxRecoverable())).toList());
     }
 
     // ------------------------------------------------------------------ vouchers

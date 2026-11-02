@@ -22,7 +22,9 @@ import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.sequence.SequenceService;
+import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.procurement.application.LandedCostLayers.Applied;
 import com.inventoryerp.procurement.application.LandedCostLayers.Group;
 import com.inventoryerp.procurement.domain.LandedCost;
@@ -71,7 +73,19 @@ public class LandedCostVoucherService {
             String supplierInvoiceRef, String invoiceDate, String currencyCode, BigDecimal exchangeRate,
             BigDecimal amount, BigDecimal taxAmount, String treatment, String allocationMethod, String expenseAccountId,
             String creditAccountId, String costCenterId, List<String> appliesToLineIds,
-            Map<String, BigDecimal> manualAllocations, String billMode, String vendorBillId, String dueDate) {
+            Map<String, BigDecimal> manualAllocations, String billMode, String vendorBillId, String dueDate,
+            String taxId, Boolean taxRecoverable) {
+
+        /** Without the tax recoverability fields (resolved from the tax, component or organisation default). */
+        public ChargeInput(String costComponentId, String kind, String description, String supplierId,
+                String supplierInvoiceRef, String invoiceDate, String currencyCode, BigDecimal exchangeRate,
+                BigDecimal amount, BigDecimal taxAmount, String treatment, String allocationMethod,
+                String expenseAccountId, String creditAccountId, String costCenterId, List<String> appliesToLineIds,
+                Map<String, BigDecimal> manualAllocations, String billMode, String vendorBillId, String dueDate) {
+            this(costComponentId, kind, description, supplierId, supplierInvoiceRef, invoiceDate, currencyCode,
+                    exchangeRate, amount, taxAmount, treatment, allocationMethod, expenseAccountId, creditAccountId,
+                    costCenterId, appliesToLineIds, manualAllocations, billMode, vendorBillId, dueDate, null, null);
+        }
 
         /** Without the supplier-bill fields (bill mode resolved from supplier / credit account). */
         public ChargeInput(String costComponentId, String kind, String description, String supplierId,
@@ -433,7 +447,8 @@ public class LandedCostVoucherService {
                     + " ON d.id = c.\"vendorBillId\" WHERE c.\"landedCostId\" = ? AND c.\"billMode\" = 'generate'")
                     .param(id));
             for (Map<String, Object> b : generated) {
-                if ("posted".equals(b.get("status")) && Money.dec(b.get("amountPaid")).signum() > 0) {
+                // Any non-cancelled bill with money against it (a fully paid bill is no longer 'posted').
+                if (!"cancelled".equals(b.get("status")) && Money.dec(b.get("amountPaid")).signum() > 0) {
                     throw ApiException.badRequest("Supplier bill " + b.get("documentNumber") + " has payments; reverse"
                             + " them before reversing landed cost " + lc.get("code"));
                 }
@@ -528,21 +543,30 @@ public class LandedCostVoucherService {
             BigDecimal rate = ch.get("exchangeRate") == null ? BigDecimal.ONE : Money.dec(ch.get("exchangeRate"));
             BigDecimal base = dp6(Money.dec(ch.get("amount")).multiply(rate));
             BigDecimal baseTax = dp6(Money.dec(ch.get("taxAmount")).multiply(rate));
+            Object recoverable = ch.get("taxRecoverable");
+            if (write && baseTax.signum() > 0 && recoverable == null) {
+                throw ApiException.badRequest("Charge " + label(ch) + ": tax recoverability is unreviewed");
+            }
+            // ADR-S053: non-recoverable tax is part of the charge (capitalised or expensed with it), never input tax.
+            boolean taxToCost = baseTax.signum() > 0 && Boolean.FALSE.equals(recoverable);
+            BigDecimal cost = taxToCost ? base.add(baseTax) : base;
             String treatment = String.valueOf(ch.get("treatment"));
             String cc = ch.get("costCenterId") != null ? (String) ch.get("costCenterId") : voucherCc;
             String lineDesc = description + " · " + (ch.get("description") != null ? ch.get("description") : ch.get("kind"))
                     + (ch.get("supplierInvoiceRef") != null ? " · inv " + ch.get("supplierInvoiceRef") : "");
-            total = total.add(base);
+            total = total.add(cost);
             if (write) {
                 String credit = ch.get("creditAccountId") != null ? (String) ch.get("creditAccountId") : clearingAccount();
                 other.add(new Line(credit, null, JsNumbers.dec(base.add(baseTax)), (String) ch.get("supplierId"),
                         lineDesc, null, null, null));
-                if (baseTax.signum() > 0) {
+                if (baseTax.signum() > 0 && !taxToCost) {
                     other.add(Line.debit(determination.mapped("tax_receivable"), JsNumbers.dec(baseTax),
                             lineDesc + " · input tax"));
                 }
             }
-            tax = tax.add(baseTax);
+            if (!taxToCost) {
+                tax = tax.add(baseTax);
+            }
             switch (treatment) {
                 case "recoverable_tax" -> {
                     tax = tax.add(base);
@@ -551,16 +575,16 @@ public class LandedCostVoucherService {
                     }
                 }
                 case "expense" -> {
-                    expensed = expensed.add(base);
+                    expensed = expensed.add(cost);
                     if (write) {
                         String account = ch.get("expenseAccountId") != null ? (String) ch.get("expenseAccountId")
                                 : determination.mapped("default_expense");
-                        other.add(new Line(account, JsNumbers.dec(base), null, null, lineDesc, null, cc, null));
+                        other.add(new Line(account, JsNumbers.dec(cost), null, null, lineDesc, null, cc, null));
                     }
                 }
                 default -> {
                     ch.put("_voucherCode", lc.get("code"));
-                    List<Alloc> parts = allocate(ch, base, units, write);
+                    List<Alloc> parts = allocate(ch, cost, units, write);
                     for (Alloc a : parts) {
                         allocs.add(a);
                         BigDecimal wip = a.applied().wip();
@@ -891,8 +915,19 @@ public class LandedCostVoucherService {
             if (tax.signum() < 0) {
                 throw ApiException.badRequest("taxAmount must not be negative");
             }
-            total = total.add(base);
-            taxTotal = taxTotal.add(dp6(tax.multiply(rate)));
+            if ("recoverable_tax".equals(treatment) && tax.signum() > 0) {
+                throw ApiException.badRequest("Charge " + label(c, kind) + ": a recoverable tax charge cannot carry tax"
+                        + " of its own");
+            }
+            String taxId = blank(c.taxId()) != null ? c.taxId() : comp != null ? (String) comp.get("taxId") : null;
+            Boolean recoverable = taxRecoverable(id, c, kind, tax, taxId);
+            BigDecimal baseTax = dp6(tax.multiply(rate));
+            if (Boolean.TRUE.equals(recoverable)) {
+                total = total.add(base);
+                taxTotal = taxTotal.add(baseTax);
+            } else {
+                total = total.add(base).add(baseTax);
+            }
             String chargeId = UUID.randomUUID().toString();
             Map<String, BigDecimal> manualBase = null;
             if ("manual".equals(method)) {
@@ -905,15 +940,16 @@ public class LandedCostVoucherService {
                             + " \"lineNumber\", \"costComponentId\", \"supplierId\", \"supplierInvoiceRef\", \"invoiceDate\","
                             + " \"currencyCode\", \"exchangeRate\", \"baseAmount\", \"taxAmount\", treatment, \"allocationMethod\","
                             + " \"expenseAccountId\", \"creditAccountId\", \"costCenterId\", \"appliesToLineIds\","
-                            + " \"manualAllocations\", \"billMode\", \"vendorBillId\", \"dueDate\") VALUES (?, ?, ?, ?, ?, ?, ?,"
-                            + " ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb, ?, ?, ?::date)")
+                            + " \"manualAllocations\", \"billMode\", \"vendorBillId\", \"dueDate\", \"taxId\", \"taxRecoverable\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb, ?, ?,"
+                            + " ?::date, ?, ?)")
                     .params(chargeId, org(), id, kind, c.description(), c.amount(), n++, c.costComponentId(),
                             supplierId, supplierRef, blank(c.invoiceDate()), blank(c.currencyCode()), rate,
                             base, tax, treatment, method, expense, c.creditAccountId(), blank(c.costCenterId()),
                             c.appliesToLineIds() == null || c.appliesToLineIds().isEmpty() ? null
                                     : c.appliesToLineIds().toArray(String[]::new),
                             manualBase == null ? null : EntityJson.toJson(manualBase), billMode, vendorBillId,
-                            blank(c.dueDate()))
+                            blank(c.dueDate()), taxId, recoverable)
                     .update();
             written.add(Obj.of("id", chargeId, "supplierId", supplierId, "supplierInvoiceRef", supplierRef,
                     "billMode", billMode, "currencyCode", blank(c.currencyCode()), "exchangeRate", rate,
@@ -1009,6 +1045,48 @@ public class LandedCostVoucherService {
         }
         return c.supplierId() != null && blank(c.supplierInvoiceRef()) != null && c.creditAccountId() == null
                 ? "generate" : "none";
+    }
+
+    /**
+     * Tax recoverability of a charge (ADR-S053, LC-0): irrelevant without tax; otherwise the charge's tax, else the
+     * organisation default. A stated value that contradicts a derived one needs {@code landed_cost:override_tax}; with
+     * nothing to derive from, the charge must state it.
+     */
+    private Boolean taxRecoverable(String voucherId, ChargeInput c, String kind, BigDecimal tax, String taxId) {
+        if (tax.signum() == 0) {
+            return Boolean.TRUE;
+        }
+        Boolean derived = null;
+        if (taxId != null) {
+            List<String> found = jdbc.sql("SELECT coalesce(recoverability, '') FROM \"Tax\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(taxId, org()).query(String.class).list();
+            if (found.isEmpty()) {
+                throw ApiException.badRequest("Tax not found");
+            }
+            derived = "full".equals(found.getFirst()) ? Boolean.TRUE : "none".equals(found.getFirst()) ? Boolean.FALSE
+                    : null;
+        }
+        if (derived == null) {
+            String def = settings.resolveString("costing.landedCost.taxRecoverableDefault", SettingContext.EMPTY);
+            derived = "recoverable".equals(def) ? Boolean.TRUE : "non_recoverable".equals(def) ? Boolean.FALSE : null;
+        }
+        if (c.taxRecoverable() == null) {
+            if (derived == null) {
+                throw ApiException.badRequest("Charge " + label(c, kind) + ": state whether its tax is recoverable"
+                        + " (no tax or default in Costing & Valuation settings says so)");
+            }
+            return derived;
+        }
+        if (derived != null && !derived.equals(c.taxRecoverable())) {
+            if (!TenantContext.permissions().contains(Permissions.LANDED_COST__OVERRIDE_TAX)) {
+                throw ApiException.forbidden("Charge " + label(c, kind) + ": overriding the tax recoverability needs"
+                        + " landed_cost:override_tax");
+            }
+            audit.recordInTx(AuditInput.of("LandedCost", voucherId, "update", null, Obj.of("kind",
+                    "landed_cost_tax_override", "charge", label(c, kind), "derived", derived, "stated",
+                    c.taxRecoverable())));
+        }
+        return c.taxRecoverable();
     }
 
     /** Charges that become one supplier bill must share its currency and rate. */

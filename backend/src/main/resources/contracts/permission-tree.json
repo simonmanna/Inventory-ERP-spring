@@ -160,7 +160,8 @@
     "approve": "landed_cost:approve",
     "post": "landed_cost:post",
     "reverse": "landed_cost:reverse",
-    "configure": "landed_cost:configure"
+    "configure": "landed_cost:configure",
+    "overrideTax": "landed_cost:override_tax"
   },
   "budget": {
     "read": "budget:read",

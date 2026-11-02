@@ -5,6 +5,7 @@ import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.CashSessionService;
+import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -65,7 +66,21 @@ public class PaymentService {
     /** {@code CreatePaymentDto} (+ the programmatic {@code refundOfId}). */
     public record PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
             String accountId, String reference, String branchId, List<AllocationInput> allocations,
-            String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId) {}
+            String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId,
+            String currencyCode, BigDecimal exchangeRate) {
+
+        /** A payment in the organisation's base currency (the original contract). */
+        public PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
+                String accountId, String reference, String branchId, List<AllocationInput> allocations,
+                String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId) {
+            this(partnerId, paymentDate, amount, paymentMethod, accountId, reference, branchId, allocations,
+                    cashSessionId, allowOverpayment, withholdingAmount, refundOfId, null, null);
+        }
+    }
+
+    /** Foreign-currency settlement of a payment (PC-0, ADR-S054): rate used and per-document carrying rates. */
+    private record FxSettlement(CurrencyService.Resolution rate, Map<String, BigDecimal> carrying,
+            BigDecimal counterBase, BigDecimal cashBase, BigDecimal fx) {}
 
     /** Payment method of a customer-deposit application (only through {@link #createDepositApplication}). */
     public static final String DEPOSIT_METHOD = "customer_deposit";
@@ -81,10 +96,15 @@ public class PaymentService {
     private final AuditService audit;
     private final ApprovalsService approvals;
     private final TransactionTemplate newTx;
+    private final CurrencyService currency;
+    private final DocumentFxRates fxRates;
 
     public PaymentService(JdbcClient jdbc, EventBus events, SequenceService sequence, PostingService posting,
             AccountDeterminationService determination, CashSessionService cashSessions, WorkflowService workflow,
-            AuditService audit, ApprovalsService approvals, PlatformTransactionManager txm) {
+            AuditService audit, ApprovalsService approvals, PlatformTransactionManager txm, CurrencyService currency,
+            DocumentFxRates fxRates) {
+        this.currency = currency;
+        this.fxRates = fxRates;
         this.jdbc = jdbc;
         this.events = events;
         this.sequence = sequence;
@@ -253,11 +273,22 @@ public class PaymentService {
             }
         }
         BigDecimal netCash = amount.subtract(withholding);
+        String baseCode = fxRates.base();
+        String payCurrency = dto.currencyCode() == null || dto.currencyCode().isBlank() ? baseCode
+                : dto.currencyCode().trim().toUpperCase();
+        boolean foreign = !payCurrency.equals(baseCode);
+        if (foreign && (withholding.signum() > 0 || "store_credit".equals(method) || DEPOSIT_METHOD.equals(method)
+                || dto.cashSessionId() != null || dto.refundOfId() != null
+                || allocations.stream().anyMatch(a -> a.invoiceId() != null && !a.invoiceId().isEmpty()))) {
+            throw ApiException.badRequest("A foreign-currency payment settles documents only: no withholding, store"
+                    + " credit, deposit, cash session, refund or POS invoice");
+        }
         if ("outbound".equals(direction) && "payable".equals(counterType)) {
             BigDecimal outstanding = jdbc.sql("SELECT COALESCE(SUM(\"amountResidual\"), 0) FROM \"Document\" WHERE"
                             + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"documentType\" = 'vendor_bill'"
-                            + " AND status IN ('posted', 'paid')")
-                    .params(org, dto.partnerId()).query(BigDecimal.class).single();
+                            + " AND status IN ('posted', 'paid')"
+                            + (foreign ? " AND upper(\"currencyId\") = ?" : " AND ?::text IS NULL"))
+                    .params(org, dto.partnerId(), foreign ? payCurrency : null).query(BigDecimal.class).single();
             if (amount.compareTo(outstanding) > 0 && !Boolean.TRUE.equals(dto.allowOverpayment())) {
                 throw ApiException.badRequest("Payment amount " + JsNumbers.dec(amount) + " exceeds supplier outstanding"
                         + " balance " + JsNumbers.dec(outstanding) + ". Overpayments require allowOverpayment=true.");
@@ -315,6 +346,8 @@ public class PaymentService {
         if (dto.refundOfId() != null) {
             counterAccount = refundCounterAccount(dto, direction, counterType, method, amount, cashAccount, org);
         }
+        FxSettlement fxs = foreign ? fxSettlement(dto, direction, payCurrency, baseCode, amount, allocations, org)
+                : null;
         String journalCode = resolved.journalCode();
         int year = EntityPatch.toInstant(dto.paymentDate()).atOffset(ZoneOffset.UTC).getYear();
         String paymentNumber = "inbound".equals(direction) ? sequence.next("payment:" + year, "PAY-" + year + "-", 6)
@@ -323,17 +356,21 @@ public class PaymentService {
         jdbc.sql("INSERT INTO \"Payment\" (id, \"organizationId\", \"paymentNumber\", direction, \"partnerId\","
                         + " \"paymentDate\", \"paymentMethod\", \"accountId\", \"cashSessionId\", \"refundOfId\", amount,"
                         + " \"withholdingAmount\", \"allocatedAmount\", \"unallocatedAmount\", reference, status, \"branchId\","
-                        + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?::\"PaymentDirection\", ?, ?, ?, ?, ?, ?, ?, ?, 0,"
-                        + " ?, ?, 'posted', ?, " + NOW + ", " + NOW + ")")
+                        + " \"currencyId\", \"exchangeRate\", \"rateSource\", \"fxAmount\", \"createdAt\", \"updatedAt\")"
+                        + " VALUES (?, ?, ?, ?::\"PaymentDirection\", ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'posted', ?, ?, ?, ?, ?, "
+                        + NOW + ", " + NOW + ")")
                 .params(paymentId, org, paymentNumber, direction, dto.partnerId(), ts(dto.paymentDate()), method,
                         cashAccount, dto.cashSessionId(), dto.refundOfId(), amount, withholding, amount, dto.reference(),
-                        dto.branchId())
+                        dto.branchId(), fxs == null ? null : payCurrency, fxs == null ? BigDecimal.ONE : fxs.rate().rate(),
+                        fxs == null ? null : fxs.rate().source(), fxs == null ? Money.ZERO : fxs.fx())
                 .update();
         if ("store_credit".equals(method)) {
             storeCredit(dto, direction, amount, paymentId, org, userId);
         }
         List<Line> lines = new ArrayList<>();
-        if ("inbound".equals(direction)) {
+        if (fxs != null) {
+            lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency));
+        } else if ("inbound".equals(direction)) {
             // a deposit application debits the customer's deposit liability: keep the partner on that line
             lines.add(new Line(cashAccount, JsNumbers.dec(amount), null, DEPOSIT_METHOD.equals(method) ? dto.partnerId()
                     : null, null, null, null, null));
@@ -352,6 +389,7 @@ public class PaymentService {
                 lines));
         jdbc.sql("UPDATE \"Payment\" SET \"journalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entry.get("id"), paymentId).update();
+
         BigDecimal allocated = Money.ZERO;
         for (AllocationInput alloc : allocations) {
             BigDecimal allocAmount = r6(Money.dec(alloc.amount()));
@@ -386,9 +424,18 @@ public class PaymentService {
             if (doc == null) {
                 throw ApiException.badRequest("Document " + alloc.documentId() + " not found");
             }
+            if (!payCurrency.equals(fxRates.currencyOf(doc))) {
+                throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
+                        + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
+            }
+            BigDecimal carryingRate = fxs == null ? null : fxs.carrying().get((String) doc.get("id"));
+            BigDecimal allocFx = carryingRate == null ? Money.ZERO : fxAmount(direction, allocAmount, carryingRate,
+                    fxs.rate().rate());
             jdbc.sql("INSERT INTO \"PaymentAllocation\" (id, \"organizationId\", \"paymentId\", \"documentId\", amount,"
-                            + " \"createdAt\") VALUES (?, ?, ?, ?, ?, " + NOW + ")")
-                    .params(UUID.randomUUID().toString(), org, paymentId, doc.get("id"), allocAmount).update();
+                            + " \"carryingRate\", \"settlementRate\", \"fxAmount\", \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, " + NOW + ")")
+                    .params(UUID.randomUUID().toString(), org, paymentId, doc.get("id"), allocAmount, carryingRate,
+                            fxs == null ? null : fxs.rate().rate(), allocFx).update();
             BigDecimal newResidual = Money.dec(doc.get("amountResidual")).subtract(allocAmount);
             if (newResidual.signum() < 0) {
                 throw ApiException.badRequest("Allocation to document " + doc.get("documentNumber") + " exceeds its"
@@ -441,6 +488,76 @@ public class PaymentService {
             BusinessOutcome.record(jdbc, outcome, true);
         }
         return result;
+    }
+
+    /**
+     * Base amounts of a foreign-currency payment (owner decision D-PC2): each allocated document is relieved at its
+     * carrying rate, the unallocated remainder (an advance) and the cash at the payment rate; the difference is
+     * realised FX (positive = gain).
+     */
+    private FxSettlement fxSettlement(PaymentInput dto, String direction, String payCurrency, String baseCode,
+            BigDecimal amount, List<AllocationInput> allocations, String org) {
+        CurrencyService.Resolution rate = currency.resolve(payCurrency, baseCode, dto.exchangeRate(),
+                EntityPatch.toInstant(dto.paymentDate()));
+        Map<String, BigDecimal> carrying = new HashMap<>();
+        BigDecimal relieved = Money.ZERO;
+        BigDecimal allocatedSum = Money.ZERO;
+        for (AllocationInput a : allocations) {
+            BigDecimal alloc = r6(Money.dec(a.amount()));
+            if (alloc.signum() <= 0) {
+                continue;
+            }
+            jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                    .params(a.documentId(), org).query().listOfRows();
+            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(a.documentId(), org));
+            if (doc == null) {
+                throw ApiException.badRequest("Document " + a.documentId() + " not found");
+            }
+            if (!payCurrency.equals(fxRates.currencyOf(doc))) {
+                throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
+                        + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
+            }
+            BigDecimal docRate = fxRates.documentRate(doc);
+            carrying.put((String) doc.get("id"), docRate);
+            relieved = relieved.add(alloc.multiply(docRate));
+            allocatedSum = allocatedSum.add(alloc);
+        }
+        BigDecimal advance = amount.subtract(allocatedSum).max(Money.ZERO).multiply(rate.rate());
+        BigDecimal counterBase = r6(relieved.add(advance));
+        BigDecimal cashBase = r6(amount.multiply(rate.rate()));
+        BigDecimal fx = "inbound".equals(direction) ? cashBase.subtract(counterBase) : counterBase.subtract(cashBase);
+        return new FxSettlement(rate, carrying, counterBase, cashBase, fx);
+    }
+
+    /** Realised FX of one allocation in base currency (positive = gain). */
+    private static BigDecimal fxAmount(String direction, BigDecimal alloc, BigDecimal carryingRate,
+            BigDecimal settlementRate) {
+        BigDecimal diff = alloc.multiply(settlementRate.subtract(carryingRate));
+        return r6("inbound".equals(direction) ? diff : diff.negate());
+    }
+
+    /** Base-currency lines of a foreign-currency payment, realised FX on the designated FX accounts only. */
+    private List<Line> fxLines(FxSettlement fxs, String direction, String counterAccount, String cashAccount,
+            String partnerId, String payCurrency) {
+        List<Line> lines = new ArrayList<>();
+        String label = "Realised FX · " + payCurrency + " @ " + JsNumbers.dec(fxs.rate().rate());
+        if ("inbound".equals(direction)) {
+            lines.add(new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null));
+            lines.add(new Line(counterAccount, null, JsNumbers.dec(fxs.counterBase()), partnerId, null, null, null,
+                    null));
+        } else {
+            lines.add(new Line(counterAccount, JsNumbers.dec(fxs.counterBase()), null, partnerId, null, null, null,
+                    null));
+            lines.add(new Line(cashAccount, null, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null));
+        }
+        BigDecimal fx = fxs.fx();
+        if (fx.signum() > 0) {
+            lines.add(Line.credit(determination.mapped("fx_gain"), JsNumbers.dec(fx), label));
+        } else if (fx.signum() < 0) {
+            lines.add(Line.debit(determination.mapped("fx_loss"), JsNumbers.dec(fx.negate()), label));
+        }
+        return lines;
     }
 
     private String refundCounterAccount(PaymentInput dto, String direction, String counterType, String method,

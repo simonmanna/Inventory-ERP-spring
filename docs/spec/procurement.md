@@ -157,6 +157,11 @@ New routes (no Nest counterpart; legacy `/procurement/landed-costs` unchanged ex
 | POST/PATCH | `/procurement/cost-components`, `/{id}` | `landed_cost:configure` |
 | GET | `/procurement/landed-cost-reports/{by-shipment,by-item,by-supplier,product-profitability}?from&to`, `/clearing` | `landed_cost:read` |
 
+LC-0 (ADR-S053, extension routes, additive): voucher charge lines accept `taxId` and `taxRecoverable`
+(`false` = tax is part of the charge, capitalised / expensed with it). A charge with tax must resolve its
+recoverability from its tax, its cost component's tax or `costing.landedCost.taxRecoverableDefault`, or state it;
+contradicting a derived value needs `landed_cost:override_tax`. A `recoverable_tax` charge cannot carry tax.
+
 GL per posted voucher: Dr stock (capitalised, per product stock account) · Dr COGS (consumed share, voucher cost
 centre) · Dr expense (expensed charges, charge cost centre) · Dr `tax_receivable` (recoverable tax) / Cr each charge's
 credit account, default landed-cost clearing `2155` (`landed_cost_clearing`). Reversal = reversing entry + Dr stock /

@@ -60,9 +60,12 @@ public class CreditNoteService {
     private final ApprovalsService approvals;
     private final PosStockLocation posLocation;
     private final TransactionTemplate newTx;
+    private final DocumentFxRates fxRates;
 
     public CreditNoteService(JdbcClient jdbc, EventBus events, PostingService posting, DocumentBuilderService builder,
-            StockService stock, ApprovalsService approvals, PosStockLocation posLocation, PlatformTransactionManager txm) {
+            StockService stock, ApprovalsService approvals, PosStockLocation posLocation, PlatformTransactionManager txm,
+            DocumentFxRates fxRates) {
+        this.fxRates = fxRates;
         this.jdbc = jdbc;
         this.events = events;
         this.posting = posting;
@@ -76,6 +79,30 @@ public class CreditNoteService {
 
     private static String org() {
         return TenantContext.organizationId();
+    }
+
+    /**
+     * PC-0 (ADR-S054, D-PC2): a foreign-currency credit note that settles part of an invoice of the same currency at
+     * another rate realises the difference on the receivable — FX gain / loss only.
+     */
+    private void realiseFx(Map<String, Object> cn, Map<String, Object> inv, BigDecimal reduce, String cnEntryId,
+            String receivable, String partnerId, Instant date) {
+        String cur = fxRates.currencyOf(cn);
+        if (cur.equals(fxRates.base()) || !cur.equals(fxRates.currencyOf(inv))) {
+            return;
+        }
+        BigDecimal cnRate = fxRates.entryRate(cnEntryId);
+        BigDecimal invRate = fxRates.documentRate(inv);
+        if (cnRate == null || cnRate.compareTo(invRate) == 0) {
+            return;
+        }
+        BigDecimal fx = reduce.multiply(cnRate.subtract(invRate)).setScale(6, java.math.RoundingMode.HALF_UP);
+        List<Line> lines = fxRates.realiseOnReceivable(fx, receivable, partnerId, "Realised FX · credit note "
+                + cn.get("documentNumber") + " on " + inv.get("documentNumber"));
+        if (!lines.isEmpty()) {
+            posting.post(PostingRequest.of("SALES", date, "Realised FX · credit note " + cn.get("documentNumber"),
+                    "credit_note_fx", (String) cn.get("id"), "credit_note_fx:" + cn.get("id"), lines));
+        }
     }
 
     /** Credit notes newest first (search on number) with partner and line count. */
@@ -169,6 +196,7 @@ public class CreditNoteService {
                     jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\","
                                     + " status = ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
                             .params(newResidual, paid ? "paid" : "partial", paid ? "paid" : invStatus, reversed).update();
+                    realiseFx(cn, inv, reduce, (String) entry.get("id"), g.counterAccount(), partnerId, issueDate);
                 }
             }
         }

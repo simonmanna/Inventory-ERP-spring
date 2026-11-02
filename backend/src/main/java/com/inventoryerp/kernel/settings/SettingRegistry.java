@@ -79,6 +79,11 @@ public final class SettingRegistry {
         def("costing.landedCost.defaultAllocationMethod", "costing", "enum", "Landed Cost Default Allocation",
                 "Basis used by a landed cost charge when neither the charge nor its cost component names one.",
                 "value", List.of("value", "quantity", "equal", "weight", "volume", "manual"), false, ORG_ONLY);
+        // ---- Landed cost LC-0 (ADR-S053) ----
+        def("costing.landedCost.taxRecoverableDefault", "costing", "enum", "Landed Cost Tax Recoverability",
+                "Whether tax on a landed cost charge is recoverable input tax when neither the charge's tax nor its"
+                        + " cost component's tax says so. unset = the charge must state it.",
+                "unset", List.of("unset", "recoverable", "non_recoverable"), false, ORG_ONLY);
         def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",

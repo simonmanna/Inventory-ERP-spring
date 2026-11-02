@@ -156,6 +156,7 @@ export function LandedCostVoucherEditPage() {
       supplierInvoiceRef: c.supplierInvoiceRef ?? '', currencyCode: c.currencyCode ?? '', treatment: c.treatment, allocationMethod: c.allocationMethod,
       expenseAccountId: c.expenseAccountId ?? undefined, creditAccountId: c.creditAccountId ?? undefined, costCenterId: c.costCenterId ?? undefined,
       appliesToLineIds: c.appliesToLineIds ?? undefined, amount: Number(c.amount), amountText: String(Number(c.amount)), taxText: Number(c.taxAmount) ? String(Number(c.taxAmount)) : '',
+      taxRecoverable: c.taxRecoverable ?? undefined,
       billMode: c.billMode ?? 'none', vendorBillId: c.vendorBillId ?? undefined, dueDate: c.dueDate ? String(c.dueDate).slice(0, 10) : undefined,
       invoiceDate: c.invoiceDate ? String(c.invoiceDate).slice(0, 10) : undefined,
       rateText: Number(c.exchangeRate) !== 1 ? String(Number(c.exchangeRate)) : '',
@@ -206,6 +207,7 @@ export function LandedCostVoucherEditPage() {
           exchangeRate: c.rateText ? Number(c.rateText) : undefined,
           amount: Number(c.amountText),
           taxAmount: c.taxText ? Number(c.taxText) : undefined,
+          taxRecoverable: c.taxText && Number(c.taxText) ? c.taxRecoverable : undefined,
           treatment: c.treatment,
           allocationMethod: c.allocationMethod,
           expenseAccountId: c.expenseAccountId || undefined,
@@ -279,7 +281,16 @@ export function LandedCostVoucherEditPage() {
                 </select>
                 <Input className="md:col-span-2" placeholder={tx('Description')} value={c.description ?? ''} onChange={(e) => patch(c.key, { description: e.target.value })} />
                 <Input type="number" min="0" placeholder={tx('Amount')} value={c.amountText} onChange={(e) => patch(c.key, { amountText: e.target.value })} />
-                <Input type="number" min="0" placeholder={tx('Recoverable tax')} value={c.taxText} onChange={(e) => patch(c.key, { taxText: e.target.value })} />
+                <div className="flex gap-1">
+                  <Input type="number" min="0" placeholder={tx('Tax')} value={c.taxText} onChange={(e) => patch(c.key, { taxText: e.target.value })} />
+                  <select aria-label={tx('Tax recoverability')} className="rounded-md border p-2 text-sm" disabled={!Number(c.taxText)}
+                    value={c.taxRecoverable === undefined ? '' : String(c.taxRecoverable)}
+                    onChange={(e) => patch(c.key, { taxRecoverable: e.target.value === '' ? undefined : e.target.value === 'true' })}>
+                    <option value="">{tx('Default')}</option>
+                    <option value="true">{tx('Recoverable')}</option>
+                    <option value="false">{tx('Part of cost')}</option>
+                  </select>
+                </div>
               </div>
               <div className="grid gap-2 md:grid-cols-6">
                 <select className="rounded-md border p-2 text-sm md:col-span-2" value={c.billMode ?? 'generate'} onChange={(e) => patch(c.key, { billMode: e.target.value as BillMode })}>
