@@ -3,7 +3,7 @@
 - Status: Accepted (owner approved the plan, 2026-11-02)
 - Plan: [`docs/roadmap/financial-reporting-plan.md`](../roadmap/financial-reporting-plan.md)
 - Spec: [`docs/spec/reporting.md`](../spec/reporting.md)
-- Migration: `V236__fr0_report_engine.sql`
+- Migrations: `V236__fr0_report_engine.sql`, `V237__fr1_cash_flow_layouts.sql`
 
 ## Context
 
@@ -56,3 +56,26 @@ statement mapping (§6). Building 60 missing reports as 60 more isolated screens
 - Presets are calendar periods; fiscal-year presets and a budget column arrive with FR-1.
 - The running balance of `gl.journal-lines` is debit − credit; FR-1 shows it in the account's normal sign.
 - Report rows are limited to what one request returns (journal lines are paged, 500 by default, 5,000 maximum).
+
+## Addendum — FR-1 to FR-9 (built together at the owner's request, 2026-11-02)
+
+13. **One module reads all subledgers, read-only.** FR-2 to FR-9 query documents, payments, stock, assets, payroll,
+    budgets, approvals and quarry / crushing tables with SQL from `reporting`, never writing them. Owning-module
+    providers through the SPI stay possible; centralising the read queries kept 126 new reports consistent (same
+    filters, period logic and checks) and avoided adding named interfaces to nine modules.
+14. **Shared primitives instead of per-report code**: account roll-forwards (12 reports), account books (4), statement
+    matrices by branch / cost center / project / month (5), a table builder with group subtotals and totals, and
+    `OptionSpec` report options (aging basis and buckets, budget, loss rates, density, windows) validated by the engine.
+15. **Budget as a comparative column** (`compare: BUDGET`, `options.budgetId` or the budget covering the period),
+    evaluated through the same layout as actuals; budget amounts are in the account's normal balance.
+16. **Cash flow (indirect) is a layout** (kind `CF`, V237) over period movements of non-cash accounts; it reconciles
+    by construction and checks opening + net = closing cash. The direct method classifies the counterpart of every
+    cash, bank and mobile-money posting.
+17. **AR / AP open items** combine posted documents, POS invoices and receipt-voucher payables, net of unapplied
+    payments, so aging ties to the control accounts; before today residuals are rebuilt from allocations by date.
+18. **Fiscal presets** (`FISCAL_YTD`, `LAST_FISCAL_YEAR`) use the fiscal year containing today.
+19. **Not built**: IFRS 16 leases (owner decision 3, deferred), contingent liabilities, subsequent events,
+    financial-instrument and estimates registers, goods delivered not invoiced — no source data exists yet.
+
+A smoke test runs every engine report (defaults, year to date, comparatives) and an integrity test proves the
+catalogue §7 acceptance criteria on posted data.

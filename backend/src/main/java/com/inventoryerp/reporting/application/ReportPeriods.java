@@ -16,14 +16,15 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Period presets and comparative periods. Pure: {@code today} is the organization's business date. Presets are
- * calendar periods; fiscal-year presets arrive with FR-1.
+ * Period presets and comparative periods. Pure: {@code today} is the organization's business date and
+ * {@code fiscalStart} the first day of its current fiscal year (January 1 when none is defined).
  */
 public final class ReportPeriods {
 
     public static final Set<String> PRESETS = Set.of("TODAY", "YESTERDAY", "THIS_MONTH", "LAST_MONTH",
-            "THIS_QUARTER", "LAST_QUARTER", "THIS_YEAR", "LAST_YEAR");
-    public static final Set<String> COMPARE = Set.of("PRIOR_PERIOD", "PRIOR_YEAR", "VARIANCE", "VARIANCE_PCT");
+            "THIS_QUARTER", "LAST_QUARTER", "THIS_YEAR", "LAST_YEAR", "FISCAL_YTD", "LAST_FISCAL_YEAR");
+    public static final Set<String> COMPARE = Set.of("PRIOR_PERIOD", "PRIOR_YEAR", "BUDGET", "VARIANCE",
+            "VARIANCE_PCT");
 
     private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
@@ -32,11 +33,17 @@ public final class ReportPeriods {
 
     /** The current column: a range for period reports, a point in time ({@code from == null}) for balance reports. */
     public static ReportPeriod current(ReportDefinition def, ReportRequest r, LocalDate today) {
+        return current(def, r, today, today.withDayOfYear(1));
+    }
+
+    /** As {@link #current(ReportDefinition, ReportRequest, LocalDate)} with the fiscal year start. */
+    public static ReportPeriod current(ReportDefinition def, ReportRequest r, LocalDate today, LocalDate fiscalStart) {
         if (r.period() != null && !r.period().isBlank() && !PRESETS.contains(r.period())) {
             throw ApiException.badRequest("period must be one of: " + String.join(", ", PRESETS.stream().sorted()
                     .toList()));
         }
-        LocalDate[] preset = r.period() == null || r.period().isBlank() ? null : preset(r.period(), today);
+        LocalDate[] preset = r.period() == null || r.period().isBlank() ? null : preset(r.period(), today,
+                fiscalStart);
         if (def.accepts(FilterKey.AS_OF)) {
             LocalDate asOf = date(r.asOf(), "asOf");
             if (asOf == null) {
@@ -50,7 +57,7 @@ public final class ReportPeriods {
         LocalDate from = date(r.from(), "from");
         LocalDate to = date(r.to(), "to");
         if (from == null && to == null) {
-            LocalDate[] p = preset == null ? preset("THIS_MONTH", today) : preset;
+            LocalDate[] p = preset == null ? preset("THIS_MONTH", today, fiscalStart) : preset;
             from = p[0];
             to = p[1];
         } else if (from == null) {
@@ -75,7 +82,7 @@ public final class ReportPeriods {
             ReportPeriod p = switch (c) {
                 case "PRIOR_PERIOD" -> priorPeriod(cur);
                 case "PRIOR_YEAR" -> priorYear(cur);
-                default -> null;
+                default -> null; // BUDGET, VARIANCE and VARIANCE_PCT are columns, not periods
             };
             if (p != null && out.stream().noneMatch(x -> x.key().equals(p.key()))) {
                 out.add(p);
@@ -113,7 +120,7 @@ public final class ReportPeriods {
         return new ReportPeriod("PRIOR_YEAR", label(f, t), f, t);
     }
 
-    static LocalDate[] preset(String preset, LocalDate today) {
+    static LocalDate[] preset(String preset, LocalDate today, LocalDate fiscalStart) {
         LocalDate q = today.withMonth(((today.getMonthValue() - 1) / 3) * 3 + 1).withDayOfMonth(1);
         return switch (preset) {
             case "TODAY" -> new LocalDate[] {today, today};
@@ -129,6 +136,8 @@ public final class ReportPeriods {
             case "THIS_YEAR" -> new LocalDate[] {today.withDayOfYear(1), today.withMonth(12).withDayOfMonth(31)};
             case "LAST_YEAR" -> new LocalDate[] {today.minusYears(1).withDayOfYear(1), today.minusYears(1)
                     .withMonth(12).withDayOfMonth(31)};
+            case "FISCAL_YTD" -> new LocalDate[] {fiscalStart, today};
+            case "LAST_FISCAL_YEAR" -> new LocalDate[] {fiscalStart.minusYears(1), fiscalStart.minusDays(1)};
             default -> throw ApiException.badRequest("Unknown period " + preset);
         };
     }

@@ -22,14 +22,14 @@ import org.junit.jupiter.api.Test;
 class ReportingUnitTest {
 
     static final ReportDefinition RANGE = new ReportDefinition("t.range", ReportCategory.FINANCIAL_STATEMENTS, "R",
-            null, "FINANCIAL", "report:accounting", List.of(FilterKey.PERIOD, FilterKey.COMPARE), true, null, null);
+            null, "FINANCIAL", "report:accounting", List.of(FilterKey.PERIOD, FilterKey.COMPARE), true, null, null, null);
     static final ReportDefinition POINT = new ReportDefinition("t.point", ReportCategory.FINANCIAL_STATEMENTS, "P",
-            null, "FINANCIAL", "report:accounting", List.of(FilterKey.AS_OF, FilterKey.COMPARE), true, null, null);
+            null, "FINANCIAL", "report:accounting", List.of(FilterKey.AS_OF, FilterKey.COMPARE), true, null, null, null);
     static final LocalDate TODAY = LocalDate.of(2026, 11, 2);
 
     static ReportRequest req(String period, String from, String to, String asOf) {
         return new ReportRequest(period, from, to, asOf, null, null, null, null, null, null, null, null, null, null,
-                null, null);
+                null, null, null);
     }
 
     @Test
@@ -77,7 +77,7 @@ class ReportingUnitTest {
                 .isEqualTo(LocalDate.of(2027, 2, 28));
         assertThat(ReportPeriods.comparatives(feb, List.of("PRIOR_PERIOD")).getFirst().to())
                 .isEqualTo(LocalDate.of(2028, 1, 31));
-        assertThatThrownBy(() -> ReportPeriods.comparatives(q3, List.of("BUDGET")))
+        assertThatThrownBy(() -> ReportPeriods.comparatives(q3, List.of("FORECAST")))
                 .isInstanceOf(ApiException.class);
     }
 

@@ -8,6 +8,14 @@ export type FilterKey =
   | 'PERIOD' | 'AS_OF' | 'BRANCH' | 'COST_CENTER' | 'PARTNER' | 'ACCOUNT' | 'JOURNAL' | 'SOURCE'
   | 'DIMENSION' | 'POSTING_STATUS' | 'COMPARE' | 'LAYOUT';
 
+export interface OptionSpec {
+  key: string;
+  label: string;
+  type: 'text' | 'number' | 'select' | 'date' | 'budget';
+  choices: string[];
+  defaultValue: string | null;
+}
+
 export interface ReportDefinition {
   id: string;
   category: string;
@@ -19,6 +27,7 @@ export interface ReportDefinition {
   engine: boolean;
   webRoute: string | null;
   apiRoute: string | null;
+  options: OptionSpec[];
 }
 
 export interface LibraryCategory {
@@ -45,6 +54,7 @@ export interface ReportRequest {
   layoutCode?: string;
   page?: number;
   limit?: number;
+  options?: Record<string, string>;
 }
 
 export interface ReportColumn { key: string; label: string; type: 'text' | 'date' | 'money' | 'number' | 'percent' }
@@ -233,6 +243,30 @@ export function useAccountOptions(enabled: boolean) {
   return useQuery({
     queryKey: [...KEY, 'accounts'],
     queryFn: async () => (await api.get<PaginatedResult<Option>>('/accounts', { params: { pageSize: 200 } })).data.data,
+    enabled,
+  });
+}
+
+export function usePartnerOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'partners'],
+    queryFn: async () => (await api.get<PaginatedResult<Option>>('/partners', { params: { pageSize: 200 } })).data.data,
+    enabled,
+  });
+}
+
+export function useJournalOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'journals'],
+    queryFn: async () => (await api.get<PaginatedResult<Option>>('/journals', { params: { pageSize: 100 } })).data.data,
+    enabled,
+  });
+}
+
+export function useBudgetOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'budgets'],
+    queryFn: async () => (await api.get<PaginatedResult<Option>>('/budgets', { params: { pageSize: 100 } })).data.data,
     enabled,
   });
 }

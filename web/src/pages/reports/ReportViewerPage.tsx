@@ -15,8 +15,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  decodeRequest, downloadLibraryReport, encodeRequest, useAccountOptions, useBranchOptions, useCostCenterOptions,
-  useCreateSchedule, useCreateView, useDeleteView, useReportDefinition, useRunReport, useSavedViews, useVerifyRun,
+  decodeRequest, downloadLibraryReport, encodeRequest, useAccountOptions, useBranchOptions, useBudgetOptions,
+  useCostCenterOptions, useCreateSchedule, useCreateView, useDeleteView, useJournalOptions, usePartnerOptions,
+  useReportDefinition, useRunReport, useSavedViews, useVerifyRun,
   type Drill, type ReportColumn, type ReportRequest, type ReportResult, type ReportRow,
 } from '@/features/reports/library-api';
 import { apiErrorMessage } from '@/lib/api-error';
@@ -25,9 +26,11 @@ import { tx } from '@/lib/i18n/tx';
 const PRESET_LABELS: Record<string, string> = {
   TODAY: 'Today', YESTERDAY: 'Yesterday', THIS_MONTH: 'This month', LAST_MONTH: 'Last month',
   THIS_QUARTER: 'This quarter', LAST_QUARTER: 'Last quarter', THIS_YEAR: 'This year', LAST_YEAR: 'Last year',
+  FISCAL_YTD: 'Fiscal year to date', LAST_FISCAL_YEAR: 'Last fiscal year',
 };
 const COMPARE_LABELS: Record<string, string> = {
-  PRIOR_PERIOD: 'Prior period', PRIOR_YEAR: 'Prior year', VARIANCE: 'Variance', VARIANCE_PCT: 'Variance %',
+  PRIOR_PERIOD: 'Prior period', PRIOR_YEAR: 'Prior year', BUDGET: 'Budget', VARIANCE: 'Variance',
+  VARIANCE_PCT: 'Variance %',
 };
 
 const nf = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -37,9 +40,12 @@ function formatCell(v: unknown, col: ReportColumn, row: ReportRow): string {
   if (col.type === 'percent' || (row.values._format === 'percent' && col.type === 'money')) {
     return `${nf.format(Number(v))}%`;
   }
-  if (col.type === 'money' || col.type === 'number') {
+  if (col.type === 'money') {
     const n = Number(v);
     return n < 0 ? `(${nf.format(-n)})` : nf.format(n);
+  }
+  if (col.type === 'number') {
+    return Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 });
   }
   return String(v);
 }
@@ -191,12 +197,17 @@ export function ReportViewerPage() {
   const branches = useBranchOptions(has('BRANCH'));
   const costCenters = useCostCenterOptions(has('COST_CENTER'));
   const accounts = useAccountOptions(has('ACCOUNT'));
+  const partners = usePartnerOptions(has('PARTNER'));
+  const journals = useJournalOptions(has('JOURNAL'));
+  const budgetList = useBudgetOptions(!!def?.options.some((o) => o.type === 'budget'));
   const views = useSavedViews(def?.engine ? id : undefined);
   const createView = useCreateView();
   const deleteView = useDeleteView(id);
   const verify = useVerifyRun();
 
   const set = (patch: Partial<ReportRequest>) => setDraft((d) => ({ ...d, ...patch }));
+  const setOption = (key: string, value: string) =>
+    setDraft((d) => ({ ...d, options: { ...(d.options ?? {}), [key]: value } }));
   const run = (r: ReportRequest = draft) => setSearch({ q: encodeRequest(r) });
   const onDrill = (d: Drill) => {
     if (d.route) navigate(d.route);
@@ -312,6 +323,29 @@ export function ReportViewerPage() {
         {has('BRANCH') && <MultiSelect label={tx('Branches')} options={branches.data ?? []} value={draft.branchIds ?? []} onChange={(v) => set({ branchIds: v })} />}
         {has('COST_CENTER') && <MultiSelect label={tx('Cost centers')} options={costCenters.data ?? []} value={draft.costCenterIds ?? []} onChange={(v) => set({ costCenterIds: v })} />}
         {has('ACCOUNT') && <MultiSelect label={tx('Accounts')} options={accounts.data ?? []} value={draft.accountIds ?? []} onChange={(v) => set({ accountIds: v })} />}
+        {has('PARTNER') && <MultiSelect label={tx('Partners')} options={partners.data ?? []} value={draft.partnerIds ?? []} onChange={(v) => set({ partnerIds: v })} />}
+        {has('JOURNAL') && <MultiSelect label={tx('Journals')} options={journals.data ?? []} value={draft.journalIds ?? []} onChange={(v) => set({ journalIds: v })} />}
+        {def.options.map((o) => {
+          const value = draft.options?.[o.key] ?? o.defaultValue ?? '';
+          return (
+            <div key={o.key} className="space-y-1">
+              <Label className={LABEL}>{tx(o.label)}</Label>
+              {o.type === 'select' ? (
+                <select value={value} onChange={(e) => setOption(o.key, e.target.value)} className="h-9 rounded-md border px-2 text-xs">
+                  {o.choices.map((c) => <option key={c} value={c}>{c === '' ? tx('Any') : tx(c.replace(/_/g, ' ').toLowerCase())}</option>)}
+                </select>
+              ) : o.type === 'budget' ? (
+                <select value={value} onChange={(e) => setOption(o.key, e.target.value)} className="h-9 rounded-md border px-2 text-xs">
+                  <option value="">{tx('Budget covering the period')}</option>
+                  {(budgetList.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              ) : (
+                <Input type={o.type === 'number' ? 'number' : o.type === 'date' ? 'date' : 'text'} value={value}
+                  onChange={(e) => setOption(o.key, e.target.value)} className="h-9 w-36 text-xs" />
+              )}
+            </div>
+          );
+        })}
         {has('COMPARE') && (
           <div className="space-y-1">
             <Label className={LABEL}>{tx('Compare')}</Label>

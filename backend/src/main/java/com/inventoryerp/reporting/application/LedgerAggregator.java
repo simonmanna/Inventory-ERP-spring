@@ -29,6 +29,11 @@ public class LedgerAggregator {
     public record AccountInfo(String id, String code, String name, String category, String section,
             String normalBalance) {}
 
+    /** Empty instead of null, so category and section tests never see null. */
+    static String nz(String s) {
+        return s == null ? "" : s;
+    }
+
     /** A SQL {@code WHERE} fragment over {@code l} (line) and {@code e} (entry) with positional parameters. */
     record Where(String sql, List<Object> params) {}
 
@@ -51,7 +56,7 @@ public class LedgerAggregator {
                         WHERE a."organizationId" = ? ORDER BY a.code""")
                 .param(org)
                 .query((rs, n) -> out.put(rs.getString("id"), new AccountInfo(rs.getString("id"), rs.getString("code"),
-                        rs.getString("name"), rs.getString("category"), rs.getString("section"), rs.getString("nb"))))
+                        rs.getString("name"), nz(rs.getString("category")), nz(rs.getString("section")), nz(rs.getString("nb")))))
                 .list();
         return out;
     }
@@ -67,6 +72,64 @@ public class LedgerAggregator {
             out.put((String) r.get("accountId"), new BigDecimal[] {SqlRows.dec(r, "d"), SqlRows.dec(r, "c")});
         }
         return out;
+    }
+
+    /** How balances can be split into columns. */
+    public enum Segment {
+        BRANCH, COST_CENTER, PARTNER, CURRENCY, MONTH, PROJECT, JOURNAL_TYPE
+    }
+
+    /** segment value → accountId → [Σ baseDebit, Σ baseCredit, Σ debit, Σ credit] (txn currency in 2 and 3). */
+    public Map<String, Map<String, BigDecimal[]>> balancesBy(ReportContext ctx, ReportPeriod period, Segment seg) {
+        Where w = where(ctx.organizationId(), ctx.request(), ctx.zone(), period.from(), period.to());
+        String key = switch (seg) {
+            case BRANCH -> "coalesce(l.\"branchId\", e.\"branchId\")";
+            case COST_CENTER -> "coalesce(l.\"costCenterId\", e.\"costCenterId\")";
+            case PARTNER -> "l.\"partnerId\"";
+            case CURRENCY -> "coalesce(l.\"currencyId\", e.\"currencyId\")";
+            case MONTH -> "to_char((e.\"postingDate\" AT TIME ZONE 'UTC') AT TIME ZONE '" + ctx.zone().getId()
+                    .replace("'", "") + "', 'YYYY-MM')";
+            case PROJECT -> "l.dimensions ->> 'projectId'";
+            case JOURNAL_TYPE -> "(SELECT j.\"journalType\"::text FROM \"Journal\" j WHERE j.id = e.\"journalId\")";
+        };
+        Map<String, Map<String, BigDecimal[]>> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT " + key + " AS seg, l.\"accountId\","
+                + " sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c, sum(l.debit) AS td, sum(l.credit) AS tc"
+                + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\"" + w.sql()
+                + " GROUP BY 1, 2").params(w.params()))) {
+            String k = r.get("seg") == null ? "" : r.get("seg").toString();
+            out.computeIfAbsent(k, x -> new LinkedHashMap<>()).put((String) r.get("accountId"), new BigDecimal[] {
+                SqlRows.dec(r, "d"), SqlRows.dec(r, "c"), SqlRows.dec(r, "td"), SqlRows.dec(r, "tc")});
+        }
+        return out;
+    }
+
+    /** Journal lines ordered by account code, then date (general ledger, books). */
+    public List<Map<String, Object>> linesByAccount(String org, ReportRequest r, ZoneId zone, LocalDate from,
+            LocalDate to, int limit) {
+        Where w = where(org, r, zone, from, to);
+        List<Object> params = new ArrayList<>(w.params());
+        params.add(limit);
+        return SqlRows.list(jdbc.sql("""
+                SELECT l.id, l."journalEntryId", e."entryNumber", e."postingDate", e."createdAt", e.status::text AS status,
+                       e."sourceType", e."sourceId", e.description AS "entryDescription", l.description,
+                       l."baseDebit" AS debit, l."baseCredit" AS credit, l.debit AS "txnDebit", l.credit AS "txnCredit",
+                       a.id AS "accountId", a.code AS "accountCode", a.name AS "accountName", j.name AS journal,
+                       p.name AS partner, b.name AS branch, cc.name AS "costCenter", cur.code AS currency,
+                       coalesce(nullif(concat_ws(' ', cu."firstName", cu."lastName"), ''), e."createdBy") AS "createdBy",
+                       coalesce(nullif(concat_ws(' ', u."firstName", u."lastName"), ''), e."postedBy") AS "postedBy"
+                FROM "JournalLine" l
+                JOIN "JournalEntry" e ON e.id = l."journalEntryId"
+                JOIN "Account" a ON a.id = l."accountId"
+                LEFT JOIN "Journal" j ON j.id = e."journalId"
+                LEFT JOIN "Partner" p ON p.id = l."partnerId"
+                LEFT JOIN "Branch" b ON b.id = coalesce(l."branchId", e."branchId")
+                LEFT JOIN "CostCenter" cc ON cc.id = coalesce(l."costCenterId", e."costCenterId")
+                LEFT JOIN "Currency" cur ON cur.id = coalesce(l."currencyId", e."currencyId")
+                LEFT JOIN "User" u ON u.id = e."postedBy"
+                LEFT JOIN "User" cu ON cu.id = e."createdBy"
+                """ + w.sql() + " ORDER BY a.code, e.\"postingDate\", e.\"entryNumber\", l.\"lineNumber\", l.id LIMIT ?")
+                .params(params));
     }
 
     /** Journal lines of a period, oldest first, with entry, account, partner, branch and cost center names. */

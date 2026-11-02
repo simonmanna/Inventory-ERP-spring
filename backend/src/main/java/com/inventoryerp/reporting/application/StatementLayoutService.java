@@ -30,6 +30,9 @@ public class StatementLayoutService {
 
     public static final String DEFAULT_PL = "IFRS_SME_PL";
     public static final String DEFAULT_BS = "IFRS_SME_BS";
+    public static final String DEFAULT_CF = "IFRS_SME_CF";
+    static final java.util.List<String> CASH_CATEGORIES = java.util.List.of("cash", "bank", "mobile_money",
+            "petty_cash");
 
     static final Set<String> PL_SECTIONS = Set.of("revenue", "contra_revenue", "other_income", "cogs",
             "operating_expense", "other_expense");
@@ -137,8 +140,8 @@ public class StatementLayoutService {
             kind = src.kind();
             lines = src.lines();
         }
-        if (!"PL".equals(kind) && !"BS".equals(kind)) {
-            throw ApiException.badRequest("kind must be one of: PL, BS");
+        if (!"PL".equals(kind) && !"BS".equals(kind) && !"CF".equals(kind)) {
+            throw ApiException.badRequest("kind must be one of: BS, CF, PL");
         }
         insert(new Layout(null, code, name, kind, false, lines));
         audit.recordInTx(AuditInput.of("FinancialStatementLayout", code, "create", null, Obj.of("name", name, "kind",
@@ -345,7 +348,41 @@ public class StatementLayoutService {
                         null),
                 formula("TE", "Total equity", "EQ + OCI + CYE", 1, true),
                 formula("TLE", "Total equity and liabilities", "TL + TE", 0, true));
+        List<Line> cf = List.of(
+                header("H_OP", "Cash flows from operating activities", 0),
+                accounts("NP", "Profit for the period", "CREDIT", 1, null, plSections, null, null),
+                accounts("DEP", "Depreciation and amortisation", "CREDIT", 1, List.of("contra_asset",
+                        "accumulated_depreciation", "accumulated_amortization"), null, null, null),
+                header("H_WC", "Changes in working capital", 1),
+                accounts("D_AR", "(Increase) / decrease in trade and other receivables", "CREDIT", 2, List.of(
+                        "receivable"), null, null, null),
+                accounts("D_INV", "(Increase) / decrease in inventories", "CREDIT", 2, List.of("inventory",
+                        "work_in_progress"), null, null, null),
+                accounts("D_PREP", "(Increase) / decrease in prepayments and other current assets", "CREDIT", 2,
+                        List.of("prepaid_expense", "current_asset"), null, null, null),
+                accounts("D_AP", "Increase / (decrease) in trade payables", "CREDIT", 2, List.of("payable"), null,
+                        null, null),
+                accounts("D_TAX", "Increase / (decrease) in tax payable", "CREDIT", 2, List.of("tax"), null, null,
+                        null),
+                accounts("D_OCL", "Increase / (decrease) in other current liabilities", "CREDIT", 2, List.of(
+                        "deferred_revenue", "current_liability"), null, null, null),
+                formula("OPER", "Net cash from operating activities", "NP + DEP + D_AR + D_INV + D_PREP + D_AP"
+                        + " + D_TAX + D_OCL", 0, true),
+                header("H_INV", "Cash flows from investing activities", 0),
+                accounts("CAPEX", "Purchase of property, plant and equipment (net of disposals)", "CREDIT", 1,
+                        List.of("non_current_asset", "construction_in_progress"), null, null, null),
+                formula("INVEST", "Net cash from investing activities", "CAPEX", 0, true),
+                header("H_FIN", "Cash flows from financing activities", 0),
+                accounts("BORROW", "Borrowings and other non-current liabilities", "CREDIT", 1, List.of(
+                        "non_current_liability", "contra_liability"), null, null, null),
+                accounts("EQUITY", "Capital contributions, dividends and reserves", "CREDIT", 1, List.of("equity",
+                        "other_comprehensive_income"), null, null, null),
+                formula("FINANCE", "Net cash from financing activities", "BORROW + EQUITY", 0, true),
+                formula("NET", "Net increase / (decrease) in cash and cash equivalents", "OPER + INVEST + FINANCE",
+                        0, true));
         return List.of(new Layout(null, DEFAULT_PL, "Statement of Profit or Loss (IFRS for SMEs)", "PL", true, pl),
-                new Layout(null, DEFAULT_BS, "Statement of Financial Position (IFRS for SMEs)", "BS", true, bs));
+                new Layout(null, DEFAULT_BS, "Statement of Financial Position (IFRS for SMEs)", "BS", true, bs),
+                new Layout(null, DEFAULT_CF, "Statement of Cash Flows, indirect method (IFRS for SMEs)", "CF", true,
+                        cf));
     }
 }

@@ -177,6 +177,7 @@ val accountingRegression by tasks.registering(Test::class) {
             "*ImportLandedScenarioIT", "*DistributionBranchScenarioIT",
             "*ProjectCostScenarioIT", "*ContractRevenueScenarioIT", "*ProfitabilityReconciliationIT",
             "*CostCloseIT", "*SimulationIsolationIT", "*ReportEngineIT",
+            "*FinancialReportIntegrityIT", "*AllReportsRunIT",
             "com.inventoryerp.costing.*").forEach { includeTestsMatching(it) }
     }
 }

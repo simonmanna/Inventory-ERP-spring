@@ -217,7 +217,7 @@ class ReportEngineIT extends ApiTestSupport {
         // filter validation and links
         assertThat(call("POST", "/reports/run/fs.balance-sheet", Map.of("from", day), token).body().get("message")
                 .asString()).isEqualTo("from is not a filter of report fs.balance-sheet");
-        assertThat(call("POST", "/reports/run/fs.profit-and-loss", Map.of("compare", List.of("BUDGET")), token)
+        assertThat(call("POST", "/reports/run/fs.profit-and-loss", Map.of("compare", List.of("FORECAST")), token)
                 .status()).isEqualTo(400);
         assertThat(call("POST", "/reports/run/legacy.trial-balance", Map.of(), token).status()).isEqualTo(400);
         assertThat(call("POST", "/reports/run/nope", Map.of(), token).status()).isEqualTo(404);

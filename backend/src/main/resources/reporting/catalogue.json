@@ -2,7 +2,7 @@
  {
   "id": "legacy.trial-balance",
   "category": "FINANCIAL_STATEMENTS",
-  "title": "Trial Balance",
+  "title": "Trial Balance (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/trial-balance",
@@ -32,7 +32,7 @@
  {
   "id": "legacy.cash-flow",
   "category": "FINANCIAL_STATEMENTS",
-  "title": "Cash Flow Statement",
+  "title": "Cash Flow Statement (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/cash-flow",
@@ -52,7 +52,7 @@
  {
   "id": "legacy.general-ledger",
   "category": "GENERAL_LEDGER",
-  "title": "General Ledger",
+  "title": "General Ledger (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/general-ledger",
@@ -102,7 +102,7 @@
  {
   "id": "legacy.ar-aging",
   "category": "ACCOUNTS_RECEIVABLE",
-  "title": "AR Aging",
+  "title": "AR Aging (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:ar",
   "webRoute": "/ar-aging",
@@ -112,7 +112,7 @@
  {
   "id": "legacy.ar-outstanding",
   "category": "ACCOUNTS_RECEIVABLE",
-  "title": "Customer Outstanding Invoices",
+  "title": "Customer Outstanding Invoices (classic screen)",
   "level": "OPERATIONAL",
   "permission": "report:ar",
   "webRoute": "/ar-aging",
@@ -122,7 +122,7 @@
  {
   "id": "legacy.ar-customer-balances",
   "category": "ACCOUNTS_RECEIVABLE",
-  "title": "Customer Balances",
+  "title": "Customer Balances (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:ar",
   "webRoute": "/ar-aging",
@@ -132,7 +132,7 @@
  {
   "id": "legacy.customer-statement",
   "category": "ACCOUNTS_RECEIVABLE",
-  "title": "Customer Statement",
+  "title": "Customer Statement (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:ar",
   "webRoute": "/statements",
@@ -192,7 +192,7 @@
  {
   "id": "legacy.ap-aging",
   "category": "ACCOUNTS_PAYABLE",
-  "title": "AP Aging",
+  "title": "AP Aging (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:ar",
   "webRoute": "/ap-aging",
@@ -202,7 +202,7 @@
  {
   "id": "legacy.supplier-statement",
   "category": "ACCOUNTS_PAYABLE",
-  "title": "Supplier Statement",
+  "title": "Supplier Statement (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:ar",
   "webRoute": "/statements",
@@ -212,7 +212,7 @@
  {
   "id": "legacy.supplier-ledger",
   "category": "ACCOUNTS_PAYABLE",
-  "title": "Supplier Ledger",
+  "title": "Supplier Ledger (classic screen)",
   "level": "OPERATIONAL",
   "permission": "expense:read",
   "webRoute": "/suppliers",
@@ -302,7 +302,7 @@
  {
   "id": "legacy.tax-summary",
   "category": "TAX",
-  "title": "Tax Summary",
+  "title": "Tax Summary (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/tax-report",
@@ -342,7 +342,7 @@
  {
   "id": "legacy.fa-register",
   "category": "FIXED_ASSETS",
-  "title": "Fixed Asset Register",
+  "title": "Fixed Asset Register (classic screen)",
   "level": "FINANCIAL",
   "permission": "fixed_asset:read",
   "webRoute": "/fixed-assets/register",
@@ -362,7 +362,7 @@
  {
   "id": "legacy.inventory-valuation",
   "category": "INVENTORY",
-  "title": "Inventory Valuation",
+  "title": "Inventory Valuation (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/inventory-valuation",
@@ -372,7 +372,7 @@
  {
   "id": "legacy.inventory-gl-tieout",
   "category": "INVENTORY",
-  "title": "Inventory GL Reconciliation",
+  "title": "Inventory GL Reconciliation (classic screen)",
   "level": "FINANCIAL",
   "permission": "report:accounting",
   "webRoute": "/inventory-gl-tieout",
@@ -502,7 +502,7 @@
  {
   "id": "legacy.cost-center-pl",
   "category": "COST_ACCOUNTING",
-  "title": "Cost Center P&L",
+  "title": "Cost Center P&L (classic screen)",
   "level": "FINANCIAL",
   "permission": "cost_center:read",
   "webRoute": "/cost-center-accounting",
@@ -612,7 +612,7 @@
  {
   "id": "legacy.budget-vs-actual",
   "category": "BUDGETING",
-  "title": "Budget vs Actual",
+  "title": "Budget vs Actual (classic screen)",
   "level": "MANAGEMENT",
   "permission": "budget:read",
   "webRoute": "/budgets",
@@ -672,7 +672,7 @@
  {
   "id": "legacy.branch-comparison",
   "category": "CONSOLIDATION",
-  "title": "Branch Performance",
+  "title": "Branch Performance (classic screen)",
   "level": "MANAGEMENT",
   "permission": "report:accounting",
   "webRoute": "/reports/branches",
@@ -722,7 +722,7 @@
  {
   "id": "legacy.audit-log",
   "category": "AUDIT",
-  "title": "Audit Trail",
+  "title": "Audit Trail (classic screen)",
   "level": "OPERATIONAL",
   "permission": "audit_log:read",
   "webRoute": "/audit-log",
@@ -752,7 +752,7 @@
  {
   "id": "legacy.quarry-rehab",
   "category": "ADVANCED",
-  "title": "Quarry Rehabilitation Provision",
+  "title": "Quarry Rehabilitation Provision (classic screen)",
   "level": "FINANCIAL",
   "permission": "quarry:report",
   "webRoute": "/quarry/reports",

@@ -97,14 +97,16 @@ public class ReportEngine {
         }
         ReportRequest req = request == null ? ReportRequest.empty() : request;
         validateFilters(def, req);
-        ReportRequest scoped = req.withBranches(scopedBranches(req.branchIds()));
+        ReportRequest scoped = req.withBranches(scopedBranches(req.branchIds())).withOptions(options(def, req));
         ZoneId zone = OrgDates.orgTimezone(jdbc, org());
         LocalDate today = LocalDate.now(zone);
-        ReportPeriod current = ReportPeriods.current(def, scoped, today);
+        LocalDate fiscalStart = fiscalStart(today);
+        ReportPeriod current = ReportPeriods.current(def, scoped, today, fiscalStart);
         List<ReportPeriod> comparatives = def.accepts(FilterKey.COMPARE) ? ReportPeriods.comparatives(current,
                 scoped.compare()) : List.of();
         ReportContext ctx = new ReportContext(org(), def, scoped, zone, current, comparatives, scoped.compare()
-                .contains("VARIANCE"), scoped.compare().contains("VARIANCE_PCT"));
+                .contains("VARIANCE"), scoped.compare().contains("VARIANCE_PCT"), scoped.compare().contains("BUDGET"),
+                today, fiscalStart);
         long started = System.nanoTime();
         ReportBody body = registry.provider(id).run(ctx);
         int ms = (int) ((System.nanoTime() - started) / 1_000_000);
@@ -168,6 +170,45 @@ public class ReportEngine {
                 "verifyRunId", again.header().runId());
     }
 
+    /** Option defaults filled; unknown keys and bad numbers or choices refused. */
+    static Map<String, String> options(ReportDefinition def, ReportRequest r) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (com.inventoryerp.reporting.spi.OptionSpec o : def.options()) {
+            if (o.defaultValue() != null) {
+                out.put(o.key(), o.defaultValue());
+            }
+        }
+        for (Map.Entry<String, String> e : r.options().entrySet()) {
+            com.inventoryerp.reporting.spi.OptionSpec spec = def.options().stream().filter(o -> o.key().equals(
+                    e.getKey())).findFirst().orElseThrow(() -> ApiException.badRequest("options." + e.getKey()
+                    + " is not an option of report " + def.id()));
+            String v = e.getValue() == null ? "" : e.getValue().trim();
+            if (v.isEmpty()) {
+                continue;
+            }
+            if ("number".equals(spec.type())) {
+                try {
+                    new java.math.BigDecimal(v);
+                } catch (NumberFormatException ex) {
+                    throw ApiException.badRequest("options." + e.getKey() + " must be a number");
+                }
+            }
+            if ("select".equals(spec.type()) && !spec.choices().contains(v)) {
+                throw ApiException.badRequest("options." + e.getKey() + " must be one of: " + String.join(", ",
+                        spec.choices()));
+            }
+            out.put(e.getKey(), v);
+        }
+        return out;
+    }
+
+    /** First day of the fiscal year containing {@code today}; January 1 when none is defined. */
+    private LocalDate fiscalStart(LocalDate today) {
+        return jdbc.sql("SELECT \"startDate\" FROM \"FiscalYear\" WHERE \"organizationId\" = ? AND \"startDate\" <= ?"
+                + " AND \"endDate\" >= ? ORDER BY \"startDate\" DESC LIMIT 1").params(org(), today, today)
+                .query(LocalDate.class).optional().orElse(today.withDayOfYear(1));
+    }
+
     private List<String> scopedBranches(List<String> requested) {
         DataScope scope = scopes.scope();
         if (!scope.restricted()) {
@@ -199,6 +240,7 @@ public class ReportEngine {
         refuse(def, "compare", !r.compare().isEmpty() && !def.accepts(FilterKey.COMPARE));
         refuse(def, "layoutCode", r.layoutCode() != null && !r.layoutCode().isBlank() && !def.accepts(
                 FilterKey.LAYOUT));
+        options(def, r);
     }
 
     private static void refuse(ReportDefinition def, String field, boolean set) {

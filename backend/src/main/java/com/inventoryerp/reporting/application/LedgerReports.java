@@ -7,6 +7,7 @@ import com.inventoryerp.reporting.application.LedgerAggregator.AccountInfo;
 import com.inventoryerp.reporting.application.StatementLayoutService.Layout;
 import com.inventoryerp.reporting.application.StatementLayoutService.Line;
 import com.inventoryerp.reporting.spi.FilterKey;
+import com.inventoryerp.reporting.spi.OptionSpec;
 import com.inventoryerp.reporting.spi.ReportBody;
 import com.inventoryerp.reporting.spi.ReportBody.Check;
 import com.inventoryerp.reporting.spi.ReportBody.Column;
@@ -43,6 +44,7 @@ public class LedgerReports implements ReportProvider {
     public static final String PROFIT_AND_LOSS = "fs.profit-and-loss";
     public static final String BALANCE_SHEET = "fs.balance-sheet";
     public static final String JOURNAL_LINES = "gl.journal-lines";
+    public static final String CASH_FLOW = "fs.cash-flow";
 
     static final String EARLIEST = "1900-01-01";
     static final int DEFAULT_LIMIT = 500;
@@ -55,32 +57,42 @@ public class LedgerReports implements ReportProvider {
 
     private final LedgerAggregator ledger;
     private final StatementLayoutService layouts;
+    private final BudgetFigures budgets;
 
-    public LedgerReports(LedgerAggregator ledger, StatementLayoutService layouts) {
+    public LedgerReports(LedgerAggregator ledger, StatementLayoutService layouts, BudgetFigures budgets) {
         this.ledger = ledger;
         this.layouts = layouts;
+        this.budgets = budgets;
     }
+
+    static final OptionSpec BUDGET_OPTION = new OptionSpec("budgetId", "Budget (for the budget column)", "budget",
+            null, null);
 
     @Override
     public List<ReportDefinition> definitions() {
         return List.of(
-                new ReportDefinition(PROFIT_AND_LOSS, ReportCategory.FINANCIAL_STATEMENTS,
+                ReportDefinition.of(PROFIT_AND_LOSS, ReportCategory.FINANCIAL_STATEMENTS,
                         "Statement of Profit or Loss", "Revenue to net profit from posted journals, by statement"
-                        + " layout, with comparative periods, variances, EBITDA and margins.", "FINANCIAL",
+                        + " layout, with comparative periods, budget, variances, EBITDA and margins.", "FINANCIAL",
                         Permissions.REPORT__ACCOUNTING, List.of(FilterKey.PERIOD, FilterKey.BRANCH,
                         FilterKey.COST_CENTER, FilterKey.DIMENSION, FilterKey.POSTING_STATUS, FilterKey.COMPARE,
-                        FilterKey.LAYOUT), true, null, null),
-                new ReportDefinition(BALANCE_SHEET, ReportCategory.FINANCIAL_STATEMENTS,
+                        FilterKey.LAYOUT), BUDGET_OPTION),
+                ReportDefinition.of(BALANCE_SHEET, ReportCategory.FINANCIAL_STATEMENTS,
                         "Statement of Financial Position", "Assets, liabilities and equity at a date, by statement"
                         + " layout, with comparative dates; checks that it balances.", "FINANCIAL",
                         Permissions.REPORT__ACCOUNTING, List.of(FilterKey.AS_OF, FilterKey.BRANCH,
-                        FilterKey.POSTING_STATUS, FilterKey.COMPARE, FilterKey.LAYOUT), true, null, null),
-                new ReportDefinition(JOURNAL_LINES, ReportCategory.GENERAL_LEDGER, "Journal Lines",
+                        FilterKey.POSTING_STATUS, FilterKey.COMPARE, FilterKey.LAYOUT)),
+                ReportDefinition.of(CASH_FLOW, ReportCategory.FINANCIAL_STATEMENTS,
+                        "Statement of Cash Flows (indirect)", "Profit adjusted for non-cash items and working capital,"
+                        + " investing and financing flows; reconciles opening to closing cash.", "FINANCIAL",
+                        Permissions.REPORT__ACCOUNTING, List.of(FilterKey.PERIOD, FilterKey.BRANCH,
+                        FilterKey.POSTING_STATUS, FilterKey.COMPARE, FilterKey.LAYOUT)),
+                ReportDefinition.of(JOURNAL_LINES, ReportCategory.GENERAL_LEDGER, "Journal Lines",
                         "Every posted journal line with account, partner, branch, cost center, source document and"
                         + " poster; running balance for a single account.", "FINANCIAL",
                         Permissions.REPORT__ACCOUNTING, List.of(FilterKey.PERIOD, FilterKey.BRANCH,
                         FilterKey.COST_CENTER, FilterKey.PARTNER, FilterKey.ACCOUNT, FilterKey.JOURNAL,
-                        FilterKey.SOURCE, FilterKey.DIMENSION, FilterKey.POSTING_STATUS), true, null, null));
+                        FilterKey.SOURCE, FilterKey.DIMENSION, FilterKey.POSTING_STATUS)));
     }
 
     @Override
@@ -88,6 +100,7 @@ public class LedgerReports implements ReportProvider {
         return switch (ctx.definition().id()) {
             case PROFIT_AND_LOSS -> statement(ctx, "PL", StatementLayoutService.DEFAULT_PL);
             case BALANCE_SHEET -> statement(ctx, "BS", StatementLayoutService.DEFAULT_BS);
+            case CASH_FLOW -> statement(ctx, "CF", StatementLayoutService.DEFAULT_CF);
             case JOURNAL_LINES -> journalLines(ctx);
             default -> throw ApiException.notFound("Report " + ctx.definition().id() + " not found");
         };
@@ -96,7 +109,7 @@ public class LedgerReports implements ReportProvider {
     // ---------------------------------------------------------------- statements
 
     /** Amounts of one column: line code → amount, and line code → account id → amount. */
-    private record Column(Map<String, BigDecimal> lines, Map<String, Map<String, BigDecimal>> accounts,
+    record Column(Map<String, BigDecimal> lines, Map<String, Map<String, BigDecimal>> accounts,
             Map<String, BigDecimal[]> balances) {}
 
     ReportBody statement(ReportContext ctx, String kind, String defaultLayout) {
@@ -114,14 +127,19 @@ public class LedgerReports implements ReportProvider {
         for (ReportPeriod p : periods) {
             cols.add(evaluate(layout, accounts, ledger.balances(ctx, p)));
         }
+        boolean withBudget = ctx.budget() && !"BS".equals(kind);
+        Column budgetCol = withBudget ? evaluate(layout, accounts, budgets.balances(ctx, accounts)) : null;
 
         List<ReportBody.Column> columns = new ArrayList<>();
         columns.add(new ReportBody.Column("label", "Description", "text"));
         for (ReportPeriod p : periods) {
             columns.add(new ReportBody.Column(p.key(), p.label(), "money"));
         }
-        boolean variance = !ctx.comparatives().isEmpty() && ctx.variance();
-        boolean variancePct = !ctx.comparatives().isEmpty() && ctx.variancePct();
+        if (withBudget) {
+            columns.add(new ReportBody.Column("BUDGET", "Budget", "money"));
+        }
+        boolean variance = (!ctx.comparatives().isEmpty() || withBudget) && ctx.variance();
+        boolean variancePct = (!ctx.comparatives().isEmpty() || withBudget) && ctx.variancePct();
         if (variance) {
             columns.add(new ReportBody.Column("VARIANCE", "Variance", "money"));
         }
@@ -151,6 +169,12 @@ public class LedgerReports implements ReportProvider {
                     }
                 }
             }
+            if (withBudget) {
+                values.put("BUDGET", round(budgetCol.lines().get(line.code()), line.percent()));
+                if (ctx.comparatives().isEmpty()) {
+                    amounts.add(budgetCol.lines().get(line.code()));
+                }
+            }
             putVariance(values, amounts, variance, variancePct, line.percent());
             String rowKind = line.kpi() ? "kpi" : "FORMULA".equals(line.lineType()) ? (line.bold() ? "total"
                     : "subtotal") : "line";
@@ -159,7 +183,7 @@ public class LedgerReports implements ReportProvider {
             }
             rows.add(new Row(line.code(), rowKind, line.indent(), line.bold(), values, drill));
             if ("ACCOUNTS".equals(line.lineType())) {
-                rows.addAll(accountRows(ctx, line, accounts, periods, cols, variance, variancePct));
+                rows.addAll(accountRows(ctx, line, accounts, periods, cols, variance, variancePct, budgetCol));
             }
         }
 
@@ -178,6 +202,29 @@ public class LedgerReports implements ReportProvider {
                             "totalEquityAndLiabilities", round(tle, false)));
                 }
             }
+        } else if ("CF".equals(kind)) {
+            Map<String, Object> open = new LinkedHashMap<>(Map.of("label", "Cash and cash equivalents at beginning"
+                    + " of period"));
+            Map<String, Object> close = new LinkedHashMap<>(Map.of("label", "Cash and cash equivalents at end of"
+                    + " period"));
+            for (int i = 0; i < periods.size(); i++) {
+                ReportPeriod p = periods.get(i);
+                BigDecimal opening = cash(ctx, accounts, new ReportPeriod("O", "", null, p.from().minusDays(1)));
+                BigDecimal closing = cash(ctx, accounts, new ReportPeriod("C", "", null, p.to()));
+                open.put(p.key(), round(opening, false));
+                close.put(p.key(), round(closing, false));
+                BigDecimal net = cols.get(i).lines().get("NET");
+                if (net != null) {
+                    BigDecimal diff = opening.add(net).subtract(closing).setScale(2, RoundingMode.HALF_UP);
+                    checks.add(new Check("CASH_RECONCILES_" + p.key(), "Opening cash plus net cash flow equals"
+                            + " closing cash (" + p.label() + ")", diff.signum() == 0, diff.signum() == 0 ? null
+                            : "Difference " + diff.toPlainString()));
+                }
+                totals.put(p.key(), Obj.of("openingCash", round(opening, false), "netCashFlow", round(net, false),
+                        "closingCash", round(closing, false)));
+            }
+            rows.add(new Row("OPENING_CASH", "subtotal", 0, true, open, Map.of()));
+            rows.add(new Row("CLOSING_CASH", "total", 0, true, close, Map.of()));
         } else {
             for (int i = 0; i < periods.size(); i++) {
                 BigDecimal np = cols.get(i).lines().get("NP");
@@ -201,6 +248,18 @@ public class LedgerReports implements ReportProvider {
         }
         return new ReportBody(columns, rows, totals, checks, Obj.of("layoutCode", layout.code(), "layoutName",
                 layout.name(), "kind", kind));
+    }
+
+    /** Debit balance of the cash and cash-equivalent accounts at a point in time. */
+    private BigDecimal cash(ReportContext ctx, Map<String, AccountInfo> accounts, ReportPeriod p) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map.Entry<String, BigDecimal[]> b : ledger.balances(ctx, p).entrySet()) {
+            AccountInfo a = accounts.get(b.getKey());
+            if (a != null && StatementLayoutService.CASH_CATEGORIES.contains(a.category())) {
+                sum = sum.add(b.getValue()[0]).subtract(b.getValue()[1]);
+            }
+        }
+        return sum;
     }
 
     Column evaluate(Layout layout, Map<String, AccountInfo> accounts, Map<String, BigDecimal[]> balances) {
@@ -254,7 +313,7 @@ public class LedgerReports implements ReportProvider {
     }
 
     private List<Row> accountRows(ReportContext ctx, Line line, Map<String, AccountInfo> accounts,
-            List<ReportPeriod> periods, List<Column> cols, boolean variance, boolean variancePct) {
+            List<ReportPeriod> periods, List<Column> cols, boolean variance, boolean variancePct, Column budgetCol) {
         Set<String> ids = new java.util.LinkedHashSet<>();
         for (Column c : cols) {
             ids.addAll(c.accounts().getOrDefault(line.code(), Map.of()).keySet());
@@ -273,6 +332,14 @@ public class LedgerReports implements ReportProvider {
                 values.put(periods.get(i).key(), round(v, false));
                 drill.put(periods.get(i).key(), drillToLines(ctx, periods.get(i), List.of(a.id())));
             }
+            if (budgetCol != null) {
+                BigDecimal b = budgetCol.accounts().getOrDefault(line.code(), Map.of()).getOrDefault(a.id(),
+                        BigDecimal.ZERO);
+                values.put("BUDGET", round(b, false));
+                if (ctx.comparatives().isEmpty()) {
+                    amounts.add(b);
+                }
+            }
             putVariance(values, amounts, variance, variancePct, false);
             out.add(new Row(line.code() + ":" + a.id(), "account", line.indent() + 1, false, values, drill));
         });
@@ -283,14 +350,15 @@ public class LedgerReports implements ReportProvider {
     private static List<Check> coverage(Layout layout, Map<String, AccountInfo> accounts,
             Map<String, BigDecimal[]> balances, String kind) {
         Set<String> sections = new java.util.HashSet<>(StatementLayoutService.PL_SECTIONS);
-        if ("BS".equals(kind)) {
+        if ("BS".equals(kind) || "CF".equals(kind)) {
             sections.addAll(StatementLayoutService.BS_SECTIONS);
         }
         List<String> unmapped = new ArrayList<>();
         List<String> twice = new ArrayList<>();
         for (Map.Entry<String, BigDecimal[]> b : balances.entrySet()) {
             AccountInfo a = accounts.get(b.getKey());
-            if (a == null || b.getValue()[0].compareTo(b.getValue()[1]) == 0) {
+            if (a == null || b.getValue()[0].compareTo(b.getValue()[1]) == 0
+                    || "CF".equals(kind) && StatementLayoutService.CASH_CATEGORIES.contains(a.category())) {
                 continue;
             }
             long hits = layout.lines().stream().filter(l -> "ACCOUNTS".equals(l.lineType()) && l.selector() != null

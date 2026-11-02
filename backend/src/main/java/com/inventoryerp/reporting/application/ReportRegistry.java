@@ -59,7 +59,7 @@ public class ReportRegistry {
             for (JsonNode n : json.readTree(in)) {
                 out.add(new ReportDefinition(text(n, "id"), ReportCategory.valueOf(text(n, "category")),
                         text(n, "title"), text(n, "description"), text(n, "level"), text(n, "permission"), List.of(),
-                        false, text(n, "webRoute"), text(n, "apiRoute")));
+                        false, text(n, "webRoute"), text(n, "apiRoute"), List.of()));
             }
             return out;
         } catch (IOException e) {

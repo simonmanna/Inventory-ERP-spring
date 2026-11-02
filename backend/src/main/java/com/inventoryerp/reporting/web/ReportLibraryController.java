@@ -4,7 +4,6 @@ import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
-import com.inventoryerp.reporting.application.LedgerReports;
 import com.inventoryerp.reporting.application.ReportEngine;
 import com.inventoryerp.reporting.application.ReportEngine.ReportResult;
 import com.inventoryerp.reporting.application.ReportExporter;
@@ -58,10 +57,15 @@ public class ReportLibraryController {
         return Obj.of("definition", d, "periodPresets", ReportPeriods.PRESETS.stream().sorted().toList(),
                 "compareOptions", d.accepts(FilterKey.COMPARE) ? ReportPeriods.COMPARE.stream().sorted().toList()
                         : List.of(), "layouts", d.accepts(FilterKey.LAYOUT) ? layouts.list().stream().filter(l -> l
-                                .get("kind").equals(LedgerReports.BALANCE_SHEET.equals(id) ? "BS" : "PL")).toList()
+                                .get("kind").equals(layoutKind(id))).toList()
                         : List.of(),
                 "exportFormats", ReportExporter.FORMATS, "canSchedule", d.engine() && TenantContext.has(
                         Permissions.REPORT_LIBRARY__SCHEDULE));
+    }
+
+    /** The statement layout kind a report uses. */
+    static String layoutKind(String id) {
+        return id.contains("balance-sheet") ? "BS" : id.contains("cash-flow") ? "CF" : "PL";
     }
 
     @PostMapping("/run/{id}")
