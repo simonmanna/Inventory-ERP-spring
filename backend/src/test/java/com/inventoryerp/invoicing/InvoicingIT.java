@@ -266,6 +266,9 @@ class InvoicingIT extends ApiTestSupport {
         assertThat(ok(200, "PATCH", "/expense-categories/" + cat.get("id").asString(), Map.of("icon", "fuel"))
                 .get("icon").asString()).isEqualTo("fuel");
 
+        // ADR-S051: a CREDIT expense accrues to its supplier's AP sub-ledger — own supplier, so the vendor-bill
+        // statement assertions above stay independent of test order.
+        String supplier = partner("Expense supplier", true);
         JsonNode credit = money("/expenses", Map.of("title", "Generator fuel", "amount", 40, "expenseDate", today,
                 "paymentType", "CREDIT", "categoryId", cat.get("id").asString(), "supplierId", supplier));
         assertThat(credit.get("status").asString()).isEqualTo("APPROVED");

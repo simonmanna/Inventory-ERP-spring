@@ -53,7 +53,12 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None._
+- **ADR-S051 (EX-0, owner-approved 2026-11-02): accrual recognition + partial payments.** An approved CREDIT
+  expense posts Dr expense / Cr accounts payable (supplier as partner, source `expense_accrual`); its payments post
+  Dr payable / Cr cash-bank. `POST /expenses/:id/pay` takes an optional positive `amount` (default = whole residual;
+  more than the residual → `Payment amount <a> exceeds the outstanding balance of <r>`). Edits re-post the accrual,
+  void / delete reverse it. Expenses approved before the change keep the pay-time Dr expense posting. Nest posts
+  nothing until payment and always pays the full residual. Test: `ExpenseAccrualIT`.
 
 ## Status
 

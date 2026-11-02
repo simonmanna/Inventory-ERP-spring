@@ -1,5 +1,6 @@
 package com.inventoryerp.expenses.application;
 
+import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -40,8 +41,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Standalone expenses (port of {@code expenses.service.ts}): create (CASH pays on the spot, CREDIT routes through the
- * approval engine), edit, approve / reject (SoD), pay (Dr expense / Cr cash-bank with treasury guards), void
- * (reverses every posted payment), soft delete, stats, audit trail and form lookups.
+ * approval engine), edit, approve / reject (SoD), pay, void (reverses every posted payment and the accrual), soft
+ * delete, stats, audit trail and form lookups.
+ *
+ * <p>Accrual recognition (ADR-S051, deviation from Nest): a CREDIT expense is recognised when it is approved —
+ * Dr expense / Cr accounts payable (the supplier's payable override, else the {@code accounts_payable} mapping; the
+ * supplier is the line's partner), journal source {@code expense_accrual}. Its payments, full or partial, then clear
+ * the payable (Dr payable / Cr cash-bank). A CASH expense still posts Dr expense / Cr cash-bank at once, and a CREDIT
+ * expense approved before ADR-S051 (no accrual entry) keeps the old pay-time Dr expense posting.
  */
 @Service
 public class ExpensesService {
@@ -55,8 +62,15 @@ public class ExpensesService {
     public record UpdateInput(String title, String description, BigDecimal amount, String categoryId, String expenseDate,
             String notes, String supplierId, String paymentType) {}
 
-    /** {@code PayExpenseDto}. */
-    public record PayInput(String paymentMethod, String accountId, String reference, String paymentNotes) {}
+    /** {@code PayExpenseDto}; {@code amount} (ADR-S051) = a partial payment, null = the whole residual. */
+    public record PayInput(String paymentMethod, String accountId, String reference, String paymentNotes,
+            BigDecimal amount) {
+
+        /** Pays the whole residual. */
+        public PayInput(String paymentMethod, String accountId, String reference, String paymentNotes) {
+            this(paymentMethod, accountId, reference, paymentNotes, null);
+        }
+    }
 
     /**
      * Tags of the expense-side line of an expense's payment postings (additive, for expenses raised by other modules,
@@ -68,6 +82,9 @@ public class ExpensesService {
 
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 
+    /** Journal source of the approval-time accrual of a CREDIT expense (ADR-S051). */
+    public static final String ACCRUAL_SOURCE = "expense_accrual";
+
     private final JdbcClient jdbc;
     private final EventBus events;
     private final SequenceService sequence;
@@ -76,11 +93,13 @@ public class ExpensesService {
     private final PostingService posting;
     private final TransactionTemplate newTx;
     private final ObjectProvider<ExpensePostingTagger> taggers;
+    private final AccountResolverService accounts;
 
     public ExpensesService(JdbcClient jdbc, EventBus events, SequenceService sequence, AuditService audit,
             ApprovalsService approvals, PostingService posting, PlatformTransactionManager txm,
-            ObjectProvider<ExpensePostingTagger> taggers) {
+            ObjectProvider<ExpensePostingTagger> taggers, AccountResolverService accounts) {
         this.taggers = taggers;
+        this.accounts = accounts;
         this.jdbc = jdbc;
         this.events = events;
         this.sequence = sequence;
@@ -386,7 +405,7 @@ public class ExpensesService {
                         + " expense instead");
             }
             recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null,
-                    category, tags);
+                    category, tags, null);
         }
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", code));
         BusinessOutcome.record(jdbc, Obj.of("id", id, "expenseCode", code), isCash);
@@ -397,6 +416,7 @@ public class ExpensesService {
             if (gate == null || !Boolean.TRUE.equals(gate.get("needsApproval"))) {
                 jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = NULL, \"updatedAt\" = " + NOW
                         + " WHERE id = ?").param(id).update();
+                postAccrual(expense(id), category, tags != null ? tags : tagsFor(id), false);
             }
         }
         return loadDecorated(id);
@@ -490,7 +510,7 @@ public class ExpensesService {
         String[] created = insertExpense(dto, actorId, true, approvedById == null ? actorId : approvedById, null);
         String id = created[0];
         recordPayment(expense(id), actorId, dto.paymentMethod(), dto.accountId(), dto.paymentReference(), null, null,
-                new PostingTags(posting.costCenterId(), null, posting.dimensions(), posting.expenseAccountId()));
+                new PostingTags(posting.costCenterId(), null, posting.dimensions(), posting.expenseAccountId()), null);
         publish("expense.created", Obj.of("expenseId", id, "expenseCode", created[1]));
         publish("expense.paid", Obj.of("expenseId", id));
         return loadDecorated(id);
@@ -554,7 +574,17 @@ public class ExpensesService {
             params.add(e.getValue() instanceof Instant i ? SqlRows.ts(i) : e.getValue());
         }
         params.add(id);
+        String accrual = accrualEntry(id);
+        boolean reAccrue = accrual != null && data.keySet().stream()
+                .anyMatch(k -> List.of("amount", "expenseDate", "supplierId", "categoryId", "title").contains(k));
+        if (reAccrue) {
+            posting.reverse(accrual, null, "Expense " + exp.get("expenseCode") + " edited: accrual re-posted");
+        }
         jdbc.sql("UPDATE \"Expense\" SET " + set + " WHERE id = ?").params(params).update();
+        if (reAccrue) {
+            Map<String, Object> edited = expense(id);
+            postAccrual(edited, categoryRow(edited.get("categoryId")), tagsFor(id), true);
+        }
         Map<String, Object> auditValues = new LinkedHashMap<>(data);
         if (auditValues.get("amount") instanceof BigDecimal b) {
             auditValues.put("amount", JsNumbers.js(b));
@@ -585,11 +615,13 @@ public class ExpensesService {
             if ("approved".equals(status)) {
                 jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = ?, \"approvalNotes\" = ?,"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(approverId, approvalNotes, id).update();
+                accrueOnApproval(id);
             }
             return loadDecorated(id);
         }
         jdbc.sql("UPDATE \"Expense\" SET status = 'APPROVED', \"approvedById\" = ?, \"approvalNotes\" = ?, \"updatedAt\" = "
                 + NOW + " WHERE id = ?").params(approverId, approvalNotes, id).update();
+        accrueOnApproval(id);
         audit.recordInTx(AuditInput.of("Expense", id, "approve", null, Obj.of("approvedBy", approverId, "reason",
                 approvalNotes)));
         return loadDecorated(id);
@@ -655,11 +687,9 @@ public class ExpensesService {
         if ("PAID".equals(String.valueOf(exp.get("paymentStatus")))) {
             throw ApiException.badRequest("Expense is already fully paid");
         }
-        Map<String, Object> category = exp.get("categoryId") == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM"
-                + " \"ExpenseCategory\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
-                .params(exp.get("categoryId"), org()));
+        Map<String, Object> category = categoryRow(exp.get("categoryId"));
         recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(), category,
-                null);
+                null, dto.amount());
         publish("expense.paid", Obj.of("expenseId", id));
         Map<String, Object> result = loadDecorated(id);
         BusinessOutcome.record(jdbc, Obj.of("id", id, "paid", true), true);
@@ -692,10 +722,14 @@ public class ExpensesService {
             jdbc.sql("UPDATE \"ExpensePayment\" SET status = 'void', \"voidReason\" = ? WHERE id = ?")
                     .params(voidReason, p.get("id")).update();
         }
+        String accrual = accrualEntry(id);
+        if (accrual != null) {
+            posting.reverse(accrual, null, "Void expense " + exp.get("expenseCode") + ": " + voidReason);
+        }
         jdbc.sql("UPDATE \"Expense\" SET status = 'VOID', \"paymentStatus\" = 'UNPAID', \"amountPaid\" = 0, \"paidAt\" = NULL,"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ?").param(id).update();
         audit.recordInTx(AuditInput.of("Expense", id, "cancel", null, Obj.of("reason", voidReason, "reversedPayments",
-                payments.size(), "voidedBy", actorId)));
+                payments.size(), "reversedAccrual", accrual, "voidedBy", actorId)));
         BusinessOutcome.record(jdbc, Obj.of("id", id, "voided", true), true);
         publish("expense.voided", Obj.of("expenseId", id));
         return loadDecorated(id);
@@ -711,6 +745,10 @@ public class ExpensesService {
         if (!"UNPAID".equals(String.valueOf(exp.get("paymentStatus"))) && !"VOID".equals(String.valueOf(exp.get("status")))) {
             throw ApiException.badRequest("Only unpaid or voided expenses can be deleted");
         }
+        String accrual = accrualEntry(id);
+        if (accrual != null) {
+            posting.reverse(accrual, null, "Deleted expense " + exp.get("expenseCode"));
+        }
         jdbc.sql("UPDATE \"Expense\" SET \"deletedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?").param(id)
                 .update();
         audit.recordInTx(AuditInput.of("Expense", id, "delete"));
@@ -720,14 +758,26 @@ public class ExpensesService {
     // ------------------------------------------------------------------ internals
 
     private void recordPayment(Map<String, Object> expense, String paidBy, String paymentMethod, String accountId,
-            String reference, String paymentNotes, Map<String, Object> category, PostingTags explicitTags) {
+            String reference, String paymentNotes, Map<String, Object> category, PostingTags explicitTags,
+            BigDecimal requested) {
         BigDecimal residual = Money.dec(expense.get("amount")).subtract(Money.dec(expense.get("amountPaid")));
         if (residual.signum() <= 0) {
             throw ApiException.badRequest("Nothing left to pay");
         }
+        BigDecimal amount = requested == null ? residual : requested;
+        if (amount.signum() <= 0) {
+            throw ApiException.badRequest("Payment amount must be greater than zero");
+        }
+        if (amount.compareTo(residual) > 0) {
+            throw ApiException.badRequest("Payment amount " + JsNumbers.dec(amount)
+                    + " exceeds the outstanding balance of " + JsNumbers.dec(residual));
+        }
         String org = org();
-        PostingTags tags = explicitTags != null ? explicitTags : tagsFor((String) expense.get("id"));
-        String debit = tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
+        Map<String, Object> payable = accruedPayable((String) expense.get("id"));
+        PostingTags tags = payable != null ? null
+                : explicitTags != null ? explicitTags : tagsFor((String) expense.get("id"));
+        String debit = payable != null ? (String) payable.get("accountId")
+                : tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
                 : resolveExpenseAccountId(category);
         if (debit == null) {
             throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
@@ -741,23 +791,25 @@ public class ExpensesService {
             throw ApiException.badRequest("Pay expenses from an active cash, bank or mobile-money account");
         }
         TreasuryGuards.assertNotDrawerAccount(jdbc, org, (String) credit.get("id"), "An expense payment");
-        TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), residual, (String) credit.get("name"));
+        TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), amount, (String) credit.get("name"));
         String paymentId = UUID.randomUUID().toString();
         String title = (String) expense.get("title");
-        String value = JsNumbers.dec(residual);
+        String value = JsNumbers.dec(amount);
+        Line debitLine = payable != null
+                ? new Line(debit, value, null, (String) payable.get("partnerId"), title, null, null, null)
+                : tags == null ? Line.debit(debit, value, title)
+                : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(), tags.dimensions());
         Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
                 "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, List.of(tags == null ? Line.debit(debit, value, title)
-                        : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(),
-                                tags.dimensions()),
+                "expense_payment:" + paymentId, List.of(debitLine,
                         Line.credit((String) credit.get("id"), value, "Paid: " + title))));
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"paymentNotes\", \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?,"
                         + " ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', " + NOW + ")")
-                .params(paymentId, org, expense.get("id"), residual, paymentMethod, reference, paymentNotes, accountId,
+                .params(paymentId, org, expense.get("id"), amount, paymentMethod, reference, paymentNotes, accountId,
                         paidBy, entry.get("id"))
                 .update();
-        BigDecimal newPaid = Money.dec(expense.get("amountPaid")).add(residual);
+        BigDecimal newPaid = Money.dec(expense.get("amountPaid")).add(amount);
         String status = String.valueOf(expense.get("status"));
         jdbc.sql("UPDATE \"Expense\" SET \"amountPaid\" = ?, \"paymentStatus\" = ?::\"ExpensePaymentStatus\", \"paidAt\" = "
                         + NOW + ", status = ?::\"ExpenseStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
@@ -767,6 +819,74 @@ public class ExpensesService {
         Map<String, Object> values = Obj.of("paymentId", paymentId, "amount", value, "method", paymentMethod, "reason",
                 paymentNotes, "journalEntryId", entry.get("id"));
         audit.recordInTx(AuditInput.of("ExpensePayment", (String) expense.get("id"), "post", null, values));
+    }
+
+    // ------------------------------------------------------------------ accrual (ADR-S051)
+
+    private Map<String, Object> categoryRow(Object categoryId) {
+        return categoryId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"ExpenseCategory\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(categoryId, org()));
+    }
+
+    private void accrueOnApproval(String id) {
+        Map<String, Object> exp = expense(id);
+        postAccrual(exp, categoryRow(exp.get("categoryId")), tagsFor(id), false);
+    }
+
+    /** The live (posted, not reversed) accrual entry of an expense, or null. */
+    private String accrualEntry(String expenseId) {
+        return jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = ?"
+                        + " AND \"sourceId\" = ? AND status = 'posted' ORDER BY \"createdAt\" DESC LIMIT 1")
+                .params(org(), ACCRUAL_SOURCE, expenseId).query(String.class).optional().orElse(null);
+    }
+
+    /** Payable account + partner credited by the live accrual of an expense, or null (no accrual). */
+    private Map<String, Object> accruedPayable(String expenseId) {
+        String entry = accrualEntry(expenseId);
+        return entry == null ? null : SqlRows.one(jdbc.sql("SELECT \"accountId\", \"partnerId\" FROM \"JournalLine\""
+                + " WHERE \"journalEntryId\" = ? AND credit > 0 ORDER BY \"accountId\" LIMIT 1").param(entry));
+    }
+
+    /**
+     * Recognise an approved CREDIT expense: Dr expense (category ledger / default, or the source module's account
+     * and tags) / Cr the supplier's payable (override, else {@code accounts_payable}) on the expense date. CASH
+     * expenses and already-accrued ones are skipped ({@code replacing}: the caller has just reversed the live
+     * accrual in this transaction, whose status flip is not yet visible to JDBC).
+     */
+    private void postAccrual(Map<String, Object> exp, Map<String, Object> category, PostingTags tags,
+            boolean replacing) {
+        if (exp == null || !"CREDIT".equals(String.valueOf(exp.get("paymentType")))
+                || (!replacing && accrualEntry((String) exp.get("id")) != null)) {
+            return;
+        }
+        String id = (String) exp.get("id");
+        String debit = tags != null && tags.expenseAccountId() != null ? tags.expenseAccountId()
+                : resolveExpenseAccountId(category);
+        if (debit == null) {
+            throw ApiException.badRequest("Configure an expense account (category ledger or default_expense mapping)"
+                    + " before approving expenses");
+        }
+        String supplierId = (String) exp.get("supplierId");
+        String payable = supplierId == null ? null : jdbc.sql("SELECT \"payableAccountId\" FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(supplierId, org()).query(String.class).optional().orElse(null);
+        if (payable == null) {
+            payable = accounts.byMapping("accounts_payable");
+        }
+        String value = JsNumbers.dec(Money.dec(exp.get("amount")));
+        String title = (String) exp.get("title");
+        long seq = jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = ?"
+                + " AND \"sourceId\" = ?").params(org(), ACCRUAL_SOURCE, id).query(Long.class).single();
+        Object d = exp.get("expenseDate");
+        Instant date = d instanceof java.sql.Timestamp t ? t.toInstant()
+                : d instanceof java.time.LocalDateTime l ? l.toInstant(ZoneOffset.UTC)
+                : d instanceof Instant i ? i : EntityPatch.toInstant(String.valueOf(d));
+        Line debitLine = tags == null ? Line.debit(debit, value, title)
+                : new Line(debit, value, null, null, title, tags.branchId(), tags.costCenterId(), tags.dimensions());
+        Map<String, Object> entry = posting.post(PostingRequest.of("GEN", date, "Expense " + exp.get("expenseCode")
+                + " - " + title + " (accrued)", ACCRUAL_SOURCE, id, ACCRUAL_SOURCE + ":" + id + ":" + (seq + 1),
+                List.of(debitLine, new Line(payable, null, value, supplierId, "Payable: " + title, null, null, null))));
+        audit.recordInTx(AuditInput.of("Expense", id, "post", null, Obj.of("accrualJournalEntryId", entry.get("id"),
+                "amount", value)));
     }
 
     /** The first tagger claiming the expense, or null (no tagger registered / none owns it). */

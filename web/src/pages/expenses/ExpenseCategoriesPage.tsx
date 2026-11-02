@@ -27,7 +27,9 @@ import {
 } from "@/components/ui/select";
 import {
   expenseCategoriesApi,
+  listLinkableLedgerAccounts,
   type ExpenseCategory,
+  type LedgerAccountOption,
 } from "@/lib/api/expenseCategories";
 import { tx } from '@/lib/i18n/tx';
 
@@ -35,19 +37,37 @@ const NONE = "__none__";
 
 function CategoryDialog({
   category,
+  accounts,
+  accountsError,
   onClose,
   onSaved,
 }: {
   category?: ExpenseCategory | null;
+  accounts: LedgerAccountOption[];
+  accountsError: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isEdit = !!category;
   const [name, setName] = useState(category?.name ?? "");
   const [icon, setIcon] = useState(category?.icon ?? "");
+  const [description, setDescription] = useState(category?.description ?? "");
   const [ledgerAccountId, setLedgerAccountId] = useState(
     category?.ledgerAccountId ?? NONE,
   );
+  // Keep the currently linked account selectable even when it is no longer postable/active
+  // (or the account list could not be loaded), so opening the dialog never silently unlinks it.
+  const options: LedgerAccountOption[] =
+    category?.ledgerAccountId && !accounts.some((a) => a.id === category.ledgerAccountId)
+      ? [
+          {
+            id: category.ledgerAccountId,
+            code: category.ledgerAccount?.code ?? category.ledgerAccountId.slice(0, 8),
+            name: category.ledgerAccount?.name ?? "",
+          },
+          ...accounts,
+        ]
+      : accounts;
   const [isActive, setIsActive] = useState(category?.isActive ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -58,16 +78,19 @@ function CategoryDialog({
     setError("");
     try {
       if (isEdit) {
+        // '' clears the field server-side (unlink GL / remove icon / remove description).
         await expenseCategoriesApi.update(category!.id, {
           name: name.trim(),
-          icon: icon.trim() || undefined,
-          ledgerAccountId: ledgerAccountId === NONE ? undefined : ledgerAccountId,
+          icon: icon.trim(),
+          description: description.trim(),
+          ledgerAccountId: ledgerAccountId === NONE ? "" : ledgerAccountId,
           isActive,
         });
       } else {
         await expenseCategoriesApi.create({
           name: name.trim(),
           icon: icon.trim() || undefined,
+          description: description.trim() || undefined,
           ledgerAccountId: ledgerAccountId === NONE ? undefined : ledgerAccountId,
         });
       }
@@ -122,6 +145,19 @@ function CategoryDialog({
 
           <div>
             <label className="text-xs font-bold uppercase text-gray-500">
+              {tx('Description')}
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+              placeholder={tx('What belongs in this category (optional)')}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold uppercase text-gray-500">
               {tx('Linked GL Account (optional)')}
             </label>
             <Select value={ledgerAccountId} onValueChange={setLedgerAccountId}>
@@ -132,8 +168,16 @@ function CategoryDialog({
                 <SelectItem value={NONE}>
                   {tx('No GL account — records expense, no journal entry')}
                 </SelectItem>
+                {options.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.code}{a.name ? ` · ${a.name}` : ""}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            {accountsError && (
+              <p className="text-[11px] text-amber-600 mt-1">{accountsError}</p>
+            )}
             <p className="text-[11px] text-slate-500 mt-1">
               {tx('Link an account to post double-entry (DR this account · CR Cash/AP). Leave unset to keep this category out of the ledger.')}
             </p>
@@ -174,10 +218,24 @@ function CategoryDialog({
 export default function ExpenseCategoriesPage() {
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<LedgerAccountOption[]>([]);
+  const [accountsError, setAccountsError] = useState("");
   const [dialog, setDialog] = useState<{
     open: boolean;
     category?: ExpenseCategory | null;
   }>({ open: false });
+
+  useEffect(() => {
+    listLinkableLedgerAccounts()
+      .then(setAccounts)
+      .catch((e: any) =>
+        setAccountsError(
+          e?.response?.status === 403
+            ? tx('You need chart-of-accounts read access to link a GL account.')
+            : tx('Could not load GL accounts.'),
+        ),
+      );
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -259,6 +317,9 @@ export default function ExpenseCategoriesPage() {
                       {c.icon ? `${c.icon} ` : ""}
                       {c.name}
                     </span>
+                    {c.description && (
+                      <p className="text-xs text-slate-500 mt-0.5">{c.description}</p>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     {c.ledgerAccountId ? (
@@ -323,6 +384,8 @@ export default function ExpenseCategoriesPage() {
       {dialog.open && (
         <CategoryDialog
           category={dialog.category}
+          accounts={accounts}
+          accountsError={accountsError}
           onClose={() => setDialog({ open: false })}
           onSaved={() => {
             setDialog({ open: false });
