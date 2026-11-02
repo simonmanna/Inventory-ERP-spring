@@ -797,6 +797,8 @@ export const PERMISSIONS = {
     leave: 'hr:leave',
     holiday: 'hr:holiday',
     payroll: 'hr:payroll',
+    /// Payroll settings, pay groups and period unlock (HP-0).
+    payrollSettings: 'hr:payroll_settings',
     payslip: 'hr:payslip',
     advance: 'hr:advance',
     loan: 'hr:loan',

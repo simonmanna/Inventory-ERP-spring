@@ -690,6 +690,7 @@
     "leave": "hr:leave",
     "holiday": "hr:holiday",
     "payroll": "hr:payroll",
+    "payrollSettings": "hr:payroll_settings",
     "payslip": "hr:payslip",
     "advance": "hr:advance",
     "loan": "hr:loan",

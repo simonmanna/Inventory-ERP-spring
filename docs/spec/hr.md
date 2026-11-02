@@ -52,7 +52,9 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+1. HP-0 (owner-approved plan, 2026-11-02): `POST /hr/payroll/runs` and `POST /hr/payroll/runs/:id/calculate` answer
+   400 `Payroll period is locked` when the period status is `LOCKED`; Nest ignored the period status. Maker-checker
+   and lock-on-approval apply only after an organisation saves payroll settings.
 
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
@@ -111,6 +113,28 @@ Screen `/hr/reviews` over the existing `/hr/reviews` routes; no backend change. 
 V93 (`HrCostAllocationRule`, `HrPayrollCostLine`). `HrPayrollService.approveRun` calls `salaryDebits`: with rules the
 salary debit becomes one line per (cost centre, branch), summing exactly to the old amount; without rules it is the Nest
 line. Reversal deletes the run's cost lines; the journal reversal copies the tags.
+
+### HP-0 payroll foundations (built 2026-11-02, ADR-S047)
+
+Plan: `docs/roadmap/hr-payroll-plan.md`. `HrPayrollSetupController` (14 routes, `hr:payroll` to read, lock and
+generate; `hr:payroll_settings` for settings, pay group writes, members and unlock), `HrPayrollSetupService`, pure
+`HrPayCalendar`, migration V241 (`HrPayrollSettings`, `HrPayGroup`, unmapped columns `HrEmployee.payGroupId`,
+`HrPayrollPeriod.payGroupId / paymentDate / lockedAt / lockedBy`).
+
+| Route | Purpose |
+|---|---|
+| `GET/PUT /hr/payroll/settings` | Engine, statutory pack (`NONE`/`UG`/`AE`), proration basis, weekend days, hours/day, rounding scale, maker-checker, lock on approval |
+| `GET /hr/payroll/statutory-packs` | Pack catalogue (`available: false` until HP-3) |
+| `GET/POST /hr/payroll/pay-groups`, `GET/PATCH/DELETE /hr/payroll/pay-groups/{id}` | Pay groups, one default |
+| `GET/PUT /hr/payroll/pay-groups/{id}/members` | Members (default group includes employees without a group); PUT moves employees in |
+| `POST /hr/payroll/pay-groups/{id}/periods` | Generate a year's periods (idempotent) |
+| `GET /hr/payroll/calendar?payGroupId&year` | Periods with HP-0 columns and their latest run |
+| `POST /hr/payroll/periods/{id}/lock`, `/unlock` | Manual lock; unlock needs `reason`, refused while an approved/paid run exists |
+
+Engine hooks in `HrPayrollService`: run on a group period pays only its members and defaults its payment date;
+create / calculate refuse a `LOCKED` period; with saved settings, approve is refused (403) to the user who calculated
+the run and locks the period; reversing an approved run reopens it. Without a settings row nothing is enforced.
+Screens: `/hr/payroll/settings` tabs General and Pay groups. Tests: `HrPayrollSetupIT` (5), `HrPayCalendarTest` (3).
 
 ## Status
 

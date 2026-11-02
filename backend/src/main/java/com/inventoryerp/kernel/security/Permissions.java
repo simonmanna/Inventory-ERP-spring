@@ -489,6 +489,7 @@ public final class Permissions {
     public static final String HR__LEAVE = "hr:leave";
     public static final String HR__HOLIDAY = "hr:holiday";
     public static final String HR__PAYROLL = "hr:payroll";
+    public static final String HR__PAYROLL_SETTINGS = "hr:payroll_settings";
     public static final String HR__PAYSLIP = "hr:payslip";
     public static final String HR__ADVANCE = "hr:advance";
     public static final String HR__LOAN = "hr:loan";
@@ -1133,6 +1134,7 @@ public final class Permissions {
             "hr:leave",
             "hr:holiday",
             "hr:payroll",
+            "hr:payroll_settings",
             "hr:payslip",
             "hr:advance",
             "hr:loan",

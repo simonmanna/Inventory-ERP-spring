@@ -104,7 +104,7 @@ class HrPayrollExtensionsIT extends ApiTestSupport {
     }
 
     String costCenter(String s, String name) {
-        return ok(201, "POST", "/cost-centers", Map.of("code", name + s, "name", name)).get("id").asString();
+        return ok(201, "POST", "/cost-centers", Map.of("code", name + s, "name", name + s)).get("id").asString();
     }
 
     @Test

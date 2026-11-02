@@ -337,11 +337,18 @@ class HrIT extends ApiTestSupport {
         // Keep this run isolated from other suites' active employees (restored afterwards).
         List<String> parked = jdbc.sql("UPDATE \"HrEmployee\" SET \"isActive\" = false WHERE \"organizationId\" = ?"
                 + " AND \"isActive\" = true RETURNING id").param(demoOrg).query(String.class).list();
+        // Components of earlier runs on a reused database would add to the expected gross.
+        List<String> components = jdbc.sql("UPDATE \"HrPayrollComponent\" SET \"isActive\" = false WHERE"
+                + " \"organizationId\" = ? AND \"isActive\" = true RETURNING id").param(demoOrg).query(String.class).list();
         try {
             payrollFlow(s);
         } finally {
             jdbc.sql("UPDATE \"HrEmployee\" SET \"isActive\" = true WHERE id = ANY(?)")
                     .param(parked.toArray(String[]::new)).update();
+            jdbc.sql("UPDATE \"HrPayrollComponent\" SET \"isActive\" = false WHERE \"organizationId\" = ? AND"
+                    + " code IN (?, ?)").params(demoOrg, ("TR" + s).toUpperCase(), ("PENSION" + s).toUpperCase()).update();
+            jdbc.sql("UPDATE \"HrPayrollComponent\" SET \"isActive\" = true WHERE id = ANY(?)")
+                    .param(components.toArray(String[]::new)).update();
         }
     }
 
@@ -471,6 +478,6 @@ class HrIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 anonymous on all routes, 403 without the hr permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.hr")).isEqualTo(179);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.hr")).isEqualTo(193);
     }
 }

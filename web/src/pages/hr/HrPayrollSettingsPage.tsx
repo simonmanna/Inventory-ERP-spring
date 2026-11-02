@@ -10,12 +10,14 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HrOvertimePanel } from './HrOvertimePanel';
 import { HrCostAllocationPanel } from './HrCostAllocationPanel';
+import { HrPayrollGeneralPanel } from './HrPayrollGeneralPanel';
+import { HrPayGroupsPanel } from './HrPayGroupsPanel';
 import { tx } from '@/lib/i18n/tx';
 
 const fmtPct = (r: number | null) => (r === null ? '—' : `${r * 100}%`);
 
 export function HrPayrollSettingsPage() {
-  const [tab, setTab] = useState('components');
+  const [tab, setTab] = useState('general');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({});
@@ -74,16 +76,26 @@ export function HrPayrollSettingsPage() {
     <div className="space-y-4 p-6">
       <div>
         <h1 className="text-xl font-semibold">{tx('Payroll settings')}</h1>
-        <p className="text-sm text-muted-foreground">{tx('Allowance/deduction components and tax tables.')}</p>
+        <p className="text-sm text-muted-foreground">{tx('Payroll rules, pay groups and calendars, components and tax tables.')}</p>
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
+          <TabsTrigger value="general">{tx('General')}</TabsTrigger>
+          <TabsTrigger value="groups">{tx('Pay groups')}</TabsTrigger>
           <TabsTrigger value="components">{tx('Components')}</TabsTrigger>
           <TabsTrigger value="taxes">{tx('Tax tables')}</TabsTrigger>
           <TabsTrigger value="overtime">{tx('Overtime')}</TabsTrigger>
           <TabsTrigger value="costs">{tx('Cost allocation')}</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="general" className="space-y-4">
+          <HrPayrollGeneralPanel />
+        </TabsContent>
+
+        <TabsContent value="groups" className="space-y-4">
+          <HrPayGroupsPanel />
+        </TabsContent>
 
         <TabsContent value="components" className="space-y-4">
           <div className="flex justify-end">

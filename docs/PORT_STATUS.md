@@ -36,6 +36,13 @@ Health endpoints (`/api/v1/health*`) were completed in P0.
 `/opening-balances` (GET, POST), `/reports/tax/summary`, AR / AP statements (JSON, PDF, e-mail; 5), `/invoices/:id/pdf`
 and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
+**HR and payroll to ERP grade (Spring-native, [plan](roadmap/hr-payroll-plan.md); not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| HP-0 | Payroll settings, pay groups + calendars, period lock, maker-checker (ADR-S047, V241, 14 routes) | done — `HrPayrollSetupIT`, `HrPayCalendarTest` |
+| HP-1..HP-10 | Compensation, engine v2, UG + AE statutory packs, leave, time→pay, separation, payslips/bank files, ESS, talent, reports | not started |
+
 ## kernel
 
 - [x] GET /api/v1/approval-policies — ApprovalPolicyController.list

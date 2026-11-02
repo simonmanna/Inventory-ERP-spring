@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import org.springframework.stereotype.Service;
 
@@ -76,10 +77,11 @@ public class HrPayrollService {
     private final HrPayrollInputService payrollInputs;
     private final HrOvertimeService overtime;
     private final HrPayrollCostService costs;
+    private final HrPayrollSetupService setup;
 
     public HrPayrollService(HrDb hr, SequenceService seq, PostingService posting,
             AccountDeterminationService accounts, HrPayrollInputService payrollInputs, HrOvertimeService overtime,
-            HrPayrollCostService costs) {
+            HrPayrollCostService costs, HrPayrollSetupService setup) {
         this.hr = hr;
         this.seq = seq;
         this.posting = posting;
@@ -87,6 +89,7 @@ public class HrPayrollService {
         this.payrollInputs = payrollInputs;
         this.overtime = overtime;
         this.costs = costs;
+        this.setup = setup;
     }
 
     private static String invalid(String what, Object v) {
@@ -367,10 +370,13 @@ public class HrPayrollService {
         if (existing != null && !"REVERSED".equals(existing.get("status"))) {
             throw ApiException.badRequest("A run already exists for this period (reverse it first)");
         }
+        // Additive (HP-0): a locked period takes no new run; a generated period lends its payment date.
+        setup.assertPeriodOpen(period);
         String runNumber = seq.next("hr_payroll_run", "PR-", 6);
         return hr.insert(HrPayrollRun.class, Obj.of("organizationId", org(), "runNumber", runNumber,
                 "periodId", period.get("id"), "status", "DRAFT",
-                "paymentDate", truthy(dto.get("paymentDate")) ? HrDb.jsDate(dto.get("paymentDate")) : null,
+                "paymentDate", truthy(dto.get("paymentDate")) ? HrDb.jsDate(dto.get("paymentDate"))
+                        : setup.periodPaymentDate(period.get("id")),
                 "notes", dto.get("notes"), "createdBy", user()));
     }
 
@@ -410,6 +416,9 @@ public class HrPayrollService {
             throw ApiException.badRequest("Only DRAFT/CALCULATED runs can be recalculated");
         }
         Map<String, Object> period = hr.db().first(HrPayrollPeriod.class, "id = ?", run.get("periodId"));
+        setup.assertPeriodOpen(period);
+        // Additive (HP-0): a period generated for a pay group pays only that group; otherwise every active employee.
+        Set<String> payGroupEmployees = setup.periodEmployees(period.get("id"));
         Instant runDate = Instant.now();
         Instant monthStart = (Instant) period.get("startDate");
         Instant monthEnd = (Instant) period.get("endDate");
@@ -429,6 +438,9 @@ public class HrPayrollService {
             payrollInputs.releaseRun(id);
             List<Map<String, Object>> inputs = payrollInputs.pendingUntil(monthEnd);
             List<Map<String, Object>> employees = hr.where(HrEmployee.class).eq("isActive", true).list(null);
+            if (payGroupEmployees != null) {
+                employees.removeIf(e -> !payGroupEmployees.contains(e.get("id")));
+            }
             List<Map<String, Object>> components = hr.where(HrPayrollComponent.class).eq("isActive", true).list(null);
             Map<String, Object> payeTable = activeTaxTable("PAYE", runDate);
             List<Map<String, Object>> advances = hr.where(HrSalaryAdvance.class)
@@ -664,6 +676,8 @@ public class HrPayrollService {
         if (runItems.isEmpty()) {
             throw ApiException.badRequest("Run has no items — calculate first");
         }
+        // Additive (HP-0): maker-checker and period lock, only once the organisation saved payroll settings.
+        setup.assertCanApprove(run, userId);
         return hr.inTx(() -> {
             for (Map<String, Object> item : runItems) {
                 String payslipNumber = seq.next("hr_payslip", "PS-", 6);
@@ -749,6 +763,7 @@ public class HrPayrollService {
             }
             Map<String, Object> run2 = hr.update(HrPayrollRun.class, id, Obj.of("status", "APPROVED",
                     "journalEntryId", journal.get("id"), "glPosted", true, "updatedBy", userId));
+            setup.onApproved(run.get("periodId"), userId);
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "post", Obj.of("status", run.get("status"), "glPosted", false),
                     Obj.of("status", "APPROVED", "journalEntryId", journal.get("id"), "periodId", run.get("periodId"),
                             "approvedBy", userId, "employeeCount", runItems.size())));
@@ -825,6 +840,7 @@ public class HrPayrollService {
             }
             payrollInputs.reopenRun(id);
             costs.clearRun(id);
+            setup.onReversed(run.get("periodId"));
             Map<String, Object> reversed = hr.update(HrPayrollRun.class, id, Obj.of("status", "REVERSED",
                     "glPosted", false, "notes", nz(dto.get("reason"), run.get("notes")), "updatedBy", userId));
             hr.auditInTx(AuditInput.of("HrPayrollRun", id, "cancel", Obj.of("status", status,
