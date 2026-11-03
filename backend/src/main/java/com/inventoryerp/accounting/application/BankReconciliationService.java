@@ -1,5 +1,7 @@
 package com.inventoryerp.accounting.application;
 
+import static com.inventoryerp.accounting.application.PostingService.plain;
+
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -8,6 +10,7 @@ import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.web.JsonConfig;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.PageQuery;
 import com.inventoryerp.shared.web.PageResult;
@@ -61,6 +64,7 @@ public class BankReconciliationService {
         int imported = 0;
         int skipped = 0;
         for (StatementLine l : lines) {
+            assertUnlocked(organizationId, bankAccountId, OrgDates.parse(l.postedAt()));
             if (l.externalRef() != null && !l.externalRef().isEmpty()) {
                 long existing = jdbc.sql("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ?"
                         + " AND \"bankAccountId\" = ? AND \"externalRef\" = ?").params(organizationId, bankAccountId, l.externalRef())
@@ -91,9 +95,10 @@ public class BankReconciliationService {
     }
 
     /**
-     * Auto-match. {@code signed} is the screen's mode: a negative statement line pairs with an outbound payment of the
-     * same size, a positive one with an inbound payment, and a payment already matched is never taken twice. Without
-     * it the Nest behaviour stands (amount equals the signed line amount, any direction).
+     * Auto-match: a negative statement line pairs with an outbound payment of the same size, a positive one with an
+     * inbound payment, and a payment already matched (in any run) is never taken twice. ACC-6 (B5, owner decision
+     * D-B5): this is now the only mode — Nest's unsigned rule never matched an outgoing line and could re-match a
+     * payment across runs; {@code signed} is accepted and ignored. Lines inside a locked statement are left alone.
      */
     @Transactional
     public Map<String, Object> match(String bankAccountId, Double dateToleranceDays, String notes, boolean signed) {
@@ -103,21 +108,17 @@ public class BankReconciliationService {
         jdbc.sql("INSERT INTO \"BankReconciliationRun\" (id, \"organizationId\", \"bankAccountId\", \"startedAt\", \"totalAmount\","
                         + " notes, \"createdById\") VALUES (?, ?, ?, now(), 0, ?, ?)")
                 .params(runId, organizationId, bankAccountId, notes, TenantContext.userId()).update();
+        Instant locked = lockedThrough(organizationId, bankAccountId);
         List<Map<String, Object>> lines = SqlRows.list(jdbc.sql("SELECT * FROM \"BankStatementLine\" WHERE \"organizationId\" = ?"
-                + " AND \"bankAccountId\" = ? AND status = 'unmatched' ORDER BY \"postedAt\" ASC").params(organizationId, bankAccountId));
+                + " AND \"bankAccountId\" = ? AND status = 'unmatched'" + (locked == null ? "" : " AND \"postedAt\" > ?")
+                + " ORDER BY \"postedAt\" ASC").params(locked == null ? List.of(organizationId, bankAccountId)
+                : List.of(organizationId, bankAccountId, FiscalPeriodControl.ts(locked))));
         int matched = 0;
         Set<String> used = new HashSet<>();
         long tolMs = (long) (tolerance * 24 * 60 * 60 * 1000);
         for (Map<String, Object> line : lines) {
             Instant at = (Instant) line.get("postedAt");
-            String candidate = signed
-                    ? signedCandidate(organizationId, bankAccountId, SqlRows.dec(line, "amount"), at, tolMs)
-                    : jdbc.sql("SELECT id FROM \"Payment\" WHERE \"organizationId\" = ? AND \"accountId\" = ? AND "
-                    + "status = 'posted'"
-                            + " AND \"paymentDate\" >= ? AND \"paymentDate\" <= ? AND amount = ? LIMIT 1")
-                    .params(organizationId, bankAccountId, FiscalPeriodControl.ts(at.minus(Duration.ofMillis(tolMs))),
-                            FiscalPeriodControl.ts(at.plus(Duration.ofMillis(tolMs))), SqlRows.dec(line, "amount"))
-                    .query(String.class).optional().orElse(null);
+            String candidate = signedCandidate(organizationId, bankAccountId, SqlRows.dec(line, "amount"), at, tolMs);
             if (candidate != null && !used.contains(candidate)) {
                 jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRunId\" = ? WHERE id = ?")
                         .params(candidate, runId, line.get("id")).update();
@@ -260,6 +261,7 @@ public class BankReconciliationService {
     public Map<String, Object> matchLine(String lineId, String paymentId) {
         String org = TenantContext.organizationId();
         Map<String, Object> line = requireLine(lineId, org, true);
+        assertUnlocked(org, line);
         if (!"unmatched".equals(line.get("status"))) {
             throw ApiException.badRequest("Only an unmatched line can be matched");
         }
@@ -297,6 +299,7 @@ public class BankReconciliationService {
     public Map<String, Object> excludeLine(String lineId, String note) {
         String org = TenantContext.organizationId();
         Map<String, Object> line = requireLine(lineId, org, true);
+        assertUnlocked(org, line);
         if (!"unmatched".equals(line.get("status"))) {
             throw ApiException.badRequest("Only an unmatched line can be excluded");
         }
@@ -322,6 +325,12 @@ public class BankReconciliationService {
     /** Manually unmatch a single line (Nest throws a plain Error → 500 when the line is unknown). */
     @Transactional
     public Map<String, Object> unmatch(String lineId) {
+        Map<String, Object> current = SqlRows.one(jdbc.sql("SELECT id, \"bankAccountId\", \"postedAt\" FROM"
+                + " \"BankStatementLine\" WHERE id = ? AND \"organizationId\" = ?").params(lineId,
+                TenantContext.organizationId()));
+        if (current != null) {
+            assertUnlocked(TenantContext.organizationId(), current);
+        }
         int n = jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'unmatched', \"matchedPaymentId\" = NULL, "
                 + "\"matchedRunId\" = NULL, note = NULL"
                 + " WHERE id = ? AND \"organizationId\" = ?").params(lineId, TenantContext.organizationId()).update();
@@ -329,6 +338,101 @@ public class BankReconciliationService {
             throw new IllegalStateException("Line not found");
         }
         return Map.of("ok", true);
+    }
+
+    // ------------------------------------------------------------------ ACC-6: reconciliation statement + lock
+
+    /** Latest locked statement date of an account, or null. */
+    private Instant lockedThrough(String org, String bankAccountId) {
+        return jdbc.sql("SELECT max(\"statementDate\") FROM \"BankReconciliationStatement\" WHERE \"organizationId\" = ?"
+                        + " AND \"bankAccountId\" = ?").params(org, bankAccountId)
+                .query((rs, n) -> rs.getTimestamp(1) == null ? null
+                        : rs.getTimestamp(1).toLocalDateTime().toInstant(java.time.ZoneOffset.UTC))
+                .optional().orElse(null);
+    }
+
+    private void assertUnlocked(String org, String bankAccountId, Instant postedAt) {
+        Instant locked = lockedThrough(org, bankAccountId);
+        if (locked != null && postedAt != null && !postedAt.isAfter(locked)) {
+            throw ApiException.badRequest("Bank reconciliation is locked through " + FiscalPeriodControl.day(locked)
+                    + "; statement lines on or before that date cannot change");
+        }
+    }
+
+    private void assertUnlocked(String org, Map<String, Object> line) {
+        Object at = line.get("postedAt");
+        Instant postedAt = at instanceof Instant i ? i : at instanceof java.sql.Timestamp t
+                ? t.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC) : null;
+        assertUnlocked(org, (String) line.get("bankAccountId"), postedAt);
+    }
+
+    /**
+     * Reconciliation statement as of {@code asOf} for a statement closing balance (ACC-6). Proves
+     * {@code closing + outstanding book items = ledger + statement items not in the books}; outstanding book items are
+     * posted payments of the account up to {@code asOf} not matched to any statement line (inbound +, outbound −);
+     * statement-only items are unmatched, non-excluded lines up to {@code asOf}.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> statement(String bankAccountId, Instant asOf, BigDecimal closingBalance) {
+        if (bankAccountId == null || bankAccountId.isEmpty()) {
+            throw ApiException.badRequest("bankAccountId is required");
+        }
+        String org = TenantContext.organizationId();
+        BigDecimal ledger = jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
+                        + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
+                        + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ?")
+                .params(org, bankAccountId, FiscalPeriodControl.ts(asOf)).query(BigDecimal.class).single();
+        BigDecimal outstanding = jdbc.sql("SELECT coalesce(sum(CASE WHEN p.direction::text = 'outbound' THEN -p.amount"
+                        + " ELSE p.amount END), 0) FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
+                        + " AND p.status = 'posted' AND p.\"paymentDate\" <= ? AND NOT EXISTS (SELECT 1 FROM"
+                        + " \"BankStatementLine\" b WHERE b.\"organizationId\" = p.\"organizationId\" AND"
+                        + " b.\"matchedPaymentId\" = p.id)")
+                .params(org, bankAccountId, FiscalPeriodControl.ts(asOf)).query(BigDecimal.class).single();
+        BigDecimal unrecorded = jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"BankStatementLine\" WHERE"
+                        + " \"organizationId\" = ? AND \"bankAccountId\" = ? AND status = 'unmatched' AND \"postedAt\" <= ?")
+                .params(org, bankAccountId, FiscalPeriodControl.ts(asOf)).query(BigDecimal.class).single();
+        BigDecimal closing = closingBalance == null ? BigDecimal.ZERO : closingBalance;
+        BigDecimal difference = closing.add(outstanding).subtract(ledger.add(unrecorded));
+        Instant locked = lockedThrough(org, bankAccountId);
+        return body("bankAccountId", bankAccountId, "asOf", JsonConfig.toJsIso(asOf), "closingBalance", plain(closing),
+                "ledgerBalance", plain(ledger), "outstandingBook", plain(outstanding), "unrecordedStatement",
+                plain(unrecorded), "difference", plain(difference), "reconciled", difference.abs()
+                        .compareTo(new BigDecimal("0.01")) <= 0,
+                "lockedThrough", locked == null ? null : JsonConfig.toJsIso(locked));
+    }
+
+    /** Lock a reconciled statement: refused unless the difference is zero and the date is after any earlier lock. */
+    @Transactional
+    public Map<String, Object> lockStatement(String bankAccountId, Instant asOf, BigDecimal closingBalance,
+            String notes) {
+        String org = TenantContext.organizationId();
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|bankrec|' || ?, 0))").params(org, bankAccountId)
+                .query().listOfRows();
+        Instant locked = lockedThrough(org, bankAccountId);
+        if (locked != null && !asOf.isAfter(locked)) {
+            throw ApiException.badRequest("A reconciliation is already locked through " + FiscalPeriodControl.day(locked));
+        }
+        Map<String, Object> s = statement(bankAccountId, asOf, closingBalance);
+        if (!Boolean.TRUE.equals(s.get("reconciled"))) {
+            throw ApiException.badRequest("Statement does not reconcile: difference " + s.get("difference")
+                    + " (closing " + s.get("closingBalance") + " + outstanding book items " + s.get("outstandingBook")
+                    + " vs ledger " + s.get("ledgerBalance") + " + unrecorded statement items "
+                    + s.get("unrecordedStatement") + ")");
+        }
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"BankReconciliationStatement\" (id, \"organizationId\", \"bankAccountId\", \"statementDate\","
+                        + " \"closingBalance\", \"ledgerBalance\", \"outstandingBook\", \"unrecordedStatement\", difference,"
+                        + " notes, \"lockedBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .params(id, org, bankAccountId, FiscalPeriodControl.ts(asOf), new BigDecimal((String) s.get("closingBalance")),
+                        new BigDecimal((String) s.get("ledgerBalance")), new BigDecimal((String) s.get("outstandingBook")),
+                        new BigDecimal((String) s.get("unrecordedStatement")), new BigDecimal((String) s.get("difference")),
+                        notes, TenantContext.userId())
+                .update();
+        audit.recordInTx(AuditInput.of("BankReconciliationStatement", id, "create", null, s));
+        Map<String, Object> out = new java.util.LinkedHashMap<>(s);
+        out.put("id", id);
+        out.put("lockedThrough", JsonConfig.toJsIso(asOf));
+        return out;
     }
 
     @Transactional(readOnly = true)

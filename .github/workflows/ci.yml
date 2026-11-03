@@ -55,13 +55,18 @@ jobs:
           name: backend-test-reports
           path: backend/build/reports/tests
       # ACC-0 known accounting defects (docs/accounting/ACCOUNTING-TEST-STRATEGY.md). Test failures are expected and
-      # non-blocking (ignoreFailures); compile/Docker errors or zero discovered tests fail this step (blocking).
+      # non-blocking (ignoreFailures); compile/Docker errors or a run count that differs from the tags in the sources
+      # fail this step (blocking). No tagged test at all = nothing known open, which is green.
       - name: Accounting known-defect verification (acc0VerificationTest)
         run: ./gradlew acc0VerificationTest --no-daemon
       - name: Accounting known-defect summary
         if: always()
         run: |
           dir=build/test-results/acc0VerificationTest
+          tagged=$(grep -rho '@Tag("acc-known-defect")' src/test/java | wc -l)
+          if [ "$tagged" -eq 0 ]; then
+            echo "### Accounting known defects: none open" >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
           if ! ls "$dir"/TEST-*.xml >/dev/null 2>&1; then
             echo "::error::acc0VerificationTest produced no JUnit XML (infrastructure failure)"; exit 1
           fi

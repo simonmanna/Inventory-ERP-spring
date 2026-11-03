@@ -134,8 +134,11 @@ val perfTest by tasks.registering(Test::class) {
 
 // ACC-0 accounting verification (docs/accounting/ACCOUNTING-TEST-STRATEGY.md): @Tag("acc-known-defect") tests assert
 // the correct accounting outcome for a reproduced defect, so they fail until their ACC phase fixes it. Excluded from
-// test / fastTest / accountingRegression; run here, failures reported but not fatal. Zero discovered tests IS fatal
-// (a silently empty run must not look green). Fresh DB container (shared reusable one carries other branches' schema).
+// test / fastTest / accountingRegression; run here, failures reported but not fatal. The run count must equal the
+// number of tags in the test sources (a silently skipped test must not look green); zero is fine only when no test is
+// tagged. Fresh DB container (shared reusable one carries other branches' schema).
+val knownDefectTags = fileTree("src/test/java") { include("**/*.java") }.files
+    .sumOf { f -> Regex("""@Tag\("acc-known-defect"\)""").findAll(f.readText()).count() }.toLong()
 val acc0VerificationTest by tasks.registering(Test::class) {
     description = "Runs @Tag(\"acc-known-defect\") accounting verification tests (failures reported, not fatal)."
     group = "verification"
@@ -147,13 +150,17 @@ val acc0VerificationTest by tasks.registering(Test::class) {
     extensions.configure<JacocoTaskExtension> { isEnabled = false }
     ignoreFailures = true
     outputs.upToDateWhen { false }
-    filter { isFailOnNoMatchingTests = true }
+    filter { isFailOnNoMatchingTests = knownDefectTags > 0 }
     reports { junitXml.required = true; html.required = true }
+    val expected = knownDefectTags
+    doFirst { println("acc0VerificationTest: $expected known-defect test(s) tagged in source") }
     afterSuite(KotlinClosure2<TestDescriptor, TestResult, Unit>({ d, r ->
         if (d.parent == null) {
             println("acc0VerificationTest: ${r.testCount} run, ${r.successfulTestCount} passed, " +
                 "${r.failedTestCount} failed, ${r.skippedTestCount} skipped")
-            if (r.testCount == 0L) throw GradleException("acc0VerificationTest discovered no tests")
+            if (r.testCount != expected) {
+                throw GradleException("acc0VerificationTest ran ${r.testCount} tests but $expected are tagged")
+            }
         }
     }))
 }
@@ -207,7 +214,7 @@ val accountingRegression by tasks.registering(Test::class) {
             "*LandedCostAuditIT", "*CostingAuditIT", "*SharedFxIT",
             "*Acc0FinancialReportingIT", "*Acc0FxIT", "*Acc0ReversalIT", "*Acc0MoneyPrecisionIT",
             "*Acc0IdempotencyIT", "*Acc0PayrollPrecisionTest", "*Acc0ArApIT", "*Acc0LifecycleIT",
-            "*Acc0FixedAssetIT",
+            "*Acc0FixedAssetIT", "*Acc0BankReconciliationIT", "*BankReconciliationIT",
             "com.inventoryerp.costing.*").forEach { includeTestsMatching(it) }
     }
 }

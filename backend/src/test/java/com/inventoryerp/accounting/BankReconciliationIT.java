@@ -103,13 +103,13 @@ class BankReconciliationIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("without signed the Nest rule stands: a negative line matches nothing")
-    void legacyMatchUnchanged() {
+    @DisplayName("ACC-6 (D-B5): without signed the match is still direction-aware: a negative line takes its payment")
+    void unsignedMatchIsDirectionAware() {
         String account = account();
         payment(account, "outbound", 30);
         importLines(account, List.of(line("L1", -30)));
         JsonNode run = ok(200, "POST", "/bank-reconciliation/match?bankAccountId=" + account, Map.of());
-        assertThat(run.get("matched").asInt()).isZero();
+        assertThat(run.get("matched").asInt()).isEqualTo(1);
     }
 
     @Test
@@ -206,6 +206,6 @@ class BankReconciliationIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every bank reconciliation route answers 401 / 403")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix(BankReconciliationController.class)).isEqualTo(10);
+        assertThat(assertAuthorizationMatrix(BankReconciliationController.class)).isEqualTo(12);
     }
 }

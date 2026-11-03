@@ -129,4 +129,30 @@ public class BankReconciliationController {
     public Map<String, Object> status(@RequestParam(required = false) String bankAccountId) {
         return svc.status(bankAccountId);
     }
+
+    /** ACC-6 extension: lock body — statement date, the bank's closing balance and an optional note. */
+    public record LockStatementRequest(
+            @NotNull(message = "must be a string") String bankAccountId,
+            @NotNull(message = "must be a valid ISO 8601 date string")
+            @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String asOf,
+            @NotNull(message = "must be a number conforming to the specified constraints") BigDecimal closingBalance,
+            String notes) {}
+
+    /** ACC-6 extension: reconciliation statement (closing + outstanding book items vs ledger + unrecorded lines). */
+    @GetMapping("/statement")
+    @RequirePermissions(Permissions.BANK_ACCOUNT__READ)
+    public Map<String, Object> statement(@RequestParam(required = false) String bankAccountId,
+            @RequestParam(required = false) String asOf, @RequestParam(required = false) BigDecimal closingBalance) {
+        return svc.statement(bankAccountId, FxRevaluationController.endOfDay(asOf == null || asOf.isEmpty()
+                ? java.time.LocalDate.now().toString() : asOf), closingBalance);
+    }
+
+    /** ACC-6 extension: lock a reconciled statement; lines on or before {@code asOf} are frozen. */
+    @PostMapping("/statement")
+    @Idempotent
+    @RequirePermissions(Permissions.BANK_ACCOUNT__UPDATE)
+    public Map<String, Object> lockStatement(@Valid @RequestBody LockStatementRequest dto) {
+        return svc.lockStatement(dto.bankAccountId(), FxRevaluationController.endOfDay(dto.asOf()),
+                dto.closingBalance(), dto.notes());
+    }
 }

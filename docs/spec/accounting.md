@@ -184,6 +184,20 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **`double_declining`** = 2 × the straight-line rate. Nest used 4 ×; `declining_balance` keeps Nest's 2 ×.
 - **Not built:** impairment, CIP capitalisation, units of production and per-category accounts.
 
+**ACC-6: bank reconciliation (B5)**
+
+- **D-B5: auto-match is always direction-aware.** A negative line takes an outbound payment, a positive line an inbound
+  payment. A payment already matched in any run is never taken again.
+  - Nest's unsigned rule (outgoing lines never matched; the same payment re-matched across runs) is gone.
+  - `signed` is still accepted.
+- **New routes (extension):**
+  - `GET /bank-reconciliation/statement?bankAccountId&asOf&closingBalance` (`bank_account:read`) proves
+    closing + outstanding book items = ledger + unrecorded statement items.
+  - `POST /bank-reconciliation/statement {bankAccountId, asOf, closingBalance, notes}` (`bank_account:update`) locks a
+    reconciled statement (V322). After that, lines on or before `asOf` cannot be imported, matched, unmatched or
+    excluded.
+- **Not built:** matching to GL lines, partial or grouped matches, matching rules, and journals for bank charges.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
