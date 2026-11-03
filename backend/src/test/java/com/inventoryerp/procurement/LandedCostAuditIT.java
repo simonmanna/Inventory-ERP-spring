@@ -203,6 +203,12 @@ class LandedCostAuditIT extends LandedCostFixtures {
                 Res c = call("POST", "/procurement/landed-cost-accruals/" + a.body().get("id").asString() + "/clear",
                         Map.of("voucherId", v), key());
                 assertThat(c.status()).as(c.raw().body()).isIn(200, 201);
+                if (actual < 1000) {
+                    // LC-4: a clear takes min(actual, remaining); the estimate above the actual is closed.
+                    Res closed = call("POST", "/procurement/landed-cost-accruals/" + a.body().get("id").asString()
+                            + "/close", null, key());
+                    assertThat(closed.status()).as(closed.raw().body()).isIn(200, 201);
+                }
                 assertBooks(s, moves("stock", String.valueOf(actual), "clearing", String.valueOf(-actual)));
                 assertThat(avg(p, w1)).isEqualByComparingTo(String.valueOf(100 + actual / 100));
             }

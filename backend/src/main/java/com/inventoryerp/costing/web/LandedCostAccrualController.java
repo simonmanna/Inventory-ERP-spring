@@ -34,11 +34,21 @@ public class LandedCostAccrualController {
             String scopeType,
             String scopeId,
             BigDecimal ratePct,
-            @Size(max = 500, message = "notes must be at most 500 characters") String notes) {}
+            @Size(max = 500, message = "notes must be at most 500 characters") String notes,
+            @Size(max = 200, message = "name must be at most 200 characters") String name,
+            String effectiveFrom,
+            String effectiveTo,
+            String rateType,
+            BigDecimal rate,
+            String currencyCode,
+            String uomId,
+            String weightBasis,
+            Integer expectedSettlementDays) {}
 
     public record AccrueRequest(@NotBlank(message = "goodsReceiptId should not be empty") String goodsReceiptId) {}
 
-    public record ClearRequest(@NotBlank(message = "voucherId should not be empty") String voucherId) {}
+    public record ClearRequest(@NotBlank(message = "voucherId should not be empty") String voucherId,
+            BigDecimal amount) {}
 
     private final LandedCostAccrualService accruals;
 
@@ -56,7 +66,9 @@ public class LandedCostAccrualController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.LANDED_COST__CONFIGURE)
     public Map<String, Object> saveRule(@Valid @RequestBody RuleRequest r) {
-        return accruals.saveRule(new RuleInput(r.scopeType(), r.scopeId(), r.ratePct(), r.notes()));
+        return accruals.saveRule(new RuleInput(r.scopeType(), r.scopeId(), r.ratePct(), r.notes(), r.name(),
+                r.effectiveFrom(), r.effectiveTo(), r.rateType(), r.rate(), r.currencyCode(), r.uomId(),
+                r.weightBasis(), r.expectedSettlementDays()));
     }
 
     @DeleteMapping("/landed-cost-accrual-rules/{id}")
@@ -78,6 +90,12 @@ public class LandedCostAccrualController {
         return accruals.reconciliation();
     }
 
+    @GetMapping("/landed-cost-accruals/monitor")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Map<String, Object> monitor() {
+        return accruals.monitor();
+    }
+
     @GetMapping("/landed-cost-accruals/{id}")
     @RequirePermissions(Permissions.LANDED_COST__READ)
     public Map<String, Object> get(@PathVariable String id) {
@@ -96,7 +114,14 @@ public class LandedCostAccrualController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__POST)
     public Map<String, Object> clear(@PathVariable String id, @Valid @RequestBody ClearRequest r) {
-        return accruals.clear(id, r.voucherId());
+        return accruals.clear(id, r.voucherId(), r.amount());
+    }
+
+    @PostMapping("/landed-cost-accruals/{id}/close")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.LANDED_COST__POST)
+    public Map<String, Object> close(@PathVariable String id) {
+        return accruals.close(id);
     }
 
     @PostMapping("/landed-cost-accruals/{id}/reverse")

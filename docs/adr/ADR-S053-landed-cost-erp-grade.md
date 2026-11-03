@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates) done.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates) and LC-4 done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -197,6 +197,34 @@ difference, drill-down), the classification and location mismatches, the open li
   happens while the completed order's WIP share is still pending cascade. A voucher whose WIP share was cascaded is
   refused (`reverse that run first`) — tested in LC-1.
 
+### LC-4 — accrual management (V294)
+
+- **Rules:** `name`, `effectiveFrom` / `effectiveTo`, `rateType` (`percent` of receipt value | `per_unit` in the rule's
+  `uomId` | `per_kg` on `weightBasis` net = `Product.weight` or gross = `Product.grossWeight`), `rate`, `currencyCode`,
+  `expectedSettlementDays` (default 30). Fixed precedence supplier > category > Incoterm > default; within a scope the
+  rule whose period covers the **receipt date**. A rule with a period that overlaps another active rule of the scope
+  is a 409 (`An active accrual rule for this scope overlaps <name> (<from> – <to>)`); a rule without a period replaces
+  the scope's other open-ended rule (the CM-6 behaviour). Per-unit quantities convert through the product's units;
+  per-kg with a missing weight is refused with the products listed; a foreign rule currency converts at the receipt
+  date (no rate → refused before anything is written).
+- **Partial clearing:** `LandedCostAccrual.clearedAmount` / `remainingAmount`, status `posted | partially_cleared |
+  cleared | reversed`. `clear` takes `min(the voucher's capitalised share on this receipt, remaining)` or an explicit
+  `amount` (refused above either: `Clearing <x> exceeds the remaining <y> of accrual <n>` / `… exceeds what voucher <c>
+  capitalised on this receipt`); one clear per voucher. Each clear unwinds pro rata to the original estimate, per
+  adjustment: the due share of its on-hand bucket (open adjunct first, the rest released since → COGS) and of its
+  consumed lines (to their targets), tracked in `LandedCostAccrualClearingLine`, so successive clears add up exactly;
+  the last clear takes exactly what is left. `close` unwinds the remainder (status `cleared`); `reverse` only before
+  any clear.
+- **Four effects kept apart** (`LandedCostAccrualClearing`): (1) accrual reversal — the cleared functional amount at
+  the receipt-date rate, with the rule currency amount and rate; (2) actual landed cost — the voucher's own posting at
+  its recognition rate (actual currency, amount, rate, functional); (3) estimate variance = (2) − (1) per clear, and
+  − remainder on `close`; (4) realised FX — the payment (PC-0), never on stock, WIP or COGS (tested: stock moves only by
+  the voucher's functional amount).
+- **Monitor** `GET /procurement/landed-cost-accruals/monitor`: open and partly cleared accruals with age bucket
+  (0-30 / 31-60 / 61-90 / 90+), overdue (past `expectedSettlementDate`), estimate, cleared, remaining, actual and
+  variance; bucket totals.
+- The 2156 reconciliation uses `remainingAmount`.
+
 ## Findings
 
 | # | Finding | Decision |
@@ -260,6 +288,15 @@ difference, drill-down), the classification and location mismatches, the open li
 - `GET /procurement/landed-cost-reports/reconciliation`, `GET /procurement/landed-cost-reports/trace`
   (`landed_cost:read`).
 - Period-close checklist item `landed_cost_lineage`.
+
+## API (LC-4, additive)
+
+- Rule body adds `name, effectiveFrom, effectiveTo, rateType, rate, currencyCode, uomId, weightBasis,
+  expectedSettlementDays`. Clear body adds optional `amount`. New `POST /procurement/landed-cost-accruals/{id}/close`
+  and `GET /procurement/landed-cost-accruals/monitor`. Accrual responses add `clearedAmount`, `remainingAmount`,
+  `expectedSettlementDate` and `clearings`.
+- Behaviour change: a clear no longer takes the whole estimate when the actual is lower — the remainder stays open
+  until another voucher clears it or it is closed (audit case 5 now closes it; its final books are unchanged).
 
 ## Tests
 
