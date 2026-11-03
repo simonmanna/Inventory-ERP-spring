@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 to LC-6 done.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-7 done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -266,6 +266,30 @@ records (dispositions, lineage lines, accrual clearings, stock ledger):
 The web report page has a tab per kind with CSV export. STANDARD adjunct releases are not attributed to individual
 sales in `profitability` (they are released per pool by the release run).
 
+### LC-7 — advanced (V295)
+
+- **Incoterm responsibility matrix** (Incoterms 2020): the kinds the seller bears — CFR / CPT freight; CIF / CIP
+  freight + insurance; DAP freight + insurance; DPU + handling; DDP + duty; E/F terms none. The voucher preview warns on
+  each charge whose kind the seller bears under the Incoterm of the voucher's shipment, else of the receipt's purchase
+  order (`Charge n (freight): the seller bears freight under CIF; check it is not already in the goods price`).
+  `PurchaseOrder.incoterm` and `Shipment.incoterm` (validated) are new. **Fix:** the CM-6 accrual rule by Incoterm read
+  the Incoterm from `Document` (sales invoices / bills) by the receipt's purchase-order id, so it never matched; it now
+  reads the shipment, else the purchase order.
+- **Customs tariff engine:** `CustomsTariff` lines — import country, HS code, origin, trade preference, period,
+  valuation basis (CIF = FOB + freight + insurance, FOB, transaction value), duty type (ad valorem, specific, compound,
+  exempt), additional duty, excise (on value + duty), legal reference, source, version. An edit (`PUT`) retires the line
+  and creates version n + 1; a past calculation is never altered. The line valid at the **declaration date** is used,
+  preference- and origin-specific lines first. `CustomsCalculation` stores the inputs, the tariff version and copies of
+  its rates and legal reference, and the outputs; a database trigger makes it immutable (only the link to the charge it
+  was used for may be set) and undeletable. A manual adjustment needs `landed_cost:customs_adjust` and a reason, and is
+  audited. Nothing is posted or capitalised by a calculation: its total is entered as a charge with the treatment the
+  component and tax policy give.
+- **Allocation templates** (`LandedCostTemplate`): named charge presets (kind / component, treatment, basis, bill mode,
+  supplier, optional `ratePct` of goods value); `apply` returns charge drafts for given receipts.
+- **Freight and supplier cost history:** report kind `freight-history` — per month, supplier and kind: charges, amount,
+  quantity, cost per unit and % of goods value.
+- Web: *Customs* tab on Landed Cost Control (calculator, tariff lines); *Freight & supplier cost history* report tab.
+
 ## Findings
 
 | # | Finding | Decision |
@@ -338,6 +362,14 @@ sales in `profitability` (they are released per pool by the release run).
   `expectedSettlementDate` and `clearings`.
 - Behaviour change: a clear no longer takes the whole estimate when the actual is lower — the remainder stays open
   until another voucher clears it or it is closed (audit case 5 now closes it; its final books are unchanged).
+
+## API (LC-7, additive)
+
+- `GET|POST /procurement/customs/tariffs`, `PUT|DELETE /procurement/customs/tariffs/{id}`;
+  `GET|POST /procurement/customs/calculations`, `GET …/{id}`, `POST …/{id}/link`;
+  `GET|POST /procurement/landed-cost-templates`, `DELETE …/{id}`, `POST …/{id}/apply`;
+  `GET /procurement/landed-cost-reports/analysis/freight-history`. Shipments accept `incoterm`.
+- Permission `landed_cost:customs_adjust` (Administrator).
 
 ## Tests
 

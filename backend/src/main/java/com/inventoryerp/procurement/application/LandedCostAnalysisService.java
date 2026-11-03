@@ -258,6 +258,32 @@ public class LandedCostAnalysisService {
     }
 
     /**
+     * Freight and supplier cost history (LC-7): per month, supplier and charge kind — charges, base amount, the goods
+     * value and quantity they landed on, and the cost per unit and as % of goods value.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> freightHistory(LocalDate from, LocalDate to) {
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT to_char(l.date, 'YYYY-MM') AS month,"
+                + " coalesce(pt.name, '(none)') AS supplier, c.kind, count(DISTINCT c.id) AS charges,"
+                + " sum(a.\"allocatedAmount\") AS amount, sum(a.\"receivedQty\") AS quantity, sum(a.\"basisValue\") FILTER"
+                + " (WHERE a.\"basisMethod\" = 'value') AS \"goodsValue\" FROM \"LandedCostCharge\" c JOIN \"LandedCost\" l ON"
+                + " l.id = c.\"landedCostId\" JOIN \"LandedCostAllocation\" a ON a.\"chargeId\" = c.id LEFT JOIN \"Partner\" pt"
+                + " ON pt.id = c.\"supplierId\" WHERE" + POSTED + " GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
+                .params(period(from, to)));
+        for (Map<String, Object> r : rows) {
+            BigDecimal amount = SqlRows.dec(r, "amount");
+            BigDecimal qty = SqlRows.dec(r, "quantity");
+            BigDecimal goods = r.get("goodsValue") == null ? null : SqlRows.dec(r, "goodsValue");
+            r.put("amount", d(amount));
+            r.put("perUnit", qty.signum() == 0 ? null : JsNumbers.dec(amount.divide(qty, 6, RoundingMode.HALF_UP)));
+            r.put("pctOfGoods", goods == null || goods.signum() == 0 ? null : JsNumbers.dec(amount
+                    .multiply(BigDecimal.valueOf(100)).divide(goods, 2, RoundingMode.HALF_UP)));
+            r.put("goodsValue", goods == null ? null : d(goods));
+        }
+        return rows;
+    }
+
+    /**
      * Operational cost structure per completed production run in the period: input quantity, good output in the output
      * unit, yield (output ÷ input), materials (of which landed cost), conversion, output value and cost per output unit
      * — unit cost on the actual good output, never on the input.

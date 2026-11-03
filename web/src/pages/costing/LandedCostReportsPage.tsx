@@ -248,6 +248,7 @@ const ANALYSIS: [string, string][] = [
   ['by-cost-centre', tx('By cost centre')],
   ['profitability', tx('Profitability by cost layer')],
   ['production-structure', tx('Production cost structure')],
+  ['freight-history', tx('Freight & supplier cost history')],
 ];
 
 function AnalysisTable({ kind, from, to }: { kind: string; from: string; to: string }) {

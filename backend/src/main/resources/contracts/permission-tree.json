@@ -163,7 +163,8 @@
     "configure": "landed_cost:configure",
     "overrideTax": "landed_cost:override_tax",
     "resolveLineage": "landed_cost:resolve_lineage",
-    "overrideDuplicate": "landed_cost:override_duplicate"
+    "overrideDuplicate": "landed_cost:override_duplicate",
+    "customsAdjust": "landed_cost:customs_adjust"
   },
   "budget": {
     "read": "budget:read",

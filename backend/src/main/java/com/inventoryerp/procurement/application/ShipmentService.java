@@ -26,10 +26,32 @@ public class ShipmentService {
 
     /** Create / update body (dates YYYY-MM-DD). */
     public record ShipmentInput(String reference, String supplierId, String transportMode, String billOfLading,
-            String origin, String etd, String eta, String arrivedAt, String status, String costCenterId, String notes) {}
+            String origin, String etd, String eta, String arrivedAt, String status, String costCenterId, String notes,
+            String incoterm) {
+
+        public ShipmentInput(String reference, String supplierId, String transportMode, String billOfLading,
+                String origin, String etd, String eta, String arrivedAt, String status, String costCenterId,
+                String notes) {
+            this(reference, supplierId, transportMode, billOfLading, origin, etd, eta, arrivedAt, status, costCenterId,
+                    notes, null);
+        }
+    }
 
     private final JdbcClient jdbc;
     private final SequenceService seq;
+
+    /** Incoterms 2020 (LC-7): the terms the landed-cost responsibility matrix knows. */
+    private static String incoterm(String v) {
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        String t = v.trim().toUpperCase();
+        if (!LandedCostCustomsService.SELLER_PAYS.containsKey(t)) {
+            throw ApiException.badRequest("incoterm must be one of the following values: "
+                    + String.join(", ", new java.util.TreeSet<>(LandedCostCustomsService.SELLER_PAYS.keySet())));
+        }
+        return t;
+    }
 
     public ShipmentService(JdbcClient jdbc, SequenceService seq) {
         this.jdbc = jdbc;
@@ -74,11 +96,11 @@ public class ShipmentService {
         String id = UUID.randomUUID().toString();
         String code = seq.next("shipment", "SHP-", 5);
         jdbc.sql("INSERT INTO \"Shipment\" (id, \"organizationId\", code, reference, \"supplierId\", \"transportMode\","
-                        + " \"billOfLading\", origin, etd, eta, \"arrivedAt\", status, \"costCenterId\", notes, \"createdBy\")"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?::date, ?::date, ?, ?, ?, ?)")
+                        + " \"billOfLading\", origin, etd, eta, \"arrivedAt\", status, \"costCenterId\", notes, \"createdBy\","
+                        + " incoterm) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?::date, ?::date, ?, ?, ?, ?, ?)")
                 .params(id, org(), code, in.reference(), in.supplierId(), in.transportMode(), in.billOfLading(),
                         in.origin(), in.etd(), in.eta(), in.arrivedAt(), in.status() == null ? "open" : in.status(),
-                        in.costCenterId(), in.notes(), user())
+                        in.costCenterId(), in.notes(), user(), incoterm(in.incoterm()))
                 .update();
         return get(id);
     }
@@ -92,9 +114,10 @@ public class ShipmentService {
                         + " \"billOfLading\"), origin = COALESCE(?, origin), etd = COALESCE(?::date, etd), eta ="
                         + " COALESCE(?::date, eta), \"arrivedAt\" = COALESCE(?::date, \"arrivedAt\"), status = COALESCE(?,"
                         + " status), \"costCenterId\" = COALESCE(?, \"costCenterId\"), notes = COALESCE(?, notes),"
-                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                        + " incoterm = COALESCE(?, incoterm), \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(in.reference(), in.supplierId(), in.transportMode(), in.billOfLading(), in.origin(), in.etd(),
-                        in.eta(), in.arrivedAt(), in.status(), in.costCenterId(), in.notes(), id, org())
+                        in.eta(), in.arrivedAt(), in.status(), in.costCenterId(), in.notes(), incoterm(in.incoterm()), id,
+                        org())
                 .update();
         return get(id);
     }

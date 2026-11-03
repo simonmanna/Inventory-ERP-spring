@@ -236,6 +236,7 @@ public class LandedCostVoucherController {
             case "by-cost-centre" -> analysis.byCostCentre(f, t);
             case "profitability" -> analysis.profitability(f, t);
             case "production-structure" -> analysis.productionStructure(f, t);
+            case "freight-history" -> analysis.freightHistory(f, t);
             default -> throw ApiException.notFound("Unknown landed cost report " + kind);
         };
     }

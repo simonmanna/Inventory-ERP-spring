@@ -206,6 +206,6 @@ class ImportLandedScenarioIT extends ApiTestSupport {
         assertThat(rev.get("status").asString()).isEqualTo("reversed");
         assertThat(call("POST", "/procurement/landed-costs/" + lcId + "/reverse", null, key()).status())
                 .isEqualTo(400);
-        assertThat(assertAuthorizationMatrix(LandedCostAccrualController.class)).isEqualTo(9);
+        assertThat(assertAuthorizationMatrix(LandedCostAccrualController.class)).isEqualTo(11);
     }
 }

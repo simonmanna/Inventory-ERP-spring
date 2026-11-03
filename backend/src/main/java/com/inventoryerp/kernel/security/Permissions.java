@@ -113,6 +113,7 @@ public final class Permissions {
     public static final String LANDED_COST__OVERRIDE_TAX = "landed_cost:override_tax";
     public static final String LANDED_COST__RESOLVE_LINEAGE = "landed_cost:resolve_lineage";
     public static final String LANDED_COST__OVERRIDE_DUPLICATE = "landed_cost:override_duplicate";
+    public static final String LANDED_COST__CUSTOMS_ADJUST = "landed_cost:customs_adjust";
     public static final String BUDGET__READ = "budget:read";
     public static final String BUDGET__CREATE = "budget:create";
     public static final String BUDGET__UPDATE = "budget:update";
@@ -779,6 +780,7 @@ public final class Permissions {
             "landed_cost:override_tax",
             "landed_cost:resolve_lineage",
             "landed_cost:override_duplicate",
+            "landed_cost:customs_adjust",
             "budget:read",
             "budget:create",
             "budget:update",

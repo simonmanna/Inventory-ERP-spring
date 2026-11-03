@@ -251,9 +251,10 @@ public class LandedCostAccrualService {
     @Transactional
     public Map<String, Object> accrue(String goodsReceiptId) {
         Map<String, Object> grn = SqlRows.one(jdbc.sql("SELECT g.id, g.\"receiptNumber\", g.status::text AS status,"
-                + " g.\"reversedAt\", g.\"partnerId\", g.\"receivedAt\", d.incoterm FROM \"GoodsReceiptNote\" g LEFT JOIN"
-                + " \"Document\" d ON"
-                + " d.id = g.\"purchaseOrderId\" WHERE g.id = ? AND g.\"organizationId\" = ? AND g.\"deletedAt\" IS NULL")
+                + " g.\"reversedAt\", g.\"partnerId\", g.\"receivedAt\", coalesce(sh.incoterm, po.incoterm) AS incoterm FROM"
+                + " \"GoodsReceiptNote\" g LEFT JOIN \"PurchaseOrder\" po ON po.id = g.\"purchaseOrderId\" LEFT JOIN"
+                + " \"ShipmentReceipt\" sr ON sr.\"goodsReceiptId\" = g.id LEFT JOIN \"Shipment\" sh ON sh.id = sr.\"shipmentId\""
+                + " WHERE g.id = ? AND g.\"organizationId\" = ? AND g.\"deletedAt\" IS NULL")
                 .params(goodsReceiptId, org()));
         if (grn == null) {
             throw ApiException.notFound("Goods receipt not found");

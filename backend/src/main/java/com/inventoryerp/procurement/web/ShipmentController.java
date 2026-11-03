@@ -38,7 +38,8 @@ public class ShipmentController {
             String origin, @Pattern(regexp = DAY, message = DAY_MSG) String etd,
             @Pattern(regexp = DAY, message = DAY_MSG) String eta,
             @Pattern(regexp = DAY, message = DAY_MSG) String arrivedAt,
-            @OneOf({"open", "in_transit", "arrived", "closed"}) String status, String costCenterId, String notes) {}
+            @OneOf({"open", "in_transit", "arrived", "closed"}) String status, String costCenterId, String notes,
+            String incoterm) {}
 
     /** Attach-receipt body. */
     public record ReceiptRequest(
@@ -62,7 +63,7 @@ public class ShipmentController {
 
     private static ShipmentInput input(ShipmentRequest d) {
         return new ShipmentInput(d.reference(), d.supplierId(), d.transportMode(), d.billOfLading(), d.origin(), d.etd(),
-                d.eta(), d.arrivedAt(), d.status(), d.costCenterId(), d.notes());
+                d.eta(), d.arrivedAt(), d.status(), d.costCenterId(), d.notes(), d.incoterm());
     }
 
     // ------------------------------------------------------------------ shipments

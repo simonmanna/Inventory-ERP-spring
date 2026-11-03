@@ -149,13 +149,14 @@ public class LandedCostVoucherService {
     private final AccountingPolicyService policies;
     private final SettingResolverService settings;
     private final ApprovalLimitService limits;
+    private final LandedCostCustomsService customs;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
             ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
             CostLineageService lineage, AccountingPolicyService policies, SettingResolverService settings,
-            ApprovalLimitService limits) {
+            ApprovalLimitService limits, LandedCostCustomsService customs) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -172,6 +173,7 @@ public class LandedCostVoucherService {
         this.policies = policies;
         this.settings = settings;
         this.limits = limits;
+        this.customs = customs;
     }
 
     private static BigDecimal dp6(BigDecimal v) {
@@ -324,6 +326,10 @@ public class LandedCostVoucherService {
             warnings.add("Part of the charge (" + JsNumbers.dec(parked) + ") cannot follow its goods (transfer still in"
                     + " transit, unpaired, or a lineage defect) and will be parked in 1396");
         }
+        @SuppressWarnings("unchecked")
+        List<String> receiptIds = ((List<Map<String, Object>>) lc.get("receipts")).stream()
+                .map(r -> (String) r.get("id")).toList();
+        warnings.addAll(customs.incotermWarnings(receiptIds, chargesOf(lc)));
         Map<String, BigDecimal> approved = approvedDisposition(id);
         if (approved != null && !approved.equals(disposition)) {
             warnings.add("Inventory moved since approval: " + difference(approved, disposition).keySet().size()

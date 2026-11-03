@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -63,12 +66,14 @@ export function LandedCostControlPage() {
           <TabsTrigger value="exceptions">{tx('Exceptions')}</TabsTrigger>
           <TabsTrigger value="accruals">{tx('Accruals')}</TabsTrigger>
           <TabsTrigger value="overrides">{tx('Duplicate invoices')}</TabsTrigger>
+          <TabsTrigger value="customs">{tx('Customs')}</TabsTrigger>
           <TabsTrigger value="trace">{tx('Trace')}</TabsTrigger>
         </TabsList>
         <TabsContent value="reconciliation"><ReconciliationTab /></TabsContent>
         <TabsContent value="exceptions"><ExceptionsTab /></TabsContent>
         <TabsContent value="accruals"><AccrualsTab /></TabsContent>
         <TabsContent value="overrides"><OverridesTab /></TabsContent>
+        <TabsContent value="customs"><CustomsTab /></TabsContent>
         <TabsContent value="trace"><TraceTab initial={params.get('voucherId') ?? ''} /></TabsContent>
       </Tabs>
     </div>
@@ -476,6 +481,67 @@ export function TraceTree({ voucherId }: { voucherId: string }) {
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+/** LC-7: versioned customs tariff lines and an immutable duty calculation (its total becomes a charge by hand). */
+function CustomsTab() {
+  const tariffs = useQuery({ queryKey: ['customs-tariffs'], queryFn: async () => (await api.get<any[]>('/procurement/customs/tariffs')).data });
+  const calcs = useQuery({ queryKey: ['customs-calculations'], queryFn: async () => (await api.get<any[]>('/procurement/customs/calculations')).data });
+  const [f, setF] = useState<Record<string, string>>({ importCountry: '', hsCode: '', originCountry: '', declarationDate: new Date().toISOString().slice(0, 10), fobValue: '', freight: '', insurance: '', transactionValue: '', quantity: '' });
+  const [result, setResult] = useState<any>(null);
+  const run = async () => {
+    try {
+      const body: Record<string, unknown> = { importCountry: f.importCountry, hsCode: f.hsCode, declarationDate: f.declarationDate, originCountry: f.originCountry || undefined };
+      for (const k of ['fobValue', 'freight', 'insurance', 'transactionValue', 'quantity']) if (f[k]) body[k] = Number(f[k]);
+      setResult(await idempotentPost<any>('/procurement/customs/calculations', body));
+      calcs.refetch();
+    } catch (e) {
+      notify.error(tx('Could not calculate'), errMsg(e));
+    }
+  };
+  const field = (k: string, label: string, type = 'text') => (
+    <div className="space-y-1"><Label>{label}</Label><Input type={type} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></div>
+  );
+  return (
+    <div className="space-y-4 pt-4">
+      <Card>
+        <CardHeader><CardTitle className="text-base">{tx('Duty calculation')}</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-2 md:grid-cols-5">
+            {field('importCountry', tx('Import country'))}{field('hsCode', tx('HS code'))}{field('originCountry', tx('Origin'))}
+            {field('declarationDate', tx('Declaration date'), 'date')}{field('quantity', tx('Quantity'), 'number')}
+            {field('fobValue', tx('FOB value'), 'number')}{field('freight', tx('Freight'), 'number')}{field('insurance', tx('Insurance'), 'number')}
+            {field('transactionValue', tx('Transaction value'), 'number')}
+            <div className="flex items-end"><Button onClick={run} disabled={!f.importCountry || !f.hsCode}>{tx('Calculate')}</Button></div>
+          </div>
+          {result && (
+            <p className="text-sm">{tx('Customs value')} {money(Number(result.customsValue))} · {tx('duty')} {money(Number(result.dutyAmount))} · {tx('additional')} {money(Number(result.additionalAmount))} · {tx('excise')} {money(Number(result.exciseAmount))} · <b>{tx('total')} {money(Number(result.totalAmount))}</b> <span className="text-muted-foreground">({tx('tariff version {{v}}', { v: result.tariffVersion })}{result.legalReference ? ` · ${result.legalReference}` : ''})</span></p>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle className="text-base">{tx('Tariff lines')}</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow><TableHead>{tx('Country')}</TableHead><TableHead>{tx('HS code')}</TableHead><TableHead>{tx('Origin / preference')}</TableHead><TableHead>{tx('Duty')}</TableHead><TableHead>{tx('Basis')}</TableHead><TableHead>{tx('Effective')}</TableHead><TableHead>{tx('Version')}</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {(tariffs.data ?? []).map((t: any) => (
+                <TableRow key={t.id}>
+                  <TableCell>{t.importCountry}</TableCell><TableCell className="font-mono text-xs">{t.hsCode}</TableCell>
+                  <TableCell>{t.originCountry ?? '—'} {t.preferenceCode ? `· ${t.preferenceCode}` : ''}</TableCell>
+                  <TableCell>{t.dutyType} {Number(t.adValoremPct) ? `${Number(t.adValoremPct)} %` : ''} {Number(t.specificAmount) ? `+ ${Number(t.specificAmount)}/${t.specificUom ?? tx('unit')}` : ''}</TableCell>
+                  <TableCell>{String(t.valuationBasis).toUpperCase()}</TableCell>
+                  <TableCell className="text-xs">{date(t.effectiveFrom)} – {t.effectiveTo ? date(t.effectiveTo) : '…'}</TableCell>
+                  <TableCell>v{t.version}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <p className="pt-2 text-xs text-muted-foreground">{tx('Editing a tariff line creates a new version; past calculations keep the rates and legal reference they used.')} {tx('{{n}} calculation(s) on record.', { n: calcs.data?.length ?? 0 })}</p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
