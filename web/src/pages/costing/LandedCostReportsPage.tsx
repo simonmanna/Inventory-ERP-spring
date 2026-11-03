@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { downloadCsv } from '@/pages/costing/LandedCostControlPage';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,12 +42,13 @@ export function LandedCostReportsPage() {
         <div className="space-y-1"><Label>{tx('To')}</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
       </div>
       <Tabs defaultValue="shipment">
-        <TabsList>
+        <TabsList className="flex h-auto w-full flex-wrap justify-start">
           <TabsTrigger value="shipment">{tx('By shipment')}</TabsTrigger>
           <TabsTrigger value="item">{tx('By item')}</TabsTrigger>
           <TabsTrigger value="supplier">{tx('By supplier')}</TabsTrigger>
           <TabsTrigger value="margin">{tx('Product margin')}</TabsTrigger>
           <TabsTrigger value="clearing">{tx('Clearing account')}</TabsTrigger>
+          {ANALYSIS.map(([k, label]) => <TabsTrigger key={k} value={k}>{label}</TabsTrigger>)}
           {has(PERMISSIONS.landedCost.configure) && <TabsTrigger value="components">{tx('Cost components')}</TabsTrigger>}
         </TabsList>
 
@@ -130,6 +134,9 @@ export function LandedCostReportsPage() {
         </TabsContent>
 
         <TabsContent value="components"><ComponentsTab /></TabsContent>
+        {ANALYSIS.map(([k]) => (
+          <TabsContent key={k} value={k}><AnalysisTable kind={k} from={from} to={to} /></TabsContent>
+        ))}
       </Tabs>
     </div>
   );
@@ -232,3 +239,49 @@ function ComponentsTab() {
 }
 
 export default LandedCostReportsPage;
+
+/** LC-6 analysis reports (ADR-S053): variance, valuation impact, by warehouse / cost centre, profitability, production. */
+const ANALYSIS: [string, string][] = [
+  ['variance', tx('Estimate vs actual')],
+  ['valuation-impact', tx('Valuation impact')],
+  ['by-warehouse', tx('By warehouse')],
+  ['by-cost-centre', tx('By cost centre')],
+  ['profitability', tx('Profitability by cost layer')],
+  ['production-structure', tx('Production cost structure')],
+];
+
+function AnalysisTable({ kind, from, to }: { kind: string; from: string; to: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['landed-cost-analysis', kind, from, to],
+    enabled: !!from && !!to,
+    queryFn: async () => (await api.get<any>(`/procurement/landed-cost-reports/analysis/${kind}`, { params: { from, to } })).data,
+  });
+  if (isLoading) return <p className="p-4 text-sm text-muted-foreground">{tx('Loading…')}</p>;
+  if (error) return <p className="p-4 text-sm text-destructive">{errMsg(error)}</p>;
+  const rows: Record<string, unknown>[] = Array.isArray(data) ? data : data?.products ?? [];
+  const cols = rows.length ? Object.keys(rows[0]).filter((c) => !/Id$|^id$/.test(c)) : [];
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">{ANALYSIS.find(([k]) => k === kind)?.[1]}</CardTitle>
+        <Button variant="outline" size="sm" disabled={!rows.length} onClick={() => downloadCsv(`landed-cost-${kind}-${from}-${to}`, rows)}>{tx('Export CSV')}</Button>
+      </CardHeader>
+      <CardContent className="overflow-x-auto">
+        {!rows.length && <p className="text-sm text-muted-foreground">{tx('Nothing in this period.')}</p>}
+        {rows.length > 0 && (
+          <Table>
+            <TableHeader><TableRow>{cols.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
+            <TableBody>
+              {rows.map((r, i) => (
+                <TableRow key={i}>{cols.map((c) => <TableCell key={c} className="whitespace-nowrap text-sm">{r[c] == null ? '' : typeof r[c] === 'object' ? JSON.stringify(r[c]) : String(r[c])}</TableCell>)}</TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {kind === 'profitability' && data?.sellingAndAdminExpenses != null && (
+          <p className="pt-3 text-sm text-muted-foreground">{tx('Selling and administrative expenses in the period (not product cost)')}: <b>{money(Number(data.sellingAndAdminExpenses))}</b></p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

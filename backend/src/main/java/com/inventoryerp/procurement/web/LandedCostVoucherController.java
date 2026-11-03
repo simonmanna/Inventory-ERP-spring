@@ -6,6 +6,7 @@ import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.procurement.application.LandedCostAnalysisService;
 import com.inventoryerp.procurement.application.LandedCostReconciliationService;
 import com.inventoryerp.procurement.application.LandedCostReportService;
 import com.inventoryerp.procurement.application.LandedCostVoucherService;
@@ -83,12 +84,14 @@ public class LandedCostVoucherController {
     private final LandedCostVoucherService vouchers;
     private final LandedCostReportService reports;
     private final LandedCostReconciliationService reconciliation;
+    private final LandedCostAnalysisService analysis;
 
     public LandedCostVoucherController(LandedCostVoucherService vouchers, LandedCostReportService reports,
-            LandedCostReconciliationService reconciliation) {
+            LandedCostReconciliationService reconciliation, LandedCostAnalysisService analysis) {
         this.vouchers = vouchers;
         this.reports = reports;
         this.reconciliation = reconciliation;
+        this.analysis = analysis;
     }
 
     private static VoucherInput input(VoucherRequest dto) {
@@ -220,6 +223,22 @@ public class LandedCostVoucherController {
     }
 
     // ------------------------------------------------------------------ reports
+
+    @GetMapping("/landed-cost-reports/analysis/{kind}")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Object analysis(@PathVariable String kind, @RequestParam String from, @RequestParam String to) {
+        LocalDate f = day(from, "from");
+        LocalDate t = day(to, "to");
+        return switch (kind) {
+            case "variance" -> analysis.variance(f, t);
+            case "valuation-impact" -> analysis.valuationImpact(f, t);
+            case "by-warehouse" -> analysis.byWarehouse(f, t);
+            case "by-cost-centre" -> analysis.byCostCentre(f, t);
+            case "profitability" -> analysis.profitability(f, t);
+            case "production-structure" -> analysis.productionStructure(f, t);
+            default -> throw ApiException.notFound("Unknown landed cost report " + kind);
+        };
+    }
 
     @GetMapping("/landed-cost-reports/reconciliation")
     @RequirePermissions(Permissions.LANDED_COST__READ)

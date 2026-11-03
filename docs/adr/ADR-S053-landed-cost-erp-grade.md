@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates), LC-4 and LC-5 done.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-6 done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -248,6 +248,23 @@ difference, drill-down), the classification and location mismatches, the open li
   for 2,406 older phrases, unchanged by this phase).
 - Not done: the historical tax review list (`taxRecoverable = NULL`) — the post-time 400 names each charge; the GRN
   panel buttons (reverse / create voucher from this receipt).
+
+### LC-6 — reports
+
+`GET /procurement/landed-cost-reports/analysis/{kind}?from&to` (`landed_cost:read`), built only on what the engine
+records (dispositions, lineage lines, accrual clearings, stock ledger):
+
+| kind | Content |
+|---|---|
+| `variance` | Per accrual clearing: estimate cleared, actual, estimate variance, and the realised FX of the payments of the voucher's generated / linked bills (pro rata to each payment allocation) in its own column |
+| `valuation-impact` | What the period's posted vouchers put into stock / adjunct / parked per warehouse, product and costing method |
+| `by-warehouse` | The same, per warehouse |
+| `by-cost-centre` | Charges by the charge's cost centre, else the voucher's: capitalised vs expensed |
+| `profitability` | The units sold in the period, cost of sales split by the cost layers those very units carried: landed (lineage lines whose consumption is the sale, **plus** the share of a landed value row followed to sales after posting), conversion (overhead settlement, cost adjustment runs, quarry), distribution (branch transfer freight), purchase = the rest; gross profit before / after landed cost. Selling and administrative expenses (`operating_expense` accounts) shown apart, never in product cost |
+| `production-structure` | Per completed production run: input, good output in the output unit, yield = output ÷ input, materials (of which landed via WIP), conversion, total and **cost per good output unit** (never per input) |
+
+The web report page has a tab per kind with CSV export. STANDARD adjunct releases are not attributed to individual
+sales in `profitability` (they are released per pool by the release run).
 
 ## Findings
 
