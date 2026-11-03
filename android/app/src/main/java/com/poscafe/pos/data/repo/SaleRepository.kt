@@ -47,6 +47,8 @@ class SaleRepository @Inject constructor(
         val provisionalNumber: String,
         val totals: CartEngine.CartTotals,
         val occurredAt: Instant,
+        /** Cash to hand back on an overpay; 0 when the legs paid exactly. */
+        val change: Double = 0.0,
     )
 
     private val json = Json { encodeDefaults = false }
@@ -159,7 +161,7 @@ class SaleRepository @Inject constructor(
             )
         }
 
-        return CompletedSale(localId, provisionalNumber, totals, occurredAt)
+        return CompletedSale(localId, provisionalNumber, totals, occurredAt, change = cashHanded?.let { it - totals.total } ?: 0.0)
     }
 
     /** Legs that pay exactly [total]: any overpay (cash change) comes off the cash legs. */

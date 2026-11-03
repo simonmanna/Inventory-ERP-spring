@@ -255,7 +255,9 @@ internal fun CatalogCard(
             ),
     ) {
         Column(Modifier.padding(8.dp)) {
-            Box(Modifier.fillMaxWidth().aspectRatio(1.2f)) {
+            // No photo: a short initial banner, so a phone shows a few rows of items per
+            // screen instead of two cards of empty placeholder.
+            Box(Modifier.fillMaxWidth().aspectRatio(if (imageUrl == null) 2.6f else 1.2f)) {
                 ItemImage(imageUrl, name, Modifier.fillMaxSize())
                 if (inCart) {
                     Surface(

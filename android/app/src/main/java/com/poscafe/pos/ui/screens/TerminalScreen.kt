@@ -259,6 +259,7 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
     }
 
     val paymentMethods by vm.paymentMethods.collectAsStateWithLifecycle()
+    LaunchedEffect(showCheckout, splitCheckout) { if (showCheckout || splitCheckout) vm.clearError() }
 
     if (showCheckout) {
         CheckoutSheet(
@@ -277,6 +278,7 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
     if (showSplit) {
         SplitBillDialog(
             lines = vm.cart,
+            totalOf = vm::totalsOf,
             onConfirm = { ids -> splitSelection = ids; showSplit = false; splitCheckout = true },
             onDismiss = { showSplit = false },
         )
@@ -284,7 +286,7 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
 
     if (splitCheckout) {
         CheckoutSheet(
-            total = CartEngine.totals(vm.cart.filter { it.lineId in splitSelection }).total,
+            total = vm.totalsOf(splitSelection).total,
             charging = vm.charging,
             error = vm.error,
             hasCustomer = selectedCustomer != null,
@@ -523,7 +525,7 @@ internal fun TerminalHeader(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = onSearchQueryChanged,
-                    placeholder = { Text("Search by name, SKU, or barcode…") },
+                    placeholder = { Text("Search name, SKU, barcode", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(20.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty()) {
@@ -536,7 +538,8 @@ internal fun TerminalHeader(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { onSearch(searchQuery) }),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    // No fixed height: at large font scales a 48dp box clips the text.
+                    modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onScanBarcode) {
                     Icon(

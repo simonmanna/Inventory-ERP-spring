@@ -114,7 +114,10 @@ internal fun CheckoutSheet(
 
     var method by remember { mutableStateOf("cash") }
     // The configured tile picked (its receiving account travels with the tender).
-    val tiles = remember(methods, hasCustomer) { methods.filter { it.kind != "store_credit" || hasCustomer } }
+    // Cash first: it is the common tender and the default selection.
+    val tiles = remember(methods, hasCustomer) {
+        methods.filter { it.kind != "store_credit" || hasCustomer }.sortedBy { if (it.kind == "cash") 0 else 1 }
+    }
     var tileId by remember(tiles) { mutableStateOf(tiles.firstOrNull { it.kind == "cash" }?.id ?: tiles.firstOrNull()?.id) }
     val tile = tiles.firstOrNull { it.id == tileId }
     LaunchedEffect(tile) { tile?.let { method = it.kind } }
@@ -336,11 +339,13 @@ internal fun tenderLabel(method: String): String = when (method) {
 @Composable
 internal fun SplitBillDialog(
     lines: List<CartEngine.CartLine>,
+    /** Bill total for a line subset, including the whole-order discount the sale carries. */
+    totalOf: (Set<String>) -> CartEngine.CartTotals,
     onConfirm: (Set<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val selected = remember { mutableStateListOf<String>() }
-    val selectedTotal = CartEngine.totals(lines.filter { it.lineId in selected }).total
+    val selectedTotal = totalOf(selected.toSet()).total
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = MaterialTheme.shapes.extraLarge,
@@ -414,6 +419,10 @@ internal fun PayMethodCard(
                 label,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
     }
@@ -472,6 +481,15 @@ internal fun SuccessOverlay(sale: SaleRepository.CompletedSale, onNewOrder: () -
                             style = MaterialTheme.typography.displaySmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
+                        if (sale.change > 0.005) {
+                            Spacer(Modifier.height(12.dp))
+                            Text("Change due", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                Money.format(sale.change),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                         Spacer(Modifier.height(24.dp))
                         PrimaryButton(
                             text = "New order",

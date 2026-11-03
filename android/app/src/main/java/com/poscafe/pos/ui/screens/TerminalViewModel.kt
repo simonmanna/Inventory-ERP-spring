@@ -349,6 +349,8 @@ class TerminalViewModel @Inject constructor(
                 ),
             )
             cart = emptyList()
+            selectedCustomer = null
+            orderDiscountPercent = 0.0
         }
     }
 
@@ -360,7 +362,12 @@ class TerminalViewModel @Inject constructor(
                     hold.linesJson,
                 )
             }.getOrDefault(emptyList())
-            if (lines.isNotEmpty()) cart = lines
+            if (lines.isEmpty()) return@launch
+            // Recalled lines join whatever is already rung up (never overwrite a live cart),
+            // and the hold is consumed so it can't be recalled — and charged — twice.
+            cart = cart + lines
+            if (selectedCustomer == null) hold.partnerId?.let { pid -> selectedCustomer = customers.value.find { it.id == pid } }
+            holdDao.softDelete(hold.id)
         }
     }
 
@@ -636,6 +643,13 @@ class TerminalViewModel @Inject constructor(
     }
 
     fun dismissSuccess() { successSale = null }
+
+    /** A stale message (e.g. "Select a table first") must not greet the next checkout. */
+    fun clearError() { error = null }
+
+    /** Totals of a split-bill subset, with the whole-order discount the sale will carry. */
+    fun totalsOf(lineIds: Set<String>): CartEngine.CartTotals =
+        CartEngine.totals(cart.filter { it.lineId in lineIds }, orderDiscountPercent)
 
     companion object {
         const val SELECT_TABLE = "Select a table first, or choose Takeaway."
