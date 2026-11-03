@@ -54,6 +54,34 @@ jobs:
         with:
           name: backend-test-reports
           path: backend/build/reports/tests
+      # ACC-0 known accounting defects (docs/accounting/ACCOUNTING-TEST-STRATEGY.md). Test failures are expected and
+      # non-blocking (ignoreFailures); compile/Docker errors or zero discovered tests fail this step (blocking).
+      - name: Accounting known-defect verification (acc0VerificationTest)
+        run: ./gradlew acc0VerificationTest --no-daemon
+      - name: Accounting known-defect summary
+        if: always()
+        run: |
+          dir=build/test-results/acc0VerificationTest
+          if ! ls "$dir"/TEST-*.xml >/dev/null 2>&1; then
+            echo "::error::acc0VerificationTest produced no JUnit XML (infrastructure failure)"; exit 1
+          fi
+          {
+            echo "### Accounting known defects (expected failures until their ACC phase)"
+            echo "| Class | Tests | Failures | Errors | Skipped |"
+            echo "|---|---|---|---|---|"
+            for f in "$dir"/TEST-*.xml; do
+              head -c 2000 "$f" | grep -o '<testsuite [^>]*>' | head -1 | sed -E \
+                's/.*name="([^"]*)".*tests="([0-9]+)".*skipped="([0-9]+)".*failures="([0-9]+)".*errors="([0-9]+)".*/| \1 | \2 | \4 | \5 | \3 |/'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload accounting known-defect reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acc0-verification-reports
+          path: |
+            backend/build/reports/tests/acc0VerificationTest
+            backend/build/test-results/acc0VerificationTest
 
   license-server:
     name: Licence server build, tests, quality gates

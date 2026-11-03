@@ -111,7 +111,7 @@ tasks.withType<Test> {
 }
 
 tasks.test {
-    useJUnitPlatform { excludeTags("perf") }
+    useJUnitPlatform { excludeTags("perf", "acc-known-defect") }
     finalizedBy(tasks.jacocoTestReport)
 }
 
@@ -132,6 +132,32 @@ val perfTest by tasks.registering(Test::class) {
     System.getProperty("perf.jfr")?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
 }
 
+// ACC-0 accounting verification (docs/accounting/ACCOUNTING-TEST-STRATEGY.md): @Tag("acc-known-defect") tests assert
+// the correct accounting outcome for a reproduced defect, so they fail until their ACC phase fixes it. Excluded from
+// test / fastTest / accountingRegression; run here, failures reported but not fatal. Zero discovered tests IS fatal
+// (a silently empty run must not look green). Fresh DB container (shared reusable one carries other branches' schema).
+val acc0VerificationTest by tasks.registering(Test::class) {
+    description = "Runs @Tag(\"acc-known-defect\") accounting verification tests (failures reported, not fatal)."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath.filter {
+        !it.name.startsWith("spring-modulith-observability") && !it.name.startsWith("spring-modulith-actuator")
+    }
+    useJUnitPlatform { includeTags("acc-known-defect") }
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+    ignoreFailures = true
+    outputs.upToDateWhen { false }
+    filter { isFailOnNoMatchingTests = true }
+    reports { junitXml.required = true; html.required = true }
+    afterSuite(KotlinClosure2<TestDescriptor, TestResult, Unit>({ d, r ->
+        if (d.parent == null) {
+            println("acc0VerificationTest: ${r.testCount} run, ${r.successfulTestCount} passed, " +
+                "${r.failedTestCount} failed, ${r.skippedTestCount} skipped")
+            if (r.testCount == 0L) throw GradleException("acc0VerificationTest discovered no tests")
+        }
+    }))
+}
+
 // Inner dev loop (`./gradlew fastTest [--tests X]`): no JaCoCo, C1-only JIT for faster Spring startup, the
 // Testcontainers Postgres kept alive between runs (TESTCONTAINERS_REUSE_ENABLE), and the multi-minute seed /
 // architecture suites skipped. NOT the gate: `./gradlew build` still runs everything on a fresh container.
@@ -144,7 +170,7 @@ val fastTest by tasks.registering(Test::class) {
     classpath = sourceSets.test.get().runtimeClasspath.filter {
         !it.name.startsWith("spring-modulith-observability") && !it.name.startsWith("spring-modulith-actuator")
     }
-    useJUnitPlatform { excludeTags("perf") }
+    useJUnitPlatform { excludeTags("perf", "acc-known-defect") }
     extensions.configure<JacocoTaskExtension> { isEnabled = false }
     jvmArgs("-XX:TieredStopAtLevel=1")
     environment("TESTCONTAINERS_REUSE_ENABLE", "true")
@@ -165,7 +191,7 @@ val accountingRegression by tasks.registering(Test::class) {
     classpath = sourceSets.test.get().runtimeClasspath.filter {
         !it.name.startsWith("spring-modulith-observability") && !it.name.startsWith("spring-modulith-actuator")
     }
-    useJUnitPlatform { excludeTags("perf") }
+    useJUnitPlatform { excludeTags("perf", "acc-known-defect") }
     extensions.configure<JacocoTaskExtension> { isEnabled = false }
     environment("TESTCONTAINERS_REUSE_ENABLE", "true")
     outputs.upToDateWhen { false }
