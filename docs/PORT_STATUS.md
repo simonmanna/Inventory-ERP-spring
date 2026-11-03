@@ -74,6 +74,17 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | LC-7 | Advanced (V295): Incoterm responsibility warnings (shipment / PO Incoterm), versioned customs tariff lines with immutable reproducible calculations and audited manual adjustments, allocation templates, freight and supplier cost history | done — `LandedCostCustomsIT` |
 | PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); cost-flow GL trace, `CostingAuditIT`, `BooksGuard` on 24 regression suites; bill-tax impact analysis for review | done — gate met ([record](audits/pc0-accounting-baseline.md)); V1 + D-PC3 await owner |
 
+**Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| ACC-0 | Verification suite, `LedgerInvariants`, `acc0VerificationTest`, lifecycle test; 15 defects confirmed | done |
+| ACC-1 | Closing-aware P&L / ranged reports, `trial-balance?view=`, FY close in base, snapshot + inactive-account fixes (B1, B2, B10) | done — `Acc0FinancialReportingIT` |
+| ACC-2 | Per-organization FX rates (V320), revaluation lifecycle + `/fx-revaluations`, FX expenses (B3, B4, B14) | done — `Acc0FxIT` |
+| ACC-3 | Reversal-date policy, invoice cancel returns stock, decimal splits / payroll tax, posting-key race, payroll date (B6, B7, B12, P1-a, B13) | done — `Acc0ReversalIT`, `Acc0MoneyPrecisionIT`, `Acc0IdempotencyIT` |
+| ACC-4 | PO-bill open payable, credit-note caps + `CreditAllocation` (V321) + `/credit-notes/:id/allocate`, debit-note VAT (B15, B9, B8) | done — `Acc0ArApIT`, `Acc0LifecycleIT` |
+| ACC-5 … ACC-8 | Fixed assets, bank reconciliation, tax & fiscal positions, reporting UI | open (B11, B5 still `acc-known-defect`) |
+
 ## kernel
 
 - [x] GET /api/v1/approval-policies — ApprovalPolicyController.list

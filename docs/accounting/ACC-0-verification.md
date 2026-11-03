@@ -8,6 +8,20 @@
 | Owner of all findings | accounting |
 | Status | **Awaiting owner review.** ACC-1 has not started. |
 
+## Remediation status (updated 2026-11-03, after ACC-1 … ACC-4)
+
+| Finding | Status | Fixed in | Regression test (untagged, in `accountingRegression`) |
+|---|---|---|---|
+| B1, B2, B10 | **Fixed** | ACC-1 `5487b251` (+ reopen-reversal filter in ACC-2) | `Acc0FinancialReportingIT` |
+| B3, B4, B14 | **Fixed** | ACC-2 `66b09727` | `Acc0FxIT` |
+| B6, B7, B12, P1-a | **Fixed** | ACC-3 `94252618` | `Acc0ReversalIT`, `Acc0MoneyPrecisionIT`, `Acc0PayrollPrecisionTest`, `Acc0IdempotencyIT` |
+| B13 (payroll) | **Fixed, code only.** The run posts on the pay-period end; no reproduction test yet | ACC-3 | none |
+| B8, B9, B15 | **Fixed** | ACC-4 `83cab550` | `Acc0ArApIT`, `Acc0LifecycleIT` |
+| B5 | Open | ACC-6 | `Acc0BankReconciliationIT` (still `acc-known-defect`) |
+| B11 | Open | ACC-5 | `Acc0FixedAssetIT` (still `acc-known-defect`) |
+
+The behaviour changes are listed under "Accounting remediation deviations" in `docs/spec/accounting.md`.
+
 **Method.** Every finding from the read-only audit got a reproduction test that asserts the **correct** accounting
 outcome. A finding is **Confirmed** only when that test fails against the current code. Suspicious code alone never
 confirms a finding. The test strategy is in `ACCOUNTING-TEST-STRATEGY.md`; the revised plan is in

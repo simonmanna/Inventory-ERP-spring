@@ -200,8 +200,10 @@ class ReportingIT extends ApiTestSupport {
         });
         assertThat(result.revalued()).isEqualTo(1);
         assertThat(result.totalGain()).isEqualTo("50");
-        BigDecimal fxGain = jdbc.sql("SELECT \"fxGain\" FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND \"fiscalPeriodId\" = 'adhoc'")
-                .param(demoOrg).query(BigDecimal.class).single();
+        // ACC-2: the row is keyed by the real fiscal period of asOf (was the constant 'adhoc').
+        BigDecimal fxGain = jdbc.sql("SELECT \"fxGain\" FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND"
+                        + " \"accountId\" = ? ORDER BY \"asOf\" DESC LIMIT 1")
+                .params(demoOrg, accountId("BANK-DEFAULT")).query(BigDecimal.class).single();
         assertThat(fxGain).isEqualByComparingTo("50");
         assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = 'fx_revaluation'")
                 .param(demoOrg).query(Long.class).single()).isEqualTo(1);
