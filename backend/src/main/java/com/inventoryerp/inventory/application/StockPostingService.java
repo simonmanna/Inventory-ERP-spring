@@ -328,18 +328,28 @@ public class StockPostingService {
         BigDecimal wipTotal = Money.ZERO;
         for (LandedLine l : landed) {
             BigDecimal cap = Money.dec(l.capitalized());
-            if (cap.signum() > 0) {
-                byAccount.merge(landedAccount(l.productId(), cap), cap, BigDecimal::add);
+            if (cap.signum() != 0) {
+                byAccount.merge(landedAccount(l.productId(), cap.abs()), cap, BigDecimal::add);
             }
             cogsTotal = cogsTotal.add(Money.dec(l.expensed()));
             wipTotal = wipTotal.add(Money.dec(l.wip()));
         }
-        if (wipTotal.signum() > 0) {
+        if (wipTotal.signum() != 0) {
             byAccount.merge(determination.mapped("wip"), wipTotal, BigDecimal::add);
         }
-        byAccount.forEach((acc, v) -> lines.add(Line.debit(acc, JsNumbers.dec(v), description)));
+        // A credit voucher (LC-1) has negative amounts: they are credits on the same accounts.
+        byAccount.forEach((acc, v) -> {
+            if (v.signum() > 0) {
+                lines.add(Line.debit(acc, JsNumbers.dec(v), description));
+            } else if (v.signum() < 0) {
+                lines.add(Line.credit(acc, JsNumbers.dec(v.negate()), description));
+            }
+        });
         if (cogsTotal.signum() > 0) {
             lines.add(new Line(determination.mapped("cogs"), JsNumbers.dec(cogsTotal), null, null,
+                    description + " · already consumed", null, cogsCostCenterId, null));
+        } else if (cogsTotal.signum() < 0) {
+            lines.add(new Line(determination.mapped("cogs"), null, JsNumbers.dec(cogsTotal.negate()), null,
                     description + " · already consumed", null, cogsCostCenterId, null));
         }
         lines.addAll(other);

@@ -77,26 +77,36 @@ account, or clearing 2155 when it has none.
 |---|---|---|---|---|
 | Issue to an open order | WIP | stock | `production_consume` → `wip` | ⚠ LC-1: the AVCO landed path doesn't use lineage, so the share goes to COGS (case 2 `@Disabled`) |
 | Output | stock (FG) | WIP | `production_output` | — |
-| Late charge after completion | **should** go to the FG layer through CM-10 | — | `target(…)` gives `cogs` for a closed order | ⚠ LC-1 (map F7) |
+| Late charge after completion | WIP of the order (`targetRef` = order), cascaded to the FG layer by the CM-10 run | — | `LineageFollower.target` (completed order stays `wip`; cancelled → `cogs`) | ✅ LC-1 (`completedOrderCascades`) |
 | CM-10 cascade run | FG targets | WIP | `CostAdjustmentService` | existing |
 
 ## 7. Transfer
 
 | Dr | Cr | Code | Status |
 |---|---|---|---|
-| stock (destination) | stock (source); the out and in rows share one `ledgerCode` | `StockService.transfer` → `postTransfer` | ⚠ LC-1: AVCO and lot landed cost after a transfer go to COGS (case 3 `@Disabled`); STANDARD parks it in the adjunct |
+| stock (destination) | stock (source); the out and in rows share one `ledgerCode` and an `InventoryTransferLineage` row | `StockService.transfer` → `postTransfer` | ✅ LC-1: a later landed charge follows the goods (`LineageFollower`) — on hand raised in the pool where they are, consumption at the destination to its target, unpaired lineage parked in 1396 with a `LineageException` (case 3, `LandedCostLineageIT`) |
 
 ## 8. Purchase return
 
 | Dr | Cr | Code | Status |
 |---|---|---|---|
-| AP / debit note | stock | `DebitNotesService` (`return_to_supplier`, `skipGl` stock row) | ⚠ LC-1: a later landed charge sends the returned share to COGS (map F6) |
+| AP / debit note | stock | `DebitNotesService` (`return_to_supplier`, `skipGl` stock row) | ✅ LC-1: a later landed charge sends the returned share to target `return` → `costing.landedCost.returnPolicy`: `expense` / `defect_claim` Dr 5976 Landed Cost on Returned Goods; `recover_from_supplier` Dr 1396 (parked, awaiting the supplier credit) |
 
 ## 9. Release run
 
 | Dr | Cr | Code |
 |---|---|---|
 | COGS (consumed share of an open adjunct) | 1396 | `CostLineageService.release` |
+| — (transferred share moves to the destination pool's adjunct; same 1396, no entry) | — | `CostLineageService.release` → `moveAdjunct` (LC-1) |
+
+## 10. Lineage exceptions and credit vouchers (LC-1)
+
+| Event | Dr | Cr | Code |
+|---|---|---|---|
+| Assign the receiving in row | each target of the distribution from that row (stock / WIP / COGS / 5976) | 1396 | `LineageExceptionService.assign` |
+| Write off | the chosen account | 1396 | `LineageExceptionService.writeOff` |
+| Credit voucher | clearing 2155 | each lineage target, mirrored (negative charges) | `LandedCostVoucherService.createCredit` → `post` |
+| Voucher reversal (lineage mode) | exact reversal of the entry, then Dr stock / adjunct · Cr COGS / WIP / 5976 for what was consumed since | | `LandedCostLayers.reverseLineage` |
 
 ## 10. Accrual
 
@@ -131,5 +141,5 @@ account, or clearing 2155 when it has none.
 | G1 | No realised FX on payments anywhere | **Fixed in PC-0** (ADR-S054) |
 | G2 | A foreign-currency posting with no configured rate inside an outer transaction fails the whole voucher (500, silent rollback): `PostingService.rate` catches the `ApiException` of `@Transactional CurrencyService.getRate`, but the participating transaction is already rollback-only. Hits the generated USD bill of a voucher (case 6 `@Disabled`). Proposed fix (shared accounting code, owner approval): `getRate` with `noRollbackFor = ApiException.class`, or a non-throwing `findRate`. Related G3: when a rate **is** configured, `rate()` takes the table rate over the document's own rate, so a bill at another rate can leave 2155 open. Verify in case 6 after G2 | **Fixed in PC-0** (ADR-S054): `findRate` never throws; explicit document rate → table → refuse; rate snapshot per entry |
 | G4 | **Fixed in LC-0:** the "bill has payments" guard checked only `status = 'posted'`, but a fully paid bill moves on to another status, so a voucher whose bill was paid could be reversed. The guard now covers any bill that is not cancelled and has `amountPaid > 0` | LC-0 ✅ case 4 |
-| F2, F5, F6, F7 | AVCO / lot / transfer / return / closed-order lineage | LC-1 |
+| F2, F5, F6, F7 | AVCO / lot / transfer / return / closed-order lineage | **Fixed in LC-1** (`LandedCostLineageIT`, `AvcoLandedMathTest`, audit cases 2 and 3 enabled) |
 | — | `taxRecoverable` source of truth | LC-0 (V290): `Tax.recoverability`, the org default, an explicit flag + `landed_cost:override_tax` |

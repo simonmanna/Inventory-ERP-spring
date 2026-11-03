@@ -65,6 +65,7 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | Phase | Scope | Status |
 |---|---|---|
 | LC-0 | Accounting audit: implementation map, GL trace, `LandedCostAuditIT`; tax recoverability on charges (V290, `landed_cost:override_tax`, `costing.landedCost.taxRecoverableDefault`) | done — `LandedCostAuditIT` |
+| LC-1 | Valuation correctness (V292): `InventoryTransferLineage` + exact backfill, `LineageFollower` (landed cost follows the goods through transfers, cycle/depth guards, unpaired → 1396 + `LineageException`), AVCO/lot/STANDARD voucher path on lineage, returns policy (`costing.landedCost.returnPolicy`), completed orders → WIP for the CM-10 cascade, STANDARD adjunct moves with transfers on release, accruals follow transfers, mirrored reversal, credit vouchers (`POST /procurement/landed-cost-vouchers/{id}/credit`), exception workspace (`GET /inventory/lineage-exceptions`, `…/{id}/assign`, `…/{id}/write-off`, `landed_cost:resolve_lineage`) | done — `LandedCostLineageIT`, `AvcoLandedMathTest`, audit cases 2–3 |
 | PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); cost-flow GL trace, `CostingAuditIT`, `BooksGuard` on 24 regression suites; bill-tax impact analysis for review | done — gate met ([record](audits/pc0-accounting-baseline.md)); V1 + D-PC3 await owner |
 
 ## kernel

@@ -86,6 +86,10 @@ public class LandedCost {
     @Column(name = "voucherType")
     private String voucherType;
 
+    /** On a credit voucher: the voucher it credits (LC-1, ADR-S053). */
+    @Column(name = "originalVoucherId")
+    private String originalVoucherId;
+
     @Column(name = "shipmentId")
     private String shipmentId;
 
@@ -280,6 +284,14 @@ public class LandedCost {
 
     public void setVoucherType(String voucherType) {
         this.voucherType = voucherType;
+    }
+
+    public String getOriginalVoucherId() {
+        return originalVoucherId;
+    }
+
+    public void setOriginalVoucherId(String originalVoucherId) {
+        this.originalVoucherId = originalVoucherId;
     }
 
     public String getShipmentId() {

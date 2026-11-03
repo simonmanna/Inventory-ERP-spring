@@ -70,6 +70,12 @@ same points as Nest. No subscribers in this module.
 
 Pending owner approval:
 
+0. **Landed cost LC-1 (ADR-S053, V292; extension).** Vouchers and accruals distribute a charge over the receipt's
+   lineage and follow the goods through transfers; returned goods follow `costing.landedCost.returnPolicy`; credit
+   vouchers (`POST /procurement/landed-cost-vouchers/{id}/credit`) and the lineage exception workspace
+   (`/inventory/lineage-exceptions`) are new. The legacy `/procurement/landed-costs` keeps the Nest behaviour. Shared
+   change: `CostLineageService.release` moves a transferred STANDARD / NRV adjunct share to the destination pool.
+
 1. **Line units (ADR-S003, V5).** PO lines snapshot `unitOfMeasureId` + `uomFactor` (default: the product's
    purchase unit); GRN lines (`uomId`, `uomFactor`) inherit the PO line's snapshot, or take `uomId` /
    the purchase unit on ad-hoc receipts; debit-note lines accept `uomId` (default: purchase unit) and a

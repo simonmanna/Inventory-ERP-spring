@@ -84,6 +84,12 @@ public final class SettingRegistry {
                 "Whether tax on a landed cost charge is recoverable input tax when neither the charge's tax nor its"
                         + " cost component's tax says so. unset = the charge must state it.",
                 "unset", List.of("unset", "recoverable", "non_recoverable"), false, ORG_ONLY);
+        // ---- Landed cost LC-1 (ADR-S053, owner decision D2) ----
+        def("costing.landedCost.returnPolicy", "costing", "enum", "Landed Cost on Returned Goods",
+                "Where the landed share of goods returned to the supplier goes. expense = landed cost on returned goods"
+                        + " (default); recover_from_supplier = parked in 1396 awaiting the supplier's credit;"
+                        + " defect_claim = expensed, a claim receivable only once the claim is accepted.",
+                "expense", List.of("expense", "recover_from_supplier", "defect_claim"), false, ORG_ONLY);
         def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",

@@ -161,7 +161,8 @@
     "post": "landed_cost:post",
     "reverse": "landed_cost:reverse",
     "configure": "landed_cost:configure",
-    "overrideTax": "landed_cost:override_tax"
+    "overrideTax": "landed_cost:override_tax",
+    "resolveLineage": "landed_cost:resolve_lineage"
   },
   "budget": {
     "read": "budget:read",

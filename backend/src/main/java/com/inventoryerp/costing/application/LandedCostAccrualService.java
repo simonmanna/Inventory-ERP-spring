@@ -200,7 +200,7 @@ public class LandedCostAccrualService {
                 continue;
             }
             total = total.add(amount);
-            parts.addAll(capitalisation.spread(amount, List.of(l)));
+            parts.addAll(capitalisation.spreadFollowing(amount, List.of(l)));
             lines.add(new Object[] {l, rule.get("id"), rate, amount});
         }
         if (total.signum() <= 0) {
@@ -289,6 +289,11 @@ public class LandedCostAccrualService {
             credits.merge(determination.mapped("cogs"), released, BigDecimal::add);
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT target, amount FROM \"CostValueAdjustmentLine\""
                     + " WHERE \"adjustmentId\" = ? AND target <> 'on_hand'").param(adj.get("id")))) {
+                boolean followed = adj.get("rootAdjustmentId") != null || adj.get("parentAdjustmentId") != null;
+                if (followed && List.of("transfer", "in_transit").contains((String) l.get("target"))) {
+                    // LC-1: a followed share is its own child adjustment (destination pool or parked amount).
+                    continue;
+                }
                 if ("transfer".equals(l.get("target"))) {
                     // A transferred share rode on the source pool's adjunct (ADR-S031).
                     inAdjunct = inAdjunct.add(SqlRows.dec(l, "amount"));
@@ -303,7 +308,9 @@ public class LandedCostAccrualService {
                         (String) adj.get("locationId"), null, inAdjunct.negate(), SOURCE + "_clearing", id,
                         "price_difference", text);
             }
-            covered = covered.add(SqlRows.dec(adj, "amount"));
+            if (adj.get("parentAdjustmentId") == null) {
+                covered = covered.add(SqlRows.dec(adj, "amount"));
+            }
         }
         BigDecimal rest = estimate.subtract(covered);
         if (rest.signum() != 0) {

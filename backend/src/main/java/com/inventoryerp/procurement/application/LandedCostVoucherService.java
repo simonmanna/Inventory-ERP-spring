@@ -9,6 +9,7 @@ import com.inventoryerp.accounting.application.AccountingPolicyService;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.CostLineageService;
@@ -163,7 +164,7 @@ public class LandedCostVoucherService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String status, String shipmentId) {
         List<Object> params = new ArrayList<>(List.of(org()));
-        StringBuilder where = new StringBuilder(" WHERE l.\"organizationId\" = ? AND l.\"voucherType\" = 'voucher'");
+        StringBuilder where = new StringBuilder(" WHERE l.\"organizationId\" = ? AND l.\"voucherType\" IN ('voucher', 'credit')");
         if (status != null && !status.isEmpty()) {
             where.append(" AND l.status = ?");
             params.add(status);
@@ -174,6 +175,7 @@ public class LandedCostVoucherService {
         }
         return SqlRows.list(jdbc.sql("SELECT l.id, l.code, l.status, l.date, l.\"shipmentId\", s.code AS \"shipmentCode\","
                 + " l.\"totalAmount\", l.\"capitalizedAmount\", l.\"expensedAmount\", l.\"taxAmount\", l.notes,"
+                + " l.\"voucherType\", l.\"originalVoucherId\","
                 + " l.\"createdAt\", (SELECT count(*) FROM \"LandedCostReceipt\" r WHERE r.\"landedCostId\" = l.id)"
                 + " AS \"receiptCount\", (SELECT count(*) FROM \"LandedCostCharge\" c WHERE c.\"landedCostId\" = l.id)"
                 + " AS \"chargeCount\" FROM \"LandedCost\" l LEFT JOIN \"Shipment\" s ON s.id = l.\"shipmentId\""
@@ -183,7 +185,7 @@ public class LandedCostVoucherService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> lc = SqlRows.one(LandedCost.class, jdbc.sql("SELECT * FROM \"LandedCost\" WHERE id = ?"
-                + " AND \"organizationId\" = ? AND \"voucherType\" = 'voucher'").params(id, org()));
+                + " AND \"organizationId\" = ? AND \"voucherType\" IN ('voucher', 'credit')").params(id, org()));
         if (lc == null) {
             throw ApiException.notFound("Landed cost voucher not found");
         }
@@ -317,6 +319,9 @@ public class LandedCostVoucherService {
             if (!"draft".equals(lc.get("status"))) {
                 throw ApiException.badRequest("Only a draft landed cost voucher can be edited");
             }
+            if ("credit".equals(lc.get("voucherType"))) {
+                throw ApiException.badRequest("A credit voucher cannot be edited; cancel it and credit the voucher again");
+            }
             List<String> receipts = receipts(in);
             jdbc.sql("UPDATE \"LandedCost\" SET \"goodsReceiptId\" = ?, \"shipmentId\" = ?, \"costCenterId\" = ?,"
                             + " date = COALESCE(?, date), notes = ?, \"updatedBy\" = ?, \"updatedAt\" = " + NOW
@@ -349,7 +354,7 @@ public class LandedCostVoucherService {
 
     private Map<String, Object> transition(String id, List<String> from, String to, String set, String error) {
         int n = jdbc.sql("UPDATE \"LandedCost\" SET status = ?, " + set + ", \"updatedAt\" = " + NOW + " WHERE id = ?"
-                        + " AND \"organizationId\" = ? AND \"voucherType\" = 'voucher' AND status = ANY(?::text[])")
+                        + " AND \"organizationId\" = ? AND \"voucherType\" IN ('voucher', 'credit') AND status = ANY(?::text[])")
                 .params(to, user(), id, org(), from.toArray(String[]::new)).update();
         if (n == 0) {
             get(id);
@@ -364,7 +369,7 @@ public class LandedCostVoucherService {
         tx.executeWithoutResult(st -> {
             int claim = jdbc.sql("UPDATE \"LandedCost\" SET status = 'posted', \"postedAt\" = " + NOW + ","
                     + " \"postedById\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
-                    + " AND \"voucherType\" = 'voucher' AND status = 'approved'").params(user(), id, org()).update();
+                    + " AND \"voucherType\" IN ('voucher', 'credit') AND status = 'approved'").params(user(), id, org()).update();
             if (claim == 0) {
                 Map<String, Object> lc = get(id);
                 throw "posted".equals(lc.get("status"))
@@ -373,7 +378,9 @@ public class LandedCostVoucherService {
                                 + lc.get("status") + ")");
             }
             Map<String, Object> lc = get(id);
-            assertNoDuplicateInvoices(id, chargesOf(lc));
+            if (!"credit".equals(lc.get("voucherType"))) {
+                assertNoDuplicateInvoices(id, chargesOf(lc)); // credits reference their original (LC-1)
+            }
             Computation c = compute(lc, true);
             for (Alloc a : c.allocs()) {
                 Unit u = a.unit();
@@ -381,14 +388,15 @@ public class LandedCostVoucherService {
                                 + " \"goodsReceiptLineId\", \"productId\", \"locationId\", \"batchId\", \"receivedQty\","
                                 + " \"onHandQty\", \"basisValue\", \"allocatedAmount\", \"capitalizedAmount\","
                                 + " \"expensedAmount\", \"unitCostBefore\", \"unitCostAfter\", \"chargeId\", \"goodsReceiptId\","
-                                + " \"basisMethod\", \"sharePct\", \"roundingAmount\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                                + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                                + " \"basisMethod\", \"sharePct\", \"roundingAmount\", disposition) VALUES (?, ?, ?, ?, ?, ?,"
+                                + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)")
                         .params(UUID.randomUUID().toString(), org(), id, u.grnLineId() == null ? "" : u.grnLineId(),
                                 u.group().productId(), u.group().locationId(), u.group().batchId(), u.group().qty()[0],
                                 a.applied().onHand(), a.basis(), a.allocated(), a.applied().capitalized(),
                                 a.allocated().subtract(a.applied().capitalized()), a.applied().unitBefore(),
                                 a.applied().unitAfter(), a.chargeId(), u.grnId(), a.method(),
-                                a.share().setScale(10, RoundingMode.HALF_UP), a.rounding())
+                                a.share().setScale(10, RoundingMode.HALF_UP), a.rounding(),
+                                EntityJson.toJson(a.applied().disposition()))
                         .update();
             }
             Instant date = (Instant) lc.get("date");
@@ -415,6 +423,12 @@ public class LandedCostVoucherService {
             Map<String, Object> lc = lock(id);
             if (!"posted".equals(lc.get("status"))) {
                 throw ApiException.badRequest("Only a posted landed cost voucher can be reversed");
+            }
+            String credit = jdbc.sql("SELECT code FROM \"LandedCost\" WHERE \"originalVoucherId\" = ? AND status IN"
+                    + " ('submitted', 'approved', 'posted') LIMIT 1").param(id).query(String.class).optional().orElse(null);
+            if (credit != null) {
+                throw ApiException.badRequest("Credit voucher " + credit + " references this voucher; reverse or cancel"
+                        + " it first");
             }
             reverseLocked(lc, "landed_cost_voucher");
         });
@@ -458,10 +472,15 @@ public class LandedCostVoucherService {
                     bills.cancel((String) b.get("id"));
                 }
             }
+            List<Map<String, Object>> allocations = SqlRows.list(jdbc.sql("SELECT * FROM \"LandedCostAllocation\""
+                    + " WHERE \"landedCostId\" = ? ORDER BY id").param(id));
+            if (allocations.stream().anyMatch(a -> a.get("disposition") != null)) {
+                reverseLineage(lc, sourceType, allocations);
+                return;
+            }
             Map<String, BigDecimal> unabsorbed = new LinkedHashMap<>();
             List<Object[]> valueRows = new ArrayList<>();
-            for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT * FROM \"LandedCostAllocation\" WHERE"
-                    + " \"landedCostId\" = ? ORDER BY id").param(id))) {
+            for (Map<String, Object> a : allocations) {
                 Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, \"costingMethod\"::text AS"
                         + " \"costingMethod\", \"serialTracking\" FROM \"Product\" WHERE id = ?").param(a.get("productId")));
                 BigDecimal cap = Money.dec(a.get("capitalizedAmount"));
@@ -510,6 +529,166 @@ public class LandedCostVoucherService {
                     .params(user(), reversalId, id).update();
             audit.recordInTx(AuditInput.of("LandedCost", id, "update", null, Obj.of("kind",
                     sourceType + "_reversed", "code", lc.get("code"))));
+    }
+
+    /**
+     * LC-1 reversal (ADR-S053): the journal is reversed exactly, the stock side unwinds what is still on hand in each
+     * pool the goods reached (followed through later transfers), and the part consumed since is reclassed from stock
+     * (or the adjunct) to where the consumption put it — COGS, WIP or the returns account.
+     */
+    private void reverseLineage(Map<String, Object> lc, String sourceType, List<Map<String, Object>> allocations) {
+        String id = (String) lc.get("id");
+        String code = (String) lc.get("code");
+        Instant now = Instant.now();
+        String original = (String) lc.get("journalEntryId");
+        Map<String, Map<String, BigDecimal>> unwound = layers.reverseLineage(sourceType, code, original, allocations);
+        String reversalId = null;
+        if (original != null) {
+            reversalId = (String) posting.reverse(original, now, "Reversal of landed cost " + code).get("id");
+        }
+        List<Line> reclass = new ArrayList<>();
+        String cc = (String) lc.get("costCenterId");
+        String text = "Landed cost " + code + " reversed · consumed since stays consumed";
+        unwound.forEach((product, targets) -> targets.forEach((target, amount) -> {
+            if (amount.signum() == 0) {
+                return;
+            }
+            String account = stockPosting.landedAccount(product, amount.abs());
+            String other = switch (target) {
+                case "wip" -> determination.mapped("wip");
+                case "return" -> returnsAccount();
+                default -> determination.mapped("cogs");
+            };
+            reclass.add(signedLine(account, amount, text, null));
+            reclass.add(signedLine(other, amount.negate(), text, "wip".equals(target) ? null : cc));
+        }));
+        if (!reclass.isEmpty()) {
+            posting.post(PostingRequest.of("INV", now, text, "landed_cost_voucher_reversal", code,
+                    "inventory:landed_cost_reclass:" + org() + ":" + code, reclass));
+        }
+        for (Map<String, Object> a : allocations) {
+            if (a.get("reversedAmount") == null || Money.dec(a.get("reversedAmount")).signum() == 0) {
+                jdbc.sql("UPDATE \"LandedCostAllocation\" SET \"reversedAmount\" = \"capitalizedAmount\" WHERE id = ?"
+                        + " AND \"reversedAmount\" IS NULL").param(a.get("id")).update();
+            }
+        }
+        jdbc.sql("UPDATE \"LandedCost\" SET status = 'reversed', \"reversedAt\" = " + NOW + ", \"reversedBy\" = ?,"
+                + " \"reversalJournalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(user(), reversalId, id).update();
+        audit.recordInTx(AuditInput.of("LandedCost", id, "update", null, Obj.of("kind", sourceType + "_reversed",
+                "code", code, "lineage", true)));
+    }
+
+    private static Line signedLine(String account, BigDecimal amount, String text, String cc) {
+        return amount.signum() > 0 ? new Line(account, JsNumbers.dec(amount), null, null, text, null, cc, null)
+                : new Line(account, null, JsNumbers.dec(amount.negate()), null, text, null, cc, null);
+    }
+
+    /** Credit vouchers (LC-1) produce negative amounts: a negative debit is a credit and vice versa. */
+    private static List<Line> signed(List<Line> lines) {
+        List<Line> out = new ArrayList<>();
+        for (Line l : lines) {
+            BigDecimal d = l.debit() == null ? null : Money.dec(l.debit());
+            BigDecimal c = l.credit() == null ? null : Money.dec(l.credit());
+            if ((d != null && d.signum() < 0) || (c != null && c.signum() < 0)) {
+                out.add(new Line(l.accountId(), c == null ? null : JsNumbers.dec(c.negate()),
+                        d == null ? null : JsNumbers.dec(d.negate()), l.partnerId(), l.description(), l.branchId(),
+                        l.costCenterId(), l.dimensions()));
+            } else {
+                out.add(l);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * LC-1 (ADR-S053): a draft credit voucher against a posted voucher — the supplier credited part of a charge. It
+     * copies the original's receipts and, per credited charge, the charge with a negative amount (no tax, no bill:
+     * the supplier's credit note is entered in payables against clearing). It runs through the same allocation and
+     * lineage engine, so each target gets back its share of the credit.
+     */
+    public Map<String, Object> createCredit(String originalId, String date, String notes, List<CreditLine> lines) {
+        String id = UUID.randomUUID().toString();
+        tx.executeWithoutResult(st -> {
+            Map<String, Object> original = lock(originalId);
+            if (!"voucher".equals(original.get("voucherType")) || !"posted".equals(original.get("status"))) {
+                throw ApiException.badRequest("Only a posted landed cost voucher can be credited");
+            }
+            if (lines == null || lines.isEmpty()) {
+                throw ApiException.badRequest("charges must contain at least 1 elements");
+            }
+            String code = seq.next("landed_cost", "LC-", 5);
+            jdbc.sql("INSERT INTO \"LandedCost\" (id, \"organizationId\", code, \"goodsReceiptId\", \"voucherType\","
+                            + " \"originalVoucherId\", \"shipmentId\", \"costCenterId\", date, notes, \"createdBy\","
+                            + " \"createdAt\", \"updatedAt\") SELECT ?, \"organizationId\", ?, \"goodsReceiptId\", 'credit',"
+                            + " id, \"shipmentId\", \"costCenterId\", " + (date != null ? "?" : NOW) + ", ?, ?, " + NOW
+                            + ", " + NOW + " FROM \"LandedCost\" WHERE id = ?")
+                    .params(params(id, code, date != null ? SqlRows.ts(ProcurementSql.date(date)) : SKIP,
+                            notes != null ? notes : "Credit of " + original.get("code"), user(), originalId))
+                    .update();
+            jdbc.sql("INSERT INTO \"LandedCostReceipt\" (id, \"organizationId\", \"landedCostId\", \"goodsReceiptId\")"
+                    + " SELECT gen_random_uuid()::text, \"organizationId\", ?, \"goodsReceiptId\" FROM"
+                    + " \"LandedCostReceipt\" WHERE \"landedCostId\" = ?").params(id, originalId).update();
+            List<String> cols = jdbc.sql("SELECT column_name FROM information_schema.columns WHERE table_schema ="
+                    + " current_schema() AND table_name = 'LandedCostCharge' ORDER BY ordinal_position")
+                    .query(String.class).list();
+            int line = 0;
+            for (CreditLine cl : lines) {
+                Map<String, Object> ch = SqlRows.one(jdbc.sql("SELECT * FROM \"LandedCostCharge\" WHERE id = ? AND"
+                        + " \"landedCostId\" = ?").params(cl.chargeId(), originalId));
+                if (ch == null) {
+                    throw ApiException.badRequest("Charge " + cl.chargeId() + " is not on landed cost "
+                            + original.get("code"));
+                }
+                if (cl.amount() == null || cl.amount().signum() <= 0) {
+                    throw ApiException.badRequest("amount must be a positive number");
+                }
+                BigDecimal credited = jdbc.sql("SELECT coalesce(sum(-c.amount), 0) FROM \"LandedCostCharge\" c JOIN"
+                        + " \"LandedCost\" l ON l.id = c.\"landedCostId\" WHERE l.\"originalVoucherId\" = ? AND"
+                        + " l.status NOT IN ('cancelled', 'reversed') AND c.\"creditOfChargeId\" = ?")
+                        .params(originalId, cl.chargeId()).query(BigDecimal.class).single();
+                BigDecimal open = Money.dec(ch.get("amount")).subtract(credited);
+                if (cl.amount().compareTo(open) > 0) {
+                    throw ApiException.badRequest("Charge " + label(ch) + ": credit " + JsNumbers.dec(cl.amount())
+                            + " exceeds the uncredited amount " + JsNumbers.dec(open));
+                }
+                BigDecimal rate = ch.get("exchangeRate") == null ? BigDecimal.ONE : Money.dec(ch.get("exchangeRate"));
+                List<String> exprs = new ArrayList<>();
+                for (String c : cols) {
+                    exprs.add(switch (c) {
+                        case "id" -> "gen_random_uuid()::text";
+                        case "landedCostId" -> "'" + id + "'";
+                        case "amount" -> "-" + cl.amount().toPlainString();
+                        case "baseAmount" -> "-" + dp6(cl.amount().multiply(rate)).toPlainString();
+                        case "taxAmount" -> "0";
+                        case "taxRecoverable" -> "true";
+                        case "billMode" -> "'none'";
+                        case "vendorBillId" -> "NULL";
+                        case "creditOfChargeId" -> "id";
+                        case "lineNumber" -> String.valueOf(++line);
+                        case "supplierInvoiceRef" -> cl.supplierInvoiceRef() == null ? "\"supplierInvoiceRef\""
+                                : "'" + cl.supplierInvoiceRef().replace("'", "''") + "'";
+                        case "createdAt", "updatedAt" -> NOW;
+                        default -> "\"" + c + "\"";
+                    });
+                }
+                jdbc.sql("INSERT INTO \"LandedCostCharge\" (" + String.join(", ", cols.stream().map(c -> "\"" + c
+                        + "\"").toList()) + ") SELECT " + String.join(", ", exprs) + " FROM \"LandedCostCharge\" WHERE id = ?")
+                        .param(cl.chargeId()).update();
+            }
+            audit.recordInTx(AuditInput.of("LandedCost", id, "create", null, Obj.of("kind",
+                    "landed_cost_credit_voucher", "code", code, "original", original.get("code"))));
+        });
+        return get(id);
+    }
+
+    /** One credited charge: the original charge and the amount (charge currency) the supplier credited. */
+    public record CreditLine(String chargeId, BigDecimal amount, String supplierInvoiceRef) {}
+
+    /** P&amp;L account for the landed share of goods returned to the supplier (LC-1 return policy). */
+    private String returnsAccount() {
+        return accounts.ensureByCode("5976", "Landed Cost on Returned Goods", "cost_of_goods_sold",
+                "landed_cost_returns");
     }
 
     // ------------------------------------------------------------------ computation
@@ -587,16 +766,29 @@ public class LandedCostVoucherService {
                     List<Alloc> parts = allocate(ch, cost, units, write);
                     for (Alloc a : parts) {
                         allocs.add(a);
-                        BigDecimal wip = a.applied().wip();
-                        BigDecimal exp = a.allocated().subtract(a.applied().capitalized()).subtract(wip);
-                        capitalized = capitalized.add(a.applied().capitalized()).add(wip);
-                        expensed = expensed.add(exp);
-                        landed.add(new LandedLine(a.unit().group().productId(), a.applied().capitalized(), exp, wip));
+                        Applied ap = a.applied();
+                        BigDecimal wip = ap.wip();
+                        // LC-1: parked lineage shares and recoveries sit in 1396; returned goods on the returns account.
+                        BigDecimal parked = ap.part("parked").add(ap.part("returnParked"));
+                        BigDecimal returned = ap.part("returned");
+                        BigDecimal exp = a.allocated().subtract(ap.capitalized()).subtract(wip).subtract(parked)
+                                .subtract(returned);
+                        capitalized = capitalized.add(ap.capitalized()).add(wip).add(parked);
+                        expensed = expensed.add(exp).add(returned);
+                        landed.add(new LandedLine(a.unit().group().productId(), ap.capitalized(), exp, wip));
+                        if (write && parked.signum() != 0) {
+                            other.add(Line.debit(lineage.priceDifferenceAccount(), JsNumbers.dec(parked), lineDesc
+                                    + " · parked (lineage / awaiting recovery)"));
+                        }
+                        if (write && returned.signum() != 0) {
+                            other.add(new Line(returnsAccount(), JsNumbers.dec(returned), null, null, lineDesc
+                                    + " · returned goods", null, cc, null));
+                        }
                     }
                 }
             }
         }
-        return new Computation(allocs, landed, other, total, capitalized, expensed, tax);
+        return new Computation(allocs, landed, signed(other), total, capitalized, expensed, tax);
     }
 
     /** Split one capitalised charge over its eligible units by its basis; last unit absorbs rounding. */
@@ -661,7 +853,7 @@ public class LandedCostVoucherService {
             BigDecimal allocated = last ? base.subtract(so) : dp6(exact);
             so = so.add(allocated);
             BigDecimal rounding = last ? dp6(allocated.subtract(exact)) : Money.ZERO;
-            Applied applied = layers.apply(u.grnId(), u.group(), allocated, write,
+            Applied applied = layers.applyLineage(u.grnId(), u.group(), allocated, write,
                     new LandedCostLayers.Source("landed_cost_voucher", (String) ch.get("_voucherCode")));
             out.add(new Alloc((String) ch.get("id"), u, method, basis[i], Money.div(basis[i], basisTotal), allocated,
                     rounding, applied));
@@ -1130,8 +1322,9 @@ public class LandedCostVoucherService {
     }
 
     private Map<String, Object> lock(String id) {
-        Map<String, Object> lc = SqlRows.one(jdbc.sql("SELECT id, code, status, \"journalEntryId\", \"costCenterId\" FROM"
-                + " \"LandedCost\" WHERE id = ? AND \"organizationId\" = ? AND \"voucherType\" = 'voucher' FOR UPDATE")
+        Map<String, Object> lc = SqlRows.one(jdbc.sql("SELECT id, code, status, \"journalEntryId\", \"costCenterId\","
+                + " \"voucherType\", \"originalVoucherId\" FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"voucherType\" IN ('voucher', 'credit') FOR UPDATE")
                 .params(id, org()));
         if (lc == null) {
             throw ApiException.notFound("Landed cost voucher not found");

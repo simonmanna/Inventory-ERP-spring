@@ -155,6 +155,27 @@ public class LandedCostVoucherController {
         return vouchers.reverse(id);
     }
 
+    /** One credited charge (LC-1). */
+    public record CreditChargeRequest(
+            @NotNull(message = "chargeId must be a string") String chargeId,
+            @NotNull(message = "amount must be a positive number") @Positive(message = "amount must be a positive number")
+            BigDecimal amount,
+            String supplierInvoiceRef) {}
+
+    /** Credit voucher body (LC-1). */
+    public record CreditRequest(
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
+            String notes,
+            @NotNull(message = "charges must be an array") @ArrayMinSize(1) List<@Valid CreditChargeRequest> charges) {}
+
+    @PostMapping("/landed-cost-vouchers/{id}/credit")
+    @Idempotent
+    @RequirePermissions(Permissions.LANDED_COST__CREATE)
+    public Map<String, Object> credit(@PathVariable String id, @Valid @RequestBody CreditRequest dto) {
+        return vouchers.createCredit(id, dto.date(), dto.notes(), dto.charges().stream().map(c ->
+                new LandedCostVoucherService.CreditLine(c.chargeId(), c.amount(), c.supplierInvoiceRef())).toList());
+    }
+
     @PostMapping("/landed-cost-vouchers/{id}/cancel")
     @RequirePermissions(Permissions.LANDED_COST__CREATE)
     public Map<String, Object> cancel(@PathVariable String id) {

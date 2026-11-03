@@ -7,6 +7,9 @@ import com.inventoryerp.inventory.application.AvcoLineageCalculator.Distribution
 import com.inventoryerp.inventory.application.AvcoLineageCalculator.Share;
 import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.CostLineageService.AdjustmentInput;
+import com.inventoryerp.inventory.application.LineageFollower;
+import com.inventoryerp.inventory.application.LineageFollower.Followed;
+import com.inventoryerp.inventory.application.LineageFollower.Mode;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -34,17 +37,62 @@ public class LineageCapitalisation {
     public record Layer(String ledgerId, String productId, String variantId, String locationId, BigDecimal value) {}
 
     /** One posted part: a layer's share at one lineage target, or a fallback with no layer (cost of sales). */
-    public record Part(Layer layer, String target, String accountId, BigDecimal amount, Distribution distribution) {}
+    public record Part(Layer layer, String target, String accountId, BigDecimal amount, Distribution distribution,
+            Followed followed) {
+
+        public Part(Layer layer, String target, String accountId, BigDecimal amount, Distribution distribution) {
+            this(layer, target, accountId, amount, distribution, null);
+        }
+    }
 
     private final JdbcClient jdbc;
     private final CostLineageService lineage;
     private final AccountDeterminationService determination;
+    private final LineageFollower follower;
 
     public LineageCapitalisation(JdbcClient jdbc, CostLineageService lineage,
-            AccountDeterminationService determination) {
+            AccountDeterminationService determination, LineageFollower follower) {
         this.jdbc = jdbc;
         this.lineage = lineage;
         this.determination = determination;
+        this.follower = follower;
+    }
+
+    /**
+     * LC-1 (ADR-S053), landed-cost accruals: as {@link #spread} but every share follows its goods through transfers
+     * ({@link LineageFollower}) — on hand at the destination pool → adjunct there, consumption at the destination →
+     * its target, unpaired lineage → parked in 1396 with an exception. {@link #record} writes it per pool.
+     */
+    public List<Part> spreadFollowing(BigDecimal amount, List<Layer> layers) {
+        List<Part> out = new ArrayList<>();
+        if (amount.signum() == 0) {
+            return out;
+        }
+        if (layers.isEmpty()) {
+            out.add(new Part(null, "cogs", determination.mapped("cogs"), amount, null));
+            return out;
+        }
+        Map<String, Layer> byId = new LinkedHashMap<>();
+        List<Receiver> receivers = new ArrayList<>();
+        for (Layer l : layers) {
+            byId.put(l.ledgerId(), l);
+            receivers.add(new Receiver(l.ledgerId(), l.value().max(BigDecimal.ONE.movePointLeft(6))));
+        }
+        for (AllocationCalculator.Share s : AllocationCalculator.allocate(amount, receivers, Rounding.LARGEST_REMAINDER,
+                2)) {
+            Layer layer = byId.get(s.key());
+            Followed f = follower.follow(layer.ledgerId(), s.amount().abs());
+            if (s.amount().signum() < 0) {
+                f = f.negate();
+            }
+            Followed ff = f;
+            f.byTarget().forEach((target, part) -> {
+                if (part.signum() != 0) {
+                    out.add(new Part(layer, target, accountFor(target), part, null, ff));
+                }
+            });
+        }
+        return out;
     }
 
     private static String org() {
@@ -115,7 +163,16 @@ public class LineageCapitalisation {
             String journalEntryId, String note) {
         Map<Distribution, String> done = new IdentityHashMap<>();
         Map<Part, String> out = new IdentityHashMap<>();
+        Map<Followed, Boolean> followedDone = new IdentityHashMap<>();
         for (Part p : parts) {
+            if (p.followed() != null) {
+                if (followedDone.put(p.followed(), Boolean.TRUE) == null) {
+                    List<String> ids = follower.record(p.followed(), adjustmentType, sourceType, sourceId,
+                            journalEntryId, Mode.ADJUNCT, note);
+                    out.put(p, ids.isEmpty() ? null : ids.getFirst());
+                }
+                continue;
+            }
             if (p.distribution() == null) {
                 continue;
             }
@@ -170,7 +227,7 @@ public class LineageCapitalisation {
     /** GL account of a lineage target (on hand / transfer → adjunct, wip, scrap, else cost of sales). */
     public String accountFor(String target) {
         return switch (target) {
-            case "on_hand", "transfer" -> lineage.priceDifferenceAccount();
+            case "on_hand", "transfer", "in_transit" -> lineage.priceDifferenceAccount();
             case "wip" -> determination.mapped("wip");
             case "scrap" -> determination.mapped("stock_adjustment_expense");
             default -> determination.mapped("cogs");

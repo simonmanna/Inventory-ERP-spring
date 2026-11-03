@@ -386,7 +386,7 @@ public class CostLineageService {
                 }
                 String account = switch (t.getKey()) {
                     case "wip" -> determination.mapped("wip");
-                    case "transfer" -> adjunctAccount; // stays in inventory (re-anchored below at the source pool)
+                    case "transfer" -> adjunctAccount; // stays in inventory: moved to the destination pool below (LC-1)
                     default -> "nrv_allowance".equals(component) ? nrvExpenseAccount() : determination.mapped("cogs");
                 };
                 if (!account.equals(adjunctAccount)) {
@@ -398,9 +398,24 @@ public class CostLineageService {
             BigDecimal releasedHere = out.subtract(transferred);
             recordValueOnly(productId, variantId, locationId, null, releasedHere.negate(), "cost_release", number,
                     component, "Released to cost of sales as consumed");
+            // LC-1 (ADR-S053): a transferred share moves with the goods — an open adjunct at the destination pool
+            // (same 1396 account, no journal), released there when the destination consumes it. Unpaired transfers
+            // stay at the source as before.
+            BigDecimal moved = BigDecimal.ZERO;
+            for (Share s : d.consumed()) {
+                if ("transfer_out".equals(s.moveType()) && s.amount().signum() != 0) {
+                    moved = moved.add(moveAdjunct(a, s, number, component));
+                }
+            }
+            if (moved.signum() != 0) {
+                recordValueOnly(productId, variantId, locationId, null, moved.negate(), "cost_release", number,
+                        component, "Moved with the goods to the destination pool");
+            }
             String newAnchor = lastPoolRow(productId, variantId, locationId);
-            jdbc.sql("UPDATE \"CostValueAdjustment\" SET \"openAmount\" = ?, \"anchorLedgerId\" = ? WHERE id = ?")
-                    .params(openAmount.subtract(releasedHere), newAnchor, a.get("id")).update();
+            // A moved share now belongs to the destination's adjustment: it leaves this one's carried amount too.
+            jdbc.sql("UPDATE \"CostValueAdjustment\" SET \"openAmount\" = ?, \"onHandAmount\" = \"onHandAmount\" - ?,"
+                    + " \"anchorLedgerId\" = ? WHERE id = ?")
+                    .params(openAmount.subtract(releasedHere).subtract(moved), moved, newAnchor, a.get("id")).update();
             total = total.add(releasedHere);
             released++;
         }
@@ -422,6 +437,45 @@ public class CostLineageService {
         audit.recordInTx(AuditInput.of("CostValueAdjustment", runId, "post", null, Obj.of("number", number,
                 "adjustments", released, "total", total, "journalEntryId", entryId)));
         return Obj.of("number", number, "adjustments", released, "released", total, "journalEntryId", entryId);
+    }
+
+    /** Move one transferred share of an open adjunct to the destination pool(s) of its transfer lineage. */
+    private BigDecimal moveAdjunct(Map<String, Object> a, Share s, String number, String component) {
+        List<Map<String, Object>> links = SqlRows.list(jdbc.sql("SELECT t.quantity, d.id, d.\"locationId\","
+                + " d.\"variantId\" FROM \"InventoryTransferLineage\" t JOIN \"InventoryLedger\" d ON d.id ="
+                + " t.\"destinationLedgerId\" WHERE t.\"organizationId\" = ? AND t.\"sourceLedgerId\" = ? ORDER BY"
+                + " t.\"createdAt\", t.id").params(org(), s.ledgerId()));
+        BigDecimal total = links.stream().map(l -> SqlRows.dec(l, "quantity")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (links.isEmpty() || total.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal given = BigDecimal.ZERO;
+        for (int i = 0; i < links.size(); i++) {
+            Map<String, Object> l = links.get(i);
+            BigDecimal part = i == links.size() - 1 ? s.amount().subtract(given)
+                    : s.amount().multiply(SqlRows.dec(l, "quantity")).divide(total, SCALE, RoundingMode.HALF_UP);
+            given = given.add(part);
+            if (part.signum() == 0) {
+                continue;
+            }
+            String productId = (String) a.get("productId");
+            String location = (String) l.get("locationId");
+            recordValueOnly(productId, (String) l.get("variantId"), location, null, part, "cost_release", number,
+                    component, "Arrived with the goods from the source pool");
+            String id = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"CostValueAdjustment\" (id, \"organizationId\", \"adjustmentType\", \"sourceType\","
+                            + " \"sourceId\", \"productId\", \"variantId\", \"locationId\", \"layerLedgerId\", amount,"
+                            + " \"onHandAmount\", \"consumedAmount\", \"valuationComponent\", \"openAmount\","
+                            + " \"anchorLedgerId\", \"createdBy\", \"parentAdjustmentId\", \"rootAdjustmentId\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)")
+                    .params(id, org(), a.get("adjustmentType"), a.get("sourceType"), a.get("sourceId"), productId,
+                            l.get("variantId"), location, l.get("id"), part, part, component, part,
+                            lastPoolRow(productId, (String) l.get("variantId"), location), TenantContext.userId(),
+                            a.get("id"), a.get("rootAdjustmentId") != null ? a.get("rootAdjustmentId") : a.get("id"))
+                    .update();
+            line(id, null, "on_hand", location, part);
+        }
+        return s.amount();
     }
 
     static Timestamp ts(Instant i) {
