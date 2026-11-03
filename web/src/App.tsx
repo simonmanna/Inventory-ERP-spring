@@ -111,6 +111,7 @@ const CurrencyPage = lazy(() => import('@/pages/accounting/currency').then((m) =
 const InventoryValuationPage = lazy(() => import('@/pages/accounting/inventory-valuation').then((m) => ({ default: m.InventoryValuationPage })));
 const InventoryGlTieOutPage = lazy(() => import('@/pages/accounting/inventory-gl-tieout').then((m) => ({ default: m.InventoryGlTieOutPage })));
 const YearEndClosePage = lazy(() => import('@/pages/accounting/year-end-close').then((m) => ({ default: m.YearEndClosePage })));
+const PeriodEndPage = lazy(() => import('@/pages/accounting/period-end').then((m) => ({ default: m.PeriodEndPage })));
 const PeriodCloseChecklistPage = lazy(() => import('@/pages/accounting/period-close-checklist').then((m) => ({ default: m.PeriodCloseChecklistPage })));
 const TrialBalancePage = lazy(() => import('@/pages/accounting/trial-balance').then((m) => ({ default: m.TrialBalancePage })));
 const BudgetsPage = lazy(() => import('@/pages/accounting/budgets').then((m) => ({ default: m.BudgetsPage })));
@@ -341,9 +342,9 @@ export function App() {
             <Route path="/menu/modifiers" element={<ModifiersPage />} />
             <Route path="/menu/combos" element={<ComboListPage />} />
             <Route path="/menu/accompaniments" element={<AccompanimentGroupsPage />} />
-            <Route path="/invoices" element={<InvoicesPage />} />
-                      <Route path="/invoices/new" element={<InvoiceCreatePage />} />
-                      <Route path="/invoices/:id" element={<InvoiceDetailPage />} />
+            <Route path="/invoices" element={<RequirePermission permission={PERMISSIONS.invoice.read}><InvoicesPage /></RequirePermission>} />
+                      <Route path="/invoices/new" element={<RequirePermission permission={PERMISSIONS.invoice.create}><InvoiceCreatePage /></RequirePermission>} />
+                      <Route path="/invoices/:id" element={<RequirePermission permission={PERMISSIONS.invoice.read}><InvoiceDetailPage /></RequirePermission>} />
                       <Route path="/orders" element={<OrdersPage />} />
                       <Route path="/orders/new" element={<OrderCreatePage />} />
                       <Route path="/orders/:id" element={<OrderDetailPage />} />
@@ -352,14 +353,14 @@ export function App() {
                       <Route path="/communication/channels" element={<CommunicationChannelsPage />} />
             <Route path="/price-lists" element={<RequirePermission permission={PERMISSIONS.priceList.read}><PriceListsPage /></RequirePermission>} />
             <Route path="/credit-control" element={<RequirePermission permission={PERMISSIONS.creditControl.read}><CreditControlPage /></RequirePermission>} />
-            <Route path="/credit-notes" element={<CreditNotesPage />} />
-            <Route path="/credit-notes/new" element={<CreditNoteCreatePage />} />
-            <Route path="/credit-notes/:id" element={<CreditNoteDetailPage />} />
-            <Route path="/payments" element={<PaymentsPage />} />
+            <Route path="/credit-notes" element={<RequirePermission permission={PERMISSIONS.creditNote.read}><CreditNotesPage /></RequirePermission>} />
+            <Route path="/credit-notes/new" element={<RequirePermission permission={PERMISSIONS.creditNote.create}><CreditNoteCreatePage /></RequirePermission>} />
+            <Route path="/credit-notes/:id" element={<RequirePermission permission={PERMISSIONS.creditNote.read}><CreditNoteDetailPage /></RequirePermission>} />
+            <Route path="/payments" element={<RequirePermission permission={PERMISSIONS.payment.read}><PaymentsPage /></RequirePermission>} />
             <Route path="/accounts/bank-import" element={<RequirePermission permission={PERMISSIONS.bankAccount.update}><BankImportPage /></RequirePermission>} />
             <Route path="/labels" element={<RequirePermission permission={PERMISSIONS.label.print}><LabelPrintPage /></RequirePermission>} />
             <Route path="/payments/mobile-money" element={<RequirePermission permission={PERMISSIONS.payment.read}><MobileMoneyPage /></RequirePermission>} />
-            <Route path="/payments/:id" element={<PaymentDetailPage />} />
+            <Route path="/payments/:id" element={<RequirePermission permission={PERMISSIONS.payment.read}><PaymentDetailPage /></RequirePermission>} />
             <Route path="/pos/receipts" element={<ReceiptsPage />} />
             <Route path="/pos/receipts/:invoiceId" element={<ReceiptDetailPage />} />
             {/* Sales returns (retail + café/restaurant), recorded through the POS refund engine. */}
@@ -376,7 +377,7 @@ export function App() {
             <Route path="/expenses/controls" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseControlsPage /></RequirePermission>} />
             <Route path="/expenses/insights" element={<RequirePermission permission={PERMISSIONS.expense.read}><ExpenseInsightsPage /></RequirePermission>} />
             <Route path="/expenses/reports" element={<RequireReport reportId="expenses.reports"><ExpensesReportPage /></RequireReport>} />
-            <Route path="/supplier-payments" element={<SupplierPaymentsPage />} />
+            <Route path="/supplier-payments" element={<RequirePermission permission={PERMISSIONS.payment.read}><SupplierPaymentsPage /></RequirePermission>} />
             <Route path="/vendor-bills" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillsPage /></RequirePermission>} />
             <Route path="/vendor-bills/new" element={<RequirePermission permission={PERMISSIONS.expense.create}><VendorBillEditPage /></RequirePermission>} />
             <Route path="/vendor-bills/:id" element={<RequirePermission permission={PERMISSIONS.expense.read}><VendorBillDetailPage /></RequirePermission>} />
@@ -384,11 +385,11 @@ export function App() {
             <Route path="/payment-schedule" element={<RequirePermission permission={PERMISSIONS.expense.read}><PaymentSchedulePage /></RequirePermission>} />
             <Route path="/ap-aging" element={<RequirePermission permission={PERMISSIONS.report.ar}><ApAgingPage /></RequirePermission>} />
             <Route path="/ar-aging" element={<RequireReport reportId="sales.ar-aging"><ArAgingPage /></RequireReport>} />
-            <Route path="/accounts" element={<ChartOfAccountsPage />} />
-            <Route path="/accounts/new" element={<AccountDetailPage />} />
+            <Route path="/accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><ChartOfAccountsPage /></RequirePermission>} />
+            <Route path="/accounts/new" element={<RequirePermission permission={PERMISSIONS.account.create}><AccountDetailPage /></RequirePermission>} />
             {/* Static segments must stay ahead of /accounts/:id. */}
-            <Route path="/accounts/categories" element={<AccountCategoriesPage />} />
-            <Route path="/accounts/:id" element={<AccountDetailPage />} />
+            <Route path="/accounts/categories" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountCategoriesPage /></RequirePermission>} />
+            <Route path="/accounts/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountDetailPage /></RequirePermission>} />
             {/* Money & Accounts — overview keeps the old /accounts/cash-accounts URL. */}
             <Route path="/accounts/cash-accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyOverviewPage /></RequirePermission>} />
             <Route path="/accounts/cash-accounts/accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountsPage /></RequirePermission>} />
@@ -401,15 +402,15 @@ export function App() {
             <Route path="/accounts/cash-registers" element={<Navigate to="/settings/registers" replace />} />
             <Route path="/settings/registers" element={<RequirePermission permission={PERMISSIONS.cashRegister.read}><RegistersSettingsPage /></RequirePermission>} />
             <Route path="/settings/payment-methods" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentMethodsSettingsPage /></RequirePermission>} />
-            <Route path="/accounts/mappings" element={<AccountMappingsPage />} />
-            <Route path="/accounts/posting-rules" element={<InventoryPostingRulesPage />} />
-            <Route path="/journals" element={<JournalsPage />} />
-            <Route path="/journals/new" element={<JournalEditPage />} />
-            <Route path="/journals/:id" element={<JournalDetailPage />} />
-            <Route path="/journals/:id/edit" element={<JournalEditPage />} />
-            <Route path="/journal-entries" element={<JournalEntriesPage />} />
-            <Route path="/journal-entries/new" element={<JournalEntryCreatePage />} />
-            <Route path="/journal-entries/:id" element={<JournalEntryDetailPage />} />
+            <Route path="/accounts/mappings" element={<RequirePermission permission={PERMISSIONS.accountMapping.read}><AccountMappingsPage /></RequirePermission>} />
+            <Route path="/accounts/posting-rules" element={<RequirePermission permission={PERMISSIONS.account.read}><InventoryPostingRulesPage /></RequirePermission>} />
+            <Route path="/journals" element={<RequirePermission permission={PERMISSIONS.journal.read}><JournalsPage /></RequirePermission>} />
+            <Route path="/journals/new" element={<RequirePermission permission={PERMISSIONS.journal.create}><JournalEditPage /></RequirePermission>} />
+            <Route path="/journals/:id" element={<RequirePermission permission={PERMISSIONS.journal.read}><JournalDetailPage /></RequirePermission>} />
+            <Route path="/journals/:id/edit" element={<RequirePermission permission={PERMISSIONS.journal.update}><JournalEditPage /></RequirePermission>} />
+            <Route path="/journal-entries" element={<RequirePermission permission={PERMISSIONS.journalEntry.read}><JournalEntriesPage /></RequirePermission>} />
+            <Route path="/journal-entries/new" element={<RequirePermission permission={PERMISSIONS.journalEntry.create}><JournalEntryCreatePage /></RequirePermission>} />
+            <Route path="/journal-entries/:id" element={<RequirePermission permission={PERMISSIONS.journalEntry.read}><JournalEntryDetailPage /></RequirePermission>} />
             <Route path="/trial-balance" element={<RequireReport reportId="accounting.trial-balance"><TrialBalancePage /></RequireReport>} />
             <Route path="/budgets" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetsPage /></RequirePermission>} />
             <Route path="/budgets/:id" element={<RequirePermission permission={PERMISSIONS.budget.read}><BudgetDetailPage /></RequirePermission>} />
@@ -428,11 +429,11 @@ export function App() {
             <Route path="/accounting-detailed-report" element={<RequireReport reportId="accounting.detailed"><DetailedAccountingReportPage /></RequireReport>} />
             <Route path="/profit-and-loss" element={<RequireReport reportId="accounting.profit-and-loss"><ProfitAndLossPage /></RequireReport>} />
             <Route path="/cash-flow" element={<RequireReport reportId="accounting.cash-flow-statement"><RequirePermission permission={PERMISSIONS.report.accounting}><CashFlowPage /></RequirePermission></RequireReport>} />
-            <Route path="/accounts/ledger/:id" element={<AccountLedgerPage />} />
+            <Route path="/accounts/ledger/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountLedgerPage /></RequirePermission>} />
             <Route path="/tieout" element={<RequireReport reportId="accounting.tieout"><TieOutPage /></RequireReport>} />
             <Route path="/pos-gl-reconciliation" element={<RequireReport reportId="accounting.pos-gl-recon"><PosGlReconciliationPage /></RequireReport>} />
-            <Route path="/audit-log" element={<AuditLogPage />} />
-            <Route path="/fiscal-periods" element={<FiscalPeriodsPage />} />
+            <Route path="/audit-log" element={<RequirePermission permission={PERMISSIONS.auditLog.read}><AuditLogPage /></RequirePermission>} />
+            <Route path="/fiscal-periods" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalPeriodsPage /></RequirePermission>} />
             <Route path="/fiscal-years" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearsPage /></RequirePermission>} />
             <Route path="/fiscal-years/:id" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><FiscalYearClosePage /></RequirePermission>} />
             <Route path="/analytic-dimensions" element={<RequirePermission permission={PERMISSIONS.analyticDimension.read}><AnalyticDimensionsPage /></RequirePermission>} />
@@ -443,15 +444,16 @@ export function App() {
             <Route path="/settings/automation" element={<RequirePermission permission={PERMISSIONS.automation.read}><AutomationRulesPage /></RequirePermission>} />
             <Route path="/settings/api-clients" element={<RequirePermission permission={PERMISSIONS.apiClient.read}><ApiClientsPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
-            <Route path="/taxes" element={<TaxesPage />} />
-            <Route path="/accounts/payment-terms" element={<PaymentTermsPage />} />
-            <Route path="/accounts/fiscal-positions" element={<FiscalPositionsPage />} />
-            <Route path="/cost-centers" element={<CostCentersPage />} />
-            <Route path="/cost-center-accounting" element={<CostCenterAccountingPage />} />
-            <Route path="/currency" element={<CurrencyPage />} />
+            <Route path="/taxes" element={<RequirePermission permission={PERMISSIONS.tax.read}><TaxesPage /></RequirePermission>} />
+            <Route path="/accounts/payment-terms" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentTermsPage /></RequirePermission>} />
+            <Route path="/accounts/fiscal-positions" element={<RequirePermission permission={PERMISSIONS.account.read}><FiscalPositionsPage /></RequirePermission>} />
+            <Route path="/cost-centers" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCentersPage /></RequirePermission>} />
+            <Route path="/cost-center-accounting" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCenterAccountingPage /></RequirePermission>} />
+            <Route path="/currency" element={<RequirePermission permission={PERMISSIONS.currency.read}><CurrencyPage /></RequirePermission>} />
             <Route path="/inventory-valuation" element={<RequireReport reportId="accounting.inventory-valuation"><InventoryValuationPage /></RequireReport>} />
             <Route path="/inventory-gl-tieout" element={<RequireReport reportId="accounting.inventory-gl-tieout"><InventoryGlTieOutPage /></RequireReport>} />
-            <Route path="/year-end-close" element={<YearEndClosePage />} />
+            <Route path="/year-end-close" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.update}><YearEndClosePage /></RequirePermission>} />
+            <Route path="/period-end" element={<RequirePermission permission={[PERMISSIONS.currency.read, PERMISSIONS.report.accounting]}><PeriodEndPage /></RequirePermission>} />
             <Route path="/balance-sheet" element={<RequireReport reportId="accounting.balance-sheet"><BalanceSheetPage /></RequireReport>} />
             <Route path="/reports" element={<RequireReport reportId="accounting.report-center"><ReportCenterPage /></RequireReport>} />
             <Route path="/approvals" element={<ApprovalsPage />} />

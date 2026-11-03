@@ -367,9 +367,12 @@ export interface TrialBalance {
   rows: TrialBalanceRow[];
   totals: { debit: string; credit: string };
   balanced: boolean;
+  source?: string;
+  view?: 'pre_closing' | 'post_closing';
 }
 
-export function useTrialBalance(params: { from?: string; to?: string }) {
+/** ACC-1/ACC-8: `view` = pre_closing leaves out the period / year closing entries. */
+export function useTrialBalance(params: { from?: string; to?: string; view?: 'pre_closing' | 'post_closing' }) {
   return useQuery({
     queryKey: ['trial-balance', params],
     queryFn: async () =>
@@ -416,7 +419,9 @@ export interface PnLResult {
   grossProfit: string;
   expense: string;
   otherIncome: string;
+  otherExpense?: string;
   operatingProfit: string;
+  netProfit?: string;
   source: string;
   asOf?: string;
 }
