@@ -19,7 +19,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /** ACC-0 reproduction: idempotency, concurrency and failure recovery of postings (P1-a … P1-e). */
@@ -55,7 +54,6 @@ class Acc0IdempotencyIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[P1-a][owner:accounting][ACC-3] two concurrent posts with one postingKey → one entry, both get it")
     void concurrentSameKey() throws Exception {
         Books b = freshBooks();

@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -19,7 +18,6 @@ import org.junit.jupiter.api.Test;
 class Acc0MoneyPrecisionIT extends AccountingFixtures {
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B12][owner:accounting][ACC-3] a bill linked to three POs splits its total exactly (Σ links = total)")
     void vendorBillLinkSplitIsExact() {
         String supplier = demoPartner("ACC0 split supplier", true);

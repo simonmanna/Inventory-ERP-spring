@@ -277,11 +277,17 @@ public class VendorBillService {
         if (found != ids.size()) {
             throw ApiException.badRequest("One or more purchase orders do not exist in this organization");
         }
-        BigDecimal share = new BigDecimal(JsNumbers.toJsString(total / ids.size()));
+        // ACC-3 (B12): exact decimal split at currency precision; the last link takes the remainder (Σ links = total).
+        BigDecimal whole = new BigDecimal(JsNumbers.toJsString(total));
+        BigDecimal share = whole.divide(BigDecimal.valueOf(ids.size()), 2, java.math.RoundingMode.DOWN);
+        BigDecimal assigned = BigDecimal.ZERO;
+        int n = 0;
         for (String po : ids) {
+            BigDecimal amount = ++n == ids.size() ? whole.subtract(assigned) : share;
+            assigned = assigned.add(amount);
             jdbc.sql("INSERT INTO \"VendorBillLink\" (id, \"organizationId\", \"vendorBillId\", \"purchaseOrderId\", amount)"
                             + " VALUES (?, ?, ?, ?, ?)")
-                    .params(UUID.randomUUID().toString(), org(), vendorBillId, po, share).update();
+                    .params(UUID.randomUUID().toString(), org(), vendorBillId, po, amount).update();
         }
     }
 

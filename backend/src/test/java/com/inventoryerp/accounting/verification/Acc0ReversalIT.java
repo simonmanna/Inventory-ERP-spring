@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -53,7 +52,6 @@ class Acc0ReversalIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B6][owner:accounting][ACC-3] cancelling an invoice whose period is open reverses it on its own date")
     void reversalInOpenPeriodKeepsOriginalDate() {
         Books b = freshBooks();
@@ -96,7 +94,6 @@ class Acc0ReversalIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B7][owner:accounting][ACC-3] cancelling a stock invoice restores stock and reverses COGS")
     void cancelRestoresStock() {
         String supplier = demoPartner("ACC0 stock supplier", true);
@@ -121,13 +118,15 @@ class Acc0ReversalIT extends AccountingFixtures {
         soft.assertThat(onHand(item)).as("stock after cancel").isEqualByComparingTo("10");
         soft.assertThat(stockValue(item)).as("stock value after cancel").isEqualByComparingTo(valueBefore);
         soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after cancel").isEqualByComparingTo("0");
+        // D-B7b: a repeated cancel keeps Nest's idempotent echo; what matters is that it changes nothing.
         Res again = as("POST", "/invoices/" + inv + "/cancel", null);
-        soft.assertThat(again.status()).as("second cancel refused → " + again.raw().body()).isGreaterThanOrEqualTo(400);
+        soft.assertThat(again.status()).as("second cancel → " + again.raw().body()).isLessThan(500);
+        soft.assertThat(onHand(item)).as("stock after a repeated cancel").isEqualByComparingTo("10");
+        soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after a repeated cancel").isEqualByComparingTo("0");
         soft.assertAll();
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B7][owner:accounting][ACC-3] cancel after selling more than on hand restores the issued quantity")
     void cancelAfterInsufficientStock() {
         String supplier = demoPartner("ACC0 neg supplier", true);

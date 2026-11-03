@@ -35,6 +35,16 @@ public class FiscalPeriodControl {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
+    /** Whether {@link #assertOpen} would accept {@code date} (books lock, period status, required period). */
+    public boolean isOpen(Instant date) {
+        try {
+            assertOpen(date);
+            return true;
+        } catch (ApiException e) {
+            return false;
+        }
+    }
+
     public void assertOpen(Instant date) {
         String orgId = TenantContext.organizationId();
         record Org(Timestamp booksLockDate, boolean requireFiscalPeriod) {}

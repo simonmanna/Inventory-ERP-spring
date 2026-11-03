@@ -237,17 +237,19 @@ public class HrPayrollService {
 
     /** Progressive tax: sum of (bracket ∩ income) × rate. */
     static double computeProgressive(double income, List<Map<String, Object>> brackets) {
-        double tax = 0;
+        // ACC-3 (B12): bracket arithmetic in decimal; float products drifted (1,234,567.89 → 272370.36699999997).
+        java.math.BigDecimal in = java.math.BigDecimal.valueOf(income);
+        java.math.BigDecimal tax = java.math.BigDecimal.ZERO;
         for (Map<String, Object> b : brackets) {
-            double from = num(b.get("fromAmount"));
-            double to = b.get("toAmount") == null ? Double.POSITIVE_INFINITY : num(b.get("toAmount"));
-            double low = Math.max(from, 0);
-            double high = Math.min(to, income);
-            if (high > low) {
-                tax += (high - low) * num(b.get("rate"));
+            java.math.BigDecimal low = java.math.BigDecimal.valueOf(num(b.get("fromAmount")))
+                    .max(java.math.BigDecimal.ZERO);
+            java.math.BigDecimal high = b.get("toAmount") == null ? in
+                    : java.math.BigDecimal.valueOf(num(b.get("toAmount"))).min(in);
+            if (high.compareTo(low) > 0) {
+                tax = tax.add(high.subtract(low).multiply(java.math.BigDecimal.valueOf(num(b.get("rate")))));
             }
         }
-        return tax;
+        return tax.doubleValue();
     }
 
     private Map<String, Object> activeTaxTable(String taxType, Instant runDate) {
@@ -752,7 +754,12 @@ public class HrPayrollService {
                 String account = dc.get("creditAccountId") == null ? salaryExpense : (String) dc.get("creditAccountId");
                 credit(lines, account, SqlRows.dec(dc, "amount").doubleValue(), "Payroll deductions withheld");
             }
-            Map<String, Object> journal = posting.post(new PostingRequest("GEN", Instant.now(),
+            // ACC-3 (B13): the payroll cost belongs to its pay period — post on the period end while that is open.
+            Object periodEnd = period == null ? null : period.get("endDate");
+            Instant payrollDate = posting.openDateOrToday(periodEnd instanceof Instant i ? i
+                    : periodEnd instanceof java.sql.Timestamp t ? t.toInstant()
+                    : periodEnd instanceof java.time.LocalDateTime l ? l.toInstant(java.time.ZoneOffset.UTC) : null);
+            Map<String, Object> journal = posting.post(new PostingRequest("GEN", payrollDate,
                     "Payroll " + run.get("runNumber") + " — " + period.get("periodCode"), null, null, "payroll_run", id,
                     "primary", "payroll_run:" + id, null, null, null, lines));
             payrollInputs.markIncluded(id);

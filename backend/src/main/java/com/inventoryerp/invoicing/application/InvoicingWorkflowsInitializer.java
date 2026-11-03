@@ -143,14 +143,40 @@ public class InvoicingWorkflowsInitializer {
                 .params(entry.get("id"), d(full.get("totalAmount")), id).update();
     }
 
-    /** Invoice cancel: reverse the JE, zero the residual. */
+    /** Invoice cancel: reverse the JE, return the auto-issued stock (with its COGS), zero the residual. */
     private void cancelDocument(Context ctx) {
         Map<String, Object> doc = ctx.entity();
         if (doc.get("journalEntryId") != null) {
             posting.reverse((String) doc.get("journalEntryId"), null, "Cancellation of " + doc.get("documentNumber"));
         }
+        returnIssuedStock((String) doc.get("id"), (String) doc.get("documentNumber"),
+                instant(doc.get("issueDate")));
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"paymentStatus\" = 'not_paid', \"updatedAt\" = " + NOW
                 + " WHERE id = ?").param(doc.get("id")).update();
+    }
+
+    /**
+     * ACC-3 (B7): compensate the invoice's own stock issue. Each issue movement ({@code sales_invoice}) comes back as a
+     * linked {@code return_in} at the cost it left at, so stock quantity, stock value and COGS return to their
+     * pre-invoice state (a FIFO lot returns as a new layer at that cost). Goods issued by a delivery are not the
+     * invoice's to return (credit note + return). Runs once: an existing compensation for the invoice is never repeated.
+     */
+    private void returnIssuedStock(String invoiceId, String number, Instant issueDate) {
+        long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice_cancel'"
+                + " AND \"referenceId\" = ?").param(invoiceId).query(Long.class).single();
+        if (done > 0) {
+            return;
+        }
+        for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
+                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
+                + " 'sales_invoice' AND \"referenceId\" = ? AND \"quantityChange\" < 0 ORDER BY \"createdAt\", id")
+                .param(invoiceId))) {
+            stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
+                    d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
+                    .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
+                    .reference(number).date(posting.reversalDate(issueDate))
+                    .notes("Return of auto-issued stock on cancellation of invoice " + number));
+        }
     }
 
     // ------------------------------------------------------------------ credit note

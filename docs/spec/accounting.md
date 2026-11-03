@@ -131,6 +131,25 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **B14.** Expense accrual and payment entries post in the expense's currency and rate. Line amounts are base ÷ rate;
   `PostingService` converts back and writes the FX snapshot.
 
+**ACC-3: posting integrity**
+
+- **B6: reversal-date policy (D-B6).** `PostingService.reverse` without a date reverses on the original's own date
+  while its period is open; otherwise it uses today. A closed or locked period is never posted into.
+  - This replaces Nest's "always today".
+  - Reopening a period therefore reverses its closing entry inside that period.
+- **B7: invoice cancel returns the invoice's own auto-issued stock.**
+  - It posts a linked `return_in` at the issue cost (`sales_invoice_cancel`). Stock quantity, value and COGS come back.
+  - The return runs once only.
+  - Goods issued by a delivery are left to a credit note plus return.
+  - A repeated cancel keeps Nest's 200 echo (D-B7b) and changes nothing.
+- **B12: decimal arithmetic.**
+  - Vendor-bill PO links split at 2 dp; the last link takes the remainder.
+  - The legacy payroll progressive tax uses BigDecimal.
+- **P1-a.** Posts with the same `postingKey` serialize on a transaction advisory lock and replay the first entry. Before,
+  the second caller got a 500 from the unique index.
+- **B13.** A payroll run posts on its pay-period end date while that period is open, otherwise today. Expense payments
+  still post today: there is no payment-date field yet.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

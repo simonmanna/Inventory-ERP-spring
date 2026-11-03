@@ -83,6 +83,10 @@ public class PostingService {
         }
         String organizationId = TenantContext.organizationId();
         if (request.postingKey() != null) {
+            // ACC-3 (P1-a): concurrent posts of one key queue here until the first commits, then replay its entry
+            // instead of hitting the unique index (which aborted the loser's transaction with a 500).
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|' || ?, 0))")
+                    .params(organizationId, request.postingKey()).query().listOfRows();
             JournalEntry existing = em.createQuery("select e from JournalEntry e where e.organizationId = :org"
                             + " and e.postingKey = :key and e.status = :status", JournalEntry.class)
                     .setParameter("org", organizationId).setParameter("key", request.postingKey())
@@ -165,7 +169,7 @@ public class PostingService {
         if (original.getStatus() != JournalEntryStatus.POSTED) {
             throw ApiException.badRequest("Only posted entries can be reversed");
         }
-        Instant when = date == null ? Instant.now() : date;
+        Instant when = date != null ? date : reversalDate(original.getPostingDate());
         fiscalPeriod.assertOpen(when);
         Journal journal = em.find(Journal.class, original.getJournalId());
         int year = when.atOffset(ZoneOffset.UTC).getYear();
@@ -225,6 +229,20 @@ public class PostingService {
         AfterCommit.run(() -> events.publish("journal.reversed", Map.of("organizationId", organizationId,
                 "journalEntryId", originalId, "reversalEntryId", reversalId)));
         return render(reversal, rows);
+    }
+
+    /**
+     * Reversal-date policy when the caller states no date (ACC-3, B6; owner decision D-B6): the original's own date while
+     * its period is still open, so the period nets to zero; otherwise today (the first permissible open date — a closed
+     * or locked period is never posted into). Both entries keep their own dates and the permanent link.
+     */
+    public Instant reversalDate(Instant originalDate) {
+        return openDateOrToday(originalDate);
+    }
+
+    /** {@code date} when it may still be posted to (books lock, open period), else today. */
+    public Instant openDateOrToday(Instant date) {
+        return date != null && fiscalPeriod.isOpen(date) ? date : Instant.now();
     }
 
     /** Stage a manual entry as a DRAFT (validated + balanced, not in the books). */

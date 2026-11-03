@@ -6,7 +6,6 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -23,7 +22,6 @@ class Acc0PayrollPrecisionTest {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B12][owner:accounting][ACC-3] bracketed tax on 1,234,567.89 equals the decimal result")
     void bracketedTaxIsExact() {
         List<Map<String, Object>> brackets = List.of(
