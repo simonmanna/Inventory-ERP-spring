@@ -33,11 +33,24 @@ public class LedgerQueries {
         return d;
     }
 
+    /**
+     * Source types of the period / fiscal-year closing entries (and their reversals on reopen). Excluded from profit
+     * and loss and from the pre-closing trial balance (ACC-1, B1); kept in the balance sheet and post-closing views.
+     */
+    public static final String CLOSING_FILTER =
+            " AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')";
+
     /** accountId → [Σ baseDebit, Σ baseCredit] with optional {@code postingDate >= from} / {@code <= to} / {@code < before}. */
     public Map<String, BigDecimal[]> balances(String organizationId, Instant from, Instant to, Instant before) {
+        return balances(organizationId, from, to, before, false);
+    }
+
+    /** As {@link #balances(String, Instant, Instant, Instant)}; {@code excludeClosing} drops the closing entries. */
+    public Map<String, BigDecimal[]> balances(String organizationId, Instant from, Instant to, Instant before,
+            boolean excludeClosing) {
         StringBuilder sql = new StringBuilder("SELECT l.\"accountId\", sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c"
                 + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = :org"
-                + " AND e.status::text IN ('posted', 'reversed')");
+                + " AND e.status::text IN ('posted', 'reversed')" + (excludeClosing ? CLOSING_FILTER : ""));
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("org", organizationId);
         if (from != null) {

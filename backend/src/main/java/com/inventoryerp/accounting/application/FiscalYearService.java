@@ -227,7 +227,7 @@ public class FiscalYearService {
     /** Net of each P&amp;L account over the year, closing entries included (zero once every period is closed). */
     private Map<String, BigDecimal> profitAndLossNet(Year y, boolean withClosing) {
         Map<String, BigDecimal> net = new HashMap<>();
-        jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.credit), 0) - COALESCE(SUM(l.debit), 0) FROM \"JournalLine\" l"
+        jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.\"baseCredit\"), 0) - COALESCE(SUM(l.\"baseDebit\"), 0) FROM \"JournalLine\" l"
                         + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
                         + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ?"
                         + (withClosing ? "" : " AND COALESCE(e.\"postingKey\", '') NOT LIKE 'period_close:%'")
@@ -267,7 +267,7 @@ public class FiscalYearService {
         checks.add(check("periods_closed", "Every period with postings closed", true, periodsWithActivity(y)));
         checks.add(check("profit_and_loss_closed", "Profit and loss closed to retained earnings", true,
                 profitAndLossNet(y, true).values().stream().filter(v -> v.signum() != 0).count()));
-        BigDecimal[] totals = jdbc.sql("SELECT COALESCE(SUM(l.debit), 0), COALESCE(SUM(l.credit), 0) FROM \"JournalLine\""
+        BigDecimal[] totals = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\"), 0), COALESCE(SUM(l.\"baseCredit\"), 0) FROM \"JournalLine\""
                         + " l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ?")
                 .params(org, ts(y.start()), endTs(y.end()))
@@ -397,7 +397,7 @@ public class FiscalYearService {
         jdbc.sql("DELETE FROM \"FiscalYearBalance\" WHERE \"organizationId\" = ? AND \"fiscalYearId\" = ?")
                 .params(org(), y.id()).update();
         Map<String, BigDecimal[]> sums = new LinkedHashMap<>();
-        jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.debit), 0), COALESCE(SUM(l.credit), 0) FROM \"JournalLine\" l"
+        jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.\"baseDebit\"), 0), COALESCE(SUM(l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                         + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ? GROUP BY l.\"accountId\"")
                 .params(org(), endTs(y.end()))

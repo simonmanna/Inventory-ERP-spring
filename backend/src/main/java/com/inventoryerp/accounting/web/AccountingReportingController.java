@@ -53,8 +53,8 @@ public class AccountingReportingController {
 
     @GetMapping("/trial-balance")
     public Map<String, Object> trialBalance(@RequestParam(required = false) String from,
-            @RequestParam(required = false) String to) {
-        return reports.trialBalance(from, to);
+            @RequestParam(required = false) String to, @RequestParam(required = false) String view) {
+        return reports.trialBalance(from, to, view);
     }
 
     @GetMapping("/account-ledger/{accountId}")

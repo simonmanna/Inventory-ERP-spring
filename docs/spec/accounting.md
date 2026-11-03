@@ -95,6 +95,25 @@ Same as Nest, kept on purpose:
   the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
 - `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
 
+## Accounting remediation deviations (ACC-1 … ACC-4, owner-approved 2026-11-03)
+
+Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`. The phase plan is in
+`docs/accounting/ACC-EXECUTION-PLAN.md`.
+
+**ACC-1: reporting**
+
+- **B1.** Closing entries are left out of P&L and of every ranged movement in the reporting engine. This covers
+  `sourceType` `period_close` and `fiscal_year_close`, including their reopen reversals. A closed period still reports
+  its result. Point-in-time balances (balance sheet, post-closing TB) keep the closing entries.
+- **B1.** `GET /reports/accounting/trial-balance` takes an optional `view=pre_closing|post_closing`. The default is
+  unchanged. The `view` field is echoed only when it was asked for.
+- **B10.** `GET /reports/accounting/profit-and-loss` always computes from the ledger. The cumulative `ReportPnLSnapshot`
+  ignored the date range and carried no other income/expense.
+- **B10.** The trial-balance snapshot answers only open-ended post-closing requests.
+- **B10.** The balance sheet keeps inactive accounts that still carry a balance.
+- **B2.** Fiscal-year close checks, and the `FiscalYearBalance` snapshot, use base amounts (`baseDebit`/`baseCredit`).
+  Before this, a multi-currency organization could not close its year.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

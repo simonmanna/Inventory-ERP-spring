@@ -11,7 +11,6 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -30,7 +29,6 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B1][owner:accounting][ACC-1] P&L of a closed month still shows its operating result")
     void pnlOfClosedMonth() {
         Books b = freshBooks();
@@ -70,7 +68,6 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B2][owner:accounting][ACC-1] fiscal-year close uses base-currency amounts")
     void fiscalYearCloseInBaseCurrency() {
         Books b = freshBooks();
@@ -107,7 +104,6 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B10][owner:accounting][ACC-1] snapshot P&L keeps other income and honours the from date")
     void snapshotPnl() {
         Books b = freshBooks();
@@ -131,7 +127,6 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B10][owner:accounting][ACC-1] balance sheet includes an inactive account that still has a balance")
     void balanceSheetInactiveAccount() {
         Books b = freshBooks();

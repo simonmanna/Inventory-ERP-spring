@@ -190,6 +190,11 @@ public class LedgerAggregator {
         if (from != null) {
             sql.append(" AND e.\"postingDate\" >= ?");
             params.add(SqlRows.ts(from.atStartOfDay(zone).toInstant()));
+            // ACC-1 (B1): a movement over a period reports the economic activity; the period / year closing transfer
+            // to retained earnings is left out. Point-in-time balances (no lower bound) keep it.
+            if (r.sourceTypes() == null || r.sourceTypes().isEmpty()) {
+                sql.append(" AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')");
+            }
         }
         if (to != null) {
             sql.append(" AND e.\"postingDate\" < ?");

@@ -205,6 +205,7 @@ val accountingRegression by tasks.registering(Test::class) {
             "*CostCloseIT", "*SimulationIsolationIT", "*ReportEngineIT",
             "*FinancialReportIntegrityIT", "*AllReportsRunIT",
             "*LandedCostAuditIT", "*CostingAuditIT", "*SharedFxIT",
+            "*Acc0FinancialReportingIT",
             "com.inventoryerp.costing.*").forEach { includeTestsMatching(it) }
     }
 }

@@ -71,8 +71,20 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> trialBalance(String from, String to) {
+        return trialBalance(from, to, null);
+    }
+
+    /**
+     * Trial balance. {@code view = pre_closing} leaves out the period / fiscal-year closing entries (P&L accounts keep
+     * their period activity); default / {@code post_closing} includes them. Snapshots are cumulative, so they answer
+     * only an open-ended post-closing request (ACC-1, B10).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> trialBalance(String from, String to, String view) {
+        boolean preClosing = "pre_closing".equals(view);
+        boolean ranged = from != null && !from.isEmpty();
         Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.date(to) : Instant.now();
-        Instant snap = findSnapshot("ReportTrialBalanceSnapshot", true, asOf);
+        Instant snap = preClosing || ranged ? null : findSnapshot("ReportTrialBalanceSnapshot", true, asOf);
         if (snap != null) {
             BigDecimal td = BigDecimal.ZERO;
             BigDecimal tc = BigDecimal.ZERO;
@@ -90,7 +102,8 @@ public class FinancialReportsService {
             return body("rows", rows, "totals", body("debit", plain(td), "credit", plain(tc)),
                     "balanced", td.subtract(tc).abs().compareTo(TB_EPSILON) <= 0, "source", "snapshot", "asOf", snap);
         }
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null);
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null,
+                preClosing);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal td = BigDecimal.ZERO;
         BigDecimal tc = BigDecimal.ZERO;
@@ -108,8 +121,12 @@ public class FinancialReportsService {
         }
         rows.sort(Comparator.<Map<String, Object>>comparingInt(r -> (Integer) r.get("sortOrder"))
                 .thenComparing(r -> (String) r.get("code"), AccountResolverService::localeCompare));
-        return body("rows", rows, "totals", body("debit", plain(td), "credit", plain(tc)),
+        Map<String, Object> out = body("rows", rows, "totals", body("debit", plain(td), "credit", plain(tc)),
                 "balanced", td.subtract(tc).abs().compareTo(TB_EPSILON) <= 0, "source", "live");
+        if (view != null) {
+            out.put("view", preClosing ? "pre_closing" : "post_closing");
+        }
+        return out;
     }
 
     private String rangeSql(Map<String, Object> params, String from, String to) {
@@ -184,25 +201,10 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> pnl(String from, String to) {
-        Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.date(to) : Instant.now();
-        Instant snap = findSnapshot("ReportPnLSnapshot", false, asOf);
-        if (snap != null) {
-            Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT * FROM \"ReportPnLSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?"
-                    + " LIMIT 1").params(org(), FiscalPeriodControl.ts(snap)));
-            if (p != null) {
-                BigDecimal revenue = SqlRows.dec(p, "revenue");
-                BigDecimal contra = SqlRows.dec(p, "contraRevenue");
-                BigDecimal cogs = SqlRows.dec(p, "cogs");
-                BigDecimal expense = SqlRows.dec(p, "expense");
-                BigDecimal gross = revenue.subtract(contra).subtract(cogs);
-                BigDecimal operating = gross.subtract(expense);
-                return body("revenue", plain(revenue), "contraRevenue", plain(contra), "netRevenue", plain(revenue.subtract(contra)),
-                        "cogs", plain(cogs), "grossProfit", plain(gross), "expense", plain(expense), "otherIncome", "0",
-                        "otherExpense", "0", "operatingProfit", plain(operating), "netProfit", plain(operating),
-                        "source", "snapshot", "asOf", p.get("asOf"));
-            }
-        }
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null);
+        // ACC-1 (B1, B10): always from the ledger. The cumulative snapshot cannot answer a date range and carries no
+        // other income / expense; closing entries are left out so a closed period still reports its result.
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null,
+                true);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal contra = BigDecimal.ZERO;
@@ -325,7 +327,8 @@ public class FinancialReportsService {
         Totals totals = new Totals();
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
-            if (a == null || !a.isActive()) {
+            // ACC-1 (B10): an inactive account that still carries a balance stays on the balance sheet.
+            if (a == null) {
                 continue;
             }
             BigDecimal display = AccountClassification.balanceSheetBalance(g.getValue()[0].subtract(g.getValue()[1]),
