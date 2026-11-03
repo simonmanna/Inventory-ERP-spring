@@ -48,7 +48,8 @@ class DepreciationCalculatorTest {
         assertThat(r6(r.depreciationAmount())).isEqualTo("33.333333");
         Result dd = DepreciationCalculator.calculate("double_declining",
                 new Input(d("1000"), d("0"), 60, d("1000"), d("0")));
-        assertThat(r6(dd.depreciationAmount())).isEqualTo("66.666667");
+        // ACC-5 (B11): double-declining = 2 × straight-line rate (Nest used 4 ×, i.e. 66.666667 here).
+        assertThat(r6(dd.depreciationAmount())).isEqualTo("33.333333");
     }
 
     @Test

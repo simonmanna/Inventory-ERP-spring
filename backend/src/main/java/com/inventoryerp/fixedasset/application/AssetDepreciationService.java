@@ -170,7 +170,7 @@ public class AssetDepreciationService {
                 : Instant.now();
         String value = JsNumbers.dec(amount);
         Map<String, Object> je = posting.post(PostingRequest.of("GEN", date, "Depreciation " + dep.getPeriod(),
-                "asset_depreciation", dep.getId(), null, List.of(
+                "asset_depreciation", dep.getId(), "asset_depreciation:" + dep.getId(), List.of(
                         Line.debit(expense, value, "Depreciation expense"),
                         Line.credit(accum, value, "Accumulated depreciation"))));
         dep.setJournalEntryId((String) je.get("id"));

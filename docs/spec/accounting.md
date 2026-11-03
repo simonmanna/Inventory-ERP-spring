@@ -170,6 +170,20 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - The return-to-vendor path is unchanged.
   - A supplier credit (a claim that reduces AP) is still a capability gap.
 
+**ACC-5: fixed assets (B11)**
+
+- **Acquisition record** (first create) capitalises the asset: Dr `fixed_asset_valuation` / Cr the vendor's payable,
+  or `suspense` (asset clearing) when no vendor is known.
+  - The amount is the capitalised cost, else purchase + freight + install + other.
+  - Removing the record reverses it. Updating it never capitalises twice.
+- **Revaluation** posts the change in carrying amount. An increase goes to Cr `asset_revaluation_surplus`. A decrease
+  first releases that asset's surplus, and the rest is a loss on `asset_gain_loss`.
+- **Disposal** posts Dr posted accumulated depreciation and Dr proceeds (default cash), Cr cost (plus revaluations),
+  with the gain/loss going to `asset_gain_loss`.
+- **Depreciation entries** carry the key `asset_depreciation:<id>`.
+- **`double_declining`** = 2 × the straight-line rate. Nest used 4 ×; `declining_balance` keeps Nest's 2 ×.
+- **Not built:** impairment, CIP capitalisation, units of production and per-category accounts.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

@@ -25,8 +25,9 @@ public final class DepreciationCalculator {
 
     public static Result calculate(String method, Input in) {
         return switch (method == null ? "" : method) {
+            // ACC-5 (B11): double-declining is twice the straight-line rate (was 4×); declining balance keeps Nest 2×.
             case "declining_balance" -> declining(in, BigDecimal.valueOf(2));
-            case "double_declining" -> declining(in, BigDecimal.valueOf(4));
+            case "double_declining" -> declining(in, BigDecimal.valueOf(2));
             case "manual" -> new Result(BigDecimal.ZERO, in.accumulatedDepreciation(), in.currentBookValue());
             default -> straightLine(in);
         };

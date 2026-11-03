@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /** ACC-0 reproduction: fixed-asset accounting (finding B11). */
@@ -41,7 +40,6 @@ class Acc0FixedAssetIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B11][owner:accounting][ACC-5] acquisition capitalises the asset in the GL")
     void acquisitionPostsToGl() {
         String id = asset(1200, 0, 12, "straight_line");
@@ -53,7 +51,6 @@ class Acc0FixedAssetIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B11][owner:accounting][ACC-5] disposal removes cost and accumulated depreciation, books gain/loss")
     void disposalPostsGainLoss() {
         String id = asset(1200, 0, 12, "straight_line");
@@ -71,7 +68,34 @@ class Acc0FixedAssetIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
+    @DisplayName("[B11][owner:accounting][ACC-5] revaluation: increase to surplus, decrease releases it then loses")
+    void revaluationSurplusThenLoss() {
+        String id = asset(1000, 0, 60, "straight_line");
+        ok(201, "POST", "/fixed-assets/" + id + "/acquisition", Map.of("vendor", "ACC0"));
+        ok(201, "POST", "/fixed-assets/" + id + "/revaluations", Map.of("previousValue", 1000, "newValue", 1200));
+        List<String> entries = assetEntries(id);
+        assertThat(netOn("fixed_asset_valuation", revaluations(id))).isEqualByComparingTo("200");
+        assertThat(netOn("asset_revaluation_surplus", revaluations(id))).as("surplus (credit)")
+                .isEqualByComparingTo("-200");
+        ok(201, "POST", "/fixed-assets/" + id + "/revaluations", Map.of("previousValue", 1200, "newValue", 900));
+        assertThat(netOn("asset_revaluation_surplus", revaluations(id))).as("surplus fully released")
+                .isEqualByComparingTo("0");
+        assertThat(netOn("asset_gain_loss", revaluations(id))).as("loss beyond the surplus")
+                .isEqualByComparingTo("100");
+        assertThat(netOn("fixed_asset_valuation", revaluations(id))).isEqualByComparingTo("-100");
+        LedgerInvariants.entriesBalanced(jdbc, demoOrg, entries);
+        // Re-posting the acquisition record (an update) does not capitalise twice.
+        ok(201, "POST", "/fixed-assets/" + id + "/acquisition", Map.of("vendor", "ACC0 again"));
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"sourceType\" = 'asset_acquisition' AND"
+                + " \"sourceId\" = ?").param(id).query(Long.class).single()).isEqualTo(1);
+    }
+
+    List<String> revaluations(String assetId) {
+        return jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"sourceType\" = 'asset_revaluation' AND \"sourceId\" = ?")
+                .param(assetId).query(String.class).list();
+    }
+
+    @Test
     @DisplayName("[B11][owner:accounting][ACC-5] double-declining uses twice the straight-line rate")
     void doubleDecliningRate() {
         // 1,200 over 60 months (5 years): straight-line rate 20 %/yr → DDB 40 %/yr → first month 1,200 × 0.4 / 12 = 40.

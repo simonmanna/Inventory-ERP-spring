@@ -39,11 +39,13 @@ public class AssetRecordsService {
     private final EntityManager em;
     private final EventBus events;
     private final AssetService assets;
+    private final AssetLedgerService ledger;
 
-    public AssetRecordsService(EntityManager em, EventBus events, AssetService assets) {
+    public AssetRecordsService(EntityManager em, EventBus events, AssetService assets, AssetLedgerService ledger) {
         this.em = em;
         this.events = events;
         this.assets = assets;
+        this.ledger = ledger;
     }
 
     private <E> List<Map<String, Object>> byAsset(Class<E> type, String assetId, String orderBy) {
@@ -112,7 +114,10 @@ public class AssetRecordsService {
                 throw ApiException.forbidden("Asset acquisition details require approval. Request ID: "
                         + gate.get("requestId") + ".");
             }
-            return EntityJson.of(insert(new AssetAcquisition(), assetId, dto));
+            AssetAcquisition row = insert(new AssetAcquisition(), assetId, dto);
+            // ACC-5 (B11): the acquisition capitalises the asset in the GL (once; retries replay the posting key).
+            ledger.capitalise(asset, row, row.getAcquisitionDate() != null ? row.getAcquisitionDate() : Instant.now());
+            return EntityJson.of(row);
         }
         EntityPatch.apply(existing, dto);
         em.flush();
@@ -122,6 +127,7 @@ public class AssetRecordsService {
 
     @Transactional
     public void removeAcquisition(String assetId) {
+        ledger.reverseCapitalisation(assetId);
         em.createQuery("delete from AssetAcquisition a where a.assetId = :id").setParameter("id", assetId)
                 .executeUpdate();
     }
@@ -372,9 +378,13 @@ public class AssetRecordsService {
             throw ApiException.forbidden("Asset revaluation requires approval. Request ID: " + gate.get("requestId")
                     + ".");
         }
+        BigDecimal previous = orZero(asset.getCurrentValue());
         AssetRevaluation row = insert(new AssetRevaluation(), assetId, dto);
         asset.setCurrentValue((BigDecimal) data.get("newValue"));
         em.flush();
+        // ACC-5 (B11): the change in carrying amount reaches the GL (surplus up / surplus then loss down).
+        ledger.revalue(asset, row.getId(), previous, (BigDecimal) data.get("newValue"),
+                row.getRevaluationDate() != null ? row.getRevaluationDate() : Instant.now());
         return EntityJson.of(row);
     }
 
@@ -467,6 +477,9 @@ public class AssetRecordsService {
         em.persist(row);
         em.flush();
         em.refresh(row);
+        // ACC-5 (B11): derecognise the asset in the GL with the gain / loss on disposal.
+        ledger.dispose(asset, acquisition(assetId), row.getId(), value, null,
+                row.getDisposalDate() != null ? row.getDisposalDate() : Instant.now());
         asset.setStatus(AssetStatus.DISPOSED);
         asset.setCurrentValue(BigDecimal.ZERO);
         em.flush();
