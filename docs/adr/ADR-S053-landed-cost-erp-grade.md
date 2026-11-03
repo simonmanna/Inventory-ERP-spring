@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates) and LC-4 done.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates), LC-4 and LC-5 done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -224,6 +224,30 @@ difference, drill-down), the classification and location mismatches, the open li
   (0-30 / 31-60 / 61-90 / 90+), overdue (past `expectedSettlementDate`), estimate, cleared, remaining, actual and
   variance; bucket totals.
 - The 2156 reconciliation uses `remainingAmount`.
+
+### LC-5 — voucher UX
+
+- **Preview** (`GET …/{id}/preview`) adds the journal the voucher would post (same line builder as posting,
+  `StockPostingService.landedVoucherLines`), the disposition per target, `inputsHash` (= the approval hash),
+  `previewHash` (inputs + disposition) and `computedAt`, and warnings: shares that would be parked in 1396 (transfer
+  in transit, unpaired, lineage defect) and inventory moved since approval. The page marks a preview stale when its
+  hash changes and never shows it as current. Missing weight / volume, no eligible goods and reversed receipts stay
+  400s with their messages (shown on the page).
+- **Edit:** stepper General → Receipts → Charges → Allocation (per-row basis, share, formula, rounding) → Review (the
+  actual journal); a saved draft autosaves 3 s after the last change (hydrated once, so a refetch never overwrites
+  typing); a new draft is kept in local storage until saved; sticky summary total / capitalised / expensed / tax /
+  unallocated.
+- **Detail:** tabs Overview (receipts, supplier bills, charges, per product), Allocation, Accounting (preview journal
+  or posted entries), Approval (approved vs now / posted per target), Trace (tree with transfer hops); Supplier credit
+  form on posted vouchers; Approve only on submitted, Reopen.
+- **Landed cost control** (`/procurement/landed-cost-control`, nav *Imports*): Reconciliation cards with drill-down,
+  classification / location mismatches and CSV export; Exceptions workspace (assign / write off, reason required,
+  gated by `landed_cost:resolve_lineage`); Accruals (age buckets, monitor with estimate variance, close / reverse,
+  rules with periods and rate types); Duplicate invoices (overrides); Trace.
+- Responsive: tables scroll horizontally, cards stack, tab lists wrap; English keys only (i18n check is red on main
+  for 2,406 older phrases, unchanged by this phase).
+- Not done: the historical tax review list (`taxRecoverable = NULL`) — the post-time 400 names each charge; the GRN
+  panel buttons (reverse / create voucher from this receipt).
 
 ## Findings
 

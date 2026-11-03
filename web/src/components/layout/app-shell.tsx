@@ -403,6 +403,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },
       { to: '/procurement/shipments', label: tx('Import Shipments'), icon: Boxes, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
       { to: '/procurement/landed-cost-vouchers', label: tx('Landed Costs'), icon: Calculator, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
+      { to: '/procurement/landed-cost-control', label: tx('Landed Cost Control'), icon: ShieldCheck, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
       { to: '/procurement/inspections', label: tx('Incoming Inspection'), icon: ShieldCheck, permission: PERMISSIONS.inspection.read, group: 'Exceptions' },
       { to: '/procurement/claims', label: tx('Supplier Claims'), icon: MessageSquareWarning, permission: PERMISSIONS.supplierClaim.read, group: 'Exceptions' },
       { to: '/procurement/reports/emergency', label: tx('Emergency Purchases'), icon: Siren, permission: PERMISSIONS.emergencyPurchase.review, group: 'Exceptions' },

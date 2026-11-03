@@ -168,6 +168,39 @@ class LandedCostControlsIT extends LandedCostFixtures {
         }
     }
 
+    // ------------------------------------------------------------------ LC-5 preview
+
+    @Test
+    @DisplayName("preview (LC-5): balanced journal, disposition, hash that changes when stock moves, parked warning")
+    void previewJournalHashAndWarnings() {
+        String p = product("AVCO", false, 0);
+        String grn = receive(p, 100, 50);
+        String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000)));
+        JsonNode first = ok(200, "GET", "/procurement/landed-cost-vouchers/" + v + "/preview", null);
+        BigDecimal debit = BigDecimal.ZERO;
+        BigDecimal credit = BigDecimal.ZERO;
+        for (JsonNode l : first.get("journal")) {
+            debit = debit.add(l.get("debit").isNull() ? BigDecimal.ZERO : new BigDecimal(l.get("debit").asString()));
+            credit = credit.add(l.get("credit").isNull() ? BigDecimal.ZERO : new BigDecimal(l.get("credit").asString()));
+        }
+        assertThat(debit).isEqualByComparingTo("1000").isEqualByComparingTo(credit);
+        assertThat(new BigDecimal(first.get("disposition").get("stock:" + p + ":" + w1).asString()))
+                .isEqualByComparingTo("1000");
+        assertThat(first.get("warnings")).isEmpty();
+        assertThat(first.get("computedAt").asString()).isNotBlank();
+        sell(p, w1, 10);
+        JsonNode second = ok(200, "GET", "/procurement/landed-cost-vouchers/" + v + "/preview", null);
+        assertThat(second.get("previewHash").asString()).isNotEqualTo(first.get("previewHash").asString());
+        assertThat(second.get("inputsHash").asString()).isEqualTo(first.get("inputsHash").asString());
+        // A transfer with no lineage → the share would be parked: the preview says so before posting.
+        asAdmin(() -> stock.transfer(com.inventoryerp.inventory.application.StockMove.transfer(p, w1, w2,
+                new BigDecimal(30)).source("audit", suffix())));
+        jdbc.sql("DELETE FROM \"InventoryTransferLineage\" WHERE \"sourceLedgerId\" IN (SELECT id FROM"
+                + " \"InventoryLedger\" WHERE \"productId\" = ? AND type = 'transfer_out')").param(p).update();
+        JsonNode third = ok(200, "GET", "/procurement/landed-cost-vouchers/" + v + "/preview", null);
+        assertThat(third.get("warnings").get(0).asString()).contains("will be parked in 1396");
+    }
+
     // ------------------------------------------------------------------ duplicates
 
     Map<String, Object> invoiceCharge(String ref, int amount) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Plus, Send, Trash2, Undo2, Upload, XCircle } from 'lucide-react';
@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TraceTree } from '@/pages/costing/LandedCostControlPage';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import { usePartners } from '@/features/partners/api';
@@ -18,8 +20,10 @@ import {
   flattenTree,
   useCostCenterTree,
   useCostComponents,
+  useCreditLandedCostVoucher,
   useLandedCostAction,
   useLandedCostPreview,
+  useLandedCostTrace,
   useLandedCostVoucher,
   useLandedCostVouchers,
   useSaveLandedCostVoucher,
@@ -112,6 +116,8 @@ export function LandedCostVouchersPage() {
 
 type ChargeRow = ChargeDraft & { key: string; amountText: string; taxText: string; rateText: string; manualText: Record<string, string> };
 
+const DRAFT_KEY = 'landed-cost-voucher-draft';
+
 const blankCharge = (): ChargeRow => ({ key: crypto.randomUUID(), amount: 0, amountText: '', taxText: '', rateText: '', manualText: {}, billMode: 'generate' });
 
 /** Create or edit a draft voucher. */
@@ -144,8 +150,11 @@ export function LandedCostVoucherEditPage() {
   const [notes, setNotes] = useState('');
   const [charges, setCharges] = useState<ChargeRow[]>([blankCharge()]);
 
+  // Hydrate once: autosave refetches the voucher, which must not overwrite what is being typed.
+  const hydrated = useRef(false);
   useEffect(() => {
-    if (!existing) return;
+    if (!existing || hydrated.current) return;
+    hydrated.current = true;
     setShipmentId(existing.shipmentId ?? '');
     setReceipts((existing.receipts ?? []).map((r: any) => r.id));
     setVoucherDate(String(existing.date).slice(0, 10));
@@ -185,9 +194,7 @@ export function LandedCostVoucherEditPage() {
     patch(key, { costComponentId: componentId || undefined, treatment: comp?.treatment, allocationMethod: comp?.defaultAllocationMethod, kind: comp?.kind, description: comp?.name });
   };
 
-  const submit = async () => {
-    try {
-      const body = {
+  const buildBody = () => ({
         shipmentId: shipmentId || undefined,
         goodsReceiptIds: receipts.length ? receipts : undefined,
         date: voucherDate,
@@ -218,8 +225,12 @@ export function LandedCostVoucherEditPage() {
             ? Object.fromEntries(Object.entries(c.manualText).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)]))
             : undefined,
         })),
-      };
+      });
+  const submit = async () => {
+    try {
+      const body = buildBody();
       const v = await save.mutateAsync({ id, body });
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ }
       notify.success(tx('{{c}} saved', { c: v.code }));
       navigate(`/procurement/landed-cost-vouchers/${v.id}`);
     } catch (e) {
@@ -228,12 +239,77 @@ export function LandedCostVoucherEditPage() {
   };
 
   const total = charges.reduce((s, c) => s + (Number(c.amountText) || 0) * (Number(c.rateText) || 1), 0);
+  const baseOf = (c: ChargeRow) => (Number(c.amountText) || 0) * (Number(c.rateText) || 1);
+  const capitalised = charges.filter((c) => (c.treatment ?? 'capitalize') === 'capitalize').reduce((t, c) => t + baseOf(c), 0);
+  const expensed = charges.filter((c) => c.treatment === 'expense').reduce((t, c) => t + baseOf(c), 0);
+  const taxTotal = charges.reduce((t, c) => t + (Number(c.taxText) || 0) * (Number(c.rateText) || 1), 0);
+  const unallocated = !receipts.length && !shipmentId ? capitalised : 0;
+
+  // LC-5 stepper and autosave: a saved draft is saved again 3 s after the last change; a new one is kept locally.
+  const [step, setStep] = useState(0);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const bodyKey = JSON.stringify(buildBody());
+  useEffect(() => {
+    if (!id) {
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ shipmentId, receipts, voucherDate, costCenterId, notes, charges })); } catch { /* storage unavailable */ }
+      return;
+    }
+    if (!existing || existing.status !== 'draft') return;
+    const t = setTimeout(async () => {
+      try {
+        await save.mutateAsync({ id, body: JSON.parse(bodyKey) });
+        setSavedAt(new Date().toLocaleTimeString());
+      } catch { /* shown on explicit save */ }
+    }, 3000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyKey]);
+  useEffect(() => {
+    if (id) return;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      setShipmentId(d.shipmentId ?? '');
+      setReceipts(d.receipts ?? []);
+      setVoucherDate(d.voucherDate ?? new Date().toISOString().slice(0, 10));
+      setCostCenterId(d.costCenterId ?? '');
+      setNotes(d.notes ?? '');
+      if (Array.isArray(d.charges) && d.charges.length) setCharges(d.charges);
+    } catch { /* storage unavailable */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const { data: draftPreview, error: draftPreviewError } = useLandedCostPreview(id, !!id && step >= 3);
+  const STEPS = [tx('General'), tx('Receipts'), tx('Charges'), tx('Allocation'), tx('Review')];
 
   return (
     <div className="space-y-6 p-6">
       <h1 className="text-2xl font-semibold">{id ? tx('Edit {{c}}', { c: existing?.code ?? '' }) : tx('New landed cost voucher')}</h1>
+      <div className="flex flex-wrap gap-2" role="tablist">
+        {STEPS.map((label, i) => (
+          <Button key={label} type="button" size="sm" variant={i === step ? 'default' : 'outline'} onClick={() => setStep(i)}>{i + 1}. {label}</Button>
+        ))}
+        <span className="ml-auto self-center text-xs text-muted-foreground">{id ? (savedAt ? tx('Autosaved {{t}}', { t: savedAt }) : tx('Changes save automatically')) : tx('Draft kept on this device until saved')}</span>
+      </div>
+      {step === 0 && (
       <Card>
-        <CardHeader><CardTitle>{tx('Goods')}</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{tx('General')}</CardTitle></CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1"><Label>{tx('Voucher date')}</Label><Input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} /></div>
+          <div className="space-y-1">
+            <Label>{tx('Cost centre (expensed share, e.g. import project)')}</Label>
+            <select className="w-full rounded-md border p-2 text-sm" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
+              <option value="">{tx('None')}</option>
+              {centers.map((c) => <option key={c.id} value={c.id}>{'  '.repeat(c.depth)}{c.code} · {c.name}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1 md:col-span-2"><Label>{tx('Notes')}</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+        </CardContent>
+      </Card>
+      )}
+      {step === 1 && (
+      <Card>
+        <CardHeader><CardTitle>{tx('Receipts')}</CardTitle></CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1">
             <Label>{tx('Shipment (optional — uses its receipts)')}</Label>
@@ -254,18 +330,10 @@ export function LandedCostVoucherEditPage() {
               ))}
             </div>
           </div>
-          <div className="space-y-1"><Label>{tx('Voucher date')}</Label><Input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} /></div>
-          <div className="space-y-1">
-            <Label>{tx('Cost centre (expensed share, e.g. import project)')}</Label>
-            <select className="w-full rounded-md border p-2 text-sm" value={costCenterId} onChange={(e) => setCostCenterId(e.target.value)}>
-              <option value="">{tx('None')}</option>
-              {centers.map((c) => <option key={c.id} value={c.id}>{'  '.repeat(c.depth)}{c.code} · {c.name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1 md:col-span-2"><Label>{tx('Notes')}</Label><Input value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
         </CardContent>
       </Card>
-
+      )}
+      {step === 2 && (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>{tx('Charges')}</CardTitle>
@@ -385,7 +453,57 @@ export function LandedCostVoucherEditPage() {
           </p>
         </CardContent>
       </Card>
+      )}
+      {step >= 3 && (
+        <Card>
+          <CardHeader><CardTitle>{step === 3 ? tx('Allocation') : tx('Review')}</CardTitle></CardHeader>
+          <CardContent className="space-y-3 overflow-x-auto">
+            {!id && <p className="text-sm text-muted-foreground">{tx('Save the draft to see the allocation and the journal it will post.')}</p>}
+            {id && draftPreviewError && <p className="text-sm text-destructive">{errMsg(draftPreviewError)}</p>}
+            {id && draftPreview && <PreviewStatus preview={draftPreview} />}
+            {id && draftPreview && step === 3 && (
+              <Table>
+                <TableHeader><TableRow><TableHead>{tx('Product')}</TableHead><TableHead>{tx('Basis')}</TableHead><TableHead className="text-right">{tx('Share')}</TableHead><TableHead className="text-right">{tx('Allocated')}</TableHead><TableHead className="text-right">{tx('Formula')}</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {(draftPreview.allocations ?? []).map((a: any, i: number) => (
+                    <TableRow key={i}>
+                      <TableCell>{a.productName}</TableCell>
+                      <TableCell>{METHOD_LABEL[a.basisMethod as AllocationMethod] ?? a.basisMethod}</TableCell>
+                      <TableCell className="text-right">{Number(a.sharePct).toFixed(2)}%</TableCell>
+                      <TableCell className="text-right">{money(Number(a.allocatedAmount))}</TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">{Number(a.basisValue).toLocaleString()} / Σ × {tx('charge')}{Number(a.roundingAmount) ? ` ${tx('(rounding {{r}})', { r: a.roundingAmount })}` : ''}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            {id && draftPreview && step === 4 && (
+              <Table>
+                <TableHeader><TableRow><TableHead>{tx('Account')}</TableHead><TableHead className="text-right">{tx('Debit')}</TableHead><TableHead className="text-right">{tx('Credit')}</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {(draftPreview.journal ?? []).map((l: any, i: number) => (
+                    <TableRow key={i}>
+                      <TableCell>{l.accountCode} · {l.accountName}<div className="text-xs text-muted-foreground">{l.description}</div></TableCell>
+                      <TableCell className="text-right">{Number(l.debit) ? money(Number(l.debit)) : ''}</TableCell>
+                      <TableCell className="text-right">{Number(l.credit) ? money(Number(l.credit)) : ''}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      <div className="sticky bottom-0 z-10 grid grid-cols-2 gap-2 rounded-md border bg-background p-3 text-sm shadow md:grid-cols-5">
+        <div>{tx('Total')}: <b>{money(total)}</b></div>
+        <div>{tx('Capitalised')}: <b>{money(capitalised)}</b></div>
+        <div>{tx('Expensed')}: <b>{money(expensed)}</b></div>
+        <div>{tx('Tax')}: <b>{money(taxTotal)}</b></div>
+        <div className={unallocated ? 'text-destructive' : ''}>{tx('Unallocated')}: <b>{money(unallocated)}</b></div>
+      </div>
       <div className="flex justify-end gap-2">
+        {step > 0 && <Button variant="ghost" onClick={() => setStep(step - 1)}>{tx('Back')}</Button>}
+        {step < 4 && <Button variant="outline" onClick={() => setStep(step + 1)}>{tx('Next')}</Button>}
         <Button variant="outline" onClick={() => navigate(-1)}>{tx('Cancel')}</Button>
         <Button onClick={submit} disabled={save.isPending || (!receipts.length && !shipmentId)}>{tx('Save draft')}</Button>
       </div>
@@ -473,6 +591,19 @@ export function LandedCostVoucherDetailPage() {
         ))}
       </div>
 
+      {unposted && preview && (
+        <PreviewStatus preview={preview} />
+      )}
+      {v.status === 'posted' && v.voucherType !== 'credit' && has(PERMISSIONS.landedCost.create) && <CreditVoucherForm voucher={v} />}
+      <Tabs defaultValue="overview">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start">
+          <TabsTrigger value="overview">{tx('Overview')}</TabsTrigger>
+          <TabsTrigger value="allocation">{tx('Allocation')}</TabsTrigger>
+          <TabsTrigger value="accounting">{tx('Accounting')}</TabsTrigger>
+          <TabsTrigger value="approval">{tx('Approval')}</TabsTrigger>
+          {!unposted && <TabsTrigger value="trace">{tx('Trace')}</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="overview" className="space-y-6">
       <Card>
         <CardHeader><CardTitle>{tx('Receipts')}</CardTitle></CardHeader>
         <CardContent className="flex flex-wrap gap-2">
@@ -593,6 +724,8 @@ export function LandedCostVoucherDetailPage() {
         </CardContent>
       </Card>
 
+        </TabsContent>
+        <TabsContent value="allocation" className="space-y-6">
       <Card>
         <CardHeader><CardTitle>{unposted ? tx('Allocation preview') : tx('Allocation')}</CardTitle></CardHeader>
         <CardContent className="space-y-2">
@@ -632,7 +765,129 @@ export function LandedCostVoucherDetailPage() {
           {v.journalEntryId && <Link className="text-sm text-primary hover:underline" to={`/journal-entries/${v.journalEntryId}`}>{tx('View journal entry')}</Link>}
         </CardContent>
       </Card>
+        </TabsContent>
+        <TabsContent value="accounting"><AccountingTab voucher={v} preview={unposted ? preview : undefined} /></TabsContent>
+        <TabsContent value="approval"><ApprovalTab voucher={v} preview={unposted ? preview : undefined} /></TabsContent>
+        {!unposted && <TabsContent value="trace"><Card><CardContent className="pt-6"><TraceTree voucherId={id} /></CardContent></Card></TabsContent>}
+      </Tabs>
     </div>
+  );
+}
+
+/** Preview freshness (LC-5): when it was computed, warnings, and a stale mark when the inputs or the stock moved. */
+function PreviewStatus({ preview }: { preview: any }) {
+  const [first, setFirst] = useState<string | null>(null);
+  useEffect(() => {
+    if (preview?.previewHash && first === null) setFirst(preview.previewHash);
+  }, [preview?.previewHash, first]);
+  const stale = first !== null && preview?.previewHash !== first;
+  return (
+    <Card className={stale || preview.warnings?.length ? 'border-amber-500' : ''}>
+      <CardContent className="space-y-1 pt-4 text-sm">
+        <p className="text-muted-foreground">{tx('Preview computed at {{t}}', { t: new Date(preview.computedAt).toLocaleString() })}
+          {stale && <Badge variant="destructive" className="ml-2">{tx('Changed since you opened it — review again')}</Badge>}</p>
+        {(preview.warnings ?? []).map((w: string) => <p key={w} className="text-amber-700">⚠ {w}</p>)}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The journal the voucher posts (preview) or posted (trace), line by line. */
+function AccountingTab({ voucher, preview }: { voucher: any; preview?: any }) {
+  const trace = useLandedCostTrace({ voucherId: preview ? undefined : voucher.id });
+  const lines: any[] = preview ? preview.journal ?? [] : trace.data?.journal ?? [];
+  return (
+    <Card>
+      <CardHeader><CardTitle>{preview ? tx('Journal this voucher will post') : tx('Journal entries')}</CardTitle></CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow><TableHead>{tx('Account')}</TableHead><TableHead className="text-right">{tx('Debit')}</TableHead><TableHead className="text-right">{tx('Credit')}</TableHead><TableHead>{tx('Description')}</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {lines.map((l, i) => (
+              <TableRow key={l.id ?? i}>
+                <TableCell>{l.accountCode} · {l.accountName}</TableCell>
+                <TableCell className="text-right">{Number(l.debit) ? money(Number(l.debit)) : ''}</TableCell>
+                <TableCell className="text-right">{Number(l.credit) ? money(Number(l.credit)) : ''}</TableCell>
+                <TableCell className="text-xs">{l.description}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {voucher.journalEntryId && <Link className="text-sm text-primary hover:underline" to={`/journal-entries/${voucher.journalEntryId}`}>{tx('Open journal entry')}</Link>}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Approved vs posted (or current) disposition per target (LC-2). */
+function ApprovalTab({ voucher, preview }: { voucher: any; preview?: any }) {
+  const approved: Record<string, string> = voucher.approvedDisposition ?? {};
+  const other: Record<string, string> = preview ? preview.disposition ?? {} : voucher.postedDisposition ?? {};
+  const keys = Array.from(new Set([...Object.keys(approved), ...Object.keys(other)])).sort();
+  const label = (k: string) => {
+    const [t, a, b] = k.split(':');
+    return `${t} · ${a?.slice(0, 8) ?? ''}${b ? ` @ ${b.slice(0, 8)}` : ''}`;
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle>{preview ? tx('Approved vs now') : tx('Approved vs posted')}</CardTitle></CardHeader>
+      <CardContent className="overflow-x-auto">
+        {voucher.approvedAt ? <p className="pb-2 text-sm text-muted-foreground">{tx('Approved {{d}}', { d: date(voucher.approvedAt) })}</p>
+          : <p className="pb-2 text-sm text-muted-foreground">{tx('Not approved yet.')}</p>}
+        <Table>
+          <TableHeader><TableRow><TableHead>{tx('Target')}</TableHead><TableHead className="text-right">{tx('Approved')}</TableHead><TableHead className="text-right">{preview ? tx('Now') : tx('Posted')}</TableHead><TableHead className="text-right">{tx('Change')}</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {keys.map((k) => {
+              const d = Number(other[k] ?? 0) - Number(approved[k] ?? 0);
+              return (
+                <TableRow key={k}>
+                  <TableCell className="font-mono text-xs">{label(k)}</TableCell>
+                  <TableCell className="text-right">{approved[k] != null ? money(Number(approved[k])) : '—'}</TableCell>
+                  <TableCell className="text-right">{other[k] != null ? money(Number(other[k])) : '—'}</TableCell>
+                  <TableCell className={`text-right ${d ? 'text-amber-700' : ''}`}>{d ? money(d) : ''}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A supplier credited part of a charge: draft credit voucher against this posted voucher (LC-1). */
+function CreditVoucherForm({ voucher }: { voucher: any }) {
+  const navigate = useNavigate();
+  const credit = useCreditLandedCostVoucher();
+  const [open, setOpen] = useState(false);
+  const [chargeId, setChargeId] = useState('');
+  const [amount, setAmount] = useState('');
+  const [ref, setRef] = useState('');
+  if (!open) return <div><Button variant="outline" size="sm" onClick={() => setOpen(true)}>{tx('Supplier credit…')}</Button></div>;
+  const submit = async () => {
+    try {
+      const c = await credit.mutateAsync({ id: voucher.id, body: { charges: [{ chargeId, amount: Number(amount), supplierInvoiceRef: ref || undefined }] } });
+      notify.success(tx('Credit voucher {{c}} created', { c: c.code }));
+      navigate(`/procurement/landed-cost-vouchers/${c.id}`);
+    } catch (e) {
+      notify.error(tx('Could not create the credit'), errMsg(e));
+    }
+  };
+  return (
+    <Card>
+      <CardContent className="grid gap-2 pt-4 md:grid-cols-4">
+        <select className="rounded-md border p-2 text-sm" value={chargeId} onChange={(e) => setChargeId(e.target.value)}>
+          <option value="">{tx('Charge…')}</option>
+          {voucher.charges.filter((c: any) => Number(c.amount) > 0).map((c: any) => <option key={c.id} value={c.id}>{c.lineNumber}. {c.costComponentCode ?? c.kind} · {Number(c.amount)} {c.currencyCode ?? ''}</option>)}
+        </select>
+        <Input type="number" min="0" placeholder={tx('Amount credited')} value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <Input placeholder={tx('Credit note no.')} value={ref} onChange={(e) => setRef(e.target.value)} />
+        <div className="flex gap-2">
+          <Button disabled={!chargeId || !(Number(amount) > 0) || credit.isPending} onClick={submit}>{tx('Create credit')}</Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>{tx('Cancel')}</Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

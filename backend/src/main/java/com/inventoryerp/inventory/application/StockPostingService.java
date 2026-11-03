@@ -322,6 +322,17 @@ public class StockPostingService {
      */
     public Map<String, Object> postLandedVoucher(List<LandedLine> landed, String cogsCostCenterId, List<Line> other,
             Instant date, String sourceId, String description) {
+        List<Line> lines = landedVoucherLines(landed, cogsCostCenterId, other, description);
+        if (lines.size() < 2) {
+            return null;
+        }
+        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher", sourceId,
+                "inventory:landed_cost_voucher:" + TenantContext.organizationId() + ":" + sourceId, lines));
+    }
+
+    /** The journal lines {@link #postLandedVoucher} posts (LC-5 preview shows them without posting). */
+    public List<Line> landedVoucherLines(List<LandedLine> landed, String cogsCostCenterId, List<Line> other,
+            String description) {
         List<Line> lines = new ArrayList<>();
         BigDecimal cogsTotal = Money.ZERO;
         Map<String, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
@@ -353,11 +364,7 @@ public class StockPostingService {
                     description + " · already consumed", null, cogsCostCenterId, null));
         }
         lines.addAll(other);
-        if (lines.size() < 2) {
-            return null;
-        }
-        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher", sourceId,
-                "inventory:landed_cost_voucher:" + TenantContext.organizationId() + ":" + sourceId, lines));
+        return lines;
     }
 
     /**

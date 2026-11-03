@@ -276,11 +276,15 @@ public class LandedCostVoucherService {
         return out;
     }
 
-    /** Allocation as posting would compute it now, without writing anything. */
-    @Transactional(readOnly = true)
+    /**
+     * Allocation as posting would compute it now, without writing anything. LC-5: also the journal it would post, the
+     * disposition per target, a {@code previewHash} (inputs + disposition; the page marks a preview stale when it
+     * changes) with {@code computedAt}, and warnings (parked lineage shares, inventory moved since approval).
+     */
+    @Transactional
     public Map<String, Object> preview(String id) {
         Map<String, Object> lc = get(id);
-        Computation c = compute(lc, false);
+        Computation c = compute(lc, false, true);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Alloc a : c.allocs()) {
             Unit u = a.unit();
@@ -302,9 +306,41 @@ public class LandedCostVoucherService {
                     "unitCostBefore", JsNumbers.dec(a.applied().unitBefore()), "unitCostAfter",
                     JsNumbers.dec(a.applied().unitAfter())));
         }
+        Map<String, BigDecimal> disposition = disposition(c);
+        List<Map<String, Object>> journal = new ArrayList<>();
+        Map<String, Map<String, Object>> accountRows = new HashMap<>();
+        for (Line l : stockPosting.landedVoucherLines(c.landed(), (String) lc.get("costCenterId"), c.other(),
+                "Landed cost " + lc.get("code"))) {
+            Map<String, Object> acc = accountRows.computeIfAbsent(l.accountId(), k -> SqlRows.one(jdbc.sql(
+                    "SELECT code, name FROM \"Account\" WHERE id = ?").param(k)));
+            journal.add(Obj.of("accountId", l.accountId(), "accountCode", acc == null ? null : acc.get("code"),
+                    "accountName", acc == null ? null : acc.get("name"), "debit", l.debit(), "credit", l.credit(),
+                    "description", l.description()));
+        }
+        List<String> warnings = new ArrayList<>();
+        BigDecimal parked = disposition.entrySet().stream().filter(e -> e.getKey().startsWith("parked:"))
+                .map(Map.Entry::getValue).reduce(Money.ZERO, BigDecimal::add);
+        if (parked.signum() != 0) {
+            warnings.add("Part of the charge (" + JsNumbers.dec(parked) + ") cannot follow its goods (transfer still in"
+                    + " transit, unpaired, or a lineage defect) and will be parked in 1396");
+        }
+        Map<String, BigDecimal> approved = approvedDisposition(id);
+        if (approved != null && !approved.equals(disposition)) {
+            warnings.add("Inventory moved since approval: " + difference(approved, disposition).keySet().size()
+                    + " target(s) changed");
+        }
+        String driver = driverHash(lc);
+        String previewHash;
+        try {
+            previewHash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((driver + EntityJson.toJson(disposition)).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
         return Obj.of("voucher", lc, "allocations", rows, "totalAmount", JsNumbers.dec(c.total()),
                 "capitalizedAmount", JsNumbers.dec(c.capitalized()), "expensedAmount", JsNumbers.dec(c.expensed()),
-                "taxAmount", JsNumbers.dec(c.tax()));
+                "taxAmount", JsNumbers.dec(c.tax()), "journal", journal, "disposition", disposition, "previewHash",
+                previewHash, "inputsHash", driver, "computedAt", Instant.now().toString(), "warnings", warnings);
     }
 
     // ------------------------------------------------------------------ commands
@@ -779,6 +815,11 @@ public class LandedCostVoucherService {
 
     @SuppressWarnings("unchecked")
     private Computation compute(Map<String, Object> lc, boolean write) {
+        return compute(lc, write, write);
+    }
+
+    /** {@code journal} builds the non-stock journal lines without writing anything (LC-5 preview). */
+    private Computation compute(Map<String, Object> lc, boolean write, boolean journal) {
         List<Map<String, Object>> receipts = (List<Map<String, Object>>) lc.get("receipts");
         List<Unit> units = new ArrayList<>();
         for (Map<String, Object> r : receipts) {
@@ -818,7 +859,7 @@ public class LandedCostVoucherService {
             String lineDesc = description + " · " + (ch.get("description") != null ? ch.get("description") : ch.get("kind"))
                     + (ch.get("supplierInvoiceRef") != null ? " · inv " + ch.get("supplierInvoiceRef") : "");
             total = total.add(cost);
-            if (write) {
+            if (journal) {
                 String credit = ch.get("creditAccountId") != null ? (String) ch.get("creditAccountId") : clearingAccount();
                 other.add(new Line(credit, null, JsNumbers.dec(base.add(baseTax)), (String) ch.get("supplierId"),
                         lineDesc, null, null, null));
@@ -833,13 +874,13 @@ public class LandedCostVoucherService {
             switch (treatment) {
                 case "recoverable_tax" -> {
                     tax = tax.add(base);
-                    if (write) {
+                    if (journal) {
                         other.add(Line.debit(determination.mapped("tax_receivable"), JsNumbers.dec(base), lineDesc));
                     }
                 }
                 case "expense" -> {
                     expensed = expensed.add(cost);
-                    if (write) {
+                    if (journal) {
                         String account = ch.get("expenseAccountId") != null ? (String) ch.get("expenseAccountId")
                                 : determination.mapped("default_expense");
                         other.add(new Line(account, JsNumbers.dec(cost), null, null, lineDesc, null, cc, null));
@@ -860,11 +901,11 @@ public class LandedCostVoucherService {
                         capitalized = capitalized.add(ap.capitalized()).add(wip).add(parked);
                         expensed = expensed.add(exp).add(returned);
                         landed.add(new LandedLine(a.unit().group().productId(), ap.capitalized(), exp, wip));
-                        if (write && parked.signum() != 0) {
+                        if (journal && parked.signum() != 0) {
                             other.add(Line.debit(lineage.priceDifferenceAccount(), JsNumbers.dec(parked), lineDesc
                                     + " · parked (lineage / awaiting recovery)"));
                         }
-                        if (write && returned.signum() != 0) {
+                        if (journal && returned.signum() != 0) {
                             other.add(new Line(returnsAccount(), JsNumbers.dec(returned), null, null, lineDesc
                                     + " · returned goods", null, cc, null));
                         }
