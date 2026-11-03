@@ -95,6 +95,20 @@ public class CostLineageService {
                 "inventory_nrv_expense");
     }
 
+    /**
+     * GL account of a consumed lineage share (ADR-S055): open production order → WIP, scrap → stock adjustment expense,
+     * everything else (sale, closed order, negative stock) → cost of sales. One function for both the posting of a late
+     * cost and the release of an open adjunct, so a share is classified the same whenever it is recognised. On hand
+     * and transferred shares stay in inventory and are the caller's.
+     */
+    public String consumptionAccount(String target) {
+        return switch (target) {
+            case "wip" -> determination.mapped("wip");
+            case "scrap" -> determination.mapped("stock_adjustment_expense");
+            default -> determination.mapped("cogs");
+        };
+    }
+
     /** P&amp;L offset of a manual inventory revaluation (5968). */
     public String revaluationAccount() {
         return accounts.ensureByCode("5968", "Inventory Revaluation", "cost_of_goods_sold", "inventory_revaluation");
@@ -329,8 +343,8 @@ public class CostLineageService {
     }
 
     /**
-     * Release the consumed part of every open adjunct (STANDARD price differences, NRV allowances) to cost of sales /
-     * WIP: for each open amount, the lineage since its anchor gives the share consumed; one journal entry, value-only
+     * Release the consumed part of every open adjunct (STANDARD price differences, NRV allowances) to the account of
+     * what consumed it ({@link #consumptionAccount}): for each open amount, the lineage since its anchor gives the share consumed; one journal entry, value-only
      * rows per pool, and the open amounts re-anchored. Material-ledger amounts are carried by the material ledger
      * itself and are not released here.
      */
@@ -384,11 +398,9 @@ public class CostLineageService {
                 if (t.getValue().signum() == 0) {
                     continue;
                 }
-                String account = switch (t.getKey()) {
-                    case "wip" -> determination.mapped("wip");
-                    case "transfer" -> adjunctAccount; // stays in inventory: moved to the destination pool below (LC-1)
-                    default -> "nrv_allowance".equals(component) ? nrvExpenseAccount() : determination.mapped("cogs");
-                };
+                // A transferred share stays in inventory (moved to the destination pool below, LC-1); the rest is
+                // classified exactly as at posting (ADR-S055).
+                String account = "transfer".equals(t.getKey()) ? adjunctAccount : consumptionAccount(t.getKey());
                 if (!account.equals(adjunctAccount)) {
                     byAccountDebit.merge(account, t.getValue(), BigDecimal::add);
                     byAccountDebit.merge(adjunctAccount, t.getValue().negate(), BigDecimal::add);

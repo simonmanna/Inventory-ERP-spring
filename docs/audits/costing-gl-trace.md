@@ -52,8 +52,8 @@
 | NRV write-down | 5975 NRV expense | 1397 NRV allowance (contra-inventory) | same | ✅ |
 | NRV reversal (smaller gap) | 1397 | 5975, never beyond the allowance held (IAS 2.33) | same | ✅ nrvRecovery |
 | New standard activated | stock ↔ standard cost revaluation variance account | | `StandardCostService` | ✅ standardActivation |
-| Price-difference release (consumed share of open 1396 adjuncts) | `cogs` | 1396 | `CostLineageService.release` | ✅ (`ImportLandedScenarioIT`, `LandedCostAuditIT` STANDARD) |
-| NRV allowance release (consumed share) | **code:** 1397 / Cr **NRV expense**; **ADR-S031:** "to cost of sales" | | same | ⚠ **V1:** classification differs from the ADR (COGS overstated, NRV expense understated; P&L total equal). `CostingAuditIT.nrvRelease` `@Disabled`, owner decision |
+| Price-difference release (consumed share of open 1396 adjuncts) | the consumer's account (ADR-S055): `cogs` / `wip` / `stock_adjustment_expense` (V2: scrap was `cogs`) | 1396 | `CostLineageService.release` | ✅ `LandedCostAuditIT` `standardAdjunctReleasedAsSold`, `standardAdjunctScrapRelease`; `ImportLandedScenarioIT` |
+| NRV allowance release (consumed share) | 1397 | the consumer's account (ADR-S055): sold → `cogs`, open order → `wip`, scrap → `stock_adjustment_expense` | same | ✅ `nrvRelease` (partial, second, full sale), `nrvRecoveryAfterRelease`, `nrvReversalRefusedAfterRelease`, `nrvScrapRelease` — V1 fixed in PC-1 WP1; earlier releases keep 5975 |
 | Material ledger run (STANDARD actual costing) | stock ↔ 5965 material ledger revaluation | | `MaterialLedgerService` | 🛡 (`AdvancedCostingIT`) |
 | Costing-method migration (AVCO ↔ FIFO) | none (value-neutral re-layering) | | `InventoryCostPolicyService` | 🛡 (`InventoryCostPolicyIT`) |
 
@@ -107,6 +107,8 @@
 - 🛡 rows rely on their dedicated suite's own GL assertions for classification. Moving them to exact checks happens as
   each area's phase is worked on: PC-1 (valuation), PC-4 (manufacturing / quarry), PC-5 (distribution / projects).
 - Findings from this trace:
-  - **V1:** NRV release classification, above. Owner decision.
+  - **V1:** NRV release classification, above. Fixed in PC-1 WP1 (ADR-S055).
+  - **V2:** scrap share of a release went to COGS while posting sent it to stock adjustment expense. Fixed in WP1.
+  - **V3:** an empty / negative pool sends the open adjunct to COGS; stated policy in ADR-S055, tests in WP6.
   - **Absorption:** for non-staged orders it is a memo until completion. This is correct, but the trace previously
     implied an immediate Dr WIP. Now documented.

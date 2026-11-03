@@ -105,6 +105,56 @@ class LandedCostAuditIT extends LandedCostFixtures {
         assertBooks(s, moves());
     }
 
+    /** The release run (organisation-wide: run once before a snapshot so the step's release is its own). */
+    void release() {
+        Res r = call("POST", "/inventory/price-differences/release", null, key());
+        assertThat(r.status()).as(r.raw().body()).isIn(200, 201);
+    }
+
+    String standardOnHand() {
+        String p = product("STANDARD", false, 50);
+        String grn = receive(p, 100, 50);
+        approveAndPost(voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000))));
+        release();
+        return p;
+    }
+
+    @Test
+    @DisplayName("1b STANDARD release (ADR-S055): 1000 in 1396 on 100; sell 40 / 30 / 30 → 400 / 300 / 300 to COGS")
+    void standardAdjunctReleasedAsSold() {
+        String p = standardOnHand();
+        Snap s = snap();
+        sell(p, w1, 40);
+        release();
+        assertBooks(s, moves("stock", "-2000", "cogs", "2400", "adjunct", "-400"));
+        Snap second = snap();
+        sell(p, w1, 30);
+        release();
+        assertBooks(second, moves("stock", "-1500", "cogs", "1800", "adjunct", "-300"));
+        Snap full = snap();
+        sell(p, w1, 30);
+        release();
+        assertBooks(full, moves("stock", "-1500", "cogs", "1800", "adjunct", "-300"));
+        assertThat(openAdjunctOf(p)).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("1b STANDARD scrap (V2): waste 10 of 100 → 100 of the adjunct to stock adjustment expense, never COGS")
+    void standardAdjunctScrapRelease() {
+        String p = standardOnHand();
+        Snap s = snap();
+        asAdmin(() -> stock.issue(StockMove.of(p, w1, BigDecimal.TEN).moveType("waste").source("audit", suffix())));
+        release();
+        assertBooks(s, moves("stock", "-500", "scrap", "600", "adjunct", "-100"));
+        assertThat(openAdjunctOf(p)).isEqualByComparingTo("900");
+    }
+
+    BigDecimal openAdjunctOf(String productId) {
+        return jdbc.sql("SELECT coalesce(sum(\"openAmount\"), 0) FROM \"CostValueAdjustment\" WHERE"
+                + " \"organizationId\" = ? AND \"reversedAt\" IS NULL AND \"productId\" = ?").params(demoOrg, productId)
+                .query(BigDecimal.class).single();
+    }
+
     @Test
     @DisplayName("1c AVCO: everything sold after posting; reverse → landed cost taken back out of COGS")
     void reverseAfterFullSale() {

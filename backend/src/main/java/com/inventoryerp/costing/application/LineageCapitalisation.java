@@ -226,13 +226,11 @@ public class LineageCapitalisation {
                 sourceId));
     }
 
-    /** GL account of a lineage target (on hand / transfer → adjunct, wip, scrap, else cost of sales). */
+    /** GL account of a lineage target: on hand / transfer / in transit → adjunct, else as consumed (ADR-S055). */
     public String accountFor(String target) {
         return switch (target) {
             case "on_hand", "transfer", "in_transit" -> lineage.priceDifferenceAccount();
-            case "wip" -> determination.mapped("wip");
-            case "scrap" -> determination.mapped("stock_adjustment_expense");
-            default -> determination.mapped("cogs");
+            default -> lineage.consumptionAccount(target);
         };
     }
 

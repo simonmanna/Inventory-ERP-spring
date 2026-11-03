@@ -61,6 +61,19 @@ analysis.**
 - Before/after VAT regression tests.
 - **No migration until the owner reviews the analysis and its acceptance tests.**
 
+**2026-11-03, PC-0 closure and PC-1 start (owner):**
+- PC-0 is accepted as closed on `a2cc07f9`.
+- The pre-existing failures `BackupJobsIT` / `FleetIncidentsIT` stay visible and are not suppressed.
+- The BooksGuard limitation and the unguarded return-to-supplier path stay documented.
+- **V1 approved:** NRV allowance release is classified per ADR-S031 (cost of sales), with exact tests for partial and
+  full sales, recovery, subsequent sales and reversals. Posted history is preserved. Done within PC-1.
+- **PC-1 approved to start**, plan first: [`docs/phases/PC-1-valuation-correctness.md`](../phases/PC-1-valuation-correctness.md).
+  Valuation correctness across AVCO / FIFO / lot / serial / STANDARD, transfers, returns, negative stock,
+  WIP → finished goods and late landed costs. Plus the return-to-supplier guard, independent AVCO golden tests, and
+  conservation, lineage-identity and reconciliation checks.
+- PC-2 does not start until the PC-1 exit criteria are demonstrated.
+- D-PC3 stays on hold.
+
 **Execution boundaries:**
 - LC-0 is completed and reviewed first.
 - PC-0 captures the accounting baseline before any shared posting change.
@@ -85,7 +98,7 @@ analysis.**
 
 | Source | Item | Phase |
 |---|---|---|
-| PC-0 V1 | NRV allowance release posts to NRV expense, not cost of sales as ADR-S031 states (P&L total equal) | Owner decision; fix in PC-1 if approved |
+| PC-0 V1 | NRV allowance release posts to NRV expense, not cost of sales as ADR-S031 states (P&L total equal) | Approved; fixed in PC-1 WP1 (ADR-S055) |
 | LC-0 G1 | No realised FX on payments, system-wide | PC-0 (owner decision) |
 | LC-0 G2 / G3 | `CurrencyService.getRate` throws inside a transaction, so a foreign-currency voucher rolls back; a table rate overrides the document's own rate | PC-0 (owner approval) |
 | LC-0 F2, F5–F7 | AVCO / lot landed cost ignores lineage: transfers, WIP, returns, closed orders | PC-1 |

@@ -176,6 +176,9 @@ abstract class LandedCostFixtures extends ApiTestSupport {
         a.put("adjunct", code("1396"));
         a.put("wip", mapped("wip"));
         a.put("returns", code("5976"));
+        a.put("scrap", jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key ="
+                + " 'stock_adjustment_expense' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).optional()
+                .orElse(null));
         return a;
     }
 

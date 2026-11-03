@@ -367,16 +367,100 @@ class CostingAuditIT extends MfgTestSupport {
         assertBooks(s, moves("inventory_revaluation", "100", "stock_valuation", "-100"));
     }
 
+    // ------------------------------------------------------------------ 3 release (PC-1 WP1, ADR-S055)
+
+    /**
+     * Run the release. It is organisation-wide, so each test runs it once before its snapshot too: what other tests
+     * left consumed is released then, and the step's release is its own.
+     */
+    void release() {
+        keyed("/inventory/price-differences/release");
+    }
+
+    /** Open NRV allowance of one product. */
+    BigDecimal openOf(String productId) {
+        return jdbc.sql("SELECT coalesce(sum(\"openAmount\"), 0) FROM \"CostValueAdjustment\" WHERE"
+                + " \"organizationId\" = ? AND \"reversedAt\" IS NULL AND \"valuationComponent\" = 'nrv_allowance' AND"
+                + " \"productId\" = ?").params(demoOrg, productId).query(BigDecimal.class).single();
+    }
+
+    void sell(String p, int qty) {
+        asAdmin(() -> stock.issue(StockMove.of(p, warehouse, new BigDecimal(qty)).source("audit_sale", suffix())));
+    }
+
     @Test
-    @org.junit.jupiter.api.Disabled("PC-0 finding V1 (owner decision): the release posts the consumed allowance to NRV"
-            + " expense, not to cost of sales as ADR-S031 states; P&L total unchanged, COGS overstated")
-    @DisplayName("3 release after selling half: the consumed allowance (60) leaves 1397 for cost of sales")
+    @DisplayName("3 V1: NRV 120 on 60; sell 30 → release 60, sell 15 → 30, sell 15 → 30: allowance to COGS, then zero")
     void nrvRelease() {
         String p = item("AVCO");
         nrvWrittenDown(p);
-        asAdmin(() -> stock.issue(StockMove.of(p, warehouse, new BigDecimal(30)).source("audit_sale", suffix())));
-        Snap rel = snap();
-        keyed("/inventory/price-differences/release");
-        assertBooks(rel, moves("inventory_nrv_allowance", "60", "cogs", "-60"));
+        release();
+        Snap first = snap();
+        sell(p, 30);
+        release();
+        // Sale at full carrying cost 300, then the consumed allowance leaves 1397 for cost of sales (ADR-S055).
+        assertBooks(first, moves("cogs", "240", "stock_valuation", "-300", "inventory_nrv_allowance", "60"));
+        assertThat(openOf(p)).isEqualByComparingTo("-60");
+        Snap second = snap();
+        sell(p, 15);
+        release();
+        assertBooks(second, moves("cogs", "120", "stock_valuation", "-150", "inventory_nrv_allowance", "30"));
+        assertThat(openOf(p)).isEqualByComparingTo("-30");
+        Snap full = snap();
+        sell(p, 15);
+        release();
+        assertBooks(full, moves("cogs", "120", "stock_valuation", "-150", "inventory_nrv_allowance", "30"));
+        assertThat(openOf(p)).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("3 V1: recovery after releasing 60 reverses only the 60 still open (IAS 2.33), never the released part")
+    void nrvRecoveryAfterRelease() {
+        String p = item("AVCO");
+        nrvWrittenDown(p);
+        release();
+        sell(p, 30);
+        release();
+        Snap s = snap();
+        String id = ok(201, "POST", "/inventory/revaluations", Map.of("kind", "nrv", "lines", List.of(Map.of(
+                "productId", p, "locationId", warehouse, "netRealisableValue", 25)))).get("id").asString();
+        keyed("/inventory/revaluations/" + id + "/post");
+        assertBooks(s, moves("inventory_nrv_allowance", "60", "inventory_nrv_expense", "-60"));
+        assertThat(openOf(p)).isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("3 V1: a partly released NRV document cannot be reversed; nothing moves; a new NRV review instead")
+    void nrvReversalRefusedAfterRelease() {
+        String p = item("AVCO");
+        String doc = nrvWrittenDown(p);
+        release();
+        sell(p, 30);
+        release();
+        Snap s = snap();
+        Res refused = call("POST", "/inventory/revaluations/" + doc + "/reverse", null, key());
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).isEqualTo("Part of this allowance was already released to"
+                + " cost of sales; post a new NRV review instead");
+        assertBooks(s, moves());
+        // The new review remeasures what is left: 30 units, NRV 9 → allowance 30, so 30 of the open 60 comes back.
+        String id = ok(201, "POST", "/inventory/revaluations", Map.of("kind", "nrv", "lines", List.of(Map.of(
+                "productId", p, "locationId", warehouse, "netRealisableValue", 9)))).get("id").asString();
+        keyed("/inventory/revaluations/" + id + "/post");
+        assertBooks(s, moves("inventory_nrv_allowance", "30", "inventory_nrv_expense", "-30"));
+    }
+
+    @Test
+    @DisplayName("3 V2: scrap 10 of 60 written down → release 20 to stock adjustment expense, never COGS or NRV expense")
+    void nrvScrapRelease() {
+        String p = item("AVCO");
+        nrvWrittenDown(p);
+        release();
+        Snap s = snap();
+        asAdmin(() -> stock.issue(StockMove.of(p, warehouse, BigDecimal.TEN).moveType("waste")
+                .source("audit_waste", suffix())));
+        release();
+        assertBooks(s, moves("stock_adjustment_expense", "80", "stock_valuation", "-100",
+                "inventory_nrv_allowance", "20"));
+        assertThat(openOf(p)).isEqualByComparingTo("-100");
     }
 }
