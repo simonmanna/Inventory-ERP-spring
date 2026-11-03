@@ -1,5 +1,7 @@
 package com.inventoryerp.costing;
 
+import com.inventoryerp.shared.costing.AllocationCalculator;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.tngtech.archunit.core.domain.JavaClass;

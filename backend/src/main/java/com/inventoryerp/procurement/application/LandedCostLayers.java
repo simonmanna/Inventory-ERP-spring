@@ -122,7 +122,8 @@ class LandedCostLayers {
         }
         if (Boolean.TRUE.equals(g.product().get("serialTracking"))) {
             Applied a = apply(grnId, g, allocated, write, source);
-            return disposed(a, allocated, "serial", Map.of());
+            return disposed(a, allocated, "serial", Map.of("targets", Map.of("stock:" + g.productId() + ":"
+                    + g.locationId(), a.capitalized(), "cogs:" + g.productId(), allocated.subtract(a.capitalized()))));
         }
         if (g.batchId() != null) {
             return lotLineage(g, allocated, write, source);
@@ -173,6 +174,22 @@ class LandedCostLayers {
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("returnPolicy", policy);
         extra.put("pools", f.nodes().size());
+        // LC-2: the disposition per target — stock (or adjunct) per product and location, WIP per order, the rest per
+        // product — compared target by target between approval and posting.
+        Map<String, BigDecimal> targets = new LinkedHashMap<>();
+        for (Placement p : f.placements()) {
+            String key = switch (p.target()) {
+                case "on_hand" -> (standard ? "adjunct:" : "stock:") + p.productId() + ":" + p.locationId();
+                case "in_transit" -> "parked:" + p.productId() + ":" + p.locationId();
+                case "wip" -> "wip:" + p.referenceId();
+                case "return" -> "recover_from_supplier".equals(policy) ? "parked:" + p.productId() + ":"
+                        + p.locationId() : "return:" + p.productId();
+                case "scrap" -> "scrap:" + p.productId();
+                default -> "cogs:" + p.productId();
+            };
+            targets.merge(key, p.amount(), BigDecimal::add);
+        }
+        extra.put("targets", targets);
         return disposed(new Applied(onHand, onHandQty, before, after, wip), allocated, standard ? "standard"
                 : "average", extra, parked, returned, policy);
     }
@@ -291,6 +308,17 @@ class LandedCostLayers {
             returned = dp2(Money.div(mul(consumed, weights.getOrDefault("return", Money.ZERO)), weightTotal));
         }
         Map<String, Object> extra = new LinkedHashMap<>();
+        Map<String, BigDecimal> targets = new LinkedHashMap<>();
+        for (Map<String, Object> t : touched) {
+            targets.merge("stock:" + g.productId() + ":" + t.get("locationId"), (BigDecimal) t.get("amount"),
+                    BigDecimal::add);
+        }
+        targets.merge("wip:" + g.productId(), wip, BigDecimal::add);
+        targets.merge("recover_from_supplier".equals(returnPolicy()) ? "parked:" + g.productId() + ":"
+                + g.locationId() : "return:" + g.productId(), returned, BigDecimal::add);
+        targets.merge("cogs:" + g.productId(), allocated.subtract(capitalized).subtract(wip).subtract(returned),
+                BigDecimal::add);
+        extra.put("targets", targets);
         extra.put("batchNumber", number);
         extra.put("perUnit", perUnit);
         extra.put("batches", touched);

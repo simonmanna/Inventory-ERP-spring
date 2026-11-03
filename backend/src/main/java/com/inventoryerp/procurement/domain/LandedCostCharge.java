@@ -126,6 +126,15 @@ public class LandedCostCharge {
         }
     }
 
+    @Column(name = "supplierInvoiceRefNorm")
+    private String supplierInvoiceRefNorm;
+
+    @Column(name = "live")
+    private Boolean live;
+
+    @Column(name = "duplicateOverrideId")
+    private String duplicateOverrideId;
+
     public String getId() {
         return id;
     }
@@ -356,5 +365,29 @@ public class LandedCostCharge {
 
     public void setCreditOfChargeId(String creditOfChargeId) {
         this.creditOfChargeId = creditOfChargeId;
+    }
+
+    public String getSupplierInvoiceRefNorm() {
+        return supplierInvoiceRefNorm;
+    }
+
+    public void setSupplierInvoiceRefNorm(String supplierInvoiceRefNorm) {
+        this.supplierInvoiceRefNorm = supplierInvoiceRefNorm;
+    }
+
+    public Boolean getLive() {
+        return live;
+    }
+
+    public void setLive(Boolean live) {
+        this.live = live;
+    }
+
+    public String getDuplicateOverrideId() {
+        return duplicateOverrideId;
+    }
+
+    public void setDuplicateOverrideId(String duplicateOverrideId) {
+        this.duplicateOverrideId = duplicateOverrideId;
     }
 }

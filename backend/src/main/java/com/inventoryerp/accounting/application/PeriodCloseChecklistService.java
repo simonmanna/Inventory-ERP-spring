@@ -112,6 +112,10 @@ public class PeriodCloseChecklistService {
                 + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, start, end,
                 CostingDimensionGuard.COSTING_SOURCES.toArray(String[]::new));
         checks.add(check("costing_close", "Costing period closed (cost close cockpit)", false, costingUnlocked));
+        // LC-3 (ADR-S053): landed-cost shares parked because their goods could not be followed must be resolved.
+        // The full landed-cost reconciliation (six balances, classification, location) is on its own page.
+        checks.add(check("landed_cost_lineage", "Landed cost lineage exceptions resolved", false,
+                count("SELECT count(*) FROM \"LineageException\" WHERE \"organizationId\" = ? AND status = 'open'", org)));
 
         Map<String, Map<String, Object>> signed = new HashMap<>();
         for (Map<String, Object> s : SqlRows.list(jdbc.sql("SELECT s.key, s.note, s.\"signedBy\", s.\"signedAt\","

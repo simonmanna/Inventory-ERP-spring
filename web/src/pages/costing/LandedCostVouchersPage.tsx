@@ -402,7 +402,7 @@ export function LandedCostVoucherDetailPage() {
   const { data: preview, error: previewError } = useLandedCostPreview(id, unposted);
   const action = useLandedCostAction();
 
-  const act = async (a: 'submit' | 'approve' | 'post' | 'reverse' | 'cancel') => {
+  const act = async (a: 'submit' | 'approve' | 'reopen' | 'post' | 'reverse' | 'cancel') => {
     try {
       const r = await action.mutateAsync({ id, action: a });
       notify.success(a === 'post'
@@ -444,8 +444,11 @@ export function LandedCostVoucherDetailPage() {
               <Button variant="outline" onClick={() => act('submit')}><Send className="mr-1 h-4 w-4" /> {tx('Submit')}</Button>
             </>
           )}
-          {['draft', 'submitted'].includes(v.status) && has(PERMISSIONS.landedCost.approve) && (
+          {v.status === 'submitted' && has(PERMISSIONS.landedCost.approve) && (
             <Button variant="outline" onClick={() => act('approve')}><CheckCircle2 className="mr-1 h-4 w-4" /> {tx('Approve')}</Button>
+          )}
+          {['submitted', 'approved'].includes(v.status) && has(PERMISSIONS.landedCost.create) && (
+            <Button variant="outline" onClick={() => act('reopen')}><Undo2 className="mr-1 h-4 w-4" /> {tx('Reopen')}</Button>
           )}
           {v.status === 'approved' && has(PERMISSIONS.landedCost.post) && (
             <Button onClick={() => act('post')} disabled={action.isPending}><Upload className="mr-1 h-4 w-4" /> {tx('Post')}</Button>

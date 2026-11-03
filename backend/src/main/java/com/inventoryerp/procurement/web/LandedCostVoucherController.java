@@ -6,6 +6,7 @@ import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.procurement.application.LandedCostReconciliationService;
 import com.inventoryerp.procurement.application.LandedCostReportService;
 import com.inventoryerp.procurement.application.LandedCostVoucherService;
 import com.inventoryerp.procurement.application.LandedCostVoucherService.ChargeInput;
@@ -67,7 +68,8 @@ public class LandedCostVoucherController {
             String vendorBillId,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
             String taxId,
-            Boolean taxRecoverable) {}
+            Boolean taxRecoverable,
+            String duplicateOverrideId) {}
 
     /** Create / replace body. */
     public record VoucherRequest(
@@ -80,10 +82,13 @@ public class LandedCostVoucherController {
 
     private final LandedCostVoucherService vouchers;
     private final LandedCostReportService reports;
+    private final LandedCostReconciliationService reconciliation;
 
-    public LandedCostVoucherController(LandedCostVoucherService vouchers, LandedCostReportService reports) {
+    public LandedCostVoucherController(LandedCostVoucherService vouchers, LandedCostReportService reports,
+            LandedCostReconciliationService reconciliation) {
         this.vouchers = vouchers;
         this.reports = reports;
+        this.reconciliation = reconciliation;
     }
 
     private static VoucherInput input(VoucherRequest dto) {
@@ -92,7 +97,8 @@ public class LandedCostVoucherController {
                         c.supplierId(), c.supplierInvoiceRef(), c.invoiceDate(), c.currencyCode(), c.exchangeRate(),
                         c.amount(), c.taxAmount(), c.treatment(), c.allocationMethod(), c.expenseAccountId(),
                         c.creditAccountId(), c.costCenterId(), c.appliesToLineIds(), c.manualAllocations(), c.billMode(),
-                        c.vendorBillId(), c.dueDate(), c.taxId(), c.taxRecoverable())).toList());
+                        c.vendorBillId(), c.dueDate(), c.taxId(), c.taxRecoverable(), c.duplicateOverrideId()))
+                        .toList());
     }
 
     // ------------------------------------------------------------------ vouchers
@@ -155,6 +161,37 @@ public class LandedCostVoucherController {
         return vouchers.reverse(id);
     }
 
+    @PostMapping("/landed-cost-vouchers/{id}/reopen")
+    @RequirePermissions(Permissions.LANDED_COST__CREATE)
+    public Map<String, Object> reopen(@PathVariable String id) {
+        return vouchers.reopen(id);
+    }
+
+    /** Duplicate supplier-invoice override (LC-2). */
+    public record OverrideRequest(
+            @NotNull(message = "supplierId must be a string") String supplierId,
+            @NotNull(message = "supplierInvoiceRef must be a string") String supplierInvoiceRef,
+            @NotNull(message = "reason must be a string") @jakarta.validation.constraints.Size(max = 500) String reason) {}
+
+    @GetMapping("/invoice-duplicate-overrides")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public List<Map<String, Object>> overrides() {
+        return vouchers.overrides();
+    }
+
+    @PostMapping("/invoice-duplicate-overrides")
+    @Idempotent
+    @RequirePermissions(Permissions.LANDED_COST__OVERRIDE_DUPLICATE)
+    public Map<String, Object> createOverride(@Valid @RequestBody OverrideRequest dto) {
+        return vouchers.createOverride(dto.supplierId(), dto.supplierInvoiceRef(), dto.reason());
+    }
+
+    @PostMapping("/invoice-duplicate-overrides/{id}/revoke")
+    @RequirePermissions(Permissions.LANDED_COST__OVERRIDE_DUPLICATE)
+    public Map<String, Object> revokeOverride(@PathVariable String id) {
+        return vouchers.revokeOverride(id);
+    }
+
     /** One credited charge (LC-1). */
     public record CreditChargeRequest(
             @NotNull(message = "chargeId must be a string") String chargeId,
@@ -183,6 +220,19 @@ public class LandedCostVoucherController {
     }
 
     // ------------------------------------------------------------------ reports
+
+    @GetMapping("/landed-cost-reports/reconciliation")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Map<String, Object> reconciliation() {
+        return reconciliation.reconciliation();
+    }
+
+    @GetMapping("/landed-cost-reports/trace")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Map<String, Object> trace(@RequestParam(required = false) String voucherId,
+            @RequestParam(required = false) String chargeId, @RequestParam(required = false) String journalLineId) {
+        return reconciliation.trace(voucherId, chargeId, journalLineId);
+    }
 
     @GetMapping("/landed-cost-reports/by-shipment")
     @RequirePermissions(Permissions.LANDED_COST__READ)

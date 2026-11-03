@@ -242,6 +242,7 @@ class ValuationIntegrityIT extends ApiTestSupport {
         JsonNode voucher = keyedOk("POST", "/procurement/landed-cost-vouchers", Map.of("goodsReceiptIds", List.of(grn),
                 "charges", List.of(Map.of("costComponentId", handling, "amount", 80))));
         String id = voucher.get("id").asString();
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/approve", null);
         keyedOk("POST", "/procurement/landed-cost-vouchers/" + id + "/post", null);
 

@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 and LC-1 done.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-3 (the gates) done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -118,6 +118,85 @@ period is entered with a date in the open period. Vouchers are never back-dated.
 - **Rounding (D4).** Shares at 2 dp; the calculator puts the residual on on-hand, else on the largest consumption;
   transfer splits give the residual to the open remainder or the last link. Σ = charge exactly (golden test).
 
+### LC-2 — financial controls (V293)
+
+- **Approval.** `costing.landedCost.allowDirectApproval` (default false): `approve` accepts only `submitted`
+  (`Only a submitted landed cost voucher can be approved; submit it first`). `ApprovalLimitService.assertWithin(
+  "landed_cost_voucher", |total|, …)` applies the approver's limit. `reopen` (submitted / approved → draft) clears the
+  approval.
+- **`approvedHash`**: SHA-256 of canonical JSON (sorted keys) of every money driver — shipment, cost centre, each
+  receipt's stock lines (line, product, variant, location, lot, quantity, value, weight, volume, unit) and per charge
+  component, kind, treatment, basis, lines, manual split, amount, base, tax, recoverability, tax code, currency, rate,
+  supplier, invoice, bill mode, bill, accounts, cost centre. Any change → `Voucher changed since approval; reopen and
+  re-approve`. The unreviewed-tax guard (LC-0) is checked first.
+- **`approvedDisposition`** per target: `stock:<product>:<location>` (STANDARD: `adjunct:`), `parked:<product>:<location>`,
+  `wip:<order>`, `return:<product>`, `scrap:<product>`, `cogs:<product>`. At posting the disposition is recomputed from
+  current lineage (that is what posts) and compared target by target. **OR rule:** a change above
+  `costing.landedCost.reapprovalTolerancePct` (5) **or** `costing.landedCost.reapprovalToleranceAmount` (1,000) refuses
+  with `Inventory moved since approval (<target>: approved <a>, now <b>); reopen and re-approve`. A target new or gone
+  since approval has no percentage: only the amount applies. 0 = any change. `postedDisposition` is stored, and the
+  audit records approved, posted and their difference.
+- **Duplicate invoices.** `procurement.invoiceRef.normalization`: `strict` (default; upper case, trimmed, separators
+  space - _ / . removed — `AB-12` and `A-B12` both become `AB12`, a deliberate false positive the override covers) or
+  `exact` (upper case, trimmed). **Deviation from the plan (smallest safe correction, standing rule 3):** the plan put
+  the partial unique indexes on `LandedCostCharge`, but one supplier invoice legitimately spans several charge lines of
+  a voucher (freight + handling). The indexes are on a registry, `LandedCostInvoiceRef` — one row per (voucher,
+  supplier, normalised number), `live` while the voucher is not cancelled or reversed:
+  `…_normal_uq (org, supplier, refNorm) WHERE duplicateOverrideId IS NULL AND live` and
+  `…_override_uq (org, supplier, refNorm, duplicateOverrideId) WHERE duplicateOverrideId IS NOT NULL AND live`.
+  The check runs when charges are written (create / update), under the advisory lock on (org, supplier, refNorm); a
+  unique violation maps to the same 409, which names the original reference and voucher (`… is already on landed cost
+  LC-00012 (entered as AB-12)`). Credit vouchers and linked bills are exempt. Historic duplicates got a migration
+  override each (listed).
+- **Overrides** (`landed_cost:override_duplicate`, reason required, audited): `POST /procurement/invoice-duplicate-overrides`,
+  `GET` (with the voucher that used each), `POST …/{id}/revoke` (unused only). A charge names one with
+  `duplicateOverrideId`; it must be approved, unrevoked, same org, supplier and normalised number, and unused; it is
+  marked used (`usedByChargeId` = the registry row, unique) in the same transaction. Rewriting a draft frees it.
+- **Allocation validation.** Weight / volume bases list every product missing it (`Charge <label> is allocated by
+  weight; set the weight of A, B`) — previously a product without weight silently got nothing. A unit with no quantity
+  is refused. Quantities are the receipt's stock-ledger quantities, which are already in the base unit. Σ allocated =
+  charge base is asserted. `weightUsed`, `volumeUsed` and `uomId` are stored on each allocation row.
+- **Engine consolidation.** The voucher basis split uses `AllocationCalculator` (LAST, 6 dp) — identical figures (all
+  existing voucher ITs unchanged). The calculator moved to `com.inventoryerp.shared.costing` (it is pure) because
+  procurement cannot depend on costing (costing already depends on procurement).
+
+### LC-3 — reconciliation and trace
+
+`GET /procurement/landed-cost-reports/reconciliation` (`landed_cost:read`) returns six rows (sub-ledger, GL,
+difference, drill-down), the classification and location mismatches, the open lineage exceptions and `clean`:
+
+| Row | Sub-ledger | GL |
+|---|---|---|
+| 2155 | Charges of posted vouchers / credits credited to clearing whose supplier bill is not booked (no linked or generated bill, or it was cancelled) | 2155 balance |
+| 2156 | Open accruals | 2156 balance |
+| 1396 | Σ open `price_difference` adjuncts (STANDARD landed cost, parked lineage shares, recoveries, accruals, material ledger), drill-down per source and parked flag | 1396 balance |
+| stock | Inventory valuation (the GL tie-out), landed-cost sources listed | inventory accounts |
+| cogs | Σ disposition `cogs` of posted vouchers | COGS lines of their posting entries |
+| wip | Σ disposition `wip` of posted vouchers − shares already cascaded by CM-10; drill-down: open shares per order | WIP lines of their posting entries − the cascaded amounts |
+
+- **Classification:** per posted voucher, each landed account (stock / 1396 / WIP / COGS / 5976) the dispositions imply
+  vs its journal lines; listed even when the entry balances.
+- **Location:** per posted voucher, product and location, the posting's value-only stock rows vs the disposition's
+  stock / adjunct / parked targets.
+- **2155 note:** a supplier invoice booked in payables against clearing without being linked to its charge shows as a
+  difference with the charge still listed as outstanding — that is the signal to link it.
+- **Trace:** `GET /procurement/landed-cost-reports/trace?voucherId|chargeId|journalLineId` — voucher → charges →
+  allocations (receipt, line, product, disposition) → adjustments per pool with parent links (transfer hops) and their
+  lines with the consumption movement (type, reference, location: sale, production order, return) → the journal
+  lines of the posting, reversal and reclass entries. Every hop filtered by organisation; another organisation's id is
+  a 404 (tested).
+- **Period close:** the checklist gets `landed_cost_lineage` (non-blocking): open lineage exceptions. The accounting
+  module cannot depend on procurement, so the full reconciliation stays on its own page.
+- **Final acceptance** `LandedCostEndToEndIT`: import, two-supplier voucher (generated bill + bill to enter), transfer
+  to the plant, issue to an open order, a late charge while goods are in W1, at the plant and in WIP (exact split),
+  sales at both places, the order completed, a supplier credit voucher, reconciliation unchanged (all six rows), no
+  classification or location mismatch, trace through the transfer hop to the order's WIP and from a journal line,
+  reversal of the late charge (every target unwinds; the units sold since keep their share in COGS through the
+  reclass, averages back exactly), and a corrected re-post. **Deviation:** the plan's FG-at-depot leg needs the CM-10
+  cascade run, and a run cannot be reversed once part of what it capitalised was released; the reversal therefore
+  happens while the completed order's WIP share is still pending cascade. A voucher whose WIP share was cascaded is
+  refused (`reverse that run first`) — tested in LC-1.
+
 ## Findings
 
 | # | Finding | Decision |
@@ -164,6 +243,23 @@ period is entered with a date in the open period. Vouchers are never back-dated.
 - `GET /inventory/lineage-exceptions?status=` (`landed_cost:read`), `POST …/{id}/assign {destinationLedgerId, reason}`,
   `POST …/{id}/write-off {accountId, reason}` (`landed_cost:resolve_lineage`, granted to Administrator, idempotent).
 - Setting `costing.landedCost.returnPolicy`.
+
+## API (LC-2, additive)
+
+- `POST /procurement/landed-cost-vouchers/{id}/reopen` (`landed_cost:create`).
+- Charge lines accept `duplicateOverrideId`; voucher responses include `approvedHash`, `approvedDisposition`,
+  `postedDisposition`; charges `supplierInvoiceRefNorm`, `live`, `duplicateOverrideId`; allocations `disposition`,
+  `weightUsed`, `volumeUsed`, `uomId`.
+- `GET|POST /procurement/invoice-duplicate-overrides`, `POST /procurement/invoice-duplicate-overrides/{id}/revoke`.
+- Settings `costing.landedCost.allowDirectApproval`, `…reapprovalTolerancePct`, `…reapprovalToleranceAmount`,
+  `procurement.invoiceRef.normalization`; permission `landed_cost:override_duplicate`.
+- Web: Approve shows on submitted vouchers only; Reopen on submitted / approved.
+
+## API (LC-3, additive)
+
+- `GET /procurement/landed-cost-reports/reconciliation`, `GET /procurement/landed-cost-reports/trace`
+  (`landed_cost:read`).
+- Period-close checklist item `landed_cost_lineage`.
 
 ## Tests
 

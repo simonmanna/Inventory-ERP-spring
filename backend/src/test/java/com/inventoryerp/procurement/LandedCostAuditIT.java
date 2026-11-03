@@ -260,6 +260,7 @@ class LandedCostAuditIT extends LandedCostFixtures {
         String grn = receive(p, 100, 50);
         Snap s = snap();
         String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000)));
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/approve", null);
         List<Integer> statuses = race(() -> call("POST", "/procurement/landed-cost-vouchers/" + v + "/post", null,
                 key()).status());
@@ -295,6 +296,7 @@ class LandedCostAuditIT extends LandedCostFixtures {
         String grn = receive(p, 100, 50);
         Snap s = snap();
         String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000)));
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/approve", null);
         jdbc.sql("UPDATE \"Organization\" SET \"booksLockDate\" = now() + interval '1 day' WHERE id = ?")
                 .param(demoOrg).update();
@@ -420,6 +422,7 @@ class LandedCostAuditIT extends LandedCostFixtures {
         Snap s = snap();
         String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000, "taxAmount", 180,
                 "taxRecoverable", true)));
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + v + "/approve", null);
         unreview(v);
         Res r = call("POST", "/procurement/landed-cost-vouchers/" + v + "/post", null, key());

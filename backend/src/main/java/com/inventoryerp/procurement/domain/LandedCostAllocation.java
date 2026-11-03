@@ -14,6 +14,8 @@ import java.util.UUID;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** Table {@code "LandedCostAllocation"} (owned by module {@code procurement}). */
 @Entity
@@ -96,6 +98,19 @@ public class LandedCostAllocation {
             id = UUID.randomUUID().toString();
         }
     }
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "disposition")
+    private String disposition;
+
+    @Column(name = "weightUsed")
+    private java.math.BigDecimal weightUsed;
+
+    @Column(name = "volumeUsed")
+    private java.math.BigDecimal volumeUsed;
+
+    @Column(name = "uomId")
+    private String uomId;
 
     public String getId() {
         return id;
@@ -271,5 +286,37 @@ public class LandedCostAllocation {
 
     public void setReversedAmount(BigDecimal reversedAmount) {
         this.reversedAmount = reversedAmount;
+    }
+
+    public String getDisposition() {
+        return disposition;
+    }
+
+    public void setDisposition(String disposition) {
+        this.disposition = disposition;
+    }
+
+    public java.math.BigDecimal getWeightUsed() {
+        return weightUsed;
+    }
+
+    public void setWeightUsed(java.math.BigDecimal weightUsed) {
+        this.weightUsed = weightUsed;
+    }
+
+    public java.math.BigDecimal getVolumeUsed() {
+        return volumeUsed;
+    }
+
+    public void setVolumeUsed(java.math.BigDecimal volumeUsed) {
+        this.volumeUsed = volumeUsed;
+    }
+
+    public String getUomId() {
+        return uomId;
+    }
+
+    public void setUomId(String uomId) {
+        this.uomId = uomId;
     }
 }

@@ -500,6 +500,7 @@ public class FleetFreightBillService {
                                 in.costCenterId()), null, null, null, null, in.dueDate() == null ? null
                                 : in.dueDate().toString()))));
         String voucherId = (String) voucher.get("id");
+        landedCosts.submit(voucherId);
         landedCosts.approve(voucherId);
         Map<String, Object> posted = landedCosts.post(voucherId);
         String vendorBillId = null;

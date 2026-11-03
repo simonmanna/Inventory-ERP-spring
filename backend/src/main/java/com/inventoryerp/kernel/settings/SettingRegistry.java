@@ -90,6 +90,21 @@ public final class SettingRegistry {
                         + " (default); recover_from_supplier = parked in 1396 awaiting the supplier's credit;"
                         + " defect_claim = expensed, a claim receivable only once the claim is accepted.",
                 "expense", List.of("expense", "recover_from_supplier", "defect_claim"), false, ORG_ONLY);
+        // ---- Landed cost LC-2 (ADR-S053) ----
+        def("costing.landedCost.allowDirectApproval", "costing", "bool", "Landed Cost Direct Approval",
+                "Allow approving a draft landed cost voucher without submitting it first. Off: draft → submitted →"
+                        + " approved.", false, null, false, ORG_ONLY);
+        def("costing.landedCost.reapprovalTolerancePct", "costing", "number", "Landed Cost Re-approval Tolerance (%)",
+                "A target (stock per product and location, WIP per order, COGS, return, parked) whose posted amount"
+                        + " differs from the approved one by more than this percentage needs re-approval.",
+                5, null, false, ORG_ONLY);
+        def("costing.landedCost.reapprovalToleranceAmount", "costing", "number",
+                "Landed Cost Re-approval Tolerance (amount)", "… or by more than this amount in the base currency."
+                        + " Either threshold triggers re-approval; 0 = any change.", 1000, null, false, ORG_ONLY);
+        def("procurement.invoiceRef.normalization", "purchasing", "enum", "Supplier Invoice Number Matching",
+                "strict = upper case, trimmed, separators (space - _ / .) ignored, so AB-12 and AB12 are the same"
+                        + " invoice (and so are AB-12 and A-B12); exact = upper case and trimmed only.",
+                "strict", List.of("strict", "exact"), false, ORG_ONLY);
         def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",

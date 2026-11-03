@@ -1,8 +1,10 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.shared.costing.AllocationCalculator;
+
 import com.inventoryerp.accounting.application.AccountDeterminationService;
-import com.inventoryerp.costing.application.AllocationCalculator.Receiver;
-import com.inventoryerp.costing.application.AllocationCalculator.Rounding;
+import com.inventoryerp.shared.costing.AllocationCalculator.Receiver;
+import com.inventoryerp.shared.costing.AllocationCalculator.Rounding;
 import com.inventoryerp.inventory.application.AvcoLineageCalculator.Distribution;
 import com.inventoryerp.inventory.application.AvcoLineageCalculator.Share;
 import com.inventoryerp.inventory.application.CostLineageService;

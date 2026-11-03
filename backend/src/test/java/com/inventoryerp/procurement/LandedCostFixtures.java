@@ -124,6 +124,7 @@ abstract class LandedCostFixtures extends ApiTestSupport {
     }
 
     JsonNode approveAndPost(String id) {
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/approve", null);
         return post(id);
     }

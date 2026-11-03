@@ -341,7 +341,7 @@ export function useSaveLandedCostVoucher() {
 export function useLandedCostAction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, action }: { id: string; action: 'submit' | 'approve' | 'post' | 'reverse' | 'cancel' }) =>
+    mutationFn: async ({ id, action }: { id: string; action: 'submit' | 'approve' | 'reopen' | 'post' | 'reverse' | 'cancel' }) =>
       action === 'post' || action === 'reverse'
         ? idempotentPost<any>(`/procurement/landed-cost-vouchers/${id}/${action}`)
         : (await api.post(`/procurement/landed-cost-vouchers/${id}/${action}`)).data,

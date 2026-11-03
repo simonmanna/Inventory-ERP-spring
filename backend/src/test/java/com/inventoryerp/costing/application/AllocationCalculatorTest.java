@@ -1,11 +1,13 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.shared.costing.AllocationCalculator;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.inventoryerp.costing.application.AllocationCalculator.Receiver;
-import com.inventoryerp.costing.application.AllocationCalculator.Rounding;
-import com.inventoryerp.costing.application.AllocationCalculator.Share;
+import com.inventoryerp.shared.costing.AllocationCalculator.Receiver;
+import com.inventoryerp.shared.costing.AllocationCalculator.Rounding;
+import com.inventoryerp.shared.costing.AllocationCalculator.Share;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
