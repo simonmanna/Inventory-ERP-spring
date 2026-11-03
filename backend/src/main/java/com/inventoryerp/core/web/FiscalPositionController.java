@@ -1,6 +1,7 @@
 package com.inventoryerp.core.web;
 
 import com.inventoryerp.core.application.FiscalPositionService;
+import com.inventoryerp.core.application.FiscalPositionTaxService;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import jakarta.validation.Valid;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -35,9 +37,11 @@ public class FiscalPositionController {
             @Min(value = 0, message = "must not be less than 0") Integer sortOrder) {}
 
     private final FiscalPositionService positions;
+    private final FiscalPositionTaxService taxes;
 
-    public FiscalPositionController(FiscalPositionService positions) {
+    public FiscalPositionController(FiscalPositionService positions, FiscalPositionTaxService taxes) {
         this.positions = positions;
+        this.taxes = taxes;
     }
 
     @GetMapping
@@ -81,5 +85,35 @@ public class FiscalPositionController {
     @RequirePermissions(Permissions.ACCOUNT__DELETE)
     public Map<String, Object> remove(@PathVariable String id) {
         return positions.remove(id);
+    }
+
+    // ------------------------------------------------------------------ ACC-7 extension: tax mapping, partners
+
+    /** One mapping: {@code targetTaxId} null = exempt under the position. */
+    public record TaxMappingRequest(@NotNull(message = "must be a string") String sourceTaxId, String targetTaxId) {}
+
+    /** {@code PUT /fiscal-positions/:id/taxes} body. */
+    public record TaxMappingsRequest(@NotNull(message = "must be an array") List<@Valid TaxMappingRequest> mappings) {}
+
+    /** {@code POST /fiscal-positions/:id/partners} body. */
+    public record AssignPartnerRequest(@NotNull(message = "must be a string") String partnerId) {}
+
+    @GetMapping("/{id}/taxes")
+    @RequirePermissions(Permissions.ACCOUNT__READ)
+    public List<Map<String, Object>> taxes(@PathVariable String id) {
+        return taxes.mappings(id);
+    }
+
+    @PutMapping("/{id}/taxes")
+    @RequirePermissions(Permissions.ACCOUNT__UPDATE)
+    public List<Map<String, Object>> replaceTaxes(@PathVariable String id, @Valid @RequestBody TaxMappingsRequest dto) {
+        return taxes.replace(id, dto.mappings().stream()
+                .map(m -> new FiscalPositionTaxService.Mapping(m.sourceTaxId(), m.targetTaxId())).toList());
+    }
+
+    @PostMapping("/{id}/partners")
+    @RequirePermissions(Permissions.ACCOUNT__UPDATE)
+    public Map<String, Object> assignPartner(@PathVariable String id, @Valid @RequestBody AssignPartnerRequest dto) {
+        return taxes.assignPartner(id, dto.partnerId());
     }
 }

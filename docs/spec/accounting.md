@@ -198,6 +198,31 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
     excluded.
 - **Not built:** matching to GL lines, partial or grouped matches, matching rules, and journals for bank charges.
 
+**ACC-7: tax and fiscal positions** (capability gaps)
+
+- **Fiscal positions now act (V323).**
+  - Each position has a map from source tax to target tax (`FiscalPositionTax`); a null target means exempt.
+  - Partners carry a default `fiscalPositionId`.
+  - Invoice create, update and journal preview, and documents created through the builder, resolve the position: the
+    one stated on the document, else the partner's. The mapping is applied to every line's tax before the tax engine
+    runs.
+  - New routes (extension): `GET/PUT /fiscal-positions/:id/taxes` and `POST /fiscal-positions/:id/partners`.
+- **VAT settlement:**
+  - `GET /tax-settlements/preview?from&to` (`report:accounting`) shows output VAT, input VAT and the net.
+  - `POST /tax-settlements {from,to}` (`journal_entry:create`, idempotent) posts Dr tax payable / Cr tax receivable for
+    the input VAT and records the period (`TaxSettlement`).
+  - `GET /tax-settlements` lists the settled periods.
+- **Tax-period lock:** `PostingService` refuses any line on a tax account dated on or before the latest settled period
+  end. Tax accounts are the output, input and withholding mappings plus each tax's own account.
+- **Not built:**
+  - tax groups;
+  - more than one tax per line;
+  - the compound-inclusive fix;
+  - withholding tax on bills;
+  - recording the partner-default position name on the document;
+  - an invoice cancelled after settlement still reverses on its original date when that accounting period is open (the
+    tax lock then refuses it, so the user cancels after re-dating via a credit note).
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

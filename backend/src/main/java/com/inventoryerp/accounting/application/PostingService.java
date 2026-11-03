@@ -107,6 +107,7 @@ public class PostingService {
             throw ApiException.badRequest(errors.getFirst().message());
         }
         assertAccounts(lines, true);
+        assertTaxPeriodOpen(organizationId, date, lines, request.sourceType());
         applyRounding(lines);
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
@@ -243,6 +244,34 @@ public class PostingService {
     /** {@code date} when it may still be posted to (books lock, open period), else today. */
     public Instant openDateOrToday(Instant date) {
         return date != null && fiscalPeriod.isOpen(date) ? date : Instant.now();
+    }
+
+    /**
+     * ACC-7 tax-period lock: once a VAT period is settled ({@code TaxSettlement}), nothing more may post to a tax account
+     * (output / input / withholding mappings and every tax's own account) on or before the settled period end. The
+     * settlement entry itself is exempt.
+     */
+    private void assertTaxPeriodOpen(String org, Instant date, List<NormalizedLine> lines, String sourceType) {
+        if ("tax_settlement".equals(sourceType)) {
+            return;
+        }
+        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?")
+                .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
+                        : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
+                .optional().orElse(null);
+        if (settled == null || date.isAfter(settled)) {
+            return;
+        }
+        java.util.Set<String> taxAccounts = new java.util.HashSet<>(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\""
+                        + " WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable', 'withholding_payable')"
+                        + " AND \"deletedAt\" IS NULL UNION SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ?"
+                        + " AND \"accountId\" IS NOT NULL").params(org, org).query(String.class).list());
+        for (NormalizedLine l : lines) {
+            if (taxAccounts.contains(l.accountId())) {
+                throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
+                        + "; tax cannot be posted on " + FiscalPeriodControl.day(date));
+            }
+        }
     }
 
     /** Stage a manual entry as a DRAFT (validated + balanced, not in the books). */

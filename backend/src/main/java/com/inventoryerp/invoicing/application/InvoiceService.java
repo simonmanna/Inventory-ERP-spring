@@ -11,6 +11,7 @@ import com.inventoryerp.core.application.PaymentTermService;
 import com.inventoryerp.core.application.PriceListService;
 import com.inventoryerp.core.application.PriceListService.ListPrice;
 import com.inventoryerp.core.application.PriceListService.PriceQuery;
+import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import com.inventoryerp.documents.domain.DocumentLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
@@ -380,7 +381,8 @@ public class InvoiceService {
     /** The journal entry the invoice would post, computed without writing anything. */
     @Transactional(readOnly = true)
     public Map<String, Object> previewJournal(InvoiceInput dto) {
-        Totals totals = builder.prepareLines(priced(dto, scopes.documentBranch(null)));
+        Totals totals = builder.prepareLines(priced(dto, scopes.documentBranch(null)), UnitRole.SALES,
+                builder.fiscalTaxMap(dto.fiscalPositionId(), dto.partnerId()));
         Grouped g = builder.groupForPosting(dto.partnerId(), totals.prepared().stream().map(PreparedLine::asRow).toList(),
                 "sales", null);
         var journal = journals.resolveSalesJournal(dto.invoicingJournalId());
@@ -433,7 +435,8 @@ public class InvoiceService {
             throw ApiException.badRequest("Only draft invoices can be edited");
         }
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
-        Totals totals = builder.prepareLines(priced(dto, (String) doc.get("branchId")));
+        Totals totals = builder.prepareLines(priced(dto, (String) doc.get("branchId")), UnitRole.SALES,
+                builder.fiscalTaxMap(dto.fiscalPositionId(), dto.partnerId()));
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"paymentTermId\" = ?,"

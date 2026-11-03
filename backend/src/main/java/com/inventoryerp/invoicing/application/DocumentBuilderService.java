@@ -154,6 +154,22 @@ public class DocumentBuilderService {
         this.determination = determination;
     }
 
+    private com.inventoryerp.core.application.FiscalPositionTaxService fiscalPositions;
+
+    /** ACC-7: optional (a hand-built builder, e.g. in landed cost, applies no fiscal position). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setFiscalPositions(com.inventoryerp.core.application.FiscalPositionTaxService fiscalPositions) {
+        this.fiscalPositions = fiscalPositions;
+    }
+
+    /** Tax mapping of the document's fiscal position (stated, else the partner's default); empty without one. */
+    public Map<String, String> fiscalTaxMap(String fiscalPositionId, String partnerId) {
+        if (fiscalPositions == null) {
+            return Map.of();
+        }
+        return fiscalPositions.taxMap(fiscalPositions.resolve(fiscalPositionId, partnerId));
+    }
+
     private static String org() {
         return TenantContext.organizationId();
     }
@@ -196,6 +212,14 @@ public class DocumentBuilderService {
 
     /** Server-side line math: price, discount, tax engine, totals; {@code role} picks each line's default unit. */
     public Totals prepareLines(List<LineInput> lines, UnitRole role) {
+        return prepareLines(lines, role, Map.of());
+    }
+
+    /**
+     * As {@link #prepareLines(List, UnitRole)}, with a fiscal-position tax mapping (ACC-7): each line's tax (stated or
+     * the product's) is replaced by its target; an exempt target ({@code ""}) leaves the line untaxed.
+     */
+    public Totals prepareLines(List<LineInput> lines, UnitRole role, Map<String, String> taxMap) {
         List<PreparedLine> prepared = new ArrayList<>();
         BigDecimal discountTotal = ZERO;
         Integer taxScale = currencyScale();
@@ -232,7 +256,11 @@ public class DocumentBuilderService {
             discountTotal = discountTotal.add(effectiveDiscount);
             BigDecimal effectivePct = gross.signum() > 0
                     ? Money.div(effectiveDiscount, gross).multiply(BigDecimal.valueOf(100)) : ZERO;
-            String taxId = meta ? null : l.taxId() != null ? l.taxId() : product == null ? null : (String) product.get("taxId");
+            String sourceTaxId = meta ? null : l.taxId() != null ? l.taxId() : product == null ? null
+                    : (String) product.get("taxId");
+            String mappedTaxId = sourceTaxId != null && taxMap.containsKey(sourceTaxId) ? taxMap.get(sourceTaxId)
+                    : sourceTaxId;
+            String taxId = mappedTaxId == null || mappedTaxId.isEmpty() ? null : mappedTaxId;
             String taxOrg = org();
             Map<String, Object> taxRow = taxId == null ? null : ReadMemo.get(() -> SqlRows.one(jdbc.sql("SELECT * FROM"
                     + " \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(taxId, taxOrg)),
@@ -258,7 +286,8 @@ public class DocumentBuilderService {
 
     /** Create a draft document (numbered per type and issue year) with its lines; returns it with lines + partner. */
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
-        Totals totals = prepareLines(lines, "vendor_bill".equals(documentType) ? UnitRole.PURCHASE : UnitRole.SALES);
+        Totals totals = prepareLines(lines, "vendor_bill".equals(documentType) ? UnitRole.PURCHASE : UnitRole.SALES,
+                fiscalTaxMap(h.fiscalPositionId(), h.partnerId()));
         int year = EntityPatch.toInstant(h.issueDate()).atOffset(ZoneOffset.UTC).getYear();
         String key;
         String prefix;
