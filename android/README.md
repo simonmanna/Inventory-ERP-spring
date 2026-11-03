@@ -270,6 +270,14 @@ Managers holding the permission approve their own stock movements without a
 PIN; everyone else needs a manager PIN, verified on-device and again on replay.
 Menu-item stock stays device-local (the server tracks ingredients via recipes).
 
+## POS report
+
+Sidebar → POS → **POS Report**: overview, sales, items, item groups, shifts and cash flow over a
+period (today … 30 days, or a custom range), filterable by shift, cashier, payment method, order
+type and item group, with CSV export. It reads the till's own database, so it works offline and
+covers what this device sold. Line amounts are allocated from each sale total, so items, groups and
+payment methods reconcile with net sales (`PosReport`, tested in `PosReportTest`).
+
 ## Not built yet
 
 - Bluetooth SPP printing (TCP 9100 works; the transport seam is in place)

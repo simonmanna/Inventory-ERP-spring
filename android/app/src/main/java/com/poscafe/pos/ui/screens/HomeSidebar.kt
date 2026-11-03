@@ -37,6 +37,7 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocalCafe
@@ -178,6 +179,7 @@ private fun sidebarSections(standalone: Boolean, isRetail: Boolean): List<Sideba
             route("Cash Registers", Icons.Outlined.PointOfSale, "registers"),
             tab("POS Receipts", Icons.Outlined.Receipt, HomeTab.Orders),
             route("Shift History", Icons.AutoMirrored.Outlined.ReceiptLong, "shift-history"),
+            route("POS Report", Icons.Outlined.Insights, "pos-report"),
         ),
     ),
     SidebarSection(
