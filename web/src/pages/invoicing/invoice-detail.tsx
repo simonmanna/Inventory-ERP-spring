@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
 import { openPdf, useEmailInvoice } from '@/features/finance/api';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
@@ -85,7 +86,7 @@ export function InvoiceDetailPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
 
-  const [activeTab, setActiveTab] = useState<'lines' | 'journal' | 'info' | 'payments'>('lines');
+  const [activeTab, setActiveTab] = useState<'lines' | 'journal' | 'info' | 'payments' | 'attachments'>('lines');
   const [payOpen, setPayOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -414,6 +415,7 @@ export function InvoiceDetailPage() {
           <TabBtn active={activeTab === 'payments'} onClick={() => setActiveTab('payments')}>
             {tx('Payments')}{receiptRows.length ? ` (${receiptRows.length})` : ''}
           </TabBtn>
+          <TabBtn active={activeTab === 'attachments'} onClick={() => setActiveTab('attachments')}>{tx('Attachments')}</TabBtn>
         </div>
 
         {/* INVOICE LINES tab */}
@@ -602,6 +604,13 @@ export function InvoiceDetailPage() {
                 />
               </dl>
             </div>
+          </div>
+        )}
+
+        {/* ATTACHMENTS tab (DMS, ADR-S044) */}
+        {activeTab === 'attachments' && (
+          <div className="p-4">
+            <AttachmentPanel resType="invoice" resId={inv.id} bare />
           </div>
         )}
 

@@ -112,6 +112,10 @@ public class LandedCostCharge {
     @Column(name = "taxRecoverable")
     private Boolean taxRecoverable;
 
+    /** On a credit voucher: the original charge this line credits (LC-1, ADR-S053). */
+    @Column(name = "creditOfChargeId")
+    private String creditOfChargeId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "landedCostId", insertable = false, updatable = false)
     private LandedCost landedCost;
@@ -121,6 +125,15 @@ public class LandedCostCharge {
             id = UUID.randomUUID().toString();
         }
     }
+
+    @Column(name = "supplierInvoiceRefNorm")
+    private String supplierInvoiceRefNorm;
+
+    @Column(name = "live")
+    private Boolean live;
+
+    @Column(name = "duplicateOverrideId")
+    private String duplicateOverrideId;
 
     public String getId() {
         return id;
@@ -344,5 +357,37 @@ public class LandedCostCharge {
 
     public void setTaxRecoverable(Boolean taxRecoverable) {
         this.taxRecoverable = taxRecoverable;
+    }
+
+    public String getCreditOfChargeId() {
+        return creditOfChargeId;
+    }
+
+    public void setCreditOfChargeId(String creditOfChargeId) {
+        this.creditOfChargeId = creditOfChargeId;
+    }
+
+    public String getSupplierInvoiceRefNorm() {
+        return supplierInvoiceRefNorm;
+    }
+
+    public void setSupplierInvoiceRefNorm(String supplierInvoiceRefNorm) {
+        this.supplierInvoiceRefNorm = supplierInvoiceRefNorm;
+    }
+
+    public Boolean getLive() {
+        return live;
+    }
+
+    public void setLive(Boolean live) {
+        this.live = live;
+    }
+
+    public String getDuplicateOverrideId() {
+        return duplicateOverrideId;
+    }
+
+    public void setDuplicateOverrideId(String duplicateOverrideId) {
+        this.duplicateOverrideId = duplicateOverrideId;
     }
 }

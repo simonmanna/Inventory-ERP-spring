@@ -1,11 +1,13 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.shared.costing.AllocationCalculator;
+
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
-import com.inventoryerp.costing.application.AllocationCalculator.Receiver;
-import com.inventoryerp.costing.application.AllocationCalculator.Rounding;
-import com.inventoryerp.costing.application.AllocationCalculator.Share;
+import com.inventoryerp.shared.costing.AllocationCalculator.Receiver;
+import com.inventoryerp.shared.costing.AllocationCalculator.Rounding;
+import com.inventoryerp.shared.costing.AllocationCalculator.Share;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;

@@ -980,12 +980,16 @@ public class StockService {
         }
 
         BigDecimal newToQty = dec(toItem, "quantity");
-        insertLedger(org, ledgerCode, dto.productId, variantId, dto.fromLocationId, null, null, "transfer_out", fromBefore,
-                qty.negate(), newFromQty, carriedUnit, carriedValue, dto.sourceType, dto.sourceId, dto.notes,
-                dto.responsibleById, dto.approvedById);
-        insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null, "transfer_in",
-                newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType, dto.sourceId,
-                dto.notes, dto.responsibleById, dto.approvedById);
+        String outRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.fromLocationId, null, null,
+                "transfer_out", fromBefore, qty.negate(), newFromQty, carriedUnit, carriedValue, dto.sourceType,
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+        String inRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null,
+                "transfer_in", newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType,
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+        // LC-1 (ADR-S053): the units of the out row are the units of the in row — landed cost follows them.
+        jdbc.sql("INSERT INTO \"InventoryTransferLineage\" (id, \"organizationId\", \"transferId\","
+                        + " \"sourceLedgerId\", \"destinationLedgerId\", quantity) VALUES (?, ?, ?, ?, ?, ?)")
+                .params(UUID.randomUUID().toString(), org, dto.sourceId, outRow, inRow, qty).update();
         if (carriedValue.signum() > 0 && !dto.skipGlPosting) {
             stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, Instant.now(),
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
@@ -1067,19 +1071,21 @@ public class StockService {
                 .params(by, id).query(BigDecimal.class).single();
     }
 
-    private void insertLedger(String org, String ledgerCode, String productId, String variantId, String locationId,
+    private String insertLedger(String org, String ledgerCode, String productId, String variantId, String locationId,
             String batchId, String serialId, String type, BigDecimal qtyBefore, BigDecimal change, BigDecimal after,
             BigDecimal unitCost, BigDecimal totalValue, String referenceType, String referenceId, String notes,
             String responsibleById, String approvedById) {
+        String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"InventoryLedger\" (id, \"organizationId\", \"ledgerCode\", \"productId\", \"variantId\","
                         + " \"locationId\", \"batchId\", \"serialId\", type, \"qtyBefore\", \"quantityChange\","
                         + " \"balanceAfter\", \"unitCost\", \"totalValue\", \"referenceType\", \"referenceId\", notes,"
                         + " \"performedBy\", \"responsibleById\", \"approvedById\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
                         + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
-                .params(UUID.randomUUID().toString(), org, ledgerCode, productId, variantId, locationId, batchId,
+                .params(id, org, ledgerCode, productId, variantId, locationId, batchId,
                         serialId, type, qtyBefore, change, after, unitCost, totalValue, referenceType, referenceId,
                         notes, TenantContext.userId(), responsibleById, approvedById)
                 .update();
+        return id;
     }
 
     private static String joinNotes(String... parts) {

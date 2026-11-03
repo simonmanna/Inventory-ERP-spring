@@ -6,6 +6,8 @@ import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.procurement.application.LandedCostAnalysisService;
+import com.inventoryerp.procurement.application.LandedCostReconciliationService;
 import com.inventoryerp.procurement.application.LandedCostReportService;
 import com.inventoryerp.procurement.application.LandedCostVoucherService;
 import com.inventoryerp.procurement.application.LandedCostVoucherService.ChargeInput;
@@ -67,7 +69,8 @@ public class LandedCostVoucherController {
             String vendorBillId,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String dueDate,
             String taxId,
-            Boolean taxRecoverable) {}
+            Boolean taxRecoverable,
+            String duplicateOverrideId) {}
 
     /** Create / replace body. */
     public record VoucherRequest(
@@ -80,10 +83,15 @@ public class LandedCostVoucherController {
 
     private final LandedCostVoucherService vouchers;
     private final LandedCostReportService reports;
+    private final LandedCostReconciliationService reconciliation;
+    private final LandedCostAnalysisService analysis;
 
-    public LandedCostVoucherController(LandedCostVoucherService vouchers, LandedCostReportService reports) {
+    public LandedCostVoucherController(LandedCostVoucherService vouchers, LandedCostReportService reports,
+            LandedCostReconciliationService reconciliation, LandedCostAnalysisService analysis) {
         this.vouchers = vouchers;
         this.reports = reports;
+        this.reconciliation = reconciliation;
+        this.analysis = analysis;
     }
 
     private static VoucherInput input(VoucherRequest dto) {
@@ -92,7 +100,8 @@ public class LandedCostVoucherController {
                         c.supplierId(), c.supplierInvoiceRef(), c.invoiceDate(), c.currencyCode(), c.exchangeRate(),
                         c.amount(), c.taxAmount(), c.treatment(), c.allocationMethod(), c.expenseAccountId(),
                         c.creditAccountId(), c.costCenterId(), c.appliesToLineIds(), c.manualAllocations(), c.billMode(),
-                        c.vendorBillId(), c.dueDate(), c.taxId(), c.taxRecoverable())).toList());
+                        c.vendorBillId(), c.dueDate(), c.taxId(), c.taxRecoverable(), c.duplicateOverrideId()))
+                        .toList());
     }
 
     // ------------------------------------------------------------------ vouchers
@@ -155,6 +164,58 @@ public class LandedCostVoucherController {
         return vouchers.reverse(id);
     }
 
+    @PostMapping("/landed-cost-vouchers/{id}/reopen")
+    @RequirePermissions(Permissions.LANDED_COST__CREATE)
+    public Map<String, Object> reopen(@PathVariable String id) {
+        return vouchers.reopen(id);
+    }
+
+    /** Duplicate supplier-invoice override (LC-2). */
+    public record OverrideRequest(
+            @NotNull(message = "supplierId must be a string") String supplierId,
+            @NotNull(message = "supplierInvoiceRef must be a string") String supplierInvoiceRef,
+            @NotNull(message = "reason must be a string") @jakarta.validation.constraints.Size(max = 500) String reason) {}
+
+    @GetMapping("/invoice-duplicate-overrides")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public List<Map<String, Object>> overrides() {
+        return vouchers.overrides();
+    }
+
+    @PostMapping("/invoice-duplicate-overrides")
+    @Idempotent
+    @RequirePermissions(Permissions.LANDED_COST__OVERRIDE_DUPLICATE)
+    public Map<String, Object> createOverride(@Valid @RequestBody OverrideRequest dto) {
+        return vouchers.createOverride(dto.supplierId(), dto.supplierInvoiceRef(), dto.reason());
+    }
+
+    @PostMapping("/invoice-duplicate-overrides/{id}/revoke")
+    @RequirePermissions(Permissions.LANDED_COST__OVERRIDE_DUPLICATE)
+    public Map<String, Object> revokeOverride(@PathVariable String id) {
+        return vouchers.revokeOverride(id);
+    }
+
+    /** One credited charge (LC-1). */
+    public record CreditChargeRequest(
+            @NotNull(message = "chargeId must be a string") String chargeId,
+            @NotNull(message = "amount must be a positive number") @Positive(message = "amount must be a positive number")
+            BigDecimal amount,
+            String supplierInvoiceRef) {}
+
+    /** Credit voucher body (LC-1). */
+    public record CreditRequest(
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
+            String notes,
+            @NotNull(message = "charges must be an array") @ArrayMinSize(1) List<@Valid CreditChargeRequest> charges) {}
+
+    @PostMapping("/landed-cost-vouchers/{id}/credit")
+    @Idempotent
+    @RequirePermissions(Permissions.LANDED_COST__CREATE)
+    public Map<String, Object> credit(@PathVariable String id, @Valid @RequestBody CreditRequest dto) {
+        return vouchers.createCredit(id, dto.date(), dto.notes(), dto.charges().stream().map(c ->
+                new LandedCostVoucherService.CreditLine(c.chargeId(), c.amount(), c.supplierInvoiceRef())).toList());
+    }
+
     @PostMapping("/landed-cost-vouchers/{id}/cancel")
     @RequirePermissions(Permissions.LANDED_COST__CREATE)
     public Map<String, Object> cancel(@PathVariable String id) {
@@ -162,6 +223,36 @@ public class LandedCostVoucherController {
     }
 
     // ------------------------------------------------------------------ reports
+
+    @GetMapping("/landed-cost-reports/analysis/{kind}")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Object analysis(@PathVariable String kind, @RequestParam String from, @RequestParam String to) {
+        LocalDate f = day(from, "from");
+        LocalDate t = day(to, "to");
+        return switch (kind) {
+            case "variance" -> analysis.variance(f, t);
+            case "valuation-impact" -> analysis.valuationImpact(f, t);
+            case "by-warehouse" -> analysis.byWarehouse(f, t);
+            case "by-cost-centre" -> analysis.byCostCentre(f, t);
+            case "profitability" -> analysis.profitability(f, t);
+            case "production-structure" -> analysis.productionStructure(f, t);
+            case "freight-history" -> analysis.freightHistory(f, t);
+            default -> throw ApiException.notFound("Unknown landed cost report " + kind);
+        };
+    }
+
+    @GetMapping("/landed-cost-reports/reconciliation")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Map<String, Object> reconciliation() {
+        return reconciliation.reconciliation();
+    }
+
+    @GetMapping("/landed-cost-reports/trace")
+    @RequirePermissions(Permissions.LANDED_COST__READ)
+    public Map<String, Object> trace(@RequestParam(required = false) String voucherId,
+            @RequestParam(required = false) String chargeId, @RequestParam(required = false) String journalLineId) {
+        return reconciliation.trace(voucherId, chargeId, journalLineId);
+    }
 
     @GetMapping("/landed-cost-reports/by-shipment")
     @RequirePermissions(Permissions.LANDED_COST__READ)

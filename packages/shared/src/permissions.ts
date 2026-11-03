@@ -172,6 +172,9 @@ export const PERMISSIONS = {
     reverse: 'landed_cost:reverse',
     configure: 'landed_cost:configure',
     overrideTax: 'landed_cost:override_tax',
+    resolveLineage: 'landed_cost:resolve_lineage',
+    overrideDuplicate: 'landed_cost:override_duplicate',
+    customsAdjust: 'landed_cost:customs_adjust',
   },
   // ---- ADR-S005 — accounting completion ----
   budget: {
@@ -1178,6 +1181,37 @@ export const PERMISSIONS = {
     manage: 'report_library:manage',
     /// Scheduled report delivery (e-mail and in-app).
     schedule: 'report_library:schedule',
+  },
+  // ---- Document management (DMS, ADR-S044; Spring-native) ----
+  dms: {
+    /// Browse workspaces, preview / download documents, see record attachments.
+    documentRead: 'dms:document:read',
+    /// Upload, version, rename, tag, move, link and lock documents.
+    documentWrite: 'dms:document:write',
+    /// Delete (soft) and restore documents.
+    documentDelete: 'dms:document:delete',
+    /// Approve / reject documents waiting for approval.
+    documentApprove: 'dms:document:approve',
+    /// Create and revoke external share links.
+    documentShare: 'dms:document:share',
+    /// Workspaces, folders and workspace access rules.
+    workspaceManage: 'dms:workspace:manage',
+    /// Tags and tag categories.
+    tagManage: 'dms:tag:manage',
+    /// Ask a colleague for a document (document requests).
+    requestCreate: 'dms:request:create',
+  },
+  // ---- Helpdesk and correspondence (ADR-S045; Spring-native) ----
+  helpdesk: {
+    ticketRead: 'helpdesk:ticket:read',
+    ticketWrite: 'helpdesk:ticket:write',
+    ticketAssign: 'helpdesk:ticket:assign',
+    ticketClose: 'helpdesk:ticket:close',
+    /// Register dispatch of outgoing letters (method, tracking number).
+    letterDispatch: 'helpdesk:letter:dispatch',
+    /// Teams, stages, ticket types and letter templates.
+    teamManage: 'helpdesk:team:manage',
+    reportRead: 'helpdesk:report:read',
   },
 } as const;
 

@@ -1,4 +1,4 @@
-package com.inventoryerp.costing.application;
+package com.inventoryerp.shared.costing;
 
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;

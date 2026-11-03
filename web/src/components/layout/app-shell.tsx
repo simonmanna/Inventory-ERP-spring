@@ -5,6 +5,11 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { PageSuspense } from '@/components/page-loading';
 import {
   LayoutDashboard,
+  FolderOpen,
+  LifeBuoy,
+  Mail,
+  Columns3,
+  FolderCog,
   Building2,
   Users,
   Package,
@@ -398,6 +403,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/procurement/debit-notes', label: tx('Debit Notes'), icon: FilePlus2, permission: 'debit_note:read' },
       { to: '/procurement/shipments', label: tx('Import Shipments'), icon: Boxes, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
       { to: '/procurement/landed-cost-vouchers', label: tx('Landed Costs'), icon: Calculator, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
+      { to: '/procurement/landed-cost-control', label: tx('Landed Cost Control'), icon: ShieldCheck, permission: PERMISSIONS.landedCost.read, group: 'Imports' },
       { to: '/procurement/inspections', label: tx('Incoming Inspection'), icon: ShieldCheck, permission: PERMISSIONS.inspection.read, group: 'Exceptions' },
       { to: '/procurement/claims', label: tx('Supplier Claims'), icon: MessageSquareWarning, permission: PERMISSIONS.supplierClaim.read, group: 'Exceptions' },
       { to: '/procurement/reports/emergency', label: tx('Emergency Purchases'), icon: Siren, permission: PERMISSIONS.emergencyPurchase.review, group: 'Exceptions' },
@@ -762,6 +768,29 @@ const NAV_SECTIONS: NavSection[] = [
     icon: ClipboardList,
     items: [
       { to: '/tasks', label: tx('Task Board'), icon: ClipboardList },
+    ],
+  },
+  {
+    // Document management (ADR-S044): one place for every file attached across the ERP.
+    zone: 'People',
+    title: 'Documents',
+    icon: FolderOpen,
+    items: [
+      { to: '/dms', label: tx('All Documents'), icon: FolderOpen, permission: PERMISSIONS.dms.documentRead },
+      { to: '/dms/requests', label: tx('Document Requests'), icon: FileQuestion, permission: PERMISSIONS.dms.documentRead },
+      { to: '/dms/settings', label: tx('Document Settings'), icon: FolderCog, permission: PERMISSIONS.dms.workspaceManage, group: 'Configuration' },
+    ],
+  },
+  {
+    // Helpdesk and correspondence register (ADR-S045).
+    zone: 'People',
+    title: 'Helpdesk',
+    icon: LifeBuoy,
+    items: [
+      { to: '/helpdesk', label: tx('Helpdesk Overview'), icon: LayoutDashboard, permission: PERMISSIONS.helpdesk.reportRead },
+      { to: '/helpdesk/tickets', label: tx('Tickets'), icon: Columns3, permission: PERMISSIONS.helpdesk.ticketRead },
+      { to: '/helpdesk/letters', label: tx('Letters (In / Out)'), icon: Mail, permission: PERMISSIONS.helpdesk.ticketRead },
+      { to: '/helpdesk/settings', label: tx('Helpdesk Settings'), icon: Settings2, permission: PERMISSIONS.helpdesk.teamManage, group: 'Configuration' },
     ],
   },
   {

@@ -132,6 +132,7 @@ class LandedCostVoucherIT extends ApiTestSupport {
     }
 
     JsonNode approveAndPost(String id) {
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + id + "/approve", null);
         Res r = call("POST", "/procurement/landed-cost-vouchers/" + id + "/post", null, key());
         assertThat(r.status()).as(r.raw().body()).isEqualTo(200);

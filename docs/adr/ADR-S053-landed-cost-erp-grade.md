@@ -1,6 +1,6 @@
 # ADR-S053 — Landed cost to ERP grade (LC-0 … LC-7)
 
-- Status: accepted in principle; built phase by phase. **LC-0 in progress.**
+- Status: accepted in principle; built phase by phase. **LC-0 to LC-7 done.**
 - Plan: [`docs/roadmap/landed-cost-plan.md`](../roadmap/landed-cost-plan.md) (rev 3.1)
 - Audit: [`landed-cost-implementation-map.md`](../audits/landed-cost-implementation-map.md),
   [`landed-cost-gl-trace.md`](../audits/landed-cost-gl-trace.md)
@@ -60,6 +60,236 @@ LC-0 to LC-3 are acceptance gates.
 A voucher dated inside the books-lock period is refused when it posts, and nothing moves. A late charge for a closed
 period is entered with a date in the open period. Vouchers are never back-dated.
 
+### LC-1 — valuation correctness (V292)
+
+**Rule:** a transfer is not consumption. A landed charge follows the goods to wherever they are now.
+
+- **Transfer lineage.** `InventoryTransferLineage(sourceLedgerId → destinationLedgerId, quantity)` is written by
+  `StockService.transfer` in the same transaction (every transfer path — documents, transit dispatch and receipt,
+  quality, rental, branch, reversal — goes through it). History is backfilled **exactly** from the shared `ledgerCode`
+  (one out and one in row, same product, variant and quantity, D1); anything else becomes an `ambiguous_pair`
+  exception. Transit is just another pool: A → transit → B is two hops.
+- **Engine.** `LineageFollower` distributes the charge over the receipt layer with `AvcoLineageCalculator`; each
+  `transfer_out` share is split over its lineage links pro rata by quantity and distributed again from each
+  `transfer_in` row (recursively). The open remainder of a partial dispatch is `in_transit`. A ledger row met twice on
+  one path is a `cycle`; more than 20 hops is `depth`; no link is `unpaired_transfer`. All three park the share in
+  1396 (value-only row tagged `price_difference`, open adjustment with no anchor) and raise a `LineageException`. A
+  posting is never silently wrong.
+- **Recording.** One `CostValueAdjustment` per pool visited, linked by `parentAdjustmentId` / `rootAdjustmentId`, with
+  `sourceReceiptLedgerId`; lines per target (`on_hand`, `cogs`, `wip`, `scrap`, `transfer` → destination row,
+  `negative_stock`, `return`, `in_transit`).
+- **Valuation by method (vouchers only; the legacy `/procurement/landed-costs` keeps the Nest behaviour).**
+  - AVCO / non-lot FIFO: each pool's on-hand share raises that pool's running average (value-only row). A share whose
+    pool holds no stock any more goes to `negative_stock` (COGS), never into the average.
+  - STANDARD: each pool's on-hand share is an open 1396 adjunct anchored at that pool, so the release run takes it to
+    COGS / WIP when **that** pool consumes it.
+  - Lots: transfers create batch rows with the same batch number, so the receipt's units still on hand are that batch
+    number's quantity at every location (at most the receipt quantity); each such batch row's unit cost rises by the
+    charge per received unit. The consumed rest is classified by the lot's own outbound rows.
+  - Serials: unchanged (the serial's `receiptRef` follows it).
+- **Targets and accounts.** on hand → stock (STANDARD: 1396); `wip` → WIP of the order (`targetRef`) — also for an
+  order completed since: the CM-10 cost adjustment run cascades it to the order's output (F7). Cancelled orders →
+  COGS. scrap and negative stock → COGS (unchanged classification). `return` → return policy. Parked → 1396.
+- **Returns policy** `costing.landedCost.returnPolicy` (owner decision D2: default `expense`):
+  `expense` and `defect_claim` → Dr 5976 *Landed Cost on Returned Goods* (mapping `landed_cost_returns`). Under
+  IAS 37 a claim receivable is recognised only once the claim is accepted, so `defect_claim` expenses now.
+  `recover_from_supplier` → parked in 1396 awaiting the supplier's credit; it is cleared through the exception
+  workspace (write-off to the receivable or expense account) — no receivable is recognised before the credit exists.
+- **STANDARD adjunct after a later transfer.** `CostLineageService.release` used to keep a transferred share at the
+  source pool for ever. It now moves it (same 1396, no journal) to an open adjustment at the destination pool(s) of the
+  transfer lineage, anchored there; the parent's carried amount is reduced by what moved. Unpaired transfers keep the
+  old behaviour. (Shared engine change: required by the plan's STANDARD acceptance test.)
+- **Accruals.** `LandedCostAccrualService.accrue` uses `LineageCapitalisation.spreadFollowing` (same engine); clearing
+  and reversal skip the followed `transfer` / `in_transit` lines because each is its own child adjustment. The quarry
+  and CM-10 callers of `LineageCapitalisation.spread` are unchanged.
+- **Reversal mirrors the posting.** The voucher entry is reversed exactly. For each AVCO pool share, the part still on
+  hand now — followed from its value-only row through any transfer since — is taken out of the pool where it is; the
+  part consumed since is reclassed (Dr stock / Cr COGS, WIP or 5976). STANDARD and parked adjuncts unwind their open
+  amount; their released part is reclassed to COGS. Lots unwind per batch number. Refused when a WIP share was already
+  cascaded by a CM-10 run (`reverse that run first`) or a parked share was resolved (`post a credit voucher instead`),
+  and while a credit voucher references the voucher.
+- **Credit vouchers.** `voucherType = 'credit'`, `originalVoucherId`, charges with negative amounts and
+  `creditOfChargeId` (Σ credits ≤ the original charge). They copy the original's receipts, carry no tax and no
+  generated bill (the supplier's credit note goes through payables against clearing), are exempt from the duplicate
+  check, cannot be edited, and run through the same engine with the sign reversed.
+- **Exception workspace** (`landed_cost:resolve_lineage`, audited): *assign* the receiving `transfer_in` row (the
+  link is recorded for the quantity still free on both sides, and the parked amount is distributed from that row:
+  Dr targets / Cr 1396), or *write off* to an account with a reason (Dr account / Cr 1396).
+- **Rounding (D4).** Shares at 2 dp; the calculator puts the residual on on-hand, else on the largest consumption;
+  transfer splits give the residual to the open remainder or the last link. Σ = charge exactly (golden test).
+
+### LC-2 — financial controls (V293)
+
+- **Approval.** `costing.landedCost.allowDirectApproval` (default false): `approve` accepts only `submitted`
+  (`Only a submitted landed cost voucher can be approved; submit it first`). `ApprovalLimitService.assertWithin(
+  "landed_cost_voucher", |total|, …)` applies the approver's limit. `reopen` (submitted / approved → draft) clears the
+  approval.
+- **`approvedHash`**: SHA-256 of canonical JSON (sorted keys) of every money driver — shipment, cost centre, each
+  receipt's stock lines (line, product, variant, location, lot, quantity, value, weight, volume, unit) and per charge
+  component, kind, treatment, basis, lines, manual split, amount, base, tax, recoverability, tax code, currency, rate,
+  supplier, invoice, bill mode, bill, accounts, cost centre. Any change → `Voucher changed since approval; reopen and
+  re-approve`. The unreviewed-tax guard (LC-0) is checked first.
+- **`approvedDisposition`** per target: `stock:<product>:<location>` (STANDARD: `adjunct:`), `parked:<product>:<location>`,
+  `wip:<order>`, `return:<product>`, `scrap:<product>`, `cogs:<product>`. At posting the disposition is recomputed from
+  current lineage (that is what posts) and compared target by target. **OR rule:** a change above
+  `costing.landedCost.reapprovalTolerancePct` (5) **or** `costing.landedCost.reapprovalToleranceAmount` (1,000) refuses
+  with `Inventory moved since approval (<target>: approved <a>, now <b>); reopen and re-approve`. A target new or gone
+  since approval has no percentage: only the amount applies. 0 = any change. `postedDisposition` is stored, and the
+  audit records approved, posted and their difference.
+- **Duplicate invoices.** `procurement.invoiceRef.normalization`: `strict` (default; upper case, trimmed, separators
+  space - _ / . removed — `AB-12` and `A-B12` both become `AB12`, a deliberate false positive the override covers) or
+  `exact` (upper case, trimmed). **Deviation from the plan (smallest safe correction, standing rule 3):** the plan put
+  the partial unique indexes on `LandedCostCharge`, but one supplier invoice legitimately spans several charge lines of
+  a voucher (freight + handling). The indexes are on a registry, `LandedCostInvoiceRef` — one row per (voucher,
+  supplier, normalised number), `live` while the voucher is not cancelled or reversed:
+  `…_normal_uq (org, supplier, refNorm) WHERE duplicateOverrideId IS NULL AND live` and
+  `…_override_uq (org, supplier, refNorm, duplicateOverrideId) WHERE duplicateOverrideId IS NOT NULL AND live`.
+  The check runs when charges are written (create / update), under the advisory lock on (org, supplier, refNorm); a
+  unique violation maps to the same 409, which names the original reference and voucher (`… is already on landed cost
+  LC-00012 (entered as AB-12)`). Credit vouchers and linked bills are exempt. Historic duplicates got a migration
+  override each (listed).
+- **Overrides** (`landed_cost:override_duplicate`, reason required, audited): `POST /procurement/invoice-duplicate-overrides`,
+  `GET` (with the voucher that used each), `POST …/{id}/revoke` (unused only). A charge names one with
+  `duplicateOverrideId`; it must be approved, unrevoked, same org, supplier and normalised number, and unused; it is
+  marked used (`usedByChargeId` = the registry row, unique) in the same transaction. Rewriting a draft frees it.
+- **Allocation validation.** Weight / volume bases list every product missing it (`Charge <label> is allocated by
+  weight; set the weight of A, B`) — previously a product without weight silently got nothing. A unit with no quantity
+  is refused. Quantities are the receipt's stock-ledger quantities, which are already in the base unit. Σ allocated =
+  charge base is asserted. `weightUsed`, `volumeUsed` and `uomId` are stored on each allocation row.
+- **Engine consolidation.** The voucher basis split uses `AllocationCalculator` (LAST, 6 dp) — identical figures (all
+  existing voucher ITs unchanged). The calculator moved to `com.inventoryerp.shared.costing` (it is pure) because
+  procurement cannot depend on costing (costing already depends on procurement).
+
+### LC-3 — reconciliation and trace
+
+`GET /procurement/landed-cost-reports/reconciliation` (`landed_cost:read`) returns six rows (sub-ledger, GL,
+difference, drill-down), the classification and location mismatches, the open lineage exceptions and `clean`:
+
+| Row | Sub-ledger | GL |
+|---|---|---|
+| 2155 | Charges of posted vouchers / credits credited to clearing whose supplier bill is not booked (no linked or generated bill, or it was cancelled) | 2155 balance |
+| 2156 | Open accruals | 2156 balance |
+| 1396 | Σ open `price_difference` adjuncts (STANDARD landed cost, parked lineage shares, recoveries, accruals, material ledger), drill-down per source and parked flag | 1396 balance |
+| stock | Inventory valuation (the GL tie-out), landed-cost sources listed | inventory accounts |
+| cogs | Σ disposition `cogs` of posted vouchers | COGS lines of their posting entries |
+| wip | Σ disposition `wip` of posted vouchers − shares already cascaded by CM-10; drill-down: open shares per order | WIP lines of their posting entries − the cascaded amounts |
+
+- **Classification:** per posted voucher, each landed account (stock / 1396 / WIP / COGS / 5976) the dispositions imply
+  vs its journal lines; listed even when the entry balances.
+- **Location:** per posted voucher, product and location, the posting's value-only stock rows vs the disposition's
+  stock / adjunct / parked targets.
+- **2155 note:** a supplier invoice booked in payables against clearing without being linked to its charge shows as a
+  difference with the charge still listed as outstanding — that is the signal to link it.
+- **Trace:** `GET /procurement/landed-cost-reports/trace?voucherId|chargeId|journalLineId` — voucher → charges →
+  allocations (receipt, line, product, disposition) → adjustments per pool with parent links (transfer hops) and their
+  lines with the consumption movement (type, reference, location: sale, production order, return) → the journal
+  lines of the posting, reversal and reclass entries. Every hop filtered by organisation; another organisation's id is
+  a 404 (tested).
+- **Period close:** the checklist gets `landed_cost_lineage` (non-blocking): open lineage exceptions. The accounting
+  module cannot depend on procurement, so the full reconciliation stays on its own page.
+- **Final acceptance** `LandedCostEndToEndIT`: import, two-supplier voucher (generated bill + bill to enter), transfer
+  to the plant, issue to an open order, a late charge while goods are in W1, at the plant and in WIP (exact split),
+  sales at both places, the order completed, a supplier credit voucher, reconciliation unchanged (all six rows), no
+  classification or location mismatch, trace through the transfer hop to the order's WIP and from a journal line,
+  reversal of the late charge (every target unwinds; the units sold since keep their share in COGS through the
+  reclass, averages back exactly), and a corrected re-post. **Deviation:** the plan's FG-at-depot leg needs the CM-10
+  cascade run, and a run cannot be reversed once part of what it capitalised was released; the reversal therefore
+  happens while the completed order's WIP share is still pending cascade. A voucher whose WIP share was cascaded is
+  refused (`reverse that run first`) — tested in LC-1.
+
+### LC-4 — accrual management (V294)
+
+- **Rules:** `name`, `effectiveFrom` / `effectiveTo`, `rateType` (`percent` of receipt value | `per_unit` in the rule's
+  `uomId` | `per_kg` on `weightBasis` net = `Product.weight` or gross = `Product.grossWeight`), `rate`, `currencyCode`,
+  `expectedSettlementDays` (default 30). Fixed precedence supplier > category > Incoterm > default; within a scope the
+  rule whose period covers the **receipt date**. A rule with a period that overlaps another active rule of the scope
+  is a 409 (`An active accrual rule for this scope overlaps <name> (<from> – <to>)`); a rule without a period replaces
+  the scope's other open-ended rule (the CM-6 behaviour). Per-unit quantities convert through the product's units;
+  per-kg with a missing weight is refused with the products listed; a foreign rule currency converts at the receipt
+  date (no rate → refused before anything is written).
+- **Partial clearing:** `LandedCostAccrual.clearedAmount` / `remainingAmount`, status `posted | partially_cleared |
+  cleared | reversed`. `clear` takes `min(the voucher's capitalised share on this receipt, remaining)` or an explicit
+  `amount` (refused above either: `Clearing <x> exceeds the remaining <y> of accrual <n>` / `… exceeds what voucher <c>
+  capitalised on this receipt`); one clear per voucher. Each clear unwinds pro rata to the original estimate, per
+  adjustment: the due share of its on-hand bucket (open adjunct first, the rest released since → COGS) and of its
+  consumed lines (to their targets), tracked in `LandedCostAccrualClearingLine`, so successive clears add up exactly;
+  the last clear takes exactly what is left. `close` unwinds the remainder (status `cleared`); `reverse` only before
+  any clear.
+- **Four effects kept apart** (`LandedCostAccrualClearing`): (1) accrual reversal — the cleared functional amount at
+  the receipt-date rate, with the rule currency amount and rate; (2) actual landed cost — the voucher's own posting at
+  its recognition rate (actual currency, amount, rate, functional); (3) estimate variance = (2) − (1) per clear, and
+  − remainder on `close`; (4) realised FX — the payment (PC-0), never on stock, WIP or COGS (tested: stock moves only by
+  the voucher's functional amount).
+- **Monitor** `GET /procurement/landed-cost-accruals/monitor`: open and partly cleared accruals with age bucket
+  (0-30 / 31-60 / 61-90 / 90+), overdue (past `expectedSettlementDate`), estimate, cleared, remaining, actual and
+  variance; bucket totals.
+- The 2156 reconciliation uses `remainingAmount`.
+
+### LC-5 — voucher UX
+
+- **Preview** (`GET …/{id}/preview`) adds the journal the voucher would post (same line builder as posting,
+  `StockPostingService.landedVoucherLines`), the disposition per target, `inputsHash` (= the approval hash),
+  `previewHash` (inputs + disposition) and `computedAt`, and warnings: shares that would be parked in 1396 (transfer
+  in transit, unpaired, lineage defect) and inventory moved since approval. The page marks a preview stale when its
+  hash changes and never shows it as current. Missing weight / volume, no eligible goods and reversed receipts stay
+  400s with their messages (shown on the page).
+- **Edit:** stepper General → Receipts → Charges → Allocation (per-row basis, share, formula, rounding) → Review (the
+  actual journal); a saved draft autosaves 3 s after the last change (hydrated once, so a refetch never overwrites
+  typing); a new draft is kept in local storage until saved; sticky summary total / capitalised / expensed / tax /
+  unallocated.
+- **Detail:** tabs Overview (receipts, supplier bills, charges, per product), Allocation, Accounting (preview journal
+  or posted entries), Approval (approved vs now / posted per target), Trace (tree with transfer hops); Supplier credit
+  form on posted vouchers; Approve only on submitted, Reopen.
+- **Landed cost control** (`/procurement/landed-cost-control`, nav *Imports*): Reconciliation cards with drill-down,
+  classification / location mismatches and CSV export; Exceptions workspace (assign / write off, reason required,
+  gated by `landed_cost:resolve_lineage`); Accruals (age buckets, monitor with estimate variance, close / reverse,
+  rules with periods and rate types); Duplicate invoices (overrides); Trace.
+- Responsive: tables scroll horizontally, cards stack, tab lists wrap; English keys only (i18n check is red on main
+  for 2,406 older phrases, unchanged by this phase).
+- Not done: the historical tax review list (`taxRecoverable = NULL`) — the post-time 400 names each charge; the GRN
+  panel buttons (reverse / create voucher from this receipt).
+
+### LC-6 — reports
+
+`GET /procurement/landed-cost-reports/analysis/{kind}?from&to` (`landed_cost:read`), built only on what the engine
+records (dispositions, lineage lines, accrual clearings, stock ledger):
+
+| kind | Content |
+|---|---|
+| `variance` | Per accrual clearing: estimate cleared, actual, estimate variance, and the realised FX of the payments of the voucher's generated / linked bills (pro rata to each payment allocation) in its own column |
+| `valuation-impact` | What the period's posted vouchers put into stock / adjunct / parked per warehouse, product and costing method |
+| `by-warehouse` | The same, per warehouse |
+| `by-cost-centre` | Charges by the charge's cost centre, else the voucher's: capitalised vs expensed |
+| `profitability` | The units sold in the period, cost of sales split by the cost layers those very units carried: landed (lineage lines whose consumption is the sale, **plus** the share of a landed value row followed to sales after posting), conversion (overhead settlement, cost adjustment runs, quarry), distribution (branch transfer freight), purchase = the rest; gross profit before / after landed cost. Selling and administrative expenses (`operating_expense` accounts) shown apart, never in product cost |
+| `production-structure` | Per completed production run: input, good output in the output unit, yield = output ÷ input, materials (of which landed via WIP), conversion, total and **cost per good output unit** (never per input) |
+
+The web report page has a tab per kind with CSV export. STANDARD adjunct releases are not attributed to individual
+sales in `profitability` (they are released per pool by the release run).
+
+### LC-7 — advanced (V295)
+
+- **Incoterm responsibility matrix** (Incoterms 2020): the kinds the seller bears — CFR / CPT freight; CIF / CIP
+  freight + insurance; DAP freight + insurance; DPU + handling; DDP + duty; E/F terms none. The voucher preview warns on
+  each charge whose kind the seller bears under the Incoterm of the voucher's shipment, else of the receipt's purchase
+  order (`Charge n (freight): the seller bears freight under CIF; check it is not already in the goods price`).
+  `PurchaseOrder.incoterm` and `Shipment.incoterm` (validated) are new. **Fix:** the CM-6 accrual rule by Incoterm read
+  the Incoterm from `Document` (sales invoices / bills) by the receipt's purchase-order id, so it never matched; it now
+  reads the shipment, else the purchase order.
+- **Customs tariff engine:** `CustomsTariff` lines — import country, HS code, origin, trade preference, period,
+  valuation basis (CIF = FOB + freight + insurance, FOB, transaction value), duty type (ad valorem, specific, compound,
+  exempt), additional duty, excise (on value + duty), legal reference, source, version. An edit (`PUT`) retires the line
+  and creates version n + 1; a past calculation is never altered. The line valid at the **declaration date** is used,
+  preference- and origin-specific lines first. `CustomsCalculation` stores the inputs, the tariff version and copies of
+  its rates and legal reference, and the outputs; a database trigger makes it immutable (only the link to the charge it
+  was used for may be set) and undeletable. A manual adjustment needs `landed_cost:customs_adjust` and a reason, and is
+  audited. Nothing is posted or capitalised by a calculation: its total is entered as a charge with the treatment the
+  component and tax policy give.
+- **Allocation templates** (`LandedCostTemplate`): named charge presets (kind / component, treatment, basis, bill mode,
+  supplier, optional `ratePct` of goods value); `apply` returns charge drafts for given receipts.
+- **Freight and supplier cost history:** report kind `freight-history` — per month, supplier and kind: charges, amount,
+  quantity, cost per unit and % of goods value.
+- Web: *Customs* tab on Landed Cost Control (calculator, tariff lines); *Freight & supplier cost history* report tab.
+
 ## Findings
 
 | # | Finding | Decision |
@@ -67,7 +297,7 @@ period is entered with a date in the open period. Vouchers are never back-dated.
 | G1 | `PaymentService` posted no realised FX for any foreign-currency document | Fixed in PC-0 (ADR-S054); `realisedFxOnSettlement` enabled |
 | G2 | Foreign-currency posting with no configured rate rolls back the whole voucher (`CurrencyService.getRate` throws inside the transaction); G3: a configured table rate overrides the document's own rate | Fixed in PC-0 (ADR-S054, owner decision D-PC1); case 6 enabled |
 | G4 | Reversal guard missed fully paid bills (status no longer `posted`) | **Fixed in LC-0**: any non-cancelled bill with `amountPaid > 0` blocks the reversal |
-| F2, F5–F7 | AVCO / lot landed cost ignores lineage (transfers, WIP, returns, closed orders) | LC-1 |
+| F2, F5–F7 | AVCO / lot landed cost ignores lineage (transfers, WIP, returns, closed orders) | **Fixed in LC-1** |
 
 ## Messages (verbatim, LC-0)
 
@@ -83,6 +313,63 @@ period is entered with a date in the open period. Vouchers are never back-dated.
   both.
 - New permission `landed_cost:override_tax`, granted to Administrator.
 - New setting `costing.landedCost.taxRecoverableDefault`.
+
+## Messages (verbatim, LC-1)
+
+- `Only a posted landed cost voucher can be credited`
+- `Charge <label>: credit <amount> exceeds the uncredited amount <open>`
+- `A credit voucher cannot be edited; cancel it and credit the voucher again`
+- `Credit voucher <code> references this voucher; reverse or cancel it first`
+- `Part of this landed cost was cascaded from WIP by a cost adjustment run; reverse that run first`
+- `Part of this landed cost was resolved from a lineage exception; post a credit voucher instead`
+- `Lineage exception not found`, `Only an open lineage exception can be resolved`
+- `The exception's stock movement is not a transfer out`
+- `The destination must be a transfer in of the same product and variant`
+- `Nothing left to link between these two movements`
+- `Cannot capitalise into an empty stock pool`
+
+## API (LC-1, additive)
+
+- `POST /procurement/landed-cost-vouchers/{id}/credit` `{date?, notes?, charges: [{chargeId, amount, supplierInvoiceRef?}]}`
+  (`landed_cost:create`, idempotent). Voucher responses include `voucherType` and `originalVoucherId`; charges
+  `creditOfChargeId`; allocations `disposition` (amount per target).
+- `GET /inventory/lineage-exceptions?status=` (`landed_cost:read`), `POST …/{id}/assign {destinationLedgerId, reason}`,
+  `POST …/{id}/write-off {accountId, reason}` (`landed_cost:resolve_lineage`, granted to Administrator, idempotent).
+- Setting `costing.landedCost.returnPolicy`.
+
+## API (LC-2, additive)
+
+- `POST /procurement/landed-cost-vouchers/{id}/reopen` (`landed_cost:create`).
+- Charge lines accept `duplicateOverrideId`; voucher responses include `approvedHash`, `approvedDisposition`,
+  `postedDisposition`; charges `supplierInvoiceRefNorm`, `live`, `duplicateOverrideId`; allocations `disposition`,
+  `weightUsed`, `volumeUsed`, `uomId`.
+- `GET|POST /procurement/invoice-duplicate-overrides`, `POST /procurement/invoice-duplicate-overrides/{id}/revoke`.
+- Settings `costing.landedCost.allowDirectApproval`, `…reapprovalTolerancePct`, `…reapprovalToleranceAmount`,
+  `procurement.invoiceRef.normalization`; permission `landed_cost:override_duplicate`.
+- Web: Approve shows on submitted vouchers only; Reopen on submitted / approved.
+
+## API (LC-3, additive)
+
+- `GET /procurement/landed-cost-reports/reconciliation`, `GET /procurement/landed-cost-reports/trace`
+  (`landed_cost:read`).
+- Period-close checklist item `landed_cost_lineage`.
+
+## API (LC-4, additive)
+
+- Rule body adds `name, effectiveFrom, effectiveTo, rateType, rate, currencyCode, uomId, weightBasis,
+  expectedSettlementDays`. Clear body adds optional `amount`. New `POST /procurement/landed-cost-accruals/{id}/close`
+  and `GET /procurement/landed-cost-accruals/monitor`. Accrual responses add `clearedAmount`, `remainingAmount`,
+  `expectedSettlementDate` and `clearings`.
+- Behaviour change: a clear no longer takes the whole estimate when the actual is lower — the remainder stays open
+  until another voucher clears it or it is closed (audit case 5 now closes it; its final books are unchanged).
+
+## API (LC-7, additive)
+
+- `GET|POST /procurement/customs/tariffs`, `PUT|DELETE /procurement/customs/tariffs/{id}`;
+  `GET|POST /procurement/customs/calculations`, `GET …/{id}`, `POST …/{id}/link`;
+  `GET|POST /procurement/landed-cost-templates`, `DELETE …/{id}`, `POST …/{id}/apply`;
+  `GET /procurement/landed-cost-reports/analysis/freight-history`. Shipments accept `incoterm`.
+- Permission `landed_cost:customs_adjust` (Administrator).
 
 ## Tests
 
@@ -106,9 +393,12 @@ Scenarios:
 - Tax-default override.
 - The unreviewed guard.
 
-`@Disabled` until their phase:
-- Production WIP (LC-1).
-- Transfer (LC-1).
+LC-1 enabled the production WIP and transfer cases. `LandedCostLineageIT` adds: multi-hop with sales at both ends
+and a reversal; a transfer after posting followed by the reversal; unpaired → assign and → write-off (403 without
+the permission); an injected cycle; both return policies; STANDARD adjunct released at the destination; lot transfer;
+credit voucher with its guards; a completed production order; an accrual after a transfer.
+`AvcoLandedMathTest` (pure JUnit): the negative-stock cap (100 available, issue 120 → 100), a full sequence with a
+partial transfer and a later receipt, a layer that settled negative stock, the epoch reset and the rounding rule.
 
 ## Deviations from the plan
 

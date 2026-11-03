@@ -36,6 +36,21 @@ Health endpoints (`/api/v1/health*`) were completed in P0.
 `/opening-balances` (GET, POST), `/reports/tax/summary`, AR / AP statements (JSON, PDF, e-mail; 5), `/invoices/:id/pdf`
 and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
+**Document management and helpdesk (Spring-native, ADR-S044 / S045 / S046; not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| DM-0 | `/files` hardening (permissions, org-bound signed URLs, blocked file types, S3 streaming) | done — `DmsIT`, `SecurityChecklistIT` |
+| DM-1 | [dms](spec/dms.md) workspaces, folders, documents, versions, tags, access rules, bulk | done — `DmsIT` |
+| DM-2 | Record attachments (14 record types) + web `AttachmentPanel` on 7 record pages | done — `DmsIT` |
+| DM-3 | Documents app (web `/dms`) | done |
+| DM-4 | Surfacing module attachments read-only | done — `DmsIT` |
+| DM-5 | Full-text search + optional OCR (tesseract CLI) | done — `DmsIT` |
+| DM-6 | Expiry reminders, document requests, approvals | done — `DmsIT` |
+| DM-7 | External share links (public routes + `/share/:token`) | done — `DmsIT` |
+| HD-0..2, HD-5 | [helpdesk](spec/helpdesk.md) tickets, correspondence register, letter PDFs, web | done — `HelpdeskIT` |
+| HD-3, HD-4, HD-6 | IMAP e-mail ingestion, SLA policies, portal ticket form | not started |
+
 **HR and payroll to ERP grade (Spring-native, [plan](roadmap/hr-payroll-plan.md); not counted above):**
 
 | Phase | Scope | Status |
@@ -50,6 +65,13 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | Phase | Scope | Status |
 |---|---|---|
 | LC-0 | Accounting audit: implementation map, GL trace, `LandedCostAuditIT`; tax recoverability on charges (V290, `landed_cost:override_tax`, `costing.landedCost.taxRecoverableDefault`) | done — `LandedCostAuditIT` |
+| LC-1 | Valuation correctness (V292): `InventoryTransferLineage` + exact backfill, `LineageFollower` (landed cost follows the goods through transfers, cycle/depth guards, unpaired → 1396 + `LineageException`), AVCO/lot/STANDARD voucher path on lineage, returns policy (`costing.landedCost.returnPolicy`), completed orders → WIP for the CM-10 cascade, STANDARD adjunct moves with transfers on release, accruals follow transfers, mirrored reversal, credit vouchers (`POST /procurement/landed-cost-vouchers/{id}/credit`), exception workspace (`GET /inventory/lineage-exceptions`, `…/{id}/assign`, `…/{id}/write-off`, `landed_cost:resolve_lineage`) | done — `LandedCostLineageIT`, `AvcoLandedMathTest`, audit cases 2–3 |
+| LC-2 | Financial controls (V293): strict approval + limits, `approvedHash`, per-target disposition with the OR re-approval tolerance, `reopen`, normalised duplicate invoices on a per-voucher registry with one-use overrides (`/procurement/invoice-duplicate-overrides`, `landed_cost:override_duplicate`), weight / volume validation and stored drivers, basis split on `AllocationCalculator` | done — `LandedCostControlsIT` |
+| LC-3 | Reconciliation (`GET /procurement/landed-cost-reports/reconciliation`: 2155, 2156, 1396, stock, COGS, WIP with drill-down; classification and location checks; open exceptions), trace (`…/trace?voucherId|chargeId|journalLineId`), period-close item; final acceptance `LandedCostEndToEndIT` | done — `LandedCostEndToEndIT` |
+| LC-4 | Accrual management (V294): rules with periods, rate types (percent / per unit / per kg), currency, unit, weight basis and settlement days; overlap rejected; partial clearing with exact pro-rata unwinding (`LandedCostAccrualClearing`), close, FX kept apart from the estimate variance, monitor | done — `LandedCostAccrualManagementIT` |
+| LC-5 | Voucher UX: preview with journal, disposition, hash, warnings; edit stepper with autosave and sticky summary; detail tabs (allocation, accounting, approval diff, trace), supplier credit; Landed Cost Control page (reconciliation, exceptions, accruals, overrides, trace) | done — typecheck + UI walk-through |
+| LC-6 | Reports (`/procurement/landed-cost-reports/analysis/{kind}`): estimate variance with realised FX apart, valuation impact, by warehouse, by cost centre, profitability by cost layer, production cost structure per output unit; CSV export | done — `LandedCostReportsIT` |
+| LC-7 | Advanced (V295): Incoterm responsibility warnings (shipment / PO Incoterm), versioned customs tariff lines with immutable reproducible calculations and audited manual adjustments, allocation templates, freight and supplier cost history | done — `LandedCostCustomsIT` |
 | PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); cost-flow GL trace, `CostingAuditIT`, `BooksGuard` on 24 regression suites; bill-tax impact analysis for review | done — gate met ([record](audits/pc0-accounting-baseline.md)); V1 + D-PC3 await owner |
 
 ## kernel

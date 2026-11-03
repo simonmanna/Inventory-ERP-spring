@@ -341,7 +341,7 @@ export function useSaveLandedCostVoucher() {
 export function useLandedCostAction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, action }: { id: string; action: 'submit' | 'approve' | 'post' | 'reverse' | 'cancel' }) =>
+    mutationFn: async ({ id, action }: { id: string; action: 'submit' | 'approve' | 'reopen' | 'post' | 'reverse' | 'cancel' }) =>
       action === 'post' || action === 'reverse'
         ? idempotentPost<any>(`/procurement/landed-cost-vouchers/${id}/${action}`)
         : (await api.post(`/procurement/landed-cost-vouchers/${id}/${action}`)).data,
@@ -497,5 +497,131 @@ export function useProcessPeriodAction() {
       qc.invalidateQueries({ queryKey: ['process-period'] });
       qc.invalidateQueries({ queryKey: ['cost-processes'] });
     },
+  });
+}
+
+// ---------------------------------------------------------------- landed cost LC-2 … LC-5 (ADR-S053)
+
+/** Reconciliation of every landed-cost balance (2155, 2156, 1396, stock, COGS, WIP) with checks and exceptions. */
+export function useLandedCostReconciliation(enabled = true) {
+  return useQuery({
+    queryKey: ['landed-cost-reconciliation'],
+    enabled,
+    queryFn: async () => (await api.get<any>('/procurement/landed-cost-reports/reconciliation')).data,
+  });
+}
+
+/** Drill-down chain from a voucher, a charge or a journal line. */
+export function useLandedCostTrace(params: { voucherId?: string; chargeId?: string; journalLineId?: string }) {
+  const enabled = !!(params.voucherId || params.chargeId || params.journalLineId);
+  return useQuery({
+    queryKey: ['landed-cost-trace', params],
+    enabled,
+    queryFn: async () => (await api.get<any>('/procurement/landed-cost-reports/trace', { params })).data,
+  });
+}
+
+export function useLineageExceptions(status = 'open') {
+  return useQuery({
+    queryKey: ['lineage-exceptions', status],
+    queryFn: async () => (await api.get<any[]>('/inventory/lineage-exceptions', { params: { status } })).data,
+  });
+}
+
+export function useResolveLineageException() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action, body }: { id: string; action: 'assign' | 'write-off'; body: Record<string, string> }) =>
+      idempotentPost<any>(`/inventory/lineage-exceptions/${id}/${action}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lineage-exceptions'] });
+      qc.invalidateQueries({ queryKey: ['landed-cost-reconciliation'] });
+    },
+  });
+}
+
+export function useAccrualMonitor() {
+  return useQuery({
+    queryKey: ['landed-cost-accruals', 'monitor'],
+    queryFn: async () => (await api.get<any>('/procurement/landed-cost-accruals/monitor')).data,
+  });
+}
+
+export function useAccrualRules() {
+  return useQuery({
+    queryKey: ['landed-cost-accrual-rules'],
+    queryFn: async () => (await api.get<any[]>('/procurement/landed-cost-accrual-rules')).data,
+  });
+}
+
+export interface AccrualRuleDraft {
+  name?: string;
+  scopeType: 'default' | 'supplier' | 'category' | 'incoterm';
+  scopeId?: string;
+  rateType: 'percent' | 'per_unit' | 'per_kg';
+  ratePct?: number;
+  rate?: number;
+  currencyCode?: string;
+  uomId?: string;
+  weightBasis?: 'net' | 'gross';
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  expectedSettlementDays?: number;
+  notes?: string;
+}
+
+export function useSaveAccrualRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: AccrualRuleDraft) => (await api.post('/procurement/landed-cost-accrual-rules', body)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['landed-cost-accrual-rules'] }),
+  });
+}
+
+export function useDeleteAccrualRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/procurement/landed-cost-accrual-rules/${id}`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['landed-cost-accrual-rules'] }),
+  });
+}
+
+export function useAccrualAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action }: { id: string; action: 'close' | 'reverse' }) =>
+      idempotentPost<any>(`/procurement/landed-cost-accruals/${id}/${action}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['landed-cost-accruals'] });
+      qc.invalidateQueries({ queryKey: ['landed-cost-reconciliation'] });
+    },
+  });
+}
+
+export function useDuplicateOverrides() {
+  return useQuery({
+    queryKey: ['invoice-duplicate-overrides'],
+    queryFn: async () => (await api.get<any[]>('/procurement/invoice-duplicate-overrides')).data,
+  });
+}
+
+export function useDuplicateOverrideAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (a: { create: { supplierId: string; supplierInvoiceRef: string; reason: string } } | { revoke: string }) =>
+      'create' in a
+        ? idempotentPost<any>('/procurement/invoice-duplicate-overrides', a.create)
+        : (await api.post(`/procurement/invoice-duplicate-overrides/${a.revoke}/revoke`)).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invoice-duplicate-overrides'] }),
+  });
+}
+
+/** A credit voucher against a posted voucher (supplier credited part of a charge). */
+export function useCreditLandedCostVoucher() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: { date?: string; notes?: string; charges: { chargeId: string; amount: number; supplierInvoiceRef?: string }[] } }) =>
+      idempotentPost<any>(`/procurement/landed-cost-vouchers/${id}/credit`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['landed-cost-vouchers'] }),
   });
 }

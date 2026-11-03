@@ -6,6 +6,8 @@ import { AppShell } from '@/components/layout/app-shell';
 import { PageSuspense } from '@/components/page-loading';
 import { crmRoutes } from '@/pages/crm/routes';
 import { salesRoutes } from '@/pages/sales/routes';
+import { dmsRoutes } from '@/pages/dms/routes';
+import { helpdeskRoutes } from '@/pages/helpdesk/routes';
 import { procurementPrintRoutes, procurementPublicRoutes, procurementRoutes } from '@/pages/procurement/routes';
 import { precastRoutes } from '@/pages/manufacturing/precast/routes';
 import { shopFloorRoutes } from '@/pages/manufacturing/shop-floor/routes';
@@ -275,6 +277,8 @@ const RoleEditPage = lazy(() => import('@/pages/staff/RoleEditPage').then((m) =>
 const TasksPage = lazy(() => import('@/pages/tasks/TasksPage').then((m) => ({ default: m.TasksPage })));
 const TaskEditPage = lazy(() => import('@/pages/tasks/TaskEditPage').then((m) => ({ default: m.TaskEditPage })));
 
+const SharePage = lazy(() => import('@/pages/public/SharePage').then((m) => ({ default: m.SharePage })));
+
 export function App() {
   // Remount the whole tree when the language changes so tx() re-evaluates.
   const lang = useAppLanguage();
@@ -287,6 +291,8 @@ export function App() {
         <Route path="/menu/:branchId/:tableId" element={<DigitalMenuPage />} />
         {/* Customer portal — magic-link token, no staff login (ADR-S011 S10). */}
         <Route path="/sales-portal" element={<CustomerPortalPage />} />
+        {/* DMS share link (ADR-S044) — token-authorized, no staff login. */}
+        <Route path="/share/:token" element={<SharePage />} />
         <Route element={<ProtectedRoute />}>
           {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
           <Route path="/pos/kds" element={<KdsPage />} />
@@ -593,6 +599,9 @@ export function App() {
             {crmRoutes}
             {/* Sales / order-to-cash (ADR-S011) — pages/sales/routes.tsx */}
             {salesRoutes}
+            {/* Document management (ADR-S044) and helpdesk / correspondence (ADR-S045) */}
+            {dmsRoutes}
+            {helpdeskRoutes}
             {procurementRoutes}
 
                     </Route>

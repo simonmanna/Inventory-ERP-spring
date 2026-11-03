@@ -13,6 +13,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /** Table {@code "LandedCost"} (owned by module {@code procurement}). */
@@ -86,6 +88,10 @@ public class LandedCost {
     @Column(name = "voucherType")
     private String voucherType;
 
+    /** On a credit voucher: the voucher it credits (LC-1, ADR-S053). */
+    @Column(name = "originalVoucherId")
+    private String originalVoucherId;
+
     @Column(name = "shipmentId")
     private String shipmentId;
 
@@ -121,6 +127,17 @@ public class LandedCost {
             id = UUID.randomUUID().toString();
         }
     }
+
+    @Column(name = "approvedHash")
+    private String approvedHash;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "approvedDisposition")
+    private String approvedDisposition;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "postedDisposition")
+    private String postedDisposition;
 
     public String getId() {
         return id;
@@ -282,6 +299,14 @@ public class LandedCost {
         this.voucherType = voucherType;
     }
 
+    public String getOriginalVoucherId() {
+        return originalVoucherId;
+    }
+
+    public void setOriginalVoucherId(String originalVoucherId) {
+        this.originalVoucherId = originalVoucherId;
+    }
+
     public String getShipmentId() {
         return shipmentId;
     }
@@ -360,5 +385,29 @@ public class LandedCost {
 
     public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
+    }
+
+    public String getApprovedHash() {
+        return approvedHash;
+    }
+
+    public void setApprovedHash(String approvedHash) {
+        this.approvedHash = approvedHash;
+    }
+
+    public String getApprovedDisposition() {
+        return approvedDisposition;
+    }
+
+    public void setApprovedDisposition(String approvedDisposition) {
+        this.approvedDisposition = approvedDisposition;
+    }
+
+    public String getPostedDisposition() {
+        return postedDisposition;
+    }
+
+    public void setPostedDisposition(String postedDisposition) {
+        this.postedDisposition = postedDisposition;
     }
 }

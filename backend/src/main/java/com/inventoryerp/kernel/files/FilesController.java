@@ -1,6 +1,8 @@
 package com.inventoryerp.kernel.files;
 
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.Public;
+import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.web.ApiException;
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -22,7 +24,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-/** {@code /files} (port of {@code files.controller.ts}). */
+/**
+ * {@code /files} (port of {@code files.controller.ts}). DM-0 (ADR-S044): routes enforce the {@code files:*}
+ * permissions Nest declared but never checked.
+ */
 @RestController
 @RequestMapping("/files")
 public class FilesController {
@@ -34,6 +39,7 @@ public class FilesController {
     }
 
     @PostMapping("/upload")
+    @RequirePermissions(Permissions.FILES__WRITE)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> upload(@RequestPart(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "ownerType", required = false) String ownerType,
@@ -52,12 +58,14 @@ public class FilesController {
     }
 
     @GetMapping
+    @RequirePermissions(Permissions.FILES__READ)
     public List<Map<String, Object>> list(@RequestParam(required = false) String ownerType,
             @RequestParam(required = false) String ownerId) {
         return files.listForOwner(ownerType, ownerId);
     }
 
     @PostMapping("/{id}/signed-url")
+    @RequirePermissions(Permissions.FILES__READ)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> signedUrl(@PathVariable String id) {
         return files.signDownload(id);
@@ -67,16 +75,32 @@ public class FilesController {
     @Public
     @GetMapping("/{id}/download")
     public ResponseEntity<InputStreamResource> download(@PathVariable String id,
-            @RequestParam(required = false) String token, @RequestParam(required = false) String expires) {
+            @RequestParam(required = false) String token, @RequestParam(required = false) String expires,
+            @RequestParam(required = false) String inline) {
         FilesService.Download file = files.resolveSignedDownload(id, token, expires);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_TYPE, file.contentType() == null
-                        ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.contentType())
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.filename() + "\"")
-                .body(new InputStreamResource(file.stream()));
+        return stream(file, "true".equals(inline));
+    }
+
+    /** A download response; inline only for {@link FilesService#INLINE_TYPES}, never content-sniffed. */
+    public static ResponseEntity<InputStreamResource> stream(FilesService.Download file, boolean inline) {
+        String type = file.contentType() == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.contentType();
+        boolean showInline = inline && FilesService.INLINE_TYPES.contains(type.toLowerCase());
+        String name = file.filename() == null ? "file" : file.filename().replaceAll("[\\r\\n\"]", "_");
+        var res = ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, FilesService.isActiveContent(type)
+                        ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type)
+                .header(HttpHeaders.CONTENT_DISPOSITION, (showInline ? "inline" : "attachment") + "; filename=\""
+                        + name + "\"")
+                .header("X-Content-Type-Options", "nosniff");
+        if (!showInline) {
+            // attachments never render; inline is limited to PDF / images / plain text, which the browser viewers need
+            res = res.header("Content-Security-Policy", "default-src 'none'; sandbox");
+        }
+        return res.body(new InputStreamResource(file.stream()));
     }
 
     @DeleteMapping("/{id}")
+    @RequirePermissions(Permissions.FILES__DELETE)
     public Map<String, Object> remove(@PathVariable String id) {
         files.remove(id);
         return Map.of("ok", true);

@@ -322,32 +322,49 @@ public class StockPostingService {
      */
     public Map<String, Object> postLandedVoucher(List<LandedLine> landed, String cogsCostCenterId, List<Line> other,
             Instant date, String sourceId, String description) {
+        List<Line> lines = landedVoucherLines(landed, cogsCostCenterId, other, description);
+        if (lines.size() < 2) {
+            return null;
+        }
+        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher", sourceId,
+                "inventory:landed_cost_voucher:" + TenantContext.organizationId() + ":" + sourceId, lines));
+    }
+
+    /** The journal lines {@link #postLandedVoucher} posts (LC-5 preview shows them without posting). */
+    public List<Line> landedVoucherLines(List<LandedLine> landed, String cogsCostCenterId, List<Line> other,
+            String description) {
         List<Line> lines = new ArrayList<>();
         BigDecimal cogsTotal = Money.ZERO;
         Map<String, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
         BigDecimal wipTotal = Money.ZERO;
         for (LandedLine l : landed) {
             BigDecimal cap = Money.dec(l.capitalized());
-            if (cap.signum() > 0) {
-                byAccount.merge(landedAccount(l.productId(), cap), cap, BigDecimal::add);
+            if (cap.signum() != 0) {
+                byAccount.merge(landedAccount(l.productId(), cap.abs()), cap, BigDecimal::add);
             }
             cogsTotal = cogsTotal.add(Money.dec(l.expensed()));
             wipTotal = wipTotal.add(Money.dec(l.wip()));
         }
-        if (wipTotal.signum() > 0) {
+        if (wipTotal.signum() != 0) {
             byAccount.merge(determination.mapped("wip"), wipTotal, BigDecimal::add);
         }
-        byAccount.forEach((acc, v) -> lines.add(Line.debit(acc, JsNumbers.dec(v), description)));
+        // A credit voucher (LC-1) has negative amounts: they are credits on the same accounts.
+        byAccount.forEach((acc, v) -> {
+            if (v.signum() > 0) {
+                lines.add(Line.debit(acc, JsNumbers.dec(v), description));
+            } else if (v.signum() < 0) {
+                lines.add(Line.credit(acc, JsNumbers.dec(v.negate()), description));
+            }
+        });
         if (cogsTotal.signum() > 0) {
             lines.add(new Line(determination.mapped("cogs"), JsNumbers.dec(cogsTotal), null, null,
                     description + " · already consumed", null, cogsCostCenterId, null));
+        } else if (cogsTotal.signum() < 0) {
+            lines.add(new Line(determination.mapped("cogs"), null, JsNumbers.dec(cogsTotal.negate()), null,
+                    description + " · already consumed", null, cogsCostCenterId, null));
         }
         lines.addAll(other);
-        if (lines.size() < 2) {
-            return null;
-        }
-        return posting.post(PostingRequest.of("INV", date, description, "landed_cost_voucher", sourceId,
-                "inventory:landed_cost_voucher:" + TenantContext.organizationId() + ":" + sourceId, lines));
+        return lines;
     }
 
     /**

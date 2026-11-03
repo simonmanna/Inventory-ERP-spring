@@ -1,8 +1,10 @@
 package com.inventoryerp.costing.application;
 
-import com.inventoryerp.costing.application.AllocationCalculator.Receiver;
-import com.inventoryerp.costing.application.AllocationCalculator.Rounding;
-import com.inventoryerp.costing.application.AllocationCalculator.Share;
+import com.inventoryerp.shared.costing.AllocationCalculator;
+
+import com.inventoryerp.shared.costing.AllocationCalculator.Receiver;
+import com.inventoryerp.shared.costing.AllocationCalculator.Rounding;
+import com.inventoryerp.shared.costing.AllocationCalculator.Share;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;

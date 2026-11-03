@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (646 permissions). Constant name = GROUP__ACTION.
+ * exactly (661 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -111,6 +111,9 @@ public final class Permissions {
     public static final String LANDED_COST__REVERSE = "landed_cost:reverse";
     public static final String LANDED_COST__CONFIGURE = "landed_cost:configure";
     public static final String LANDED_COST__OVERRIDE_TAX = "landed_cost:override_tax";
+    public static final String LANDED_COST__RESOLVE_LINEAGE = "landed_cost:resolve_lineage";
+    public static final String LANDED_COST__OVERRIDE_DUPLICATE = "landed_cost:override_duplicate";
+    public static final String LANDED_COST__CUSTOMS_ADJUST = "landed_cost:customs_adjust";
     public static final String BUDGET__READ = "budget:read";
     public static final String BUDGET__CREATE = "budget:create";
     public static final String BUDGET__UPDATE = "budget:update";
@@ -657,6 +660,21 @@ public final class Permissions {
     public static final String REPORT_LIBRARY__READ = "report_library:read";
     public static final String REPORT_LIBRARY__MANAGE = "report_library:manage";
     public static final String REPORT_LIBRARY__SCHEDULE = "report_library:schedule";
+    public static final String DMS__DOCUMENT_READ = "dms:document:read";
+    public static final String DMS__DOCUMENT_WRITE = "dms:document:write";
+    public static final String DMS__DOCUMENT_DELETE = "dms:document:delete";
+    public static final String DMS__DOCUMENT_APPROVE = "dms:document:approve";
+    public static final String DMS__DOCUMENT_SHARE = "dms:document:share";
+    public static final String DMS__WORKSPACE_MANAGE = "dms:workspace:manage";
+    public static final String DMS__TAG_MANAGE = "dms:tag:manage";
+    public static final String DMS__REQUEST_CREATE = "dms:request:create";
+    public static final String HELPDESK__TICKET_READ = "helpdesk:ticket:read";
+    public static final String HELPDESK__TICKET_WRITE = "helpdesk:ticket:write";
+    public static final String HELPDESK__TICKET_ASSIGN = "helpdesk:ticket:assign";
+    public static final String HELPDESK__TICKET_CLOSE = "helpdesk:ticket:close";
+    public static final String HELPDESK__LETTER_DISPATCH = "helpdesk:letter:dispatch";
+    public static final String HELPDESK__TEAM_MANAGE = "helpdesk:team:manage";
+    public static final String HELPDESK__REPORT_READ = "helpdesk:report:read";
 
     /** Every permission (Administrator role). */
     public static final List<String> ALL = List.of(
@@ -760,6 +778,9 @@ public final class Permissions {
             "landed_cost:reverse",
             "landed_cost:configure",
             "landed_cost:override_tax",
+            "landed_cost:resolve_lineage",
+            "landed_cost:override_duplicate",
+            "landed_cost:customs_adjust",
             "budget:read",
             "budget:create",
             "budget:update",
@@ -1305,7 +1326,22 @@ public final class Permissions {
             "cost_simulation:manage",
             "report_library:read",
             "report_library:manage",
-            "report_library:schedule");
+            "report_library:schedule",
+            "dms:document:read",
+            "dms:document:write",
+            "dms:document:delete",
+            "dms:document:approve",
+            "dms:document:share",
+            "dms:workspace:manage",
+            "dms:tag:manage",
+            "dms:request:create",
+            "helpdesk:ticket:read",
+            "helpdesk:ticket:write",
+            "helpdesk:ticket:assign",
+            "helpdesk:ticket:close",
+            "helpdesk:letter:dispatch",
+            "helpdesk:team:manage",
+            "helpdesk:report:read");
 
     /** Operational manager role (cash management, no system administration). */
     public static final List<String> MANAGER = List.of(

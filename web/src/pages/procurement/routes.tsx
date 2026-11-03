@@ -3,6 +3,7 @@ import { Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
 
+const LandedCostControlPage = lazy(() => import('@/pages/costing/LandedCostControlPage').then((m) => ({ default: m.LandedCostControlPage })));
 const LandedCostReportsPage = lazy(() => import('@/pages/costing/LandedCostReportsPage').then((m) => ({ default: m.LandedCostReportsPage })));
 const LandedCostVoucherDetailPage = lazy(() => import('@/pages/costing/LandedCostVouchersPage').then((m) => ({ default: m.LandedCostVoucherDetailPage })));
 const LandedCostVoucherEditPage = lazy(() => import('@/pages/costing/LandedCostVouchersPage').then((m) => ({ default: m.LandedCostVoucherEditPage })));
@@ -65,6 +66,7 @@ export const procurementRoutes = (
     <Route path="/procurement/landed-cost-vouchers/:id" element={<RequirePermission permission={PERMISSIONS.landedCost.read}><LandedCostVoucherDetailPage /></RequirePermission>} />
     <Route path="/procurement/landed-cost-vouchers/:id/edit" element={<RequirePermission permission={PERMISSIONS.landedCost.create}><LandedCostVoucherEditPage /></RequirePermission>} />
     <Route path="/procurement/shipments" element={<RequirePermission permission={PERMISSIONS.landedCost.read}><ShipmentsPage /></RequirePermission>} />
+    <Route path="/procurement/landed-cost-control" element={<RequirePermission permission={PERMISSIONS.landedCost.read}><LandedCostControlPage /></RequirePermission>} />
     <Route path="/procurement/landed-cost-reports" element={<RequirePermission permission={PERMISSIONS.landedCost.read}><LandedCostReportsPage /></RequirePermission>} />
     <Route path="/procurement/three-way-match" element={<RequirePermission permission={P.threeWayMatch.read}><ThreeWayMatchPage /></RequirePermission>} />
     <Route path="/procurement/debit-notes" element={<RequirePermission permission={PERMISSIONS.debitNote.read}><DebitNotesPage /></RequirePermission>} />

@@ -34,6 +34,12 @@ Customer portal (ADR-S011 S10, licence `customerPortal`): `APP_PORTAL_BASE_URL` 
 is the web address put in e-mailed portal links when staff do not supply one. Never set
 `APP_PORTAL_ALLOW_TEST_PAYMENTS=true` in production — it lets customers "pay" with the mock mobile-money gateway.
 
+Document management (ADR-S044 / S046): files stay in the kernel vault (`STORAGE_DRIVER`, `UPLOAD_MAX_BYTES`), so
+backups already cover them. `APP_PUBLIC_WEB_URL` is the web origin used in share links (`<url>/share/<token>`).
+OCR of scanned PDFs / images needs `DMS_OCR_ENABLED=true`, the `tesseract` binary on `PATH` and the language packs
+named in `DMS_OCR_LANGUAGES` (e.g. `eng+ara`). Jobs: `dms-text-extraction` (5 min), `dms-expiry` (daily 06:15),
+`dms-legacy-index` (10 min); all ShedLock-guarded. Helpdesk replies and e-mail dispatch use the SMTP settings.
+
 Grant `beverage:approve` only to supervisors: they approve flagged counts and unweighed exceptions and cannot
 approve a count they started.
 

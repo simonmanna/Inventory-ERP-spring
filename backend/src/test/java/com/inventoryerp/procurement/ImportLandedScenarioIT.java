@@ -143,6 +143,7 @@ class ImportLandedScenarioIT extends ApiTestSupport {
         charge.put("amount", 1200);
         String voucher = money("/procurement/landed-cost-vouchers", Map.of("goodsReceiptIds", List.of(grn), "charges",
                 List.of(charge))).get("id").asString();
+        ok(200, "POST", "/procurement/landed-cost-vouchers/" + voucher + "/submit", null);
         ok(200, "POST", "/procurement/landed-cost-vouchers/" + voucher + "/approve", null);
         money("/procurement/landed-cost-vouchers/" + voucher + "/post", null);
 
@@ -205,6 +206,6 @@ class ImportLandedScenarioIT extends ApiTestSupport {
         assertThat(rev.get("status").asString()).isEqualTo("reversed");
         assertThat(call("POST", "/procurement/landed-costs/" + lcId + "/reverse", null, key()).status())
                 .isEqualTo(400);
-        assertThat(assertAuthorizationMatrix(LandedCostAccrualController.class)).isEqualTo(9);
+        assertThat(assertAuthorizationMatrix(LandedCostAccrualController.class)).isEqualTo(11);
     }
 }

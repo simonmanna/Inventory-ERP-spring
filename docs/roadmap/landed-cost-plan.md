@@ -1,5 +1,8 @@
 # Landed cost to ERP grade — roadmap LC-0 … LC-7 (rev 3.1)
 
+> **Status (2026-11-03):** LC-0 … LC-7 delivered; see ADR-S053 and the done-reports in `docs/phases/LC-*.md`
+> (deviations are listed there).
+
 > Rev 3.1 changes:
 > 1. Transfer pairing moves to a lineage table (supports splits).
 > 2. Negative-stock cap.

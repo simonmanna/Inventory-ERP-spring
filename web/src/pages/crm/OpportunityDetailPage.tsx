@@ -18,6 +18,7 @@ import {
 } from '@/features/crm/suite-api';
 import { ActivityBadge, Avatar, QuoteStatusPill, Stars, TYPE_ICON, TagChips, colorOf, typeLabel } from './crm-ui';
 import { ConvertDialog, DoneDialog, LostDialog, OpportunityDialog, ScheduleDialog } from './crm-dialogs';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 
 function duration(seconds: number) {
   const d = Math.floor(seconds / 86400);
@@ -190,6 +191,7 @@ export function OpportunityDetailPage() {
               })}
             </div>
           </div>
+          <AttachmentPanel resType="crm_deal" resId={o.id} writePermission={PERMISSIONS.crm.dealWrite} />
           <Chatter id={o.id} />
         </div>
       </div>
