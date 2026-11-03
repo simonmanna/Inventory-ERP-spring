@@ -270,6 +270,28 @@ Managers holding the permission approve their own stock movements without a
 PIN; everyone else needs a manager PIN, verified on-device and again on replay.
 Menu-item stock stays device-local (the server tracks ingredients via recipes).
 
+## Backup & restore
+
+Sidebar → Device → **Backup & Restore** (managers: `organization:update`, or `admin` on a standalone
+till). The live database key lives in the Keystore and dies with an uninstall, so a backup is
+re-encrypted (`sqlcipher_export`) under a passphrase the owner sets, into one `.posbak` file that also
+carries the receipt profile and sale counter; it restores on any phone. Save it anywhere via the
+system file picker, or pick a folder (e.g. Google Drive) for an automatic daily backup that keeps the
+newest 7 (`BackupWorker`). Restore shows what the file holds and how many unsynced changes would be
+lost, replaces the database, and restarts the app. A synced till's device token is never in the
+backup: an unenrolled phone restored from it must be enrolled again.
+
+The drawer lists only what the signed-in staff member may open (`allowed` in `HomeSidebar.kt`):
+synced staff by their server permissions, standalone staff by their `admin` / `cashier` role.
+
+## POS report
+
+Sidebar → POS → **POS Report**: overview, sales, items, item groups, shifts and cash flow over a
+period (today … 30 days, or a custom range), filterable by shift, cashier, payment method, order
+type and item group, with CSV export. It reads the till's own database, so it works offline and
+covers what this device sold. Line amounts are allocated from each sale total, so items, groups and
+payment methods reconcile with net sales (`PosReport`, tested in `PosReportTest`).
+
 ## Not built yet
 
 - Bluetooth SPP printing (TCP 9100 works; the transport seam is in place)

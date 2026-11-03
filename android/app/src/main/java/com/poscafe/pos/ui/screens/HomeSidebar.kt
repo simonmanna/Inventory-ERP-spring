@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.Checklist
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocalCafe
@@ -85,13 +87,19 @@ import androidx.compose.ui.unit.sp
 internal fun HomeSidebar(
     businessName: String,
     cashierName: String,
+    /** Signed-in staff's permissions; the drawer only lists what they may open. */
+    permissions: Set<String>,
     standalone: Boolean,
     isRetail: Boolean,
     currentTab: HomeTab,
     onTab: (HomeTab) -> Unit,
     onNavigate: (String) -> Unit,
 ) {
-    val sections = remember(standalone, isRetail) { sidebarSections(standalone, isRetail) }
+    val sections = remember(standalone, isRetail, permissions) {
+        sidebarSections(standalone, isRetail).mapNotNull { s ->
+            s.copy(items = s.items.filter { allowed(permissions, it.need) }).takeIf { it.items.isNotEmpty() }
+        }
+    }
     val activeSection = sections.firstOrNull { s -> s.items.any { it.target == SidebarTarget.Tab(currentTab) } }?.title
 
     // Accordion state, like the web's expandedSections (kept across rotation).
@@ -154,7 +162,13 @@ internal sealed interface SidebarTarget {
     data class Route(val route: String) : SidebarTarget
 }
 
-private data class SidebarItem(val label: String, val icon: ImageVector, val target: SidebarTarget) {
+private data class SidebarItem(
+    val label: String,
+    val icon: ImageVector,
+    val target: SidebarTarget,
+    /** Any one of these permissions opens it; null = everyone signed in. */
+    val need: Set<String>? = null,
+) {
     fun isActive(current: HomeTab) = target == SidebarTarget.Tab(current)
 
     fun open(onTab: (HomeTab) -> Unit, onNavigate: (String) -> Unit) = when (target) {
@@ -165,60 +179,89 @@ private data class SidebarItem(val label: String, val icon: ImageVector, val tar
 
 private data class SidebarSection(val title: String?, val icon: ImageVector, val items: List<SidebarItem>)
 
-private fun tab(label: String, icon: ImageVector, tab: HomeTab) = SidebarItem(label, icon, SidebarTarget.Tab(tab))
+private fun tab(label: String, icon: ImageVector, tab: HomeTab, vararg need: String) =
+    SidebarItem(label, icon, SidebarTarget.Tab(tab), need.toSet().ifEmpty { null })
 
-private fun route(label: String, icon: ImageVector, route: String) = SidebarItem(label, icon, SidebarTarget.Route(route))
+private fun route(label: String, icon: ImageVector, route: String, vararg need: String) =
+    SidebarItem(label, icon, SidebarTarget.Route(route), need.toSet().ifEmpty { null })
 
+/**
+ * Staff synced from the server carry real permission strings. Staff created on a standalone
+ * till carry a role word instead: "admin" opens everything, "cashier" the front-of-house set.
+ */
+private val CASHIER = setOf(
+    "pos:checkout", "pos:read", "pos:hold", "pos:open_session", "pos:close_session",
+    "cash_session:open", "cash_session:close", "cash_session:read", "partner:read", "partner:create", "tables:view",
+)
+
+internal fun allowed(permissions: Set<String>, need: Set<String>?): Boolean = when {
+    need == null -> true
+    "admin" in permissions -> true
+    need.any { it in permissions } -> true
+    "cashier" in permissions || permissions.isEmpty() -> need.any { it in CASHIER }
+    else -> false
+}
+
+private const val MANAGE_CATALOG = "product:update"
+
+/**
+ * Ordered like a shift: sell, settle, cash up, report, then manage. Mirrors the web POS area,
+ * limited to what the till has; Backup sits under Device for every manager.
+ */
 private fun sidebarSections(standalone: Boolean, isRetail: Boolean): List<SidebarSection> = listOfNotNull(
-    SidebarSection(null, Icons.Outlined.Dashboard, listOf(route("Dashboard", Icons.Outlined.Dashboard, "reports"))),
+    SidebarSection(null, Icons.Outlined.Dashboard, listOf(route("Dashboard", Icons.Outlined.Dashboard, "reports", "pos:reports"))),
     SidebarSection(
-        "POS", Icons.Outlined.LocalCafe,
-        listOf(
-            tab("POS Terminal", Icons.Outlined.LocalCafe, HomeTab.Sell),
-            route("Cash Registers", Icons.Outlined.PointOfSale, "registers"),
-            tab("POS Receipts", Icons.Outlined.Receipt, HomeTab.Orders),
-            route("Shift History", Icons.AutoMirrored.Outlined.ReceiptLong, "shift-history"),
-        ),
-    ),
-    SidebarSection(
-        "Inventory", Icons.Outlined.Inventory2,
-        listOf(
-            route("Stock Levels", Icons.Outlined.Inventory2, "stock"),
-            route("Stock Count", Icons.Outlined.Checklist, "inventory-count"),
-            route("Products", Icons.Outlined.Inventory2, "products"),
-        ),
-    ),
-    SidebarSection("Customers", Icons.Outlined.People, listOf(route("Customers", Icons.Outlined.People, "customers"))),
-    SidebarSection("Suppliers", Icons.Outlined.Business, listOf(route("Suppliers", Icons.Outlined.Business, "suppliers"))),
-    SidebarSection(
-        "Menus", Icons.Outlined.LocalCafe,
-        listOf(
-            route("Menu", Icons.Outlined.LocalCafe, "menu-manager"),
-            route("Accompaniments", Icons.Outlined.LocalOffer, "accompaniment-groups"),
-            route("Modifiers", Icons.Outlined.LocalOffer, "modifier-groups"),
-        ),
-    ),
-    // Retail tills have no dine-in tables (the Tables tab is hidden too).
-    if (isRetail) null else SidebarSection(
-        "Tables", Icons.Outlined.GridView,
-        listOf(
-            tab("Floor Plan", Icons.Outlined.TableRestaurant, HomeTab.Tables),
-            route("Tables", Icons.Outlined.LocalCafe, "tables-manager"),
-        ),
-    ),
-    SidebarSection("Accounting", Icons.Outlined.Calculate, listOf(route("Tax Rates", Icons.Outlined.Percent, "taxes"))),
-    SidebarSection("Expenses", Icons.Outlined.Description, listOf(route("Expenses", Icons.Outlined.Description, "expenses"))),
-    SidebarSection(
-        "Purchases", Icons.Outlined.LocalShipping,
-        listOf(route("Purchases", Icons.Outlined.ShoppingCart, "purchases")),
-    ),
-    SidebarSection("Communication", Icons.Outlined.Forum, listOf(route("Inbox", Icons.Outlined.Forum, "messaging"))),
-    SidebarSection(
-        "Settings", Icons.Outlined.Settings,
+        "Sell", Icons.Outlined.LocalCafe,
         listOfNotNull(
-            route("Staff", Icons.Outlined.ManageAccounts, "staff"),
-            route("Company Settings", Icons.Outlined.AccountBalance, "business"),
+            tab("POS Terminal", Icons.Outlined.LocalCafe, HomeTab.Sell),
+            // Retail tills have no dine-in tables (the Tables tab is hidden too).
+            if (isRetail) null else tab("Floor Plan", Icons.Outlined.TableRestaurant, HomeTab.Tables),
+        ),
+    ),
+    SidebarSection("Receipts", Icons.Outlined.Receipt, listOf(tab("POS Receipts", Icons.Outlined.Receipt, HomeTab.Orders))),
+    SidebarSection(
+        "Cash & Shifts", Icons.Outlined.PointOfSale,
+        listOf(
+            route("Shift History", Icons.AutoMirrored.Outlined.ReceiptLong, "shift-history", "cash_session:read", "pos:reports"),
+            route("Cash Registers", Icons.Outlined.PointOfSale, "registers", "cash_register:update", "cash_register:create"),
+            route("Expenses", Icons.Outlined.Description, "expenses", "expense:create", "expense:read"),
+        ),
+    ),
+    SidebarSection("Reports", Icons.Outlined.Insights, listOf(route("POS Report", Icons.Outlined.Insights, "pos-report", "pos:reports"))),
+    SidebarSection(
+        "Catalog", Icons.Outlined.LocalOffer,
+        listOf(
+            route("Menu", Icons.Outlined.LocalCafe, "menu-manager", MANAGE_CATALOG, "product:create"),
+            route("Modifiers", Icons.Outlined.LocalOffer, "modifier-groups", MANAGE_CATALOG),
+            route("Accompaniments", Icons.Outlined.LocalOffer, "accompaniment-groups", MANAGE_CATALOG),
+            route("Products", Icons.Outlined.Inventory2, "products", "product:read", MANAGE_CATALOG),
+        ),
+    ),
+    SidebarSection(
+        "Stock", Icons.Outlined.Inventory2,
+        listOf(
+            route("Stock Levels", Icons.Outlined.Inventory2, "stock", "inventory:read"),
+            route("Stock Count", Icons.Outlined.Checklist, "inventory-count", "inventory_count:count"),
+            route("Receive Stock", Icons.Outlined.ShoppingCart, "purchases", "purchase_order:receive", "inventory_doc:create"),
+            route("Suppliers", Icons.Outlined.Business, "suppliers", "supplier:read", "supplier:manage"),
+        ),
+    ),
+    SidebarSection("Customers", Icons.Outlined.People, listOf(route("Customers", Icons.Outlined.People, "customers", "partner:read"))),
+    SidebarSection(
+        "Setup", Icons.Outlined.Settings,
+        listOfNotNull(
+            route("Company Settings", Icons.Outlined.AccountBalance, "business", "organization:update"),
+            route("Staff & PINs", Icons.Outlined.ManageAccounts, "staff", "user:update", "user:create"),
+            route("Tax Rates", Icons.Outlined.Percent, "taxes", "tax:update", "tax:create"),
+            if (isRetail) null else route("Tables", Icons.Outlined.GridView, "tables-manager", "tables:edit", "tables:create"),
+        ),
+    ),
+    SidebarSection(
+        "Device", Icons.Outlined.CloudSync,
+        listOfNotNull(
+            route("Backup & Restore", Icons.Outlined.Backup, "backup", "organization:update"),
             if (standalone) null else route("Sync", Icons.Outlined.CloudSync, "sync"),
+            if (standalone) null else route("Inbox", Icons.Outlined.Forum, "messaging"),
         ),
     ),
 )

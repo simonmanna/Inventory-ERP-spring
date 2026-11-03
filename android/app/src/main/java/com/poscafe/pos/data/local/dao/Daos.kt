@@ -195,6 +195,10 @@ interface SaleDao {
     @Query("SELECT * FROM local_sales WHERE occurredAt >= :since ORDER BY occurredAt DESC")
     suspend fun since(since: Long): List<LocalSaleEntity>
 
+    /** Report window [from, until): every sale, discarded ones included (the report drops them). */
+    @Query("SELECT * FROM local_sales WHERE occurredAt >= :from AND occurredAt < :until ORDER BY occurredAt DESC")
+    suspend fun between(from: Long, until: Long): List<LocalSaleEntity>
+
     @Query("UPDATE local_sales SET syncStatus = :status, serverInvoiceId = :serverInvoiceId, finalInvoiceNumber = :finalNumber, lastError = :error WHERE id = :id")
     suspend fun markSync(id: String, status: String, serverInvoiceId: String?, finalNumber: String?, error: String?)
 
@@ -225,6 +229,9 @@ interface RefundDao {
 
     @Query("SELECT * FROM local_refunds WHERE cashSessionLocalId = :sessionLocalId")
     suspend fun forSession(sessionLocalId: String): List<LocalRefundEntity>
+
+    @Query("SELECT * FROM local_refunds WHERE occurredAt >= :from AND occurredAt < :until AND syncStatus != 'discarded'")
+    suspend fun between(from: Long, until: Long): List<LocalRefundEntity>
 
     @Query("UPDATE local_refunds SET syncStatus = :status, serverInvoiceId = COALESCE(:serverInvoiceId, serverInvoiceId), lastError = :error WHERE id = :id")
     suspend fun markSync(id: String, status: String, serverInvoiceId: String?, error: String?)
@@ -262,6 +269,10 @@ interface CashSessionDao {
 
     @Query("SELECT * FROM local_cash_movements WHERE occurredAt >= :since ORDER BY occurredAt DESC")
     suspend fun movementsSince(since: Long): List<LocalCashMovementEntity>
+
+    /** Shifts that were open at any point in [from, until). */
+    @Query("SELECT * FROM local_cash_sessions WHERE openedAt < :until AND (closedAt IS NULL OR closedAt >= :from) ORDER BY openedAt DESC")
+    suspend fun overlapping(from: Long, until: Long): List<LocalCashSessionEntity>
 }
 
 @Dao

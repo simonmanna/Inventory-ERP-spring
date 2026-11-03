@@ -31,13 +31,19 @@ class HomeSidebarTest {
     private var tab: HomeTab? = null
     private var route: String? = null
 
-    private fun show(currentTab: HomeTab = HomeTab.Sell, isRetail: Boolean = false, standalone: Boolean = false) {
+    private fun show(
+        currentTab: HomeTab = HomeTab.Sell,
+        isRetail: Boolean = false,
+        standalone: Boolean = false,
+        permissions: Set<String> = setOf("admin"),
+    ) {
         compose.setContent {
             PosTheme {
                 Box(Modifier.fillMaxSize()) {
                     HomeSidebar(
                         businessName = "Demo Cafe",
                         cashierName = "Sarah Cashier",
+                        permissions = permissions,
                         standalone = standalone,
                         isRetail = isRetail,
                         currentTab = currentTab,
@@ -50,13 +56,13 @@ class HomeSidebarTest {
     }
 
     @Test
-    fun `sections follow the web sidebar and the active section starts open`() {
+    fun `sections follow a shift and the active section starts open`() {
         show()
-        listOf("Dashboard", "POS", "Inventory", "Customers", "Suppliers", "Menus", "Tables", "Accounting",
-            "Expenses", "Purchases", "Communication", "Settings").forEach {
+        listOf("Dashboard", "Sell", "Receipts", "Cash & Shifts", "Reports", "Catalog", "Stock", "Customers",
+            "Setup", "Device").forEach {
             compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
         }
-        // POS holds the active tab (Sell), so it is expanded; Inventory is not.
+        // Sell holds the active tab, so it is expanded; Stock is not.
         compose.onNodeWithText("POS Terminal").assertIsDisplayed()
         compose.onNodeWithText("Stock Levels").assertDoesNotExist()
         snapshot("sidebar-default")
@@ -65,7 +71,7 @@ class HomeSidebarTest {
     @Test
     fun `expanding a section and tapping an item navigates`() {
         show()
-        compose.onNodeWithText("Inventory").performClick()
+        compose.onNodeWithText("Stock").performClick()
         compose.onNodeWithText("Stock Levels").performClick()
         assertEquals("stock", route)
         snapshot("sidebar-inventory-open")
@@ -74,6 +80,7 @@ class HomeSidebarTest {
     @Test
     fun `tab items switch the home tab`() {
         show()
+        compose.onNodeWithText("Receipts").performClick()
         compose.onNodeWithText("POS Receipts").performClick()
         assertEquals(HomeTab.Orders, tab)
     }
@@ -81,10 +88,27 @@ class HomeSidebarTest {
     @Test
     fun `retail hides tables and standalone hides sync`() {
         show(isRetail = true, standalone = true)
-        compose.onNodeWithText("Tables").assertDoesNotExist()
-        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithText("Floor Plan").assertDoesNotExist()
+        compose.onNodeWithText("Setup").performClick()
         compose.onNodeWithText("Company Settings").assertIsDisplayed()
+        compose.onNodeWithText("Tables").assertDoesNotExist()
+        compose.onNodeWithText("Device").performClick()
+        compose.onNodeWithText("Backup & Restore").assertIsDisplayed()
         compose.onNodeWithText("Sync").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a cashier only sees front-of-house sections`() {
+        show(permissions = setOf("pos:checkout", "pos:read", "cash_session:open", "cash_session:read"))
+        listOf("Sell", "Receipts", "Cash & Shifts", "Device").forEach {
+            compose.onNodeWithText(it, useUnmergedTree = true).assertIsDisplayed()
+        }
+        listOf("Dashboard", "Reports", "Catalog", "Stock", "Setup").forEach {
+            compose.onNodeWithText(it, useUnmergedTree = true).assertDoesNotExist()
+        }
+        compose.onNodeWithText("Device").performClick()
+        compose.onNodeWithText("Backup & Restore").assertDoesNotExist()
+        compose.onNodeWithText("Sync").assertIsDisplayed()
     }
 
     /** Writes the rendered drawer to build/sidebar-snapshots for a visual check. */

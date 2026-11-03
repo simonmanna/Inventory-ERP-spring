@@ -15,6 +15,7 @@ class PosApp : Application(), Configuration.Provider {
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var connectivity: ConnectivityMonitor
     @Inject lateinit var queueWatcher: QueueWatcher
+    @Inject lateinit var config: com.poscafe.pos.data.DeviceConfig
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -23,6 +24,7 @@ class PosApp : Application(), Configuration.Provider {
         super.onCreate()
         CrashLog.install(this)
         SyncWorker.schedule(this)
+        com.poscafe.pos.data.backup.BackupWorker.apply(this, config.autoBackup)
         connectivity.start()
         queueWatcher.start()
     }

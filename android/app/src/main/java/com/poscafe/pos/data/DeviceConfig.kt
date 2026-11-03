@@ -258,6 +258,35 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         return "%s-%06d".format(prefix, next)
     }
 
+    /** Last provisional number issued; a restore moves it forward so numbers are never reused. */
+    var saleCounter: Long
+        get() = prefs.getLong("saleCounter", 0L)
+        set(v) { check(prefs.edit().putLong("saleCounter", v).commit()) { "Could not store the sale counter" } }
+
+    // ---- backup (see BackupRepository) ----
+
+    /** Passphrase that encrypts backup files; unlike the DB key it is known to the owner, so a backup restores on a new phone. */
+    var backupPassphrase: String?
+        get() = prefs.getString("backupPassphrase", null)
+        set(v) { prefs.edit().putString("backupPassphrase", v).commit() }
+
+    /** SAF tree URI the daily automatic backup writes into (persisted permission). */
+    var backupFolderUri: String?
+        get() = prefs.getString("backupFolderUri", null)
+        set(v) = prefs.edit().putString("backupFolderUri", v).apply()
+
+    var autoBackup: Boolean
+        get() = prefs.getBoolean("autoBackup", false)
+        set(v) = prefs.edit().putBoolean("autoBackup", v).apply()
+
+    var lastBackupAt: Long
+        get() = prefs.getLong("lastBackupAt", 0L)
+        set(v) = prefs.edit().putLong("lastBackupAt", v).apply()
+
+    var lastBackupError: String?
+        get() = prefs.getString("lastBackupError", null)
+        set(v) = prefs.edit().putString("lastBackupError", v).apply()
+
     /** Revocation wipe: forget enrollment (DB wipe is handled by the caller). */
     fun clearEnrollment() {
         prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").commit()
