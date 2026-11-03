@@ -907,9 +907,10 @@ public class GlReports implements ReportProvider {
 
     ReportBody rateHistory(ReportContext ctx) {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT id, \"fromCode\", \"toCode\", \"asOf\", rate,"
-                + " source FROM \"CurrencyRate\" WHERE \"asOf\" >= ? AND \"asOf\" < ? ORDER BY \"fromCode\", \"toCode\","
-                + " \"asOf\"").params(SqlRows.ts(ctx.start(ctx.current().from())), SqlRows.ts(ctx.endExclusive(
-                ctx.current().to()))));
+                + " source FROM \"CurrencyRate\" WHERE \"asOf\" >= ? AND \"asOf\" < ? AND (\"organizationId\" IS NULL"
+                + " OR \"organizationId\" = ?) ORDER BY \"fromCode\", \"toCode\", \"asOf\"").params(
+                SqlRows.ts(ctx.start(ctx.current().from())), SqlRows.ts(ctx.endExclusive(ctx.current().to())),
+                ctx.organizationId()));
         Tables.Builder t = new Tables.Builder(ctx.zone(), Tables.date("asOf", "Date"), text("fromCode", "From"),
                 text("toCode", "To"), Tables.number("rate", "Rate"), text("source", "Source"));
         rows.forEach(t::line);

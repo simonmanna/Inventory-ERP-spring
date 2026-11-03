@@ -1,8 +1,8 @@
 package com.inventoryerp.accounting.application;
 
 import com.inventoryerp.accounting.domain.Currency;
-import com.inventoryerp.accounting.domain.CurrencyRate;
 import com.inventoryerp.kernel.common.Money;
+import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
@@ -57,17 +57,26 @@ public class CurrencyService {
                 .params(code, symbol, name, decimalPlaces).update();
     }
 
-    /** Idempotent rate upsert for (from, to, asOf). */
+    /**
+     * Idempotent rate upsert for (organization, from, to, asOf). A tenant's rate belongs to that tenant (ACC-2, B4);
+     * without a tenant (seeds, jobs) the row is shared and serves as every organization's fallback.
+     */
     @Transactional
     public void upsertRate(String fromCode, String toCode, Instant asOf, BigDecimal rate, String source) {
         if (fromCode.equals(toCode)) {
             throw ApiException.badRequest("fromCode and toCode must differ");
         }
-        jdbc.sql("INSERT INTO \"CurrencyRate\" (id, \"fromCode\", \"toCode\", \"asOf\", rate, source)"
-                        + " VALUES (gen_random_uuid()::text, ?, ?, ?, ?, ?)"
-                        + " ON CONFLICT (\"fromCode\", \"toCode\", \"asOf\") DO UPDATE SET rate = EXCLUDED.rate,"
-                        + " source = EXCLUDED.source")
-                .params(fromCode, toCode, FiscalPeriodControl.ts(asOf), rate, source).update();
+        jdbc.sql("INSERT INTO \"CurrencyRate\" (id, \"organizationId\", \"fromCode\", \"toCode\", \"asOf\", rate, source,"
+                        + " \"createdBy\") VALUES (gen_random_uuid()::text, ?, ?, ?, ?, ?, ?, ?)"
+                        + " ON CONFLICT ((coalesce(\"organizationId\", '')), \"fromCode\", \"toCode\", \"asOf\") DO UPDATE"
+                        + " SET rate = EXCLUDED.rate, source = EXCLUDED.source, \"createdBy\" = EXCLUDED.\"createdBy\"")
+                .params(tenant(), fromCode, toCode, FiscalPeriodControl.ts(asOf), rate, source, TenantContext.userId())
+                .update();
+    }
+
+    private static String tenant() {
+        String org = TenantContext.organizationId();
+        return org == null || org.isEmpty() ? null : org;
     }
 
     /** FX rate (TO per 1 FROM) valid at {@code asOf}. */
@@ -125,26 +134,31 @@ public class CurrencyService {
         return Money.dec(amount).multiply(getRate(fromCode, toCode, asOf), DECIMAL_JS);
     }
 
-    /** Rates for a pair, most recent first. */
+    /** Rates for a pair the caller's organization can use (its own and the shared ones), most recent first. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listRates(String fromCode, String toCode, int limit) {
-        return em.createQuery("select r from CurrencyRate r where r.fromCode = :f and r.toCode = :t order by r.asOf desc",
-                        CurrencyRate.class)
-                .setParameter("f", fromCode).setParameter("t", toCode).setMaxResults(limit).getResultList().stream()
-                .map(r -> {
+        return jdbc.sql("SELECT \"asOf\", rate, source FROM \"CurrencyRate\" WHERE \"fromCode\" = ? AND \"toCode\" = ?"
+                        + " AND (\"organizationId\" IS NULL OR \"organizationId\" = ?)"
+                        + " ORDER BY \"asOf\" DESC, (\"organizationId\" IS NULL) ASC LIMIT ?")
+                .params(fromCode, toCode, tenant(), limit)
+                .query((rs, n) -> {
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("asOf", r.getAsOf());
-                    m.put("rate", r.getRate());
-                    m.put("source", r.getSource());
+                    m.put("asOf", rs.getTimestamp(1).toLocalDateTime().toInstant(java.time.ZoneOffset.UTC));
+                    m.put("rate", rs.getBigDecimal(2));
+                    m.put("source", rs.getString(3));
                     return m;
-                }).toList();
+                }).list();
     }
 
+    /**
+     * Latest rate at or before {@code asOf}: the organization's own rate when it has any for the pair, else the shared
+     * rate (ACC-2, B4). An organization that keeps its own rates is never mixed with someone else's.
+     */
     private BigDecimal lookupRate(String fromCode, String toCode, Instant asOf) {
-        List<CurrencyRate> rows = em.createQuery("select r from CurrencyRate r where r.fromCode = :f and r.toCode = :t"
-                        + " and r.asOf <= :d order by r.asOf desc", CurrencyRate.class)
-                .setParameter("f", fromCode).setParameter("t", toCode).setParameter("d", asOf)
-                .setMaxResults(1).getResultList();
-        return rows.isEmpty() ? null : rows.getFirst().getRate();
+        return jdbc.sql("SELECT rate FROM \"CurrencyRate\" WHERE \"fromCode\" = ? AND \"toCode\" = ? AND \"asOf\" <= ?"
+                        + " AND (\"organizationId\" IS NULL OR \"organizationId\" = ?)"
+                        + " ORDER BY (\"organizationId\" IS NULL) ASC, \"asOf\" DESC LIMIT 1")
+                .params(fromCode, toCode, FiscalPeriodControl.ts(asOf), tenant()).query(BigDecimal.class).optional()
+                .orElse(null);
     }
 }

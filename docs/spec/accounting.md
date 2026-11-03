@@ -114,6 +114,23 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **B2.** Fiscal-year close checks, and the `FiscalYearBalance` snapshot, use base amounts (`baseDebit`/`baseCredit`).
   Before this, a multi-currency organization could not close its year.
 
+**ACC-2: foreign currency**
+
+- **B4: rates per organization.**
+  - V320 adds `CurrencyRate."organizationId"` (null = shared), the unique key `(org, from, to, asOf)` and RLS.
+  - A tenant's `POST /currencies/rates` writes its own rate.
+  - Resolution, rate lists and the rate-history report use the organization's own rate first, then the shared one.
+  - Intercompany consolidation still averages across all rows; it is group-level by design.
+- **B3: revaluation lifecycle.** Owner decision C1, simplified:
+  - Each adjustment posts at `asOf` with a linked automatic reversal on the next day.
+  - The carrying basis is the original foreign-currency lines only.
+  - A re-run for the same date posts only the difference. Amounts are BigDecimal.
+  - The adjustment hits the monetary account itself; a separate valuation-adjustment account is a later option.
+  - New routes (extension, Nest has none): `GET /fx-revaluations`, `POST /fx-revaluations/preview` (`currency:read`)
+    and `POST /fx-revaluations` (`currency:update`), body `{asOf}`.
+- **B14.** Expense accrual and payment entries post in the expense's currency and rate. Line amounts are base ÷ rate;
+  `PostingService` converts back and writes the FX snapshot.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

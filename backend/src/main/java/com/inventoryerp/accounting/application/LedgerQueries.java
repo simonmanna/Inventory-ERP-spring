@@ -38,7 +38,9 @@ public class LedgerQueries {
      * and loss and from the pre-closing trial balance (ACC-1, B1); kept in the balance sheet and post-closing views.
      */
     public static final String CLOSING_FILTER =
-            " AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')";
+            " AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')"
+            + " AND NOT (coalesce(e.\"sourceType\", '') = 'reversal' AND EXISTS (SELECT 1 FROM \"JournalEntry\" ce"
+            + " WHERE ce.id = e.\"reversalOfId\" AND ce.\"sourceType\" IN ('period_close', 'fiscal_year_close')))";
 
     /** accountId → [Σ baseDebit, Σ baseCredit] with optional {@code postingDate >= from} / {@code <= to} / {@code < before}. */
     public Map<String, BigDecimal[]> balances(String organizationId, Instant from, Instant to, Instant before) {

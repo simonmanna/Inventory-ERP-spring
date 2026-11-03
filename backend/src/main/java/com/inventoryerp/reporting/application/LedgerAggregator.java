@@ -193,7 +193,10 @@ public class LedgerAggregator {
             // ACC-1 (B1): a movement over a period reports the economic activity; the period / year closing transfer
             // to retained earnings is left out. Point-in-time balances (no lower bound) keep it.
             if (r.sourceTypes() == null || r.sourceTypes().isEmpty()) {
-                sql.append(" AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')");
+                sql.append(" AND coalesce(e.\"sourceType\", '') NOT IN ('period_close', 'fiscal_year_close')"
+                        + " AND NOT (coalesce(e.\"sourceType\", '') = 'reversal' AND EXISTS (SELECT 1 FROM"
+                        + " \"JournalEntry\" ce WHERE ce.id = e.\"reversalOfId\" AND ce.\"sourceType\" IN"
+                        + " ('period_close', 'fiscal_year_close')))");
             }
         }
         if (to != null) {

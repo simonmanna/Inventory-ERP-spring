@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
@@ -33,12 +32,17 @@ class Acc0FxIT extends AccountingFixtures {
                 .params(b.org(), classification).query(String.class).optional().orElse(null);
     }
 
-    /** Net base movement the revaluation runs posted on {@code code}. */
-    BigDecimal revaluedOn(Books b, String code) {
+    /**
+     * Net base effect of revaluations (adjustments and their linked reversals) on {@code code} as of {@code asOf}:
+     * what the balance sheet shows at that date.
+     */
+    BigDecimal revaluedOn(Books b, String code, LocalDate asOf) {
         return jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
                 + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" JOIN \"Account\" a ON a.id = l.\"accountId\" WHERE"
-                + " e.\"organizationId\" = ? AND e.\"sourceType\" = 'fx_revaluation' AND e.status = 'posted' AND a.code = ?")
-                .params(b.org(), code).query(BigDecimal.class).single();
+                + " e.\"organizationId\" = ? AND a.code = ? AND e.status IN ('posted', 'reversed') AND"
+                + " e.\"postingDate\" <= ?::timestamp AND (e.\"sourceType\" = 'fx_revaluation' OR e.\"reversalOfId\" IN"
+                + " (SELECT x.id FROM \"JournalEntry\" x WHERE x.\"sourceType\" = 'fx_revaluation'))")
+                .params(b.org(), code, asOf + " 23:59:59").query(BigDecimal.class).single();
     }
 
     void run(Books b, LocalDate asOf) {
@@ -46,7 +50,6 @@ class Acc0FxIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B3][owner:accounting][ACC-2] revaluation: +400 once, same-day rerun posts nothing, later run "
             + "adjusts to the new rate only")
     void receivableRevaluation() {
@@ -64,16 +67,19 @@ class Acc0FxIT extends AccountingFixtures {
 
         LocalDate d1 = LocalDate.now().minusDays(5);
         rate(b, ccy, base, d1.toString(), "1.12");
+        JsonNode preview = okAs(b, 200, "POST", "/fx-revaluations/preview", Map.of("asOf", d1.toString()));
+        assertThat(new BigDecimal(preview.get(0).get("toPost").asString())).as("preview").isEqualByComparingTo("400");
         run(b, d1);
-        assertThat(revaluedOn(b, asset)).as("unrealised gain after first run (10,000 × 1.12 − 10,800)")
+        assertThat(revaluedOn(b, asset, d1)).as("unrealised gain after first run (10,000 × 1.12 − 10,800)")
                 .isEqualByComparingTo("400");
-        run(b, d1);
-        assertThat(revaluedOn(b, asset)).as("same-date rerun must post nothing more").isEqualByComparingTo("400");
+        okAs(b, 201, "POST", "/fx-revaluations", Map.of("asOf", d1.toString()));
+        assertThat(revaluedOn(b, asset, d1)).as("same-date rerun must post nothing more").isEqualByComparingTo("400");
+        assertThat(revaluedOn(b, asset, d1.plusDays(1))).as("reversed on the next day").isEqualByComparingTo("0");
 
         LocalDate d2 = LocalDate.now().minusDays(1);
         rate(b, ccy, base, d2.toString(), "1.15");
         run(b, d2);
-        assertThat(revaluedOn(b, asset)).as("cumulative revaluation at 1.15 (10,000 × 1.15 − 10,800)")
+        assertThat(revaluedOn(b, asset, d2)).as("cumulative revaluation at 1.15 (10,000 × 1.15 − 10,800)")
                 .isEqualByComparingTo("700");
         LedgerInvariants.entriesBalanced(jdbc, b.org(), null);
     }
@@ -94,12 +100,11 @@ class Acc0FxIT extends AccountingFixtures {
         LocalDate d1 = LocalDate.now().minusDays(5);
         rate(b, ccy, base, d1.toString(), "1.12");
         run(b, d1);
-        assertThat(revaluedOn(b, liability)).as("payable grows by 5,000 × 0.04 = 200 (credit)")
+        assertThat(revaluedOn(b, liability, d1)).as("payable grows by 5,000 × 0.04 = 200 (credit)")
                 .isEqualByComparingTo("-200");
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B4][owner:accounting][ACC-2] one organization's exchange rate never changes another's")
     void ratesAreTenantScoped() {
         Books a = freshBooks();
@@ -118,7 +123,6 @@ class Acc0FxIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B14][owner:accounting][ACC-2] a foreign-currency expense posts with its currency and rate")
     void foreignExpense() {
         String ccy = testCurrency();

@@ -152,6 +152,38 @@ public class ExpensesService {
         return TenantContext.organizationId();
     }
 
+    /**
+     * ACC-2 (B14): a foreign-currency expense posts in its own currency and rate, so the ledger keeps the foreign amount
+     * and the rate snapshot. Line amounts are built in base; they are expressed in the document currency here (base ÷
+     * rate) and {@code PostingService} converts them back. Base-currency expenses are unchanged.
+     */
+    PostingRequest inExpenseCurrency(Map<String, Object> exp, PostingRequest r) {
+        String ccy = (String) exp.get("currencyCode");
+        Object rateValue = exp.get("exchangeRate");
+        if (ccy == null || ccy.isBlank() || rateValue == null) {
+            return r;
+        }
+        String base = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
+                .query(String.class).optional().orElse(null);
+        BigDecimal rate = Money.dec(rateValue);
+        if (ccy.equals(base) || rate.signum() <= 0 || rate.compareTo(BigDecimal.ONE) == 0) {
+            return r;
+        }
+        List<Line> lines = r.lines().stream().map(l -> new Line(l.accountId(), foreign(l.debit(), rate),
+                foreign(l.credit(), rate), l.partnerId(), l.description(), l.branchId(), l.costCenterId(),
+                l.dimensions())).toList();
+        return new PostingRequest(r.journalCode(), r.date(), r.description(), ccy, rate, r.sourceType(), r.sourceId(),
+                r.postingType(), r.postingKey(), r.branchId(), r.costCenterId(), r.dimensions(), lines);
+    }
+
+    private static Object foreign(Object baseAmount, BigDecimal rate) {
+        if (baseAmount == null) {
+            return null;
+        }
+        BigDecimal v = Money.dec(baseAmount);
+        return v.signum() == 0 ? baseAmount : v.divide(rate, 6, RoundingMode.HALF_UP);
+    }
+
     static String journalForMethod(String method) {
         return switch (method == null ? "" : method.toUpperCase()) {
             case "CASH" -> "CASH";
@@ -1122,9 +1154,9 @@ public class ExpensesService {
             lines.addAll(debitLines(expense, category, tags, amount));
         }
         lines.add(Line.credit((String) credit.get("id"), value, "Paid: " + title));
-        Map<String, Object> entry = posting.post(PostingRequest.of(journalForMethod(paymentMethod), Instant.now(),
-                "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment", (String) expense.get("id"),
-                "expense_payment:" + paymentId, lines));
+        Map<String, Object> entry = posting.post(inExpenseCurrency(expense, PostingRequest.of(
+                journalForMethod(paymentMethod), Instant.now(), "Expense " + expense.get("expenseCode") + " - "
+                + title, "expense_payment", (String) expense.get("id"), "expense_payment:" + paymentId, lines)));
         if (payable == null && tags == null) {
             prepayments.ensureSchedule(expense, resolveExpenseAccountId(category), net(expense));
         }
@@ -1211,9 +1243,9 @@ public class ExpensesService {
                 : d instanceof Instant i ? i : EntityPatch.toInstant(String.valueOf(d));
         List<Line> lines = new ArrayList<>(debitLines(exp, category, tags, Money.dec(exp.get("amount"))));
         lines.add(new Line(payable, null, value, supplierId, "Payable: " + title, null, null, null));
-        Map<String, Object> entry = posting.post(PostingRequest.of("GEN", date, "Expense " + exp.get("expenseCode")
-                + " - " + title + " (accrued)", ACCRUAL_SOURCE, id, ACCRUAL_SOURCE + ":" + id + ":" + (seq + 1),
-                lines));
+        Map<String, Object> entry = posting.post(inExpenseCurrency(exp, PostingRequest.of("GEN", date, "Expense "
+                + exp.get("expenseCode") + " - " + title + " (accrued)", ACCRUAL_SOURCE, id, ACCRUAL_SOURCE + ":" + id
+                + ":" + (seq + 1), lines)));
         audit.recordInTx(AuditInput.of("Expense", id, "post", null, Obj.of("accrualJournalEntryId", entry.get("id"),
                 "amount", value)));
         if (tags == null) {

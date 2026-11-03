@@ -168,5 +168,11 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
                 + " \"sourceType\" = 'period_close' AND status = 'posted' AND \"reversalOfId\" IS NULL")
                 .param(b.org()).query(Long.class).single();
         assertThat(activeClosings).as("active closing entries").isLessThanOrEqualTo(2);
+        // The reopen reversal of the first closing entry must not leak into profit and loss either.
+        assertThat(new BigDecimal(pnl(b, months[0].toString(), to).get("netProfit").asString()))
+                .as("closed month P&L after reopen + reclose").isEqualByComparingTo("500");
+        String through = months[1].plusMonths(1).minusDays(1).toString();
+        assertThat(new BigDecimal(pnl(b, months[0].toString(), through).get("netProfit").asString()))
+                .as("P&L across both months").isEqualByComparingTo("500");
     }
 }
