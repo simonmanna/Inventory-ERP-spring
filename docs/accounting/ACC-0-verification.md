@@ -8,7 +8,7 @@
 | Owner of all findings | accounting |
 | Status | **Awaiting owner review.** ACC-1 has not started. |
 
-## Remediation status (updated 2026-11-03, after ACC-1 … ACC-4)
+## Remediation status (updated 2026-11-03, after ACC-1 … ACC-8)
 
 | Finding | Status | Fixed in | Regression test (untagged, in `accountingRegression`) |
 |---|---|---|---|
@@ -17,8 +17,11 @@
 | B6, B7, B12, P1-a | **Fixed** | ACC-3 `94252618` | `Acc0ReversalIT`, `Acc0MoneyPrecisionIT`, `Acc0PayrollPrecisionTest`, `Acc0IdempotencyIT` |
 | B13 (payroll) | **Fixed, code only.** The run posts on the pay-period end; no reproduction test yet | ACC-3 | none |
 | B8, B9, B15 | **Fixed** | ACC-4 `83cab550` | `Acc0ArApIT`, `Acc0LifecycleIT` |
-| B5 | Open | ACC-6 | `Acc0BankReconciliationIT` (still `acc-known-defect`) |
-| B11 | Open | ACC-5 | `Acc0FixedAssetIT` (still `acc-known-defect`) |
+| B5 | **Fixed** (D-B5: direction-aware match only) + reconciliation statement and lock | ACC-6 `2c6b5162` | `Acc0BankReconciliationIT`, `BankReconciliationIT` |
+| B11 | **Fixed** (capitalise, revalue, dispose; DDB 2×) | ACC-5 `88dd31fa` | `Acc0FixedAssetIT` |
+| — (gaps) | Fiscal-position tax mapping, VAT settlement + tax-period lock (ACC-7 `66da77fc`, `Acc7TaxIT`); report filters/export, period-end page, route guards (ACC-8 `14c9c3f1`, browser-verified) | ACC-7, ACC-8 | |
+
+No finding is tagged `acc-known-defect` any more: `acc0VerificationTest` runs 0 tests and is green.
 
 The behaviour changes are listed under "Accounting remediation deviations" in `docs/spec/accounting.md`.
 

@@ -83,7 +83,11 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | ACC-2 | Per-organization FX rates (V320), revaluation lifecycle + `/fx-revaluations`, FX expenses (B3, B4, B14) | done — `Acc0FxIT` |
 | ACC-3 | Reversal-date policy, invoice cancel returns stock, decimal splits / payroll tax, posting-key race, payroll date (B6, B7, B12, P1-a, B13) | done — `Acc0ReversalIT`, `Acc0MoneyPrecisionIT`, `Acc0IdempotencyIT` |
 | ACC-4 | PO-bill open payable, credit-note caps + `CreditAllocation` (V321) + `/credit-notes/:id/allocate`, debit-note VAT (B15, B9, B8) | done — `Acc0ArApIT`, `Acc0LifecycleIT` |
-| ACC-5 … ACC-8 | Fixed assets, bank reconciliation, tax & fiscal positions, reporting UI | open (B11, B5 still `acc-known-defect`) |
+| ACC-5 | Fixed-asset GL lifecycle: capitalise on acquisition, revaluation (surplus / loss), disposal with gain / loss, DDB 2× (B11) | done — `Acc0FixedAssetIT` |
+| ACC-6 | Direction-aware bank auto-match only (B5), reconciliation statement proof + lock (V322, `/bank-reconciliation/statement`) | done — `Acc0BankReconciliationIT`, `BankReconciliationIT` |
+| ACC-7 | Fiscal-position tax mapping + partner default (V323, `/fiscal-positions/:id/taxes|partners`), VAT settlement + tax-period lock (`/tax-settlements`) | done — `Acc7TaxIT` |
+| ACC-8 | Web: TB (range, pre/post closing, export, drill-down), P&L (other income/expense, net, export), AR aging (as-of, filter, export), Period-end page, 32 route guards | done — typecheck + lint + browser walk-through |
+| later | Integrity dashboard, accounting-policy engine, posting-rule versioning, recurring / deferred entries, tax groups, impairment / CIP, bank matching rules | open |
 
 ## kernel
 
