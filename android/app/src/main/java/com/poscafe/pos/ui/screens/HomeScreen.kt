@@ -117,6 +117,7 @@ fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) 
             HomeSidebar(
                 businessName = terminalVm.config.businessName,
                 cashierName = terminalVm.cashier?.displayName ?: "",
+                permissions = terminalVm.cashier?.permissions ?: emptySet(),
                 standalone = standalone,
                 isRetail = isRetail,
                 currentTab = tab,

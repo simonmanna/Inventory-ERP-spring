@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
                         composable("expenses") { com.poscafe.pos.ui.screens.manage.ExpensesScreen(onBack = { nav.popBackStack() }) }
                         composable("staff") { com.poscafe.pos.ui.screens.manage.StaffScreen(onBack = { nav.popBackStack() }) }
                         composable("reports") { com.poscafe.pos.ui.screens.ReportsScreen(onBack = { nav.popBackStack() }) }
+                        composable("backup") { com.poscafe.pos.ui.screens.manage.BackupScreen(onBack = { nav.popBackStack() }) }
                         composable("pos-report") { com.poscafe.pos.ui.screens.report.PosReportScreen(onBack = { nav.popBackStack() }) }
                         composable("business") { com.poscafe.pos.ui.screens.manage.BusinessSettingsScreen(onBack = { nav.popBackStack() }) }
                     }
