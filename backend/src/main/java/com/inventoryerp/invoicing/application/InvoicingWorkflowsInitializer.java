@@ -251,6 +251,7 @@ public class InvoicingWorkflowsInitializer {
         BigDecimal postableTotal = Money.ZERO;
         BigDecimal priceVariance = Money.ZERO;
         BigDecimal voucheredVariance = Money.ZERO;
+        BigDecimal voucheredBillTotal = Money.ZERO;
         for (Map<String, Object> line : lines) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             boolean stockable = product != null && Boolean.TRUE.equals(product.get("trackInventory"));
@@ -269,6 +270,8 @@ public class InvoicingWorkflowsInitializer {
                         .subtract(match.accruedReceiptValue());
             }
             if (match.voucheredQuantity().signum() > 0) {
+                voucheredBillTotal = voucheredBillTotal.add(d(line.get("total"))
+                        .multiply(Money.div(match.voucheredQuantity().min(qty), qty)));
                 // P1-7 (post-parity): the receipt voucher raised AP at the receipt price; a bill priced higher owes the
                 // difference too (Dr PPV / Cr AP). A lower bill price is a match exception settled by a supplier credit.
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
@@ -367,9 +370,13 @@ public class InvoicingWorkflowsInitializer {
                     .notes("Auto-receive for bill " + full.get("documentNumber"));
             stock.receiveFromBill(m, id, instant(full.get("issueDate")));
         }
+        // ACC-4 (B15): the bill is the open AP item for its whole amount. Vouchered quantities were raised on AP by the
+        // receipt voucher, so the bill posts no second AP for them, but the supplier is paid against this bill — its
+        // residual carries the vouchered share at bill price (the billed-above-receipt variance is part of that share).
+        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal);
         jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(entryId, postableTotal, id).update();
+                .params(entryId, openPayable, id).update();
     }
 
     private static final class MutableLine {

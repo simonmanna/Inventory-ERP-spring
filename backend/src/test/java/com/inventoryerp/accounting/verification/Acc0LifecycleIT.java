@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -33,7 +32,6 @@ import tools.jackson.databind.JsonNode;
 class Acc0LifecycleIT extends AccountingFixtures {
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[LIFE][owner:accounting][ACC-1] P2P → O2C → bank rec → month-end: exact residuals and invariants")
     void lifecycle() {
         Books b = freshBooks();

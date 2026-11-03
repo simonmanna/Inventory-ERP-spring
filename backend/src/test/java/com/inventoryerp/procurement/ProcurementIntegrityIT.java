@@ -404,7 +404,9 @@ class ProcurementIntegrityIT extends ApiTestSupport {
                 List.of(Map.of("productId", product, "description", "Cement", "quantity", 1, "unitPrice", 120))));
         JsonNode posted = ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of("override3WM",
                 true, "overrideApproval", true));
-        assertThat(new BigDecimal(posted.get("amountResidual").asString())).isEqualByComparingTo("20");
+        // ACC-4 (B15): the bill is the open AP item for the whole purchase — the receipt voucher's 100 plus the 20
+        // variance this bill posts — so the supplier is paid against it (was: residual 20, the voucher's 100 orphaned).
+        assertThat(new BigDecimal(posted.get("amountResidual").asString())).isEqualByComparingTo("120");
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("-20");
     }
 }

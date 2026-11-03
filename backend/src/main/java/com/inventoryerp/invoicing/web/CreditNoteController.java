@@ -73,4 +73,16 @@ public class CreditNoteController {
     public Map<String, Object> post(@PathVariable String id, @RequestParam(required = false) String disposition) {
         return creditNotes.post(id, "scrap".equals(disposition) ? "scrap" : "restock");
     }
+
+    /** {@code POST /credit-notes/:id/allocate} body (ACC-4 extension: open-item matching of an unapplied credit). */
+    public record AllocateCreditRequest(
+            @NotNull(message = "must be a string") String documentId,
+            @NotNull(message = "must be a number conforming to the specified constraints") java.math.BigDecimal amount) {}
+
+    @PostMapping("/{id}/allocate")
+    @Idempotent
+    @RequirePermissions(Permissions.CREDIT_NOTE__POST)
+    public Map<String, Object> allocate(@PathVariable String id, @Valid @RequestBody AllocateCreditRequest dto) {
+        return creditNotes.allocate(id, dto.documentId(), dto.amount());
+    }
 }

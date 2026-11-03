@@ -226,13 +226,23 @@ public class DebitNotesService {
         String counterAccount = outbound ? determination.receivableAccount(partnerCol(note, "receivableAccountId"))
                 : determination.payableAccount(partnerCol(note, "payableAccountId"));
         List<Line> postingLines = new ArrayList<>();
+        // ACC-4 (B8): each line's tax (from its taxId) is part of the note: input VAT on a supplier's note, output VAT
+        // on a note to a customer; the AR / AP leg carries subtotal + tax.
+        Map<String, BigDecimal> taxByAccount = new java.util.LinkedHashMap<>();
+        BigDecimal noteTax = Money.ZERO;
         for (Map<String, Object> ln : noteLines) {
+            BigDecimal tax = lineTax(ln, outbound, taxByAccount);
+            noteTax = noteTax.add(tax);
             // Dr AR (outbound) / Cr AP (inbound) per line, tagged with the partner so the sub-ledger and ageing see it.
-            String v = JsNumbers.dec(Money.dec(ln.get("subtotal")));
+            String v = JsNumbers.dec(Money.dec(ln.get("subtotal")).add(tax));
             String partnerId = (String) note.get("partnerId");
             postingLines.add(outbound ? new Line(counterAccount, v, null, partnerId, null, null, null, null)
                     : new Line(counterAccount, null, v, partnerId, null, null, null, null));
         }
+        taxByAccount.forEach((acc, amt) -> postingLines.add(outbound ? Line.credit(acc, JsNumbers.dec(amt), "Output tax")
+                : Line.debit(acc, JsNumbers.dec(amt), "Input tax")));
+        BigDecimal noteTotal = Money.dec(note.get("subtotal")).add(noteTax);
+        BigDecimal taxTotal = noteTax;
         for (Map<String, Object> ln : noteLines) {
             String accountId = null;
             if (ln.get("productId") != null) {
@@ -262,12 +272,55 @@ public class DebitNotesService {
             posting.post(PostingRequest.of(journalCode, (Instant) note.get("issueDate"),
                     (outbound ? "Debit note to customer" : "Debit note from supplier") + " " + note.get("noteNumber"),
                     "debit_note", id, "debit_note:" + id, postingLines));
+            jdbc.sql("UPDATE \"DebitNote\" SET \"taxAmount\" = ?, \"totalAmount\" = ? WHERE id = ?")
+                    .params(taxTotal, noteTotal, id).update();
+            row.put("taxAmount", taxTotal);
+            row.put("totalAmount", noteTotal);
+            raiseReferencedDocument((String) note.get("documentId"), outbound, noteTotal);
             audit.recordInTx(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted")));
             return row;
         });
         events.publish("debit_note.posted", Obj.of("organizationId", orgId, "noteId", id, "direction",
                 note.get("direction"), "amount", JsNumbers.dec(Money.dec(note.get("totalAmount")))));
         return updated;
+    }
+
+    /** Tax of one note line at its tax's rate (exclusive, rounded to cents), accumulated per GL account. */
+    private BigDecimal lineTax(Map<String, Object> ln, boolean outbound, Map<String, BigDecimal> byAccount) {
+        if (ln.get("taxId") == null) {
+            return Money.ZERO;
+        }
+        Map<String, Object> tax = SqlRows.one(jdbc.sql("SELECT rate, \"accountId\", type::text AS type FROM \"Tax\""
+                + " WHERE id = ? AND \"organizationId\" = ?").params(ln.get("taxId"), org()));
+        if (tax == null || "withholding".equals(tax.get("type"))) {
+            return Money.ZERO;
+        }
+        BigDecimal amount = Money.dec(ln.get("subtotal")).multiply(Money.dec(tax.get("rate")))
+                .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        if (amount.signum() == 0) {
+            return Money.ZERO;
+        }
+        String account = outbound
+                ? (tax.get("accountId") != null ? (String) tax.get("accountId") : determination.mapped("tax_payable"))
+                : determination.mapped("tax_receivable");
+        byAccount.merge(account, amount, BigDecimal::add);
+        return amount;
+    }
+
+    /**
+     * ACC-4 (B8): a note raised against a posted bill (from the supplier) or invoice (to the customer) adds to that
+     * document's open amount, so it is settled with it and the sub-ledger matches the GL.
+     */
+    private void raiseReferencedDocument(String documentId, boolean outbound, BigDecimal amount) {
+        if (documentId == null || amount.signum() <= 0) {
+            return;
+        }
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = \"amountResidual\" + ?, status = CASE WHEN status::text ="
+                        + " 'paid' THEN 'posted'::\"DocumentStatus\" ELSE status END, \"paymentStatus\" = CASE WHEN"
+                        + " \"amountPaid\" > 0 THEN 'partial'::\"PaymentStatus\" ELSE 'not_paid'::\"PaymentStatus\" END,"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text"
+                        + " = ? AND status::text IN ('posted', 'paid')")
+                .params(amount, documentId, org(), outbound ? "sales_invoice" : "vendor_bill").update();
     }
 
     private Map<String, Object> markPosted(String id, String orgId) {

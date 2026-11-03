@@ -11,7 +11,6 @@ import java.util.UUID;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -42,7 +41,6 @@ class Acc0ArApIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B8][owner:accounting][ACC-4] supplier's extra charge (inbound debit note) with VAT books input VAT"
             + " and is traceable to the bill")
     void supplierChargeWithVat() {
@@ -74,7 +72,6 @@ class Acc0ArApIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B9][owner:accounting][ACC-4] a credit note cannot credit more quantity than was invoiced")
     void creditNoteQuantityCapped() {
         String customer = demoPartner("ACC0 qty customer", false);
@@ -90,7 +87,6 @@ class Acc0ArApIT extends AccountingFixtures {
     }
 
     @Test
-    @Tag("acc-known-defect")
     @DisplayName("[B9][owner:accounting][ACC-4] open items: invoice 10,000 − receipt 4,000 − credit 1,000 = 5,000, "
             + "with an allocation record for the credit")
     void openItemAllocation() {
@@ -107,13 +103,44 @@ class Acc0ArApIT extends AccountingFixtures {
 
         assertThat(residual(inv)).as("invoice residual").isEqualByComparingTo("5000");
         LedgerInvariants.partnerControlReconciles(jdbc, demoOrg, customer, true);
-        long creditAllocations = jdbc.sql("SELECT count(*) FROM \"PaymentAllocation\" WHERE \"documentId\" = ?")
-                .param(inv).query(Long.class).single();
-        assertThat(creditAllocations).as("allocation history for invoice (receipt + credit note)").isEqualTo(2);
+        // Allocation history: cash in PaymentAllocation, credits in CreditAllocation (ACC-4, V321).
+        long allocations = jdbc.sql("SELECT (SELECT count(*) FROM \"PaymentAllocation\" WHERE \"documentId\" = ?)"
+                + " + (SELECT count(*) FROM \"CreditAllocation\" WHERE \"documentId\" = ?)").params(inv, inv)
+                .query(Long.class).single();
+        assertThat(allocations).as("allocation history for invoice (receipt + credit note)").isEqualTo(2);
+        assertThat(jdbc.sql("SELECT amount FROM \"CreditAllocation\" WHERE \"creditDocumentId\" = ?").param(cn)
+                .query(BigDecimal.class).single()).as("credit allocated").isEqualByComparingTo("1000");
     }
 
     @Test
-    @Tag("acc-known-defect")
+    @DisplayName("[B9][owner:accounting][ACC-4] an unapplied credit is allocated to a later invoice (open-item match)")
+    void allocateOpenCreditLater() {
+        String customer = demoPartner("ACC0 later-credit customer", false);
+        String first = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
+                List.of(Map.of("productId", service, "quantity", 1, "unitPrice", 100)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + first + "/post", null);
+        demoMoney("POST", "/payments", Map.of("partnerId", customer, "paymentDate", today(), "amount", 100,
+                "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", first, "amount", 100))));
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today(),
+                "reversedDocumentId", first, "lines", List.of(Map.of("productId", service, "quantity", 1, "unitPrice",
+                        30)))).get("id").asString();
+        ok(200, "POST", "/credit-notes/" + cn + "/post", null);
+        assertThat(residual(cn)).as("credit left open (invoice already paid)").isEqualByComparingTo("30");
+        String second = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
+                List.of(Map.of("productId", service, "quantity", 1, "unitPrice", 50)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + second + "/post", null);
+        Res over = call("POST", "/credit-notes/" + cn + "/allocate", Map.of("documentId", second, "amount", 40),
+                demoKey());
+        assertThat(over.status()).as(over.raw().body()).isEqualTo(400);
+        Res alloc = call("POST", "/credit-notes/" + cn + "/allocate", Map.of("documentId", second, "amount", 30),
+                demoKey());
+        assertThat(alloc.status()).as(alloc.raw().body()).isEqualTo(200);
+        assertThat(residual(second)).isEqualByComparingTo("20");
+        assertThat(residual(cn)).isEqualByComparingTo("0");
+        LedgerInvariants.partnerControlReconciles(jdbc, demoOrg, customer, true);
+    }
+
+    @Test
     @DisplayName("[B9][owner:accounting][ACC-4] credit larger than the residual leaves a reusable unallocated credit")
     void creditBeyondResidual() {
         String customer = demoPartner("ACC0 over-credit customer", false);

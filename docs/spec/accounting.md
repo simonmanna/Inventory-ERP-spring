@@ -150,6 +150,26 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **B13.** A payroll run posts on its pay-period end date while that period is open, otherwise today. Expense payments
   still post today: there is no payment-date field yet.
 
+**ACC-4: AR/AP documents**
+
+- **B15.** A posted vendor bill's `amountResidual` is its whole open payable: the postable part plus the vouchered
+  share at bill price.
+  - Before, a PO-backed bill showed residual 0 (or only the price variance) because the receipt voucher had already
+    raised AP. The supplier could not be paid against it, and the AP sub-ledger did not match the GL.
+  - The GL postings are unchanged.
+- **B9: customer credit notes.**
+  - Refused when they credit more of a product than the referenced invoice sold, or more than its total, net of earlier
+    credit notes.
+  - Each application to an invoice is recorded in `CreditAllocation` (V321).
+  - The unapplied remainder stays on the credit note's residual.
+  - New extension `POST /credit-notes/:id/allocate {documentId, amount}` (`credit_note:post`, Idempotency-Key optional)
+    applies open credit to a later invoice of the same customer. It posts nothing to the GL.
+- **B8: debit notes.** Debit notes (non-RTV) post line tax from `taxId`: input VAT inbound, output VAT outbound. The
+  AR/AP leg carries subtotal + tax, `taxAmount`/`totalAmount` are stored, and the referenced posted bill or invoice's
+  residual grows by the note total.
+  - The return-to-vendor path is unchanged.
+  - A supplier credit (a claim that reduces AP) is still a capability gap.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

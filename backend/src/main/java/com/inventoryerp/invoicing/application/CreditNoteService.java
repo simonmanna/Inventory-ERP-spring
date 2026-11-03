@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -147,6 +148,117 @@ public class CreditNoteService {
                 dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), dto.lines());
     }
 
+    /**
+     * Apply {@code amount} of a posted credit note's open credit to a posted invoice of the same customer (ACC-4, B9
+     * open-item matching). Both residuals drop by the amount and a {@code CreditAllocation} is recorded; no GL entry
+     * (both documents sit on the receivable control account).
+     */
+    @Transactional
+    public Map<String, Object> allocate(String creditNoteId, String invoiceId, BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw ApiException.badRequest("amount must be greater than zero");
+        }
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id IN (?, ?) AND \"organizationId\" = ? ORDER BY id FOR UPDATE")
+                .params(creditNoteId, invoiceId, org()).query().listOfRows();
+        Map<String, Object> cn = builder.document(creditNoteId, "credit_note");
+        if (cn == null) {
+            throw ApiException.notFound("Credit note not found");
+        }
+        Map<String, Object> inv = builder.document(invoiceId, "sales_invoice");
+        if (inv == null) {
+            throw ApiException.notFound("Invoice not found");
+        }
+        if (!"posted".equals(String.valueOf(cn.get("status")))) {
+            throw ApiException.badRequest("Only a posted credit note can be allocated");
+        }
+        String invStatus = String.valueOf(inv.get("status"));
+        if (!"posted".equals(invStatus)) {
+            throw ApiException.badRequest("Credit can only be allocated to an open posted invoice");
+        }
+        if (!String.valueOf(cn.get("partnerId")).equals(String.valueOf(inv.get("partnerId")))) {
+            throw ApiException.badRequest("Credit note and invoice belong to different customers");
+        }
+        BigDecimal open = Money.dec(cn.get("amountResidual"));
+        if (amount.compareTo(open) > 0) {
+            throw ApiException.badRequest("Allocation " + JsNumbers.dec(amount) + " exceeds the credit note's open"
+                    + " credit " + JsNumbers.dec(open));
+        }
+        if (amount.compareTo(Money.dec(inv.get("amountResidual"))) > 0) {
+            throw ApiException.badRequest("Allocation " + JsNumbers.dec(amount) + " exceeds the invoice's residual "
+                    + JsNumbers.dec(Money.dec(inv.get("amountResidual"))));
+        }
+        applyTo(creditNoteId, inv, amount);
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(open.subtract(amount), creditNoteId).update();
+        return builder.document(creditNoteId);
+    }
+
+    /** Lower an invoice's residual by {@code amount} of a credit and record the allocation. */
+    private void applyTo(String creditNoteId, Map<String, Object> inv, BigDecimal amount) {
+        String invoiceId = (String) inv.get("id");
+        String invStatus = String.valueOf(inv.get("status"));
+        BigDecimal newResidual = Money.dec(inv.get("amountResidual")).subtract(amount);
+        boolean paid = newResidual.signum() <= 0;
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\","
+                        + " status = ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(newResidual, paid ? "paid" : "partial", paid ? "paid" : invStatus, invoiceId).update();
+        jdbc.sql("INSERT INTO \"CreditAllocation\" (id, \"organizationId\", \"creditDocumentId\", \"documentId\", amount,"
+                        + " \"createdBy\") VALUES (?, ?, ?, ?, ?, ?)")
+                .params(UUID.randomUUID().toString(), org(), creditNoteId, invoiceId, amount, TenantContext.userId())
+                .update();
+    }
+
+    /**
+     * ACC-4 (B9): a credit note against an invoice cannot credit more of a product than the invoice sold (net of earlier
+     * posted credit notes), nor more than the invoice's total.
+     */
+    private void assertWithinInvoice(String creditNoteId, String invoiceId, List<Map<String, Object>> lines) {
+        if (invoiceId == null) {
+            return;
+        }
+        Map<String, BigDecimal> invoiced = new HashMap<>();
+        for (Map<String, Object> l : builder.lines(invoiceId, false)) {
+            if (l.get("productId") != null) {
+                invoiced.merge((String) l.get("productId"), Money.dec(l.get("quantity")), BigDecimal::add);
+            }
+        }
+        Map<String, BigDecimal> credited = new HashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", sum(l.quantity) AS q FROM"
+                + " \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE d.\"organizationId\" = ? AND"
+                + " d.\"documentType\" = 'credit_note' AND d.\"reversedDocumentId\" = ? AND d.status::text IN ('posted',"
+                + " 'paid') AND d.id <> ? AND l.\"productId\" IS NOT NULL GROUP BY l.\"productId\"")
+                .params(org(), invoiceId, creditNoteId))) {
+            credited.put((String) r.get("productId"), Money.dec(r.get("q")));
+        }
+        for (Map<String, Object> l : lines) {
+            String productId = (String) l.get("productId");
+            if (productId == null) {
+                continue;
+            }
+            BigDecimal already = credited.merge(productId, Money.dec(l.get("quantity")), BigDecimal::add);
+            BigDecimal sold = invoiced.getOrDefault(productId, Money.ZERO);
+            if (already.compareTo(sold) > 0) {
+                throw ApiException.badRequest("Credit note credits " + JsNumbers.dec(already) + " of a product the"
+                        + " invoice sold " + JsNumbers.dec(sold) + " of");
+            }
+        }
+        Map<String, Object> inv = builder.document(invoiceId);
+        if (inv != null) {
+            BigDecimal priorTotal = jdbc.sql("SELECT coalesce(sum(\"totalAmount\"), 0) FROM \"Document\" WHERE"
+                    + " \"organizationId\" = ? AND \"documentType\" = 'credit_note' AND \"reversedDocumentId\" = ? AND"
+                    + " status::text IN ('posted', 'paid') AND id <> ?").params(org(), invoiceId, creditNoteId)
+                    .query(BigDecimal.class).single();
+            BigDecimal mine = Money.ZERO;
+            for (Map<String, Object> l : lines) {
+                mine = mine.add(Money.dec(l.get("total")));
+            }
+            if (priorTotal.add(mine).compareTo(Money.dec(inv.get("totalAmount"))) > 0) {
+                throw ApiException.badRequest("Credit notes would credit more than the invoice total of "
+                        + JsNumbers.dec(Money.dec(inv.get("totalAmount"))));
+            }
+        }
+    }
+
     /** Post a credit note; {@code disposition} restock (default) or scrap. */
     @Transactional
     public Map<String, Object> post(String id, String disposition) {
@@ -168,6 +280,7 @@ public class CreditNoteService {
         }
         List<Map<String, Object>> lines = builder.lines(id, false);
         String partnerId = (String) cn.get("partnerId");
+        assertWithinInvoice(id, (String) cn.get("reversedDocumentId"), lines);
         Grouped g = builder.groupForPosting(partnerId, lines, "sales", null);
         List<Line> post = new ArrayList<>();
         g.itemLines().forEach(it -> post.add(new Line(it.accountId(), JsNumbers.dec(it.amount()), null, partnerId,
@@ -184,6 +297,7 @@ public class CreditNoteService {
                         + " \"journalEntryId\" = ?, \"amountResidual\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(TenantContext.userId(), entry.get("id"), id).update();
         String reversed = (String) cn.get("reversedDocumentId");
+        BigDecimal applied = Money.ZERO;
         if (reversed != null) {
             Map<String, Object> inv = builder.document(reversed, "sales_invoice");
             String invStatus = inv == null ? null : String.valueOf(inv.get("status"));
@@ -191,15 +305,15 @@ public class CreditNoteService {
                 BigDecimal residual = Money.dec(inv.get("amountResidual"));
                 BigDecimal reduce = total.compareTo(residual) > 0 ? residual : total;
                 if (reduce.signum() > 0) {
-                    BigDecimal newResidual = residual.subtract(reduce);
-                    boolean paid = newResidual.signum() <= 0;
-                    jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\","
-                                    + " status = ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
-                            .params(newResidual, paid ? "paid" : "partial", paid ? "paid" : invStatus, reversed).update();
+                    applyTo(id, inv, reduce);
+                    applied = reduce;
                     realiseFx(cn, inv, reduce, (String) entry.get("id"), g.counterAccount(), partnerId, issueDate);
                 }
             }
         }
+        // ACC-4 (B9): what the invoice could not absorb stays open on the credit note for later allocation.
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ? WHERE id = ?").params(total.subtract(applied), id)
+                .update();
         if ("restock".equals(disposition)) {
             String warehouse = posLocation.resolve(org(), null);
             if (warehouse != null) {
