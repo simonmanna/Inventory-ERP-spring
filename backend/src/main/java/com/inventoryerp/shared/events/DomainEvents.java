@@ -175,6 +175,15 @@ public final class DomainEvents {
     public static final String SALES_ORDER_DONE = "sales.order.done";
     public static final String SALES_RETURN_RECEIVED = "sales.return.received";
     public static final String SALES_RETURN_CLOSED = "sales.return.closed";
+    public static final String SALES_CASH_SALE_CONFIRMED = "sales.cash_sale.confirmed";
+    public static final String SALES_CASH_SALE_SUBMITTED = "sales.cash_sale.submitted";
+    public static final String SALES_CASH_SALE_RETURNED = "sales.cash_sale.returned";
+    public static final String SALES_CASH_SALE_APPROVED = "sales.cash_sale.approved";
+    public static final String SALES_CASH_SALE_REJECTED = "sales.cash_sale.rejected";
+    public static final String SALES_CASH_SALE_INVOICED = "sales.cash_sale.invoiced";
+    public static final String SALES_CASH_SALE_INVOICE_CANCELLED = "sales.cash_sale.invoice_cancelled";
+    public static final String SALES_CASH_SALE_VOIDED = "sales.cash_sale.voided";
+    public static final String SALES_CASH_SALE_REJECTED_OVERDUE = "sales.cash_sale.rejected_overdue";
     public static final String FLEET_VEHICLE_CHECKED_OUT = "fleet.vehicle.checked_out";
     public static final String FLEET_VEHICLE_CHECKED_IN = "fleet.vehicle.checked_in";
     public static final String FLEET_CLAIM_SETTLED = "fleet.claim.settled";

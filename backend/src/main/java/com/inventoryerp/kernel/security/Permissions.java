@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (664 permissions). Constant name = GROUP__ACTION.
+ * exactly (675 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -468,6 +468,17 @@ public final class Permissions {
     public static final String SALES__COMMISSION_MANAGE = "sales:commission:manage";
     public static final String SALES__TARGET_MANAGE = "sales:target:manage";
     public static final String SALES__PORTAL_MANAGE = "sales:portal:manage";
+    public static final String SALES__CASH_SALE_READ = "sales:cash_sale:read";
+    public static final String SALES__CASH_SALE_READ_ALL = "sales:cash_sale:read_all";
+    public static final String SALES__CASH_SALE_CREATE = "sales:cash_sale:create";
+    public static final String SALES__CASH_SALE_CONFIRM = "sales:cash_sale:confirm";
+    public static final String SALES__CASH_SALE_SUBMIT = "sales:cash_sale:submit";
+    public static final String SALES__CASH_SALE_REVIEW = "sales:cash_sale:review";
+    public static final String SALES__CASH_SALE_APPROVE = "sales:cash_sale:approve";
+    public static final String SALES__CASH_SALE_INVOICE = "sales:cash_sale:invoice";
+    public static final String SALES__CASH_SALE_VOID = "sales:cash_sale:void";
+    public static final String SALES__CASH_SALE_VERIFY_PAYMENT = "sales:cash_sale:verify_payment";
+    public static final String SALES__BRANCH_PROFILE_MANAGE = "sales:branch_profile:manage";
     public static final String CREDIT__READ = "credit:read";
     public static final String CREDIT__MANAGE = "credit:manage";
     public static final String CREDIT__OVERRIDE = "credit:override";
@@ -1135,6 +1146,17 @@ public final class Permissions {
             "sales:commission:manage",
             "sales:target:manage",
             "sales:portal:manage",
+            "sales:cash_sale:read",
+            "sales:cash_sale:read_all",
+            "sales:cash_sale:create",
+            "sales:cash_sale:confirm",
+            "sales:cash_sale:submit",
+            "sales:cash_sale:review",
+            "sales:cash_sale:approve",
+            "sales:cash_sale:invoice",
+            "sales:cash_sale:void",
+            "sales:cash_sale:verify_payment",
+            "sales:branch_profile:manage",
             "credit:read",
             "credit:manage",
             "credit:override",

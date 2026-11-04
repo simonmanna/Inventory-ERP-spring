@@ -131,13 +131,29 @@ public class InvoicingWorkflowsInitializer {
         String partnerId = (String) full.get("partnerId");
         post.add(new Line(g.counterAccount(), JsNumbers.dec(d(full.get("totalAmount"))), null, partnerId,
                 "Invoice " + full.get("documentNumber"), null, null, null));
-        g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId,
-                "Revenue", null, it.costCenterId(), it.glDimensions())));
-        g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
+        String accrual = jdbc.sql("SELECT data->>'revenueAccruedBy' FROM \"Document\" WHERE id = ?").param(id)
+                .query(String.class).optional().orElse(null);
+        if (accrual != null) {
+            // Branch cash sale (ADR-S056 P4): revenue and VAT were accrued at showroom confirm — the invoice only
+            // reclassifies the accrual to AR, for exactly the accrued amount.
+            String unbilled = determination.mapped("unbilled_receivable");
+            BigDecimal accrued = jdbc.sql("SELECT COALESCE(sum(debit), 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?"
+                    + " AND \"accountId\" = ?").params(accrual, unbilled).query(BigDecimal.class).single();
+            if (accrued.compareTo(d(full.get("totalAmount"))) != 0) {
+                throw ApiException.badRequest("Invoice total does not match the accrued sale");
+            }
+            post.add(new Line(unbilled, null, JsNumbers.dec(accrued), partnerId, "Accrued cash sale "
+                    + full.get("documentNumber"), null, null, null));
+        } else {
+            g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId,
+                    "Revenue", null, it.costCenterId(), it.glDimensions())));
+            g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
+        }
         var journal = journals.resolveSalesJournal((String) full.get("invoicingJournalId"));
         Map<String, Object> entry = posting.post(new PostingRequest(journal.getCode(), instant(full.get("issueDate")),
                 "Invoice " + full.get("documentNumber"), (String) full.get("currencyId"),
-                d(full.get("exchangeRate")), "invoice", id, null, null, null, null, null, post));
+                d(full.get("exchangeRate")), "invoice", id, null, null, accrual == null ? null : (String) full.get("branchId"),
+                null, null, post));
         jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entry.get("id"), d(full.get("totalAmount")), id).update();

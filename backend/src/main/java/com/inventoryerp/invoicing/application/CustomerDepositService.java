@@ -15,6 +15,7 @@ import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.workflow.WorkflowService;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -53,10 +54,12 @@ public class CustomerDepositService {
     private final AccountDeterminationService determination;
     private final SequenceService sequence;
     private final AuditService audit;
+    private final WorkflowService workflow;
 
     public CustomerDepositService(JdbcClient jdbc, PostingService posting, PaymentService payments,
             AccountResolverService accounts, AccountDeterminationService determination, SequenceService sequence,
-            AuditService audit) {
+            AuditService audit, WorkflowService workflow) {
+        this.workflow = workflow;
         this.jdbc = jdbc;
         this.posting = posting;
         this.payments = payments;
@@ -117,6 +120,123 @@ public class CustomerDepositService {
         return get(id);
     }
 
+    /** One verified showroom payment of a branch cash sale (ADR-S056 P2). */
+    public record CashSaleDeposit(String partnerId, String cashSaleId, String cashSaleNumber, String branchId,
+            BigDecimal amount, String paymentMethod, String accountId, LocalDate receivedDate, String reference,
+            String postingKey) {}
+
+    /**
+     * Cash-sale deposit (ADR-S056 P2): Dr the branch tender account (fixed by the branch profile) / Cr Customer
+     * Deposits, linked to the submission. Such a deposit settles only the invoice of that submission (see
+     * {@link #apply}) and is refunded or released only through the submission ({@link #refundCashSale},
+     * {@link #releaseCashSale}). Idempotent on {@code postingKey}: a replay returns the existing deposit.
+     */
+    @Transactional
+    public Map<String, Object> receiveForCashSale(CashSaleDeposit in) {
+        String org = org();
+        BigDecimal amount = in.amount() == null ? BigDecimal.ZERO : in.amount().setScale(6, RoundingMode.HALF_UP);
+        if (amount.signum() <= 0) {
+            throw ApiException.badRequest("Deposit amount must be positive");
+        }
+        if (in.cashSaleId() == null || in.accountId() == null) {
+            throw ApiException.badRequest("A cash-sale deposit needs its submission and tender account");
+        }
+        TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org, in.paymentMethod(), in.accountId(),
+                null);
+        String id = UUID.randomUUID().toString();
+        LocalDate date = in.receivedDate() == null ? LocalDate.now() : in.receivedDate();
+        String depositAccount = depositAccount();
+        Map<String, Object> entry = posting.post(new PostingRequest(tender.journalCode(), date.atStartOfDay()
+                .toInstant(ZoneOffset.UTC), "Cash sale " + in.cashSaleNumber() + " payment", null, null,
+                "customer_deposit", id, null, in.postingKey(), in.branchId(), null, null, List.of(
+                        new Line(tender.accountId(), amount, null, null, "Cash sale " + in.cashSaleNumber(), in.branchId(),
+                                null, null),
+                        new Line(depositAccount, null, amount, in.partnerId(), "Cash sale " + in.cashSaleNumber(),
+                                in.branchId(), null, null))));
+        Map<String, Object> existing = SqlRows.one(jdbc.sql("SELECT id FROM \"CustomerDeposit\" WHERE \"journalEntryId\" = ?"
+                + " AND \"organizationId\" = ?").params(entry.get("id"), org));
+        if (existing != null) {
+            return get((String) existing.get("id"));
+        }
+        String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
+        jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", source, \"cashSaleId\","
+                + " \"branchId\", \"paymentMethod\", \"accountId\", amount, \"receivedDate\", \"journalEntryId\", reference,"
+                + " notes, \"createdById\") VALUES (?, ?, ?, ?, 'cash_sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .params(id, org, number, in.partnerId(), in.cashSaleId(), in.branchId(), in.paymentMethod(),
+                        tender.accountId(), amount, java.sql.Date.valueOf(date), entry.get("id"), in.reference(),
+                        "Cash sale " + in.cashSaleNumber(), TenantContext.userId())
+                .update();
+        audit.record(AuditInput.of("CustomerDeposit", id, "create", null, Obj.of("number", number, "amount", amount,
+                "cashSaleId", in.cashSaleId())));
+        return get(id);
+    }
+
+    /** Cash-sale deposits of a submission (oldest first). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> cashSaleDeposits(String cashSaleId) {
+        return SqlRows.list(jdbc.sql("SELECT d.*, d.amount - d.\"appliedAmount\" - d.\"refundedAmount\" AS available FROM"
+                + " \"CustomerDeposit\" d WHERE d.\"organizationId\" = ? AND d.\"cashSaleId\" = ? ORDER BY d.\"createdAt\","
+                + " d.id").params(org(), cashSaleId));
+    }
+
+    /**
+     * Unapply every live application of the submission's deposits to {@code documentId} (ADR-S056 P7, before the
+     * invoice is cancelled): the deposit-backed receipt is voided (reversal entry, invoice residual restored) and the
+     * deposit is open again, still linked to its submission.
+     */
+    @Transactional
+    public void unapplyCashSale(String cashSaleId, String documentId, String reason) {
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.* FROM \"DepositApplication\" a JOIN \"CustomerDeposit\""
+                + " d ON d.id = a.\"depositId\" WHERE a.\"organizationId\" = ? AND a.\"documentId\" = ? AND a.kind ="
+                + " 'application' AND a.\"reversedAt\" IS NULL AND d.\"cashSaleId\" = ? ORDER BY a.\"createdAt\"")
+                .params(org(), documentId, cashSaleId))) {
+            String depositId = (String) a.get("depositId");
+            lock(depositId);
+            workflow.transition("payment", (String) a.get("paymentId"), "void", Map.of("reason", reason == null
+                    ? "Invoice cancelled" : reason), null);
+            BigDecimal amount = SqlRows.dec(a, "amount");
+            jdbc.sql("UPDATE \"DepositApplication\" SET \"reversedAt\" = " + NOW + " WHERE id = ?").param(a.get("id"))
+                    .update();
+            jdbc.sql("UPDATE \"CustomerDeposit\" SET \"appliedAmount\" = \"appliedAmount\" - ?, status = 'open',"
+                    + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, depositId).update();
+            audit.record(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("unapplied", amount,
+                    "documentId", documentId)));
+        }
+    }
+
+    /** Refund an unapplied cash-sale deposit (ADR-S056 P6, void with refund): Dr Customer Deposits / Cr the tender. */
+    @Transactional
+    public Map<String, Object> refundCashSale(String depositId, String reason) {
+        Map<String, Object> d = lock(depositId);
+        if (!"cash_sale".equals(d.get("source"))) {
+            throw ApiException.badRequest("Not a cash-sale deposit");
+        }
+        return refundInternal(d, null, (String) d.get("paymentMethod"), (String) d.get("accountId"), reason);
+    }
+
+    /**
+     * Release a cash-sale deposit from its voided submission and keep it as a documented customer advance (ADR-S056
+     * P6, void without refund): it becomes a plain receipt deposit, applicable to any invoice of the customer.
+     */
+    @Transactional
+    public Map<String, Object> releaseCashSale(String depositId, String reason) {
+        Map<String, Object> d = lock(depositId);
+        if (!"cash_sale".equals(d.get("source"))) {
+            throw ApiException.badRequest("Not a cash-sale deposit");
+        }
+        jdbc.sql("UPDATE \"CustomerDeposit\" SET source = 'receipt', notes = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params("Advance kept from voided cash sale" + (reason == null ? "" : ": " + reason), depositId).update();
+        audit.record(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("releasedFromCashSale",
+                d.get("cashSaleId"), "reason", reason)));
+        return get(depositId);
+    }
+
+    private static void assertNotCashSale(Map<String, Object> d) {
+        if ("cash_sale".equals(d.get("source"))) {
+            throw ApiException.badRequest("A cash-sale deposit is refunded or voided only through its cash sale");
+        }
+    }
+
     /**
      * A posted down-payment invoice (P3): register the deposit for the net amount posted to the deposit account.
      * Idempotent per invoice; ignored for other invoices.
@@ -168,6 +288,11 @@ public class CustomerDepositService {
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
+        if ("cash_sale".equals(d.get("source")) && SqlRows.one(jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND \"sourceType\" = 'cash_sale' AND \"sourceId\" = ?").params(documentId, org(),
+                d.get("cashSaleId"))) == null) {
+            throw ApiException.badRequest("A cash-sale deposit settles only the invoice of its own cash sale");
+        }
         if (!d.get("partnerId").equals(doc.get("partnerId"))) {
             throw ApiException.badRequest("The deposit and the invoice belong to different customers");
         }
@@ -208,6 +333,13 @@ public class CustomerDepositService {
     public Map<String, Object> refund(String depositId, BigDecimal amountIn, String method, String accountId,
             String reason) {
         Map<String, Object> d = lock(depositId);
+        assertNotCashSale(d);
+        return refundInternal(d, amountIn, method, accountId, reason);
+    }
+
+    private Map<String, Object> refundInternal(Map<String, Object> d, BigDecimal amountIn, String method,
+            String accountId, String reason) {
+        String depositId = (String) d.get("id");
         if (!"open".equals(d.get("status"))) {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is " + d.get("status"));
         }
@@ -239,6 +371,7 @@ public class CustomerDepositService {
     @Transactional
     public Map<String, Object> voidDeposit(String depositId, String reason) {
         Map<String, Object> d = lock(depositId);
+        assertNotCashSale(d);
         if (!"open".equals(d.get("status")) || SqlRows.dec(d, "appliedAmount").signum() > 0
                 || SqlRows.dec(d, "refundedAmount").signum() > 0 || !"receipt".equals(d.get("source"))) {
             throw ApiException.badRequest("Only an unused deposit receipt can be voided");

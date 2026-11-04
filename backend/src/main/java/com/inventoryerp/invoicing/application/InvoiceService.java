@@ -295,6 +295,27 @@ public class InvoiceService {
         return doc;
     }
 
+    /**
+     * Draft invoice of an approved branch cash sale (ADR-S056 P4), stamped with the submission's branch (not the
+     * caller's scope), linked to the submission ({@code sourceType = cash_sale}) and marked so that posting neither
+     * issues stock ({@code stockIssuedBy}) nor posts revenue / VAT ({@code revenueAccruedBy} = the accrual entry):
+     * it only reclassifies the accrual to AR. Lines carry their frozen prices, so no repricing happens.
+     */
+    @Transactional
+    public Map<String, Object> createForCashSale(InvoiceInput dto, String branchId, String cashSaleId,
+            String cashSaleNumber, String accrualEntryId) {
+        Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
+        Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
+        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names, branchId), dto.lines());
+        String id = (String) doc.get("id");
+        jdbc.sql("UPDATE \"Document\" SET \"sourceType\" = 'cash_sale', \"sourceId\" = ?, data = COALESCE(data,"
+                        + " '{}'::jsonb) || jsonb_build_object('stockIssuedBy', ?::text, 'revenueAccruedBy', ?::text),"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(cashSaleId, cashSaleNumber, accrualEntryId, id, org()).update();
+        publish("invoice.created", doc);
+        return builder.document(id, "sales_invoice");
+    }
+
     private static HeaderInput header(InvoiceInput dto, Term term, Names names, String branchId) {
         return new HeaderInput(dto.partnerId(), dto.issueDate(), term.dueDate(), term.paymentTermId(),
                 term.paymentTermName(), dto.paymentMode(), dto.fiscalPositionId(), names.fiscalPositionName(),

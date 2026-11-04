@@ -255,5 +255,51 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 | T30 | 403 per route without permission; missing Idempotency-Key | 403 / 400 |
 | T31 | Partial deposit apply + refund (deposit service regression) | subledger = GL |
 
-## Deviations
-None yet.
+## As built (CS-1 … CS-4, 2026-11-04)
+
+- **Migration** `V340__sales_cash_sales.sql` creates:
+  - the tables in § 6, plus RLS (unset `app.org_id` allowed for jobs) and permissions;
+  - the `CustomerDeposit` source `cash_sale` and the `cashSaleId` / `branchId` columns.
+- **Backend:**
+  - `sales/application`: `BranchSalesProfileService`, `CashSaleService`, `CashSaleFiscalService`, `FiscalDocumentPort` with the `FiscalAdapters.None` / `Mock` adapters, `CashSaleFiscalJob` (outbox every minute, hourly rejected-sale alerts) and `CashSaleResourceProvider` (DMS `sales_submission`).
+  - `sales/web/CashSaleController`.
+  - Invoicing:
+    - `BranchSaleRecognitionService` (P3 accrual and account checks);
+    - `CustomerDepositService.receiveForCashSale` / `unapplyCashSale` / `refundCashSale` / `releaseCashSale`, plus guards on `apply` / `refund` / `voidDeposit`;
+    - `InvoiceService.createForCashSale`;
+    - `postInvoice` reclass path, which posts only when `data.revenueAccruedBy` is set.
+- **Web:**
+  - `/sales/cash-sales`: showroom list and tiles.
+  - `/sales/cash-sales/processing`: head-office queues, by-branch totals, exception queue, processing time.
+  - `/sales/cash-sales/new|:id`: form, payments with verification, review panel with checklist, deposits, invoice history, fiscal documents, timeline, attachments.
+  - `/sales/branch-profiles`.
+  - Menu entries under Sales.
+- **Tests** in `CashSaleIT` (12 scenarios, all green), covering T1–T4, T7–T9, T11–T17, T19, T21–T30. T13 is covered as an idempotent confirm replay.
+- **Moved to CS-5:** T5 (several tax categories) and T31.
+- **T6:** see deviation 1.
+
+## Deviations (owner to confirm)
+
+1. **Base currency only.**
+   - Cash sales are recorded in the organization currency; another `currencyCode` returns 400.
+   - Reason: `PaymentService` refuses deposit applications in a foreign currency, and `CustomerDeposit` has no currency column.
+   - Result: the FX freeze holds trivially (rate 1). Foreign-currency showroom sales need a currency-aware deposit first (CS-5 or later).
+2. **MoMo verification.**
+   - Verification goes through a verifier user (`verify_payment`) only.
+   - `MobileMoneyService` books its own deposit on success, so using it here would post the money twice.
+   - Gateway-confirmed verification (`momo_gateway`) comes with CS-5 settlement.
+3. **Fiscal status model.**
+   - The submission carries `fiscalStatus` (`none|pending|issued|failed|cancellation_pending|cancelled`).
+   - Each `FiscalDocument` row (one per operation attempt) carries `pending|unknown|succeeded|failed`.
+   - A failed cancellation keeps the submission `cancellation_pending`; the next void / cancel-invoice requests a new attempt.
+   - A successful `correct` applies the identity fields as audited amendments.
+4. **Invoicing permissions.**
+   - Generating / cancelling the invoice runs the existing invoicing workflow transitions, so the head-office invoicer also needs `invoice:post`.
+   - Cancelling also needs `invoice:cancel` and `payment:void`, and `invoice:cancel` passes the existing `invoice_cancel` approval gate.
+   - Existing controls are kept rather than bypassed.
+5. **Rejected-sale alert.**
+   - Published as `sales.cash_sale.rejected_overdue` plus an in-app notification to the owner, once per rejection.
+   - Not an alert-engine rule.
+6. **Profile tender categories.**
+   - Tender accounts must also be of the payment method's account category (cash / bank / mobile money), using the existing `TenderAccount` rule.
+   - An income account as tender is refused.

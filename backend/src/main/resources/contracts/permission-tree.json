@@ -660,7 +660,18 @@
     "commissionRead": "sales:commission:read",
     "commissionManage": "sales:commission:manage",
     "targetManage": "sales:target:manage",
-    "portalManage": "sales:portal:manage"
+    "portalManage": "sales:portal:manage",
+    "cashSaleRead": "sales:cash_sale:read",
+    "cashSaleReadAll": "sales:cash_sale:read_all",
+    "cashSaleCreate": "sales:cash_sale:create",
+    "cashSaleConfirm": "sales:cash_sale:confirm",
+    "cashSaleSubmit": "sales:cash_sale:submit",
+    "cashSaleReview": "sales:cash_sale:review",
+    "cashSaleApprove": "sales:cash_sale:approve",
+    "cashSaleInvoice": "sales:cash_sale:invoice",
+    "cashSaleVoid": "sales:cash_sale:void",
+    "cashSaleVerifyPayment": "sales:cash_sale:verify_payment",
+    "branchProfileManage": "sales:branch_profile:manage"
   },
   "credit": {
     "read": "credit:read",

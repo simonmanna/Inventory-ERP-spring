@@ -755,6 +755,28 @@ export const PERMISSIONS = {
     targetManage: 'sales:target:manage',
     /// Issue / revoke customer portal links (licence customerPortal, ADR-S011 S10).
     portalManage: 'sales:portal:manage',
+    /// Branch cash sales submissions (ADR-S056): own branch scope.
+    cashSaleRead: 'sales:cash_sale:read',
+    /// See submissions of every branch (head office).
+    cashSaleReadAll: 'sales:cash_sale:read_all',
+    /// Create / edit draft submissions and capture payments (showroom).
+    cashSaleCreate: 'sales:cash_sale:create',
+    /// Confirm the sale + handover (posts stock, deposits and the revenue accrual).
+    cashSaleConfirm: 'sales:cash_sale:confirm',
+    /// Submit / resubmit / amend for head office.
+    cashSaleSubmit: 'sales:cash_sale:submit',
+    /// Start review and return for correction (head office).
+    cashSaleReview: 'sales:cash_sale:review',
+    /// Approve, reject and reopen submissions (head office).
+    cashSaleApprove: 'sales:cash_sale:approve',
+    /// Generate / cancel the official invoice of an approved submission.
+    cashSaleInvoice: 'sales:cash_sale:invoice',
+    /// Void a confirmed sale whose goods physically came back.
+    cashSaleVoid: 'sales:cash_sale:void',
+    /// Verify mobile-money / bank (and, with segregation, cash) payment lines.
+    cashSaleVerifyPayment: 'sales:cash_sale:verify_payment',
+    /// Configure branch sales profiles (location, tender accounts, numbering).
+    branchProfileManage: 'sales:branch_profile:manage',
   },
   // ---- Credit management (ADR-S011 §3) ----
   credit: {

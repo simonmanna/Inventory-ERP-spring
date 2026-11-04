@@ -221,6 +221,16 @@ export const EVENTS = {
   SalesOrderDone: 'sales.order.done',
   SalesReturnReceived: 'sales.return.received',
   SalesReturnClosed: 'sales.return.closed',
+  // Branch cash sales (ADR-S056).
+  SalesCashSaleConfirmed: 'sales.cash_sale.confirmed',
+  SalesCashSaleSubmitted: 'sales.cash_sale.submitted',
+  SalesCashSaleReturned: 'sales.cash_sale.returned',
+  SalesCashSaleApproved: 'sales.cash_sale.approved',
+  SalesCashSaleRejected: 'sales.cash_sale.rejected',
+  SalesCashSaleInvoiced: 'sales.cash_sale.invoiced',
+  SalesCashSaleInvoiceCancelled: 'sales.cash_sale.invoice_cancelled',
+  SalesCashSaleVoided: 'sales.cash_sale.voided',
+  SalesCashSaleRejectedOverdue: 'sales.cash_sale.rejected_overdue',
   // Fleet 1.2 — drivers & operators: vehicle check-out / check-in and settled driver allowance claims.
   FleetVehicleCheckedOut: 'fleet.vehicle.checked_out',
   FleetVehicleCheckedIn: 'fleet.vehicle.checked_in',
@@ -295,6 +305,19 @@ export const EVENTS = {
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
+/** Common payload of `sales.cash_sale.*` events (ADR-S056). */
+export interface SalesCashSaleEventPayload {
+  v: 1;
+  organizationId: string;
+  submissionId: string;
+  number: string;
+  branchId: string;
+  partnerId: string;
+  grandTotal: number;
+  invoiceId?: string | null;
+  reason?: string | null;
+}
+
 /** Common payload of `sales.order.*` events (ADR-S011). */
 export interface SalesOrderEventPayload {
   v: 1;
@@ -597,6 +620,15 @@ export interface DomainEventMap {
   'sales.order.done': SalesOrderEventPayload;
   'sales.return.received': { v: 1; organizationId: string; returnId: string; number: string; orderId: string };
   'sales.return.closed': { v: 1; organizationId: string; returnId: string; number: string; orderId: string; outcome: string };
+  'sales.cash_sale.confirmed': SalesCashSaleEventPayload;
+  'sales.cash_sale.submitted': SalesCashSaleEventPayload;
+  'sales.cash_sale.returned': SalesCashSaleEventPayload;
+  'sales.cash_sale.approved': SalesCashSaleEventPayload;
+  'sales.cash_sale.rejected': SalesCashSaleEventPayload;
+  'sales.cash_sale.invoiced': SalesCashSaleEventPayload;
+  'sales.cash_sale.invoice_cancelled': SalesCashSaleEventPayload;
+  'sales.cash_sale.voided': SalesCashSaleEventPayload;
+  'sales.cash_sale.rejected_overdue': SalesCashSaleEventPayload;
   'fleet.vehicle.checked_out': FleetCheckoutEventPayload;
   'fleet.vehicle.checked_in': FleetCheckoutEventPayload;
   'fleet.claim.settled': FleetClaimSettledPayload;

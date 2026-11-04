@@ -396,8 +396,10 @@ production.
 | Phase | Scope | Status |
 |---|---|---|
 | CS-0 | ADR-S056, spec (states, posting matrix, account validation, fiscal lifecycle, test list T1–T31) | done |
-| CS-1 | Migration, entities, `BranchSalesProfile` + validation, draft CRUD, numbering, branch scope, permissions | todo |
-| CS-2 | Confirm: P1 stock issue, P2 cash-sale deposits, P3 revenue/VAT accrual; payment capture + verification; deposit isolation | todo |
-| CS-3 | HO workflow: submit, review, return/amend, approve, reject/reopen, generate invoice (P4–P5), cancel invoice (P7), void (P6), timeline, DMS, events, fiscal port + outbox | todo |
-| CS-4 | Web: showroom form + list + tiles; HO queue, review split panel, exception queue; profile admin; menu; i18n | todo |
+| CS-1 | Migration, entities, `BranchSalesProfile` + validation, draft CRUD, numbering, branch scope, permissions | done |
+| CS-2 | Confirm: P1 stock issue, P2 cash-sale deposits, P3 revenue/VAT accrual; payment capture + verification; deposit isolation | done |
+| CS-3 | HO workflow: submit, review, return/amend, approve, reject/reopen, generate invoice (P4–P5), cancel invoice (P7), void (P6), timeline, DMS, events, fiscal port + outbox | done |
+| CS-4 | Web: showroom form + list + tiles; HO queue, review split panel, exception queue; profile admin; menu; i18n | done (i18n phrases untranslated) |
 | Later | CS-5 branch cash book / remittance / MoMo settlement; CS-6 reports; deliver-later; RMA after invoice; self-invoicing; credit sales; EFRIS adapter | deferred |
+
+As built and deviations: [`cash-sales.md`](cash-sales.md) § As built / Deviations (base currency only, verifier-only MoMo verification, invoicing permissions kept).
