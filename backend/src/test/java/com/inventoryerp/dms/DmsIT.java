@@ -157,6 +157,135 @@ class DmsIT extends ApiTestSupport {
     // ---- DM-1 / DM-2 ----
 
     @Test
+    @DisplayName("DM-1 admin: workspace edit / archive guards, folder rename / move / cycle guard, tags and categories")
+    void workspaceFolderTagAdmin() {
+        String sfx = UUID.randomUUID().toString().substring(0, 6);
+        JsonNode parent = ok(201, "POST", "/dms/workspaces", Map.of("name", "Legal " + sfx));
+        String parentId = parent.get("id").asString();
+        assertThat(parent.get("code").asString()).isEqualTo("legal_" + sfx);
+        JsonNode child = ok(201, "POST", "/dms/workspaces", Map.of("code", "leases_" + sfx, "name", "Leases " + sfx,
+                "parentId", parentId, "sortOrder", 5));
+        String childId = child.get("id").asString();
+        assertThat(as("POST", "/dms/workspaces", Map.of("code", "leases_" + sfx, "name", "Dup")).status())
+                .isEqualTo(409);
+        assertThat(as("POST", "/dms/workspaces", Map.of("code", "Bad Code!", "name", "Bad")).status()).isEqualTo(400);
+
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("name", "Leases and rentals " + sfx);
+        patch.put("description", "Property leases");
+        patch.put("icon", "file");
+        patch.put("color", "#336699");
+        patch.put("requiresApproval", false);
+        patch.put("sortOrder", 7);
+        patch.put("parentId", "");
+        JsonNode edited = ok(200, "PATCH", "/dms/workspaces/" + childId, patch);
+        assertThat(edited.get("name").asString()).isEqualTo("Leases and rentals " + sfx);
+        assertThat(edited.get("parentId").isNull()).isTrue();
+        assertThat(as("PATCH", "/dms/workspaces/" + childId, Map.of("parentId", childId)).status()).isEqualTo(400);
+        assertThat(ok(200, "PATCH", "/dms/workspaces/" + childId, Map.of("parentId", parentId)).get("parentId")
+                .asString()).isEqualTo(parentId);
+
+        JsonNode a = ok(201, "POST", "/dms/folders", Map.of("workspaceId", childId, "name", "A"));
+        String aId = a.get("id").asString();
+        JsonNode b = ok(201, "POST", "/dms/folders", Map.of("workspaceId", childId, "parentId", aId, "name", "B"));
+        String bId = b.get("id").asString();
+        assertThat(as("POST", "/dms/folders", Map.of("workspaceId", childId, "name", "A")).status()).isEqualTo(409);
+        String otherWsFolder = ok(201, "POST", "/dms/folders", Map.of("workspaceId", parentId, "name", "X"))
+                .get("id").asString();
+        assertThat(as("POST", "/dms/folders", Map.of("workspaceId", childId, "parentId", otherWsFolder, "name", "Y"))
+                .status()).isEqualTo(400);
+        assertThat(ok(200, "GET", "/dms/workspaces/" + childId + "/folders", null).findValuesAsString("id"))
+                .contains(aId, bId);
+
+        assertThat(ok(200, "PATCH", "/dms/folders/" + bId, Map.of("name", "B renamed")).get("name").asString())
+                .isEqualTo("B renamed");
+        Res cycle = as("PATCH", "/dms/folders/" + aId, Map.of("parentId", bId));
+        assertThat(cycle.status()).isEqualTo(400);
+        assertThat(cycle.body().get("message").asString()).isEqualTo("A folder cannot be moved into its own subfolder");
+        assertThat(as("PATCH", "/dms/folders/" + aId, Map.of("parentId", aId)).status()).isEqualTo(400);
+        assertThat(as("PATCH", "/dms/folders/" + bId, Map.of("parentId", otherWsFolder)).status()).isEqualTo(400);
+        assertThat(as("PATCH", "/dms/folders/" + bId, Map.of("name", "A", "moveToRoot", true)).status())
+                .isEqualTo(409);
+        assertThat(ok(200, "PATCH", "/dms/folders/" + bId, Map.of("moveToRoot", true)).get("parentId").isNull())
+                .isTrue();
+        assertThat(ok(200, "DELETE", "/dms/folders/" + bId, null).get("deleted").asBoolean()).isTrue();
+        assertThat(ok(200, "DELETE", "/dms/folders/" + aId, null).get("deleted").asBoolean()).isTrue();
+
+        JsonNode archived = ok(200, "DELETE", "/dms/workspaces/" + childId, null);
+        assertThat(archived.get("archivedAt").isNull()).isFalse();
+        String general = workspace("general");
+        uploadOne(List.of(Part.file("keep.txt", "text/plain", "keep"), Part.field("workspaceId", parentId)));
+        assertThat(as("DELETE", "/dms/workspaces/" + parentId, null).status()).isEqualTo(400);
+        Res system = as("DELETE", "/dms/workspaces/" + general, null);
+        assertThat(system.status()).isEqualTo(400);
+        assertThat(system.body().get("message").asString()).isEqualTo("System workspaces cannot be archived");
+
+        JsonNode cat = ok(201, "POST", "/dms/tag-categories", Map.of("name", "Status " + sfx, "sortOrder", 2));
+        String catId = cat.get("id").asString();
+        assertThat(as("POST", "/dms/tag-categories", Map.of("name", "Status " + sfx)).status()).isEqualTo(409);
+        assertThat(ok(200, "GET", "/dms/tag-categories", null).findValuesAsString("id")).contains(catId);
+        JsonNode tag = ok(201, "POST", "/dms/tags", Map.of("name", "Signed " + sfx, "categoryId", catId, "color",
+                "green"));
+        String tagId = tag.get("id").asString();
+        ok(201, "POST", "/dms/tags", Map.of("name", "Draft " + sfx));
+        assertThat(as("POST", "/dms/tags", Map.of("name", "Signed " + sfx)).status()).isEqualTo(409);
+        assertThat(as("POST", "/dms/tags", Map.of("name", "Nope", "categoryId", UUID.randomUUID().toString()))
+                .status()).isEqualTo(400);
+        assertThat(ok(200, "PATCH", "/dms/tags/" + tagId, Map.of("name", "Executed " + sfx, "color", "blue"))
+                .get("name").asString()).isEqualTo("Executed " + sfx);
+        assertThat(as("PATCH", "/dms/tags/" + tagId, Map.of("name", "Draft " + sfx)).status()).isEqualTo(409);
+        assertThat(as("PATCH", "/dms/tags/" + UUID.randomUUID(), Map.of("name", "x")).status()).isEqualTo(404);
+        assertThat(ok(200, "GET", "/dms/tags", null).findValuesAsString("id")).contains(tagId);
+        ok(200, "DELETE", "/dms/tags/" + tagId, null);
+        assertThat(as("DELETE", "/dms/tags/" + tagId, null).status()).isEqualTo(404);
+        ok(200, "DELETE", "/dms/tag-categories/" + catId, null);
+        assertThat(as("DELETE", "/dms/tag-categories/" + catId, null).status()).isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("DM-1/2: document tags by id, expiry, partner, workspace move, unlink a record, submit without approval")
+    void documentEditing() {
+        String sfx = UUID.randomUUID().toString().substring(0, 6);
+        String ws = workspace("general");
+        String target = ok(201, "POST", "/dms/workspaces", Map.of("name", "Archive " + sfx)).get("id").asString();
+        String tagId = ok(201, "POST", "/dms/tags", Map.of("name", "Edit " + sfx)).get("id").asString();
+        JsonNode doc = uploadOne(List.of(Part.file("edit.txt", "text/plain", "edit me"), Part.field("workspaceId",
+                ws)));
+        String id = doc.get("id").asString();
+
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("description", "Signed lease");
+        patch.put("tagIds", List.of(tagId));
+        patch.put("expiresOn", LocalDate.now(ZoneOffset.UTC).plusDays(60).toString());
+        patch.put("reminderLeadDays", 14);
+        patch.put("partnerId", partnerId);
+        patch.put("workspaceId", target);
+        JsonNode edited = ok(200, "PATCH", "/dms/documents/" + id, patch);
+        assertThat(edited.get("workspaceId").asString()).isEqualTo(target);
+        assertThat(edited.get("tags").findValuesAsString("id")).containsExactly(tagId);
+        assertThat(edited.get("expiresOn").isNull()).isFalse();
+        JsonNode cleared = ok(200, "PATCH", "/dms/documents/" + id, Map.of("clearExpiry", true, "tagIds", List.of(),
+                "moveToRoot", true));
+        assertThat(cleared.get("expiresOn").isNull()).isTrue();
+        assertThat(cleared.get("tags")).isEmpty();
+
+        JsonNode linked = ok(201, "POST", "/dms/documents/" + id + "/links", Map.of("resType", "partner", "resId",
+                partnerId));
+        String linkId = linked.get("links").get(0).get("id").asString();
+        JsonNode unlinked = ok(200, "DELETE", "/dms/documents/" + id + "/links/" + linkId, null);
+        assertThat(unlinked.get("links")).isEmpty();
+        assertThat(as("DELETE", "/dms/documents/" + id + "/links/" + linkId, null).status()).isEqualTo(404);
+
+        assertThat(ok(200, "POST", "/dms/documents/" + id + "/submit", null).get("status").asString())
+                .isEqualTo("pending_approval");
+        Res again = as("POST", "/dms/documents/" + id + "/submit", null);
+        assertThat(again.status()).isEqualTo(400);
+        assertThat(ok(200, "GET", "/dms/documents/resource-types", null)).isNotEmpty();
+        assertThat(ok(200, "GET", "/dms/documents?tagId=" + tagId + "&partnerId=" + partnerId + "&q=edit", null)
+                .get("data")).isNotNull();
+    }
+
+    @Test
     @DisplayName("DM-1: upload, rename, tag, move to folder, version, restore version, lock, archive, delete, restore")
     void documentLifecycle() {
         String ws = workspace("general");

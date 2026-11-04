@@ -229,6 +229,145 @@ class HelpdeskIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("HD-1 config: team edit, stages add / rename / delete guards, ticket types, letter templates")
+    void configuration() {
+        String sfx = UUID.randomUUID().toString().substring(0, 6);
+        JsonNode team = ok(201, "POST", "/helpdesk/teams", Map.of("code", "Ops " + sfx, "name", "Ops " + sfx,
+                "leaderId", adminId, "email", "ops@demo.test"));
+        String teamId = team.get("id").asString();
+        assertThat(team.get("code").asString()).isEqualTo("ops_" + sfx);
+        assertThat(as("POST", "/helpdesk/teams", Map.of("code", "Ops " + sfx, "name", "Again")).status())
+                .isEqualTo(409);
+        assertThat(as("POST", "/helpdesk/teams", Map.of("name", "Ghost", "memberIds",
+                List.of(UUID.randomUUID().toString()))).status()).isEqualTo(400);
+
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("name", "Operations " + sfx);
+        patch.put("description", "Field operations");
+        patch.put("assignment", "balanced");
+        patch.put("leaderId", adminId);
+        patch.put("memberIds", List.of(adminId));
+        patch.put("isActive", true);
+        JsonNode updated = ok(200, "PATCH", "/helpdesk/teams/" + teamId, patch);
+        assertThat(updated.get("name").asString()).isEqualTo("Operations " + sfx);
+        assertThat(updated.get("assignment").asString()).isEqualTo("balanced");
+        assertThat(as("PATCH", "/helpdesk/teams/" + teamId, Map.of("assignment", "random")).status()).isEqualTo(400);
+        assertThat(as("PATCH", "/helpdesk/teams/" + UUID.randomUUID(), Map.of("name", "x")).status()).isEqualTo(404);
+        assertThat(ok(200, "GET", "/helpdesk/teams/" + teamId, null).get("id").asString()).isEqualTo(teamId);
+        assertThat(ok(200, "GET", "/helpdesk/teams", null).findValuesAsString("id")).contains(teamId);
+
+        JsonNode stage = ok(201, "POST", "/helpdesk/teams/" + teamId + "/stages", Map.of("name", "Waiting on parts",
+                "sequence", 25));
+        String stageId = stage.get("id").asString();
+        JsonNode renamed = ok(200, "PATCH", "/helpdesk/stages/" + stageId, Map.of("name", "Awaiting parts",
+                "folded", true));
+        assertThat(renamed.get("name").asString()).isEqualTo("Awaiting parts");
+        assertThat(renamed.get("folded").asBoolean()).isTrue();
+        String ticket = ok(201, "POST", "/helpdesk/tickets", Map.of("subject", "Uses stage", "teamId", teamId))
+                .get("id").asString();
+        ok(200, "POST", "/helpdesk/tickets/" + ticket + "/stage", Map.of("stageId", stageId));
+        Res inUse = as("DELETE", "/helpdesk/stages/" + stageId, null);
+        assertThat(inUse.status()).isEqualTo(400);
+        assertThat(inUse.body().get("message").asString()).isEqualTo("Move the 1 ticket(s) of this stage first");
+        String other = jdbc.sql("SELECT id FROM \"HdStage\" WHERE \"teamId\" = ? AND id <> ? AND NOT \"isClosed\""
+                + " ORDER BY sequence LIMIT 1").params(teamId, stageId).query(String.class).single();
+        ok(200, "POST", "/helpdesk/tickets/" + ticket + "/stage", Map.of("stageId", other));
+        ok(200, "DELETE", "/helpdesk/tickets/" + ticket, null);
+        assertThat(as("GET", "/helpdesk/tickets/" + ticket, null).status()).isEqualTo(404);
+        assertThat(ok(200, "DELETE", "/helpdesk/stages/" + stageId, null).get("deleted").asBoolean()).isTrue();
+        assertThat(as("DELETE", "/helpdesk/stages/" + stageId, null).status()).isEqualTo(404);
+        assertThat(as("PATCH", "/helpdesk/stages/" + UUID.randomUUID(), Map.of("name", "x")).status()).isEqualTo(404);
+
+        JsonNode type = ok(201, "POST", "/helpdesk/types", Map.of("name", "Warranty " + sfx));
+        String typeId = type.get("id").asString();
+        assertThat(as("POST", "/helpdesk/types", Map.of("name", "Warranty " + sfx)).status()).isEqualTo(409);
+        assertThat(ok(200, "PATCH", "/helpdesk/types/" + typeId, Map.of("isActive", false)).get("isActive")
+                .asBoolean()).isFalse();
+        assertThat(as("PATCH", "/helpdesk/types/" + UUID.randomUUID(), Map.of("isActive", true)).status())
+                .isEqualTo(404);
+        assertThat(ok(200, "GET", "/helpdesk/types", null).findValuesAsString("id")).contains(typeId);
+
+        Map<String, Object> tpl = new LinkedHashMap<>();
+        tpl.put("name", "Overdue notice " + sfx);
+        tpl.put("subject", "Overdue balance");
+        tpl.put("body", "Dear {{contact.name}}, your balance is overdue.");
+        tpl.put("closingLine", "Yours faithfully");
+        tpl.put("signatureName", "Credit Control");
+        tpl.put("signatureTitle", "Manager");
+        JsonNode created = ok(201, "POST", "/helpdesk/letter-templates", tpl);
+        String tplId = created.get("id").asString();
+        assertThat(created.get("code").asString()).isEqualTo("overdue_notice_" + sfx);
+        assertThat(as("POST", "/helpdesk/letter-templates", tpl).status()).isEqualTo(409);
+        JsonNode edited = ok(200, "PATCH", "/helpdesk/letter-templates/" + tplId, Map.of("subject", "Final notice",
+                "isActive", false));
+        assertThat(edited.get("subject").asString()).isEqualTo("Final notice");
+        assertThat(edited.get("isActive").asBoolean()).isFalse();
+        assertThat(as("PATCH", "/helpdesk/letter-templates/" + UUID.randomUUID(), Map.of("name", "x")).status())
+                .isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("HD-1 tickets: edit with optimistic version, team move, assign / unassign, list filters")
+    void ticketEditing() {
+        String sfx = UUID.randomUUID().toString().substring(0, 6);
+        String teamId = ok(201, "POST", "/helpdesk/teams", Map.of("name", "Edit " + sfx)).get("id").asString();
+        JsonNode t = ok(201, "POST", "/helpdesk/tickets", Map.of("subject", "Edit me " + sfx, "channel", "email",
+                "priority", "low", "partnerId", partnerId));
+        String id = t.get("id").asString();
+        int version = t.get("version").asInt();
+
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("priority", "urgent");
+        patch.put("contactName", "Jane Doe");
+        patch.put("contactEmail", "jane@example.com");
+        patch.put("contactPhone", "+256700000000");
+        patch.put("description", "Updated description");
+        patch.put("tags", List.of("vip", "onsite"));
+        patch.put("externalRef", "EXT-" + sfx);
+        patch.put("ourRef", "OUR-" + sfx);
+        patch.put("relatedResType", "partner");
+        patch.put("relatedResId", partnerId);
+        patch.put("teamId", teamId);
+        patch.put("assigneeId", adminId);
+        patch.put("version", version);
+        JsonNode updated = ok(200, "PATCH", "/helpdesk/tickets/" + id, patch);
+        assertThat(updated.get("priority").asString()).isEqualTo("urgent");
+        assertThat(updated.get("teamId").asString()).isEqualTo(teamId);
+        assertThat(updated.get("assigneeId").asString()).isEqualTo(adminId);
+        assertThat(updated.get("messages").findValuesAsString("body")).anyMatch(b -> b.startsWith("Moved to team"));
+        Res stale = as("PATCH", "/helpdesk/tickets/" + id, Map.of("priority", "low", "version", version));
+        assertThat(stale.status()).isEqualTo(409);
+        assertThat(stale.body().get("message").asString())
+                .isEqualTo("Ticket was changed by someone else; reload and try again");
+        assertThat(as("PATCH", "/helpdesk/tickets/" + id, Map.of("subject", " ")).status()).isEqualTo(400);
+
+        String q = "/helpdesk/tickets?";
+        assertThat(ok(200, "GET", q + "teamId=" + teamId, null).get("data").findValuesAsString("id")).contains(id);
+        assertThat(ok(200, "GET", q + "stageId=" + updated.get("stageId").asString(), null).get("data")
+                .findValuesAsString("id")).contains(id);
+        assertThat(ok(200, "GET", q + "assigneeId=" + adminId + "&priority=urgent&channel=email", null).get("data")
+                .findValuesAsString("id")).contains(id);
+        assertThat(ok(200, "GET", q + "mine=true&state=open", null).get("data").findValuesAsString("id"))
+                .contains(id);
+        assertThat(ok(200, "GET", q + "partnerId=" + partnerId + "&relatedResType=partner&relatedResId=" + partnerId,
+                null).get("data").findValuesAsString("id")).contains(id);
+        assertThat(ok(200, "GET", q + "direction=inbound&state=closed", null).get("data").findValuesAsString("id"))
+                .doesNotContain(id);
+        assertThat(as("GET", q + "state=pending", null).status()).isEqualTo(400);
+
+        JsonNode unassigned = ok(200, "POST", "/helpdesk/tickets/" + id + "/assign", Map.of());
+        assertThat(unassigned.get("assigneeId").isNull()).isTrue();
+        assertThat(ok(200, "GET", q + "unassigned=true&teamId=" + teamId, null).get("data")
+                .findValuesAsString("id")).contains(id);
+        assertThat(ok(200, "POST", "/helpdesk/tickets/" + id + "/assign", Map.of()).get("assigneeId").isNull())
+                .isTrue();
+        assertThat(as("POST", "/helpdesk/tickets/" + id + "/assign", Map.of("assigneeId",
+                UUID.randomUUID().toString())).status()).isEqualTo(400);
+        assertThat(ok(200, "POST", "/helpdesk/tickets/" + id + "/assign", Map.of("assigneeId", adminId))
+                .get("assigneeId").asString()).isEqualTo(adminId);
+    }
+
+    @Test
     @DisplayName("tickets are invisible to another organization")
     void tenantIsolation() {
         String id = ok(201, "POST", "/helpdesk/tickets", Map.of("subject", "Private")).get("id").asString();

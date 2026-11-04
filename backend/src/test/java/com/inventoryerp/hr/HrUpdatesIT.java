@@ -136,4 +136,107 @@ class HrUpdatesIT extends ApiTestSupport {
         }
         assertThat(call("GET", "/hr/me", null, token).body().toString()).contains(emp);
     }
+
+    String provisioned(String employeeId) {
+        String email = "team-" + s() + "@demo.test";
+        String roleId = jdbc.sql("SELECT id FROM \"Role\" WHERE \"organizationId\" = ? AND name = 'Administrator'")
+                .param(demoOrg).query(String.class).list().getFirst();
+        ok(201, "POST", "/hr/employees/" + employeeId + "/provision-user", Map.of("email", email, "password",
+                "Staff@123456", "firstName", "Team", "roleIds", List.of(roleId)));
+        return login("DEMO", email, "Staff@123456");
+    }
+
+    @Test
+    @DisplayName("my team: a report clocks in and asks for leave; only their manager sees and decides it")
+    void managerTeamFlow() {
+        String s = s();
+        String manager = employee();
+        String report = ok(201, "POST", "/hr/employees", Map.of("firstName", "Rep", "lastName", "Ort " + s,
+                "supervisorId", manager)).get("id").asString();
+        String bystander = employee();
+        String managerToken = provisioned(manager);
+        String reportToken = provisioned(report);
+        String bystanderToken = provisioned(bystander);
+        String typeId = ok(201, "POST", "/hr/leave/types", Map.of("code", "tm" + s, "name", "Team leave " + s,
+                "daysPerYear", 10)).get("id").asString();
+
+        Res clocked = call("POST", "/hr/me/clock", Map.of("eventType", "CHECK_IN"), reportToken);
+        assertThat(clocked.status()).as(clocked.raw().body()).isEqualTo(201);
+        JsonNode today = call("GET", "/hr/team/today", null, managerToken).body();
+        assertThat(today.get("total").asInt()).isEqualTo(1);
+        assertThat(today.get("rows").get(0).get("employeeId").asString()).isEqualTo(report);
+        assertThat(today.get("rows").get(0).get("checkInAt").isNull()).isFalse();
+        assertThat(call("GET", "/hr/team", null, managerToken).body().get("rows").findValuesAsString("id"))
+                .containsExactly(report);
+        assertThat(call("GET", "/hr/team/today", null, bystanderToken).body().get("total").asInt()).isZero();
+        assertThat(call("GET", "/hr/team/leave", null, bystanderToken).body().get("total").asInt()).isZero();
+
+        String start = LocalDate.now(ZoneOffset.UTC).plusYears(1).withDayOfMonth(3).toString();
+        String end = LocalDate.now(ZoneOffset.UTC).plusYears(1).withDayOfMonth(4).toString();
+        Res asked = call("POST", "/hr/me/leave", Map.of("leaveTypeId", typeId, "startDate", start, "endDate", end,
+                "overrideBalance", true), reportToken);
+        assertThat(asked.status()).as(asked.raw().body()).isEqualTo(201);
+        String requestId = asked.body().get("id").asString();
+        assertThat(call("GET", "/hr/team/leave?status=PENDING", null, managerToken).body().get("rows")
+                .findValuesAsString("id")).contains(requestId);
+
+        Res notYours = call("POST", "/hr/me/leave/" + requestId + "/cancel", null, bystanderToken);
+        assertThat(notYours.status()).isEqualTo(403);
+        assertThat(notYours.body().get("message").asString()).isEqualTo("That leave request is not yours");
+        Res notManaged = call("POST", "/hr/team/leave/" + requestId + "/approve", Map.of(), bystanderToken);
+        assertThat(notManaged.status()).isEqualTo(403);
+        assertThat(notManaged.body().get("message").asString())
+                .isEqualTo("That leave request is not from someone you manage");
+        assertThat(call("POST", "/hr/team/leave/" + UUID.randomUUID() + "/approve", Map.of(), managerToken).status())
+                .isEqualTo(403);
+        Res approved = call("POST", "/hr/team/leave/" + requestId + "/approve", Map.of(), managerToken);
+        assertThat(approved.status()).as(approved.raw().body()).isEqualTo(201);
+        assertThat(approved.body().get("status").asString()).isEqualTo("APPROVED");
+
+        String start2 = LocalDate.now(ZoneOffset.UTC).plusYears(1).withDayOfMonth(20).toString();
+        String second = call("POST", "/hr/me/leave", Map.of("leaveTypeId", typeId, "startDate", start2, "endDate",
+                start2), reportToken).body().get("id").asString();
+        Res rejected = call("POST", "/hr/team/leave/" + second + "/reject", Map.of("reason", "Busy week"),
+                managerToken);
+        assertThat(rejected.status()).as(rejected.raw().body()).isEqualTo(201);
+        String third = call("POST", "/hr/me/leave", Map.of("leaveTypeId", typeId, "startDate", start2, "endDate",
+                start2), reportToken).body().get("id").asString();
+        assertThat(call("POST", "/hr/me/leave/" + third + "/cancel", null, reportToken).status()).isEqualTo(201);
+        assertThat(call("GET", "/hr/me/payslips?take=5", null, reportToken).body().get("total").asInt()).isZero();
+    }
+
+    @Test
+    @DisplayName("pay info: IBAN normalised and mod-97 checked; annual earnings summary and certificate PDF")
+    void payInfoAndAnnualEarnings() throws Exception {
+        String emp = employee();
+        assertThat(ok(200, "GET", "/hr/employees/" + emp + "/pay-info", null).get("employeeId").asString())
+                .isEqualTo(emp);
+        Res bad = as("PUT", "/hr/employees/" + emp + "/pay-info", Map.of("iban", "GB00 WEST 1234 5698 7654 32"));
+        assertThat(bad.status()).isEqualTo(400);
+        assertThat(bad.body().get("message").asString()).isEqualTo("Invalid IBAN");
+        assertThat(as("PUT", "/hr/employees/" + emp + "/pay-info", Map.of("iban", "not-an-iban")).status())
+                .isEqualTo(400);
+        JsonNode saved = ok(200, "PUT", "/hr/employees/" + emp + "/pay-info", Map.of("iban",
+                "gb82 west 1234 5698 7654 32", "routingCode", "west 12", "bankBranch", "City"));
+        assertThat(saved.get("iban").asString()).isEqualTo("GB82WEST12345698765432");
+        assertThat(saved.get("routingCode").asString()).isEqualTo("WEST12");
+        JsonNode updated = ok(200, "PUT", "/hr/employees/" + emp + "/pay-info", Map.of("wpsPersonId", "p 77"));
+        assertThat(updated.get("wpsPersonId").asString()).isEqualTo("P77");
+        assertThat(ok(200, "GET", "/hr/employees/" + emp + "/pay-info", null).get("iban").asString())
+                .isEqualTo("GB82WEST12345698765432");
+        assertThat(as("PUT", "/hr/employees/" + UUID.randomUUID() + "/pay-info", Map.of("iban", "x")).status())
+                .isEqualTo(404);
+
+        JsonNode summary = ok(200, "GET", "/hr/employees/" + emp + "/earnings/2026", null);
+        assertThat(summary.get("year").asInt()).isEqualTo(2026);
+        assertThat(summary.get("periods").asInt()).isZero();
+        assertThat(summary.get("byCode")).isEmpty();
+        assertThat(as("GET", "/hr/employees/" + UUID.randomUUID() + "/earnings/2026", null).status())
+                .isEqualTo(404);
+        var pdf = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port
+                + "/api/v1/hr/employees/" + emp + "/earnings/2026/pdf")).header("Authorization", "Bearer "
+                + adminToken).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(new String(pdf.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+    }
 }
