@@ -40,8 +40,17 @@ class BackupJobsIT extends ApiTestSupport {
     Path usb;
     BackupService service;
 
+    /** Fixture .env written only when the checkout has none (CI); never touches a real one. */
+    Path fixtureEnv;
+
     @BeforeAll
     void setUp() throws Exception {
+        Path cwd = Path.of("").toAbsolutePath();
+        if (!Files.exists(cwd.resolve(".env")) && !Files.exists(cwd.resolve("backend").resolve(".env"))
+                && !Files.exists(cwd.resolve("..").resolve(".env").normalize())) {
+            fixtureEnv = Files.writeString(cwd.resolve(".env"), "# BackupJobsIT fixture" + System.lineSeparator()
+                    + "PORT=3000" + System.lineSeparator());
+        }
         root = Files.createTempDirectory("pos-backup-jobs-");
         primary = Files.createDirectories(root.resolve("primary"));
         usb = Files.createDirectories(root.resolve("usb"));
@@ -69,6 +78,9 @@ class BackupJobsIT extends ApiTestSupport {
 
     @AfterAll
     void tearDown() throws Exception {
+        if (fixtureEnv != null) {
+            Files.deleteIfExists(fixtureEnv);
+        }
         try (var walk = Files.walk(root)) {
             walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
         }
