@@ -75,6 +75,8 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | PC-0 | Shared currency resolution (explicit → table → refuse, `JournalEntryFxRate` snapshot) and realised FX on payments / credit notes (ADR-S054, V291); cost-flow GL trace, `CostingAuditIT`, `BooksGuard` on 24 regression suites; bill-tax impact analysis for review | done — gate met ([record](audits/pc0-accounting-baseline.md)); D-PC3 awaits owner |
 | PC-1 | Valuation correctness ([plan](phases/PC-1-valuation-correctness.md)). WP1: one target → account function for posting and release; NRV allowance released to cost of sales (V1), scrap to stock adjustment expense (V2) (ADR-S055) | in progress — WP1 done (`CostingAuditIT`, `LandedCostAuditIT`); WP2 transfer lineage superseded by LC-1 (V292, ADR-S053) |
 
+**Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0 design done 2026-11-04; CS-1..CS-4 todo; CS-5/6 deferred.
+
 **Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**
 
 | Phase | Scope | Status |

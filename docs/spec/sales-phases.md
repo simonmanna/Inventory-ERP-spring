@@ -383,3 +383,21 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   `CrmTeam`. Revisit in S9 (targets).
 - S0: rollback is a runbook (copy rows back + drop trigger + revert release) instead of a runtime source flag; a
   dual code path would keep two quotation engines alive, which ADR-S011 §4 forbids.
+
+---
+
+## CS — Branch cash sales → head-office invoicing (ADR-S056)
+
+Spec: [`cash-sales.md`](cash-sales.md). Owner approved plan rev 4 on 2026-11-04. Each phase gets its own branch
+`phase/CS-<n>-cash-sales` and ends with a done-report. **CS-3 does not start until the CS-2 ledger ITs prove that
+postings are balanced, idempotent and correct.** VAT tax point and EFRIS timing need accountant sign-off before
+production.
+
+| Phase | Scope | Status |
+|---|---|---|
+| CS-0 | ADR-S056, spec (states, posting matrix, account validation, fiscal lifecycle, test list T1–T31) | done |
+| CS-1 | Migration, entities, `BranchSalesProfile` + validation, draft CRUD, numbering, branch scope, permissions | todo |
+| CS-2 | Confirm: P1 stock issue, P2 cash-sale deposits, P3 revenue/VAT accrual; payment capture + verification; deposit isolation | todo |
+| CS-3 | HO workflow: submit, review, return/amend, approve, reject/reopen, generate invoice (P4–P5), cancel invoice (P7), void (P6), timeline, DMS, events, fiscal port + outbox | todo |
+| CS-4 | Web: showroom form + list + tiles; HO queue, review split panel, exception queue; profile admin; menu; i18n | todo |
+| Later | CS-5 branch cash book / remittance / MoMo settlement; CS-6 reports; deliver-later; RMA after invoice; self-invoicing; credit sales; EFRIS adapter | deferred |

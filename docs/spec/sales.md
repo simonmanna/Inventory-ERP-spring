@@ -33,6 +33,7 @@ Sales owns commercial commitments and orchestrates the rest of order-to-cash.
 | Make-to-order | SO → production request → DO → Invoice | after manufacturing integration |
 | Return | RMA → inspection → credit note / replacement SO / refund | S7 |
 | Walk-in / counter | POS (unchanged) or direct invoice (existing) | — |
+| Branch cash sale | Showroom CSS (sale + stock + payment) → HO review → invoice ([`cash-sales.md`](cash-sales.md), ADR-S056) | CS-1..CS-4 |
 
 `SalesSettings.flows` enables flows per organization; disabling a flow never disables a control (credit, approvals,
 idempotency, stock and GL integrity).
