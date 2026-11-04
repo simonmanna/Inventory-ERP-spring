@@ -110,6 +110,7 @@ import {
   Cylinder,
   CreditCard,
   Settings2,
+  Store,
   // fleet 1.3 dispatch
   CalendarRange,
   Route as RouteIcon,
@@ -339,6 +340,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
       { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead, feature: 'crm' },
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
+      { to: '/sales/cash-sales', label: tx('Branch Cash Sales'), icon: Store, permission: PERMISSIONS.sales.cashSaleRead },
+      { to: '/sales/cash-sales/processing', label: tx('Branch Sales Processing'), icon: ClipboardCheck, permission: PERMISSIONS.sales.cashSaleReadAll },
       { to: '/fleet/delivery-orders', label: tx('Deliveries'), icon: Truck, permission: PERMISSIONS.fleetDispatch.read, feature: 'fleet' },
       { to: '/invoices', label: tx('Invoices'), icon: Receipt, permission: PERMISSIONS.invoice.read },
       { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
@@ -354,6 +357,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/margin-floors', label: tx('Margin Floors'), icon: Percent, permission: PERMISSIONS.sales.pricingRead, group: 'Configuration' },
       { to: '/sales/agreements', label: tx('Agreements & Rebates'), icon: FileSignature, permission: PERMISSIONS.sales.agreementRead, group: 'Configuration' },
       { to: '/sales/portal-access', label: tx('Customer Portal'), icon: Globe, permission: PERMISSIONS.sales.portalManage, group: 'Configuration' },
+      { to: '/sales/branch-profiles', label: tx('Branch Sales Profiles'), icon: Settings2, permission: PERMISSIONS.sales.branchProfileManage, group: 'Configuration' },
     ],
   },
   {
