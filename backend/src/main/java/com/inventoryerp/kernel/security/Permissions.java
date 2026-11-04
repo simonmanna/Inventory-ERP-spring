@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (661 permissions). Constant name = GROUP__ACTION.
+ * exactly (664 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 

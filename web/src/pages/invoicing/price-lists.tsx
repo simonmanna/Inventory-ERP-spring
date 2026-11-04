@@ -248,7 +248,6 @@ function PriceListDialog({ id, canManage, onClose }: { id?: string; canManage: b
               </thead>
               <tbody>
                 {v.items.map((it, i) => (
-                  // eslint-disable-next-line react/no-array-index-key
                   <tr key={i}>
                     <td className="min-w-48 p-1"><SearchableSelect value={it.productId ?? ''} onValueChange={(x) => setItem(i, { productId: x || null })} options={productOptions} placeholder={tx('All products')} /></td>
                     <td className="p-1">

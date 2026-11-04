@@ -59,7 +59,7 @@ class BackupJobsIT extends ApiTestSupport {
         cfg.put("destinations", List.of(
                 BackupService.m("type", "local", "path", primary.toString(), "label", "Primary", "enabled", true),
                 BackupService.m("type", "external_drive", "path", usb.toString(), "label", "USB", "enabled", true),
-                BackupService.m("type", "s3", "path", "shop", "bucket", "no-such-bucket", "label", "Cloud",
+                BackupService.m("type", "dropbox", "path", "shop", "bucket", "no-such-remote", "label", "Cloud",
                         "enabled", true)));
         cfg.put("internetBehaviour", "upload_immediately");
         cfg.put("notifications", BackupService.m("on", List.of("completed", "failed", "skipped"), "channels",
@@ -93,8 +93,9 @@ class BackupJobsIT extends ApiTestSupport {
     void configBackup() throws Exception {
         Map<String, Object> r = service.runConfigBackup();
         assertThat(r.get("status")).as(String.valueOf(r)).isEqualTo("success");
-        // No provider CLI here: the cloud copy fails and is reported, the backup itself does not.
-        assertThat(String.valueOf(r.get("copies"))).contains("destination=Cloud, ok=false");
+        // rclone is not installed (and "no-such-remote" is not configured): the cloud copy fails and is reported, the
+        // backup itself does not. Not s3: CI runners ship the AWS CLI.
+        assertThat(String.valueOf(r.get("copies"))).as(String.valueOf(r)).contains("destination=Cloud, ok=false");
         try (var s = Files.walk(primary)) {
             assertThat(s.filter(Files::isRegularFile).map(p -> p.toString()).anyMatch(p -> p.contains("config")))
                     .isTrue();
