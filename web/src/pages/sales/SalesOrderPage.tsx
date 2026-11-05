@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
-import { Copy, FileSignature, FileText, History, Pause, Play, Plus, Scissors, Trash2, Truck, XCircle } from 'lucide-react';
+import { ChevronDown, Copy, FileSignature, FileText, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
@@ -58,6 +60,7 @@ export function SalesOrderPage() {
   const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | null>(null);
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
+  const [tab, setTab] = useState('lines');
 
   useEffect(() => {
     if (o) {
@@ -113,6 +116,19 @@ export function SalesOrderPage() {
   const step = !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
   const currency = o?.currencyCode;
   const est = lines.reduce((s, l) => s + n(l.quantity) * n(l.unitPrice) * (1 - n(l.discountPercent) / 100), 0);
+  const rel = o?.relations;
+  const fulfilling = !!o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status);
+  const ico = 'mr-2 h-4 w-4';
+  type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
+  const menu: MenuItem[] = [];
+  if (o) {
+    if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
+    if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
+    if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (has(P.orderWrite)) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => run('duplicate') });
+    if (!['cancelled', 'done'].includes(status) && has(P.orderCancel)) menu.push({ key: 'cancel', label: tx('Cancel order'), icon: <XCircle className={ico} />, danger: true, onSelect: () => { setReason(''); setDialog('cancel'); } });
+    if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
+  }
 
   return (
     <div className="space-y-4">
@@ -127,45 +143,56 @@ export function SalesOrderPage() {
         {status !== 'cancelled' && <div className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
-        {o?.status === 'draft' && has(P.orderConfirm) && <Button variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
-        {o?.status === 'pending_approval' && has(P.quotationApprove) && <>
-          <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
-          <Button variant="destructive" onClick={() => { const r = prompt(tx('Reason')); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
-        </>}
-        {o && open && !o.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => { setReason(''); setDialog('hold'); }}><Pause className="mr-1.5 h-4 w-4" />{tx('Hold')}</Button>}
-        {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
-        {o && open && has(P.orderAmend) && <Button variant="outline" onClick={() => setDialog('change')}><FileSignature className="mr-1.5 h-4 w-4" />{tx('Request change')}</Button>}
-        {o && !['cancelled', 'done'].includes(status) && has(P.orderCancel) && <Button variant="ghost" onClick={() => { setReason(''); setDialog('cancel'); }}><XCircle className="mr-1.5 h-4 w-4" />{tx('Cancel order')}</Button>}
-        {o && ['in_fulfilment', 'done'].includes(status) && has(P.returnWrite) && <Button variant="outline" onClick={() => setDialog('return')}>{tx('Return / claim')}</Button>}
-        {o && has(P.orderWrite) && <Button variant="ghost" onClick={() => run('duplicate')}><Copy className="mr-1.5 h-4 w-4" />{tx('Duplicate')}</Button>}
-        {o?.status === 'draft' && has(P.orderWrite) && (
-          <Button variant="ghost" className="text-destructive" onClick={() => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); }}><Trash2 className="h-4 w-4" /></Button>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
+          {o?.status === 'draft' && has(P.orderConfirm) && <Button variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
+          {o?.status === 'pending_approval' && has(P.quotationApprove) && <>
+            <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
+            <Button variant="destructive" onClick={() => { const r = prompt(tx('Reason')); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
+          </>}
+          {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
+          {menu.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">{tx('Actions')}<ChevronDown className="ml-1.5 h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[200px]">
+                {menu.map((m, i) => (
+                  <Fragment key={m.key}>
+                    {m.danger && i > 0 && !menu[i - 1].danger && <DropdownMenuSeparator />}
+                    <DropdownMenuItem onSelect={m.onSelect} className={cn(m.danger && 'text-destructive focus:text-destructive')}>{m.icon}{m.label}</DropdownMenuItem>
+                  </Fragment>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/crm/quotations/${rel.quotation.id}`)} />
+          <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/fleet/delivery-orders/${rel.deliveries[0].id}`)} />
+          <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
+          <SmartButton icon={<FileSignature className="h-4 w-4" />} count={rel?.changeRequests ?? 0} label={tx('Change requests')} disabled={!rel?.changeRequests} onClick={() => setTab('other')} />
+          <SmartButton icon={<History className="h-4 w-4" />} count={rel?.revisions ?? 0} label={tx('Revisions')} disabled={!rel?.revisions} onClick={() => setDialog('revisions')} />
+        </div>
       </div>
 
       {o?.status === 'pending_approval' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
       {o?.status === 'draft' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.approvalReasons.join(' · ')}</div>}
       {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.holdKind === 'credit' ? tx('Credit hold') : o.holdKind === 'customer' ? tx('Customer blocked') : tx('On hold')}: {o.holdReason}{o.holdKind === 'credit' && <span className="block text-xs">{tx('Release needs the credit override permission.')}</span>}</div>}
 
-      {o?.relations && (
-        <div className="flex flex-wrap gap-2">
-          <SmartButton icon={<FileText className="h-4 w-4" />} count={o.relations.quotation ? 1 : 0} label={tx('Quotation')} disabled={!o.relations.quotation} onClick={() => o.relations?.quotation && navigate(`/crm/quotations/${o.relations.quotation.id}`)} />
-          <SmartButton icon={<Truck className="h-4 w-4" />} count={o.relations.deliveries.length} label={tx('Deliveries')} disabled={!o.relations.deliveries.length} onClick={() => navigate(`/fleet/delivery-orders/${o.relations!.deliveries[0].id}`)} />
-          <SmartButton icon={<FileText className="h-4 w-4" />} count={o.relations.invoices.length} label={tx('Invoices')} disabled={!o.relations.invoices.length} onClick={() => navigate(`/invoices/${o.relations!.invoices[0].id}`)} />
-          <SmartButton icon={<FileSignature className="h-4 w-4" />} count={o.relations.changeRequests} label={tx('Change requests')} />
-          <SmartButton icon={<History className="h-4 w-4" />} count={o.relations.revisions} label={tx('Revisions')} disabled={!o.relations.revisions} onClick={() => setDialog('revisions')} />
+      <section className="rounded-xl border bg-card shadow-sm">
+        <div className="px-5 pt-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{tx('Sales order')}</p>
+          <h1 className="text-2xl font-bold">{o ? o.number : tx('New')}</h1>
         </div>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border bg-card p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold">{tx('Customer')}</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={tx('Customer')} className="sm:col-span-2">
+        <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
+          <div className="space-y-3">
+            <Field label={tx('Customer')}>
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{o?.partnerName}</p>}
             </Field>
+          </div>
+          <div className="space-y-3">
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
               <Field label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
@@ -175,31 +202,24 @@ export function SalesOrderPage() {
                 </select>
               </Field>
             )}
-            <Field label={tx('Delivery address / site')} className="sm:col-span-2"><Input disabled={!editable} value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); setDirty(true); }} /></Field>
+            {o && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={tx('Created')}><p className="py-2 text-sm">{date(o.createdAt)}</p></Field>
+                {o.confirmedAt && <Field label={tx('Confirmed')}><p className="py-2 text-sm">{date(o.confirmedAt)}</p></Field>}
+                {o.cancelledAt && <Field label={tx('Cancelled')} className="sm:col-span-2"><p className="py-2 text-sm">{date(o.cancelledAt)} — {o.cancelReason}</p></Field>}
+              </div>
+            )}
           </div>
-        </section>
+        </div>
 
-        <section className="rounded-xl border bg-card p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold">{tx('Order details')}</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={tx('Requested date')}><Input type="date" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
-            <Field label={tx('Delivery method')}>
-              <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={deliveryMethod} onChange={(e) => { setDeliveryMethod(e.target.value as 'delivery' | 'collect'); setDirty(true); }}>
-                <option value="delivery">{tx('Deliver to site')}</option><option value="collect">{tx('Customer collects')}</option>
-              </select>
-            </Field>
-            {o && <>
-              <Field label={tx('Delivery')}><p className="py-2 text-sm">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>
-              <Field label={tx('Invoicing')}><p className="py-2 text-sm">{INVOICE_LABEL[o.invoiceStatus]}</p></Field>
-              <Field label={tx('Created')}><p className="py-2 text-sm">{date(o.createdAt)}</p></Field>
-              {o.confirmedAt && <Field label={tx('Confirmed')}><p className="py-2 text-sm">{date(o.confirmedAt)}</p></Field>}
-              {o.cancelledAt && <Field label={tx('Cancelled')} className="sm:col-span-2"><p className="py-2 text-sm">{date(o.cancelledAt)} — {o.cancelReason}</p></Field>}
-            </>}
-          </div>
-        </section>
-      </div>
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
+            {([['lines', tx('Order lines')], ['delivery', tx('Delivery & fulfilment')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
+              <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
+            ))}
+          </TabsList>
 
-      <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
+          <TabsContent value="lines" className="mt-0 space-y-4 p-5">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm">
               <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -249,16 +269,50 @@ export function SalesOrderPage() {
               {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
             </div>
           </div>
-      </section>
+          </TabsContent>
 
-      <div className="grid items-start gap-4 lg:grid-cols-2">
-        {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
-        {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <FulfilmentPanel order={o} />}
-        {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <BillingPanel order={o} />}
-        {o && o.status !== 'draft' && <AvailabilityPanel order={o} />}
-        {o && <ChangeRequestsPanel orderId={o.id} />}
-        {o && <AttachmentPanel resType="sales_order" resId={o.id} />}
-      </div>
+          <TabsContent value="delivery" className="mt-0 space-y-4 p-5">
+            <TabSection title={tx('Delivery')}>
+              <Field label={tx('Requested date')}><Input type="date" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
+              <Field label={tx('Delivery method')}>
+                <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={deliveryMethod} onChange={(e) => { setDeliveryMethod(e.target.value as 'delivery' | 'collect'); setDirty(true); }}>
+                  <option value="delivery">{tx('Deliver to site')}</option><option value="collect">{tx('Customer collects')}</option>
+                </select>
+              </Field>
+              <Field label={tx('Delivery address / site')} className="sm:col-span-2"><Input disabled={!editable} value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); setDirty(true); }} /></Field>
+              {o && <Field label={tx('Delivery status')}><p className="py-2 text-sm">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>}
+            </TabSection>
+            {o && o.status !== 'draft' && (
+              <div className="grid items-start gap-4 lg:grid-cols-2">
+                {fulfilling && <FulfilmentPanel order={o} />}
+                <AvailabilityPanel order={o} />
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="billing" className="mt-0 space-y-4 p-5">
+            <TabSection title={tx('Invoicing')}>
+              <Field label={tx('Invoice status')}><p className="py-2 text-sm">{o ? INVOICE_LABEL[o.invoiceStatus] : '—'}</p></Field>
+              <Field label={tx('Order total')}><p className="py-2 text-sm font-medium tabular-nums">{money(o && !dirty ? o.total : est, currency)}</p></Field>
+            </TabSection>
+            {(o?.partnerId || partnerId) ? (
+              <div className="grid items-start gap-4 lg:grid-cols-2">
+                {o && fulfilling && <BillingPanel order={o} />}
+                <CreditPanel partnerId={o?.partnerId ?? partnerId} />
+              </div>
+            ) : <p className="text-sm text-muted-foreground">{tx('Choose a customer to see credit and billing details.')}</p>}
+          </TabsContent>
+
+          <TabsContent value="other" className="mt-0 space-y-4 p-5">
+            {o ? (
+              <div className="grid items-start gap-4 lg:grid-cols-2">
+                <ChangeRequestsPanel orderId={o.id} />
+                <AttachmentPanel resType="sales_order" resId={o.id} />
+              </div>
+            ) : <p className="text-sm text-muted-foreground">{tx('Save the order to add attachments and change requests.')}</p>}
+          </TabsContent>
+        </Tabs>
+      </section>
 
       <Dialog open={dialog === 'hold' || dialog === 'cancel' || dialog === 'close'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
@@ -278,6 +332,15 @@ export function SalesOrderPage() {
       {o && dialog === 'change' && <ChangeDialog order={o} onClose={() => setDialog(null)} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
+    </div>
+  );
+}
+
+function TabSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-3 border-b pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <div className="grid gap-3 sm:grid-cols-2 lg:max-w-3xl">{children}</div>
     </div>
   );
 }
