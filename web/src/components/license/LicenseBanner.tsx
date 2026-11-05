@@ -1,4 +1,4 @@
-import { AlertTriangle, BadgeCheck, Clock, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, ShieldAlert } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
@@ -15,6 +15,8 @@ export function LicenseBanner() {
   const { data } = useLicense();
   const severity = licenseSeverity(data);
   if (!data || severity === 'none') return null;
+  // Trial countdown is not shown to users; only a stopped (read-only) trial surfaces.
+  if (data.mode === 'TRIAL' && severity !== 'error' && !data.tamperSuspected) return null;
 
   const { icon: Icon, tone, text } = describe(data, severity);
 
@@ -75,14 +77,6 @@ function describe(status: LicenseStatus, severity: 'info' | 'warn' | 'error') {
         ? tx('Your licence has expired. Everything still works until {date} — renew before then.')
             .replace('{date}', formatDate(status.graceUntil))
         : tx('Your licence has expired and is running on borrowed time. Please renew.'),
-    };
-  }
-
-  if (status.mode === 'TRIAL' && days != null) {
-    return {
-      icon: Clock,
-      tone: 'border-border bg-muted text-muted-foreground',
-      text: tx('Trial: {days} day(s) left.').replace('{days}', String(Math.max(0, days))),
     };
   }
 

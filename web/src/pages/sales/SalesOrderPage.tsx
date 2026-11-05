@@ -166,7 +166,6 @@ export function SalesOrderPage() {
             <Field label={tx('Customer')} className="sm:col-span-2">
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{o?.partnerName}</p>}
             </Field>
-            <Field label={tx('Customer PO')}><Input disabled={!editable} value={customerRef} onChange={(e) => { setCustomerRef(e.target.value); setDirty(true); }} /></Field>
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
               <Field label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
