@@ -29,8 +29,10 @@ const DashboardPage = lazy(() => import('@/pages/dashboard').then((m) => ({ defa
 const PartnersPage = lazy(() => import('@/pages/partners').then((m) => ({ default: m.PartnersPage })));
 const CustomersPage = lazy(() => import('@/pages/customers').then((m) => ({ default: m.CustomersPage })));
 const CustomerDetailPage = lazy(() => import('@/pages/customers').then((m) => ({ default: m.CustomerDetailPage })));
+const CustomerCreatePage = lazy(() => import('@/pages/customers').then((m) => ({ default: m.CustomerCreatePage })));
 const SuppliersPage = lazy(() => import('@/pages/suppliers').then((m) => ({ default: m.SuppliersPage })));
 const SupplierDetailPage = lazy(() => import('@/pages/suppliers').then((m) => ({ default: m.SupplierDetailPage })));
+const SupplierCreatePage = lazy(() => import('@/pages/suppliers').then((m) => ({ default: m.SupplierCreatePage })));
 const SupplierLedgerPage = lazy(() => import('@/pages/purchasing/supplier-ledger').then((m) => ({ default: m.SupplierLedgerPage })));
 const ProductsPage = lazy(() => import('@/pages/products').then((m) => ({ default: m.ProductsPage })));
 const UomPage = lazy(() => import('@/pages/uom').then((m) => ({ default: m.UomPage })));
@@ -328,8 +330,10 @@ export function App() {
             <Route path="/staff/roles/:id/edit" element={<RoleEditPage />} />
             <Route path="/partners" element={<PartnersPage />} />
             <Route path="/customers" element={<CustomersPage />} />
+            <Route path="/customers/new" element={<CustomerCreatePage />} />
             <Route path="/customers/:partnerId" element={<CustomerDetailPage />} />
             <Route path="/suppliers" element={<SuppliersPage />} />
+            <Route path="/suppliers/new" element={<SupplierCreatePage />} />
             <Route path="/suppliers/:partnerId" element={<SupplierDetailPage />} />
             <Route path="/suppliers/:partnerId/ledger" element={<SupplierLedgerPage />} />
             <Route path="/products" element={<ProductsPage />} />

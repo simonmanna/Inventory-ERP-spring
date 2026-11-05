@@ -1,5 +1,6 @@
 package com.inventoryerp.core.web;
 
+import com.inventoryerp.core.application.PartnerProfileService;
 import com.inventoryerp.core.application.PartnerService;
 import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.security.Permissions;
@@ -73,10 +74,22 @@ public class PartnerController {
             List<Map<String, Object>> contacts,
             List<Map<String, Object>> addresses) {}
 
-    private final PartnerService partners;
+    /** One contact of a partner (contacts tab). */
+    public record ContactRequest(
+            String firstName,
+            String lastName,
+            String position,
+            @Email(message = "must be an email") String email,
+            String phone,
+            Boolean isPrimary,
+            Boolean isActive) {}
 
-    public PartnerController(PartnerService partners) {
+    private final PartnerService partners;
+    private final PartnerProfileService profiles;
+
+    public PartnerController(PartnerService partners, PartnerProfileService profiles) {
         this.partners = partners;
+        this.profiles = profiles;
     }
 
     @GetMapping
@@ -109,5 +122,38 @@ public class PartnerController {
     @RequirePermissions(Permissions.PARTNER__DELETE)
     public void remove(@PathVariable String id) {
         partners.remove(id);
+    }
+
+    @GetMapping("/{id}/profile")
+    @RequirePermissions(Permissions.PARTNER__READ)
+    public Map<String, Object> profile(@PathVariable String id) {
+        return profiles.get(id);
+    }
+
+    @PatchMapping("/{id}/profile")
+    @RequirePermissions(Permissions.PARTNER__UPDATE)
+    public Map<String, Object> updateProfile(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        return profiles.update(id, body);
+    }
+
+    @PostMapping("/{id}/contacts")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.PARTNER__UPDATE)
+    public Map<String, Object> addContact(@PathVariable String id, @Valid @RequestBody ContactRequest dto) {
+        return partners.addContact(id, dto);
+    }
+
+    @PatchMapping("/{id}/contacts/{contactId}")
+    @RequirePermissions(Permissions.PARTNER__UPDATE)
+    public Map<String, Object> updateContact(@PathVariable String id, @PathVariable String contactId,
+            @Valid @RequestBody ContactRequest dto) {
+        return partners.updateContact(id, contactId, dto);
+    }
+
+    @DeleteMapping("/{id}/contacts/{contactId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @RequirePermissions(Permissions.PARTNER__UPDATE)
+    public void removeContact(@PathVariable String id, @PathVariable String contactId) {
+        partners.removeContact(id, contactId);
     }
 }

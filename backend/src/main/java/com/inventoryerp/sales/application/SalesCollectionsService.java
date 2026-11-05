@@ -18,11 +18,16 @@ import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -148,6 +153,10 @@ public class SalesCollectionsService {
             Map<String, Object> level = levels.stream().filter(l -> ((Number) l.get("daysOverdue")).intValue() <= days)
                     .findFirst().orElse(null);
             if (level == null) {
+                continue;
+            }
+            if (db.count("SELECT count(*) FROM \"Partner\" WHERE id = ? AND \"followupExcluded\"", List.of(partnerId)) > 0) {
+                skipped++;
                 continue;
             }
             if (db.count("SELECT count(*) FROM \"PromiseToPay\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND"
@@ -353,6 +362,197 @@ public class SalesCollectionsService {
             rows.removeIf(r -> dec(r.get(bucket)).signum() <= 0);
         }
         return rows;
+    }
+
+    // ------------------------------------------------------------------ per-customer follow-up (customer page)
+
+    private static final Set<String> FOLLOWUP_KEYS = Set.of("followupLevelId", "followupNextReminder",
+            "followupResponsibleId", "followupExcluded", "followupNote", "promisedDate", "promiseNote");
+
+    /**
+     * The customer's follow-up card: status, plan level (stated or suggested by days overdue), next reminder,
+     * responsible, amounts due / overdue, the open promise to pay, exclusion flag and the open receivable lines.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> followup(String partnerId) {
+        Map<String, Object> p = db.row("SELECT id, name, \"followupLevelId\", \"followupNextReminder\","
+                + " \"followupResponsibleId\", \"followupExcluded\", \"followupNote\" FROM \"Partner\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", partnerId, org());
+        if (p == null) {
+            throw ApiException.notFound("Partner not found");
+        }
+        List<Map<String, Object>> lines = db.rows("""
+                SELECT d.id, d."documentNumber", d."documentType"::text AS "documentType", d."issueDate", d."dueDate",
+                       CASE WHEN d."documentType"::text = 'credit_note' THEN -d."amountResidual" ELSE d."amountResidual" END
+                           AS balance,
+                       COALESCE(b.name, o.name) AS company
+                  FROM "Document" d
+                  LEFT JOIN "Branch" b ON b.id = d."branchId"
+                  LEFT JOIN "Organization" o ON o.id = d."organizationId"
+                 WHERE d."organizationId" = ? AND d."partnerId" = ? AND d.status::text = 'posted'
+                   AND d."documentType"::text IN ('sales_invoice', 'debit_note', 'credit_note')
+                   AND d."amountResidual" <> 0
+                 ORDER BY d."issueDate" DESC, d."documentNumber" DESC""", org(), partnerId);
+        LocalDate today = LocalDate.now();
+        BigDecimal due = BigDecimal.ZERO;
+        BigDecimal overdue = BigDecimal.ZERO;
+        LocalDate oldest = null;
+        for (Map<String, Object> l : lines) {
+            BigDecimal bal = dec(l.get("balance"));
+            due = due.add(bal);
+            LocalDate dd = toDate(l.get("dueDate"));
+            if (bal.signum() > 0 && dd != null && dd.isBefore(today)) {
+                overdue = overdue.add(bal);
+                oldest = oldest == null || dd.isBefore(oldest) ? dd : oldest;
+            }
+        }
+        overdue = overdue.min(due.max(BigDecimal.ZERO));
+        int daysOverdue = oldest == null ? 0 : (int) ChronoUnit.DAYS.between(oldest, today);
+        List<Map<String, Object>> levels = levels();
+        String levelId = str(p.get("followupLevelId"));
+        Map<String, Object> level = levelId == null ? null
+                : levels.stream().filter(l -> levelId.equals(l.get("id"))).findFirst().orElse(null);
+        Map<String, Object> suggested = oldest == null ? null : levels.stream()
+                .filter(l -> Boolean.TRUE.equals(l.get("isActive"))
+                        && ((Number) l.get("daysOverdue")).intValue() <= daysOverdue)
+                .max(Comparator.comparingInt(l -> ((Number) l.get("daysOverdue")).intValue()))
+                .orElse(null);
+        LocalDate next = toDate(p.get("followupNextReminder"));
+        boolean excluded = Boolean.TRUE.equals(p.get("followupExcluded"));
+        String status;
+        if (overdue.signum() <= 0) {
+            status = "no_action_needed";
+        } else if (!excluded && (next == null || !next.isAfter(today))) {
+            status = "in_need_of_action";
+        } else {
+            status = "with_overdue_invoices";
+        }
+        Map<String, Object> promise = db.row("SELECT id, amount, \"promisedDate\", notes, status FROM \"PromiseToPay\""
+                + " WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'open' ORDER BY \"createdAt\" DESC"
+                + " LIMIT 1", org(), partnerId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("partnerId", partnerId);
+        out.put("status", status);
+        out.put("followupLevelId", levelId);
+        out.put("level", level == null ? suggested : level);
+        out.put("suggestedLevel", suggested);
+        out.put("followupNextReminder", next);
+        out.put("followupResponsibleId", p.get("followupResponsibleId"));
+        out.put("followupExcluded", excluded);
+        out.put("followupNote", p.get("followupNote"));
+        out.put("amountDue", due);
+        out.put("amountOverdue", overdue);
+        out.put("oldestDueDate", oldest);
+        out.put("daysOverdue", daysOverdue);
+        out.put("promise", promise);
+        out.put("lines", lines);
+        return out;
+    }
+
+    /**
+     * Save the follow-up card (only keys present are written). A changed {@code promisedDate} / {@code promiseNote}
+     * replaces the open promise to pay (for the amount due); an empty date cancels it.
+     */
+    @Transactional
+    public Map<String, Object> saveFollowup(String partnerId, Map<String, Object> in) {
+        Map<String, Object> before = followup(partnerId);
+        for (String k : in.keySet()) {
+            if (!FOLLOWUP_KEYS.contains(k)) {
+                throw ApiException.badRequest("property " + k + " should not exist");
+            }
+        }
+        List<String> sets = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+        if (in.containsKey("followupLevelId")) {
+            String id = str(in.get("followupLevelId"));
+            if (!blank(id) && !db.exists("DunningLevel", id)) {
+                throw ApiException.badRequest("Follow-up level not found");
+            }
+            sets.add("\"followupLevelId\" = ?");
+            params.add(blank(id) ? null : id);
+        }
+        if (in.containsKey("followupNextReminder")) {
+            sets.add("\"followupNextReminder\" = ?");
+            params.add(SalesDb.date(str(in.get("followupNextReminder"))));
+        }
+        if (in.containsKey("followupResponsibleId")) {
+            String id = str(in.get("followupResponsibleId"));
+            sets.add("\"followupResponsibleId\" = ?");
+            params.add(blank(id) ? null : id);
+        }
+        if (in.containsKey("followupExcluded")) {
+            sets.add("\"followupExcluded\" = ?");
+            params.add(Boolean.TRUE.equals(in.get("followupExcluded")));
+        }
+        if (in.containsKey("followupNote")) {
+            String note = str(in.get("followupNote"));
+            sets.add("\"followupNote\" = ?");
+            params.add(blank(note) ? null : note);
+        }
+        if (!sets.isEmpty()) {
+            params.add(partnerId);
+            params.add(org());
+            db.update("UPDATE \"Partner\" SET " + String.join(", ", sets) + ", \"updatedAt\" = now() WHERE id = ? AND"
+                    + " \"organizationId\" = ?", params.toArray());
+        }
+        if (in.containsKey("promisedDate") || in.containsKey("promiseNote")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> open = (Map<String, Object>) before.get("promise");
+            String oldDate = open == null ? null : day(open.get("promisedDate"));
+            String oldNote = open == null ? null : nullIfBlank(str(open.get("notes")));
+            String newDate = in.containsKey("promisedDate") ? day(in.get("promisedDate")) : oldDate;
+            String newNote = in.containsKey("promiseNote") ? nullIfBlank(str(in.get("promiseNote"))) : oldNote;
+            if (!Objects.equals(newDate, oldDate) || !Objects.equals(newNote, oldNote)) {
+                if (open != null) {
+                    cancelPromise(str(open.get("id")));
+                }
+                if (newDate != null) {
+                    BigDecimal amount = dec(before.get("amountDue"));
+                    if (amount.signum() <= 0) {
+                        throw ApiException.badRequest("No amount due to promise");
+                    }
+                    Map<String, Object> pr = new LinkedHashMap<>();
+                    pr.put("partnerId", partnerId);
+                    pr.put("amount", amount);
+                    pr.put("promisedDate", newDate);
+                    pr.put("notes", newNote);
+                    promise(pr);
+                }
+            }
+        }
+        audit.record(AuditInput.of("Partner", partnerId, "update", null, in));
+        return followup(partnerId);
+    }
+
+    private static String nullIfBlank(String s) {
+        return blank(s) ? null : s;
+    }
+
+    private static String day(Object v) {
+        LocalDate d = toDate(v);
+        return d == null ? null : d.toString();
+    }
+
+    private static LocalDate toDate(Object v) {
+        if (v == null || v.toString().isBlank()) {
+            return null;
+        }
+        if (v instanceof LocalDate d) {
+            return d;
+        }
+        if (v instanceof java.sql.Date d) {
+            return d.toLocalDate();
+        }
+        if (v instanceof java.sql.Timestamp t) {
+            return t.toLocalDateTime().toLocalDate();
+        }
+        if (v instanceof LocalDateTime t) {
+            return t.toLocalDate();
+        }
+        if (v instanceof Instant i) {
+            return i.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        }
+        return LocalDate.parse(v.toString().substring(0, 10));
     }
 
     /** E-mail statements to customers with an open balance (and an e-mail). Returns counts. */

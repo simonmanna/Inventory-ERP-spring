@@ -241,10 +241,15 @@ export function PartnersList({ partnerType }: { partnerType?: PartnerTypeFilter 
   );
 
   const openCreate = useCallback(() => {
+    // Customers / suppliers get a full-page form; the generic partner list keeps the dialog.
+    if (partnerType) {
+      navigate(`/${partnerType === 'customer' ? 'customers' : 'suppliers'}/new`);
+      return;
+    }
     setEditing(null);
     resetForm(null);
     setOpen(true);
-  }, [resetForm]);
+  }, [resetForm, partnerType, navigate]);
 
   const openEdit = useCallback(
     (p: Partner) => {

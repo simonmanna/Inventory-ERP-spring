@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
-  ChevronRight, ArrowLeft, Users, Building2, Mail, Phone,
+  ChevronRight, ArrowLeft, Users, Building2, Mail, Phone, Pencil, Save, SlidersHorizontal, Landmark,
   MapPin, FileText, DollarSign, ShoppingCart, BookOpen, Activity, Receipt, Handshake,
 } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
+import { Input } from '@/components/ui/input';
+import { notify } from '@/lib/notify';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,107 +20,160 @@ import type { PaginatedResult } from '@erp/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CustomFieldsPanel } from '@/features/customization/CustomFieldInputs';
 import { useAuthStore } from '@/stores/auth.store';
-import { usePartner, useCustomerStatement, type Partner } from '@/features/partners/api';
+import {
+  usePartner, useCustomerStatement, useUpdatePartner, useAddContact, useUpdateContact, useDeleteContact,
+  usePartnerProfile, useUpdatePartnerProfile, EMPTY_PROFILE, type Partner, type PartnerContact, type PartnerProfile,
+} from '@/features/partners/api';
+import {
+  AccountingFields, ContactsTable, EMPTY_GENERAL, FieldRow, FormSection, GeneralFields, KindToggle, ReadValue,
+  SalesConfigFields, cleanProfile, generalPayload, type GeneralValues,
+} from './profile-forms';
+import { FollowupPanel } from './FollowupTab';
 import { useOpenCreditInvoices } from '@/pages/pos/api';
 import { RecordCreditPaymentDialog, type CreditPaymentTarget } from '@/pages/pos/RecordCreditPaymentDialog';
 import { useSupplierLedger } from '@/features/invoicing/api';
 import { CrmPartnerTab } from '@/features/crm/partner-tab';
 import { tx } from '@/lib/i18n/tx';
 
-function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-start py-2.5 gap-4">
-      <dt className="w-36 flex-shrink-0 text-xs text-muted-foreground font-semibold pt-0.5 uppercase tracking-wide">{label}</dt>
-      <dd className="text-sm flex-1">{value ?? <span className="text-muted-foreground">—</span>}</dd>
-    </div>
-  );
-}
-
 function PartnerStatusBadge({ status }: { status: string }) {
-  if (status === 'active') return <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs">{tx('Active')}</Badge>;
-  return <Badge variant="secondary" className="text-xs">{tx('Inactive')}</Badge>;
+  if (status === 'active') return <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 text-xs">{tx('Active')}</Badge>;
+  return <Badge variant="secondary" className="text-xs capitalize">{status === 'archived' ? tx('Archived') : tx('Inactive')}</Badge>;
 }
 
-function TabOverview({ partner }: { partner: Partner }) {
+function toGeneral(p: Partner): GeneralValues {
+  return {
+    name: p.name ?? '',
+    code: p.code ?? '',
+    isCompany: !!p.isCompany,
+    email: p.email ?? '',
+    phone: p.phone ?? '',
+    website: p.website ?? '',
+    taxNumber: p.taxNumber ?? '',
+    categoryId: p.categoryId ?? '',
+    membershipLevel: p.membershipLevel ?? '',
+    gender: p.gender ?? '',
+    status: p.status ?? 'active',
+    notes: p.notes ?? '',
+  };
+}
+
+function TabOverview({ partner, editing, value, onChange }: {
+  partner: Partner; editing: boolean; value: GeneralValues; onChange: (p: Partial<GeneralValues>) => void;
+}) {
+  if (editing) {
+    return (
+      <div className="rounded-xl border bg-card p-5">
+        <GeneralFields value={value} onChange={onChange} isCustomer={partner.isCustomer} />
+      </div>
+    );
+  }
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <Card>
-        <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
-          <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Basic Info')}</CardTitle>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          <dl className="divide-y">
-            <InfoRow label={tx('Code')} value={<code className="text-xs bg-muted px-2 py-0.5 rounded font-mono text-primary font-semibold">{partner.code}</code>} />
-            <InfoRow label={tx('Name')} value={<span className="font-semibold">{partner.name}</span>} />
-            <InfoRow label={tx('Email')} value={partner.email ? <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5 text-muted-foreground" />{partner.email}</span> : null} />
-            <InfoRow label={tx('Phone')} value={partner.phone ? <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5 text-muted-foreground" />{partner.phone}</span> : null} />
-            <InfoRow label={tx('Website')} value={partner.website} />
-            <InfoRow label={tx('Tax Number')} value={partner.taxNumber ? <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{partner.taxNumber}</code> : null} />
-            <InfoRow label={tx('Status')} value={<PartnerStatusBadge status={partner.status} />} />
-            <InfoRow label={tx('Type')} value={
-              <div className="flex gap-1.5">
-                {partner.isCustomer && <Badge variant="secondary" className="text-xs bg-blue-50 text-blue-700">{tx('Customer')}</Badge>}
-                {partner.isSupplier && <Badge variant="secondary" className="text-xs bg-purple-50 text-purple-700">{tx('Supplier')}</Badge>}
-                {partner.isEmployee && <Badge variant="secondary" className="text-xs bg-green-50 text-green-700">{tx('Employee')}</Badge>}
-              </div>
-            } />
-            <InfoRow label={tx('Category')} value={partner.category?.name ? <span className="font-semibold">{partner.category.name}</span> : null} />
-            <InfoRow label={tx('Membership')} value={partner.membershipLevel ? <Badge variant="outline" className="text-xs">{partner.membershipLevel}</Badge> : null} />
-            <InfoRow label={tx('Gender')} value={partner.gender ? <span className="capitalize">{partner.gender}</span> : null} />
-            <InfoRow label={tx('Notes')} value={partner.notes} />
-          </dl>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
-          <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Activity')}</CardTitle>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          <dl className="divide-y">
-            <InfoRow label={tx('Created')} value={<span className="text-sm">{dateTime(partner.createdAt)}</span>} />
-            <InfoRow label={tx('Updated')} value={<span className="text-sm">{dateTime(partner.updatedAt)}</span>} />
-          </dl>
-        </CardContent>
-      </Card>
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="lg:col-span-2 rounded-xl border bg-card p-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-4">
+          <FormSection title={tx('Contact details')}>
+            <FieldRow label={tx('Email')}><ReadValue>{partner.email ? <a className="text-primary hover:underline" href={`mailto:${partner.email}`}>{partner.email}</a> : null}</ReadValue></FieldRow>
+            <FieldRow label={tx('Phone')}><ReadValue>{partner.phone}</ReadValue></FieldRow>
+            <FieldRow label={tx('Website')}><ReadValue>{partner.website}</ReadValue></FieldRow>
+            <FieldRow label={tx('Tax Number')}><ReadValue>{partner.taxNumber ? <span className="font-mono text-xs">{partner.taxNumber}</span> : null}</ReadValue></FieldRow>
+          </FormSection>
+          <FormSection title={tx('Classification')}>
+            <FieldRow label={tx('Code')}><ReadValue><span className="font-mono text-xs">{partner.code}</span></ReadValue></FieldRow>
+            <FieldRow label={tx('Category')}><ReadValue>{partner.category?.name}</ReadValue></FieldRow>
+            {partner.isCustomer && <FieldRow label={tx('Membership')}><ReadValue>{partner.membershipLevel ? <span className="capitalize">{partner.membershipLevel}</span> : null}</ReadValue></FieldRow>}
+            {!partner.isCompany && <FieldRow label={tx('Gender')}><ReadValue>{partner.gender ? <span className="capitalize">{partner.gender.replace(/_/g, ' ')}</span> : null}</ReadValue></FieldRow>}
+            <FieldRow label={tx('Status')}><ReadValue><PartnerStatusBadge status={partner.status} /></ReadValue></FieldRow>
+          </FormSection>
+        </div>
+        {partner.notes ? (
+          <FormSection title={tx('Internal notes')} className="mt-5">
+            <p className="whitespace-pre-wrap text-sm">{partner.notes}</p>
+          </FormSection>
+        ) : null}
+      </div>
+      <div className="rounded-xl border bg-card p-5">
+        <FormSection title={tx('Record')}>
+          <FieldRow label={tx('Created')}><ReadValue>{dateTime(partner.createdAt)}</ReadValue></FieldRow>
+          <FieldRow label={tx('Updated')}><ReadValue>{dateTime(partner.updatedAt)}</ReadValue></FieldRow>
+          <FieldRow label={tx('Roles')}>
+            <div className="flex flex-wrap gap-1.5 py-1.5">
+              {partner.isCustomer && <Badge variant="outline" className="text-xs">{tx('Customer')}</Badge>}
+              {partner.isSupplier && <Badge variant="outline" className="text-xs">{tx('Supplier')}</Badge>}
+              {partner.isEmployee && <Badge variant="outline" className="text-xs">{tx('Employee')}</Badge>}
+            </div>
+          </FieldRow>
+        </FormSection>
+      </div>
     </div>
   );
 }
 
-function TabContacts({ partner }: { partner: Partner }) {
-  const contacts = partner.contacts ?? [];
+function TabContacts({ partner, canEdit }: { partner: Partner; canEdit: boolean }) {
+  const add = useAddContact(partner.id);
+  const update = useUpdateContact(partner.id);
+  const del = useDeleteContact(partner.id);
+  const fail = (e: any) => notify.error(tx('Could not update contact'), e?.response?.data?.message ?? e?.message);
   return (
-    <Card>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{tx('First Name')}</TableHead>
-              <TableHead>{tx('Last Name')}</TableHead>
-              <TableHead>{tx('Position')}</TableHead>
-              <TableHead>{tx('Email')}</TableHead>
-              <TableHead>{tx('Phone')}</TableHead>
-              <TableHead>{tx('Primary')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {contacts.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">{tx('No contacts registered.')}</TableCell>
-              </TableRow>
-            ) : contacts.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.firstName}</TableCell>
-                <TableCell>{c.lastName ?? '-'}</TableCell>
-                <TableCell>{c.position ?? '-'}</TableCell>
-                <TableCell>{c.email ?? '-'}</TableCell>
-                <TableCell>{c.phone ?? '-'}</TableCell>
-                <TableCell>{c.isPrimary ? <Badge className="bg-emerald-100 text-emerald-700 text-xs">{tx('Primary')}</Badge> : '-'}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <ContactsTable
+      contacts={(partner.contacts ?? []) as PartnerContact[]}
+      canEdit={canEdit}
+      busy={add.isPending || update.isPending || del.isPending}
+      onAdd={async (c) => { await add.mutateAsync(c); notify.success(tx('Contact added')); }}
+      onUpdate={async (id, c) => {
+        try {
+          await update.mutateAsync({ id, data: c });
+          notify.success(tx('Contact updated'));
+        } catch (e) {
+          // Dialog edits surface their own error; quick actions toast it.
+          if (c.firstName === undefined) fail(e);
+          else throw e;
+        }
+      }}
+      onDelete={async (id) => {
+        try { await del.mutateAsync(id); notify.success(tx('Contact deleted')); } catch (e) { fail(e); }
+      }}
+    />
+  );
+}
+
+/** Editable profile tab (sales config or accounting) with its own Save / Discard bar. */
+function TabProfile({ partnerId, canEdit, kind }: { partnerId: string; canEdit: boolean; kind: 'sales' | 'accounting' }) {
+  const { data, isLoading } = usePartnerProfile(partnerId);
+  const update = useUpdatePartnerProfile();
+  const [value, setValue] = useState<PartnerProfile | null>(null);
+  useEffect(() => { if (data) setValue({ ...EMPTY_PROFILE, ...data }); }, [data]);
+  if (isLoading || !value || !data) return <Skeleton className="h-56 w-full rounded-xl" />;
+  const original = { ...EMPTY_PROFILE, ...data };
+  const keys: (keyof PartnerProfile)[] = kind === 'sales'
+    ? ['salespersonId', 'paymentTermId', 'paymentModeId', 'incoterm', 'incotermLocation']
+    : ['receivableAccountId', 'payableAccountId', 'autoPostBills', 'bankAccounts'];
+  const dirty = keys.some((k) => JSON.stringify(value[k]) !== JSON.stringify(original[k]));
+  const onSave = async () => {
+    const clean = cleanProfile(value);
+    const body: Partial<PartnerProfile> = {};
+    keys.forEach((k) => {
+      if (JSON.stringify(clean[k]) !== JSON.stringify(original[k])) (body as Record<string, unknown>)[k] = clean[k];
+    });
+    try {
+      await update.mutateAsync({ id: partnerId, data: body });
+      notify.success(kind === 'sales' ? tx('Sales configuration saved') : tx('Accounting settings saved'));
+    } catch (e: any) {
+      notify.error(tx('Could not save'), e?.response?.data?.message ?? e?.message);
+    }
+  };
+  const onChange = (patch: Partial<PartnerProfile>) => setValue({ ...value, ...patch });
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      {canEdit && (
+        <div className={`mb-3 flex justify-end gap-2 transition-opacity ${dirty ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+          <Button size="sm" variant="ghost" onClick={() => setValue(original)}>{tx('Discard')}</Button>
+          <Button size="sm" onClick={onSave} disabled={update.isPending}>{tx('Save')}</Button>
+        </div>
+      )}
+      {kind === 'sales'
+        ? <SalesConfigFields value={value} onChange={onChange} disabled={!canEdit} />
+        : <AccountingFields value={value} onChange={onChange} disabled={!canEdit} />}
+    </div>
   );
 }
 
@@ -670,14 +726,22 @@ function TabExpensesPurchases({ partnerId }: { partnerId: string }) {
 function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplier' }) {
   const { partnerId } = useParams<{ partnerId: string }>();
   const navigate = useNavigate();
-  const canCrm = useAuthStore((s) => s.hasPermission('crm:deal:read'));
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canCrm = hasPermission('crm:deal:read');
+  const canEdit = hasPermission(PERMISSIONS.partners.edit);
+  const canFollowup = hasPermission('sales:collections:read');
+  const canManageFollowup = hasPermission('sales:collections:manage');
   const { data: partner, isLoading } = usePartner(partnerId);
+  const updatePartner = useUpdatePartner();
+  const [editing, setEditing] = useState(false);
+  const [general, setGeneral] = useState<GeneralValues>(EMPTY_GENERAL);
+  const [tab, setTab] = useState('overview');
 
   if (isLoading) {
     return (
       <div className="space-y-6 px-2 md:px-4 py-3 mx-auto">
         <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     );
@@ -699,17 +763,41 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
 
   const isCustomer = partnerType === 'customer';
   const labelPlural = isCustomer ? 'Customers' : 'Suppliers';
-  const gradientFrom = isCustomer ? 'from-blue-600' : 'from-purple-600';
-  const gradientTo = isCustomer ? 'to-blue-700' : 'to-purple-700';
-  const Icon = isCustomer ? Users : Building2;
+  const Icon = partner.isCompany ? Building2 : isCustomer ? Users : Building2;
+  const primary = partner.contacts?.find((c) => c.isPrimary);
+
+  const startEdit = () => {
+    setGeneral(toGeneral(partner));
+    setEditing(true);
+    setTab('overview');
+  };
+  const saveEdit = async () => {
+    if (!general.name.trim()) {
+      notify.error(tx('Name is required'));
+      return;
+    }
+    if (general.email.trim() && !/^\S+@\S+\.\S+$/.test(general.email.trim())) {
+      notify.error(tx('Invalid email'));
+      return;
+    }
+    try {
+      await updatePartner.mutateAsync({ id: partner.id, data: generalPayload(general) as any });
+      notify.success(tx('Partner updated successfully'));
+      setEditing(false);
+    } catch (e: any) {
+      notify.error(tx('Could not update partner'), e?.response?.data?.message ?? e?.message);
+    }
+  };
 
   const tabs = [
     { value: 'overview', label: tx('Overview'), icon: FileText },
     { value: 'contacts', label: tx('Contacts'), icon: Users },
     { value: 'addresses', label: tx('Addresses'), icon: MapPin },
-    { value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? tx('Invoices') : tx('Expenses/Purchases'), icon: isCustomer ? DollarSign : Receipt },
-    { value: 'payments', label: tx('Payments'), icon: Activity },
   ];
+  if (isCustomer) tabs.push({ value: 'sales-config', label: tx('Sales Config'), icon: SlidersHorizontal });
+  tabs.push({ value: 'accounting', label: tx('Accounting'), icon: Landmark });
+  tabs.push({ value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? tx('Invoices') : tx('Expenses/Purchases'), icon: isCustomer ? DollarSign : Receipt });
+  tabs.push({ value: 'payments', label: isCustomer ? tx('Payments and Follow-ups') : tx('Payments'), icon: Activity });
   if (canCrm) {
     tabs.push({ value: 'crm', label: 'CRM', icon: Handshake });
   }
@@ -721,90 +809,135 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
   }
 
   return (
-    <div className="space-y-6 px-2 md:px-4 py-3 mx-auto">
+    <div className="space-y-5 px-2 md:px-4 py-3 mx-auto">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <button onClick={() => navigate(`/${labelPlural.toLowerCase()}`)} className="hover:text-foreground transition-colors">{labelPlural}</button>
+        <button onClick={() => navigate(`/${labelPlural.toLowerCase()}`)} className="hover:text-foreground transition-colors">{tx(labelPlural)}</button>
         <ChevronRight className="h-3.5 w-3.5" />
         <span className="text-foreground font-medium truncate">{partner.name}</span>
       </nav>
 
-      {/* Gradient header */}
-      <div className={`rounded-xl bg-gradient-to-r ${gradientFrom} ${gradientTo} p-6 text-white shadow-lg`}>
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
-              <Icon className="h-7 w-7" />
+      {/* Header */}
+      <div className="rounded-xl border bg-card px-5 py-4 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Icon className="h-6 w-6" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">{partner.name}</h1>
-              <div className="flex items-center gap-3 mt-1">
-                <code className="text-xs bg-white/20 px-2 py-0.5 rounded font-mono">{partner.code}</code>
-                <PartnerStatusBadge status={partner.status} />
-              </div>
+            <div className="min-w-0 flex-1">
+              {editing ? (
+                <div className="space-y-2">
+                  <Input
+                    aria-label={tx('Name')}
+                    className="h-10 text-lg font-semibold"
+                    value={general.name}
+                    onChange={(e) => setGeneral({ ...general, name: e.target.value })}
+                  />
+                  <KindToggle isCompany={general.isCompany} onChange={(v) => setGeneral({ ...general, isCompany: v })} />
+                </div>
+              ) : (
+                <>
+                  <h1 className="truncate text-xl font-semibold text-foreground">{partner.name}</h1>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground/80">{partner.code}</code>
+                    <PartnerStatusBadge status={partner.status} />
+                    <span className="text-xs">{partner.isCompany ? tx('Company') : tx('Individual')}</span>
+                    {partner.email && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{partner.email}</span>}
+                    {partner.phone && <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{partner.phone}</span>}
+                    {primary && <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5" />{[primary.firstName, primary.lastName].filter(Boolean).join(' ')}</span>}
+                  </div>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              className="bg-white/20 text-white hover:bg-white/30 border-0"
-              onClick={() => navigate(`/${labelPlural.toLowerCase()}`)}
-            >
-              <ArrowLeft className="mr-1.5 h-4 w-4" /> {tx('Back')}
-            </Button>
+          <div className="flex flex-shrink-0 gap-2">
+            {editing ? (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setEditing(false)}>{tx('Discard')}</Button>
+                <Button size="sm" onClick={saveEdit} disabled={updatePartner.isPending}>
+                  <Save className="mr-1.5 h-4 w-4" /> {tx('Save')}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" onClick={() => navigate(`/${labelPlural.toLowerCase()}`)}>
+                  <ArrowLeft className="mr-1.5 h-4 w-4" /> {tx('Back')}
+                </Button>
+                {canEdit && (
+                  <Button size="sm" variant="outline" onClick={startEdit}>
+                    <Pencil className="mr-1.5 h-4 w-4" /> {tx('Edit')}
+                  </Button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList className="bg-muted/50 p-1">
-          {tabs.map((t) => (
-            <TabsTrigger key={t.value} value={t.value} className="flex items-center gap-1.5 data-[state=active]:bg-background">
-              <t.icon className="h-4 w-4" />
-              <span>{t.label}</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <div className="overflow-x-auto">
+          <TabsList className="bg-muted/50 p-1">
+            {tabs.map((t) => (
+              <TabsTrigger key={t.value} value={t.value} className="flex items-center gap-1.5 data-[state=active]:bg-background">
+                <t.icon className="h-4 w-4" />
+                <span>{t.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
-        <TabsContent value="overview" className="mt-6">
-          <TabOverview partner={partner} />
+        <TabsContent value="overview" className="mt-5">
+          <TabOverview partner={partner} editing={editing} value={general} onChange={(p) => setGeneral({ ...general, ...p })} />
           <div className="mt-4"><CustomFieldsPanel entity="partner" recordId={partnerId ?? ''} /></div>
         </TabsContent>
 
-        <TabsContent value="contacts" className="mt-6">
-          <TabContacts partner={partner} />
+        <TabsContent value="contacts" className="mt-5">
+          <TabContacts partner={partner} canEdit={canEdit} />
         </TabsContent>
 
-        <TabsContent value="addresses" className="mt-6">
+        <TabsContent value="addresses" className="mt-5">
           <TabAddresses partner={partner} />
         </TabsContent>
 
-        <TabsContent value={isCustomer ? 'invoices' : 'expenses-purchases'} className="mt-6">
+        {isCustomer && (
+          <TabsContent value="sales-config" className="mt-5">
+            <TabProfile partnerId={partner.id} canEdit={canEdit} kind="sales" />
+          </TabsContent>
+        )}
+
+        <TabsContent value="accounting" className="mt-5">
+          <TabProfile partnerId={partner.id} canEdit={canEdit} kind="accounting" />
+        </TabsContent>
+
+        <TabsContent value={isCustomer ? 'invoices' : 'expenses-purchases'} className="mt-5">
           {isCustomer ? <TabInvoices partnerId={partner.id} /> : <TabExpensesPurchases partnerId={partner.id} />}
         </TabsContent>
 
-        <TabsContent value="payments" className="mt-6">
-          <TabPayments partnerId={partner.id} direction={isCustomer ? 'inbound' : 'outbound'} />
+        <TabsContent value="payments" className="mt-5 space-y-5">
+          {isCustomer && canFollowup && <FollowupPanel partnerId={partner.id} canManage={canManageFollowup} />}
+          <div>
+            {isCustomer && <h3 className="mb-2 text-sm font-semibold">{tx('Payments received')}</h3>}
+            <TabPayments partnerId={partner.id} direction={isCustomer ? 'inbound' : 'outbound'} />
+          </div>
         </TabsContent>
 
         {canCrm && (
-          <TabsContent value="crm" className="mt-6">
+          <TabsContent value="crm" className="mt-5">
             <CrmPartnerTab partnerId={partner.id} />
           </TabsContent>
         )}
 
         {isCustomer ? (
-          <TabsContent value="statement" className="mt-6">
+          <TabsContent value="statement" className="mt-5">
             <TabStatement partnerId={partner.id} />
           </TabsContent>
         ) : (
           <>
-            <TabsContent value="purchase-orders" className="mt-6">
+            <TabsContent value="purchase-orders" className="mt-5">
               <TabPurchaseOrders partnerId={partner.id} />
             </TabsContent>
-            <TabsContent value="ledger" className="mt-6">
+            <TabsContent value="ledger" className="mt-5">
               <TabLedger partnerId={partner.id} />
             </TabsContent>
           </>

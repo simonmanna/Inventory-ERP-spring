@@ -44,6 +44,18 @@ public class SalesCollectionsController {
         return svc.worklist(q);
     }
 
+    @GetMapping("/partners/{partnerId}/followup")
+    @RequirePermissions(Permissions.SALES__COLLECTIONS_READ)
+    public Map<String, Object> followup(@PathVariable String partnerId) {
+        return svc.followup(partnerId);
+    }
+
+    @PutMapping("/partners/{partnerId}/followup")
+    @RequirePermissions(Permissions.SALES__COLLECTIONS_MANAGE)
+    public Map<String, Object> saveFollowup(@PathVariable String partnerId, @RequestBody Map<String, Object> b) {
+        return svc.saveFollowup(partnerId, body(b));
+    }
+
     @GetMapping("/levels")
     @RequirePermissions(Permissions.SALES__COLLECTIONS_READ)
     public List<Map<String, Object>> levels() {

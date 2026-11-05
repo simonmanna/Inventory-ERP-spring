@@ -126,3 +126,23 @@ calls it. Screen: `/price-lists`. Test: `PriceListIT`.
 `ProductSpecController` (11 routes on `/product-grades`, `/product-attributes`, `/product-specifications`), `ProductSpecService`,
 migration V96 (`ProductGrade`, `ProductAttribute`, `ProductSpecification`, `ProductAttributeValue`), permissions
 `product:read` / `product:update`. `Product` itself is not changed. Screen: `/products/specifications`.
+
+## Customer detail page: contacts, profile, follow-up (2026-11-05, extension — not in Nest)
+
+Additive routes for the redesigned customer / supplier detail page and the new full-page
+`/customers/new` · `/suppliers/new` form. Migration `V360__partner_profile_followup.sql`.
+
+| Route | Permission | Notes |
+|---|---|---|
+| `POST /partners/:id/contacts` | `partner:update` | 201; `firstName` required; `isPrimary` demotes the others |
+| `PATCH /partners/:id/contacts/:contactId` | `partner:update` | PATCH semantics (explicit `null` clears); a primary contact cannot be deactivated (400) |
+| `DELETE /partners/:id/contacts/:contactId` | `partner:update` | 204, soft delete |
+| `GET /partners/:id/profile` | `partner:read` | salesperson, payment term, payment mode, incoterm (+location), AR/AP accounts, `autoPostBills` (`ask`/`always`/`never`), `bankAccounts[]` |
+| `PATCH /partners/:id/profile` | `partner:update` | only keys present are written; unknown keys 400 |
+| `GET /sales/collections/partners/:id/followup` | `sales:collections:read` | status, plan level (stated or suggested), next reminder, responsible, amount due/overdue, oldest due, open promise, open receivable lines |
+| `PUT /sales/collections/partners/:id/followup` | `sales:collections:manage` | a changed promise date/note replaces the open `PromiseToPay` (amount = amount due); `null` date cancels it |
+
+- `Contact.isActive` (default true) — `Contact.java` is now hand-owned (generator marker removed).
+- `Partner.followupExcluded` = dunning runs skip the customer (counted as `skipped`).
+- `autoPostBills`, `paymentModeId`, `incoterm*` are stored preferences; no posting/document defaulting reads them yet.
+- Tests: `core/PartnerProfileIT`.

@@ -142,6 +142,92 @@ public class PartnerService extends BaseCrudService<Partner> {
         AfterCommit.run(() -> events.publish(DomainEvents.PARTNER_DELETED, Map.of("id", id, "organizationId", tenant)));
     }
 
+    // ------------------------------------------------------------------ contacts (customer detail page)
+
+    /** Add one contact; a primary contact demotes the partner's other contacts. */
+    @Transactional
+    public Map<String, Object> addContact(String partnerId, Record dto) {
+        Partner partner = find(partnerId);
+        if (partner == null) {
+            throw ApiException.notFound("Partner " + partnerId + " not found");
+        }
+        Contact c = EntityPatch.apply(new Contact(), dto);
+        if (c.getFirstName() == null || c.getFirstName().isBlank()) {
+            throw ApiException.badRequest("firstName should not be empty");
+        }
+        c.setOrganizationId(partner.getOrganizationId());
+        c.setPartnerId(partnerId);
+        if (c.getFirstName() == null) {
+            c.setFirstName("");
+        }
+        if (c.getIsPrimary() == null) {
+            c.setIsPrimary(false);
+        }
+        if (c.getIsActive() == null) {
+            c.setIsActive(true);
+        }
+        em.persist(c);
+        em.flush();
+        if (Boolean.TRUE.equals(c.getIsPrimary())) {
+            demoteOtherContacts(partnerId, c.getId());
+        }
+        Map<String, Object> out = EntityJson.of(c);
+        audit.recordInTx(AuditInput.of("Contact", c.getId(), "create", null, out));
+        return out;
+    }
+
+    /** Patch one contact (explicit null clears a column; absent keys stay). */
+    @Transactional
+    public Map<String, Object> updateContact(String partnerId, String contactId, Record dto) {
+        Contact c = requireContact(partnerId, contactId);
+        Map<String, Object> before = EntityJson.of(c);
+        EntityPatch.apply(c, dto);
+        if (c.getFirstName() == null) {
+            c.setFirstName("");
+        }
+        if (c.getIsPrimary() == null) {
+            c.setIsPrimary(false);
+        }
+        if (c.getIsActive() == null) {
+            c.setIsActive(true);
+        }
+        if (Boolean.FALSE.equals(c.getIsActive()) && Boolean.TRUE.equals(c.getIsPrimary())) {
+            throw ApiException.badRequest("A primary contact cannot be deactivated");
+        }
+        em.flush();
+        if (Boolean.TRUE.equals(c.getIsPrimary())) {
+            demoteOtherContacts(partnerId, contactId);
+        }
+        Map<String, Object> after = EntityJson.of(c);
+        audit.recordInTx(AuditInput.of("Contact", contactId, "update", before, after));
+        return after;
+    }
+
+    /** Soft delete one contact. */
+    @Transactional
+    public void removeContact(String partnerId, String contactId) {
+        Contact c = requireContact(partnerId, contactId);
+        c.setDeletedAt(Instant.now());
+        em.flush();
+        audit.recordInTx(AuditInput.of("Contact", contactId, "delete"));
+    }
+
+    private Contact requireContact(String partnerId, String contactId) {
+        return em.createQuery("select c from Contact c where c.id = :id and c.partnerId = :pid"
+                        + " and c.organizationId = :org and c.deletedAt is null", Contact.class)
+                .setParameter("id", contactId).setParameter("pid", partnerId)
+                .setParameter("org", TenantContext.organizationId())
+                .getResultList().stream().findFirst()
+                .orElseThrow(() -> ApiException.notFound("Contact " + contactId + " not found"));
+    }
+
+    private void demoteOtherContacts(String partnerId, String keepId) {
+        em.createQuery("update Contact c set c.isPrimary = false where c.partnerId = :pid and c.id <> :id"
+                        + " and c.organizationId = :org")
+                .setParameter("pid", partnerId).setParameter("id", keepId)
+                .setParameter("org", TenantContext.organizationId()).executeUpdate();
+    }
+
     private void insertContacts(String orgId, String partnerId, List<Map<String, Object>> rows) {
         for (Map<String, Object> c : rows) {
             Contact x = new Contact();
