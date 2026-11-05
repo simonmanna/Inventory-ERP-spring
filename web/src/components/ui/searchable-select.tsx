@@ -28,6 +28,18 @@ interface SearchableSelectProps {
   className?: string;
   /** Popover width; defaults to matching the trigger. */
   contentClassName?: string;
+  /**
+   * Server-side search: called as the user types; `options` are then shown
+   * as-is (no local filtering). Use for lists too big to load up front.
+   */
+  onQueryChange?: (query: string) => void;
+  /** Trigger text when the current value is not among `options` (remote lists). */
+  selectedLabel?: string | null;
+  /** Shows a loading row while remote results are fetched. */
+  loading?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** When set and a value is picked, adds a first row that clears the selection. */
+  clearLabel?: string;
 }
 
 /**
@@ -45,29 +57,40 @@ export function SearchableSelect({
   disabled,
   className,
   contentClassName,
+  onQueryChange,
+  selectedLabel,
+  loading,
+  onOpenChange,
+  clearLabel,
 }: SearchableSelectProps) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpenState] = React.useState(false);
+  const setOpen = (v: boolean) => { setOpenState(v); onOpenChange?.(v); };
   const [query, setQuery] = React.useState('');
   const [activeIndex, setActiveIndex] = React.useState(0);
   const listRef = React.useRef<HTMLDivElement>(null);
 
-  const selected = options.find((o) => o.value === value) ?? null;
+  const selected = options.find((o) => o.value === value)
+    ?? (value && selectedLabel ? ({ value, label: selectedLabel } as SearchableSelectOption) : null);
+  const remote = !!onQueryChange;
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return options;
+    if (!q || remote) return options;
     return options.filter((o) =>
       `${o.code ?? ''} ${o.label} ${o.hint ?? ''} ${o.keywords ?? ''}`.toLowerCase().includes(q),
     );
-  }, [options, query]);
+  }, [options, query, remote]);
 
   // Reset the search each time the panel opens, and start on the current pick.
   React.useEffect(() => {
     if (!open) return;
     setQuery('');
+    onQueryChange?.('');
     const idx = options.findIndex((o) => o.value === value);
     setActiveIndex(idx >= 0 ? idx : 0);
-  }, [open, options, value]);
+    // Only on open: remote results arriving must not wipe what the user typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   React.useEffect(() => {
     setActiveIndex(0);
@@ -131,7 +154,7 @@ export function SearchableSelect({
           <Search className="h-4 w-4 shrink-0 opacity-50" />
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); onQueryChange?.(e.target.value); }}
             onKeyDown={onKeyDown}
             placeholder={searchPlaceholder}
             className="h-9 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
@@ -139,7 +162,20 @@ export function SearchableSelect({
         </div>
 
         <div ref={listRef} className="max-h-64 overflow-y-auto p-1 bg-popover">
-          {filtered.length === 0 && (
+          {clearLabel && value && (
+            <button
+              type="button"
+              onClick={() => { onValueChange(''); setOpen(false); }}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-accent bg-popover"
+            >
+              <span className="h-4 w-4 shrink-0" />
+              {clearLabel}
+            </button>
+          )}
+          {loading && filtered.length === 0 && (
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">…</div>
+          )}
+          {!loading && filtered.length === 0 && (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">{emptyText}</div>
           )}
           {filtered.map((option, idx) => (

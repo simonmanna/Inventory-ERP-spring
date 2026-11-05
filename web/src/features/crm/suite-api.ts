@@ -582,8 +582,9 @@ export function useProductOptions() {
   });
 }
 
-export function usePartnerOptions(search: string) {
+export function usePartnerOptions(search: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: ['crm-suite', 'partners', search],
     queryFn: async () => (await api.get<{ data: Array<{ id: string; name: string; code: string | null; isCustomer: boolean; email: string | null }> }>('/partners', {
       params: { page: 1, pageSize: 20, search: search || undefined },

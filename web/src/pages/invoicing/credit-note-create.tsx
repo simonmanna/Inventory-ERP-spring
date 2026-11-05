@@ -16,6 +16,7 @@ import {
 } from '@/features/invoicing/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 
 const selectClass =
@@ -139,14 +140,14 @@ export function CreditNoteCreatePage() {
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>{tx('Customer')}</Label>
-            <select className={selectClass} {...register('partnerId', { required: true })}>
-              <option value="">{tx('Select customer')}</option>
-              {(partners.data?.data ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <input type="hidden" {...register('partnerId', { required: true })} />
+            <SearchableSelect
+              value={watch('partnerId') ?? ''}
+              onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+              options={(partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }))}
+              placeholder={tx('Select customer')}
+              searchPlaceholder={tx('Search customers…')}
+            />
           </div>
           <div className="space-y-2">
             <Label>{tx('Reverses invoice (optional)')}</Label>

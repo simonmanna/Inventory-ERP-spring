@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { RemotePicker, OptionalSelect } from '@/pages/fleet/fleet-ui';
+import { OptionalSelect } from '@/pages/fleet/fleet-ui';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import {
@@ -13,23 +14,27 @@ import {
 import { Field, Stars, TYPE_ICON, typeLabel } from './crm-ui';
 import { cn } from '@/lib/utils';
 
-/** Customer type-ahead (partners search). */
-export function PartnerPicker({ value, label, onPick, placeholder }: {
-  value: string; label?: string | null; onPick: (id: string, name: string) => void; placeholder?: string;
+/** Customer dropdown with type-ahead search (partners search), styled like the order-line product picker. */
+export function PartnerPicker({ value, label, onPick, placeholder, className }: {
+  value: string; label?: string | null; onPick: (id: string, name: string) => void; placeholder?: string; className?: string;
 }) {
   const [search, setSearch] = useState('');
-  const { data, isFetching } = usePartnerOptions(search);
+  const [open, setOpen] = useState(false);
+  const { data, isFetching } = usePartnerOptions(search, open);
+  const options = (data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined, hint: p.email ?? undefined }));
   return (
-    <RemotePicker
+    <SearchableSelect
       value={value}
       selectedLabel={label}
-      search={search}
-      onSearch={setSearch}
-      results={(search.trim() ? data ?? [] : []).map((p) => ({ value: p.id, label: p.name, hint: p.code ?? undefined }))}
+      onValueChange={(v) => onPick(v, options.find((o) => o.value === v)?.label ?? '')}
+      options={options}
+      onQueryChange={setSearch}
+      onOpenChange={setOpen}
       loading={isFetching}
-      onPick={onPick}
-      placeholder={placeholder ?? tx('Search customers…')}
+      placeholder={placeholder ?? tx('Select a customer…')}
+      searchPlaceholder={tx('Search customers…')}
       clearLabel={tx('Clear')}
+      className={className}
     />
   );
 }

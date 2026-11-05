@@ -28,6 +28,7 @@ import {
 import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
 
@@ -389,14 +390,14 @@ export function InvoiceCreatePage() {
             <table className="w-full text-xs">
               <tbody className="divide-y divide-sky-100">
                 <MetaRow label={tx('Customer')}>
-                  <select className={selectClassSm} {...register('partnerId', { required: true })}>
-                    <option value="">{tx('Select customer')}</option>
-                    {(partners.data?.data ?? []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                  <input type="hidden" {...register('partnerId', { required: true })} />
+                  <SearchableSelect
+                    value={watch('partnerId') ?? ''}
+                    onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+                    options={(partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }))}
+                    placeholder={tx('Select customer')}
+                    searchPlaceholder={tx('Search customers…')}
+                  />
                 </MetaRow>
                 <MetaRow label={tx('Reference')}>
                   <Input id="reference" className="h-8 text-xs px-2 py-1 border-sky-200 focus-visible:ring-sky-400" {...register('reference')} />

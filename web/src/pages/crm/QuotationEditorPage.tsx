@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, PackageCheck, PackageX, Plus, Printer, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, PackageX, Plus, Printer, Send, ShoppingCart, Sparkles, ThumbsDown, Trash2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { useAuthStore } from '@/stores/auth.store';
 import { apiErrorMessage } from '@/lib/api-error';
@@ -21,6 +23,7 @@ import {
 } from '@/features/crm/suite-api';
 import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
+import { SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 
 const blankLine = (): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const SOURCE_LABEL: Record<string, string> = { list: tx('List price'), rule: tx('Price rule'), customer: tx('Customer discount'), manual: tx('Manual') };
@@ -55,6 +58,7 @@ export function QuotationEditorPage() {
   const [target, setTarget] = useState<'sales_order' | 'order' | 'proforma'>('sales_order');
   const [backorder, setBackorder] = useState(false);
   const [shortages, setShortages] = useState<string[] | null>(null);
+  const [tab, setTab] = useState('lines');
 
   useEffect(() => {
     if (q) {
@@ -136,6 +140,22 @@ export function QuotationEditorPage() {
   const status = q?.status ?? 'draft';
   const currency = q?.currencyCode ?? deal?.currencyCode;
 
+  const ribbon = [tx('Draft'), tx('Approved'), tx('Sent'), tx('Accepted'), tx('Converted')];
+  const step = ({ approved: 1, sent: 2, accepted: 3, converted: 4 } as Record<string, number>)[status] ?? 0;
+  const showRibbon = !['cancelled', 'expired'].includes(status);
+  const ico = 'mr-2 h-4 w-4';
+  type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
+  const menu: MenuItem[] = [];
+  if (q) {
+    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name) });
+    if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
+    if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
+    if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
+    if (status === 'draft' && canWrite) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(q.id, { onSuccess: () => navigate('/crm/quotations'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
+  }
+  const opportunityId = q?.dealId ?? dealId;
+  const convertedLink = q?.convertedId ? (q.convertedType === 'sales_order' ? `/sales/orders/${q.convertedId}` : q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/invoices/${q.convertedId}`) : null;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -146,32 +166,42 @@ export function QuotationEditorPage() {
           {q && q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}
           {q && <span className="ml-3"><QuoteStatusPill status={status} /></span>}
         </div>
-        {(q?.dealId || dealId) && (
-          <Link to={`/crm/opportunities/${q?.dealId ?? dealId}`} className="text-sm text-primary hover:underline">← {q?.dealName ?? deal?.name ?? tx('Opportunity')}</Link>
-        )}
+        {showRibbon && <div className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
-        {q && editable && canWrite && <Button variant="secondary" disabled={action.isPending || save.isPending} onClick={() => dirty ? doSave(() => run('submit')) : run('submit')}>{tx('Submit for approval')}</Button>}
-        {q?.status === 'pending_approval' && q.canApprove && <>
-          <Button onClick={() => run('approve', {}, tx('Approved'))}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>
-          <Button variant="destructive" onClick={() => { setReason(''); setDialog('reject'); }}>{tx('Reject')}</Button>
-        </>}
-        {q && ['approved', 'sent'].includes(status) && canWrite && <>
-          {status === 'approved' && <Button onClick={() => run('send', undefined, tx('Marked as sent'))}>{tx('Mark as sent')}</Button>}
-          <Button variant="secondary" onClick={() => run('accept', undefined, tx('Accepted by customer'))}>{tx('Customer accepted')}</Button>
-          <Button variant="outline" onClick={() => { setReason(''); setDialog('decline'); }}>{tx('Customer declined')}</Button>
-        </>}
-        {q && ['approved', 'sent', 'accepted'].includes(status) && canConvert && (
-          <Button onClick={() => { setShortages(null); setBackorder(false); setDialog('convert'); }}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Convert')}</Button>
-        )}
-        {q && !['converted', 'draft'].includes(status) && canWrite && <Button variant="outline" onClick={() => run('revise', undefined, tx('New revision in draft'))}>{tx('Revise')}</Button>}
-        {q && !['converted', 'cancelled'].includes(status) && canWrite && <Button variant="ghost" onClick={() => run('cancel', undefined, tx('Cancelled'))}>{tx('Cancel quotation')}</Button>}
-        {q && <Button variant="outline" onClick={() => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name)}><Printer className="mr-1.5 h-4 w-4" />{tx('Print')}</Button>}
-        {q?.status === 'draft' && canWrite && (
-          <Button variant="ghost" className="text-destructive" onClick={() => { if (confirm(tx('Delete this draft?'))) del.mutate(q.id, { onSuccess: () => navigate('/crm/quotations'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); }}><Trash2 className="h-4 w-4" /></Button>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
+          {q && editable && canWrite && <Button variant="secondary" disabled={action.isPending || save.isPending} onClick={() => dirty ? doSave(() => run('submit')) : run('submit')}>{tx('Submit for approval')}</Button>}
+          {q?.status === 'pending_approval' && q.canApprove && <>
+            <Button onClick={() => run('approve', {}, tx('Approved'))}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>
+            <Button variant="destructive" onClick={() => { setReason(''); setDialog('reject'); }}>{tx('Reject')}</Button>
+          </>}
+          {q && status === 'approved' && canWrite && <Button variant="secondary" onClick={() => run('send', undefined, tx('Marked as sent'))}><Send className="mr-1.5 h-4 w-4" />{tx('Mark as sent')}</Button>}
+          {q && ['approved', 'sent'].includes(status) && canWrite && <Button variant="secondary" onClick={() => run('accept', undefined, tx('Accepted by customer'))}>{tx('Customer accepted')}</Button>}
+          {q && ['approved', 'sent', 'accepted'].includes(status) && canConvert && (
+            <Button onClick={() => { setShortages(null); setBackorder(false); setDialog('convert'); }}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Convert')}</Button>
+          )}
+          {menu.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">{tx('Actions')}<ChevronDown className="ml-1.5 h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-[200px]">
+                {menu.map((m, i) => (
+                  <Fragment key={m.key}>
+                    {m.danger && i > 0 && !menu[i - 1].danger && <DropdownMenuSeparator />}
+                    <DropdownMenuItem onSelect={m.onSelect} className={cn(m.danger && 'text-destructive focus:text-destructive')}>{m.icon}{m.label}</DropdownMenuItem>
+                  </Fragment>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <SmartButton icon={<Handshake className="h-4 w-4" />} count={opportunityId ? 1 : 0} label={tx('Opportunity')} disabled={!opportunityId} onClick={() => opportunityId && navigate(`/crm/opportunities/${opportunityId}`)} />
+          <SmartButton icon={<ShoppingCart className="h-4 w-4" />} count={convertedLink ? 1 : 0} label={q?.convertedType === 'proforma' ? tx('Proforma') : tx('Order')} disabled={!convertedLink} onClick={() => convertedLink && navigate(convertedLink)} />
+        </div>
       </div>
 
       {q?.status === 'pending_approval' && (
@@ -180,106 +210,129 @@ export function QuotationEditorPage() {
       {q?.status === 'rejected' && <Banner tone="danger" title={tx('Rejected')} items={[q.rejectionReason ?? '']} />}
       {q?.status === 'converted' && (
         <Banner tone="success" title={q.convertedType === 'proforma' ? tx('Converted to proforma invoice') : tx('Converted to order')}
-          items={[q.convertedNumber ?? '']} link={q.convertedType === 'sales_order' ? `/sales/orders/${q.convertedId}` : q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/invoices/${q.convertedId}`} />
+          items={[q.convertedNumber ?? '']} link={convertedLink ?? undefined} />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label={tx('Customer')} className="sm:col-span-2">
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, n) => { setPartnerId(i); setPartnerName(n || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
+      <section className="rounded-xl border bg-card shadow-sm">
+        <div className="px-5 pt-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{tx('Quotation')}</p>
+          <h1 className="text-2xl font-bold">{q ? q.number : tx('New')}</h1>
+        </div>
+        <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
+          <div className="space-y-3">
+            <Field label={tx('Customer')}>
+              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
             </Field>
-            <Field label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></Field>
-            <Field label={tx('Valid until')}><Input type="date" disabled={!editable} value={validUntil} placeholder={tx('Default validity')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></Field>
-            <Field label={tx('Salesperson')} className="sm:col-span-2">
+            <Field label={tx('Salesperson')}>
               <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
             </Field>
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-sm">
-              <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
-                  <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-36 py-2 pr-2">{tx('Tax')}</th>
-                  <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
-              </thead>
-              <tbody>
-                {lines.map((l, i) => {
-                  const sub = Number(l.quantity || 0) * Number(l.unitPrice || 0) * (1 - Number(l.discountPercent || 0) / 100);
-                  return (
-                    <tr key={i} className="border-b align-top">
-                      <td className="py-1.5 pr-2">
-                        {editable
-                          ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => {
-                              const next = lines.map((x, j) => (j === i ? { ...x, productId: v || null, priceSource: undefined, description: '' } : x));
-                              setLines(next); setDirty(true); void priceLines(i, next);
-                            }} options={productOpts} placeholder={tx('Product…')} className="w-56" />
-                          : <span className="font-medium">{l.productName ?? '—'}</span>}
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                          {l.priceSource && <span className={cn('rounded px-1.5 py-0.5', l.priceSource === 'manual' ? 'bg-amber-100 text-amber-800' : 'bg-muted text-muted-foreground')}>{SOURCE_LABEL[l.priceSource]}</span>}
-                          {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span className="text-muted-foreground">{tx('List')} {money(l.listPrice, currency)}</span>}
-                          {l.stock && (l.stock.sufficient
-                            ? <span className="inline-flex items-center gap-0.5 text-emerald-700"><PackageCheck className="h-3 w-3" />{l.stock.available} {tx('available')}</span>
-                            : <span className="inline-flex items-center gap-0.5 text-rose-700"><PackageX className="h-3 w-3" />{tx('Only')} {l.stock.available} {tx('available')}</span>)}
-                        </div>
-                      </td>
-                      <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value, priceSource: l.priceSource })} /></td>
-                      <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value), priceSource: l.priceSource })} onBlur={() => l.productId && l.priceSource !== 'manual' && priceLines(i)} /></td>
-                      <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value) })} /></td>
-                      <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
-                      <td className="py-1.5 pr-2">
-                        <OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null, priceSource: l.priceSource })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} />
-                      </td>
-                      <td className="py-1.5 pr-2 pt-3.5 text-right tabular-nums">{money(l.lineSubtotal ?? sub, currency)}</td>
-                      <td className="py-1.5 pt-2.5">{editable && <button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}><Trash2 className="h-4 w-4" /></button>}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {editable && (
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>
-              {canPrice && <Button variant="ghost" size="sm" onClick={() => priceLines()}><Sparkles className="mr-1 h-4 w-4" />{tx('Apply customer prices')}</Button>}
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></Field>
+              <Field label={tx('Valid until')}><Input type="date" disabled={!editable} value={validUntil} placeholder={tx('Default validity')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></Field>
             </div>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
-            <Field label={tx('Terms & conditions')}><Textarea disabled={!editable} rows={3} value={terms} onChange={(e) => { setTerms(e.target.value); setDirty(true); }} /></Field>
+            {q && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={tx('Created')}><p className="py-2 text-sm">{date(q.createdAt)}</p></Field>
+                {q.approvedAt && <Field label={tx('Approved')}><p className="py-2 text-sm">{date(q.approvedAt)}</p></Field>}
+                {q.sentAt && <Field label={tx('Sent')}><p className="py-2 text-sm">{date(q.sentAt)}</p></Field>}
+                {q.acceptedAt && <Field label={tx('Accepted')}><p className="py-2 text-sm">{date(q.acceptedAt)}</p></Field>}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
-            <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-            <Row label={tx('Untaxed amount')} value={money(dirty || !q ? est.sub : q.subtotal, currency)} />
-            {q && !dirty && Number(q.discountTotal) > 0 && <Row label={tx('Discount')} value={'− ' + money(q.discountTotal, currency)} />}
-            <Row label={tx('Taxes')} value={money(dirty || !q ? est.tax : q.taxAmount, currency)} />
-            <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(dirty || !q ? est.total : q.total, currency)}</strong>} /></div>
-            {q && Number(q.maxDiscountPercent) > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('Highest discount vs list')}: {Number(q.maxDiscountPercent).toFixed(1)}% · {tx('limit')} {lk?.settings.quoteMaxDiscountPercent}%</p>}
-          </div>
-          {q?.credit && (
-            <div className={cn('rounded-xl border bg-card p-4 text-sm shadow-sm', (q.credit.creditHold || q.credit.exceeded) && 'border-rose-300')}>
-              <h2 className="mb-2 font-semibold">{tx('Customer credit')}</h2>
-              {q.credit.creditHold && <p className="mb-2 flex items-center gap-1.5 text-rose-700"><AlertTriangle className="h-4 w-4" />{tx('On credit hold')}</p>}
-              <Row label={tx('Credit limit')} value={Number(q.credit.creditLimit) > 0 ? money(q.credit.creditLimit, currency) : tx('None')} />
-              <Row label={tx('Open receivables')} value={money(q.credit.openReceivables, currency)} />
-              <Row label={tx('Overdue')} value={<span className={Number(q.credit.overdueReceivables) > 0 ? 'text-rose-600' : ''}>{money(q.credit.overdueReceivables, currency)}</span>} />
-              {q.credit.headroom != null && <Row label={tx('Headroom')} value={money(q.credit.headroom, currency)} />}
-              <Link to={`/crm/customers/${q.partnerId}`} className="mt-2 inline-block text-xs text-primary hover:underline">{tx('Customer 360')} →</Link>
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
+            {([['lines', tx('Quotation lines')], ['terms', tx('Terms & conditions')], ['other', tx('Other info')]] as const).map(([v, label]) => (
+              <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="lines" className="mt-0 space-y-4 p-5">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
+                    <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-16 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-32 py-2 pr-2">{tx('Tax')}</th>
+                    <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
+                </thead>
+                <tbody>
+                  {lines.map((l, i) => {
+                    const sub = Number(l.quantity || 0) * Number(l.unitPrice || 0) * (1 - Number(l.discountPercent || 0) / 100);
+                    return (
+                      <tr key={i} className="border-b align-top">
+                        <td className="py-1.5 pr-2">
+                          {editable
+                            ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => {
+                                const next = lines.map((x, j) => (j === i ? { ...x, productId: v || null, priceSource: undefined, description: '' } : x));
+                                setLines(next); setDirty(true); void priceLines(i, next);
+                              }} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                            : <span className="font-medium">{l.productName ?? '—'}</span>}
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                            {l.priceSource && <span className="rounded bg-muted px-1.5 py-0.5">{SOURCE_LABEL[l.priceSource]}</span>}
+                            {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span>{tx('List')} {money(l.listPrice, currency)}</span>}
+                            {l.stock && (l.stock.sufficient
+                              ? <span className="inline-flex items-center gap-0.5"><PackageCheck className="h-3 w-3" />{l.stock.available} {tx('available')}</span>
+                              : <span className="inline-flex items-center gap-0.5 text-destructive"><PackageX className="h-3 w-3" />{tx('Only')} {l.stock.available} {tx('available')}</span>)}
+                          </div>
+                        </td>
+                        <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value, priceSource: l.priceSource })} /></td>
+                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value), priceSource: l.priceSource })} onBlur={() => l.productId && l.priceSource !== 'manual' && priceLines(i)} /></td>
+                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value) })} /></td>
+                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
+                        <td className="py-1.5 pr-2">
+                          <OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null, priceSource: l.priceSource })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} />
+                        </td>
+                        <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{money(l.lineSubtotal ?? sub, currency)}</td>
+                        <td className="py-1.5 pt-2">{editable && <button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}><Trash2 className="h-4 w-4" /></button>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          )}
-          {q && (
-            <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground shadow-sm">
-              <p>{tx('Created')} {date(q.createdAt)}</p>
-              {q.approvedAt && <p>{tx('Approved')} {date(q.approvedAt)}</p>}
-              {q.sentAt && <p>{tx('Sent')} {date(q.sentAt)}</p>}
-              {q.acceptedAt && <p>{tx('Accepted')} {date(q.acceptedAt)}</p>}
+            {editable && (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>
+                {canPrice && <Button variant="ghost" size="sm" onClick={() => priceLines()}><Sparkles className="mr-1 h-4 w-4" />{tx('Apply customer prices')}</Button>}
+              </div>
+            )}
+            <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
+              <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
+              <div className="text-sm">
+                <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
+                <Row label={tx('Untaxed amount')} value={money(dirty || !q ? est.sub : q.subtotal, currency)} />
+                {q && !dirty && Number(q.discountTotal) > 0 && <Row label={tx('Discount')} value={'− ' + money(q.discountTotal, currency)} />}
+                <Row label={tx('Taxes')} value={money(dirty || !q ? est.tax : q.taxAmount, currency)} />
+                <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(dirty || !q ? est.total : q.total, currency)}</strong>} /></div>
+                {q && Number(q.maxDiscountPercent) > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('Highest discount vs list')}: {Number(q.maxDiscountPercent).toFixed(1)}% · {tx('limit')} {lk?.settings.quoteMaxDiscountPercent}%</p>}
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+          </TabsContent>
+
+          <TabsContent value="terms" className="mt-0 space-y-4 p-5">
+            <Field label={tx('Terms & conditions')} className="lg:max-w-3xl"><Textarea disabled={!editable} rows={8} value={terms} onChange={(e) => { setTerms(e.target.value); setDirty(true); }} /></Field>
+          </TabsContent>
+
+          <TabsContent value="other" className="mt-0 space-y-4 p-5">
+            {q?.credit ? (
+              <div className="lg:max-w-md">
+                <h3 className="mb-3 border-b pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Customer credit')}</h3>
+                <div className="text-sm">
+                  {q.credit.creditHold && <p className="mb-2 flex items-center gap-1.5 text-destructive"><AlertTriangle className="h-4 w-4" />{tx('On credit hold')}</p>}
+                  <Row label={tx('Credit limit')} value={Number(q.credit.creditLimit) > 0 ? money(q.credit.creditLimit, currency) : tx('None')} />
+                  <Row label={tx('Open receivables')} value={money(q.credit.openReceivables, currency)} />
+                  <Row label={tx('Overdue')} value={<span className={Number(q.credit.overdueReceivables) > 0 ? 'text-destructive' : ''}>{money(q.credit.overdueReceivables, currency)}</span>} />
+                  {q.credit.headroom != null && <Row label={tx('Headroom')} value={money(q.credit.headroom, currency)} />}
+                  <Link to={`/crm/customers/${q.partnerId}`} className="mt-2 inline-block text-xs text-primary hover:underline">{tx('Customer 360')} →</Link>
+                </div>
+              </div>
+            ) : <p className="text-sm text-muted-foreground">{q ? tx('No credit information for this customer.') : tx('Save the quotation to see customer credit.')}</p>}
+          </TabsContent>
+        </Tabs>
+      </section>
 
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">

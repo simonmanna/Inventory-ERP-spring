@@ -3,6 +3,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { StatusPill, type Tone } from '@/components/list';
 import { cn } from '@/lib/utils';
+import { tx } from '@/lib/i18n/tx';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import {
   COMPLIANCE_STATE_LABEL, STATUS_LABEL, type ComplianceStateValue, type VehicleStatus,
 } from '@/features/fleet/api';
@@ -82,37 +84,19 @@ export function RemotePicker({ value, selectedLabel, search, onSearch, results, 
   placeholder: string;
   clearLabel: string;
 }) {
+  // Dropdown with a search box (same control as the order-line product picker); results come from the server.
   return (
-    <div className="space-y-1.5">
-      {value && (
-        <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-1.5 text-sm">
-          <span className="truncate">{selectedLabel ?? value}</span>
-          <button type="button" className="text-xs text-primary hover:underline" onClick={() => onPick('', '')}>{clearLabel}</button>
-        </div>
-      )}
-      <input
-        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        placeholder={placeholder}
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-      />
-      {search.trim().length > 0 && (
-        <div className="max-h-48 overflow-y-auto rounded-md border bg-card text-sm shadow-sm">
-          {loading && <div className="px-3 py-2 text-muted-foreground">…</div>}
-          {!loading && results.length === 0 && <div className="px-3 py-2 text-muted-foreground">—</div>}
-          {results.map((r) => (
-            <button
-              key={r.value}
-              type="button"
-              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-accent"
-              onClick={() => { onPick(r.value, r.label); onSearch(''); }}
-            >
-              <span className="truncate">{r.label}</span>
-              {r.hint && <span className="shrink-0 text-xs text-muted-foreground">{r.hint}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <SearchableSelect
+      value={value}
+      selectedLabel={selectedLabel}
+      onValueChange={(v) => { onPick(v, results.find((r) => r.value === v)?.label ?? ''); }}
+      options={results}
+      onQueryChange={onSearch}
+      loading={loading}
+      placeholder={placeholder}
+      searchPlaceholder={placeholder}
+      emptyText={search.trim() ? undefined : tx('Type to search…')}
+      clearLabel={clearLabel}
+    />
   );
 }
