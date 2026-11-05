@@ -43,3 +43,13 @@ export function SmartButton({ icon, count, label, onClick, disabled }: { icon: R
     </button>
   );
 }
+
+/** Odoo-style header field: label on the left, value beside it on the same row. */
+export function InlineField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('grid grid-cols-[8.5rem_minmax(0,1fr)] items-baseline gap-x-4', className)}>
+      <span className="text-sm font-medium text-muted-foreground">{label}</span>
+      <div className="min-w-0 text-sm">{children}</div>
+    </div>
+  );
+}

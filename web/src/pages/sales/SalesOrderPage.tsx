@@ -25,7 +25,7 @@ import {
 } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
-import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
+import { DELIVERY_LABEL, INVOICE_LABEL, InlineField, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
@@ -198,26 +198,36 @@ export function SalesOrderPage() {
         </div>
         <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
           <div className="space-y-3">
-            <Field label={tx('Customer')}>
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{o?.partnerName}</p>}
-            </Field>
+            <InlineField label={tx('Customer')}>
+              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <span className="font-medium">{o?.partnerName}</span>}
+            </InlineField>
+            {o && (
+              <>
+                <InlineField label={tx('Source Doc')}>
+                  {o.quotationId && o.quotationNumber
+                    ? <Link to={`/crm/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
+                    : <span className="text-muted-foreground">-</span>}
+                </InlineField>
+                <InlineField label={tx('Salesperson')}>{o.ownerName ?? <span className="text-muted-foreground">-</span>}</InlineField>
+              </>
+            )}
           </div>
           <div className="space-y-3">
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
-              <Field label={tx('Agreement')}>
+              <InlineField label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
                   <option value="">{tx('None')}</option>
                   {agreementId && !agreements.data?.some((a) => a.id === agreementId) && <option value={agreementId}>{o?.relations?.agreement?.number ?? agreementId}</option>}
                   {(agreements.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.number} · {a.name}</option>)}
                 </select>
-              </Field>
+              </InlineField>
             )}
             {o && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={tx('Created')}><p className="py-2 text-sm">{date(o.createdAt)}</p></Field>
-                {o.confirmedAt && <Field label={tx('Confirmed')}><p className="py-2 text-sm">{date(o.confirmedAt)}</p></Field>}
-                {o.cancelledAt && <Field label={tx('Cancelled')} className="sm:col-span-2"><p className="py-2 text-sm">{date(o.cancelledAt)} — {o.cancelReason}</p></Field>}
-              </div>
+              <>
+                <InlineField label={tx('Order Date')}>{date(o.createdAt)}</InlineField>
+                {o.confirmedAt && <InlineField label={tx('Confirmed')}>{date(o.confirmedAt)}</InlineField>}
+                {o.cancelledAt && <InlineField label={tx('Cancelled')}>{date(o.cancelledAt)} — {o.cancelReason}</InlineField>}
+              </>
             )}
           </div>
         </div>

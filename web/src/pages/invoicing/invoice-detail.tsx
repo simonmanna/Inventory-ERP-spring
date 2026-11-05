@@ -22,7 +22,7 @@ import { useUomCode } from '@/features/uom/api';
 import { openPdf, useEmailInvoice } from '@/features/finance/api';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { Field } from '@/pages/crm/crm-ui';
-import { SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
+import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { InvoiceLinesTable } from './InvoiceLinesTable';
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
@@ -262,25 +262,23 @@ export function InvoiceDetailPage() {
         </div>
         <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
           <div className="space-y-3">
-            <Field label={tx('Customer')}>
-              <div className="py-2 text-sm">
-                <p className="font-medium">{inv.partner?.name ?? '—'}</p>
-                {partner?.taxNumber && <p className="text-xs text-muted-foreground">{tx('TIN:')} {partner.taxNumber}</p>}
-                {addressLines.length > 0 && (
-                  <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {addressLines.map((l, i) => <p key={i}>{l}</p>)}
-                  </div>
-                )}
-              </div>
-            </Field>
+            <InlineField label={tx('Customer')}>
+              <p className="font-medium">{inv.partner?.name ?? '—'}</p>
+              {partner?.taxNumber && <p className="text-muted-foreground">{tx('TIN:')} {partner.taxNumber}</p>}
+              {addressLines.length > 0 && (
+                <div className="leading-relaxed">
+                  {addressLines.map((l, i) => <p key={i}>{l}</p>)}
+                </div>
+              )}
+            </InlineField>
+            <InlineField label={tx('Source Doc')}>{inv.sourceDocument ?? inv.reference ?? '-'}</InlineField>
+            <InlineField label={tx('Salesperson')}>{inv.salespersonName ?? '-'}</InlineField>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={tx('Invoice Date')}><p className="py-2 text-sm">{date(inv.issueDate)}</p></Field>
-            <Field label={tx('Due Date')}><p className="py-2 text-sm">{inv.dueDate ? date(inv.dueDate) : '-'}</p></Field>
-            <Field label={tx('Payment Terms')}><p className="py-2 text-sm">{inv.paymentTermName ?? '-'}</p></Field>
-            <Field label={tx('Currency')}><p className="py-2 text-sm">{currency}</p></Field>
-            <Field label={tx('Source Doc')}><p className="py-2 text-sm">{inv.sourceDocument ?? inv.reference ?? '-'}</p></Field>
-            <Field label={tx('Salesperson')}><p className="py-2 text-sm">{inv.salespersonName ?? '-'}</p></Field>
+          <div className="space-y-3">
+            <InlineField label={tx('Invoice Date')}>{date(inv.issueDate)}</InlineField>
+            <InlineField label={tx('Due Date')}>{inv.dueDate ? date(inv.dueDate) : '-'}</InlineField>
+            <InlineField label={tx('Payment Terms')}>{inv.paymentTermName ?? '-'}</InlineField>
+            <InlineField label={tx('Currency')}>{currency}</InlineField>
           </div>
         </div>
 
