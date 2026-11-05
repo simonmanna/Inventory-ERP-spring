@@ -23,6 +23,7 @@ import { openPdf, useEmailInvoice } from '@/features/finance/api';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { Field } from '@/pages/crm/crm-ui';
 import { SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
+import { InvoiceLinesTable } from './InvoiceLinesTable';
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
@@ -295,59 +296,7 @@ export function InvoiceDetailPage() {
           </TabsList>
 
           <TabsContent value="lines" className="mt-0 space-y-4 p-5">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-sm">
-                <thead className="border-b">
-                  <tr>
-                    <th className={th}>{tx('Product')}</th>
-                    <th className={th}>{tx('Account')}</th>
-                    <th className={cn(th, 'w-24 text-right')}>{tx('Qty')}</th>
-                    <th className={cn(th, 'w-28 text-right')}>{tx('Unit Price')}</th>
-                    <th className={cn(th, 'w-32 text-right')}>{tx('Tax')}</th>
-                    <th className={cn(th, 'w-24 text-right')}>{tx('Discount')}</th>
-                    <th className={cn(th, 'w-32 text-right')}>{tx('Amount')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {inv.lines.length === 0 ? (
-                    <tr><td colSpan={7} className="py-10 text-center text-muted-foreground">{tx('No line items found.')}</td></tr>
-                  ) : inv.lines.map((l) => {
-                    const isSection = (l.lineType ?? 'product') === 'section';
-                    const isNote = (l.lineType ?? 'product') === 'note';
-                    if (isSection || isNote) {
-                      return (
-                        <tr key={l.id} className={cn('border-b', isSection && 'bg-muted/40')}>
-                          <td colSpan={7} className={isSection ? 'py-1.5 pr-2 font-semibold' : 'py-1.5 pr-2 italic text-muted-foreground'}>
-                            {l.description || (isSection ? tx('Section') : tx('Note'))}
-                          </td>
-                        </tr>
-                      );
-                    }
-                    const discountLabel = l.discountType === 'fixed_amount'
-                      ? `-${money(l.discountAmount)}`
-                      : l.discountPercent && Number(l.discountPercent) > 0
-                        ? `${Number(l.discountPercent).toFixed(1)}%`
-                        : '-';
-                    return (
-                      <tr key={l.id} className="border-b align-top">
-                        <td className="py-2 pr-2 font-medium">
-                          {l.description}
-                          {l.discountReason ? <span className="block text-[11px] font-normal text-muted-foreground">({l.discountReason})</span> : null}
-                        </td>
-                        <td className="py-2 pr-2 text-muted-foreground">
-                          {l.account ? <span><span className="font-mono text-xs">{l.account.code}</span> {l.account.name}</span> : '-'}
-                        </td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{money(l.quantity)} <span className="text-xs text-muted-foreground">{uomCode(l.uomId)}</span></td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{money(l.unitPrice)}</td>
-                        <td className="py-2 pr-2 text-right">{l.tax && Number(l.taxAmount) > 0 ? `${l.tax.name} ${rateLabel(l.tax.rate)}`.trim() : '-'}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{discountLabel}</td>
-                        <td className="py-2 pr-2 text-right font-medium tabular-nums">{money(l.total)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <InvoiceLinesTable invoiceId={inv.id} status={inv.status} lines={inv.lines} withDelivery={!isPosInvoice} uomCode={uomCode} />
             <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
               <div>
                 {inv.notes ? (
