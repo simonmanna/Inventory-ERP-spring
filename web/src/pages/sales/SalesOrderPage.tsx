@@ -159,9 +159,10 @@ export function SalesOrderPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-xl border bg-card p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold">{tx('Customer')}</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label={tx('Customer')} className="sm:col-span-2">
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{o?.partnerName}</p>}
             </Field>
@@ -175,15 +176,31 @@ export function SalesOrderPage() {
                 </select>
               </Field>
             )}
+            <Field label={tx('Delivery address / site')} className="sm:col-span-2"><Input disabled={!editable} value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); setDirty(true); }} /></Field>
+          </div>
+        </section>
+
+        <section className="rounded-xl border bg-card p-4 shadow-sm">
+          <h2 className="mb-3 text-sm font-semibold">{tx('Order details')}</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label={tx('Requested date')}><Input type="date" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
             <Field label={tx('Delivery method')}>
               <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={deliveryMethod} onChange={(e) => { setDeliveryMethod(e.target.value as 'delivery' | 'collect'); setDirty(true); }}>
                 <option value="delivery">{tx('Deliver to site')}</option><option value="collect">{tx('Customer collects')}</option>
               </select>
             </Field>
-            <Field label={tx('Delivery address / site')} className="sm:col-span-3"><Input disabled={!editable} value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); setDirty(true); }} /></Field>
+            {o && <>
+              <Field label={tx('Delivery')}><p className="py-2 text-sm">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>
+              <Field label={tx('Invoicing')}><p className="py-2 text-sm">{INVOICE_LABEL[o.invoiceStatus]}</p></Field>
+              <Field label={tx('Created')}><p className="py-2 text-sm">{date(o.createdAt)}</p></Field>
+              {o.confirmedAt && <Field label={tx('Confirmed')}><p className="py-2 text-sm">{date(o.confirmedAt)}</p></Field>}
+              {o.cancelledAt && <Field label={tx('Cancelled')} className="sm:col-span-2"><p className="py-2 text-sm">{date(o.cancelledAt)} — {o.cancelReason}</p></Field>}
+            </>}
           </div>
+        </section>
+      </div>
 
+      <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm">
               <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -224,31 +241,24 @@ export function SalesOrderPage() {
             </table>
           </div>
           {editable && <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
-          <Field label={tx('Notes')}><Textarea disabled={!editable} rows={2} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
-        </div>
-
-        <div className="space-y-4">
-          <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
-            <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-            <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est : o.subtotal, currency)} />
-            {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
-            {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
-          </div>
-          {o && (
-            <div className="rounded-xl border bg-card p-4 text-xs text-muted-foreground shadow-sm">
-              <p>{DELIVERY_LABEL[o.deliveryStatus]} · {INVOICE_LABEL[o.invoiceStatus]}</p>
-              <p>{tx('Created')} {date(o.createdAt)}</p>
-              {o.confirmedAt && <p>{tx('Confirmed')} {date(o.confirmedAt)}</p>}
-              {o.cancelledAt && <p>{tx('Cancelled')} {date(o.cancelledAt)} — {o.cancelReason}</p>}
+          <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
+            <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
+            <div className="text-sm">
+              <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
+              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est : o.subtotal, currency)} />
+              {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
+              {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
             </div>
-          )}
-          {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
-          {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <FulfilmentPanel order={o} />}
-          {o && <AttachmentPanel resType="sales_order" resId={o.id} />}
-          {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <BillingPanel order={o} />}
-          {o && o.status !== 'draft' && <AvailabilityPanel order={o} />}
-          {o && <ChangeRequestsPanel orderId={o.id} />}
-        </div>
+          </div>
+      </section>
+
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        {(o?.partnerId || partnerId) && <CreditPanel partnerId={o?.partnerId ?? partnerId} />}
+        {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <FulfilmentPanel order={o} />}
+        {o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status) && <BillingPanel order={o} />}
+        {o && o.status !== 'draft' && <AvailabilityPanel order={o} />}
+        {o && <ChangeRequestsPanel orderId={o.id} />}
+        {o && <AttachmentPanel resType="sales_order" resId={o.id} />}
       </div>
 
       <Dialog open={dialog === 'hold' || dialog === 'cancel' || dialog === 'close'} onOpenChange={(v) => !v && setDialog(null)}>
