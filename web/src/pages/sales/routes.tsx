@@ -22,6 +22,8 @@ const PresentationPage = lazy(() => import('./PresentationPage').then((m) => ({ 
 const PortalAccessPage = lazy(() => import('./PortalAccessPage').then((m) => ({ default: m.PortalAccessPage })));
 const CashSalesPage = lazy(() => import('./cash-sales/CashSalesPage').then((m) => ({ default: m.CashSalesPage })));
 const CashSalePage = lazy(() => import('./cash-sales/CashSalePage').then((m) => ({ default: m.CashSalePage })));
+const SalesReportsHubPage = lazy(() => import('./reports/SalesReportsHubPage').then((m) => ({ default: m.SalesReportsHubPage })));
+const SalesReportPage = lazy(() => import('./reports/SalesReportPage').then((m) => ({ default: m.SalesReportPage })));
 const BranchProfilesPage = lazy(() => import('./cash-sales/BranchProfilesPage').then((m) => ({ default: m.BranchProfilesPage })));
 
 const P = PERMISSIONS.sales;
@@ -36,6 +38,8 @@ export const salesRoutes = (
     <Route path="/sales/pricelists" element={<RequirePermission permission={P.pricingRead}><PricelistsPage /></RequirePermission>} />
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />
     <Route path="/sales/collections" element={<RequirePermission permission={P.collectionsRead}><CollectionsPage /></RequirePermission>} />
+    <Route path="/sales/reports" element={<RequirePermission permission={P.reportRead}><SalesReportsHubPage /></RequirePermission>} />
+    <Route path="/sales/reports/:page" element={<RequirePermission permission={P.reportRead}><SalesReportPage /></RequirePermission>} />
     <Route path="/sales/analytics" element={<RequirePermission permission={P.reportRead}><AnalyticsPage /></RequirePermission>} />
     <Route path="/sales/presentation" element={<RequirePermission permission={P.reportRead}><PresentationPage /></RequirePermission>} />
     <Route path="/sales/portal-access" element={<RequirePermission permission={P.portalManage}><PortalAccessPage /></RequirePermission>} />

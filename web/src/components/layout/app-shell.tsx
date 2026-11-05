@@ -131,6 +131,8 @@ import {
   FileQuestion,
   PackagePlus,
   Siren,
+  UsersRound,
+  Telescope,
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -350,6 +352,17 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/complaints', label: tx('Complaints'), icon: MessageSquareWarning, permission: PERMISSIONS.sales.complaintRead },
       { to: '/sales/backorders', label: tx('Backorders'), icon: PackageX, permission: PERMISSIONS.sales.reportRead },
       { to: '/customers', label: tx('Customers'), icon: Users, permission: PERMISSIONS.partners.view },
+      { to: '/sales/reports', label: tx('Sales Reports'), icon: LineChart, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/performance', label: tx('Performance'), icon: TrendingUp, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/customers', label: tx('Customer Reports'), icon: Users, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/products', label: tx('Product Reports'), icon: Package, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/orders', label: tx('Orders & Fulfilment'), icon: ClipboardList, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/quotations', label: tx('Quotations & Pipeline'), icon: FileText, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/billing', label: tx('Billing & Collections'), icon: Receipt, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/discounts', label: tx('Discounts & Returns'), icon: Percent, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/team', label: tx('Team Performance'), icon: UsersRound, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/profitability', label: tx('Profitability'), icon: BarChart3, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/forecasting', label: tx('Forecasting & Planning'), icon: Telescope, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/analytics', label: tx('Sales Analytics'), icon: LineChart, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/commissions', label: tx('Commissions & Targets'), icon: BadgePercent, permission: PERMISSIONS.sales.commissionRead, group: 'Reporting' },
       { to: '/sales/presentation', label: tx('Generate Presentation'), icon: Presentation, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
