@@ -11,6 +11,15 @@
       "port": 3001
     },
     {
+      "name": "api-dev",
+      "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && SPRING_PROFILES_ACTIVE=seed JDBC_DATABASE_URL='jdbc:postgresql://localhost:5434/erp_dev?stringtype=unspecified' ./gradlew bootRun --console=plain"
+      ],
+      "port": 3001
+    },
+    {
       "name": "api-mena",
       "runtimeExecutable": "C:/Program Files/Git/bin/bash.exe",
       "runtimeArgs": [
