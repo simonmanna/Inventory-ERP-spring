@@ -44,6 +44,12 @@ public final class CashSaleController {
             return svc.list(q);
         }
 
+        @GetMapping("/payment-modes")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public List<Map<String, Object>> paymentModes() {
+            return svc.paymentModes();
+        }
+
         @GetMapping("/dashboard")
         @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
         public Map<String, Object> dashboard(@RequestParam(defaultValue = "branch") String scope) {
@@ -119,6 +125,12 @@ public final class CashSaleController {
         @RequirePermissions(Permissions.SALES__CASH_SALE_SUBMIT)
         public Map<String, Object> resubmit(@PathVariable String id) {
             return svc.resubmit(id);
+        }
+
+        @PatchMapping("/{id}/delivery")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_CREATE)
+        public Map<String, Object> updateDelivery(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.updateDelivery(id, body(b));
         }
 
         @PostMapping("/{id}/amend")

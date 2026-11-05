@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { PERMISSIONS } from '@erp/shared';
+import { apiErrorMessage } from '@/lib/api-error';
+import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
+import { emptyHandover, saveHandoverDraft, type HandoverForm } from '@/pages/sales/handover-draft';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { Plus, Section, StickyNote, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -146,6 +151,8 @@ export function InvoiceCreatePage() {
   const { data: journalsData } = useJournals();
   const { data: employeesData } = useHrEmployees({ pageSize: 200 });
   const createInvoice = useCreateInvoice();
+  const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
+  const canUpdateInvoice = useAuthStore((s) => s.hasPermission(PERMISSIONS.invoice.update));
     const postInvoice = usePostInvoice();
     const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
     const companySettingsQ = useCompanySettings();
@@ -313,8 +320,8 @@ export function InvoiceCreatePage() {
       fiscalPositionId: values.fiscalPositionId || undefined,
       invoicingJournalId: values.invoicingJournalId || undefined,
       salespersonId: values.salespersonId || undefined,
-      deliveryDate: values.deliveryDate || undefined,
-      deliveryAddress: values.deliveryAddress || undefined,
+      deliveryDate: handover.scheduledDate || values.deliveryDate || undefined,
+      deliveryAddress: (handover.method === 'delivery' ? handover.address : '') || values.deliveryAddress || undefined,
       incoterm: values.incoterm || undefined,
       incotermLocation: values.incotermLocation || undefined,
       sourceDocument: values.sourceDocument || undefined,
@@ -332,6 +339,10 @@ export function InvoiceCreatePage() {
 
     const invoice = await createInvoice.mutateAsync(payload);
     if (action === 'post') await postInvoice.mutateAsync(invoice.id);
+    if (canUpdateInvoice) {
+      try { await saveHandoverDraft(`/sales/invoices/${invoice.id}/handover`, handover); }
+      catch (e) { toast.error(apiErrorMessage(e, tx('Invoice saved, but the delivery details could not be saved'))); }
+    }
     navigate(`/invoices/${invoice.id}`);
   });
 
@@ -466,7 +477,7 @@ export function InvoiceCreatePage() {
             {tx('Other Info')}
           </TabBtn>
           <TabBtn active={activeTab === 'delivery'} onClick={() => setActiveTab('delivery')}>
-            {tx('Delivery')}
+            {tx('Delivery & fulfilment')}
           </TabBtn>
           <TabBtn active={activeTab === 'journal'} onClick={() => setActiveTab('journal')}>
             {tx('Journal Entry')}
@@ -655,21 +666,9 @@ export function InvoiceCreatePage() {
         {/* DELIVERY tab */}
         {activeTab === 'delivery' && (
           <div className="p-5">
+            <HandoverDraftPanel value={handover} onChange={setHandover} hint={tx('Plan how the goods reach the customer. Saved with the invoice; dispatch and delivery follow once it is posted.')} />
+            <h3 className="mb-2 mt-6 text-sm font-semibold">{tx('Shipping terms')}</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
-              <dl>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Delivery Date')}</dt>
-                  <dd className="mt-1">
-                    <Input id="deliveryDate" type="date" className="border-sky-200 focus-visible:ring-sky-400" {...register('deliveryDate')} />
-                  </dd>
-                </div>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Delivery Address')}</dt>
-                  <dd className="mt-1">
-                    <Input id="deliveryAddress" placeholder={tx('Street, city, region')} className="border-sky-200 focus-visible:ring-sky-400" {...register('deliveryAddress')} />
-                  </dd>
-                </div>
-              </dl>
               <dl>
                 <div className="py-1.5">
                   <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Incoterm')}</dt>

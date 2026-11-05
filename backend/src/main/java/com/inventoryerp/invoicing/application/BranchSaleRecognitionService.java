@@ -129,18 +129,8 @@ public class BranchSaleRecognitionService {
     public List<String> accountProblems(List<Tender> tenders) {
         List<String> out = new ArrayList<>();
         for (Tender t : tenders) {
-            if (t.accountId() == null) {
-                continue;
-            }
-            int before = out.size();
-            check(out, t.label(), t.accountId(), ASSET);
-            if (out.size() == before) {
-                try {
-                    TenderAccount.resolve(jdbc, determination, TenantContext.organizationId(), t.method(), t.accountId(),
-                            null);
-                } catch (ApiException e) {
-                    out.add(t.label() + ": " + e.getMessage());
-                }
+            if (t.accountId() != null) {
+                out.addAll(tenderProblems(t.label(), t.method(), t.accountId()));
             }
         }
         check(out, "unbilled_receivable", unbilledAccount(), ASSET);
@@ -150,6 +140,21 @@ public class BranchSaleRecognitionService {
         mapping(out, "cogs", COGS);
         mapping(out, "sales_revenue", REVENUE);
         mapping(out, "tax_payable", LIABILITY);
+        return out;
+    }
+
+    /** Problems with one tender account: active postable asset of the organization, of the method's category. */
+    @Transactional(readOnly = true)
+    public List<String> tenderProblems(String label, String method, String accountId) {
+        List<String> out = new ArrayList<>();
+        check(out, label, accountId, ASSET);
+        if (out.isEmpty()) {
+            try {
+                TenderAccount.resolve(jdbc, determination, TenantContext.organizationId(), method, accountId, null);
+            } catch (ApiException e) {
+                out.add(label + ": " + e.getMessage());
+            }
+        }
         return out;
     }
 

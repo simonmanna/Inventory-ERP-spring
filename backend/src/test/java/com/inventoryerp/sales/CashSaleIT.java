@@ -309,23 +309,91 @@ class CashSaleIT extends ApiTestSupport {
                 "accountId", bankAccount)).status()).isEqualTo(201);
         JsonNode o = ok(200, "GET", "/sales/cash-sales/" + other, null);
         assertThat(o.get("payments").get(0).get("accountId").asString()).isEqualTo(cashAccount);
+        // a payment mode picked at the counter decides method, provider label and receiving account
+        String modeId = ok(201, "POST", "/accounts/pos-payment-methods", Map.of("code", "cs_bank_" + sfx.toLowerCase(),
+                "label", "Bank transfer " + sfx, "kind", "bank", "accountId", bankAccount, "requiresReference", true))
+                .get("id").asString();
+        try {
+            JsonNode modes = ok(200, "GET", "/sales/cash-sales/payment-modes", null);
+            assertThat(modes.findValuesAsString("id")).contains(modeId);
+            assertThat(modes.findValuesAsString("kind")).doesNotContain("card", "store_credit");
+            JsonNode m = ok(201, "POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", modeId,
+                    "amount", 500, "reference", "BT-" + sfx));
+            JsonNode last = m.get("payments").get(m.get("payments").size() - 1);
+            assertThat(last.get("method").asString()).isEqualTo("bank");
+            assertThat(last.get("accountId").asString()).isEqualTo(bankAccount);
+            assertThat(last.get("paymentModeLabel").asString()).isEqualTo("Bank transfer " + sfx);
+            assertThat(as("POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", "nope",
+                    "amount", 500)).status()).isEqualTo(400);
+        } finally {
+            as("DELETE", "/accounts/pos-payment-methods/" + modeId, null);
+        }
         ledger.trialBalanceZero();
     }
 
     @Test
     @DisplayName("T7/T9: insufficient stock at the showroom location → 400, nothing posted; payments ≠ total → 400")
     void insufficientStockAndTotals() {
-        String id = draft(null, 100_000);
-        JsonNode s = ok(200, "GET", "/sales/cash-sales/" + id, null);
-        verify(id, pay(id, "cash", null, s.get("grandTotal").asDouble(), null));
-        Res r = call("POST", "/sales/cash-sales/" + id + "/confirm", null, key());
-        assertThat(r.status()).isEqualTo(400);
-        assertThat(r.body().get("message").asString()).contains("Insufficient stock");
-        assertThat(glRows(id)).isZero();
+        // strict org (negative stock off) + item policy "block" → 400, nothing posted
+        ok(200, "PUT", "/costing/settings", Map.of("allowNegativeStock", false));
+        jdbc.sql("UPDATE \"Product\" SET \"stockPolicy\" = 'block'::\"PosStockPolicy\" WHERE id = ?").param(goods).update();
+        try {
+            String id = draft(null, 100_000);
+            JsonNode s = ok(200, "GET", "/sales/cash-sales/" + id, null);
+            verify(id, pay(id, "cash", null, s.get("grandTotal").asDouble(), null));
+            Res r = call("POST", "/sales/cash-sales/" + id + "/confirm", null, key());
+            assertThat(r.status()).isEqualTo(400);
+            assertThat(r.body().get("message").asString()).contains("Insufficient stock");
+            assertThat(glRows(id)).isZero();
+        } finally {
+            ok(200, "PUT", "/costing/settings", Map.of("allowNegativeStock", true));
+            jdbc.sql("UPDATE \"Product\" SET \"stockPolicy\" = 'warn'::\"PosStockPolicy\" WHERE id = ?").param(goods)
+                    .update();
+        }
+        // negative stock allowed (the default): selling above on hand confirms and the location goes negative
+        String tiles = product("Tiles " + sfx, 10_000, 6_000);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("branchId", branch);
+        body.put("lines", List.of(Map.of("productId", tiles, "quantity", 3, "unitPrice", 10_000)));
+        String neg = ok(201, "POST", "/sales/cash-sales", body).get("id").asString();
+        verify(neg, pay(neg, "cash", null, 30_000, null));
+        money("/sales/cash-sales/" + neg + "/confirm", null, 200);
+        assertThat(jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
+                .params(tiles, location).query(BigDecimal.class).single()).isEqualByComparingTo("-3");
         String short_ = draft(null, 1);
         verify(short_, pay(short_, "cash", null, 1000, null));
         assertThat(call("POST", "/sales/cash-sales/" + short_ + "/confirm", null, key()).body().get("message")
                 .asString()).contains("must equal the sale total");
+    }
+
+    @Test
+    @DisplayName("Delivery & fulfilment: details on a draft, dispatch needs confirm, delivered is final, timeline")
+    void deliveryAndFulfilment() {
+        String d = draft(null, 1);
+        String path = "/sales/cash-sales/" + d + "/delivery";
+        JsonNode s = ok(200, "PATCH", path, Map.of("deliveryMethod", "delivery", "deliveryAddress", "Plot 12, Ntinda",
+                "deliveryContactPhone", "0772000000"));
+        assertThat(s.get("deliveryStatus").asString()).isEqualTo("pending");
+        assertThat(s.get("deliveryAddress").asString()).isEqualTo("Plot 12, Ntinda");
+        assertThat(as("PATCH", path, Map.of("deliveryStatus", "dispatched")).status()).isEqualTo(400);
+        assertThat(as("PATCH", path, Map.of("deliveryStatus", "scheduled")).status()).isEqualTo(400);
+        assertThat(as("PATCH", path, Map.of("deliveryMethod", "drone")).status()).isEqualTo(400);
+        assertThat(as("PATCH", path, Map.of("grandTotal", 1)).status()).isEqualTo(400);
+        ok(200, "PATCH", path, Map.of("deliveryStatus", "scheduled", "deliveryScheduledDate", "2026-11-10"));
+
+        String id = confirmedCashSale(null, 1);
+        String p2 = "/sales/cash-sales/" + id + "/delivery";
+        assertThat(as("PATCH", p2, Map.of("deliveryMethod", "delivery", "deliveryStatus", "dispatched")).status())
+                .isEqualTo(400);
+        ok(200, "PATCH", p2, Map.of("deliveryMethod", "delivery", "deliveryAddress", "Kololo", "deliveryStatus",
+                "dispatched", "deliveryDriver", "Okello", "deliveryVehicle", "UBA 123X"));
+        JsonNode done = ok(200, "PATCH", p2, Map.of("deliveryStatus", "delivered", "deliveryReceivedBy", "Site manager"));
+        assertThat(done.get("deliveredAt").isNull()).isFalse();
+        assertThat(as("PATCH", p2, Map.of("deliveryStatus", "failed")).status()).isEqualTo(400);
+        ok(200, "PATCH", p2, Map.of("deliveryNotes", "Signed delivery note filed"));
+        JsonNode timeline = ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null);
+        assertThat(timeline.findValuesAsString("action")).contains("delivery_dispatched", "delivery_delivered",
+                "delivery_update");
     }
 
     @Test
@@ -484,10 +552,11 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(incomeAsTender.body().get("message").asString()).contains("cash account");
         assertThat(as("POST", "/sales/branch-profiles", Map.of("branchId", b2, "locationId", location, "cashAccountId",
                 cashAccount, "numberPrefix", "JJ1")).status()).isEqualTo(400);
-        assertThat(as("POST", "/sales/branch-profiles", Map.of("branchId", b2, "locationId", l2, "numberPrefix",
-                "JJ2")).status()).isEqualTo(400);
         assertThat(as("POST", "/sales/branch-profiles", Map.of("branchId", b2, "locationId", l2, "cashAccountId",
                 cashAccount, "numberPrefix", "JJ3", "invoicingMode", "self")).status()).isEqualTo(400);
+        // basic profile: branch + stock location only; the prefix comes from the branch, payments use payment modes
+        JsonNode basic = ok(201, "POST", "/sales/branch-profiles", Map.of("branchId", b2, "locationId", l2));
+        assertThat(basic.get("numberPrefix").asString()).matches("[A-Z0-9]{2,8}");
         // drift: the tender account is deactivated after the profile was saved
         String id = draft(null, 1);
         verify(id, pay(id, "cash", null, 41_300, null));

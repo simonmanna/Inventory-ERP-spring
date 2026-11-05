@@ -303,3 +303,23 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 6. **Profile tender categories.**
    - Tender accounts must also be of the payment method's account category (cash / bank / mobile money), using the existing `TenderAccount` rule.
    - An income account as tender is refused.
+7. **Basic branch profile + payment modes (2026-11-05, owner request).**
+   - A profile needs only `branchId` + `locationId`. `numberPrefix` defaults from the branch code (or name), 2-8 `[A-Z0-9]`, else `BR`.
+   - Tender accounts on the profile are optional ("at least one tender account" rule dropped).
+   - `POST /sales/cash-sales/{id}/payments` accepts `paymentModeId`: an active cash / mobile-money / bank mode from
+     `/accounts/pos-payment-methods` decides method, provider and receiving account (validated by `TenderAccount`).
+     A cash mode without an account uses the profile cash account, else the `default_cash` mapping.
+   - `GET /sales/cash-sales/payment-modes` (`sales:cash_sale:read`) lists them. The old `method`/`provider` body still works.
+   - V341 drops the `provider IN ('mtn','airtel')` check and adds `paymentModeId`, `paymentModeLabel` to `SalesSubmissionPayment`.
+   - Web: profile dialog shows branch name + branch location only; the cash sale tab is "Billing & payments details" with a payment-mode picker.
+8. **Delivery & fulfilment (2026-11-05, owner request).**
+   - V342 adds `deliveryMethod` (`pickup|delivery`), `deliveryStatus` (`pending|scheduled|dispatched|delivered|failed`),
+     address, contact, scheduled date, driver, vehicle, received-by, notes, `deliveredAt`/`deliveredById` to `SalesSubmission`.
+   - `PATCH /sales/cash-sales/{id}/delivery` (`sales:cash_sale:create`): logistics only, stock still issues at confirm.
+     Draft or confirmed only; dispatched/delivered need confirm; delivery needs an address once past pending; scheduled needs a date;
+     delivered is final (only received-by and notes stay editable). Each change → timeline (`delivery_update`, `delivery_<status>`).
+   - Web: "Delivery and Fulfilment" tab (status steps, issued vs ordered per line, delivery form) + Delivery smart button.
+9. **Negative stock follows the org setting (2026-11-05, owner request).**
+   - Confirm no longer forces `requireAvailable(true)`; the issue obeys `inventory.allowNegativeStock` (default on) and,
+     when that is off, the product `stockPolicy` (`block` refuses, `warn` logs) — same as POS / invoices.
+   - T7 now covers both: strict org + `block` → 400 nothing posted; default → confirm succeeds, location goes negative.

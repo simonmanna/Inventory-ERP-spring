@@ -82,6 +82,9 @@ public class BranchSalesProfileService {
     @Transactional
     public Map<String, Object> create(Map<String, Object> in) {
         Map<String, Object> d = values(in, null);
+        if (d.get("numberPrefix") == null) {
+            d.put("numberPrefix", defaultPrefix(str(d.get("branchId"))));
+        }
         if (db.count("SELECT count(*) FROM \"BranchSalesProfile\" WHERE \"organizationId\" = ? AND \"branchId\" = ?",
                 List.of(org(), str(d.get("branchId")))) > 0) {
             throw ApiException.conflict("This branch already has a sales profile");
@@ -138,7 +141,7 @@ public class BranchSalesProfileService {
             d.put("rejectedAlertDays", days);
         }
         if (current == null) {
-            for (String k : List.of("branchId", "locationId", "numberPrefix")) {
+            for (String k : List.of("branchId", "locationId")) {
                 if (d.get(k) == null) {
                     throw ApiException.badRequest(k + " should not be empty");
                 }
@@ -198,11 +201,23 @@ public class BranchSalesProfileService {
         tenders.add(new Tender("MTN mobile money account", "mobile_money", str(p.get("momoMtnAccountId"))));
         tenders.add(new Tender("Airtel mobile money account", "mobile_money", str(p.get("momoAirtelAccountId"))));
         tenders.add(new Tender("bank clearing account", "bank", str(p.get("bankClearingAccountId"))));
-        if (tenders.stream().allMatch(t -> t.accountId() == null)) {
-            out.add("at least one tender account is required");
-        }
         out.addAll(recognition.accountProblems(tenders));
         return out;
+    }
+
+    /** Numbering prefix from the branch code (or name): 2-8 upper-case letters or digits, else {@code BR}. */
+    private String defaultPrefix(String branchId) {
+        Map<String, Object> b = db.row("SELECT code, name FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ?",
+                branchId, org());
+        if (b != null) {
+            for (String src : new String[] {str(b.get("code")), str(b.get("name"))}) {
+                String p = src == null ? "" : src.toUpperCase().replaceAll("[^A-Z0-9]", "");
+                if (p.length() >= 2) {
+                    return p.substring(0, Math.min(8, p.length()));
+                }
+            }
+        }
+        return "BR";
     }
 
     /** Tender account of a payment method (server-side; 400 when the branch does not accept it). */

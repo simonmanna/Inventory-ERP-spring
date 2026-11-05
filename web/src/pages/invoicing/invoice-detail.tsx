@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { HandoverTab } from '@/pages/sales/HandoverTab';
 import { money, date, statusLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
@@ -76,7 +77,7 @@ export function InvoiceDetailPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
 
-  const [activeTab, setActiveTab] = useState<'lines' | 'journal' | 'info' | 'payments' | 'attachments'>('lines');
+  const [activeTab, setActiveTab] = useState<'lines' | 'delivery' | 'journal' | 'info' | 'payments' | 'attachments'>('lines');
   const [payOpen, setPayOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -285,7 +286,8 @@ export function InvoiceDetailPage() {
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
           <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
             {([
-              ['lines', tx('Invoice Lines')], ['journal', tx('Journal Items')], ['info', tx('Other Info')],
+              ['lines', tx('Invoice Lines')], ...(isPosInvoice ? [] : [['delivery', tx('Delivery & fulfilment')] as const]),
+              ['journal', tx('Journal Items')], ['info', tx('Other Info')],
               ['payments', `${tx('Payments')}${receiptRows.length ? ` (${receiptRows.length})` : ''}`], ['attachments', tx('Attachments')],
             ] as const).map(([v, label]) => (
               <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
@@ -370,6 +372,12 @@ export function InvoiceDetailPage() {
               </div>
             </div>
           </TabsContent>
+
+          {!isPosInvoice && (
+            <TabsContent value="delivery" className="mt-0 p-5">
+              <HandoverTab path={`/sales/invoices/${inv.id}/handover`} canEdit={has(PERMISSIONS.invoice.update)} sourceLabel={tx('invoice')} readyHint={tx('Post the invoice first')} />
+            </TabsContent>
+          )}
 
           <TabsContent value="journal" className="mt-0 p-5">
             {!inv.journalEntryId ? (

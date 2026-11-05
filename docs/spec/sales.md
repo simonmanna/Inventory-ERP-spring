@@ -238,3 +238,21 @@ customer_rule, crm_rule, customer_pricelist, category_pricelist, price_list, bra
 standing_discount; catalogue list last). Every result carries `breakdown` (base, discount, net, tax, final, line totals).
 `PriceSnapshot` (insert-only) records each line at sales order confirmation, invoice posting, POS billing and manual
 delivery order creation. Routes added: `GET|PUT /sales/pricing/policy`. Tests: `CentralPricingIT`, `PriceListIT`.
+
+## Delivery & fulfilment handover (orders and invoices)
+
+Same model as the branch cash sale delivery tab (`docs/spec/cash-sales.md`), stored in `SalesHandover` (V350, one
+row per `sourceType` + `sourceId`, created on first update; until then defaults come from the source document).
+
+| Route | Permission |
+|---|---|
+| `GET/PATCH /sales/orders/:id/handover` | `sales:order:read` / `sales:order:write` |
+| `GET/PATCH /sales/invoices/:id/handover` | `invoice:read` / `invoice:update` |
+
+- Method `pickup` (customer collect from a store / warehouse `locationId`) or `delivery` (to site, `address`).
+- Status `pending → scheduled → dispatched → delivered`, or `failed`. Dispatched / delivered need the order
+  confirmed (or in fulfilment / done) or the invoice posted / paid. Scheduled needs `scheduledDate`; non-pending
+  delivery needs `address`, non-pending pickup needs `locationId`. Delivered stamps `deliveredAt` / `deliveredById`
+  and then only `receivedBy` and `notes` stay editable. A cancelled source is read-only.
+- On a sales order, method / address write through to `SalesOrder.deliveryMethod` (`collect` ↔ `pickup`) and
+  `deliveryAddress`. Logistics only: stock still moves through fleet delivery orders / invoice posting.

@@ -5,15 +5,18 @@ import { tx } from '@/lib/i18n/tx';
 /** Branch cash sales → head-office invoicing (ADR-S056, docs/spec/cash-sales.md). */
 export type ExecutionStatus = 'draft' | 'confirmed' | 'voided' | 'cancelled';
 export type ProcessingStatus = 'not_submitted' | 'submitted' | 'under_review' | 'returned_for_correction' | 'approved' | 'invoiced' | 'rejected';
+export type DeliveryStatus = 'pending' | 'scheduled' | 'dispatched' | 'delivered' | 'failed';
 export type FiscalStatus = 'none' | 'pending' | 'issued' | 'failed' | 'cancellation_pending' | 'cancelled';
 
 export interface CashSaleLine {
   id: string; productId: string; productName: string | null; productCode: string | null; description: string;
   quantity: number; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
+  deliveredQty?: number; invoicedQty?: number;
 }
 export interface CashSalePayment {
-  id: string; method: 'cash' | 'mobile_money' | 'bank'; provider: 'mtn' | 'airtel' | null; amount: number; reference: string | null;
+  id: string; method: 'cash' | 'mobile_money' | 'bank'; provider: string | null; amount: number; reference: string | null;
+  paymentModeId: string | null; paymentModeLabel: string | null;
   accountCode: string | null; accountName: string | null; collectedByName: string | null; collectedAt: string;
   verificationStatus: 'pending' | 'verified' | 'failed'; verifiedByName: string | null; verifiedAt: string | null;
   verificationSource: string | null; settlementStatus: string;
@@ -27,6 +30,10 @@ export interface CashSale {
   confirmedAt: string | null; submittedAt: string | null; approvedAt: string | null; invoicedAt: string | null; rejectedAt: string | null;
   rejectionReason: string | null; ownerName: string | null; voidReason: string | null; remarks: string | null;
   currentInvoiceId: string | null; invoiceNumber: string | null; createdAt: string; updatedAt: string;
+  deliveryMethod?: 'pickup' | 'delivery'; deliveryStatus?: DeliveryStatus; deliveryAddress?: string | null;
+  deliveryContactName?: string | null; deliveryContactPhone?: string | null; deliveryScheduledDate?: string | null;
+  deliveryDriver?: string | null; deliveryVehicle?: string | null; deliveryReceivedBy?: string | null; deliveryNotes?: string | null;
+  deliveredAt?: string | null; deliveredByName?: string | null;
   lines?: CashSaleLine[]; payments?: CashSalePayment[]; actions?: string[];
   invoices?: Array<{ id: string; attempt: number; invoiceId: string; documentNumber: string; status: 'active' | 'cancelled'; cancelReason: string | null; createdAt: string }>;
   deposits?: Array<{ id: string; number: string; amount: number; appliedAmount: number; refundedAmount: number; status: string; source: string }>;
@@ -52,6 +59,12 @@ export interface BranchProfile {
   fiscalTrigger: 'at_confirm' | 'at_invoice' | null; fiscalProvider: string; rejectedAlertDays: number; isActive: boolean;
 }
 
+/** An organization payment mode a cash sale can take (cash / mobile money / bank); it decides the receiving account. */
+export interface PaymentMode {
+  id: string; code: string; label: string; kind: 'cash' | 'mobile_money' | 'bank'; provider: string | null;
+  accountId: string | null; accountName: string | null; accountCode: string | null; requiresReference: boolean;
+}
+
 export const EXECUTION_LABEL: Record<ExecutionStatus, string> = {
   draft: tx('Draft'), confirmed: tx('Confirmed'), voided: tx('Voided'), cancelled: tx('Discarded'),
 };
@@ -63,6 +76,9 @@ export const FISCAL_LABEL: Record<FiscalStatus, string> = {
   none: tx('Not fiscalised'), pending: tx('Fiscal pending'), issued: tx('Fiscal issued'), failed: tx('Fiscal failed'),
   cancellation_pending: tx('Fiscal cancel pending'), cancelled: tx('Fiscal cancelled'),
 };
+export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
+  pending: tx('Pending'), scheduled: tx('Scheduled'), dispatched: tx('Dispatched'), delivered: tx('Delivered'), failed: tx('Failed'),
+};
 export const METHOD_LABEL: Record<string, string> = { cash: tx('Cash'), mobile_money: tx('Mobile money'), bank: tx('Bank') };
 
 export const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
@@ -72,6 +88,14 @@ export function useCashSale(id: string | undefined) {
     queryKey: ['cash-sales', id],
     enabled: !!id,
     queryFn: async () => (await api.get<CashSale>(`/sales/cash-sales/${id}`)).data,
+  });
+}
+
+export function usePaymentModes() {
+  return useQuery({
+    queryKey: ['cash-sales', 'payment-modes'],
+    queryFn: async () => (await api.get<PaymentMode[]>('/sales/cash-sales/payment-modes')).data,
+    staleTime: 60_000,
   });
 }
 

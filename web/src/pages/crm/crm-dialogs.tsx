@@ -15,13 +15,19 @@ import { Field, Stars, TYPE_ICON, typeLabel } from './crm-ui';
 import { cn } from '@/lib/utils';
 
 /** Customer dropdown with type-ahead search (partners search), styled like the order-line product picker. */
-export function PartnerPicker({ value, label, onPick, placeholder, className }: {
+export function PartnerPicker({ value, label, onPick, placeholder, className, pinned }: {
   value: string; label?: string | null; onPick: (id: string, name: string) => void; placeholder?: string; className?: string;
+  /** Options always listed first (e.g. the branch walk-in customer), whatever the search. */
+  pinned?: Array<{ id: string; name: string }>;
 }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const { data, isFetching } = usePartnerOptions(search, open);
-  const options = (data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined, hint: p.email ?? undefined }));
+  const pinnedIds = new Set((pinned ?? []).map((p) => p.id));
+  const options = [
+    ...(pinned ?? []).map((p) => ({ value: p.id, label: p.name, code: undefined as string | undefined, hint: undefined as string | undefined })),
+    ...(data ?? []).filter((p) => !pinnedIds.has(p.id)).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined, hint: p.email ?? undefined })),
+  ];
   return (
     <SearchableSelect
       value={value}

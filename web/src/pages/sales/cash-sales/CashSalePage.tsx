@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Undo2, Wallet, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,13 +22,15 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
+import { useCrmUsers } from '@/features/crm/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import {
-  METHOD_LABEL, idem, useBranchProfiles, useCashSale,
+  DELIVERY_STATUS_LABEL, METHOD_LABEL, idem, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
+import { CashSaleDelivery } from './CashSaleDelivery';
 
 interface DraftLine { productId: string; description: string; quantity: number; unitPrice: number | ''; discountPercent: number; taxId: string | null }
 
@@ -56,7 +58,12 @@ export function CashSalePage() {
   const [branchId, setBranchId] = useState('');
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
-  const [customer, setCustomer] = useState({ customerName: '', customerPhone: '', customerTin: '', customerAddress: '', remarks: '' });
+  const [customer, setCustomer] = useState({ customerPhone: '', customerAddress: '', remarks: '' });
+  const me = useAuthStore((st) => st.user);
+  const currentBranchId = useAuthStore((st) => st.currentBranchId);
+  const users = useCrmUsers();
+  const [saleDate, setSaleDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [salespersonId, setSalespersonId] = useState(me?.id ?? '');
   const [lines, setLines] = useState<DraftLine[]>(() => (isNew ? [{ productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null }] : []));
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<null | 'return' | 'reject' | 'reopen' | 'void' | 'cancel_invoice' | 'amend' | 'payment'>(null);
@@ -67,12 +74,33 @@ export function CashSalePage() {
     if (!s) return;
     setPartnerId(s.partnerId);
     setPartnerName(s.partnerName);
-    setCustomer({ customerName: s.customerName ?? '', customerPhone: s.customerPhone ?? '', customerTin: s.customerTin ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
+    setCustomer({ customerPhone: s.customerPhone ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
+    setSaleDate(String(s.saleDate).slice(0, 10));
+    setSalespersonId(s.salespersonId ?? '');
     setLines((s.lines ?? []).map((l) => ({ productId: l.productId, description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
   }, [s]);
+  const activeProfiles = useMemo(() => (profiles.data ?? []).filter((p) => p.isActive), [profiles.data]);
+  const profile = activeProfiles.find((p) => p.branchId === (isNew ? branchId : s?.branchId));
   useEffect(() => {
-    if (isNew && !branchId && profiles.data?.length === 1) setBranchId(profiles.data[0].branchId);
-  }, [isNew, branchId, profiles.data]);
+    if (!isNew || branchId || activeProfiles.length === 0) return;
+    setBranchId((activeProfiles.find((p) => p.branchId === currentBranchId) ?? activeProfiles[0]).branchId);
+  }, [isNew, branchId, activeProfiles, currentBranchId]);
+  // New sale: the branch walk-in customer is the default until the user picks someone else.
+  const [partnerTouched, setPartnerTouched] = useState(false);
+  useEffect(() => {
+    if (!isNew || partnerTouched || !profile?.walkInPartnerId) return;
+    setPartnerId(profile.walkInPartnerId);
+    setPartnerName(profile.walkInPartnerName ?? tx('Walk-in Customer'));
+  }, [isNew, partnerTouched, profile]);
+  const walkIn = profile?.walkInPartnerId ? [{ id: profile.walkInPartnerId, name: profile.walkInPartnerName ?? tx('Walk-in Customer') }] : [];
+  const userOpts = useMemo(() => {
+    const list = (users.data ?? []).map((u) => ({ id: u.id, name: u.name }));
+    const meName = me ? [me.firstName, me.lastName].filter(Boolean).join(' ') || me.email : '';
+    const extra = me && !list.some((u) => u.id === me.id) ? [{ id: me.id, name: meName }] : [];
+    const cur = s?.salespersonId && ![...list, ...extra].some((u) => u.id === s.salespersonId)
+      ? [{ id: s.salespersonId, name: s.salespersonName ?? s.salespersonId }] : [];
+    return [...extra, ...cur, ...list];
+  }, [users.data, me, s?.salespersonId, s?.salespersonName]);
 
   const refresh = async () => { await qc.invalidateQueries({ queryKey: ['cash-sales'] }); };
   const run = async (fn: () => Promise<unknown>, ok: string) => {
@@ -85,11 +113,14 @@ export function CashSalePage() {
     };
     if (partnerId) b.partnerId = partnerId;
     Object.entries(customer).forEach(([k, v]) => { b[k] = v || null; });
+    if (saleDate) b.saleDate = saleDate;
+    if (salespersonId) b.salespersonId = salespersonId;
     return b;
   };
   const save = () => run(async () => {
     if (isNew) {
-      const r = await api.post<CashSale>('/sales/cash-sales', { ...body(), branchId: branchId || undefined });
+      if (!branchId) throw new Error(tx('Select a branch'));
+      const r = await api.post<CashSale>('/sales/cash-sales', { ...body(), branchId });
       navigate(`/sales/cash-sales/${r.data.id}`, { replace: true });
     } else {
       await api.patch(`/sales/cash-sales/${id}`, body());
@@ -119,7 +150,7 @@ export function CashSalePage() {
     : Number(l.quantity) * Number(l.unitPrice) * (1 - Number(l.discountPercent || 0) / 100));
   const est = lines.reduce((a, l, i) => a + (lineEst(l, i) ?? 0), 0);
   const paymentsCount = s?.payments?.length ?? 0;
-  const custLabel = { customerName: tx('Customer name'), customerPhone: tx('Phone'), customerTin: tx('TIN'), customerAddress: tx('Address') };
+  const custLabel = { customerPhone: tx('Phone'), customerAddress: tx('Address') };
   const custField = (k: keyof typeof custLabel, className?: string) => (
     <Field key={k} label={custLabel[k]} className={className}>
       {editable ? <Input value={customer[k]} onChange={(e) => setCustomer({ ...customer, [k]: e.target.value })} /> : <p className="py-2 text-sm">{s?.[k] ?? '—'}</p>}
@@ -172,6 +203,7 @@ export function CashSalePage() {
           <div className="flex flex-wrap gap-2">
             <SmartButton icon={<Receipt className="h-4 w-4" />} count={s.currentInvoiceId ? 1 : 0} label={tx('Invoice')} disabled={!s.currentInvoiceId} onClick={() => s.currentInvoiceId && navigate(`/invoices/${s.currentInvoiceId}`)} />
             <SmartButton icon={<Wallet className="h-4 w-4" />} count={paymentsCount} label={tx('Payments')} onClick={() => setTab('payments')} />
+            <SmartButton icon={<Truck className="h-4 w-4" />} count={DELIVERY_STATUS_LABEL[s.deliveryStatus ?? 'pending']} label={tx('Delivery')} onClick={() => setTab('delivery')} />
             <SmartButton icon={<History className="h-4 w-4" />} count="" label={tx('Timeline')} onClick={() => setTab('history')} />
           </div>
         )}
@@ -185,43 +217,45 @@ export function CashSalePage() {
       <div className={cn('grid items-start gap-4', ho ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : '')}>
         <section className="rounded-xl border bg-card shadow-sm">
           <div className="px-5 pt-5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{tx('Cash sale')}</p>
-            <h1 className="text-2xl font-bold">{isNew ? tx('New') : s?.number}</h1>
+            <h1 className="flex items-baseline gap-1.5 text-2xl font-bold">
+              <span>{isNew ? tx('New') : s?.number}</span>
+              <span className="text-sm font-medium text-muted-foreground">{tx('Cash Sale')}</span>
+            </h1>
           </div>
-          <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
-            <div className="space-y-3">
-              <Field label={tx('Customer')} hint={editable ? tx('Empty: the branch walk-in customer') : undefined}>
-                {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); }} />
-                  : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
+          {/* 4-col grid, rows aligned: Customer | Branch | Sale date / Address | Phone | Salesperson. */}
+          <div className="grid items-start gap-x-6 gap-y-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label={tx('Customer')} className="sm:col-span-2">
+              {editable ? <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
+                : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
+            </Field>
+            {isNew ? (
+              <Field label={tx('Branch')}>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={branchId} onChange={(e) => { setBranchId(e.target.value); setPartnerTouched(false); }}>
+                  {activeProfiles.length === 0 && <option value="">{tx('No branch sales profile')}</option>}
+                  {activeProfiles.map((p) => <option key={p.id} value={p.branchId}>{p.branchName}</option>)}
+                </select>
               </Field>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {custField('customerName')}
-                {custField('customerPhone')}
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {isNew ? (
-                  <Field label={tx('Branch')}>
-                    <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-                      <option value="">{tx('My branch')}</option>
-                      {(profiles.data ?? []).filter((p) => p.isActive).map((p) => <option key={p.id} value={p.branchId}>{p.branchName}</option>)}
-                    </select>
-                  </Field>
-                ) : (
-                  <Field label={tx('Branch')}><p className="py-2 text-sm">{s?.branchName} · {s?.locationName}</p></Field>
-                )}
-                <Field label={tx('Sale date')}><p className="py-2 text-sm">{s ? date(s.saleDate) : date(new Date().toISOString())}</p></Field>
-                {custField('customerTin')}
-                <Field label={tx('Salesperson')}><p className="py-2 text-sm">{s?.salespersonName ?? tx('Me')}</p></Field>
-              </div>
-              {custField('customerAddress')}
-            </div>
+            ) : (
+              <Field label={tx('Branch')}><p className="py-2 text-sm">{s?.branchName} · {s?.locationName}</p></Field>
+            )}
+            <Field label={tx('Sale date')}>
+              {editable ? <Input type="date" max={new Date().toLocaleDateString('en-CA')} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
+                : <p className="py-2 text-sm">{s ? date(s.saleDate) : '—'}</p>}
+            </Field>
+            {custField('customerAddress', 'sm:col-span-2')}
+            {custField('customerPhone')}
+            <Field label={tx('Salesperson')}>
+              {editable ? (
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
+                  {userOpts.map((u) => <option key={u.id} value={u.id}>{u.id === me?.id ? `${u.name} (${tx('me')})` : u.name}</option>)}
+                </select>
+              ) : <p className="py-2 text-sm">{s?.salespersonName ?? '—'}</p>}
+            </Field>
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
-              {([['lines', tx('Sale lines')], ['payments', `${tx('Payments')}${paymentsCount ? ` (${paymentsCount})` : ''}`], ['documents', tx('Supporting documents')], ['history', tx('Timeline')]] as const).map(([v, label]) => (
+              {([['lines', tx('Sale lines')], ['payments', `${tx('Billing & payments details')}${paymentsCount ? ` (${paymentsCount})` : ''}`], ['delivery', tx('Delivery and Fulfilment')], ['documents', tx('Supporting documents')], ['history', tx('Timeline')]] as const).map(([v, label]) => (
                 <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
               ))}
             </TabsList>
@@ -231,6 +265,7 @@ export function CashSalePage() {
                 <table className="w-full min-w-[900px] text-sm">
                   <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
+                      <th className="w-20 py-2 pr-2 text-right">{tx('Delivered')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Invoiced')}</th>
                       <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-16 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-32 py-2 pr-2">{tx('Tax')}</th>
                       <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
                   </thead>
@@ -242,6 +277,8 @@ export function CashSalePage() {
                           <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" /></td>
                           <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>
                           <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
+                          <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.deliveredQty)}</td>
+                          <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.invoicedQty)}</td>
                           <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" placeholder={tx('List')} value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value === '' ? '' : Number(e.target.value) })} /></td>
                           <td className="py-1.5 pr-2"><Input type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
                           <td className="py-1.5 pr-2"><OptionalSelect value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={taxOpts} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>
@@ -253,14 +290,16 @@ export function CashSalePage() {
                       <tr key={l.id} className="border-b align-top">
                         <td className="py-2 pr-2 font-medium">{l.productName}</td>
                         <td className="py-2 pr-2 text-muted-foreground">{l.description}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{Number(l.quantity)} {l.uomCode ?? ''}</td>
+                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.quantity)} {l.uomCode ?? ''}</td>
+                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.deliveredQty)}</td>
+                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.invoicedQty)}</td>
                         <td className="py-2 pr-2 text-right tabular-nums">{money(l.unitPrice)}</td>
                         <td className="py-2 pr-2 text-right tabular-nums">{Number(l.discountPercent) || '—'}</td>
                         <td className="py-2 pr-2">{l.taxName ?? '—'}</td>
                         <td className="py-2 pr-2 text-right tabular-nums">{money(l.lineTotal)}</td><td />
                       </tr>
                     ))}
-                    {editable && lines.length === 0 && <tr><td colSpan={8} className="py-4 text-center text-muted-foreground">{tx('No lines yet.')}</td></tr>}
+                    {editable && lines.length === 0 && <tr><td colSpan={10} className="py-4 text-center text-muted-foreground">{tx('No lines yet.')}</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -281,6 +320,9 @@ export function CashSalePage() {
 
             <TabsContent value="payments" className="mt-0 p-5">
               {s ? <Payments sale={s} busy={busy} onAdd={() => setDialog('payment')} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to capture payments.')}</p>}
+            </TabsContent>
+            <TabsContent value="delivery" className="mt-0 p-5">
+              {s ? <CashSaleDelivery sale={s} busy={busy} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to plan the delivery.')}</p>}
             </TabsContent>
             <TabsContent value="documents" className="mt-0 p-5">
               {s ? <AttachmentPanel resType="sales_submission" resId={s.id} title={tx('Supporting documents')} writePermission={PERMISSIONS.sales.cashSaleCreate} bare />
@@ -309,6 +351,8 @@ export function CashSalePage() {
   );
 }
 
+const qty = (v: number | string | null | undefined) => Number(v ?? 0).toFixed(2);
+
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return <div className="flex items-center justify-between py-0.5"><span className="text-muted-foreground">{label}</span><span className="tabular-nums">{value}</span></div>;
 }
@@ -334,13 +378,13 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
         </div>
       </div>
       <table className="w-full text-sm">
-        <thead className="text-left text-xs uppercase text-muted-foreground"><tr><th className="py-1">{tx('Method')}</th><th className="py-1">{tx('Reference')}</th><th className="py-1">{tx('Account')}</th><th className="py-1 text-right">{tx('Amount')}</th><th className="py-1">{tx('Collected by')}</th><th className="py-1">{tx('Verification')}</th><th /></tr></thead>
+        <thead className="text-left text-xs uppercase text-muted-foreground"><tr><th className="py-1">{tx('Payment mode')}</th><th className="py-1">{tx('Reference')}</th><th className="py-1">{tx('Account')}</th><th className="py-1 text-right">{tx('Amount')}</th><th className="py-1">{tx('Collected by')}</th><th className="py-1">{tx('Verification')}</th><th /></tr></thead>
         <tbody>
           {(sale.payments ?? []).map((p) => {
             const canVerify = p.method === 'cash' ? canVerifyAll || canConfirm : canVerifyAll;
             return (
               <tr key={p.id} className="border-t">
-                <td className="py-1.5">{METHOD_LABEL[p.method]}{p.provider ? ` · ${p.provider.toUpperCase()}` : ''}</td>
+                <td className="py-1.5">{p.paymentModeLabel ?? `${METHOD_LABEL[p.method]}${p.provider ? ` · ${p.provider.toUpperCase()}` : ''}`}</td>
                 <td className="py-1.5 text-xs">{p.reference ?? '—'}</td>
                 <td className="py-1.5 text-xs">{p.accountCode} {p.accountName}</td>
                 <td className="py-1.5 text-right tabular-nums">{money(p.amount)}</td>
@@ -493,24 +537,32 @@ function AmendDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () 
 
 function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () => void; onSubmit: (p: Record<string, unknown>) => void }) {
   const remaining = Math.max(0, Number(sale.grandTotal) - (sale.payments ?? []).reduce((a, p) => a + Number(p.amount), 0));
-  const [method, setMethod] = useState<'cash' | 'mobile_money' | 'bank'>('cash');
-  const [provider, setProvider] = useState<'mtn' | 'airtel'>('mtn');
+  const modes = usePaymentModes();
+  const [modeId, setModeId] = useState('');
+  const mode = (modes.data ?? []).find((m) => m.id === modeId) ?? modes.data?.[0];
   const [amount, setAmount] = useState<number>(remaining);
   const [reference, setReference] = useState('');
+  const needsRef = !!mode && (mode.kind !== 'cash' || mode.requiresReference);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>{tx('Add payment')}</DialogTitle></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={tx('Method')}><select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value as typeof method)}><option value="cash">{tx('Cash')}</option><option value="mobile_money">{tx('Mobile money')}</option><option value="bank">{tx('Bank')}</option></select></Field>
-          {method === 'mobile_money' && <Field label={tx('Provider')}><select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}><option value="mtn">MTN</option><option value="airtel">Airtel</option></select></Field>}
+          <Field label={tx('Payment mode')}>
+            <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={mode?.id ?? ''} onChange={(e) => setModeId(e.target.value)}>
+              {(modes.data ?? []).length === 0 && <option value="">{modes.isLoading ? tx('Loading…') : tx('No payment mode configured')}</option>}
+              {(modes.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}{m.provider && m.kind !== 'cash' && m.provider !== m.label ? ` · ${m.provider}` : ''}</option>)}
+            </select>
+          </Field>
           <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
-          {method !== 'cash' && <Field label={tx('Transaction reference')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>}
+          {needsRef && <Field label={tx('Transaction reference')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>}
         </div>
-        <p className="text-xs text-muted-foreground">{tx('The receiving account comes from the branch sales profile.')}</p>
+        <p className="text-xs text-muted-foreground">
+          {mode?.accountName ? `${tx('Received into')} ${mode.accountCode ?? ''} ${mode.accountName}` : tx('The receiving account comes from the payment mode.')}
+        </p>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Close')}</Button>
-          <Button disabled={amount <= 0 || (method !== 'cash' && !reference.trim())} onClick={() => onSubmit({ method, provider: method === 'mobile_money' ? provider : undefined, amount, reference: reference || undefined })}>{tx('Add payment')}</Button>
+          <Button disabled={!mode || amount <= 0 || (needsRef && !reference.trim())} onClick={() => mode && onSubmit({ paymentModeId: mode.id, amount, reference: reference || undefined })}>{tx('Add payment')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

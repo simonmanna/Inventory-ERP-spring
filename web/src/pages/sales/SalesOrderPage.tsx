@@ -29,6 +29,9 @@ import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, SmartButton, StatusRibb
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
+import { HandoverTab } from './HandoverTab';
+import { HandoverDraftPanel } from './HandoverDetails';
+import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-draft';
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
@@ -52,9 +55,8 @@ export function SalesOrderPage() {
   const [customerRef, setCustomerRef] = useState('');
   const [agreementId, setAgreementId] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
-  const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'collect'>('delivery');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
   const [notes, setNotes] = useState('');
+  const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
   const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | null>(null);
@@ -65,7 +67,7 @@ export function SalesOrderPage() {
   useEffect(() => {
     if (o) {
       setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
-      setRequestedDate(o.requestedDate?.slice(0, 10) ?? ''); setDeliveryMethod(o.deliveryMethod); setDeliveryAddress(o.deliveryAddress ?? '');
+      setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
@@ -81,7 +83,8 @@ export function SalesOrderPage() {
 
   const save = useSalesMutation(async () => {
     const body = {
-      partnerId, customerRef, requestedDate: requestedDate || undefined, deliveryMethod, deliveryAddress, notes,
+      partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
+      ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
         productId: l.productId || undefined, description: l.description || undefined, quantity: n(l.quantity),
@@ -98,7 +101,14 @@ export function SalesOrderPage() {
   const doSave = (then?: () => void) => {
     if (!partnerId) return toast.error(tx('Choose a customer'));
     save.mutate(undefined, {
-      onSuccess: (s) => { setDirty(false); if (isNew) navigate(`/sales/orders/${s.id}`, { replace: true }); else toast.success(tx('Saved')); then?.(); },
+      onSuccess: async (s) => {
+        setDirty(false);
+        if (isNew) {
+          try { await saveHandoverDraft(`/sales/orders/${s.id}/handover`, handover); } catch (e) { toast.error(apiErrorMessage(e, tx('Order saved, but the delivery details could not be saved'))); }
+          navigate(`/sales/orders/${s.id}`, { replace: true });
+        } else toast.success(tx('Saved'));
+        then?.();
+      },
       onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save'))),
     });
   };
@@ -272,16 +282,20 @@ export function SalesOrderPage() {
           </TabsContent>
 
           <TabsContent value="delivery" className="mt-0 space-y-4 p-5">
-            <TabSection title={tx('Delivery')}>
-              <Field label={tx('Requested date')}><Input type="date" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
-              <Field label={tx('Delivery method')}>
-                <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={deliveryMethod} onChange={(e) => { setDeliveryMethod(e.target.value as 'delivery' | 'collect'); setDirty(true); }}>
-                  <option value="delivery">{tx('Deliver to site')}</option><option value="collect">{tx('Customer collects')}</option>
-                </select>
-              </Field>
-              <Field label={tx('Delivery address / site')} className="sm:col-span-2"><Input disabled={!editable} value={deliveryAddress} onChange={(e) => { setDeliveryAddress(e.target.value); setDirty(true); }} /></Field>
-              {o && <Field label={tx('Delivery status')}><p className="py-2 text-sm">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>}
-            </TabSection>
+            {isNew || !o ? (
+              <>
+                <Field label={tx('Requested date')}><Input type="date" className="max-w-xs" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
+                <HandoverDraftPanel value={handover} onChange={(v) => { setHandover(v); setDirty(true); }} hint={tx('Plan how the goods reach the customer. Saved with the order; dispatch and delivery follow once it is confirmed.')} />
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-end gap-x-6 gap-y-2 text-sm">
+                  <Field label={tx('Requested date')}>{editable ? <Input type="date" value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /> : <p className="py-2">{o.requestedDate ? date(o.requestedDate) : '—'}</p>}</Field>
+                  <Field label={tx('Stock delivery status')}><p className="py-2">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>
+                </div>
+                <HandoverTab path={`/sales/orders/${o.id}/handover`} canEdit={has(P.orderWrite)} sourceLabel={tx('sales order')} readyHint={tx('Confirm the sales order first')} issuedLabel={tx('Delivered from stock')} />
+              </>
+            )}
             {o && o.status !== 'draft' && (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {fulfilling && <FulfilmentPanel order={o} />}

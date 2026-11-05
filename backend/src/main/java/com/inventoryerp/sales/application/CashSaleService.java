@@ -7,6 +7,8 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.PosPaymentMethodService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.inventory.application.StockMove;
@@ -71,6 +73,7 @@ public class CashSaleService {
                    l.name AS "locationName",
                    COALESCE(NULLIF(trim(concat_ws(' ', u."firstName", u."lastName")), ''), u.email) AS "salespersonName",
                    COALESCE(NULLIF(trim(concat_ws(' ', o."firstName", o."lastName")), ''), o.email) AS "ownerName",
+                   COALESCE(NULLIF(trim(concat_ws(' ', dv."firstName", dv."lastName")), ''), dv.email) AS "deliveredByName",
                    d."documentNumber" AS "invoiceNumber"
               FROM "SalesSubmission" s
               LEFT JOIN "Branch" b ON b.id = s."branchId"
@@ -78,8 +81,11 @@ public class CashSaleService {
               LEFT JOIN "InventoryLocation" l ON l.id = s."locationId"
               LEFT JOIN "User" u ON u.id = s."salespersonId"
               LEFT JOIN "User" o ON o.id = s."ownerUserId"
+              LEFT JOIN "User" dv ON dv.id = s."deliveredById"
               LEFT JOIN "Document" d ON d.id = s."currentInvoiceId"
             """;
+
+    private static final Set<String> CASH_SALE_METHODS = Set.of("cash", "mobile_money", "bank");
 
     private final SalesDb db;
     private final BranchSalesProfileService profiles;
@@ -95,13 +101,18 @@ public class CashSaleService {
     private final AuditService audit;
     private final EventBus events;
     private final NotificationsService notifications;
+    private final PosPaymentMethodService paymentModes;
+    private final AccountDeterminationService determination;
 
     public CashSaleService(SalesDb db, BranchSalesProfileService profiles, BranchScopeService scopes,
             SalesLinePricing pricing, DocumentBuilderService builder, StockService stock,
             CustomerDepositService deposits, BranchSaleRecognitionService recognition, InvoiceService invoices,
             CashSaleFiscalService fiscal, SequenceService sequence, AuditService audit, EventBus events,
-            NotificationsService notifications) {
+            NotificationsService notifications, PosPaymentMethodService paymentModes,
+            AccountDeterminationService determination) {
         this.db = db;
+        this.paymentModes = paymentModes;
+        this.determination = determination;
         this.profiles = profiles;
         this.scopes = scopes;
         this.pricing = pricing;
@@ -166,7 +177,16 @@ public class CashSaleService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> s = require(id);
-        s.put("lines", lines(id));
+        // Handover delivers every line at confirm; a void puts the goods back. Invoiced once HO generates the invoice.
+        boolean delivered = "confirmed".equals(str(s.get("executionStatus")));
+        boolean invoiced = s.get("currentInvoiceId") != null;
+        List<Map<String, Object>> lines = lines(id);
+        for (Map<String, Object> l : lines) {
+            Object qty = l.get("quantity");
+            l.put("deliveredQty", delivered ? qty : 0);
+            l.put("invoicedQty", invoiced ? qty : 0);
+        }
+        s.put("lines", lines);
         s.put("payments", db.rows("SELECT y.*, a.code AS \"accountCode\", a.name AS \"accountName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\""
@@ -508,19 +528,61 @@ public class CashSaleService {
 
     // ------------------------------------------------------------------ payments
 
-    /** Capture a payment line on a draft; the tender account comes from the branch profile, never the client. */
+    /** Payment modes a cash sale can take: the organization's active cash, mobile-money and bank modes. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> paymentModes() {
+        return paymentModes.terminalPaymentMethods().stream().filter(m -> CASH_SALE_METHODS.contains(m.kind()))
+                .map(PosPaymentMethodService.View::toMap).toList();
+    }
+
+    /**
+     * Capture a payment line on a draft. With {@code paymentModeId} the organization's payment mode decides the
+     * method, provider and receiving account; otherwise the tender account comes from the branch profile. A
+     * client-sent account is never trusted.
+     */
     @Transactional
     public Map<String, Object> addPayment(String id, Map<String, Object> in) {
-        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId"));
+        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId", "paymentModeId"));
         Map<String, Object> s = lock(id);
         requireDraft(s);
-        String method = str(in.get("method"));
-        String provider = blank(str(in.get("provider"))) ? null : str(in.get("provider"));
-        if (!"mobile_money".equals(method)) {
-            provider = null;
+        String method;
+        String provider;
+        String account;
+        String modeId = blank(str(in.get("paymentModeId"))) ? null : str(in.get("paymentModeId"));
+        String modeLabel = null;
+        if (modeId != null) {
+            PosPaymentMethodService.View mode = paymentModes.terminalPaymentMethods().stream()
+                    .filter(m -> m.id().equals(modeId)).findFirst()
+                    .orElseThrow(() -> ApiException.badRequest("Payment mode not found"));
+            method = mode.kind();
+            if (!CASH_SALE_METHODS.contains(method)) {
+                throw ApiException.badRequest("Payment mode " + mode.label() + " cannot be used for cash sales");
+            }
+            modeLabel = mode.label();
+            provider = "mobile_money".equals(method)
+                    ? (blank(mode.provider()) ? mode.code() : mode.provider()).trim().toLowerCase() : null;
+            account = mode.accountId();
+            if (account == null) {
+                Map<String, Object> profile = profiles.get(str(s.get("profileId")));
+                account = "cash".equals(method) ? str(profile.get("cashAccountId")) : null;
+                if (account == null) {
+                    account = determination.mapped("cash".equals(method) ? "default_cash" : "mobile_money"
+                            .equals(method) ? "mobile_money" : "default_bank");
+                }
+            }
+            List<String> problems = recognition.tenderProblems(mode.label(), method, account);
+            if (!problems.isEmpty()) {
+                throw ApiException.badRequest(String.join("; ", problems));
+            }
+        } else {
+            method = str(in.get("method"));
+            provider = blank(str(in.get("provider"))) ? null : str(in.get("provider"));
+            if (!"mobile_money".equals(method)) {
+                provider = null;
+            }
+            Map<String, Object> profile = profiles.get(str(s.get("profileId")));
+            account = BranchSalesProfileService.tenderAccount(profile, method, provider);
         }
-        Map<String, Object> profile = profiles.get(str(s.get("profileId")));
-        String account = BranchSalesProfileService.tenderAccount(profile, method, provider);
         BigDecimal amount = dec(in.get("amount")).setScale(6, RoundingMode.HALF_UP);
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("amount must be greater than 0");
@@ -531,7 +593,8 @@ public class CashSaleService {
         }
         try {
             db.insert("SalesSubmissionPayment", Obj.of("submissionId", id, "method", method, "provider", provider, "amount",
-                    amount, "reference", reference, "accountId", account, "collectedById", user()));
+                    amount, "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId",
+                    modeId, "paymentModeLabel", modeLabel));
         } catch (DuplicateKeyException e) {
             throw ApiException.conflict("Payment reference " + reference + " is already recorded");
         }
@@ -654,7 +717,7 @@ public class CashSaleService {
             }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
                     dec(l.get("quantity"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
-                    .reference(number).date(postDate).requireAvailable(true).notes("Cash sale " + number));
+                    .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);
             db.update("UPDATE \"SalesSubmissionLine\" SET \"costSnapshot\" = ?, \"issueLedgerCode\" = ? WHERE id = ?",
@@ -721,6 +784,97 @@ public class CashSaleService {
                 DomainEvents.SALES_CASH_SALE_RETURNED);
         notify(str(s.get("submittedById")), "Cash sale " + s.get("number") + " returned for correction", reason, id);
         return out;
+    }
+
+    static final List<String> DELIVERY_FIELDS = List.of("deliveryMethod", "deliveryStatus", "deliveryAddress",
+            "deliveryContactName", "deliveryContactPhone", "deliveryScheduledDate", "deliveryDriver", "deliveryVehicle",
+            "deliveryReceivedBy", "deliveryNotes");
+    private static final List<String> DELIVERY_STATUSES = List.of("pending", "scheduled", "dispatched", "delivered",
+            "failed");
+
+    /**
+     * Delivery and fulfilment details (logistics only; stock is issued at confirm). Editable on a draft or confirmed
+     * sale; dispatch and delivery need the sale confirmed; a completed delivery keeps only its receipt fields open.
+     * Every changed field is written to the timeline.
+     */
+    @Transactional
+    public Map<String, Object> updateDelivery(String id, Map<String, Object> in) {
+        unknownFields(in, Set.copyOf(DELIVERY_FIELDS));
+        Map<String, Object> s = lock(id);
+        String execution = str(s.get("executionStatus"));
+        if ("voided".equals(execution) || "cancelled".equals(execution)) {
+            throw ApiException.badRequest("Delivery cannot change on a voided or discarded sale");
+        }
+        Map<String, Object> next = new LinkedHashMap<>();
+        for (String k : DELIVERY_FIELDS) {
+            Object current = s.get(k);
+            next.put(k, current == null ? null : "deliveryScheduledDate".equals(k) ? current.toString() : str(current));
+        }
+        for (String k : in.keySet()) {
+            next.put(k, blank(str(in.get(k))) ? null : str(in.get(k)).trim());
+        }
+        String method = str(next.get("deliveryMethod"));
+        String status = str(next.get("deliveryStatus"));
+        if (!List.of("pickup", "delivery").contains(method)) {
+            throw ApiException.badRequest("deliveryMethod must be one of: pickup, delivery");
+        }
+        if (!DELIVERY_STATUSES.contains(status)) {
+            throw ApiException.badRequest("deliveryStatus must be one of: " + String.join(", ", DELIVERY_STATUSES));
+        }
+        LocalDate scheduled = null;
+        if (next.get("deliveryScheduledDate") != null) {
+            try {
+                scheduled = LocalDate.parse(str(next.get("deliveryScheduledDate")).substring(0,
+                        Math.min(10, str(next.get("deliveryScheduledDate")).length())));
+            } catch (RuntimeException e) {
+                throw ApiException.badRequest("deliveryScheduledDate must be a valid ISO 8601 date string");
+            }
+            next.put("deliveryScheduledDate", scheduled.toString());
+        }
+        String before = str(s.get("deliveryStatus"));
+        if ("delivered".equals(before)) {
+            for (String k : DELIVERY_FIELDS) {
+                if (!Set.of("deliveryReceivedBy", "deliveryNotes").contains(k)
+                        && !Objects.equals(next.get(k), k.equals("deliveryScheduledDate") && s.get(k) != null
+                                ? s.get(k).toString() : str(s.get(k)))) {
+                    throw ApiException.badRequest("Delivery is already completed; only the receiver and notes can change");
+                }
+            }
+        }
+        if (List.of("dispatched", "delivered").contains(status) && !"confirmed".equals(execution)) {
+            throw ApiException.badRequest("Confirm the sale before the goods are dispatched or delivered");
+        }
+        if ("delivery".equals(method) && !"pending".equals(status) && next.get("deliveryAddress") == null) {
+            throw ApiException.badRequest("deliveryAddress should not be empty for a delivery");
+        }
+        if ("scheduled".equals(status) && scheduled == null) {
+            throw ApiException.badRequest("deliveryScheduledDate should not be empty when the delivery is scheduled");
+        }
+        Map<String, Object> patch = new LinkedHashMap<>();
+        for (String k : DELIVERY_FIELDS) {
+            Object old = s.get(k) == null ? null : "deliveryScheduledDate".equals(k) ? s.get(k).toString() : str(s.get(k));
+            if (!Objects.equals(old, next.get(k))) {
+                patch.put(k, "deliveryScheduledDate".equals(k) && scheduled != null ? scheduled : next.get(k));
+                if (!"deliveryStatus".equals(k)) {
+                    db.update("INSERT INTO \"SalesSubmissionEvent\" (id, \"organizationId\", \"submissionId\", action,"
+                            + " field, \"oldValue\", \"newValue\", \"userId\") VALUES (?, ?, ?, 'delivery_update', ?, ?, ?, ?)",
+                            SalesDb.newId(), org(), id, k, str(old), str(next.get(k)), user());
+                }
+            }
+        }
+        if (patch.isEmpty()) {
+            return get(id);
+        }
+        if (!Objects.equals(before, status)) {
+            event(id, "delivery_" + status, null, null, null, null, null);
+            if ("delivered".equals(status)) {
+                db.update("UPDATE \"SalesSubmission\" SET \"deliveredAt\" = " + NOW + ", \"deliveredById\" = ? WHERE id = ?",
+                        user(), id);
+            }
+        }
+        patch.put("version", ((Number) s.get("version")).intValue() + 1);
+        db.patch("SalesSubmission", id, patch, true);
+        return get(id);
     }
 
     /** Non-financial corrections while returned (audited one row per changed field). */
