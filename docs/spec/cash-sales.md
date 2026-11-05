@@ -319,6 +319,9 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
      Draft or confirmed only; dispatched/delivered need confirm; delivery needs an address once past pending; scheduled needs a date;
      delivered is final (only received-by and notes stay editable). Each change → timeline (`delivery_update`, `delivery_<status>`).
    - Web: "Delivery and Fulfilment" tab (status steps, issued vs ordered per line, delivery form) + Delivery smart button.
+   - V365 (owner request) adds site details: `deliveryLandmark` (GPS / landmark), `deliveryLoadingSite`, `deliveryScope`
+     (`full|partial`) and `deliveryOffloadingEquipment` (`yes|no`), same rules as the order / invoice handover. A new
+     (unsaved) cash sale now plans the delivery in the tab; it is PATCHed to `/delivery` right after the draft is created.
 9. **Negative stock follows the org setting (2026-11-05, owner request).**
    - Confirm no longer forces `requireAvailable(true)`; the issue obeys `inventory.allowNegativeStock` (default on) and,
      when that is off, the product `stockPolicy` (`block` refuses, `warn` logs) — same as POS / invoices.

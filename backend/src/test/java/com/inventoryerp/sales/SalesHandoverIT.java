@@ -86,6 +86,15 @@ class SalesHandoverIT extends ApiTestSupport {
         JsonNode h = ok(200, "GET", path, null);
         assertThat(h.get("method").asString()).isEqualTo("delivery");
         assertThat(h.get("address").asString()).isEqualTo("Plot 7, Site road");
+        assertThat(h.get("landmark").isNull()).isTrue();
+        JsonNode site = ok(200, "PATCH", path, Map.of("landmark", "0.3476,32.5825 / opposite Shell", "loadingSite",
+                "Main yard", "deliveryScope", "full", "offloadingEquipment", "no"));
+        assertThat(site.get("landmark").asString()).isEqualTo("0.3476,32.5825 / opposite Shell");
+        assertThat(site.get("loadingSite").asString()).isEqualTo("Main yard");
+        assertThat(site.get("deliveryScope").asString()).isEqualTo("full");
+        assertThat(site.get("offloadingEquipment").asString()).isEqualTo("no");
+        assertThat(as("PATCH", path, Map.of("deliveryScope", "half")).status()).isEqualTo(400);
+        assertThat(as("PATCH", path, Map.of("offloadingEquipment", "maybe")).status()).isEqualTo(400);
         ok(200, "PATCH", path, Map.of("method", "pickup", "locationId", store));
         assertThat(ok(200, "GET", "/sales/orders/" + id, null).get("deliveryMethod").asString()).isEqualTo("collect");
         Map<String, Object> clearAddress = new HashMap<>();

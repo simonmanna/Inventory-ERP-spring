@@ -380,6 +380,14 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(as("PATCH", path, Map.of("deliveryMethod", "drone")).status()).isEqualTo(400);
         assertThat(as("PATCH", path, Map.of("grandTotal", 1)).status()).isEqualTo(400);
         ok(200, "PATCH", path, Map.of("deliveryStatus", "scheduled", "deliveryScheduledDate", "2026-11-10"));
+        JsonNode site = ok(200, "PATCH", path, Map.of("deliveryLandmark", "Behind Ntinda market",
+                "deliveryLoadingSite", "Showroom yard", "deliveryScope", "partial", "deliveryOffloadingEquipment", "yes"));
+        assertThat(site.get("deliveryLandmark").asString()).isEqualTo("Behind Ntinda market");
+        assertThat(site.get("deliveryLoadingSite").asString()).isEqualTo("Showroom yard");
+        assertThat(site.get("deliveryScope").asString()).isEqualTo("partial");
+        assertThat(site.get("deliveryOffloadingEquipment").asString()).isEqualTo("yes");
+        assertThat(as("PATCH", path, Map.of("deliveryScope", "half")).status()).isEqualTo(400);
+        assertThat(as("PATCH", path, Map.of("deliveryOffloadingEquipment", "maybe")).status()).isEqualTo(400);
 
         String id = confirmedCashSale(null, 1);
         String p2 = "/sales/cash-sales/" + id + "/delivery";

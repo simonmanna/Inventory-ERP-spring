@@ -18,6 +18,8 @@ export interface Handover {
   method: 'pickup' | 'delivery'; status: HandoverStatus; locationId: string | null; locationName: string | null;
   address: string | null; contactName: string | null; contactPhone: string | null; scheduledDate: string | null;
   driver: string | null; vehicle: string | null; receivedBy: string | null; notes: string | null;
+  landmark: string | null; loadingSite: string | null; deliveryScope: 'full' | 'partial' | null;
+  offloadingEquipment: 'yes' | 'no' | null;
   deliveredAt: string | null; deliveredByName: string | null; saved: boolean;
   lines: Array<{ id: string; productName: string | null; description: string; uomCode: string | null; quantity: number; issuedQty: number | null; handedOverQty: number }>;
 }
@@ -31,6 +33,8 @@ function toForm(h: Handover): Form {
     method: h.method, locationId: h.locationId ?? '', address: h.address ?? '', contactName: h.contactName ?? '',
     contactPhone: h.contactPhone ?? '', scheduledDate: h.scheduledDate ? h.scheduledDate.slice(0, 10) : '',
     driver: h.driver ?? '', vehicle: h.vehicle ?? '', receivedBy: h.receivedBy ?? '', notes: h.notes ?? '',
+    landmark: h.landmark ?? '', loadingSite: h.loadingSite ?? '', deliveryScope: h.deliveryScope ?? '',
+    offloadingEquipment: h.offloadingEquipment ?? '',
   };
 }
 
@@ -75,7 +79,7 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
   const send = (extra?: Record<string, unknown>, ok = tx('Delivery details saved')) => {
     const b: Record<string, unknown> = {};
     (Object.keys(f) as Array<keyof Form>).forEach((k) => { if (!done || RECEIPT.includes(k)) b[k] = f[k] || null; });
-    if (!isDelivery && !done) { b.driver = null; b.vehicle = null; }
+    if (!isDelivery && !done) { b.driver = null; b.vehicle = null; b.landmark = null; b.offloadingEquipment = null; }
     save.mutate({ body: { ...b, ...extra }, ok });
   };
   const ordered = h.lines.reduce((a, l) => a + Number(l.quantity), 0);

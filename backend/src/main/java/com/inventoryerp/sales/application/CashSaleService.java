@@ -788,7 +788,8 @@ public class CashSaleService {
 
     static final List<String> DELIVERY_FIELDS = List.of("deliveryMethod", "deliveryStatus", "deliveryAddress",
             "deliveryContactName", "deliveryContactPhone", "deliveryScheduledDate", "deliveryDriver", "deliveryVehicle",
-            "deliveryReceivedBy", "deliveryNotes");
+            "deliveryReceivedBy", "deliveryNotes", "deliveryLandmark", "deliveryLoadingSite", "deliveryScope",
+            "deliveryOffloadingEquipment");
     private static final List<String> DELIVERY_STATUSES = List.of("pending", "scheduled", "dispatched", "delivered",
             "failed");
 
@@ -820,6 +821,13 @@ public class CashSaleService {
         }
         if (!DELIVERY_STATUSES.contains(status)) {
             throw ApiException.badRequest("deliveryStatus must be one of: " + String.join(", ", DELIVERY_STATUSES));
+        }
+        if (next.get("deliveryScope") != null && !List.of("full", "partial").contains(next.get("deliveryScope"))) {
+            throw ApiException.badRequest("deliveryScope must be one of: full, partial");
+        }
+        if (next.get("deliveryOffloadingEquipment") != null
+                && !List.of("yes", "no").contains(next.get("deliveryOffloadingEquipment"))) {
+            throw ApiException.badRequest("deliveryOffloadingEquipment must be one of: yes, no");
         }
         LocalDate scheduled = null;
         if (next.get("deliveryScheduledDate") != null) {

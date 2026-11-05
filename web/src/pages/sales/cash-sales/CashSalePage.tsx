@@ -31,6 +31,8 @@ import {
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
 import { CashSaleDelivery } from './CashSaleDelivery';
+import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
+import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/handover-draft';
 
 interface DraftLine { productId: string; description: string; quantity: number; unitPrice: number | ''; discountPercent: number; taxId: string | null }
 
@@ -68,6 +70,7 @@ export function CashSalePage() {
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<null | 'return' | 'reject' | 'reopen' | 'void' | 'cancel_invoice' | 'amend' | 'payment'>(null);
   const [tab, setTab] = useState('lines');
+  const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
   const editable = isNew || s?.executionStatus === 'draft';
 
   useEffect(() => {
@@ -121,6 +124,7 @@ export function CashSalePage() {
     if (isNew) {
       if (!branchId) throw new Error(tx('Select a branch'));
       const r = await api.post<CashSale>('/sales/cash-sales', { ...body(), branchId });
+      try { await saveCashDeliveryDraft(r.data.id, handover); } catch (e) { toast.error(apiErrorMessage(e, tx('Sale saved, but the delivery details could not be saved'))); }
       navigate(`/sales/cash-sales/${r.data.id}`, { replace: true });
     } else {
       await api.patch(`/sales/cash-sales/${id}`, body());
@@ -322,7 +326,8 @@ export function CashSalePage() {
               {s ? <Payments sale={s} busy={busy} onAdd={() => setDialog('payment')} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to capture payments.')}</p>}
             </TabsContent>
             <TabsContent value="delivery" className="mt-0 p-5">
-              {s ? <CashSaleDelivery sale={s} busy={busy} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to plan the delivery.')}</p>}
+              {s ? <CashSaleDelivery sale={s} busy={busy} run={run} />
+                : <HandoverDraftPanel value={handover} onChange={setHandover} hideLocation hint={tx('Plan how the goods reach the customer. Saved with the draft; dispatch and delivery follow once the sale is confirmed.')} />}
             </TabsContent>
             <TabsContent value="documents" className="mt-0 p-5">
               {s ? <AttachmentPanel resType="sales_submission" resId={s.id} title={tx('Supporting documents')} writePermission={PERMISSIONS.sales.cashSaleCreate} bare />
@@ -567,4 +572,22 @@ function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: (
       </DialogContent>
     </Dialog>
   );
+}
+
+const CASH_DELIVERY_KEYS: Partial<Record<keyof HandoverForm, string>> = {
+  address: 'deliveryAddress', contactName: 'deliveryContactName', contactPhone: 'deliveryContactPhone',
+  scheduledDate: 'deliveryScheduledDate', driver: 'deliveryDriver', vehicle: 'deliveryVehicle', notes: 'deliveryNotes',
+  landmark: 'deliveryLandmark', loadingSite: 'deliveryLoadingSite', deliveryScope: 'deliveryScope',
+  offloadingEquipment: 'deliveryOffloadingEquipment',
+};
+
+/** Save the delivery details planned on a new cash sale once the draft exists (only filled fields; status pending). */
+async function saveCashDeliveryDraft(id: string, f: HandoverForm) {
+  const body: Record<string, unknown> = { deliveryMethod: f.method };
+  (Object.keys(CASH_DELIVERY_KEYS) as Array<keyof HandoverForm>).forEach((k) => {
+    if (!f[k] || (f.method === 'pickup' && DELIVERY_ONLY.includes(k))) return;
+    body[CASH_DELIVERY_KEYS[k]!] = f[k];
+  });
+  if (Object.keys(body).length === 1 && f.method === 'pickup') return;
+  await api.patch(`/sales/cash-sales/${id}/delivery`, body);
 }

@@ -11,10 +11,12 @@ import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import { Field } from '@/pages/crm/crm-ui';
 import { DELIVERY_STATUS_LABEL, type CashSale, type DeliveryStatus } from '@/features/sales/cash-sales-api';
+import { OptionField, SCOPE_OPTIONS, YES_NO_OPTIONS } from '@/pages/sales/HandoverDetails';
 
 type Form = {
   deliveryMethod: 'pickup' | 'delivery'; deliveryAddress: string; deliveryContactName: string; deliveryContactPhone: string;
   deliveryScheduledDate: string; deliveryDriver: string; deliveryVehicle: string; deliveryReceivedBy: string; deliveryNotes: string;
+  deliveryLandmark: string; deliveryLoadingSite: string; deliveryScope: string; deliveryOffloadingEquipment: string;
 };
 
 const STEPS: DeliveryStatus[] = ['pending', 'scheduled', 'dispatched', 'delivered'];
@@ -29,6 +31,8 @@ function toForm(s: CashSale): Form {
     deliveryScheduledDate: s.deliveryScheduledDate ? String(s.deliveryScheduledDate).slice(0, 10) : '',
     deliveryDriver: s.deliveryDriver ?? '', deliveryVehicle: s.deliveryVehicle ?? '',
     deliveryReceivedBy: s.deliveryReceivedBy ?? '', deliveryNotes: s.deliveryNotes ?? '',
+    deliveryLandmark: s.deliveryLandmark ?? '', deliveryLoadingSite: s.deliveryLoadingSite ?? '',
+    deliveryScope: s.deliveryScope ?? '', deliveryOffloadingEquipment: s.deliveryOffloadingEquipment ?? '',
   };
 }
 
@@ -54,7 +58,7 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
       if (done && k !== 'deliveryReceivedBy' && k !== 'deliveryNotes') return;
       b[k] = f[k] || null;
     });
-    if (!isDelivery && !done) { b.deliveryDriver = null; b.deliveryVehicle = null; }
+    if (!isDelivery && !done) { b.deliveryDriver = null; b.deliveryVehicle = null; b.deliveryLandmark = null; b.deliveryOffloadingEquipment = null; }
     return { ...b, ...extra };
   };
   const save = (extra?: Record<string, unknown>, ok = tx('Delivery details saved')) =>
@@ -153,6 +157,10 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {isDelivery && <div className="sm:col-span-2 lg:col-span-3">{text('deliveryAddress', tx('Delivery address'))}</div>}
+          {isDelivery && text('deliveryLandmark', tx('GPS / Landmark'))}
+          {text('deliveryLoadingSite', tx('Loading site'))}
+          <OptionField label={tx('Delivery scope')} value={f.deliveryScope} options={SCOPE_OPTIONS} locked={lockedField('deliveryScope')} onChange={(v) => set('deliveryScope', v)} />
+          {isDelivery && <OptionField label={tx('Offloading equipment')} value={f.deliveryOffloadingEquipment} options={YES_NO_OPTIONS} locked={lockedField('deliveryOffloadingEquipment')} onChange={(v) => set('deliveryOffloadingEquipment', v)} />}
           {text('deliveryContactName', isDelivery ? tx('Contact person') : tx('Collected by (name)'))}
           {text('deliveryContactPhone', tx('Contact phone'))}
           {text('deliveryScheduledDate', isDelivery ? tx('Scheduled date') : tx('Pickup date'), 'date')}

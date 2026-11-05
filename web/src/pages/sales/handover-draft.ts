@@ -4,11 +4,16 @@ import { api } from '@/lib/api';
 export type HandoverForm = {
   method: 'pickup' | 'delivery'; locationId: string; address: string; contactName: string; contactPhone: string;
   scheduledDate: string; driver: string; vehicle: string; receivedBy: string; notes: string;
+  /** Site details of a delivery: GPS pin / landmark, loading site, full or partial delivery, offloading equipment. */
+  landmark: string; loadingSite: string; deliveryScope: '' | 'full' | 'partial'; offloadingEquipment: '' | 'yes' | 'no';
 };
+
+/** Delivery-only fields: dropped when the customer collects. */
+export const DELIVERY_ONLY: Array<keyof HandoverForm> = ['driver', 'vehicle', 'address', 'landmark', 'offloadingEquipment'];
 
 export const emptyHandover = (method: HandoverForm['method'] = 'pickup'): HandoverForm => ({
   method, locationId: '', address: '', contactName: '', contactPhone: '', scheduledDate: '', driver: '', vehicle: '',
-  receivedBy: '', notes: '',
+  receivedBy: '', notes: '', landmark: '', loadingSite: '', deliveryScope: '', offloadingEquipment: '',
 });
 
 /**
@@ -19,7 +24,7 @@ export async function saveHandoverDraft(path: string, f: HandoverForm) {
   const body: Record<string, unknown> = { method: f.method };
   (Object.keys(f) as Array<keyof HandoverForm>).forEach((k) => {
     if (k === 'method' || !f[k]) return;
-    if (f.method === 'pickup' && (k === 'driver' || k === 'vehicle' || k === 'address')) return;
+    if (f.method === 'pickup' && DELIVERY_ONLY.includes(k)) return;
     body[k] = f[k];
   });
   await api.patch(path, body);

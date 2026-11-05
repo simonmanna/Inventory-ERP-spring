@@ -256,3 +256,6 @@ row per `sourceType` + `sourceId`, created on first update; until then defaults 
   and then only `receivedBy` and `notes` stay editable. A cancelled source is read-only.
 - On a sales order, method / address write through to `SalesOrder.deliveryMethod` (`collect` ↔ `pickup`) and
   `deliveryAddress`. Logistics only: stock still moves through fleet delivery orders / invoice posting.
+- Site details (V365, 2026-11-05 owner request): `landmark` (GPS / landmark), `loadingSite`, `deliveryScope`
+  (`full|partial`, 400 `deliveryScope must be one of: full, partial`) and `offloadingEquipment` (`yes|no`, 400
+  `offloadingEquipment must be one of: yes, no`). All optional; web drops landmark / offloading for customer collect.

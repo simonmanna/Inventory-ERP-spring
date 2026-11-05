@@ -33,6 +33,8 @@ export interface CashSale {
   deliveryMethod?: 'pickup' | 'delivery'; deliveryStatus?: DeliveryStatus; deliveryAddress?: string | null;
   deliveryContactName?: string | null; deliveryContactPhone?: string | null; deliveryScheduledDate?: string | null;
   deliveryDriver?: string | null; deliveryVehicle?: string | null; deliveryReceivedBy?: string | null; deliveryNotes?: string | null;
+  deliveryLandmark?: string | null; deliveryLoadingSite?: string | null; deliveryScope?: 'full' | 'partial' | null;
+  deliveryOffloadingEquipment?: 'yes' | 'no' | null;
   deliveredAt?: string | null; deliveredByName?: string | null;
   lines?: CashSaleLine[]; payments?: CashSalePayment[]; actions?: string[];
   invoices?: Array<{ id: string; attempt: number; invoiceId: string; documentNumber: string; status: 'active' | 'cancelled'; cancelReason: string | null; createdAt: string }>;

@@ -37,7 +37,8 @@ public class SalesHandoverService {
     public static final String INVOICE = "invoice";
 
     static final List<String> FIELDS = List.of("method", "status", "locationId", "address", "contactName",
-            "contactPhone", "scheduledDate", "driver", "vehicle", "receivedBy", "notes");
+            "contactPhone", "scheduledDate", "driver", "vehicle", "receivedBy", "notes", "landmark", "loadingSite",
+            "deliveryScope", "offloadingEquipment");
     private static final List<String> STATUSES = List.of("pending", "scheduled", "dispatched", "delivered", "failed");
     private static final Set<String> RECEIPT_FIELDS = Set.of("receivedBy", "notes");
 
@@ -108,7 +109,8 @@ public class SalesHandoverService {
         v.put("contactPhone", str(r.get("partnerPhone")));
         Object date = order ? r.get("requestedDate") : r.get("deliveryDate");
         v.put("scheduledDate", date == null ? null : date.toString().substring(0, 10));
-        for (String k : List.of("driver", "vehicle", "receivedBy", "notes")) {
+        for (String k : List.of("driver", "vehicle", "receivedBy", "notes", "landmark", "loadingSite", "deliveryScope",
+                "offloadingEquipment")) {
             v.put(k, null);
         }
         return v;
@@ -203,6 +205,12 @@ public class SalesHandoverService {
         }
         if (!STATUSES.contains(status)) {
             throw ApiException.badRequest("status must be one of: " + String.join(", ", STATUSES));
+        }
+        if (next.get("deliveryScope") != null && !List.of("full", "partial").contains(next.get("deliveryScope"))) {
+            throw ApiException.badRequest("deliveryScope must be one of: full, partial");
+        }
+        if (next.get("offloadingEquipment") != null && !List.of("yes", "no").contains(next.get("offloadingEquipment"))) {
+            throw ApiException.badRequest("offloadingEquipment must be one of: yes, no");
         }
         LocalDate scheduled = null;
         if (next.get("scheduledDate") != null) {
