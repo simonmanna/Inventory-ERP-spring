@@ -46,7 +46,7 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
   path: string; canEdit: boolean; readyHint: string; sourceLabel: string; issuedLabel?: string;
 }) {
   const qc = useQueryClient();
-  const { data: h } = useHandover(path);
+  const { data: h, isError, error, refetch } = useHandover(path);
   const [f, setF] = useState<Form | null>(null);
   useEffect(() => { if (h) setF(toForm(h)); }, [h]);
   const save = useMutation({
@@ -54,6 +54,14 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
     onSuccess: (d, v) => { qc.setQueryData(['handover', path], d); qc.invalidateQueries({ queryKey: ['sales'] }); toast.success(v.ok); },
     onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save the delivery details'))),
   });
+  if (isError) {
+    return (
+      <div className="py-6 text-center text-sm">
+        <p className="text-rose-600">{apiErrorMessage(error, tx('Could not load the delivery details'))}</p>
+        <Button className="mt-2" size="sm" variant="outline" onClick={() => refetch()}>{tx('Retry')}</Button>
+      </div>
+    );
+  }
   if (!h || !f) return <p className="py-6 text-center text-sm text-muted-foreground">{tx('Loading…')}</p>;
 
   const status = h.status;
