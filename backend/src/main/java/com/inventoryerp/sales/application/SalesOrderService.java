@@ -8,6 +8,7 @@ import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
 import com.inventoryerp.core.application.PriceSnapshotService;
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
@@ -70,12 +71,14 @@ public class SalesOrderService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private final ProductVariantService variants;
     private SalesAgreementService agreements;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
             DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events,
-            PriceSnapshotService snapshots) {
+            PriceSnapshotService snapshots, ProductVariantService variants) {
+        this.variants = variants;
         this.snapshots = snapshots;
         this.credit = credit;
         this.atp = atp;
@@ -151,7 +154,8 @@ public class SalesOrderService {
     }
 
     List<Map<String, Object>> lines(String orderId) {
-        List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\","
+        List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
+                + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " pr.\"trackInventory\", t.name AS \"taxName\", t.rate AS \"taxRate\", u.code AS \"uomCode\" FROM"
                 + " \"SalesOrderLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id ="
                 + " l.\"taxId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"orderId\" = ? ORDER BY"
@@ -271,8 +275,8 @@ public class SalesOrderService {
                 continue;
             }
             Map<String, Object> m = new LinkedHashMap<>();
-            for (String k : List.of("productId", "description", "quantity", "uomId", "unitPrice", "discountPercent",
-                    "taxId", "taxInclusive", "listPrice")) {
+            for (String k : List.of("productId", "variantId", "description", "quantity", "uomId", "unitPrice",
+                    "discountPercent", "taxId", "taxInclusive", "listPrice")) {
                 m.put(k, l.get(k));
             }
             m.put("priceSource", "quotation");
@@ -435,7 +439,9 @@ public class SalesOrderService {
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("quantity must be greater than 0");
         }
-        QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, qty,
+        ProductVariantService.VariantRef variant = variants.resolve(productId, str(l.get("variantId")));
+        String variantId = variant == null ? null : variant.id();
+        QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, variantId, qty,
                 blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on, agreementId);
         BigDecimal unit;
         BigDecimal disc;
@@ -469,6 +475,7 @@ public class SalesOrderService {
         }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("productId", productId);
+        m.put("variantId", variantId);
         m.put("description", description);
         m.put("quantity", qty);
         m.put("uomId", blank(str(l.get("uomId"))) ? null : str(l.get("uomId")));
@@ -504,11 +511,12 @@ public class SalesOrderService {
         int i = 0;
         for (PreparedLine pl : totals.prepared()) {
             Map<String, Object> m = rows.get(i);
-            BigDecimal cost = pl.productId() == null ? null : costOf(pl.productId());
+            BigDecimal cost = pl.productId() == null ? null : costOf(pl.productId(), str(m.get("variantId")));
             Map<String, Object> ins = new LinkedHashMap<>();
             ins.put("orderId", orderId);
             ins.put("sortOrder", sortFrom + i);
             ins.put("productId", pl.productId());
+            ins.put("variantId", m.get("variantId"));
             ins.put("description", pl.description());
             ins.put("quantity", pl.quantity());
             ins.put("uomId", pl.uomId());
@@ -534,7 +542,13 @@ public class SalesOrderService {
         return ids;
     }
 
-    private BigDecimal costOf(String productId) {
+    private BigDecimal costOf(String productId, String variantId) {
+        if (variantId != null) {
+            ProductVariantService.VariantRef v = variants.find(variantId);
+            if (v != null && v.costPrice() != null) {
+                return v.costPrice();
+            }
+        }
         Map<String, Object> r = db.row("SELECT \"costPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?",
                 productId, org());
         return r == null || r.get("costPrice") == null ? null : dec(r.get("costPrice"));

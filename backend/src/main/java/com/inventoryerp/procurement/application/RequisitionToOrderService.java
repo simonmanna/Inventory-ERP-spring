@@ -181,7 +181,8 @@ public class RequisitionToOrderService {
                 }
                 taking.merge(ol.requestLineId(), qty, BigDecimal::add);
                 poLines.add(new PurchaseOrdersService.LineInput((String) rl.get("productId"), (String) rl.get("description"),
-                        qty, (String) rl.get("unitOfMeasureId"), price, ol.taxId(), ol.taxRate(), null));
+                        qty, (String) rl.get("unitOfMeasureId"), price, ol.taxId(), ol.taxRate(), null,
+                        (String) rl.get("variantId")));
                 requestId = requestId == null ? (String) rl.get("purchaseRequestId") : requestId;
             }
             Map<String, Object> po = orders.create(new CreateInput(in.partnerId(), in.branchId(), null,

@@ -54,7 +54,9 @@ public class PurchaseOrdersController {
             @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
             String taxId,
             BigDecimal taxRate,
-            String notes) {}
+            String notes,
+            // ADR-S058: product variant (required for a product with variants).
+            String variantId) {}
 
     /** {@code CreatePODto}. */
     public record CreatePORequest(
@@ -82,7 +84,9 @@ public class PurchaseOrdersController {
             BigDecimal unitCost,
             String batchNumber,
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String expiryDate,
-            String notes) {}
+            String notes,
+            // ADR-S058: variant of a free receipt line (a PO line's own variant wins).
+            String variantId) {}
 
     /** {@code ReceivePODto}. */
     public record ReceivePORequest(
@@ -140,7 +144,7 @@ public class PurchaseOrdersController {
                 dto.expectedDeliveryDate(), dto.currencyCode(), dto.exchangeRate(), dto.paymentType(), dto.notes(),
                 dto.terms(), dto.warehouseId(), dto.requestId(), dto.lines().stream().map(l -> new LineInput(
                         l.productId(), l.description(), l.quantity(), l.unitOfMeasureId(), l.unitPrice(), l.taxId(),
-                        l.taxRate(), l.notes())).toList(), dto.departmentId()));
+                        l.taxRate(), l.notes(), l.variantId())).toList(), dto.departmentId()));
     }
 
     @PatchMapping("/{id}")
@@ -156,7 +160,8 @@ public class PurchaseOrdersController {
     public Map<String, Object> receive(@PathVariable String id, @Valid @RequestBody ReceivePORequest dto) {
         return svc.receive(id, new ReceiveInput(dto.warehouseId(), dto.receivedAt(), dto.notes(),
                 dto.lines().stream().map(l -> new ReceiveLineInput(l.purchaseOrderLineId(), l.productId(),
-                        l.description(), l.quantity(), l.unitCost(), l.batchNumber(), l.expiryDate(), l.notes()))
+                        l.description(), l.quantity(), l.unitCost(), l.batchNumber(), l.expiryDate(), l.notes(),
+                        l.variantId()))
                         .toList()));
     }
 

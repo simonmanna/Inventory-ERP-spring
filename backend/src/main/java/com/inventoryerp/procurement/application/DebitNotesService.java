@@ -57,11 +57,16 @@ public class DebitNotesService {
 
     /** {@code DebitNoteLineDto}. */
     public record LineInput(String productId, String description, BigDecimal quantity, BigDecimal unitPrice,
-            String taxId, String notes, String uomId) {
+            String taxId, String notes, String uomId, String variantId) {
+
+        public LineInput(String productId, String description, BigDecimal quantity, BigDecimal unitPrice,
+                String taxId, String notes, String uomId) {
+            this(productId, description, quantity, unitPrice, taxId, notes, uomId, null);
+        }
 
         public LineInput(String productId, String description, BigDecimal quantity, BigDecimal unitPrice,
                 String taxId, String notes) {
-            this(productId, description, quantity, unitPrice, taxId, notes, null);
+            this(productId, description, quantity, unitPrice, taxId, notes, null, null);
         }
     }
 
@@ -147,11 +152,12 @@ public class DebitNotesService {
                 LineUnit unit = lineUnits.get(idx);
                 lines.add(SqlRows.one(DebitNoteLine.class, jdbc.sql("INSERT INTO \"DebitNoteLine\" (id, \"organizationId\","
                                 + " \"debitNoteId\", \"productId\", description, quantity, \"unitPrice\", \"taxId\", subtotal,"
-                                + " total, \"lineNumber\", notes, \"uomId\", \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                                + " ?, ?, ?, ?, ?) RETURNING *")
+                                + " total, \"lineNumber\", notes, \"uomId\", \"uomFactor\", \"variantId\") VALUES (?, ?, ?, ?, ?,"
+                                + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, ln.productId(), ln.description(), ln.quantity(),
                                 ln.unitPrice(), ln.taxId(), lineSub, lineSub, ++idx, ln.notes(), unit.uomId(),
-                                unit.factor())));
+                                unit.factor(), ln.variantId() == null || ln.variantId().isBlank() ? null
+                                        : ln.variantId())));
             }
             created.put("lines", lines);
             return created;
@@ -362,6 +368,7 @@ public class DebitNotesService {
                 totalAp = totalAp.add(price);
                 if (isStock && qty.signum() > 0 && location != null) {
                     StockMove move = StockMove.of((String) ln.get("productId"), (String) location.get("id"), qty)
+                            .variant((String) ln.get("variantId"))
                             .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                     : Money.dec(ln.get("uomFactor")))
                             .moveType("return_to_supplier").skipGl().source("debit_note", id)

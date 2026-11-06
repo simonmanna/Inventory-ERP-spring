@@ -82,6 +82,7 @@ public class SalesBillingService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> l : db.rows("""
                 SELECT l.*, p."invoicePolicy", p."trackInventory",
+                       (SELECT v.name FROM "ProductVariant" v WHERE v.id = l."variantId") AS "variantName",
                        COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k JOIN "Document" d ON d.id = k."documentId"
                                   WHERE k."orderLineId" = l.id AND k.kind = 'regular'
                                     AND d.status::text NOT IN ('cancelled', 'rejected')), 0) AS linked
@@ -150,7 +151,8 @@ public class SalesBillingService {
             for (Map<String, Object> it : items) {
                 Map<String, Object> l = (Map<String, Object>) it.get("_row");
                 goods |= Boolean.TRUE.equals(l.get("trackInventory"));
-                lines.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
+                lines.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), str(l.get("variantName")),
+                        null, str(l.get("description")),
                         dec(it.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
                         str(l.get("uomId"))));

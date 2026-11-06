@@ -76,13 +76,15 @@ public class ThreeWayMatchService {
             return List.of();
         }
         // Bill lines (net) of the bills linked to this order.
-        List<Map<String, Object>> billLines = SqlRows.list(jdbc.sql("SELECT dl.\"productId\", dl.quantity, dl.subtotal,"
-                + " dl.\"uomFactor\" FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\" WHERE"
+        List<Map<String, Object>> billLines = SqlRows.list(jdbc.sql("SELECT dl.\"productId\", dl.\"variantId\", dl.quantity,"
+                + " dl.subtotal, dl.\"uomFactor\" FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\" WHERE"
                 + " d.\"organizationId\" = ? AND d.\"documentType\" = 'vendor_bill'"
                 + " AND (d.status IN ('posted', 'paid') OR d.id = ?::text) AND d.id IN (SELECT \"vendorBillId\" FROM"
                 + " \"VendorBillLink\" WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)")
                 .params(org, includeBillId, org, purchaseOrderId));
-        Map<String, BigDecimal[]> billedByProduct = new HashMap<>(); // productId -> {qty, net}
+        // productId|variantId -> {qty, net}; ADR-S058: each variant matches on its own (prices differ per variant),
+        // bill lines without a variant stay under productId| and feed the product's lines as before.
+        Map<String, BigDecimal[]> billedByProduct = new HashMap<>();
         BigDecimal unlinkedNet = BigDecimal.ZERO;
         for (Map<String, Object> bl : billLines) {
             Object pid = bl.get("productId");
@@ -90,7 +92,8 @@ public class ThreeWayMatchService {
                 unlinkedNet = unlinkedNet.add(n(bl.get("subtotal")));
                 continue;
             }
-            BigDecimal[] acc = billedByProduct.computeIfAbsent((String) pid, k -> new BigDecimal[] {BigDecimal.ZERO,
+            BigDecimal[] acc = billedByProduct.computeIfAbsent(key(pid, bl.get("variantId")), k -> new BigDecimal[] {
+                    BigDecimal.ZERO,
                     BigDecimal.ZERO});
             acc[0] = acc[0].add(n(bl.get("quantity")));
             acc[1] = acc[1].add(n(bl.get("subtotal")));
@@ -119,15 +122,20 @@ public class ThreeWayMatchService {
             BigDecimal billedAmount;
             Object pid = line.get("productId");
             if (pid != null) {
-                BigDecimal[] acc = billedByProduct.get((String) pid);
+                Object vid = line.get("variantId");
+                BigDecimal[] own = billedByProduct.get(key(pid, vid));
+                BigDecimal[] acc = own != null && own[0].signum() > 0 || vid == null ? own
+                        : billedByProduct.get(key(pid, null));
                 if (acc == null || acc[0].signum() <= 0) {
                     billedQty = BigDecimal.ZERO;
                     billedAmount = BigDecimal.ZERO;
                 } else {
                     // Consume the product's billed quantity line by line, up to each line's ordered quantity; the
-                    // last line of the product takes any excess (an over-bill is a variance, not lost).
-                    boolean lastOfProduct = lines.stream().filter(o -> pid.equals(o.get("productId")))
-                            .reduce((a, b) -> b).orElse(line) == line;
+                    // last line of the product (of the variant, for a variant's own bill lines) takes any excess (an
+                    // over-bill is a variance, not lost).
+                    boolean exact = acc == own && vid != null;
+                    boolean lastOfProduct = lines.stream().filter(o -> pid.equals(o.get("productId"))
+                            && (!exact || vid.equals(o.get("variantId")))).reduce((a, b) -> b).orElse(line) == line;
                     BigDecimal take = lastOfProduct ? acc[0] : acc[0].min(orderedQty);
                     BigDecimal unit = acc[1].divide(acc[0], 6, RoundingMode.HALF_UP);
                     billedQty = take;
@@ -195,6 +203,10 @@ public class ThreeWayMatchService {
 
     private static BigDecimal scale(BigDecimal v) {
         return v.setScale(6, RoundingMode.HALF_UP);
+    }
+
+    private static String key(Object productId, Object variantId) {
+        return productId + "|" + (variantId == null ? "" : variantId);
     }
 
     /** Match rows (latest first, max 200) with the order's number and partner. */

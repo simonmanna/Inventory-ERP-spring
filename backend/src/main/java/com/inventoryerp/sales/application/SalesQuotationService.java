@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
@@ -71,12 +72,15 @@ public class SalesQuotationService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private final ProductVariantService variants;
 
     public SalesQuotationService(SalesDb db, SalesSettingsService config, ObjectProvider<QuotationPricingPort> pricing,
             ObjectProvider<QuotationOpportunityPort> opportunities, DocumentBuilderService builder,
             OrdersService orders, ObjectProvider<SalesOrderService> salesOrders, SalesPricingEngine engine,
             CreditService creditChecks,
-            ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events) {
+            ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events,
+            ProductVariantService variants) {
+        this.variants = variants;
         this.db = db;
         this.config = config;
         this.pricing = pricing;
@@ -151,7 +155,8 @@ public class SalesQuotationService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> q = require(id);
-        List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\","
+        List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
+                + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", t.name AS \"taxName\","
                 + " t.rate AS \"taxRate\" FROM \"SalesQuotationLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\""
                 + " LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? ORDER BY l.\"sortOrder\"", id);
@@ -308,7 +313,12 @@ public class SalesQuotationService {
             if (qty.signum() <= 0) {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
-            QuotationPricingPort.Price price = blank(productId) ? null : price(partnerId, productId, qty, on);
+            ProductVariantService.VariantRef variant = variants.resolve(blank(productId) ? null : productId,
+                    str(l.get("variantId")));
+            QuotationPricingPort.Price price = blank(productId) ? null : variant != null
+                    ? engine.resolve(new SalesPricingEngine.Context(partnerId, productId, qty, null, null, null, null, on,
+                            null, variant.id())).price()
+                    : price(partnerId, productId, qty, on);
             BigDecimal list = price == null ? decOr(l.get("unitPrice"), BigDecimal.ZERO) : price.listPrice();
             BigDecimal unit;
             BigDecimal disc;
@@ -340,7 +350,7 @@ public class SalesQuotationService {
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
                     disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
-                    ? null : price.ruleId()));
+                    ? null : price.ruleId(), "variantId", variant == null ? null : variant.id()));
         }
         if (inputs.isEmpty()) {
             db.update("UPDATE \"SalesQuotation\" SET subtotal = 0, \"discountTotal\" = 0, \"taxAmount\" = 0, total = 0,"
@@ -359,7 +369,7 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             db.insert("SalesQuotationLine", Obj.of("quotationId", id, "sortOrder", i, "productId", pl.productId(),
-                    "description", pl.description(), "quantity", pl.quantity(), "listPrice", list, "unitPrice",
+                    "variantId", m.get("variantId"), "description", pl.description(), "quantity", pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(), "lineTotal", pl.total()));

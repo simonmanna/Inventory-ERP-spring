@@ -40,6 +40,10 @@ public class GoodsReceiptLine {
     @Column(name = "productId")
     private String productId;
 
+    /** ADR-S058: product variant of the line (null = product without variants). */
+    @Column(name = "variantId")
+    private String variantId;
+
     @Column(name = "description", nullable = false)
     private String description;
 
@@ -124,6 +128,14 @@ public class GoodsReceiptLine {
 
     public void setProductId(String productId) {
         this.productId = productId;
+    }
+
+    public String getVariantId() {
+        return variantId;
+    }
+
+    public void setVariantId(String variantId) {
+        this.variantId = variantId;
     }
 
     public String getDescription() {

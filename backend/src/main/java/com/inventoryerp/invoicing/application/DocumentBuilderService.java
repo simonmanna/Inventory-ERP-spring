@@ -4,6 +4,7 @@ import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService;
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.kernel.common.Money.ZERO;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
@@ -236,6 +237,30 @@ public class DocumentBuilderService {
                         + " \"organizationId\" = ? AND \"deletedAt\" IS NULL LIMIT 1").params(productId, productOrg)),
                         "Product", productOrg, productId);
             }
+            // POS lines carry menu-item variants (menuItemId set); only product lines name a ProductVariant.
+            String variantId = meta || l.menuItemId() != null || l.variantId() == null || l.variantId().isBlank() ? null
+                    : l.variantId();
+            String variantName = l.variantName();
+            if (variantId != null && product == null) {
+                variantId = null;
+            }
+            if (variantId != null) {
+                // ADR-S058: the variant must belong to the line's product; its price is the default unit price.
+                Map<String, Object> v = SqlRows.one(jdbc.sql("SELECT v.name, " + ProductVariantService.PRICE_SQL
+                        + " AS price FROM \"ProductVariant\" v JOIN \"Product\" p ON p.id = v.\"productId\" WHERE v.id = ?"
+                        + " AND v.\"productId\" = ? AND v.\"organizationId\" = ? AND v.\"deletedAt\" IS NULL").params(
+                                variantId, l.productId(), org()));
+                if (v == null && Boolean.TRUE.equals(product.get("hasVariants"))) {
+                    throw ApiException.badRequest("Variant not found");
+                }
+                if (v == null) {
+                    variantId = null; // not a product variant (e.g. a legacy menu variant id): keep the old behaviour
+                } else {
+                    variantName = variantName != null ? variantName : (String) v.get("name");
+                    product = new LinkedHashMap<>(product);
+                    product.put("salesPrice", v.get("price"));
+                }
+            }
             LineUnit unit = meta || product == null ? new LineUnit(null, null) : lineUnit(l.productId(), l.uomId(), role);
             BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
                     ? (BigDecimal) product.get("salesPrice") : null;
@@ -274,7 +299,8 @@ public class DocumentBuilderService {
             LineTaxResult result = tax.computeLine(afterDiscount, taxes, taxScale);
             String description = l.description() != null ? l.description()
                     : product != null ? (String) product.get("name") : "Item";
-            prepared.add(new PreparedLine(l.productId(), l.menuItemId(), l.variantId(), l.variantName(), l.accountId(),
+            prepared.add(new PreparedLine(l.productId(), l.menuItemId(), variantId == null ? l.variantId() : variantId,
+                    variantId == null ? l.variantName() : variantName, l.accountId(),
                     description, quantity, unitPrice, effectivePct, discType, effectiveDiscount, l.discountReason(),
                     l.discountSource() != null ? l.discountSource() : "manual", taxId, lineType, result.net(),
                     result.taxTotal(), result.gross(), i, taxInclusive, unit.uomId(), unit.factor()));
@@ -339,15 +365,17 @@ public class DocumentBuilderService {
     /** Insert prepared lines ({@code withExtras}: menuItemId / lineType / taxInclusive like {@code create}). */
     public void insertLines(String documentId, List<PreparedLine> prepared, boolean withExtras) {
         for (PreparedLine p : prepared) {
+            String variant = productVariant(p);
             jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", \"productId\", \"menuItemId\","
                             + " \"accountId\", description, quantity, \"unitPrice\", \"discountPercent\", \"taxId\", subtotal,"
-                            + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\", \"uomId\", \"uomFactor\")"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                            + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\", \"uomId\", \"uomFactor\","
+                            + " \"variantId\", \"variantName\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, ?)")
                     .params(UUID.randomUUID().toString(), org(), documentId, p.productId(),
                             withExtras ? p.menuItemId() : null, p.accountId(), p.description(), p.quantity(),
                             p.unitPrice(), p.discountPercent(), p.taxId(), p.subtotal(), p.taxAmount(), p.total(),
                             p.lineNumber(), withExtras ? p.lineType() : "product", withExtras && p.taxInclusive(),
-                            p.uomId(), p.uomFactor())
+                            p.uomId(), p.uomFactor(), variant, variant == null ? null : p.variantName())
                     .update();
         }
     }
@@ -464,8 +492,27 @@ public class DocumentBuilderService {
 
     /** Lines of a document ({@code ordered}: by lineNumber). */
     public List<Map<String, Object>> lines(String documentId, boolean ordered) {
-        return SqlRows.list(DocumentLine.class, jdbc.sql("SELECT * FROM \"DocumentLine\" WHERE \"documentId\" = ?"
-                + (ordered ? " ORDER BY \"lineNumber\" ASC" : "")).param(documentId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : jdbc.sql("SELECT * FROM \"DocumentLine\" WHERE \"documentId\" = ?"
+                + (ordered ? " ORDER BY \"lineNumber\" ASC" : "")).param(documentId).query().listOfRows()) {
+            Map<String, Object> line = SqlRows.as(DocumentLine.class, row);
+            // ADR-S058: variant keys only on variant lines, so documents without variants keep their exact shape.
+            if (row.get("variantId") != null) {
+                line.put("variantId", row.get("variantId"));
+                line.put("variantName", row.get("variantName"));
+            }
+            out.add(line);
+        }
+        return out;
+    }
+
+    /** The line's ProductVariant id (ADR-S058); menu-item variants of POS lines are not stored here. */
+    private String productVariant(PreparedLine p) {
+        if (p.menuItemId() != null || p.productId() == null || p.variantId() == null || p.variantId().isBlank()) {
+            return null;
+        }
+        return jdbc.sql("SELECT id FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ? AND \"organizationId\" = ?")
+                .params(p.variantId(), p.productId(), org()).query(String.class).optional().orElse(null);
     }
 
     /** Full partner row ({@code include: {partner: true}}). */

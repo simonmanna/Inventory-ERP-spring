@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { VariantSelect } from '@/features/products/variant-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -34,7 +35,7 @@ import { CashSaleDelivery } from './CashSaleDelivery';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/handover-draft';
 
-interface DraftLine { productId: string; description: string; quantity: number; unitPrice: number | ''; discountPercent: number; taxId: string | null }
+interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; unitPrice: number | ''; discountPercent: number; taxId: string | null }
 
 const CHECKS = [
   tx('Customer information verified'), tx('Products and prices verified'), tx('Tax verified'),
@@ -80,7 +81,7 @@ export function CashSalePage() {
     setCustomer({ customerPhone: s.customerPhone ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
     setSaleDate(String(s.saleDate).slice(0, 10));
     setSalespersonId(s.salespersonId ?? '');
-    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
+    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
   }, [s]);
   const activeProfiles = useMemo(() => (profiles.data ?? []).filter((p) => p.isActive), [profiles.data]);
   const profile = activeProfiles.find((p) => p.branchId === (isNew ? branchId : s?.branchId));
@@ -112,7 +113,7 @@ export function CashSalePage() {
   };
   const body = () => {
     const b: Record<string, unknown> = {
-      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, description: l.description || undefined, quantity: Number(l.quantity), unitPrice: l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
+      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), unitPrice: l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
     };
     if (partnerId) b.partnerId = partnerId;
     Object.entries(customer).forEach(([k, v]) => { b[k] = v || null; });
@@ -278,7 +279,9 @@ export function CashSalePage() {
                       const sub = lineEst(l, i);
                       return (
                         <tr key={i} className="border-b align-top">
-                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" /></td>
+                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, variantId: null, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                            <VariantSelect productId={l.productId} value={l.variantId} className="w-52"
+                              onChange={(v, opt) => patchLine(i, { variantId: v, unitPrice: '', ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} /></td>
                           <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>
                           <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
                           <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.deliveredQty)}</td>
@@ -292,7 +295,7 @@ export function CashSalePage() {
                       );
                     }) : (s?.lines ?? []).map((l) => (
                       <tr key={l.id} className="border-b align-top">
-                        <td className="py-2 pr-2 font-medium">{l.productName}</td>
+                        <td className="py-2 pr-2 font-medium">{l.productName}{l.variantName && <span className="block text-xs font-normal text-muted-foreground">{l.variantName}</span>}</td>
                         <td className="py-2 pr-2 text-muted-foreground">{l.description}</td>
                         <td className="py-2 pr-2 text-right tabular-nums">{qty(l.quantity)} {l.uomCode ?? ''}</td>
                         <td className="py-2 pr-2 text-right tabular-nums">{qty(l.deliveredQty)}</td>

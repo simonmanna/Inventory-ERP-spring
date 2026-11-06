@@ -212,6 +212,20 @@ public class CreditNoteService {
      * ACC-4 (B9): a credit note against an invoice cannot credit more of a product than the invoice sold (net of earlier
      * posted credit notes), nor more than the invoice's total.
      */
+    /**
+     * ADR-S058: the variant a credit-note line restocks when the line names none — the one variant of that product on
+     * the credited invoice (null when the invoice has none or several).
+     */
+    private String invoiceVariant(String invoiceId, String productId) {
+        if (invoiceId == null) {
+            return null;
+        }
+        List<String> ids = jdbc.sql("SELECT DISTINCT \"variantId\" FROM \"DocumentLine\" WHERE \"documentId\" = ? AND"
+                + " \"productId\" = ? AND \"organizationId\" = ? AND \"variantId\" IS NOT NULL").params(invoiceId, productId,
+                        org()).query(String.class).list();
+        return ids.size() == 1 ? ids.getFirst() : null;
+    }
+
     private void assertWithinInvoice(String creditNoteId, String invoiceId, List<Map<String, Object>> lines) {
         if (invoiceId == null) {
             return;
@@ -329,8 +343,10 @@ public class CreditNoteService {
                     if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))
                             && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                         try {
+                            String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
+                                    : invoiceVariant(reversed, productId);
                             Savepoints.run(jdbc, () -> stock.receiveReturn(StockMove.of(productId, warehouse, qty)
-                                    .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
+                                    .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                             : Money.dec(ln.get("uomFactor")))
                                     .reference((String) cn.get("documentNumber")).source("credit_note", id)
                                     .date(issueDate)));

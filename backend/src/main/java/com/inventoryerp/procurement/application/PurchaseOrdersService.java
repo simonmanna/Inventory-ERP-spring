@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
@@ -68,14 +69,27 @@ public class PurchaseOrdersService {
 
     /** {@code POLineDto}. */
     public record LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
-            BigDecimal unitPrice, String taxId, BigDecimal taxRate, String notes) {}
+            BigDecimal unitPrice, String taxId, BigDecimal taxRate, String notes, String variantId) {
+
+        public LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
+                BigDecimal unitPrice, String taxId, BigDecimal taxRate, String notes) {
+            this(productId, description, quantity, unitOfMeasureId, unitPrice, taxId, taxRate, notes, null);
+        }
+    }
 
     /** {@code ReceivePODto}. */
     public record ReceiveInput(String warehouseId, String receivedAt, String notes, List<ReceiveLineInput> lines) {}
 
     /** {@code ReceiveLineDto}. */
     public record ReceiveLineInput(String purchaseOrderLineId, String productId, String description,
-            BigDecimal quantity, BigDecimal unitCost, String batchNumber, String expiryDate, String notes) {}
+            BigDecimal quantity, BigDecimal unitCost, String batchNumber, String expiryDate, String notes,
+            String variantId) {
+
+        public ReceiveLineInput(String purchaseOrderLineId, String productId, String description, BigDecimal quantity,
+                BigDecimal unitCost, String batchNumber, String expiryDate, String notes) {
+            this(purchaseOrderLineId, productId, description, quantity, unitCost, batchNumber, expiryDate, notes, null);
+        }
+    }
 
     /** {@code PayPODto}. */
     public record PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
@@ -88,7 +102,8 @@ public class PurchaseOrdersService {
     record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {}
 
     /** A receive line after PO-line resolution ({@code _resolvedLineId} / {@code _unitCost}). */
-    private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit) {}
+    private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit,
+            String variantId) {}
 
     private final JdbcClient jdbc;
     private final SequenceService sequence;
@@ -108,12 +123,15 @@ public class PurchaseOrdersService {
     private final ProcurementPolicyService policies;
     private final PurchaseCommitments commitments;
     private final ReceivingControls receiving;
+    private final ProductVariantService variants;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
             ProcurementBudgetService budgets, ProcurementDelegationService delegations, SupplierService suppliers,
-            ProcurementPolicyService policies, PurchaseCommitments commitments, ReceivingControls receiving) {
+            ProcurementPolicyService policies, PurchaseCommitments commitments, ReceivingControls receiving,
+            ProductVariantService variants) {
+        this.variants = variants;
         this.jdbc = jdbc;
         this.budgets = budgets;
         this.delegations = delegations;
@@ -219,6 +237,7 @@ public class PurchaseOrdersService {
         // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : dto.lines()) {
+            variants.resolve(ln.productId(), ln.variantId()); // ADR-S058: a product with variants needs one
             lineUnits.add(units.resolveLineUnit(ln.productId(), ln.unitOfMeasureId(), UnitRole.PURCHASE));
         }
 
@@ -251,11 +270,13 @@ public class PurchaseOrdersService {
                 lines.add(SqlRows.one(PurchaseOrderLine.class, jdbc.sql("INSERT INTO \"PurchaseOrderLine\" (id,"
                                 + " \"organizationId\", \"purchaseOrderId\", \"productId\", description, quantity,"
                                 + " \"unitOfMeasureId\", \"uomFactor\", \"unitPrice\", \"taxId\", \"taxRate\", subtotal,"
-                                + " \"lineNumber\", notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                                + " \"lineNumber\", notes, \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                + " RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, ln.productId(), ln.description(), ln.quantity(),
                                 unit.uomId(), unit.factor(), ln.unitPrice(), ln.taxId(),
                                 ln.taxRate() != null ? ln.taxRate() : BigDecimal.ZERO,
-                                ln.quantity().multiply(ln.unitPrice()), ++idx, ln.notes())));
+                                ln.quantity().multiply(ln.unitPrice()), ++idx, ln.notes(),
+                                ln.variantId() == null || ln.variantId().isBlank() ? null : ln.variantId())));
             }
             created.put("lines", lines);
             budgets.enforce(new Doc(ProcurementBudgetService.ORDER, id, dto.branchId(), dto.departmentId(), baseLines,
@@ -526,11 +547,11 @@ public class PurchaseOrdersService {
             lines.add(SqlRows.one(GoodsReceiptLine.class, jdbc.sql("INSERT INTO \"GoodsReceiptLine\" (id,"
                             + " \"organizationId\", \"goodsReceiptId\", \"purchaseOrderLineId\", \"productId\", description,"
                             + " quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\", \"uomId\","
-                            + " \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                            + " \"uomFactor\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
                     .params(UUID.randomUUID().toString(), orgId, grnId, r.resolvedLineId(), rln.productId(),
                             rln.description(), rln.quantity(), r.unitCost() != null ? r.unitCost() : BigDecimal.ZERO,
                             rln.batchNumber(), SqlRows.ts(ProcurementSql.date(rln.expiryDate())), rln.notes(), ++idx,
-                            r.unit().uomId(), r.unit().factor())));
+                            r.unit().uomId(), r.unit().factor(), r.variantId())));
         }
         grn.put("lines", lines);
         return grn;
@@ -649,7 +670,14 @@ public class PurchaseOrdersService {
             Map<String, Object> poLine = lineId == null ? null : poLines.get(lineId);
             BigDecimal unitCost = rln.unitCost() != null ? rln.unitCost()
                     : poLine != null ? Money.dec(poLine.get("unitPrice")) : null;
-            resolved.add(new Resolved(rln, lineId, unitCost, receiptUnit(poLine, rln.productId(), null)));
+            // ADR-S058: the PO line's variant wins; a free receipt line names its own.
+            String variantId = poLine != null && poLine.get("variantId") != null ? (String) poLine.get("variantId")
+                    : rln.variantId();
+            if (rln.productId() != null) {
+                ProductVariantService.VariantRef v = variants.resolve(rln.productId(), variantId);
+                variantId = v == null ? null : v.id();
+            }
+            resolved.add(new Resolved(rln, lineId, unitCost, receiptUnit(poLine, rln.productId(), null), variantId));
         }
 
         int year = year();
@@ -706,6 +734,7 @@ public class PurchaseOrdersService {
                 BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
                         : Money.dec(product.get("costPrice"));
                 StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), rln.quantity()).unitCost(unitCost)
+                        .variant(r.variantId())
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())
                         .reference("GRN " + receiptNumber);

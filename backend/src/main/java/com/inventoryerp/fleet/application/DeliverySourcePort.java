@@ -23,5 +23,12 @@ public interface DeliverySourcePort {
             LocalDate requestedDate, List<SourceLine> lines) {}
 
     record SourceLine(String sourceLineId, String productId, String description, String uomId, BigDecimal uomFactor,
-            BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent, String taxId) {}
+            BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String variantId) {
+
+        public SourceLine(String sourceLineId, String productId, String description, String uomId, BigDecimal uomFactor,
+                BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent, String taxId) {
+            this(sourceLineId, productId, description, uomId, uomFactor, quantity, unitPrice, discountPercent, taxId,
+                    null);
+        }
+    }
 }

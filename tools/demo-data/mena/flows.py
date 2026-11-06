@@ -224,7 +224,7 @@ def sales_order(org, key, customer, lines, loc, date, trips=1, transporter=None,
         so = a.post("/sales/orders", {
             "partnerId": par[customer], "branchId": branch, "locationId": l[loc], "customerRef": key,
             "requestedDate": date,
-            "lines": [{"productId": p[c], "description": c, "quantity": q, "unitPrice": u} for c, q, u in lines]})
+            "lines": [so_line(p, ln) for ln in lines]})
         sid = so["id"]
         a.post("/sales/orders/%s/confirm" % sid, {})
         out = {"so": sid}
@@ -234,7 +234,7 @@ def sales_order(org, key, customer, lines, loc, date, trips=1, transporter=None,
 
     def finish(out):
         sid = out["so"]
-        stocked = [(c, q) for c, q, u in lines if not c.startswith("SVC-")]
+        stocked = [(c, q) for c, q, u, *_ in lines if not c.startswith("SVC-")]
         if stocked and not out.get("trips"):
             did = out.get("do")
             if not did:
@@ -308,6 +308,19 @@ def sales_order(org, key, customer, lines, loc, date, trips=1, transporter=None,
                 "allocations": [{"documentId": inv_id, "amount": amount}]})["id"]
         return out
     return once(org, key, run)
+
+
+def so_line(p, ln):
+    """Sales-order line from (code, qty, unit price[, variantId]); a None price lets the pricing engine decide."""
+    c, q, u, *rest = ln
+    line = {"productId": p[c], "quantity": q}
+    if rest and rest[0]:
+        line["variantId"] = rest[0]
+    else:
+        line["description"] = c
+    if u is not None:
+        line["unitPrice"] = u
+    return line
 
 
 # ------------------------------------------------------------------------------------------------ finance

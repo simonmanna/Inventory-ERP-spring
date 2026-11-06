@@ -794,7 +794,7 @@ public class InventoryReportsService {
                    WHERE b."organizationId" = :org AND b."isActive" = true AND b.quantity > 0
                    GROUP BY b."productId", COALESCE(b."variantId", ''), b."locationId"
                 )
-                SELECT qt."productId", qt."variantId", qt."locationId", loc.name AS location_name,
+                SELECT qt."productId", qt."variantId", pv.name AS variant_name, qt."locationId", loc.name AS location_name,
                        p.code, p.name, p."batchTracking", p."costingMethod"::text AS "costingMethod", p."costPrice", u.code AS uom, c.name AS category,
                        qt.on_hand, qt.avg_cost, lots.lot_value,
                        a.b0_30, a.b31_60, a.b61_90, a.b91_180, a.b180_plus, a.weighted_age,
@@ -802,6 +802,7 @@ public class InventoryReportsService {
                   FROM quant qt
                   JOIN "Product" p ON p.id = qt."productId"
                   JOIN "InventoryLocation" loc ON loc.id = qt."locationId"
+                  LEFT JOIN "ProductVariant" pv ON pv.id = qt."variantId"
                   LEFT JOIN "UnitOfMeasure" u ON u.id = p."uomId"
                   LEFT JOIN "ProductCategory" c ON c.id = p."categoryId"
                   LEFT JOIN aging a ON a."productId" = qt."productId" AND a.vkey = qt."variantKey" AND a."locationId" = qt."locationId"
@@ -830,7 +831,8 @@ public class InventoryReportsService {
             double attributed = n(r.get("b0_30")) + n(r.get("b31_60")) + n(r.get("b61_90")) + n(r.get("b91_180"))
                     + n(r.get("b180_plus"));
             double unattributed = Math.max(0, onHand - attributed);
-            out.add(Obj.of("productId", r.get("productId"), "variantId", r.get("variantId"), "locationId",
+            out.add(Obj.of("productId", r.get("productId"), "variantId", r.get("variantId"), "variantName",
+                    r.get("variant_name"), "locationId",
                     r.get("locationId"), "location", r.get("location_name"), "code", r.get("code"), "name", r.get("name"),
                     "category", r.get("category"), "uom", r.get("uom"), "onHand", js(round(onHand, 6)), "unitCost",
                     js(round(unit, 6)), "value", js(value), "aging", Obj.of("d0_30", js(round(n(r.get("b0_30")), 6)),

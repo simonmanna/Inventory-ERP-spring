@@ -42,7 +42,7 @@ public class SalesDeliverySource implements DeliverySourcePort {
                     "qtyDispatched"))).max(BigDecimal.ZERO);
             lines.add(new SourceLine(str(l.get("id")), str(l.get("productId")), str(l.get("description")),
                     str(l.get("uomId")), dec(l.get("uomFactor")), open, dec(l.get("unitPrice")), dec(l.get(
-                    "discountPercent")), str(l.get("taxId"))));
+                    "discountPercent")), str(l.get("taxId")), str(l.get("variantId"))));
         }
         return new Source(str(o.get("number")), str(o.get("partnerId")), str(o.get("branchId")), str(o.get("locationId")),
                 str(o.get("siteId")), o.get("requestedDate") instanceof LocalDate d ? d : null, lines);

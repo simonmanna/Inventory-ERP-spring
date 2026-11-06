@@ -11,6 +11,7 @@ import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { defaultUnitId, unitPrice, type UnitAwareProduct } from '@/features/products/units';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Partner { id: string; name: string; code: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
@@ -18,6 +19,8 @@ interface Warehouse { id: string; name: string; code: string }
 
 interface Line {
   productId?: string;
+  /** ADR-S058: product variant (required for a product with variants). */
+  variantId?: string | null;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -251,6 +254,19 @@ export function PurchaseOrderCreatePage() {
                       ))
                     )}
                   </select>
+                  <VariantSelect
+                    productId={ln.productId}
+                    value={ln.variantId}
+                    onChange={(variantId, opt) => {
+                      const next = [...lines];
+                      next[idx] = {
+                        ...next[idx],
+                        variantId,
+                        ...(opt ? { description: opt.displayName, ...(opt.costPrice != null ? { unitPrice: Number(opt.costPrice) } : {}) } : {}),
+                      };
+                      setLines(next);
+                    }}
+                  />
                 </div>
                 <div className="md:col-span-3">
                   <Input

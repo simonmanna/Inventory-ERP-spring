@@ -9,6 +9,7 @@ import com.inventoryerp.core.application.PriceListService;
 import com.inventoryerp.core.application.PriceListService.ListPrice;
 import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.core.application.PricingEngine;
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
@@ -65,11 +66,16 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
 
     /** Pricing context of one line. */
     public record Context(String partnerId, String productId, BigDecimal quantity, String uomId, String siteId,
-            String branchId, String currencyCode, LocalDate on, String agreementId) {
+            String branchId, String currencyCode, LocalDate on, String agreementId, String variantId) {
+
+        public Context(String partnerId, String productId, BigDecimal quantity, String uomId, String siteId,
+                String branchId, String currencyCode, LocalDate on, String agreementId) {
+            this(partnerId, productId, quantity, uomId, siteId, branchId, currencyCode, on, agreementId, null);
+        }
 
         public Context(String partnerId, String productId, BigDecimal quantity, String uomId, String siteId,
                 String branchId, String currencyCode, LocalDate on) {
-            this(partnerId, productId, quantity, uomId, siteId, branchId, currencyCode, on, null);
+            this(partnerId, productId, quantity, uomId, siteId, branchId, currencyCode, on, null, null);
         }
     }
 
@@ -78,6 +84,12 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             BigDecimal discountPercent, String source, String pricelistId, String pricelistName, String itemId,
             String taxId, boolean taxInclusive, String description, BigDecimal cost, BigDecimal minMarginPercent,
             BigDecimal floorPrice) {
+
+        /** As a document-line price. */
+        public QuotationPricingPort.Price price() {
+            return new QuotationPricingPort.Price(listPrice, unitPrice, discountPercent, source, itemId, taxId,
+                    taxInclusive, description);
+        }
 
         public BigDecimal net() {
             return unitPrice.multiply(BigDecimal.ONE.subtract(discountPercent.divide(HUNDRED, 10, RoundingMode.HALF_UP)))
@@ -152,7 +164,8 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 Map<String, Object> l = (Map<String, Object>) o;
                 BigDecimal qty = l.get("quantity") == null ? BigDecimal.ONE : dec(l.get("quantity"));
                 Result r = resolve(new Context(partnerId, str(l.get("productId")), qty, str(l.get("uomId")),
-                        str(in.get("siteId")), str(in.get("branchId")), str(in.get("currencyCode")), on));
+                        str(in.get("siteId")), str(in.get("branchId")), str(in.get("currencyCode")), on, null,
+                        blank(str(l.get("variantId"))) ? null : str(l.get("variantId"))));
                 Map<String, Object> j = r.json();
                 j.put("breakdown", breakdown(r));
                 out.add(j);
@@ -174,6 +187,20 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 c.productId(), org());
         if (product == null) {
             throw ApiException.notFound("Product not found");
+        }
+        if (!blank(c.variantId())) {
+            // ADR-S058: the variant's price (fixed, else product price + value extras) is the list price.
+            Map<String, Object> v = db.row("SELECT v.name, " + ProductVariantService.PRICE_SQL + " AS price, "
+                    + ProductVariantService.COST_SQL + " AS cost FROM \"ProductVariant\" v JOIN \"Product\" p ON p.id ="
+                    + " v.\"productId\" WHERE v.id = ? AND v.\"productId\" = ? AND v.\"organizationId\" = ? AND"
+                    + " v.\"deletedAt\" IS NULL", c.variantId(), c.productId(), org());
+            if (v == null) {
+                throw ApiException.badRequest("Variant not found");
+            }
+            product = new LinkedHashMap<>(product);
+            product.put("salesPrice", v.get("price"));
+            product.put("costPrice", v.get("cost"));
+            product.put("name", product.get("name") + " (" + v.get("name") + ")");
         }
         LocalDate on = c.on() == null ? LocalDate.now() : c.on();
         BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : uoms.factorToBase(c.productId(), c.uomId());
@@ -389,7 +416,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 continue;
             }
             Result r = resolve(new Context(partnerId, str(l.get("productId")), dec(l.get("quantity")), str(l.get("uomId")),
-                    null, branchId, null, on));
+                    null, branchId, null, on, null, blank(str(l.get("variantId"))) ? null : str(l.get("variantId"))));
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
             BigDecimal authorised = r.net();

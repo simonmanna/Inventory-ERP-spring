@@ -5,10 +5,11 @@ import scenarios as SC
 import crm as CRM
 import fixups as FX
 import seed as S
+import variants as V
 
 PHASES = {"setup": S.setup, "opening": S.opening, "production": SC.masters_production, "quarry": SC.quarry,
           "intercompany": SC.intercompany, "hq": SC.hq, "showroom": SC.showroom, "quotations": SC.quotations, "fixups": FX.fixups,
-          "fixups2": FX.fixups2, "crm": CRM.crm}
+          "fixups2": FX.fixups2, "crm": CRM.crm, "variants": V.variants}
 
 if __name__ == "__main__":
     for ph in sys.argv[1:] or list(PHASES):

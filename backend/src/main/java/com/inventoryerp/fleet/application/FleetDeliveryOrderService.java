@@ -359,7 +359,7 @@ public class FleetDeliveryOrderService {
             }
             Map<String, Object> product = product(l.productId());
             String uomId = l.uomId() != null ? l.uomId() : (String) product.get("uomId");
-            lines.add(new Line(l.productId(), null, l.description(), uomId, l.uomFactor(), l.quantity().setScale(3,
+            lines.add(new Line(l.productId(), l.variantId(), l.description(), uomId, l.uomFactor(), l.quantity().setScale(3,
                     RoundingMode.HALF_UP), l.sourceLineId(), l.unitPrice(), l.discountPercent(), l.taxId(), null, null));
         }
         if (lines.isEmpty()) {

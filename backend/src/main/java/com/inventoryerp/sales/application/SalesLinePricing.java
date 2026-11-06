@@ -22,8 +22,14 @@ public class SalesLinePricing {
     /** Price of a line released against {@code agreementId} (agreement price first, S9). */
     public QuotationPricingPort.Price price(String partnerId, String productId, BigDecimal qty, String uomId,
             LocalDate on, String agreementId) {
+        return price(partnerId, productId, null, qty, uomId, on, agreementId);
+    }
+
+    /** Price of a line of variant {@code variantId} (ADR-S058; null = product without variants). */
+    public QuotationPricingPort.Price price(String partnerId, String productId, String variantId, BigDecimal qty,
+            String uomId, LocalDate on, String agreementId) {
         SalesPricingEngine.Result r = engine.resolve(new SalesPricingEngine.Context(partnerId, productId, qty, uomId, null,
-                null, null, on, agreementId));
+                null, null, on, agreementId, variantId));
         return new QuotationPricingPort.Price(r.listPrice(), r.unitPrice(), r.discountPercent(), r.source(), r.itemId(),
                 r.taxId(), r.taxInclusive(), r.description());
     }

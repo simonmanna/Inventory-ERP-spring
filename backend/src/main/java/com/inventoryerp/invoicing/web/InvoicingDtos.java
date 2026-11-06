@@ -29,11 +29,17 @@ public final class InvoicingDtos {
             @DecimalMax(value = "100", message = "Discount percent cannot exceed 100") BigDecimal discountPercent,
             String taxId,
             @OneOf({"product", "section", "note"}) String lineType,
-            String uomId) {
+            String uomId,
+            /* ADR-S058: the product variant of the line (null = product without variants). */
+            String variantId) {
 
         LineInput toInput() {
-            return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType,
-                    uomId);
+            if (variantId == null || variantId.isBlank()) {
+                return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
+                        lineType, uomId);
+            }
+            return new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
+                    discountPercent, null, null, null, null, taxId, lineType, null, uomId);
         }
     }
 

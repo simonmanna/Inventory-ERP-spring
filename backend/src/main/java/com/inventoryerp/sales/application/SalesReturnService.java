@@ -143,8 +143,8 @@ public class SalesReturnService {
                         + open.stripTrailingZeros().toPlainString() + " (delivered and not yet returned)");
             }
             db.update("INSERT INTO \"SalesReturnLine\" (id, \"organizationId\", \"returnId\", \"orderLineId\", \"productId\","
-                    + " description, quantity) VALUES (?, ?, ?, ?, ?, ?, ?)", SalesDb.newId(), org(), id, ol.get("id"),
-                    ol.get("productId"), ol.get("description"), qty);
+                    + " \"variantId\", description, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", SalesDb.newId(), org(), id,
+                    ol.get("id"), ol.get("productId"), ol.get("variantId"), ol.get("description"), qty);
         }
         if (!blank(str(in.get("complaintId")))) {
             db.update("UPDATE \"CustomerComplaint\" SET \"returnId\" = ?, status = 'investigating', \"updatedAt\" = now()"
@@ -213,7 +213,8 @@ public class SalesReturnService {
                 throw ApiException.badRequest("Received quantity of " + l.get("description") + " is out of range");
             }
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
-                stock.receiveReturn(StockMove.of(str(l.get("productId")), location, qty).uom(str(l.get("uomId")),
+                stock.receiveReturn(StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
+                        .uom(str(l.get("uomId")),
                         dec(l.get("uomFactor"))).reference(str(r.get("number"))).source("sales_return", id));
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ? WHERE id = ?", qty, l.get("id"));
@@ -255,12 +256,14 @@ public class SalesReturnService {
                     throw ApiException.badRequest("Choose the quarantine location for " + l.get("description"));
                 }
                 if (!target.equals(from)) {
-                    StockMove m = StockMove.transfer(str(l.get("productId")), from, target, qty).uom(str(l.get("uomId")),
+                    StockMove m = StockMove.transfer(str(l.get("productId")), from, target, qty)
+                            .variant(str(l.get("variantId"))).uom(str(l.get("uomId")),
                             dec(l.get("uomFactor"))).reference(str(r.get("number")));
                     stock.transfer(m);
                 }
             } else if (tracked && "scrap".equals(disposition)) {
-                stock.issue(StockMove.of(str(l.get("productId")), from, qty).uom(str(l.get("uomId")), dec(l.get(
+                stock.issue(StockMove.of(str(l.get("productId")), from, qty).variant(str(l.get("variantId")))
+                        .uom(str(l.get("uomId")), dec(l.get(
                         "uomFactor"))).moveType("waste").reference(str(r.get("number"))).source("sales_return", id)
                         .notes("Scrapped return " + r.get("number")));
             }

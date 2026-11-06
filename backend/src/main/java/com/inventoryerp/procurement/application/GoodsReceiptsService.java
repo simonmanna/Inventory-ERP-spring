@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
@@ -65,11 +66,13 @@ public class GoodsReceiptsService {
     private final ReceivingControls receiving;
     private final StockReversalService reversals;
     private final TransactionTemplate tx;
+    private final ProductVariantService variants;
 
     public GoodsReceiptsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             PurchaseOrdersService purchaseOrders, StockReversalService reversals, PlatformTransactionManager txm,
-            ReceivingControls receiving) {
+            ReceivingControls receiving, ProductVariantService variants) {
+        this.variants = variants;
         this.jdbc = jdbc;
         this.receiving = receiving;
         this.sequence = sequence;
@@ -189,14 +192,19 @@ public class GoodsReceiptsService {
                 Object expiry = ln.get("expiryDate");
                 String poLineId = stringOrNull(ln.get("purchaseOrderLineId"));
                 Map<String, Object> poLine = poLineId == null ? null : SqlRows.one(jdbc.sql("SELECT \"unitOfMeasureId\","
-                        + " \"uomFactor\" FROM \"PurchaseOrderLine\" WHERE id = ? AND \"organizationId\" = ?")
+                        + " \"uomFactor\", \"variantId\" FROM \"PurchaseOrderLine\" WHERE id = ? AND \"organizationId\" = ?")
                         .params(poLineId, orgId));
+                // ADR-S058: the PO line's variant wins; a free receipt line names its own.
+                String variantId = poLine != null && poLine.get("variantId") != null ? (String) poLine.get("variantId")
+                        : stringOrNull(ln.get("variantId"));
+                ProductVariantService.VariantRef variant = variants.resolve(stringOrNull(ln.get("productId")), variantId);
                 LineUnit unit = purchaseOrders.receiptUnit(poLine, stringOrNull(ln.get("productId")),
                         stringOrNull(ln.get("uomId")));
                 created.add(SqlRows.one(GoodsReceiptLine.class, jdbc.sql("INSERT INTO \"GoodsReceiptLine\" (id,"
                                 + " \"organizationId\", \"goodsReceiptId\", \"purchaseOrderLineId\", \"productId\","
                                 + " description, quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\","
-                                + " \"uomId\", \"uomFactor\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *")
+                                + " \"uomId\", \"uomFactor\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                + " RETURNING *")
                         .params(UUID.randomUUID().toString(), orgId, id, stringOrNull(ln.get("purchaseOrderLineId")),
                                 stringOrNull(ln.get("productId")), requiredString(ln.get("description")),
                                 requiredDecimal(ln.get("quantity")),
@@ -204,7 +212,8 @@ public class GoodsReceiptsService {
                                 stringOrNull(ln.get("batchNumber")),
                                 ProcurementSql.truthy(expiry) ? SqlRows.ts(EntityPatch.toInstant(String.valueOf(expiry)))
                                         : null,
-                                stringOrNull(ln.get("notes")), ++idx, unit.uomId(), unit.factor())));
+                                stringOrNull(ln.get("notes")), ++idx, unit.uomId(), unit.factor(),
+                                variant == null ? null : variant.id())));
             }
             row.put("lines", created);
             return row;
@@ -345,7 +354,7 @@ public class GoodsReceiptsService {
                 }
                 BigDecimal unitCost = Money.dec(ln.get("unitCost"));
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
-                                Money.dec(ln.get("quantity")))
+                                Money.dec(ln.get("quantity"))).variant((String) ln.get("variantId"))
                         .unitCost(unitCost.signum() > 0 ? unitCost.multiply(rate) : Money.dec(product.get("costPrice")))
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),

@@ -11,6 +11,7 @@ import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PosPaymentMethodService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.BranchSaleRecognitionService;
@@ -103,13 +104,15 @@ public class CashSaleService {
     private final NotificationsService notifications;
     private final PosPaymentMethodService paymentModes;
     private final AccountDeterminationService determination;
+    private final ProductVariantService variants;
 
     public CashSaleService(SalesDb db, BranchSalesProfileService profiles, BranchScopeService scopes,
             SalesLinePricing pricing, DocumentBuilderService builder, StockService stock,
             CustomerDepositService deposits, BranchSaleRecognitionService recognition, InvoiceService invoices,
             CashSaleFiscalService fiscal, SequenceService sequence, AuditService audit, EventBus events,
             NotificationsService notifications, PosPaymentMethodService paymentModes,
-            AccountDeterminationService determination) {
+            AccountDeterminationService determination, ProductVariantService variants) {
+        this.variants = variants;
         this.db = db;
         this.paymentModes = paymentModes;
         this.determination = determination;
@@ -207,6 +210,7 @@ public class CashSaleService {
 
     private List<Map<String, Object>> lines(String id) {
         return db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", pr.\"trackInventory\","
+                + " (SELECT v.name FROM \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " t.name AS \"taxName\", t.rate AS \"taxRate\", u.code AS \"uomCode\" FROM \"SalesSubmissionLine\" l LEFT"
                 + " JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" LEFT JOIN"
                 + " \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"submissionId\" = ? ORDER BY l.\"sortOrder\"", id);
@@ -456,8 +460,8 @@ public class CashSaleService {
         List<LineInput> inputs = new ArrayList<>();
         List<Map<String, Object>> meta = new ArrayList<>();
         for (Map<String, Object> l : lines) {
-            unknownFields(l, Set.of("productId", "description", "quantity", "uomId", "unitPrice", "discountPercent",
-                    "taxId", "taxInclusive"));
+            unknownFields(l, Set.of("productId", "variantId", "description", "quantity", "uomId", "unitPrice",
+                    "discountPercent", "taxId", "taxInclusive"));
             String productId = str(l.get("productId"));
             if (blank(productId)) {
                 throw ApiException.badRequest("productId should not be empty");
@@ -472,7 +476,9 @@ public class CashSaleService {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
             String uomId = blank(str(l.get("uomId"))) ? null : str(l.get("uomId"));
-            QuotationPricingPort.Price price = pricing.price(partnerId, productId, qty, uomId, on);
+            ProductVariantService.VariantRef variant = variants.resolve(productId, str(l.get("variantId")));
+            QuotationPricingPort.Price price = pricing.price(partnerId, productId, variant == null ? null : variant.id(),
+                    qty, uomId, on, null);
             BigDecimal unit = l.get("unitPrice") != null ? dec(l.get("unitPrice")) : price.unitPrice();
             BigDecimal disc = l.get("discountPercent") != null ? dec(l.get("discountPercent")) : price.discountPercent();
             if (unit.signum() < 0) {
@@ -489,7 +495,8 @@ public class CashSaleService {
             inputs.add(new LineInput(productId, null, null, null, null, description, qty, unit, disc, null, null, null,
                     "manual", taxId, null, incl, uomId));
             meta.add(Obj.of("listPrice", price.listPrice(), "priceSource", same ? price.source() : "manual", "cost",
-                    product.get("costPrice")));
+                    variant != null && variant.costPrice() != null ? variant.costPrice() : product.get("costPrice"),
+                    "variantId", variant == null ? null : variant.id()));
         }
         if (!inputs.isEmpty()) {
             Totals totals = builder.prepareLines(inputs);
@@ -500,6 +507,7 @@ public class CashSaleService {
                 ins.put("submissionId", id);
                 ins.put("sortOrder", i);
                 ins.put("productId", pl.productId());
+                ins.put("variantId", m.get("variantId"));
                 ins.put("description", pl.description());
                 ins.put("quantity", pl.quantity());
                 ins.put("uomId", pl.uomId());
@@ -716,7 +724,7 @@ public class CashSaleService {
                 continue;
             }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
-                    dec(l.get("quantity"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
+                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
                     .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);
@@ -1017,9 +1025,10 @@ public class CashSaleService {
         String number = str(s.get("number"));
         List<LineInput> lines = new ArrayList<>();
         for (Map<String, Object> l : lines(id)) {
-            lines.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
-                    dec(l.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
-                    "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId"))));
+            lines.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), str(l.get("variantName")), null,
+                    str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
+                    dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
+                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,

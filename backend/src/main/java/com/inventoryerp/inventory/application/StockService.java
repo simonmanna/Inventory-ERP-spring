@@ -151,8 +151,8 @@ public class StockService {
     /** Receipt from a vendor bill. */
     @Transactional
     public Received receiveFromBill(StockMove dto, String billId, Instant billDate) {
-        StockMove m = StockMove.of(dto.productId, dto.locationId, dto.quantity).unitCost(dto.unitCost)
-                .uom(dto.uomId, dto.uomFactor)
+        StockMove m = StockMove.of(dto.productId, dto.locationId, dto.quantity).variant(dto.variantId)
+                .unitCost(dto.unitCost).uom(dto.uomId, dto.uomFactor)
                 .batch(dto.batchNumber).expiry(dto.expiryDate).notes(dto.notes).serials(dto.serialNumbers);
         return receiveCore(m, GlReceiptContext.grni("vendor_bill", billId, billDate));
     }
@@ -229,6 +229,7 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        requireVariant(product, dto.variantId, dto.locationId);
         boolean batchTracking = bool(product, "batchTracking");
         String productName = str(product, "name");
         if (batchTracking && dto.batchNumber == null
@@ -384,6 +385,19 @@ public class StockService {
                 actualValue);
     }
 
+    /**
+     * ADR-S058: a product with variants moves stock per variant. A move without a variant is refused unless the
+     * location still holds a quant without one (stock or documents from before the product got variants).
+     */
+    private void requireVariant(Map<String, Object> product, String variantId, String locationId) {
+        if (variantId != null || !bool(product, "hasVariants")) {
+            return;
+        }
+        if (lookups.stockItem(str(product, "id"), null, locationId) == null) {
+            throw ApiException.badRequest("Choose a variant for " + str(product, "name"));
+        }
+    }
+
     // ================================================================== issue
 
     /** Issue stock (sale, consumption, waste, ...) with layer-aware costing and the GL leg. */
@@ -399,6 +413,7 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        requireVariant(product, dto.variantId, dto.locationId);
         String productName = str(product, "name");
         BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
@@ -700,6 +715,7 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        requireVariant(product, dto.variantId, dto.locationId);
         BigDecimal counted = dto.countedQuantity;
         String variantId = dto.variantId;
         String variantKey = variantId == null ? "" : variantId;
@@ -841,6 +857,7 @@ public class StockService {
         if (lookups.location(dto.toLocationId) == null) {
             throw ApiException.notFound("Destination location not found");
         }
+        requireVariant(product, dto.variantId, dto.fromLocationId);
         BigDecimal qty = dto.quantity;
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");

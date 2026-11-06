@@ -830,7 +830,7 @@ public class FleetDispatchService {
             if (qty.signum() > 0 && moveStock && tracked((String) l.get("productId"))) {
                 String batch = (String) l.get("batchNumber");
                 StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
-                        .uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor")).batch(batch)
+                        .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor")).batch(batch)
                         .moveType("issue").source(STOCK_SOURCE, id).reference(code).date(now)
                         .notes("Delivery " + order.get("code") + " · trip " + code);
                 if (batch != null) {
@@ -1190,6 +1190,16 @@ public class FleetDispatchService {
         return new Locked(require(id, true), order);
     }
 
+    /** Product variant of a load line, from its delivery-order line (ADR-S058; null without variants). */
+    private String variantOf(Map<String, Object> loadLine) {
+        Object dl = loadLine.get("deliveryOrderLineId");
+        if (dl == null) {
+            return null;
+        }
+        return db.jdbc().sql("SELECT \"variantId\" FROM \"FleetDeliveryOrderLine\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(dl, FleetDb.org()).query(String.class).optional().orElse(null);
+    }
+
     private List<Map<String, Object>> lines(String tripId) {
         return db.list(FleetLoadLine.class, " AND \"loadId\" = ? ORDER BY \"createdAt\", id", tripId);
     }
@@ -1205,8 +1215,8 @@ public class FleetDispatchService {
             return null;
         }
         StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
-                .uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor")).batch((String) l.get("batchNumber"))
-                .source(STOCK_SOURCE + "_return", (String) t.get("id")).reference((String) t.get("code")).notes(notes);
+                .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor"))
+                .batch((String) l.get("batchNumber")).source(STOCK_SOURCE + "_return", (String) t.get("id")).reference((String) t.get("code")).notes(notes);
         if (issuedHere && l.get("unitCost") != null) {
             m.unitCost(SqlRows.dec(l, "unitCost"));
         }

@@ -10,6 +10,8 @@ export type FiscalStatus = 'none' | 'pending' | 'issued' | 'failed' | 'cancellat
 
 export interface CashSaleLine {
   id: string; productId: string; productName: string | null; productCode: string | null; description: string;
+  /** ADR-S058: product variant. */
+  variantId?: string | null; variantName?: string | null;
   quantity: number; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
   deliveredQty?: number; invoicedQty?: number;

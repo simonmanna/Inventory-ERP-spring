@@ -30,9 +30,24 @@ python report.py        # reports/*.json
 ```
 
 Phases (`python run.py <phase>`): `setup opening production quarry intercompany hq showroom quotations fixups
-fixups2 crm`. Each step is recorded in `state.json`; a re-run skips finished steps (Idempotency-Key per step).
+fixups2 crm variants`. Each step is recorded in `state.json`; a re-run skips finished steps (Idempotency-Key per step).
 `fixups*` hold the corrections made after the first verification (kept so the audit trail tells the story).
 
 Files: `data.py` masters and prices, `opening.py` 31 Oct 2026 position, `scenarios.py` the business story,
-`flows.py` reusable document flows, `crm.py` CRM story (reps, teams, tags, leads, pipeline incl. won/lost,
+`flows.py` reusable document flows, `variants.py` product variants demo (ADR-S058, see below), `crm.py` CRM story (reps, teams, tags, leads, pipeline incl. won/lost,
 planner activities, cases, quotations linked to opportunities), `report.py` the report pack. Results: `docs/reports/MENA_DEMO_DATA_REPORT.md`.
+
+## Product variants demo (`python run.py variants`)
+
+New products only (codes `VAR-*`), existing products untouched. Shared attributes: Stone colour (colour chips),
+Thickness, Edge profile, Block size, Surface finish, Tile size, Vanity width.
+
+| Company | Product | Variants | What to look at |
+|---|---|---|---|
+| MENA | `VAR-WTOP` Granite kitchen worktop | 16 = 4 colours x 2 thicknesses x 2 edges | price extras (Spotted Green +20k, Galaxy Black +40k, Viscount White +85k, 30 mm +45k, Bullnose +15k); fixed price 340,000 + fixed cost on *Viscount White, 30 mm, Bullnose*; bought on PO/bill `HQ-PO-VAR-STONE-01`, sold on the Canan Developers order |
+| MENA | `VAR-BLOCK` Hollow concrete block (by size) | 3 (4/6/8 inch) | +500 / +1000 extras, fixed costs 1,400 / 1,750; opening count 5,000 / 3,000 / 1,500 |
+| MENA | `VAR-TILE` Granite floor tile | 24 generated, 15 active | *Flamed* removed afterwards: its 8 variants archived (one still holds 40 m2); *Dragon Fire, Honed, 30x60 cm* archived by hand |
+| MENA-SHOW | `VAR-VANITY` Granite vanity top | 9 = 3 colours x 3 widths | fixed price 820,000 on *Viscount White, 120 cm*; counted stock, sold to C-KARIM |
+
+Open documents to edit: quotation + draft sales order for C-OPHIR (MENA) and C-MICH (MENA-SHOW), all lines with
+variants. Each variant has a SKU (e.g. `WTOP-VW-30-B`) and a barcode `619…`.

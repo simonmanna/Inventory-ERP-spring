@@ -6,7 +6,7 @@ import { z } from 'zod';
 import {
   ChevronRight, ArrowLeft, Save, Package, Plus, Trash2,
   DollarSign, FlaskConical, Boxes, BookOpen,
-  PackageOpen,
+  PackageOpen, Layers,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProductUnitProfileCard } from '@/features/products/unit-profile-card';
+import { VariantsTab } from '@/features/products/variants-tab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -166,6 +167,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: 'general', label: tx('General'), icon: Package },
+  { id: 'variants', label: tx('Attributes & Variants'), icon: Layers },
   { id: 'pricing-uom', label: tx('Pricing & UOM'), icon: DollarSign },
   { id: 'inventory', label: tx('Inventory'), icon: PackageOpen },
   { id: 'beverage', label: tx('Beverage'), icon: FlaskConical },
@@ -615,6 +617,11 @@ export function ProductEditPage() {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* ── Attributes & Variants Tab (ADR-S058) ── */}
+            <TabsContent value="variants" className="mt-0 outline-none space-y-6">
+              <VariantsTab productId={id} />
             </TabsContent>
 
             {/* ── Pricing & UOM Tab ── */}

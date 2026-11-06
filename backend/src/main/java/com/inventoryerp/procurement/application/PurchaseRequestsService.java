@@ -50,7 +50,15 @@ public class PurchaseRequestsService {
     public record LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
             BigDecimal estimatedUnitPrice, String notes, String requiredDate, String deliveryLocationId,
             String preferredSupplierId, String costCenterId, String projectId, String demandSource,
-            String demandRef) {
+            String demandRef, String variantId) {
+
+        public LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
+                BigDecimal estimatedUnitPrice, String notes, String requiredDate, String deliveryLocationId,
+                String preferredSupplierId, String costCenterId, String projectId, String demandSource,
+                String demandRef) {
+            this(productId, description, quantity, unitOfMeasureId, estimatedUnitPrice, notes, requiredDate,
+                    deliveryLocationId, preferredSupplierId, costCenterId, projectId, demandSource, demandRef, null);
+        }
 
         /** The parity line (no ADR-PROCUREMENT-001 extras). */
         public LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
@@ -117,14 +125,15 @@ public class PurchaseRequestsService {
                             + " \"organizationId\", \"purchaseRequestId\", \"productId\", description, quantity,"
                             + " \"unitOfMeasureId\", \"estimatedUnitPrice\", notes, \"lineNumber\", \"requiredDate\","
                             + " \"deliveryLocationId\", \"preferredSupplierId\", \"costCenterId\", \"projectId\","
-                            + " \"demandSource\", \"demandRef\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?, ?,"
-                            + " COALESCE(?, 'manual'), ?) RETURNING *")
+                            + " \"demandSource\", \"demandRef\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::date,"
+                            + " ?, ?, ?, ?, COALESCE(?, 'manual'), ?, ?) RETURNING *")
                     .params(lineId, orgId, id, ln.productId(), ln.description(), ln.quantity(),
                             ln.unitOfMeasureId(), ln.estimatedUnitPrice(), ln.notes(), ++idx,
                             ln.requiredDate() == null || ln.requiredDate().isBlank() ? null
                                     : ln.requiredDate().substring(0, 10),
                             ln.deliveryLocationId(), ln.preferredSupplierId(), ln.costCenterId(), ln.projectId(),
-                            ln.demandSource(), ln.demandRef())));
+                            ln.demandSource(), ln.demandRef(),
+                            ln.variantId() == null || ln.variantId().isBlank() ? null : ln.variantId())));
         }
         pr.put("lines", lines);
         return pr;

@@ -28,6 +28,9 @@ export interface SalesOrderLine {
   productId: string | null;
   productName?: string | null;
   productCode?: string | null;
+  /** ADR-S058: product variant (required for a product with variants). */
+  variantId?: string | null;
+  variantName?: string | null;
   description: string;
   quantity: number;
   uomId?: string | null;

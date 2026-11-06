@@ -49,7 +49,9 @@ public class PurchaseRequestsController {
             String deliveryLocationId,
             String preferredSupplierId,
             String costCenterId,
-            String projectId) {}
+            String projectId,
+            // ADR-S058: product variant (required for a product with variants on the order).
+            String variantId) {}
 
     /** {@code CreatePRDto}. */
     public record CreatePRRequest(
@@ -92,7 +94,8 @@ public class PurchaseRequestsController {
         return svc.create(new CreateInput(dto.partnerId(), dto.branchId(), dto.description(), dto.neededBy(),
                 dto.lines().stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
                         l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes(), l.requiredDate(),
-                        l.deliveryLocationId(), l.preferredSupplierId(), l.costCenterId(), l.projectId(), null, null))
+                        l.deliveryLocationId(), l.preferredSupplierId(), l.costCenterId(), l.projectId(), null, null,
+                        l.variantId()))
                         .toList(), dto.departmentId()));
     }
 

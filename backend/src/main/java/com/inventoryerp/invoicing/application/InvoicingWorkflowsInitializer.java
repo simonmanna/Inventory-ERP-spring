@@ -119,7 +119,7 @@ public class InvoicingWorkflowsInitializer {
                     throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
                 }
                 StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
-                        .uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
+                        .variant((String) line.get("variantId")).uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                         .date(instant(doc.get("issueDate"))).source("sales_invoice", id)
                         .notes("Auto-issue for invoice " + doc.get("documentNumber"));
                 stock.issue(m);
@@ -381,6 +381,7 @@ public class InvoicingWorkflowsInitializer {
             BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
                     Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
             StockMove m = StockMove.of((String) line.get("productId"), location, toReceive).unitCost(unitCost)
+                    .variant((String) line.get("variantId"))
                     .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),
                             line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                     .notes("Auto-receive for bill " + full.get("documentNumber"));
