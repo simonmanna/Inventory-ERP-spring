@@ -232,9 +232,7 @@ public class SalesQuotationService {
         if (blank(partnerId)) {
             throw ApiException.badRequest("A quotation needs a customer; convert the lead or set the customer first");
         }
-        if (!db.exists("Partner", partnerId)) {
-            throw ApiException.notFound("Partner not found");
-        }
+        db.requireActivePartner(partnerId);
         Map<String, Object> settings = config.settings();
         LocalDate issue = in.get("issueDate") == null ? LocalDate.now() : SalesDb.date(str(in.get("issueDate")));
         LocalDate valid = in.get("validUntil") == null
@@ -251,8 +249,9 @@ public class SalesQuotationService {
                 : str(in.get("contactId")), "ownerId", owner, "issueDate", issue, "validUntil", valid, "currencyCode",
                 currency, "notes", str(in.get("notes")), "terms", in.containsKey("terms") ? str(in.get("terms"))
                 : str(settings.get("defaultQuoteTerms")), "createdById", user()));
+        row = db.patch("SalesQuotation", str(row.get("id")), commercial(in), true);
         String id = str(row.get("id"));
-        writeLines(id, partnerId, issue, in.get("lines"));
+        writeLines(id, partnerId, issue, in.get("lines"), row);
         audit.record(AuditInput.of("SalesQuotation", id, "create", null, Obj.of("number", number, "dealId", dealId)));
         return get(id);
     }
@@ -286,6 +285,7 @@ public class SalesQuotationService {
         if (in.containsKey("validUntil")) {
             d.put("validUntil", SalesDb.date(str(in.get("validUntil"))));
         }
+        d.putAll(commercial(in));
         d.put("status", "draft");
         d.put("approvalReasons", List.of());
         d.put("rejectionReason", null);
@@ -294,15 +294,37 @@ public class SalesQuotationService {
         if (in.containsKey("lines")) {
             String partner = str(d.getOrDefault("partnerId", q.get("partnerId")));
             LocalDate issue = (LocalDate) d.getOrDefault("issueDate", q.get("issueDate"));
-            writeLines(id, partner, issue, in.get("lines"));
+            Map<String, Object> scope = new LinkedHashMap<>(q);
+            scope.putAll(d);
+            writeLines(id, partner, issue, in.get("lines"), scope);
         }
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("fields", d.keySet(), "lines",
                 in.containsKey("lines"))));
         return get(id);
     }
 
+    /** The quotation's branch, terms and delivery details, which pass on to the order it converts into. */
+    private Map<String, Object> commercial(Map<String, Object> in) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        for (String k : List.of("branchId", "paymentTermId", "siteId", "deliveryAddress")) {
+            if (in.containsKey(k)) {
+                d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
+            }
+        }
+        if (d.get("branchId") != null && !db.exists("Branch", str(d.get("branchId")))) {
+            throw ApiException.notFound("Branch not found");
+        }
+        if (d.get("paymentTermId") != null && !db.exists("PaymentTerm", str(d.get("paymentTermId")))) {
+            throw ApiException.notFound("Payment term not found");
+        }
+        if (d.get("siteId") != null && !db.exists("FleetCustomerSite", str(d.get("siteId")))) {
+            throw ApiException.notFound("Customer site not found");
+        }
+        return d;
+    }
+
     @SuppressWarnings("unchecked")
-    private void writeLines(String id, String partnerId, LocalDate on, Object raw) {
+    private void writeLines(String id, String partnerId, LocalDate on, Object raw, Map<String, Object> header) {
         db.update("DELETE FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?", id, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         List<LineInput> inputs = new ArrayList<>();
@@ -315,10 +337,10 @@ public class SalesQuotationService {
             }
             ProductVariantService.VariantRef variant = variants.resolve(blank(productId) ? null : productId,
                     str(l.get("variantId")));
-            QuotationPricingPort.Price price = blank(productId) ? null : variant != null
-                    ? engine.resolve(new SalesPricingEngine.Context(partnerId, productId, qty, null, null, null, null, on,
-                            null, variant.id())).price()
-                    : price(partnerId, productId, qty, on);
+            String uomId = blank(str(l.get("uomId"))) ? null : str(l.get("uomId"));
+            QuotationPricingPort.Price price = blank(productId) ? null : engine.resolve(new SalesPricingEngine.Context(
+                    partnerId, productId, qty, uomId, str(header.get("siteId")), str(header.get("branchId")),
+                    str(header.get("currencyCode")), on, null, variant == null ? null : variant.id())).price();
             BigDecimal list = price == null ? decOr(l.get("unitPrice"), BigDecimal.ZERO) : price.listPrice();
             BigDecimal unit;
             BigDecimal disc;
@@ -350,7 +372,7 @@ public class SalesQuotationService {
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
                     disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
-                    ? null : price.ruleId(), "variantId", variant == null ? null : variant.id()));
+                    ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId));
         }
         if (inputs.isEmpty()) {
             db.update("UPDATE \"SalesQuotation\" SET subtotal = 0, \"discountTotal\" = 0, \"taxAmount\" = 0, total = 0,"
@@ -369,7 +391,8 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             db.insert("SalesQuotationLine", Obj.of("quotationId", id, "sortOrder", i, "productId", pl.productId(),
-                    "variantId", m.get("variantId"), "description", pl.description(), "quantity", pl.quantity(), "listPrice", list, "unitPrice",
+                    "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
+                    pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(), "lineTotal", pl.total()));

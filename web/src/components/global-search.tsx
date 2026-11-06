@@ -20,6 +20,8 @@ const ICONS: Record<string, typeof Search> = {
   product: Package,
   invoice: Receipt,
   credit_note: FileText,
+  sales_order: Receipt,
+  quotation: FileText,
   payment: HandCoins,
   expense: FileText,
   account: BookOpen,

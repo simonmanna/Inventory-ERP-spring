@@ -91,6 +91,18 @@ public class SalesDb {
                 List.of(id, org())) > 0;
     }
 
+    /** The customer a new sales document is for must exist and be active. */
+    void requireActivePartner(String partnerId) {
+        Map<String, Object> p = partnerId == null ? null : row("SELECT status::text AS status, \"deletedAt\" FROM"
+                + " \"Partner\" WHERE id = ? AND \"organizationId\" = ?", partnerId, org());
+        if (p == null) {
+            throw ApiException.notFound("Partner not found");
+        }
+        if (!"active".equals(p.get("status")) || p.get("deletedAt") != null) {
+            throw ApiException.badRequest("This customer is not active");
+        }
+    }
+
     /**
      * Insert {@code data} (null values skipped) into {@code table}; {@code id} and {@code organizationId} default.
      * Returns the inserted row.

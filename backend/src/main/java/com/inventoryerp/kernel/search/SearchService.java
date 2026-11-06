@@ -1,5 +1,7 @@
 package com.inventoryerp.kernel.search;
 
+import com.inventoryerp.kernel.security.PermissionService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -33,11 +35,33 @@ public class SearchService {
 
     private record Entity(String type, String sql, Mapper mapper) {}
 
+    /** Result type to the permission needed to see it; a type not listed here is never returned. */
+    private static final Map<String, List<String>> PERMISSIONS = Map.ofEntries(
+            Map.entry("partner", List.of(Permissions.PARTNER__READ)),
+            Map.entry("product", List.of(Permissions.PRODUCT__READ)),
+            Map.entry("invoice", List.of(Permissions.INVOICE__READ)),
+            Map.entry("credit_note", List.of(Permissions.CREDIT_NOTE__READ)),
+            Map.entry("payment", List.of(Permissions.PAYMENT__READ)),
+            Map.entry("expense", List.of(Permissions.EXPENSE__READ)),
+            Map.entry("account", List.of(Permissions.ACCOUNT__READ)),
+            Map.entry("journal_entry", List.of(Permissions.JOURNAL_ENTRY__READ, Permissions.JOURNAL__READ)),
+            Map.entry("deal", List.of(Permissions.CRM__DEAL_READ)),
+            Map.entry("sales_order", List.of(Permissions.SALES__ORDER_READ)),
+            Map.entry("quotation", List.of(Permissions.SALES__QUOTATION_READ, Permissions.CRM__QUOTATION_READ)));
+
+    /** Result types that belong to a branch, with the table holding it. */
+    private static final Map<String, String> BRANCH_TABLE = Map.of("invoice", "Document", "credit_note", "Document",
+            "expense", "Document", "payment", "Payment", "sales_order", "SalesOrder", "quotation", "SalesQuotation");
+
     private final JdbcClient jdbc;
+    private final SearchBranchAccess branches;
+    private final PermissionService permissions;
     private final List<Entity> entities = new ArrayList<>();
 
-    public SearchService(JdbcClient jdbc) {
+    public SearchService(JdbcClient jdbc, SearchBranchAccess branches, PermissionService permissions) {
         this.jdbc = jdbc;
+        this.branches = branches;
+        this.permissions = permissions;
         entities.add(new Entity("partner", """
                 SELECT id, code, name, email FROM "Partner" WHERE "organizationId" = :org AND "deletedAt" IS NULL
                   AND (name ILIKE :q OR code ILIKE :q OR email ILIKE :q OR phone ILIKE :q OR "taxNumber" ILIKE :q) LIMIT 5""",
@@ -56,6 +80,18 @@ public class SearchService {
                   AND (d."documentNumber" ILIKE :q OR d.reference ILIKE :q) LIMIT 5""",
                 rs -> hit("invoice", rs.getString("id"), rs.getString("documentNumber"),
                         nz(rs.getString("partnerName")) + " · " + decimal(rs.getBigDecimal("totalAmount")), "/invoices/")));
+        entities.add(new Entity("sales_order", """
+                SELECT o.id, o.number, o."customerRef", p.name AS "partnerName" FROM "SalesOrder" o
+                  LEFT JOIN "Partner" p ON p.id = o."partnerId"
+                WHERE o."organizationId" = :org AND (o.number ILIKE :q OR o."customerRef" ILIKE :q) LIMIT 5""",
+                rs -> hit("sales_order", rs.getString("id"), rs.getString("number"), nz(rs.getString("partnerName"))
+                        + (blank(rs.getString("customerRef")) ? "" : " · " + rs.getString("customerRef")), "/sales/orders/")));
+        entities.add(new Entity("quotation", """
+                SELECT q.id, q.number, p.name AS "partnerName" FROM "SalesQuotation" q
+                  LEFT JOIN "Partner" p ON p.id = q."partnerId"
+                WHERE q."organizationId" = :org AND q.number ILIKE :q LIMIT 5""",
+                rs -> hit("quotation", rs.getString("id"), rs.getString("number"), nz(rs.getString("partnerName")),
+                        "/crm/quotations/")));
         entities.add(new Entity("credit_note", """
                 SELECT d.id, d."documentNumber", p.name AS "partnerName" FROM "Document" d
                   LEFT JOIN "Partner" p ON p.id = d."partnerId"
@@ -102,6 +138,9 @@ public class SearchService {
         Set<String> seen = new HashSet<>();
         List<Map<String, Object>> hits = new ArrayList<>();
         for (Entity e : entities) {
+            if (!permitted(e.type())) {
+                continue;
+            }
             List<Map<String, Object>> rows;
             try {
                 rows = jdbc.sql(e.sql()).param("org", orgId).param("q", like).query((rs, n) -> e.mapper().map(rs)).list();
@@ -126,7 +165,32 @@ public class SearchService {
                 hits.add(h);
             }
         }
-        return hits;
+        return hits.stream().filter(h -> visible((String) h.get("type"), (String) h.get("id"), orgId)).toList();
+    }
+
+    private boolean permitted(String type) {
+        // /search is open to any signed-in user, so the guard has not loaded the caller's permissions.
+        return PERMISSIONS.getOrDefault(type, List.of()).stream().anyMatch(permissions.current()::contains);
+    }
+
+    /** Applied to both search paths: the caller's permission, then branch scope and own-orders-only. */
+    private boolean visible(String type, String id, String orgId) {
+        if (!permitted(type)) {
+            return false;
+        }
+        boolean ownOnly = "sales_order".equals(type)
+                && !permissions.current().contains(Permissions.SALES__ORDER_READ_ALL);
+        String table = BRANCH_TABLE.get(type);
+        if (table == null || (!branches.restricted() && !ownOnly)) {
+            return true;
+        }
+        Map<String, Object> row = jdbc.sql("SELECT \"branchId\"" + (ownOnly ? ", \"ownerId\"" : "") + " FROM \"" + table
+                + "\" WHERE id = ? AND \"organizationId\" = ?").params(id, orgId).query().listOfRows().stream().findFirst()
+                .orElse(null);
+        if (row == null || !branches.allowsBranch((String) row.get("branchId"))) {
+            return false;
+        }
+        return !ownOnly || TenantContext.userId().equals(row.get("ownerId"));
     }
 
     private List<Map<String, Object>> trigram(String q, String orgId) {

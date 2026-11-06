@@ -249,7 +249,8 @@ public class SalesOrderChangeService {
             }
         }
         for (Map<String, Object> a : add) {
-            Map<String, Object> m = orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")));
+            Map<String, Object> m = orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")),
+                    SalesOrderService.PriceScope.of(o));
             valueAfter = valueAfter.add(net(dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get(
                     "discountPercent"))));
             if (m.get("productId") != null) {
@@ -330,7 +331,8 @@ public class SalesOrderChangeService {
         List<Map<String, Object>> add = changes.get("addLines") instanceof List<?> l ? (List<Map<String, Object>>) l
                 : List.of();
         for (Map<String, Object> a : add) {
-            newLines.add(orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId"))));
+            newLines.add(orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")),
+                    SalesOrderService.PriceScope.of(o)));
         }
         orders.insertLines(orderId, newLines, sort);
     }

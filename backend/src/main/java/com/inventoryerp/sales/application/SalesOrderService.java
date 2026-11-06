@@ -238,7 +238,7 @@ public class SalesOrderService {
         Map<String, Object> row = db.insert("SalesOrder", header);
         String id = str(row.get("id"));
         writeLines(id, partnerId, str(header.get("agreementId")), LocalDate.now(), in.get("lines"),
-                str(header.get("locationId")));
+                str(header.get("locationId")), PriceScope.of(header));
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"))));
         return get(id);
     }
@@ -283,7 +283,8 @@ public class SalesOrderService {
             m.put("quotationLineId", l.get("id"));
             lines.add(m);
         }
-        writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")));
+        writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")),
+                PriceScope.of(header));
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"), "quotationId",
                 q.get("id"))));
         return get(id);
@@ -313,7 +314,7 @@ public class SalesOrderService {
         if (in.containsKey("lines")) {
             writeLines(id, str(d.getOrDefault("partnerId", o.get("partnerId"))), str(d.getOrDefault("agreementId",
                     o.get("agreementId"))), LocalDate.now(), in.get("lines"), str(d.getOrDefault("locationId",
-                            o.get("locationId"))));
+                            o.get("locationId"))), PriceScope.of(o, d));
         }
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("fields", d.keySet(), "lines",
                 in.containsKey("lines"))));
@@ -418,14 +419,29 @@ public class SalesOrderService {
     }
 
     /** Replace the lines of a draft order (price resolved for product lines without an explicit price). */
+    /** The order header fields that select price rules. */
+    record PriceScope(String siteId, String branchId, String currencyCode) {
+
+        static PriceScope of(Map<String, Object> order) {
+            return new PriceScope(str(order.get("siteId")), str(order.get("branchId")), str(order.get("currencyCode")));
+        }
+
+        /** {@code changes} win over the stored order. */
+        static PriceScope of(Map<String, Object> order, Map<String, Object> changes) {
+            Map<String, Object> merged = new LinkedHashMap<>(order);
+            merged.putAll(changes);
+            return of(merged);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     void writeLines(String orderId, String partnerId, String agreementId, LocalDate on, Object raw,
-            String defaultLocation) {
+            String defaultLocation, PriceScope scope) {
         db.update("DELETE FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?", orderId, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> l : lines) {
-            rows.add(line(partnerId, agreementId, on, l, defaultLocation));
+            rows.add(line(partnerId, agreementId, on, l, defaultLocation, scope));
         }
         insertLines(orderId, rows, 0);
         retotal(orderId);
@@ -433,7 +449,7 @@ public class SalesOrderService {
 
     /** Validated, priced line values (not yet taxed). */
     Map<String, Object> line(String partnerId, String agreementId, LocalDate on, Map<String, Object> l,
-            String defaultLocation) {
+            String defaultLocation, PriceScope scope) {
         String productId = blank(str(l.get("productId"))) ? null : str(l.get("productId"));
         BigDecimal qty = dec(l.get("quantity"));
         if (qty.signum() <= 0) {
@@ -442,7 +458,8 @@ public class SalesOrderService {
         ProductVariantService.VariantRef variant = variants.resolve(productId, str(l.get("variantId")));
         String variantId = variant == null ? null : variant.id();
         QuotationPricingPort.Price price = productId == null ? null : pricing.price(partnerId, productId, variantId, qty,
-                blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on, agreementId);
+                blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), on, agreementId, scope.siteId(), scope.branchId(),
+                scope.currencyCode());
         BigDecimal unit;
         BigDecimal disc;
         String source;
@@ -585,6 +602,7 @@ public class SalesOrderService {
         if (!"draft".equals(o.get("status"))) {
             throw ApiException.badRequest("Only draft orders can be confirmed");
         }
+        requirePartner(str(o.get("partnerId")));
         List<Map<String, Object>> lines = db.rows("SELECT * FROM \"SalesOrderLine\" WHERE \"orderId\" = ? ORDER BY"
                 + " \"sortOrder\"", id);
         if (lines.isEmpty()) {
@@ -882,9 +900,7 @@ public class SalesOrderService {
     }
 
     private void requirePartner(String partnerId) {
-        if (!db.exists("Partner", partnerId)) {
-            throw ApiException.notFound("Partner not found");
-        }
+        db.requireActivePartner(partnerId);
     }
 
     private String requireUser(String id) {
