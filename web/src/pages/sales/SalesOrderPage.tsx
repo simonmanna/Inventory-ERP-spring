@@ -36,6 +36,7 @@ import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -57,6 +58,7 @@ export function SalesOrderPage() {
   const [agreementId, setAgreementId] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [header, setHeader] = useState<OrderHeader>(blankHeader);
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
@@ -69,6 +71,7 @@ export function SalesOrderPage() {
     if (o) {
       setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
+      setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0) });
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
@@ -85,6 +88,8 @@ export function SalesOrderPage() {
   const save = useSalesMutation(async () => {
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
+      branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
+      ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
       ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
@@ -214,6 +219,7 @@ export function SalesOrderPage() {
             )}
           </div>
           <div className="space-y-3">
+            <OrderHeaderFields value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
               <InlineField label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
@@ -309,7 +315,7 @@ export function SalesOrderPage() {
                 <HandoverTab path={`/sales/orders/${o.id}/handover`} canEdit={has(P.orderWrite)} sourceLabel={tx('sales order')} readyHint={tx('Confirm the sales order first')} issuedLabel={tx('Delivered from stock')} />
               </>
             )}
-            {o && o.status !== 'draft' && (
+            {o && (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {fulfilling && <FulfilmentPanel order={o} />}
                 <AvailabilityPanel order={o} />
@@ -334,6 +340,7 @@ export function SalesOrderPage() {
             {o ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 <ChangeRequestsPanel orderId={o.id} />
+                <AmendmentHistory orderId={o.id} />
                 <AttachmentPanel resType="sales_order" resId={o.id} />
               </div>
             ) : <p className="text-sm text-muted-foreground">{tx('Save the order to add attachments and change requests.')}</p>}
@@ -447,6 +454,25 @@ function ChangeRequestsPanel({ orderId }: { orderId: string }) {
             {cr.status === 'pending_approval' && canApprove && (
               <div className="mt-1 flex gap-2"><Button size="sm" onClick={() => go(cr, 'approve')}>{tx('Approve & apply')}</Button><Button size="sm" variant="outline" onClick={() => go(cr, 'reject')}>{tx('Reject')}</Button></div>
             )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Every applied amendment of this order, newest first, with what changed. */
+function AmendmentHistory({ orderId }: { orderId: string }) {
+  const { data } = useOrderRevisions(orderId, true);
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
+      <h2 className="mb-2 font-semibold">{tx('Amendment history')}</h2>
+      <ul className="space-y-2">
+        {data.map((r) => (
+          <li key={r.id} className="rounded-lg border p-2">
+            <div className="flex justify-between"><span className="font-medium">r{r.revision} · {r.reason}</span><span className="text-xs text-muted-foreground">{date(r.createdAt)} · {money(r.total)}</span></div>
+            {r.diff != null && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{JSON.stringify(r.diff, null, 1)}</pre>}
           </li>
         ))}
       </ul>

@@ -34,7 +34,8 @@ public class SalesSettingsService {
             "revenueRecognition", Set.of("at_ownership_transfer", "at_invoice"),
             "billingPolicy", Set.of("ordered", "delivered"),
             "depositApplication", Set.of("manual", "oldest_first"),
-            "depositTaxPoint", Set.of("delivery", "receipt"));
+            "depositTaxPoint", Set.of("delivery", "receipt"),
+            "stockCheckPolicy", Set.of("none", "warn", "block"));
 
     private final SalesDb db;
     private final AuditService audit;
@@ -98,7 +99,8 @@ public class SalesSettingsService {
             params.add(v);
         }
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
-                "monthlyStatements")) {
+                "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
+                "orderApprovalAlways")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

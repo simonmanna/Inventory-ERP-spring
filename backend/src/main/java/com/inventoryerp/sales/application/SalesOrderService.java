@@ -74,6 +74,12 @@ public class SalesOrderService {
     private final ProductVariantService variants;
     private SalesAgreementService agreements;
     private SalesAccess access;
+    private SalesAlerts alerts;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAlerts(SalesAlerts alerts) {
+        this.alerts = alerts;
+    }
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
@@ -149,6 +155,9 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         List<Map<String, Object>> lines = lines(id);
         o.put("lines", lines);
+        if ("draft".equals(o.get("status"))) {
+            o.put("stockWarnings", atp.shortages(id));
+        }
         o.put("relations", relations(o));
         o.put("canAmend", OPEN.contains(o.get("status")) && TenantContext.has(Permissions.SALES__ORDER_AMEND));
         return o;
@@ -619,6 +628,13 @@ public class SalesOrderService {
         if (lines.isEmpty()) {
             throw ApiException.badRequest("Add at least one line before confirming");
         }
+        Map<String, Object> policy = settings.settings();
+        List<Map<String, Object>> shortages = "none".equals(policy.get("stockCheckPolicy")) ? List.of()
+                : atp.shortages(id);
+        if ("block".equals(policy.get("stockCheckPolicy")) && !shortages.isEmpty()) {
+            throw ApiException.badRequest("Not enough stock to confirm this order: short by "
+                    + shortages.get(0).get("shortage") + " on " + shortDescription(lines, shortages.get(0)));
+        }
         List<String> reasons = approvalReasons(o, lines);
         if (!reasons.isEmpty()) {
             Map<String, Object> snapshot = Obj.of("number", o.get("number"), "partnerId", o.get("partnerId"), "total",
@@ -635,6 +651,11 @@ public class SalesOrderService {
         return finishConfirm(id);
     }
 
+    private static String shortDescription(List<Map<String, Object>> lines, Map<String, Object> shortage) {
+        return lines.stream().filter(l -> l.get("id").equals(shortage.get("lineId"))).map(l -> str(l.get("description")))
+                .findFirst().orElse("a line");
+    }
+
     /** Why this order needs commercial approval (empty = within policy). */
     List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
         Map<String, Object> s = settings.settings();
@@ -643,6 +664,9 @@ public class SalesOrderService {
                         "priceSource")))).toList(), dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get(
                                 "marginCheck"))));
         reasons.addAll(agreements.releaseReasons(o, lines));
+        if (Boolean.TRUE.equals(s.get("orderApprovalAlways"))) {
+            reasons.add("Every sales order needs approval");
+        }
         BigDecimal amount = dec(s.get("orderApprovalAmount"));
         if (amount.signum() > 0 && dec(o.get("total")).compareTo(amount) > 0) {
             reasons.add("Total exceeds the approval amount of " + amount.stripTrailingZeros().toPlainString());
@@ -712,15 +736,27 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, d, true);
         audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "onHold", hold,
                 "creditDecision", c.id())));
-        if ("confirm".equals(settings.settings().get("reservationTrigger"))) {
+        Map<String, Object> policy = settings.settings();
+        if ("confirm".equals(policy.get("reservationTrigger"))) {
             atp.reserveOrder(id);
         }
         snapshots.record("sales_order", id);
         publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
         if (hold) {
             publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
+            if (Boolean.TRUE.equals(policy.get("notifyOnHold"))) {
+                alerts.order(o, "sales_order_hold", "Order " + o.get("number") + " is on hold", reason);
+            }
         }
-        return get(id);
+        List<Map<String, Object>> shortages = "none".equals(policy.get("stockCheckPolicy")) ? List.of()
+                : atp.shortages(id);
+        if (!shortages.isEmpty() && Boolean.TRUE.equals(policy.get("notifyOnShortage"))) {
+            alerts.order(o, "sales_order_shortage", "Order " + o.get("number") + " is short of stock", shortages.size()
+                    + " line(s) cannot be covered from stock today.");
+        }
+        Map<String, Object> out = get(id);
+        out.put("stockWarnings", shortages);
+        return out;
     }
 
     /** Put an open order on hold (no fulfilment while held). */
@@ -737,6 +773,9 @@ public class SalesOrderService {
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("onHold", true, "reason", reason)));
         publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
+        if (Boolean.TRUE.equals(settings.settings().get("notifyOnHold"))) {
+            alerts.order(o, "sales_order_hold", "Order " + o.get("number") + " is on hold", reason);
+        }
         return get(id);
     }
 
@@ -776,6 +815,22 @@ public class SalesOrderService {
         if (db.count("SELECT count(*) FROM \"FleetDeliveryOrder\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
                 + " 'sales_order' AND \"sourceId\" = ? AND status NOT IN ('cancelled')", List.of(org(), id)) > 0) {
             throw ApiException.badRequest("Cancel the delivery orders of this order first");
+        }
+        if (OPEN.contains(o.get("status")) && blank(reason)) {
+            throw ApiException.badRequest("reason should not be empty");
+        }
+        if (db.count("SELECT count(*) FROM \"Document\" WHERE \"organizationId\" = ? AND \"sourceType\" = 'sales_order'"
+                + " AND \"sourceId\" = ? AND \"documentType\"::text <> 'proforma_invoice' AND status::text NOT IN"
+                + " ('cancelled', 'rejected')", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Cancel the invoices of this order first");
+        }
+        if (db.count("SELECT count(*) FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"salesOrderId\" = ? AND"
+                + " status = 'open' AND amount - \"appliedAmount\" - \"refundedAmount\" > 0", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Refund or apply the deposits of this order first");
+        }
+        if (db.count("SELECT count(*) FROM \"SalesOrderChangeRequest\" WHERE \"organizationId\" = ? AND \"orderId\" = ? AND"
+                + " status = 'pending_approval'", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Decide the pending change requests of this order first");
         }
         db.patch("SalesOrder", id, Obj.of("status", "cancelled", "cancelledAt", Instant.now(), "cancelledById", user(),
                 "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",

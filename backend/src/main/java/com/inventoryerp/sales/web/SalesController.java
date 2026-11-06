@@ -269,6 +269,15 @@ public final class SalesController {
             return atp.forOrder(id);
         }
 
+        @PostMapping("/{id}/lines/{lineId}/source-location")
+        @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
+        public Map<String, Object> pickLocation(@PathVariable String id, @PathVariable String lineId,
+                @RequestBody Map<String, Object> b) {
+            svc.require(id);
+            atp.pickLocation(id, lineId, text(b, "locationId"));
+            return svc.get(id);
+        }
+
         @GetMapping("/{id}/reservations")
         @RequirePermissions(Permissions.SALES__ORDER_READ)
         public Map<String, Object> reservations(@PathVariable String id) {
