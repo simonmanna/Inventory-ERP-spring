@@ -58,7 +58,8 @@ class SalesDocumentReports implements SalesReportSet {
                    o."invoiceStatus", o."onHold", o."holdReason", o."partnerId", p.name AS customer, o."ownerId",
                    trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson, o."branchId",
                    b.name AS branch, o."requestedDate", o."commitmentDate",
-                   COALESCE(o."commitmentDate", o."requestedDate") AS "dueDate", o.total, o."currencyCode",
+                   COALESCE(o."commitmentDate", o."requestedDate") AS "dueDate", ROUND(o.total * o."exchangeRate", 6) AS total,
+                   o."currencyCode",
                    o."cancelReason", o."quotationId", o."approvalReasons", o."maxDiscountPercent", o.priority,
                    ol.ordered, ol.delivered, ol.dispatched, ol.invoiced, ol.cancelled, ol.remaining, ol."toDispatch",
                    ol."openValue", ol.lines
@@ -525,9 +526,10 @@ class SalesDocumentReports implements SalesReportSet {
                 + " t.\"plannedDate\") >= ? AND COALESCE(t.\"dispatchedAt\"::date, t.\"plannedDate\") < ?",
                 "/fleet/delivery-orders/", pid, from, to);
         add(rows, "SELECT id, \"documentNumber\" AS number, \"issueDate\"::date AS date, status::text AS status,"
-                + " CASE WHEN \"documentType\" = 'credit_note' THEN -\"totalAmount\" ELSE \"totalAmount\" END AS amount,"
+                + " CASE WHEN \"documentType\" = 'credit_note' THEN -\"totalAmount\" ELSE \"totalAmount\" END"
+                + " * \"exchangeRate\" AS amount,"
                 + " CASE WHEN \"documentType\" = 'credit_note' THEN 'Credit note' ELSE 'Invoice' END AS type,"
-                + " 'balance ' || \"amountResidual\"::numeric(18,2)::text AS detail FROM \"Document\" WHERE"
+                + " 'balance ' || (\"amountResidual\" * \"exchangeRate\")::numeric(18,2)::text AS detail FROM \"Document\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"documentType\" IN ('sales_invoice', 'credit_note')"
                 + " AND status NOT IN ('draft') AND \"issueDate\" >= ? AND \"issueDate\" < ?", "/invoices/", pid, from, to);
         add(rows, "SELECT id, \"paymentNumber\" AS number, \"paymentDate\"::date AS date, status::text AS status, amount,"
@@ -542,8 +544,9 @@ class SalesDocumentReports implements SalesReportSet {
         rows.sort(Comparator.comparing((Map<String, Object> r) -> String.valueOf(r.get("date"))).reversed());
         Report rep = table(rows, "date|Date|date", "type|Document|status", "number|Number|text",
                 "status|Status|status", "amount|Amount|money", "detail|Detail|text");
-        Map<String, Object> bal = db.row("SELECT COALESCE(sum(\"amountResidual\") FILTER (WHERE \"documentType\" ="
-                + " 'sales_invoice'), 0) AS outstanding, COALESCE(sum(\"amountResidual\") FILTER (WHERE \"documentType\" ="
+        Map<String, Object> bal = db.row("SELECT COALESCE(sum(\"amountResidual\" * \"exchangeRate\") FILTER (WHERE \"documentType\" ="
+                + " 'sales_invoice'), 0) AS outstanding, COALESCE(sum(\"amountResidual\" * \"exchangeRate\") FILTER (WHERE"
+                + " \"documentType\" ="
                 + " 'sales_invoice' AND \"dueDate\" < CURRENT_DATE), 0) AS overdue FROM \"Document\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'posted'", org(), pid);
         BigDecimal invoiced = sumType(rows, "Invoice");
@@ -592,13 +595,13 @@ class SalesDocumentReports implements SalesReportSet {
                        (SELECT count(*) FROM "Document" d WHERE d."organizationId" = p."organizationId"
                            AND d."partnerId" = p.id AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                            AND d."issueDate" >= ? AND d."issueDate" < ?) AS invoices,
-                       (SELECT COALESCE(sum(d.subtotal), 0) FROM "Document" d WHERE d."organizationId" = p."organizationId"
+                       (SELECT COALESCE(sum(d.subtotal * d."exchangeRate"), 0) FROM "Document" d WHERE d."organizationId" = p."organizationId"
                            AND d."partnerId" = p.id AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                            AND d."issueDate" >= ? AND d."issueDate" < ?) AS revenue
                   FROM "Partner" p
                   LEFT JOIN "PartnerCategory" c ON c.id = p."categoryId"
                   LEFT JOIN "User" u ON u.id = p."salespersonId"
-                  LEFT JOIN LATERAL (SELECT d."issueDate"::date AS date, d.subtotal AS amount FROM "Document" d
+                  LEFT JOIN LATERAL (SELECT d."issueDate"::date AS date, d.subtotal * d."exchangeRate" AS amount FROM "Document" d
                          WHERE d."organizationId" = p."organizationId" AND d."partnerId" = p.id
                            AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                          ORDER BY d."issueDate" LIMIT 1) fi ON true
@@ -648,7 +651,7 @@ class SalesDocumentReports implements SalesReportSet {
                   LEFT JOIN "PartnerCategory" c ON c.id = p."categoryId"
                   LEFT JOIN "User" u ON u.id = p."salespersonId"
                   LEFT JOIN LATERAL (SELECT max(d."issueDate")::date AS last, count(*) AS invoices,
-                                            COALESCE(sum(d.subtotal) FILTER (WHERE d."issueDate" >= ?), 0) AS revenue
+                                            COALESCE(sum(d.subtotal * d."exchangeRate") FILTER (WHERE d."issueDate" >= ?), 0) AS revenue
                          FROM "Document" d WHERE d."organizationId" = p."organizationId" AND d."partnerId" = p.id
                           AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                           AND d."issueDate" < ?) a ON true

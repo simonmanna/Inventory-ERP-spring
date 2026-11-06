@@ -201,9 +201,14 @@ public class SalesBillingService {
         String address = site != null ? String.join(", ", java.util.stream.Stream.of(site.get("name"), site.get(
                 "address"), site.get("city")).filter(x -> x != null).map(Object::toString).toList())
                 : str(o.get("deliveryAddress"));
+        // The order's prices are in its currency, so its invoice must be too.
+        Map<String, Object> currency = db.row("SELECT c.id FROM \"Currency\" c JOIN \"Organization\" g ON g.id = ?"
+                + " WHERE c.code = ? AND c.code <> g.\"currencyCode\"", org(), o.get("currencyCode"));
+        String currencyId = currency == null ? null : str(currency.get("id"));
+        BigDecimal rate = currencyId == null ? null : dec(o.get("exchangeRate"));
         return invoices.create(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
-                null, null, str(o.get("ownerId")), null, address, str(o.get("incoterm")), null, str(o.get("number")), null,
-                null, str(o.get("customerRef")), notes, lines));
+                null, null, str(o.get("ownerId")), null, address, str(o.get("incoterm")), null, str(o.get("number")),
+                currencyId, rate, str(o.get("customerRef")), notes, lines));
     }
 
     private void link(String orderId, String lineId, String documentId, String kind, BigDecimal qty, BigDecimal amount) {

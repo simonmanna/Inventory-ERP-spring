@@ -263,8 +263,8 @@ public class SalesReportingService {
         Map<String, Object> prev = facts.totals(f.previous());
         BigDecimal rev = dec(cur.get("revenue"));
         BigDecimal prevRev = dec(prev.get("revenue"));
-        Map<String, Object> ar = db.row("SELECT COALESCE(sum(\"amountResidual\"), 0) AS outstanding,"
-                + " COALESCE(sum(\"amountResidual\") FILTER (WHERE \"dueDate\" < CURRENT_DATE), 0) AS overdue,"
+        Map<String, Object> ar = db.row("SELECT COALESCE(sum(\"amountResidual\" * \"exchangeRate\"), 0) AS outstanding,"
+                + " COALESCE(sum(\"amountResidual\" * \"exchangeRate\") FILTER (WHERE \"dueDate\" < CURRENT_DATE), 0) AS overdue,"
                 + " count(*) FILTER (WHERE \"dueDate\" < CURRENT_DATE) AS \"overdueCount\" FROM \"Document\" WHERE"
                 + " \"organizationId\" = ? AND \"documentType\" = 'sales_invoice' AND status = 'posted' AND"
                 + " \"amountResidual\" > 0", org());

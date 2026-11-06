@@ -143,8 +143,14 @@ public class CreditNoteService {
     /** Create a draft credit note. */
     @Transactional
     public Map<String, Object> create(CreditNoteInput dto) {
+        // A credit note against an invoice is in that invoice's currency and rate unless it says otherwise.
+        Map<String, Object> reversed = dto.reversedDocumentId() == null || dto.currencyId() != null ? null
+                : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(dto.reversedDocumentId(), org()));
+        String currencyId = reversed == null ? dto.currencyId() : (String) reversed.get("currencyId");
+        BigDecimal rate = reversed == null ? null : Money.dec(reversed.get("exchangeRate"));
         return builder.createDocument("credit_note", new HeaderInput(dto.partnerId(), dto.issueDate(), null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, dto.currencyId(), null,
+                null, null, null, null, null, null, null, null, null, null, null, null, currencyId, rate,
                 dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), dto.lines());
     }
 

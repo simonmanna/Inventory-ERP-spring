@@ -32,6 +32,8 @@ import { FollowupPanel } from './FollowupTab';
 import { useOpenCreditInvoices } from '@/pages/pos/api';
 import { RecordCreditPaymentDialog, type CreditPaymentTarget } from '@/pages/pos/RecordCreditPaymentDialog';
 import { useSupplierLedger } from '@/features/invoicing/api';
+import { useStatement } from '@/features/finance/api';
+import { useQuery } from '@tanstack/react-query';
 import { CrmPartnerTab } from '@/features/crm/partner-tab';
 import { tx } from '@/lib/i18n/tx';
 
@@ -462,10 +464,143 @@ function TabLedger({ partnerId }: { partnerId: string }) {
   );
 }
 
+/** Consolidated AR when the user may read it; cashiers without that permission keep their POS credit view. */
 function TabStatement({ partnerId }: { partnerId: string }) {
-  const { data, isLoading } = useCustomerStatement(partnerId);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  return hasPermission(PERMISSIONS.report.ar) ? <ArStatementView partnerId={partnerId} /> : <PosStatementView partnerId={partnerId} />;
+}
+
+interface CreditExposure {
+  effectiveLimit: number;
+  headroom: number | null;
+  creditHold: boolean;
+  overdue: { amount: number; maxDays: number };
+}
+
+function ArStatementView({ partnerId }: { partnerId: string }) {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canCredit = hasPermission(PERMISSIONS.credit.read);
+  const { data, isLoading } = useStatement('ar', partnerId, {});
+  const { data: credit } = useQuery({
+    queryKey: ['credit', 'exposure', partnerId],
+    enabled: canCredit,
+    queryFn: async () => (await api.get<CreditExposure>(`/credit/partners/${partnerId}/exposure`)).data,
+  });
+
+  if (isLoading) return <div className="p-8"><Skeleton className="h-48 w-full" /></div>;
+  if (!data) return <div className="p-8 text-center text-muted-foreground">{tx('No statement data.')}</div>;
+
+  return (
+    <div className="space-y-4">
+      {credit?.creditHold ? (
+        <div className="rounded-lg border-2 border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700">
+          {tx('On credit hold — new credit sales are blocked for this customer.')}
+        </div>
+      ) : null}
+      <div className="grid gap-4 sm:grid-cols-4">
+        <Card><CardContent className="pt-6">
+          <div className="text-sm text-muted-foreground">{tx('Outstanding')}</div>
+          <div className="text-2xl font-bold">{money(data.closingBalance)}</div>
+        </CardContent></Card>
+        {credit ? (
+          <>
+            <Card><CardContent className="pt-6">
+              <div className="text-sm text-muted-foreground">{tx('Overdue')}</div>
+              <div className="text-2xl font-bold">{money(credit.overdue.amount)}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-6">
+              <div className="text-sm text-muted-foreground">{tx('Credit Limit')}</div>
+              <div className="text-2xl font-bold">{credit.effectiveLimit > 0 ? money(credit.effectiveLimit) : tx('No limit')}</div>
+            </CardContent></Card>
+            <Card><CardContent className="pt-6">
+              <div className="text-sm text-muted-foreground">{tx('Available')}</div>
+              <div className="text-2xl font-bold">{credit.headroom == null ? '—' : money(credit.headroom)}</div>
+            </CardContent></Card>
+          </>
+        ) : null}
+      </div>
+      {hasPermission(PERMISSIONS.pos.read) ? <PosOpenInvoices partnerId={partnerId} /> : null}
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{tx('Date')}</TableHead>
+                <TableHead>{tx('Type')}</TableHead>
+                <TableHead>{tx('Reference')}</TableHead>
+                <TableHead className="text-right">{tx('Debit')}</TableHead>
+                <TableHead className="text-right">{tx('Credit')}</TableHead>
+                <TableHead className="text-right">{tx('Balance')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.lines.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">{tx('No account activity.')}</TableCell>
+                </TableRow>
+              ) : data.lines.map((l, i) => (
+                <TableRow key={`${l.entryId}-${i}`}>
+                  <TableCell className="text-sm">{date(l.date)}</TableCell>
+                  <TableCell className="text-xs capitalize">{l.type.replace(/_/g, ' ')}</TableCell>
+                  <TableCell className="font-mono text-xs">{l.reference}</TableCell>
+                  <TableCell className="text-right">{Number(l.debit) ? money(l.debit) : '-'}</TableCell>
+                  <TableCell className="text-right">{Number(l.credit) ? money(l.credit) : '-'}</TableCell>
+                  <TableCell className="text-right font-medium">{money(l.balance)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function PosOpenInvoices({ partnerId }: { partnerId: string }) {
   const { data: open } = useOpenCreditInvoices({ partnerId, pageSize: 100 });
   const [target, setTarget] = useState<CreditPaymentTarget | null>(null);
+  const openRows = open?.rows ?? [];
+  return (
+    <>
+      {openRows.length > 0 ? (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="mb-3 text-sm font-semibold">{tx('Open POS credit invoices')}</div>
+            <div className="space-y-2">
+              {openRows.map((r) => (
+                <div key={r.invoiceId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <span className="font-mono text-xs">{r.invoiceNumber}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{date(r.issueDate)} · {r.daysOutstanding}d</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold">{money(r.amountResidual)}</span>
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={() => setTarget({
+                        invoiceId: r.invoiceId,
+                        invoiceNumber: r.invoiceNumber,
+                        partnerName: r.partnerName,
+                        amountResidual: r.amountResidual,
+                      })}
+                    >
+                      {tx('Record payment')}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+      <RecordCreditPaymentDialog target={target} onClose={() => setTarget(null)} />
+    </>
+  );
+}
+
+function PosStatementView({ partnerId }: { partnerId: string }) {
+  const { data, isLoading } = useCustomerStatement(partnerId);
 
   if (isLoading) return <div className="p-8"><Skeleton className="h-48 w-full" /></div>;
   if (!data) return <div className="p-8 text-center text-muted-foreground">{tx('No statement data.')}</div>;
@@ -475,8 +610,6 @@ function TabStatement({ partnerId }: { partnerId: string }) {
     payment: 'bg-emerald-50 text-emerald-700',
     write_off: 'bg-red-50 text-red-700',
   };
-
-  const openRows = open?.rows ?? [];
 
   return (
     <div className="space-y-4">
@@ -506,40 +639,7 @@ function TabStatement({ partnerId }: { partnerId: string }) {
         </Card>
       </div>
 
-      {openRows.length > 0 ? (
-        <Card>
-          <CardContent className="pt-6">
-            <div className="mb-3 text-sm font-semibold">{tx('Open invoices')}</div>
-            <div className="space-y-2">
-              {openRows.map((r) => (
-                <div key={r.invoiceId} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <span className="font-mono text-xs">{r.invoiceNumber}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">{date(r.issueDate)} · {r.daysOutstanding}d</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold">{money(r.amountResidual)}</span>
-                    <Button
-                      size="sm"
-                      className="bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => setTarget({
-                        invoiceId: r.invoiceId,
-                        invoiceNumber: r.invoiceNumber,
-                        partnerName: r.partnerName,
-                        amountResidual: r.amountResidual,
-                      })}
-                    >
-                      {tx('Record payment')}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <RecordCreditPaymentDialog target={target} onClose={() => setTarget(null)} />
+      <PosOpenInvoices partnerId={partnerId} />
       <Card>
         <CardContent className="p-0">
           <Table>

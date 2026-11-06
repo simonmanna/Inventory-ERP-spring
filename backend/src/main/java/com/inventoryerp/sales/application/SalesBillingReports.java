@@ -51,7 +51,8 @@ class SalesBillingReports implements SalesReportSet {
                    d."dueDate"::date AS "dueDate", d.status::text AS status, d."paymentStatus"::text AS "paymentStatus",
                    d."paymentMode"::text AS "paymentMode", d."partnerId", p.name AS customer,
                    trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson, b.name AS branch,
-                   d.subtotal, d."taxAmount", d."totalAmount", d."amountPaid", d."amountResidual",
+                   ROUND(d.subtotal * d."exchangeRate", 6) AS subtotal, ROUND(d."taxAmount" * d."exchangeRate", 6) AS "taxAmount", ROUND(d."totalAmount" * d."exchangeRate", 6) AS "totalAmount",
+                   ROUND(d."amountPaid" * d."exchangeRate", 6) AS "amountPaid", ROUND(d."amountResidual" * d."exchangeRate", 6) AS "amountResidual",
                    d."cancelledAt"::date AS "cancelledOn", d.notes, d."sourceType", d.reference,
                    CASE WHEN ss.id IS NOT NULL THEN 'branch_cash' WHEN so.id IS NOT NULL THEN 'sales_order'
                         WHEN d."tableId" IS NOT NULL OR d."sourceType" LIKE 'pos%' THEN 'pos' ELSE 'direct' END AS channel
@@ -71,7 +72,8 @@ class SalesBillingReports implements SalesReportSet {
 
     private static final String PAYMENTS = """
             SELECT pm.id, pm."paymentNumber" AS number, pm."paymentDate"::date AS date, pm."paymentMethod" AS method,
-                   pm.amount, pm."allocatedAmount", pm."unallocatedAmount", pm."refundedAmount", pm.status::text AS status,
+                   ROUND(pm.amount * pm."exchangeRate", 6) AS amount, ROUND(pm."allocatedAmount" * pm."exchangeRate", 6) AS "allocatedAmount",
+                   ROUND(pm."unallocatedAmount" * pm."exchangeRate", 6) AS "unallocatedAmount", ROUND(pm."refundedAmount" * pm."exchangeRate", 6) AS "refundedAmount", pm.status::text AS status,
                    pm."partnerId", p.name AS customer, b.name AS branch, pm.reference, pm."refundOfId",
                    pm."withholdingAmount"
               FROM "Payment" pm
@@ -337,9 +339,9 @@ class SalesBillingReports implements SalesReportSet {
     Report salesTax(Filter f) {
         Sql s = new Sql("""
                 SELECT COALESCE(t.name, 'No tax') AS tax, t.rate, t.code,
-                       sum(CASE WHEN d."documentType" = 'credit_note' THEN -l.subtotal ELSE l.subtotal END) AS base,
+                       sum(CASE WHEN d."documentType" = 'credit_note' THEN -l.subtotal ELSE l.subtotal END * d."exchangeRate") AS base,
                        sum(CASE WHEN d."documentType" = 'credit_note' THEN -COALESCE(l."taxAmount", 0)
-                                ELSE COALESCE(l."taxAmount", 0) END) AS tax_amount,
+                                ELSE COALESCE(l."taxAmount", 0) END * d."exchangeRate") AS tax_amount,
                        count(DISTINCT d.id) AS documents
                   FROM "DocumentLine" l JOIN "Document" d ON d.id = l."documentId"
                   LEFT JOIN "Tax" t ON t.id = l."taxId"
@@ -527,16 +529,16 @@ class SalesBillingReports implements SalesReportSet {
         Sql s = new Sql("""
                 SELECT p.id AS "partnerId", p.name AS customer, p."creditLimit",
                        trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson,
-                       COALESCE((SELECT sum(d."amountResidual") FROM "Document" d WHERE d."organizationId" = p."organizationId"
+                       COALESCE((SELECT sum(d."amountResidual" * d."exchangeRate") FROM "Document" d WHERE d."organizationId" = p."organizationId"
                            AND d."partnerId" = p.id AND d."documentType" = 'sales_invoice' AND d.status = 'posted'), 0)
                            AS invoices,
-                       COALESCE((SELECT sum(d."amountResidual") FROM "Document" d WHERE d."organizationId" = p."organizationId"
+                       COALESCE((SELECT sum(d."amountResidual" * d."exchangeRate") FROM "Document" d WHERE d."organizationId" = p."organizationId"
                            AND d."partnerId" = p.id AND d."documentType" = 'sales_invoice' AND d.status = 'posted'
                            AND d."dueDate"::date < ?), 0) AS overdue,
-                       COALESCE((SELECT sum(d."amountResidual") FROM "Document" d WHERE d."organizationId" = p."organizationId"
+                       COALESCE((SELECT sum(d."amountResidual" * d."exchangeRate") FROM "Document" d WHERE d."organizationId" = p."organizationId"
                            AND d."partnerId" = p.id AND d."documentType" = 'credit_note' AND d.status = 'posted'), 0)
                            AS credits,
-                       COALESCE((SELECT sum(pm."unallocatedAmount") FROM "Payment" pm WHERE
+                       COALESCE((SELECT sum(pm."unallocatedAmount" * pm."exchangeRate") FROM "Payment" pm WHERE
                            pm."organizationId" = p."organizationId" AND pm."partnerId" = p.id AND pm.direction = 'inbound'
                            AND pm."voidedAt" IS NULL AND pm.status NOT IN ('draft', 'cancelled')), 0) AS unallocated,
                        COALESCE((SELECT sum(cd.amount - cd."appliedAmount" - cd."refundedAmount") FROM "CustomerDeposit" cd
@@ -602,7 +604,7 @@ class SalesBillingReports implements SalesReportSet {
                 c.put("oldestDue", r.get("dueDate"));
             }
         }
-        Sql s = new Sql("SELECT pm.\"partnerId\", sum(pm.amount) AS amount FROM \"Payment\" pm LEFT JOIN \"Partner\" p ON"
+        Sql s = new Sql("SELECT pm.\"partnerId\", sum(pm.amount * pm.\"exchangeRate\") AS amount FROM \"Payment\" pm LEFT JOIN \"Partner\" p ON"
                 + " p.id = pm.\"partnerId\" WHERE pm.\"organizationId\" = ? AND pm.direction = 'inbound' AND"
                 + " pm.\"voidedAt\" IS NULL AND pm.status NOT IN ('draft', 'cancelled')", org());
         SalesReportKit.apply(s, f, PAYMENT_SCOPE, true);
@@ -645,7 +647,8 @@ class SalesBillingReports implements SalesReportSet {
         for (String k : b.keys(f.from(), f.to())) {
             m.put(k, Obj.of("label", b.label(k), "due", 0, "collectedOnDue", 0, "collected", 0));
         }
-        Sql due = new Sql("SELECT d.\"dueDate\"::date AS date, d.\"totalAmount\" AS amount, d.\"amountResidual\" AS open"
+        Sql due = new Sql("SELECT d.\"dueDate\"::date AS date, d.\"totalAmount\" * d.\"exchangeRate\" AS amount,"
+                + " d.\"amountResidual\" * d.\"exchangeRate\" AS open"
                 + " FROM \"Document\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\" WHERE d.\"organizationId\" = ?"
                 + " AND d.\"documentType\" = 'sales_invoice' AND d.status IN ('posted', 'paid') AND d.\"dueDate\"::date"
                 + " >= ? AND d.\"dueDate\"::date <= ?", org(), f.from(), f.to());
@@ -658,7 +661,8 @@ class SalesBillingReports implements SalesReportSet {
                         .subtract(dec(r.get("open"))))));
             }
         }
-        Sql paid = new Sql("SELECT a.\"createdAt\"::date AS date, a.amount - COALESCE(a.\"refundedAmount\", 0) AS amount"
+        Sql paid = new Sql("SELECT a.\"createdAt\"::date AS date, (a.amount - COALESCE(a.\"refundedAmount\", 0)) * d.\"exchangeRate\""
+                + " AS amount"
                 + " FROM \"PaymentAllocation\" a JOIN \"Document\" d ON d.id = COALESCE(a.\"documentId\", a.\"invoiceId\")"
                 + " WHERE a.\"organizationId\" = ? AND d.\"documentType\" = 'sales_invoice' AND a.\"createdAt\" >= ? AND"
                 + " a.\"createdAt\" < ?", org(), f.from(), f.to().plusDays(1));
@@ -720,7 +724,7 @@ class SalesBillingReports implements SalesReportSet {
         Sql s = new Sql("""
                 SELECT a.id, pm.id AS "paymentId", pm."paymentNumber" AS payment, a."createdAt"::date AS date,
                        p.name AS customer, d."documentNumber" AS invoice, d."issueDate"::date AS "invoiceDate",
-                       d."dueDate"::date AS "dueDate", a.amount, COALESCE(a."refundedAmount", 0) AS refunded
+                       d."dueDate"::date AS "dueDate", a.amount * d."exchangeRate" AS amount, COALESCE(a."refundedAmount", 0) * d."exchangeRate" AS refunded
                   FROM "PaymentAllocation" a JOIN "Payment" pm ON pm.id = a."paymentId"
                   JOIN "Document" d ON d.id = COALESCE(a."documentId", a."invoiceId")
                   LEFT JOIN "Partner" p ON p.id = pm."partnerId"
@@ -748,7 +752,7 @@ class SalesBillingReports implements SalesReportSet {
     }
 
     Report collectionsBySalesperson(Filter f) {
-        Sql s = new Sql("SELECT " + SP + " AS sp, sum(a.amount - COALESCE(a.\"refundedAmount\", 0)) AS collected,"
+        Sql s = new Sql("SELECT " + SP + " AS sp, sum((a.amount - COALESCE(a.\"refundedAmount\", 0)) * d.\"exchangeRate\") AS collected,"
                 + " count(DISTINCT d.id) AS invoices, count(DISTINCT d.\"partnerId\") AS customers FROM"
                 + " \"PaymentAllocation\" a JOIN \"Document\" d ON d.id = COALESCE(a.\"documentId\", a.\"invoiceId\") LEFT"
                 + " JOIN \"Partner\" p ON p.id = d.\"partnerId\" LEFT JOIN \"SalesOrder\" so ON d.\"sourceType\" ="
@@ -762,7 +766,7 @@ class SalesBillingReports implements SalesReportSet {
             g.put(String.valueOf(r.get("sp")), Obj.of("sp", r.get("sp"), "collected", money(dec(r.get("collected"))),
                     "invoices", r.get("invoices"), "customers", r.get("customers"), "outstanding", 0, "overdue", 0));
         }
-        Sql o = new Sql("SELECT " + SP + " AS sp, sum(d.\"amountResidual\") AS outstanding, sum(d.\"amountResidual\")"
+        Sql o = new Sql("SELECT " + SP + " AS sp, sum(d.\"amountResidual\" * d.\"exchangeRate\") AS outstanding, sum(d.\"amountResidual\" * d.\"exchangeRate\")"
                 + " FILTER (WHERE d.\"dueDate\" < CURRENT_DATE) AS overdue FROM \"Document\" d LEFT JOIN \"Partner\" p ON"
                 + " p.id = d.\"partnerId\" LEFT JOIN \"SalesOrder\" so ON d.\"sourceType\" = 'sales_order' AND so.id ="
                 + " d.\"sourceId\" WHERE d.\"organizationId\" = ? AND d.\"documentType\" = 'sales_invoice' AND d.status ="

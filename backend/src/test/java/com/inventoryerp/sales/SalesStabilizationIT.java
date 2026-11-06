@@ -93,6 +93,65 @@ class SalesStabilizationIT extends ApiTestSupport {
         assertThat(list.size()).as("proforma is not a tax invoice").isZero();
     }
 
+    @Test
+    @DisplayName("#6 the AR statement the customer tab reads includes a back-office invoice; the POS one never did")
+    void customerStatementSource() {
+        String c = customer();
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", c, "issueDate", today(), "lines", List.of(Map.of(
+                "productId", product, "quantity", 1, "unitPrice", 100)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        assertThat(ok(200, "GET", "/pos/customers/" + c + "/statement", null).get("outstanding").asDouble()).isZero();
+        JsonNode ar = ok(200, "GET", "/reports/ar/customers/" + c + "/statement", null);
+        assertThat(ar.get("closingBalance").asDouble()).isEqualTo(100);
+        assertThat(ar.get("lines").size()).isEqualTo(1);
+        assertThat(ok(200, "GET", "/credit/partners/" + c + "/exposure", null).get("components").get("receivables")
+                .asDouble()).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("#7 a foreign-currency order bills in its currency; its credit note follows; reports show base currency")
+    void foreignCurrencyChain() {
+        String base = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg)
+                .query(String.class).single();
+        Map<String, Object> currency = jdbc.sql("SELECT id, code FROM \"Currency\" WHERE code <> ? ORDER BY code LIMIT 1")
+                .param(base).query().singleRow();
+        String c = customer();
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "currencyCode", currency.get("code"),
+                "exchangeRate", 4, "lines", List.of(Map.of("productId", product, "quantity", 1, "unitPrice", 100))))
+                .get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 1, \"qtyDelivered\" = 1, \"qtyAccepted\" = 1,"
+                + " \"qtyBillable\" = 1 WHERE \"orderId\" = ?").param(so).update();
+        String inv = money("POST", "/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
+        Map<String, Object> doc = jdbc.sql("SELECT \"currencyId\", \"exchangeRate\", \"totalAmount\" FROM \"Document\""
+                + " WHERE id = ?").param(inv).query().singleRow();
+        assertThat(doc.get("currencyId")).isEqualTo(currency.get("id"));
+        assertThat((java.math.BigDecimal) doc.get("exchangeRate")).isEqualByComparingTo("4");
+        assertThat((java.math.BigDecimal) doc.get("totalAmount")).isEqualByComparingTo("100");
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        assertThat(ok(200, "GET", "/reports/ar/customers/" + c + "/statement", null).get("closingBalance").asDouble())
+                .as("AR in base currency").isEqualTo(400);
+
+        String period = "from=" + LocalDate.now().minusDays(1) + "&to=" + LocalDate.now() + "&partnerId=" + c;
+        JsonNode register = ok(200, "GET", "/sales/report-center/run/invoice-register?" + period, null);
+        assertThat(register.get("totals").get("totalAmount").asDouble()).as("invoice register").isEqualTo(400);
+        assertThat(register.get("totals").get("amountResidual").asDouble()).isEqualTo(400);
+        JsonNode summary = ok(200, "GET", "/sales/report-center/run/customer-summary?" + period, null);
+        assertThat(summary.get("rows").get(0).get("revenue").asDouble()).as("revenue fact").isEqualTo(400);
+        JsonNode balances = ok(200, "GET", "/sales/report-center/run/outstanding-balances?partnerId=" + c, null);
+        assertThat(balances.get("rows").get(0).get("invoices").asDouble()).as("outstanding balance").isEqualTo(400);
+
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", c, "issueDate", today(), "reversedDocumentId",
+                inv, "lines", List.of(Map.of("productId", product, "quantity", 1, "unitPrice", 100)))).get("id").asString();
+        Map<String, Object> credit = jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ?")
+                .param(cn).query().singleRow();
+        assertThat(credit.get("currencyId")).as("credit note follows its invoice").isEqualTo(currency.get("id"));
+        assertThat((java.math.BigDecimal) credit.get("exchangeRate")).isEqualByComparingTo("4");
+        ok(200, "POST", "/credit-notes/" + cn + "/post", null);
+        assertThat(ok(200, "GET", "/reports/ar/customers/" + c + "/statement", null).get("closingBalance").asDouble())
+                .as("fully credited in base currency").isZero();
+    }
+
     JsonNode listRow(String partner, String id, String filter) {
         for (JsonNode row : ok(200, "GET", "/invoices?partnerId=" + partner + filter, null).get("data")) {
             if (row.get("id").asString().equals(id)) {

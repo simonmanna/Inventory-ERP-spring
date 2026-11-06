@@ -124,15 +124,15 @@ public class SalesReportFacts {
                    d."paymentMode"::text AS "paymentMode",
                    sg.s * l.quantity AS quantity,
                    sg.s * l.quantity * COALESCE(l."uomFactor", 1) AS "baseQty",
-                   sg.s * l.subtotal AS revenue,
+                   sg.s * l.subtotal * d."exchangeRate" AS revenue,
                    sg.s * CASE WHEN l."discountPercent" > 0 AND l."discountPercent" < 100
-                               THEN l.subtotal * l."discountPercent" / (100 - l."discountPercent") ELSE 0 END AS discount,
-                   sg.s * COALESCE(l."taxAmount", 0) AS tax,
+                               THEN l.subtotal * d."exchangeRate" * l."discountPercent" / (100 - l."discountPercent") ELSE 0 END AS discount,
+                   sg.s * COALESCE(l."taxAmount", 0) * d."exchangeRate" AS tax,
                    sg.s * l.quantity * COALESCE(l."uomFactor", 1)
                         * COALESCE(ic.unit, cc.unit, rcc.unit, tc.unit, pr."costPrice", 0) AS cost,
                    (ic.unit IS NOT NULL OR cc.unit IS NOT NULL OR rcc.unit IS NOT NULL OR tc.unit IS NOT NULL)
                         AS "actualCost",
-                   COALESCE(l."discountPercent", 0) AS "discountPercent", l."unitPrice", pr."salesPrice" AS "listPrice"
+                   COALESCE(l."discountPercent", 0) AS "discountPercent", l."unitPrice" * d."exchangeRate" AS "unitPrice", pr."salesPrice" AS "listPrice"
               FROM "DocumentLine" l JOIN "Document" d ON d.id = l."documentId"
              CROSS JOIN LATERAL (SELECT CASE WHEN d."documentType" = 'credit_note' THEN -1 ELSE 1 END AS s) sg
               LEFT JOIN "Partner" p ON p.id = d."partnerId"
