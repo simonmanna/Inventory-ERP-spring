@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpRight, ArrowDownRight, Receipt, AlertCircle, Wallet, TrendingUp,
   Users, Package, Plus, FileText, HandCoins, ShoppingCart, RefreshCw,
-  Coffee, Sparkles, ArrowRight, Activity as ActivityIcon, ChevronRight,
-  Utensils, CreditCard, Boxes, Flame, Clock,
+  Sparkles, ArrowRight, Activity as ActivityIcon, ChevronRight,
+  CreditCard, Boxes, Flame, Clock,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -352,16 +352,6 @@ export function DashboardPage() {
                 className="border-white/40 bg-white/10 text-white hover:bg-white/20"
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> {tx('Refresh')}
-              </Button>
-              <Button asChild className="bg-white text-sky-700 hover:bg-white/90 shadow-lg">
-                <Link to="/pos/terminal">
-                  <Coffee className="mr-2 h-4 w-4" /> {tx('Terminal')}
-                </Link>
-              </Button>
-              <Button asChild variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20">
-                <Link to="/tables">
-                  <Utensils className="mr-2 h-4 w-4" /> {tx('Tables')}
-                </Link>
               </Button>
             </div>
           </div>
