@@ -52,7 +52,9 @@ public final class SalesLedgerAssertions {
 
     /** AR subledger (open residual of the partner's posted sales invoices) equals the partner's AR control balance. */
     public void receivableTiesOut(String partnerId) {
-        BigDecimal open = jdbc.sql("SELECT COALESCE(SUM(\"amountResidual\"), 0) FROM \"Document\" WHERE"
+        // A credit note's open balance is money owed to the customer, so it lowers the receivable.
+        BigDecimal open = jdbc.sql("SELECT COALESCE(SUM(CASE WHEN \"documentType\"::text = 'credit_note' THEN"
+                + " -\"amountResidual\" ELSE \"amountResidual\" END), 0) FROM \"Document\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"documentType\"::text IN ('sales_invoice',"
                 + " 'credit_note') AND status::text NOT IN ('draft', 'cancelled', 'rejected')").params(org, partnerId)
                 .query(BigDecimal.class).single();

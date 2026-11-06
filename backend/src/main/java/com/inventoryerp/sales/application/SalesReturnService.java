@@ -351,17 +351,20 @@ public class SalesReturnService {
                             "number"), invoiceId, cnLines));
             creditNoteId = str(cn.get("id"));
             creditNotes.post(creditNoteId, "none");
-            BigDecimal total = dec(creditNotes.findOne(creditNoteId).get("totalAmount"));
             for (Map<String, Object> k : cnLinks) {
                 db.update("INSERT INTO \"SalesInvoiceLink\" (id, \"organizationId\", \"orderId\", \"orderLineId\","
                         + " \"documentId\", kind, quantity, amount) VALUES (?, ?, ?, ?, ?, 'credit_note', ?, 0)",
                         SalesDb.newId(), org(), orderId, k.get("lineId"), creditNoteId, k.get("qty"));
             }
             if ("refund".equals(outcome)) {
-                refundId = str(payments.createCustomerRefund(new PaymentInput(str(r.get("partnerId")), LocalDate.now()
-                        .toString(), total.setScale(2, RoundingMode.HALF_UP), blank(str(in.get("paymentMethod"))) ? "bank"
-                                : str(in.get("paymentMethod")), str(in.get("accountId")), "Refund " + r.get("number"), null,
-                        List.of(), null, true, null, null), true, true).get("id"));
+                // Posting already applied the credit to the invoice's open balance; only what is left is paid in cash.
+                BigDecimal refundable = creditNotes.takeOpenCredit(creditNoteId).setScale(2, RoundingMode.HALF_UP);
+                if (refundable.signum() > 0) {
+                    refundId = str(payments.createCustomerRefund(new PaymentInput(str(r.get("partnerId")), LocalDate.now()
+                            .toString(), refundable, blank(str(in.get("paymentMethod"))) ? "bank"
+                                    : str(in.get("paymentMethod")), str(in.get("accountId")), "Refund " + r.get("number"),
+                            null, List.of(), null, true, null, null), true, true).get("id"));
+                }
             }
         }
         if (!replacement.isEmpty()) {

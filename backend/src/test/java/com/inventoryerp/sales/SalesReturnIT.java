@@ -152,6 +152,7 @@ class SalesReturnIT extends ApiTestSupport {
     @DisplayName("scrap disposition issues the returned goods as waste; quarantine moves them; refund outcome pays back")
     void scrapQuarantineRefund() throws Exception {
         String so = deliveredOrder(10, true);
+        pay(so, 10 * 2500);
         String id = rma(so, 2, "damaged", true, null).get("id").asString();
         ok(200, "POST", "/sales/returns/" + id + "/approve", null);
         BigDecimal before = onHand(yard);
@@ -173,6 +174,116 @@ class SalesReturnIT extends ApiTestSupport {
         money("/sales/returns/" + id2 + "/inspect", Map.of("lines", List.of(Map.of("lineId", l2, "disposition",
                 "quarantine", "locationId", quarantine))));
         assertThat(onHand(quarantine)).isEqualByComparingTo("3");
+    }
+
+    String invoiceOf(String so) {
+        return jdbc.sql("SELECT k.\"documentId\" FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\""
+                + " WHERE k.\"orderId\" = ? AND k.kind = 'regular' LIMIT 1").param(so).query(String.class).single();
+    }
+
+    void pay(String so, int amount) {
+        money("/payments", Map.of("partnerId", customer, "paymentDate", LocalDate.now().toString(), "amount", amount,
+                "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", invoiceOf(so), "amount", amount))));
+    }
+
+    BigDecimal residual(String documentId) {
+        return jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?").param(documentId)
+                .query(BigDecimal.class).single();
+    }
+
+    BigDecimal refunded(String returnId) {
+        return jdbc.sql("SELECT COALESCE((SELECT p.amount FROM \"SalesReturn\" r JOIN \"Payment\" p ON p.id ="
+                + " r.\"refundPaymentId\" WHERE r.id = ?), 0)").param(returnId).query(BigDecimal.class).single();
+    }
+
+    /** Approved, received and inspected return of {@code qty}, closed with outcome refund. */
+    JsonNode closeWithRefund(String so, int qty) {
+        String id = rma(so, qty, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        money("/sales/returns/" + id + "/receive", Map.of());
+        money("/sales/returns/" + id + "/inspect", Map.of());
+        return money("/sales/returns/" + id + "/close", Map.of("outcome", "refund", "paymentMethod", "bank"));
+    }
+
+    @Test
+    @DisplayName("#4 refund on an unpaid invoice pays no cash: the credit already reduced what the customer owes")
+    void refundOnUnpaidInvoice() throws Exception {
+        String so = deliveredOrder(10, true);
+        JsonNode closed = closeWithRefund(so, 2);
+        assertThat(refunded(closed.get("id").asString())).as("no cash on top of the reduction").isZero();
+        assertThat(closed.get("refundPaymentId").isNull()).isTrue();
+        assertThat(residual(invoiceOf(so))).isEqualByComparingTo("20000");
+        assertThat(residual(closed.get("creditNoteId").asString())).isZero();
+        ledger.receivableTiesOut(customer);
+    }
+
+    @Test
+    @DisplayName("#4 refund on a paid invoice pays the credit in cash once and leaves none of it open")
+    void refundOnPaidInvoice() throws Exception {
+        String so = deliveredOrder(10, true);
+        pay(so, 25000);
+        JsonNode closed = closeWithRefund(so, 10);
+        assertThat(refunded(closed.get("id").asString())).isEqualByComparingTo("25000");
+        assertThat(residual(closed.get("creditNoteId").asString())).as("cash paid, so no credit left to reuse").isZero();
+        ledger.receivableTiesOut(customer);
+    }
+
+    @Test
+    @DisplayName("#4 refund on a partly paid invoice: credit clears the balance, only the rest is paid in cash")
+    void refundOnPartlyPaidInvoice() throws Exception {
+        String so = deliveredOrder(10, true);
+        pay(so, 22000);
+        JsonNode closed = closeWithRefund(so, 2);
+        assertThat(residual(invoiceOf(so))).as("3000 of the 5000 credit clears the balance").isZero();
+        assertThat(refunded(closed.get("id").asString())).as("total benefit equals the credit").isEqualByComparingTo("2000");
+        assertThat(residual(closed.get("creditNoteId").asString())).isZero();
+        ledger.receivableTiesOut(customer);
+    }
+
+    @Test
+    @DisplayName("#4 replaying a refund close with the same Idempotency-Key pays once")
+    void refundReplay() throws Exception {
+        String so = deliveredOrder(10, true);
+        pay(so, 25000);
+        String id = rma(so, 2, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        money("/sales/returns/" + id + "/receive", Map.of());
+        money("/sales/returns/" + id + "/inspect", Map.of());
+        Map<String, String> h = key();
+        Map<String, Object> body = Map.of("outcome", "refund", "paymentMethod", "bank");
+        Res first = call("POST", "/sales/returns/" + id + "/close", body, h);
+        Res replay = call("POST", "/sales/returns/" + id + "/close", body, h);
+        assertThat(first.status()).as(first.raw().body()).isEqualTo(200);
+        assertThat(replay.status()).as(replay.raw().body()).isEqualTo(200);
+        assertThat(replay.body().get("refundPaymentId").asString()).isEqualTo(first.body().get("refundPaymentId").asString());
+        assertThat(jdbc.sql("SELECT count(*) FROM \"Payment\" WHERE reference = ?").param("Refund " + first.body().get(
+                "number").asString()).query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("#5 a credit note whose restock fails posts nothing; scrap disposition still posts")
+    void creditNoteRestockFailure() {
+        String batched = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                + " \"batchTracking\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                + " 'stockable'::\"ProductType\", true, true, 10, 20, now())").params(batched, demoOrg, "RBT-"
+                        + UUID.randomUUID().toString().substring(0, 8), "Batched " + sfx).update();
+        String own = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"isCompany\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, ?, true, true, now())").params(own, demoOrg, "RCB-" + UUID.randomUUID().toString()
+                        .substring(0, 8), "Restock cust " + sfx).update();
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", own, "issueDate", LocalDate.now().toString(),
+                "lines", List.of(Map.of("productId", batched, "quantity", 1, "unitPrice", 20)))).get("id").asString();
+        Res failed = as("POST", "/credit-notes/" + cn + "/post", null);
+        assertThat(failed.status()).as(failed.raw().body()).isEqualTo(400);
+        assertThat(failed.raw().body()).contains("scrap");
+        assertThat(jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ?").param(cn).query(String.class).single())
+                .isEqualTo("draft");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"sourceId\" = ?").param(cn).query(Long.class)
+                .single()).as("no journal left behind").isZero();
+        ok(200, "POST", "/credit-notes/" + cn + "/post?disposition=scrap", null);
+        assertThat(jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ?").param(cn).query(String.class).single())
+                .isEqualTo("posted");
     }
 
     @Test

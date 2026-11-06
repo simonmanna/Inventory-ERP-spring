@@ -193,6 +193,27 @@ public class CreditNoteService {
         return builder.document(creditNoteId);
     }
 
+    /**
+     * Close a posted credit note's open balance so it can be paid out, and return that balance. The caller must pay it in
+     * the same transaction: once taken, the credit can no longer be allocated or count toward credit exposure.
+     */
+    @Transactional
+    public BigDecimal takeOpenCredit(String creditNoteId) {
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(creditNoteId, org()).query().listOfRows();
+        Map<String, Object> cn = builder.document(creditNoteId, "credit_note");
+        if (cn == null) {
+            throw ApiException.notFound("Credit note not found");
+        }
+        if (!"posted".equals(String.valueOf(cn.get("status")))) {
+            throw ApiException.badRequest("Only a posted credit note can be refunded");
+        }
+        BigDecimal open = Money.dec(cn.get("amountResidual"));
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .param(creditNoteId).update();
+        return open;
+    }
+
     /** Lower an invoice's residual by {@code amount} of a credit and record the allocation. */
     private void applyTo(String creditNoteId, Map<String, Object> inv, BigDecimal amount) {
         String invoiceId = (String) inv.get("id");
@@ -329,31 +350,34 @@ public class CreditNoteService {
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ? WHERE id = ?").params(total.subtract(applied), id)
                 .update();
         if ("restock".equals(disposition)) {
+            // Deliberate deviation from Nest (SG-0): a failed restock now fails the whole post, so the books never credit
+            // goods that did not come back. Goods that are not coming back are posted with disposition scrap.
             String warehouse = posLocation.resolve(org(), null);
-            if (warehouse != null) {
-                for (Map<String, Object> ln : lines) {
-                    String productId = (String) ln.get("productId");
-                    BigDecimal qty = Money.dec(ln.get("quantity"));
-                    if (productId == null || qty.signum() <= 0) {
-                        continue;
-                    }
-                    Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT \"trackInventory\", \"productType\"::text"
-                            + " AS t FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
-                            .params(productId, org()));
-                    if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))
-                            && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
-                        try {
-                            String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
-                                    : invoiceVariant(reversed, productId);
-                            Savepoints.run(jdbc, () -> stock.receiveReturn(StockMove.of(productId, warehouse, qty)
-                                    .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
-                                            : Money.dec(ln.get("uomFactor")))
-                                    .reference((String) cn.get("documentNumber")).source("credit_note", id)
-                                    .date(issueDate)));
-                        } catch (RuntimeException e) {
-                            log.warn("credit-note {} restock of {} skipped: {}", cn.get("documentNumber"), productId,
-                                    e.getMessage());
+            for (Map<String, Object> ln : lines) {
+                String productId = (String) ln.get("productId");
+                BigDecimal qty = Money.dec(ln.get("quantity"));
+                if (productId == null || qty.signum() <= 0) {
+                    continue;
+                }
+                Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT name, \"trackInventory\", \"productType\"::text"
+                        + " AS t FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                        .params(productId, org()));
+                if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))
+                        && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
+                    String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
+                            : invoiceVariant(reversed, productId);
+                    try {
+                        if (warehouse == null) {
+                            throw ApiException.badRequest("no stock location is configured");
                         }
+                        stock.receiveReturn(StockMove.of(productId, warehouse, qty)
+                                .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
+                                        : Money.dec(ln.get("uomFactor")))
+                                .reference((String) cn.get("documentNumber")).source("credit_note", id)
+                                .date(issueDate));
+                    } catch (ApiException e) {
+                        throw ApiException.badRequest("Cannot restock " + product.get("name") + ": " + e.getMessage()
+                                + ". Post with disposition scrap if the goods are not coming back.");
                     }
                 }
             }
