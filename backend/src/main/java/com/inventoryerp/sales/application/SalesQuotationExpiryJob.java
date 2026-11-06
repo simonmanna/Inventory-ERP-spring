@@ -28,8 +28,7 @@ public class SalesQuotationExpiryJob {
     @Scheduled(cron = "0 40 5 * * *")
     @SchedulerLock(name = "sales-quotation-expiry", lockAtMostFor = "PT30M")
     public void daily() {
-        List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"SalesQuotation\" WHERE status IN ('draft',"
-                + " 'approved', 'sent') AND \"validUntil\" < CURRENT_DATE AND \"deletedAt\" IS NULL").query(String.class).list();
+        List<String> orgs = jdbc.sql("SELECT id FROM \"Organization\" WHERE \"deletedAt\" IS NULL").query(String.class).list();
         for (String org : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(org), quotations::expireAndNotify);

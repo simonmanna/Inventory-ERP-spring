@@ -1228,6 +1228,11 @@ public class FleetDispatchService {
             if (t.get("vehicleId") == null || t.get("driverId") == null) {
                 throw ApiException.badRequest("Assign a truck and a driver to trip " + t.get("code") + " first");
             }
+        } else if ("manual".equals(t.get("carrier"))) {
+            // Sales delivery without the Fleet module (SG-9): vehicle and driver are typed in, no fleet record exists.
+            if (t.get("transporterPlate") == null) {
+                throw ApiException.badRequest("Enter the vehicle of trip " + t.get("code") + " first");
+            }
         } else if (t.get("transporterPartnerId") == null) {
             throw ApiException.badRequest("Assign a transporter to trip " + t.get("code") + " first");
         }

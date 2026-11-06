@@ -728,6 +728,10 @@ export const PERMISSIONS = {
     /// Override fulfilment / recognition policies on an order.
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
+    /// Deliveries without the Fleet module (SG-9).
+    deliveryRead: 'sales:delivery:read',
+    deliveryWrite: 'sales:delivery:write',
+    deliveryApprove: 'sales:delivery:approve',
     /// Customer profile, duplicates, export (SG-5).
     customerRead: 'sales:customer:read',
     /// Edit profile, suspend, import (SG-5).

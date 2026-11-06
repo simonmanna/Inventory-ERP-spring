@@ -106,6 +106,22 @@ public class SalesBillingService {
         return out;
     }
 
+    /** SG-9: every taxable line carries a tax, and a large invoice needs the customer's tax number. */
+    private void assertTaxRules(Map<String, Object> o) {
+        Map<String, Object> s = settings.settings();
+        if (Boolean.TRUE.equals(s.get("requireLineTax")) && db.count("SELECT count(*) FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND"
+                + " \"taxId\" IS NULL AND \"productId\" IS NOT NULL", List.of(o.get("id"))) > 0) {
+            throw ApiException.badRequest("Every product line needs a tax before invoicing");
+        }
+        BigDecimal above = dec(s.get("requireTaxNumberAbove"));
+        if (above.signum() > 0 && dec(o.get("total")).compareTo(above) > 0) {
+            Map<String, Object> p = db.row("SELECT \"taxNumber\" FROM \"Partner\" WHERE id = ?", o.get("partnerId"));
+            if (p == null || blank(str(p.get("taxNumber")))) {
+                throw ApiException.badRequest("This customer needs a tax number for an invoice of this size");
+            }
+        }
+    }
+
     /**
      * Create a draft invoice for an order: {@code mode = regular} (what is invoiceable) or {@code down_payment}
      * ({@code percent} of the order total or a fixed {@code amount}).
@@ -117,6 +133,7 @@ public class SalesBillingService {
         if (!SalesOrderService.OPEN.contains(o.get("status")) && !"done".equals(o.get("status"))) {
             throw ApiException.badRequest("Only confirmed orders can be invoiced");
         }
+        assertTaxRules(o);
         String mode = blank(str(in.get("mode"))) ? "regular" : str(in.get("mode"));
         String issue = blank(str(in.get("issueDate"))) ? LocalDate.now().toString() : str(in.get("issueDate"));
         String number = str(o.get("number"));

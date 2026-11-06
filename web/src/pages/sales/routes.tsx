@@ -11,6 +11,8 @@ const QuotationEditorPage = lazy(() => import('@/pages/crm/QuotationEditorPage')
 const ProformasPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformasPage })));
 const ProformaPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformaPage })));
 const SalesSettingsPage = lazy(() => import('./SalesSettingsPage').then((m) => ({ default: m.SalesSettingsPage })));
+const DeliveriesPage = lazy(() => import('./DeliveriesPages').then((m) => ({ default: m.DeliveriesPage })));
+const DeliveryPage = lazy(() => import('./DeliveriesPages').then((m) => ({ default: m.DeliveryPage })));
 const PricelistsPage = lazy(() => import('./PricelistsPage').then((m) => ({ default: m.PricelistsPage })));
 const PricelistPage = lazy(() => import('./PricelistPage').then((m) => ({ default: m.PricelistPage })));
 const MarginFloorsPage = lazy(() => import('./MarginFloorsPage').then((m) => ({ default: m.MarginFloorsPage })));
@@ -45,6 +47,8 @@ export const salesRoutes = (
     <Route path="/sales/quotations/:id" element={<RequirePermission permission={P.quotationRead}><QuotationEditorPage /></RequirePermission>} />
     <Route path="/sales/proformas" element={<RequirePermission permission={P.orderRead}><ProformasPage /></RequirePermission>} />
     <Route path="/sales/proformas/:id" element={<RequirePermission permission={P.orderRead}><ProformaPage /></RequirePermission>} />
+    <Route path="/sales/deliveries" element={<RequirePermission permission={P.deliveryRead}><DeliveriesPage /></RequirePermission>} />
+    <Route path="/sales/deliveries/:id" element={<RequirePermission permission={P.deliveryRead}><DeliveryPage /></RequirePermission>} />
     <Route path="/sales/settings" element={<RequirePermission permission={P.configure}><SalesSettingsPage /></RequirePermission>} />
     <Route path="/sales/pricelists" element={<RequirePermission permission={P.pricingRead}><PricelistsPage /></RequirePermission>} />
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />

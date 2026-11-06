@@ -226,9 +226,12 @@ public class InvoiceService {
             merged = merged.stream().filter(m -> f.settlementStatus().equals(String.valueOf(m.get("settlementStatus"))))
                     .toList();
         }
-        int total = merged.size();
-        int start = Math.min(total, (page - 1) * pageSize);
-        return PageResult.of(new ArrayList<>(merged.subList(start, Math.min(total, start + pageSize))), page, pageSize,
+        // The rows above stop at page * pageSize, so the real total has to be counted.
+        long total = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE" + dw).params(dp).query(Long.class).single()
+                + jdbc.sql("SELECT count(*) FROM \"Invoice\" WHERE" + iw).params(ip).query(Long.class).single();
+        int fetched = merged.size();
+        int start = Math.min(fetched, (page - 1) * pageSize);
+        return PageResult.of(new ArrayList<>(merged.subList(start, Math.min(fetched, start + pageSize))), page, pageSize,
                 total);
     }
 

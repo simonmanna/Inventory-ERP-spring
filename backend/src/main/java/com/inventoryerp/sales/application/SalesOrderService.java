@@ -248,7 +248,7 @@ public class SalesOrderService {
         header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
         agreement(header, partnerId);
-        header.put("number", nextNumber());
+        header.put("number", nextNumber(str(header.get("branchId"))));
         header.putIfAbsent("currencyCode", orgCurrency());
         header.putIfAbsent("ownerId", user());
         header.put("createdById", user());
@@ -285,7 +285,7 @@ public class SalesOrderService {
         header.putIfAbsent("teamId", q.get("teamId"));
         header.putIfAbsent("notes", q.get("notes"));
         header.putIfAbsent("terms", q.get("terms"));
-        header.put("number", nextNumber());
+        header.put("number", nextNumber(str(header.get("branchId"))));
         header.put("createdById", user());
         Map<String, Object> row = db.insert("SalesOrder", header);
         String id = str(row.get("id"));
@@ -955,12 +955,26 @@ public class SalesOrderService {
         events.publish(event, payload);
     }
 
-    String nextNumber() {
+    /** SG-9: numbers run per branch when the setting says so; the branch code in the prefix keeps series apart. */
+    String nextNumber(String branchId) {
         int year = LocalDate.now().getYear();
-        return sequence.next("sales_order:" + year, "SO-" + year + "-", 5);
+        String code = branchCode(branchId);
+        return code == null ? sequence.next("sales_order:" + year, "SO-" + year + "-", 5)
+                : sequence.next("sales_order:" + code + ":" + year, "SO-" + code + "-" + year + "-", 5);
+    }
+
+    private String branchCode(String branchId) {
+        if (branchId == null || !"branch".equals(settings.settings().get("numberingScope"))) {
+            return null;
+        }
+        Map<String, Object> b = db.row("SELECT code FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ?", branchId, org());
+        return b == null ? null : str(b.get("code"));
     }
 
     private void visibility(StringBuilder where, List<Object> params) {
+        if (user() == null) {
+            return; // scheduled work has no user and is not limited to one
+        }
         access.filterDocument(where, params, "o");
         if (TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
             return;

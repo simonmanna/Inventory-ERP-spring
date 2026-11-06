@@ -35,6 +35,12 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['proformaBankDetails', 'Bank details', 'text'],
     ['proformaMobileDetails', 'Mobile money details', 'text'],
   ]],
+  ['Delivery and invoicing', [
+    ['deliveryPostingApproval', 'Deliveries need approval before stock is issued', 'bool'],
+    ['requireLineTax', 'Every product line needs a tax before invoicing', 'bool'],
+    ['requireTaxNumberAbove', 'Customer tax number required above this amount (0 = off)', 'num'],
+    ['numberingScope', 'Order numbers run per', ['organization', 'branch']],
+  ]],
   ['Credit', [
     ['overLimitPolicy', 'Order over the credit limit', ['flag', 'approve', 'block']],
     ['cashBypassesCredit', 'Cash orders skip the credit check', 'bool'],

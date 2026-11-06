@@ -35,7 +35,8 @@ public class SalesSettingsService {
             "billingPolicy", Set.of("ordered", "delivered"),
             "depositApplication", Set.of("manual", "oldest_first"),
             "depositTaxPoint", Set.of("delivery", "receipt"),
-            "stockCheckPolicy", Set.of("none", "warn", "block"));
+            "stockCheckPolicy", Set.of("none", "warn", "block"),
+            "numberingScope", Set.of("organization", "branch"));
 
     private final SalesDb db;
     private final AuditService audit;
@@ -100,7 +101,7 @@ public class SalesSettingsService {
         }
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
                 "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
-                "orderApprovalAlways")) {
+                "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));
@@ -111,6 +112,14 @@ public class SalesSettingsService {
                 sets.add("\"" + k + "\" = ?");
                 params.add(str(in.get(k)));
             }
+        }
+        if (in.containsKey("requireTaxNumberAbove")) {
+            BigDecimal v = dec(in.get("requireTaxNumberAbove"));
+            if (v.signum() < 0) {
+                throw ApiException.badRequest("requireTaxNumberAbove is out of range");
+            }
+            sets.add("\"requireTaxNumberAbove\" = ?");
+            params.add(v);
         }
         if (in.containsKey("proformaAdvancePercent")) {
             BigDecimal v = dec(in.get("proformaAdvancePercent"));

@@ -36,6 +36,7 @@ import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { MilestonesPanel, NewDeliveryDialog } from './DeliveriesPages';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
@@ -62,7 +63,7 @@ export function SalesOrderPage() {
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
-  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | null>(null);
+  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | 'delivery' | null>(null);
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
   const [tab, setTab] = useState('lines');
@@ -139,6 +140,7 @@ export function SalesOrderPage() {
   const menu: MenuItem[] = [];
   if (o) {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
+    if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
@@ -187,7 +189,7 @@ export function SalesOrderPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/sales/quotations/${rel.quotation.id}`)} />
-          <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/fleet/delivery-orders/${rel.deliveries[0].id}`)} />
+          <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/sales/deliveries?orderId=${o?.id}`)} />
           <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
           <SmartButton icon={<FileSignature className="h-4 w-4" />} count={rel?.changeRequests ?? 0} label={tx('Change requests')} disabled={!rel?.changeRequests} onClick={() => setTab('other')} />
           <SmartButton icon={<History className="h-4 w-4" />} count={rel?.revisions ?? 0} label={tx('Revisions')} disabled={!rel?.revisions} onClick={() => setDialog('revisions')} />
@@ -332,6 +334,7 @@ export function SalesOrderPage() {
             {(o?.partnerId || partnerId) ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {o && fulfilling && <BillingPanel order={o} />}
+                {o && fulfilling && <MilestonesPanel orderId={o.id} total={Number(o.total)} />}
                 <CreditPanel partnerId={o?.partnerId ?? partnerId} />
               </div>
             ) : <p className="text-sm text-muted-foreground">{tx('Choose a customer to see credit and billing details.')}</p>}
@@ -365,6 +368,7 @@ export function SalesOrderPage() {
       </Dialog>
 
       {o && dialog === 'change' && <ChangeDialog order={o} onClose={() => setDialog(null)} />}
+      {o && dialog === 'delivery' && <NewDeliveryDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
     </div>
