@@ -1,5 +1,9 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
+import { VariantSelect } from '@/features/products/variant-select';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, PackageX, Plus, Printer, Send, ShoppingCart, Sparkles, ThumbsDown, Trash2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -40,9 +44,16 @@ export function QuotationEditorPage() {
   const { data: lk } = useCrmLookups();
   const products = useProductOptions();
   const taxes = useTaxOptions();
-  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite));
-  const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert));
+  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
+  const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
   const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
+  const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
+  const [internalNotes, setInternalNotes] = useState('');
+  const [header, setHeader] = useState({ branchId: '', paymentTermId: '', deliveryAddress: '' });
+  const [lostReasonId, setLostReasonId] = useState('');
+  const opts = useHeaderOptions();
+  const uoms = useQuery({ queryKey: ['header-options', 'uoms'], queryFn: async () => { try { const d = (await api.get('/uoms', { params: { pageSize: 500 } })).data; return (Array.isArray(d) ? d : d.data ?? []) as Array<{ id: string; code: string; name: string }>; } catch { return []; } }, staleTime: 300_000, retry: false });
+  const lostReasons = useQuery({ queryKey: ['sales', 'lost-reasons'], queryFn: async () => (await api.get<Array<{ id: string; name: string; isActive: boolean }>>('/sales/lost-reasons')).data, retry: false, enabled: useAuthStore.getState().hasPermission(PERMISSIONS.sales.quotationRead) });
 
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
@@ -64,6 +75,7 @@ export function QuotationEditorPage() {
     if (q) {
       setPartnerId(q.partnerId); setPartnerName(q.partnerName); setIssueDate(q.issueDate?.slice(0, 10) ?? '');
       setValidUntil(q.validUntil?.slice(0, 10) ?? ''); setOwnerId(q.ownerId ?? ''); setNotes(q.notes ?? ''); setTerms(q.terms ?? '');
+      setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '' });
       setLines(q.lines?.length ? q.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [q]);
@@ -107,9 +119,10 @@ export function QuotationEditorPage() {
 
   const save = useCrmMutation(async () => {
     const body = {
-      partnerId, issueDate, validUntil: validUntil || undefined, ownerId: ownerId || undefined, notes, terms,
+      partnerId, issueDate, validUntil: validUntil || undefined, ownerId: ownerId || undefined, notes, terms, internalNotes,
+      branchId: header.branchId || null, paymentTermId: header.paymentTermId || null, deliveryAddress: header.deliveryAddress || null,
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
-        productId: l.productId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
+        productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
         unitPrice: l.priceSource === 'manual' || !l.productId ? Number(l.unitPrice) : undefined,
         discountPercent: l.priceSource === 'manual' || !l.productId ? Number(l.discountPercent) : undefined,
         taxId: l.taxId || null,
@@ -125,7 +138,7 @@ export function QuotationEditorPage() {
   const doSave = (then?: (saved: Quotation) => void) => {
     if (!partnerId) return toast.error(tx('Choose a customer'));
     save.mutate(undefined, {
-      onSuccess: (saved) => { setDirty(false); if (isNew) navigate(`/crm/quotations/${saved.id}`, { replace: true }); else toast.success(tx('Saved')); then?.(saved); },
+      onSuccess: (saved) => { setDirty(false); if (isNew) navigate(`${base}/${saved.id}`, { replace: true }); else toast.success(tx('Saved')); then?.(saved); },
       onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save'))),
     });
   };
@@ -147,20 +160,22 @@ export function QuotationEditorPage() {
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
   if (q) {
+    if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`/sales/quotations/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
+    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf`, `${q.number}.pdf`) });
     menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
-    if (status === 'draft' && canWrite) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(q.id, { onSuccess: () => navigate('/crm/quotations'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
+    if (status === 'draft' && canWrite) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(q.id, { onSuccess: () => navigate(base), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
   }
   const opportunityId = q?.dealId ?? dealId;
-  const convertedLink = q?.convertedId ? (q.convertedType === 'sales_order' ? `/sales/orders/${q.convertedId}` : q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/invoices/${q.convertedId}`) : null;
+  const convertedLink = q?.convertedId ? (q.convertedType === 'sales_order' ? `/sales/orders/${q.convertedId}` : q.convertedType === 'order' ? `/orders/${q.convertedId}` : `/sales/proformas/${q.convertedId}`) : null;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm">
-          <Link to="/crm/quotations" className="font-medium text-primary hover:underline">{tx('Quotations')}</Link>
+          <Link to={base} className="font-medium text-primary hover:underline">{tx('Quotations')}</Link>
           <span className="mx-1.5 text-muted-foreground">/</span>
           <span className="font-semibold">{q ? q.number : tx('New')}</span>
           {q && q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}
@@ -223,6 +238,9 @@ export function QuotationEditorPage() {
             <Field label={tx('Customer')}>
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
             </Field>
+            <Field label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></Field>
+            <Field label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></Field>
+            <Field label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></Field>
             <Field label={tx('Salesperson')}>
               <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
             </Field>
@@ -270,6 +288,11 @@ export function QuotationEditorPage() {
                                 setLines(next); setDirty(true); void priceLines(i, next);
                               }} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                             : <span className="font-medium">{l.productName ?? '—'}</span>}
+                          <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-52" onChange={(v) => patchLine(i, { variantId: v })} />
+                          <select aria-label={tx('Unit')} disabled={!editable} className="mt-1 h-8 w-52 rounded-md border bg-background px-2 text-xs" value={l.uomId ?? ''} onChange={(e) => patchLine(i, { uomId: e.target.value || null, priceSource: l.priceSource })}>
+                            <option value="">{tx('Default unit')}</option>
+                            {(uoms.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
+                          </select>
                           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                             {l.priceSource && <span className="rounded bg-muted px-1.5 py-0.5">{SOURCE_LABEL[l.priceSource]}</span>}
                             {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span>{tx('List')} {money(l.listPrice, currency)}</span>}
@@ -296,6 +319,7 @@ export function QuotationEditorPage() {
             {editable && (
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>
+                <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, { ...blankLine(), description: tx('Transport charge'), priceSource: 'manual' }]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a charge')}</Button>
                 {canPrice && <Button variant="ghost" size="sm" onClick={() => priceLines()}><Sparkles className="mr-1 h-4 w-4" />{tx('Apply customer prices')}</Button>}
               </div>
             )}
@@ -313,6 +337,7 @@ export function QuotationEditorPage() {
           </TabsContent>
 
           <TabsContent value="terms" className="mt-0 space-y-4 p-5">
+            <Field label={tx('Internal notes (never shown to the customer)')} className="lg:max-w-3xl"><Textarea disabled={!editable} rows={3} value={internalNotes} onChange={(e) => { setInternalNotes(e.target.value); setDirty(true); }} /></Field>
             <Field label={tx('Terms & conditions')} className="lg:max-w-3xl"><Textarea disabled={!editable} rows={8} value={terms} onChange={(e) => { setTerms(e.target.value); setDirty(true); }} /></Field>
           </TabsContent>
 
@@ -336,11 +361,12 @@ export function QuotationEditorPage() {
 
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
+          {dialog === 'decline' && <Field label={tx('Lost reason')}><HeaderSelect value={lostReasonId} options={(lostReasons.data ?? []).filter((r) => r.isActive)} none={tx('Choose…')} onChange={setLostReasonId} /></Field>}
           <DialogHeader><DialogTitle>{dialog === 'reject' ? tx('Reject quotation') : tx('Customer declined')}</DialogTitle></DialogHeader>
           <Field label={tx('Reason')}><Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>
-            <Button variant="destructive" onClick={() => { run(dialog === 'reject' ? 'reject' : 'decline', { reason }, tx('Recorded')); setDialog(null); }}>{tx('Confirm')}</Button>
+            <Button variant="destructive" onClick={() => { run(dialog === 'reject' ? 'reject' : 'decline', { reason, ...(dialog === 'decline' && lostReasonId ? { lostReasonId } : {}) }, tx('Recorded')); setDialog(null); }}>{tx('Confirm')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -395,6 +421,16 @@ function Banner({ tone, title, items, link }: { tone: 'warning' | 'danger' | 'su
 }
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+async function downloadBlob(path: string, name: string) {
+  try {
+    const r = await api.get(path, { responseType: 'blob' });
+    const url = URL.createObjectURL(r.data as Blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) { toast.error(apiErrorMessage(err, tx('Could not download'))); }
+}
 
 /** Printable quotation in a new window. */
 function printQuote(q: Quotation, owner?: string) {

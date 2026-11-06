@@ -126,7 +126,7 @@ public final class SalesController {
         @PostMapping("/{id}/decline")
         @RequirePermissions(Permissions.SALES__QUOTATION_WRITE)
         public Map<String, Object> decline(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
-            return svc.decline(id, text(b, "reason"));
+            return svc.decline(id, text(b, "reason"), text(b, "lostReasonId"));
         }
 
         @PostMapping("/{id}/cancel")

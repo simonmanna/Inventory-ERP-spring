@@ -26,7 +26,8 @@ export function QuotationsPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { data: lk } = useCrmLookups();
-  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite));
+  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
+  const base = window.location.pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const status = params.get('status') ?? '';
   const set = (k: string, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); if (k !== 'page') n.delete('page'); return n; }, { replace: true });
   const { data, isLoading } = useQuotations({
@@ -38,7 +39,7 @@ export function QuotationsPage() {
   return (
     <div className="space-y-4">
       <ListPageHeader icon={FileText} title={tx('Quotations')} description={tx('Price, approve and send quotations; convert accepted ones into orders or proforma invoices.')}
-        actions={canWrite && <Button onClick={() => navigate('/crm/quotations/new')}><Plus className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>} />
+        actions={canWrite && <Button onClick={() => navigate(`${base}/new`)}><Plus className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
           {TABS.map((t) => (
@@ -64,7 +65,7 @@ export function QuotationsPage() {
           <tbody>
             {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
             {data?.data.map((q) => (
-              <tr key={q.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/crm/quotations/${q.id}`)}>
+              <tr key={q.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`${base}/${q.id}`)}>
                 <td className="px-3 py-2 font-medium">{q.number}{q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}</td>
                 <td className="px-3 py-2">{q.partnerName}</td>
                 <td className="px-3 py-2 text-muted-foreground">{q.dealName ?? '—'}</td>

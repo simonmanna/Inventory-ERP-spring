@@ -90,6 +90,13 @@ public class SalesAccess {
         return " AND " + column + " = ANY(?::text[])";
     }
 
+    /** 404-free check for a document with a plain branch: refuse it when the caller's scope excludes that branch. */
+    public void assertBranchIfScoped(String branchId) {
+        if (!scope().allowsBranch(branchId)) {
+            throw ApiException.forbidden("This branch is outside your data access");
+        }
+    }
+
     /** Refuse an organization-wide figure or action for a restricted user. */
     public void assertAllBranches() {
         if (scope().restricted()) {

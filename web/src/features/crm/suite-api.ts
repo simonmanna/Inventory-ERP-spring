@@ -1,5 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 
 // ---- Types (CRM sales suite, ADR-S010) ----
@@ -189,9 +191,15 @@ export interface KanbanColumn {
 
 export interface GroupRow { key: string | null; label: string | null; count: number; amount: number; weighted: number }
 
+/** Sales users work through /sales/quotations, which needs no CRM switch; CRM-only roles keep the facade. */
+export const quoteBase = () => (useAuthStore.getState().hasPermission(PERMISSIONS.sales.quotationRead) ? '/sales/quotations' : '/crm/quotations');
+
 export interface QuoteLine {
   id?: string;
   productId: string | null;
+  variantId?: string | null;
+  variantName?: string | null;
+  uomId?: string | null;
   productName?: string | null;
   productCode?: string | null;
   description: string;
@@ -220,6 +228,11 @@ export interface CreditInfo {
 
 export interface Quotation {
   id: string;
+  internalNotes?: string | null;
+  branchId?: string | null;
+  paymentTermId?: string | null;
+  deliveryAddress?: string | null;
+  lostReasonId?: string | null;
   number: string;
   revision: number;
   dealId: string | null;
@@ -439,14 +452,14 @@ export const crmApi = {
   resolvePrices: async (body: { partnerId?: string; lines: Array<{ productId: string; quantity: number }> }) =>
     (await api.post<{ lines: ResolvedPrice[] }>('/crm/pricing/resolve', body)).data,
 
-  createQuote: async (body: Record<string, unknown>) => (await api.post<Quotation>('/crm/quotations', body)).data,
-  updateQuote: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<Quotation>(`/crm/quotations/${id}`, body)).data,
+  createQuote: async (body: Record<string, unknown>) => (await api.post<Quotation>(quoteBase(), body)).data,
+  updateQuote: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<Quotation>(`${quoteBase()}/${id}`, body)).data,
   quoteAction: async ({ id, action, body }: { id: string; action: 'submit' | 'approve' | 'reject' | 'send' | 'accept' | 'decline' | 'cancel' | 'revise'; body?: Record<string, unknown> }) =>
-    (await api.post<Quotation>(`/crm/quotations/${id}/${action}`, body ?? {})).data,
+    (await api.post<Quotation>(`${quoteBase()}/${id}/${action}`, body ?? {})).data,
   convertQuote: async ({ id, target, allowBackorder }: { id: string; target: 'sales_order' | 'order' | 'proforma'; allowBackorder?: boolean }) =>
-    (await api.post<Quotation & { converted: { type: string; id: string; number: string } }>(`/crm/quotations/${id}/convert`, { target, allowBackorder },
+    (await api.post<Quotation & { converted: { type: string; id: string; number: string } }>(`${quoteBase()}/${id}/convert`, { target, allowBackorder },
       { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
-  deleteQuote: async (id: string) => (await api.delete(`/crm/quotations/${id}`)).data,
+  deleteQuote: async (id: string) => (await api.delete(`${quoteBase()}/${id}`)).data,
 };
 
 export function useSavedFilters(scope: string) {
@@ -474,7 +487,7 @@ export function usePriceRules(params: Record<string, string | undefined> = {}) {
 export function useQuotations(params: Record<string, string | number | undefined>) {
   return useQuery({
     queryKey: ['crm-suite', 'quotes', params],
-    queryFn: async () => (await api.get<Paged<Quotation, { count: number; total: number }>>('/crm/quotations', { params: clean(params) })).data,
+    queryFn: async () => (await api.get<Paged<Quotation, { count: number; total: number }>>(quoteBase(), { params: clean(params) })).data,
     placeholderData: keepPreviousData,
   });
 }
@@ -482,7 +495,7 @@ export function useQuotations(params: Record<string, string | number | undefined
 export function useQuotation(id: string | undefined) {
   return useQuery({
     queryKey: ['crm-suite', 'quote', id],
-    queryFn: async () => (await api.get<Quotation>(`/crm/quotations/${id}`)).data,
+    queryFn: async () => (await api.get<Quotation>(`${quoteBase()}/${id}`)).data,
     enabled: !!id,
   });
 }

@@ -278,6 +278,8 @@ public class SalesOrderService {
         header.putIfAbsent("paymentTermId", q.get("paymentTermId"));
         header.putIfAbsent("pricelistId", q.get("pricelistId"));
         header.put("currencyCode", q.get("currencyCode"));
+        header.putIfAbsent("exchangeRate", q.get("exchangeRate"));
+        header.putIfAbsent("agreementId", q.get("agreementId"));
         header.putIfAbsent("ownerId", q.get("ownerId") == null ? user() : q.get("ownerId"));
         header.putIfAbsent("teamId", q.get("teamId"));
         header.putIfAbsent("notes", q.get("notes"));

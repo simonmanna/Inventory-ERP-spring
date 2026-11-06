@@ -6,6 +6,11 @@ import { RequirePermission } from '@/components/require-permission';
 const SalesDashboardPage = lazy(() => import('./SalesDashboardPage').then((m) => ({ default: m.SalesDashboardPage })));
 const SalesOrdersPage = lazy(() => import('./SalesOrdersPage').then((m) => ({ default: m.SalesOrdersPage })));
 const SalesOrderPage = lazy(() => import('./SalesOrderPage').then((m) => ({ default: m.SalesOrderPage })));
+const QuotationsPage = lazy(() => import('@/pages/crm/QuotationsPage').then((m) => ({ default: m.QuotationsPage })));
+const QuotationEditorPage = lazy(() => import('@/pages/crm/QuotationEditorPage').then((m) => ({ default: m.QuotationEditorPage })));
+const ProformasPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformasPage })));
+const ProformaPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformaPage })));
+const SalesSettingsPage = lazy(() => import('./SalesSettingsPage').then((m) => ({ default: m.SalesSettingsPage })));
 const PricelistsPage = lazy(() => import('./PricelistsPage').then((m) => ({ default: m.PricelistsPage })));
 const PricelistPage = lazy(() => import('./PricelistPage').then((m) => ({ default: m.PricelistPage })));
 const MarginFloorsPage = lazy(() => import('./MarginFloorsPage').then((m) => ({ default: m.MarginFloorsPage })));
@@ -35,6 +40,12 @@ export const salesRoutes = (
     <Route path="/sales/orders" element={<RequirePermission permission={P.orderRead}><SalesOrdersPage /></RequirePermission>} />
     <Route path="/sales/orders/new" element={<RequirePermission permission={P.orderWrite}><SalesOrderPage /></RequirePermission>} />
     <Route path="/sales/orders/:id" element={<RequirePermission permission={P.orderRead}><SalesOrderPage /></RequirePermission>} />
+    <Route path="/sales/quotations" element={<RequirePermission permission={P.quotationRead}><QuotationsPage /></RequirePermission>} />
+    <Route path="/sales/quotations/new" element={<RequirePermission permission={P.quotationWrite}><QuotationEditorPage /></RequirePermission>} />
+    <Route path="/sales/quotations/:id" element={<RequirePermission permission={P.quotationRead}><QuotationEditorPage /></RequirePermission>} />
+    <Route path="/sales/proformas" element={<RequirePermission permission={P.orderRead}><ProformasPage /></RequirePermission>} />
+    <Route path="/sales/proformas/:id" element={<RequirePermission permission={P.orderRead}><ProformaPage /></RequirePermission>} />
+    <Route path="/sales/settings" element={<RequirePermission permission={P.configure}><SalesSettingsPage /></RequirePermission>} />
     <Route path="/sales/pricelists" element={<RequirePermission permission={P.pricingRead}><PricelistsPage /></RequirePermission>} />
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />
     <Route path="/sales/collections" element={<RequirePermission permission={P.collectionsRead}><CollectionsPage /></RequirePermission>} />

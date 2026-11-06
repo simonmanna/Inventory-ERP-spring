@@ -106,6 +106,20 @@ public class SalesSettingsService {
                 params.add(Boolean.TRUE.equals(in.get(k)));
             }
         }
+        for (String k : List.of("proformaBankDetails", "proformaMobileDetails")) {
+            if (in.containsKey(k)) {
+                sets.add("\"" + k + "\" = ?");
+                params.add(str(in.get(k)));
+            }
+        }
+        if (in.containsKey("proformaAdvancePercent")) {
+            BigDecimal v = dec(in.get("proformaAdvancePercent"));
+            if (v.signum() < 0 || v.compareTo(BigDecimal.valueOf(100)) > 0) {
+                throw ApiException.badRequest("proformaAdvancePercent is out of range");
+            }
+            sets.add("\"proformaAdvancePercent\" = ?");
+            params.add(v);
+        }
         if (in.containsKey("defaultQuoteTerms")) {
             sets.add("\"defaultQuoteTerms\" = ?");
             params.add(str(in.get("defaultQuoteTerms")));

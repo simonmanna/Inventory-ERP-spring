@@ -101,7 +101,7 @@ function Overview() {
 }
 
 function adviceLink(a: Advice) {
-  const to = a.entityType === 'sales_order' ? `/sales/orders/${a.entityId}` : a.entityType === 'sales_quotation' ? `/crm/quotations/${a.entityId}`
+  const to = a.entityType === 'sales_order' ? `/sales/orders/${a.entityId}` : a.entityType === 'sales_quotation' ? `/sales/quotations/${a.entityId}`
     : a.entityType === 'document' ? `/invoices/${a.entityId}` : a.entityType === 'sales_agreement' ? '/sales/agreements' : a.partnerId ? '/partners' : null;
   return to ? <Link to={to} className="text-xs text-primary hover:underline">{tx('Open')}</Link> : null;
 }

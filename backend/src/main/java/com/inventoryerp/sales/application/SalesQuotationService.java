@@ -74,10 +74,23 @@ public class SalesQuotationService {
     private final EventBus events;
     private final ProductVariantService variants;
     private SalesAccess access;
+    private SalesAlerts alerts;
+    private com.inventoryerp.kernel.notifications.NotificationsService mail;
+    private SalesLostReasonService lostReasons;
+    private SalesProformaService proformas;
 
     @org.springframework.beans.factory.annotation.Autowired
     void setAccess(SalesAccess access) {
         this.access = access;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCollaborators(SalesAlerts alerts, com.inventoryerp.kernel.notifications.NotificationsService mail,
+            SalesLostReasonService lostReasons, @org.springframework.context.annotation.Lazy SalesProformaService proformas) {
+        this.alerts = alerts;
+        this.mail = mail;
+        this.lostReasons = lostReasons;
+        this.proformas = proformas;
     }
 
     public SalesQuotationService(SalesDb db, SalesSettingsService config, ObjectProvider<QuotationPricingPort> pricing,
@@ -317,10 +330,17 @@ public class SalesQuotationService {
     /** The quotation's branch, terms and delivery details, which pass on to the order it converts into. */
     private Map<String, Object> commercial(Map<String, Object> in) {
         Map<String, Object> d = new LinkedHashMap<>();
-        for (String k : List.of("branchId", "paymentTermId", "siteId", "deliveryAddress")) {
+        for (String k : List.of("branchId", "paymentTermId", "siteId", "deliveryAddress", "internalNotes", "agreementId")) {
             if (in.containsKey(k)) {
                 d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
             }
+        }
+        if (in.containsKey("exchangeRate")) {
+            BigDecimal r = dec(in.get("exchangeRate"));
+            if (r.signum() <= 0) {
+                throw ApiException.badRequest("exchangeRate must be greater than 0");
+            }
+            d.put("exchangeRate", r);
         }
         if (d.get("branchId") != null && !db.exists("Branch", str(d.get("branchId")))) {
             throw ApiException.notFound("Branch not found");
@@ -351,7 +371,8 @@ public class SalesQuotationService {
             String uomId = blank(str(l.get("uomId"))) ? null : str(l.get("uomId"));
             QuotationPricingPort.Price price = blank(productId) ? null : engine.resolve(new SalesPricingEngine.Context(
                     partnerId, productId, qty, uomId, str(header.get("siteId")), str(header.get("branchId")),
-                    str(header.get("currencyCode")), on, null, variant == null ? null : variant.id())).price();
+                    str(header.get("currencyCode")), on, str(header.get("agreementId")), variant == null ? null
+                            : variant.id())).price();
             BigDecimal list = price == null ? decOr(l.get("unitPrice"), BigDecimal.ZERO) : price.listPrice();
             BigDecimal unit;
             BigDecimal disc;
@@ -572,12 +593,21 @@ public class SalesQuotationService {
     /** Customer declined. */
     @Transactional
     public Map<String, Object> decline(String id, String reason) {
+        return decline(id, reason, null);
+    }
+
+    /** Customer declined, with an optional catalog reason. */
+    @Transactional
+    public Map<String, Object> decline(String id, String reason, String lostReasonId) {
         Map<String, Object> q = lock(id);
         if (!Set.of("approved", "sent").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved or sent quotations can be declined");
         }
-        db.patch("SalesQuotation", id, Obj.of("status", "rejected", "rejectionReason", blank(reason)
-                ? "Declined by customer" : reason), true);
+        if (!blank(lostReasonId)) {
+            lostReasons.assertActive(lostReasonId);
+        }
+        db.patch("SalesQuotation", id, Obj.of("status", "rejected", "lostReasonId", blank(lostReasonId) ? null : lostReasonId,
+                "rejectionReason", blank(reason) ? "Declined by customer" : reason), true);
         audit.record(AuditInput.of("SalesQuotation", id, "reject", null, Obj.of("byCustomer", true, "reason", reason)));
         return get(id);
     }
@@ -689,9 +719,10 @@ public class SalesQuotationService {
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), LocalDate.now().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
                     null, null, null, null, null, str(q.get("number")), null, null, str(q.get("number")),
-                    str(q.get("notes")), null, "crm_quotation", null);
+                    str(q.get("notes")), null, "crm_quotation", str(q.get("branchId")));
             Map<String, Object> doc = builder.createDocument("proforma_invoice", h, inputs);
             convertedId = str(doc.get("id"));
+            proformas.applyTerms(convertedId, in, null);
             convertedNumber = str(doc.get("documentNumber"));
         }
         db.patch("SalesQuotation", id, Obj.of("status", "converted", "acceptedAt", q.get("acceptedAt") == null
@@ -737,6 +768,56 @@ public class SalesQuotationService {
     // ------------------------------------------------------------------ helpers
 
     /** Mark approved / sent quotes past their validity date as expired. */
+    /** Expire overdue quotations and tell their owners; returns how many expired. */
+    @Transactional
+    public int expireAndNotify() {
+        List<Map<String, Object>> expired = db.rows("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW
+                + " WHERE \"organizationId\" = ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < CURRENT_DATE"
+                + " AND \"deletedAt\" IS NULL RETURNING id, number, \"ownerId\", \"createdById\"", org());
+        for (Map<String, Object> e : expired) {
+            alerts.send(str(e.get("ownerId") != null ? e.get("ownerId") : e.get("createdById")), "sales_quotation_expired",
+                    "Quotation " + e.get("number") + " has expired", "Revise it to send it again.", Obj.of("entityType",
+                            "sales_quotation", "entityId", e.get("id")));
+        }
+        return expired.size();
+    }
+
+    /** Customer-facing PDF; internal notes never appear. */
+    @Transactional(readOnly = true)
+    public byte[] pdf(String id) {
+        Map<String, Object> q = require(id);
+        List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\","
+                + " \"lineTotal\" AS total FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ? AND NOT"
+                + " COALESCE(\"isOptional\", false) ORDER BY \"sortOrder\"", id, org());
+        String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
+                + " \"Organization\" WHERE id = ?", org()).get("n"));
+        return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),
+                "Date: " + q.get("issueDate"), "Valid until: " + q.get("validUntil")), lines, str(q.get("currencyCode")), List.of(
+                        new SalesDocumentPdf.Total("Untaxed", dec(q.get("subtotal"))), new SalesDocumentPdf.Total("Tax",
+                                dec(q.get("taxAmount"))), new SalesDocumentPdf.Total("Total", dec(q.get("total")))), List.of(
+                                        new SalesDocumentPdf.Block("Notes", str(q.get("notes"))),
+                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))));
+    }
+
+    /** Email the PDF to the customer; an approved quotation becomes sent. */
+    @Transactional
+    public Map<String, Object> email(String id, String to) {
+        Map<String, Object> q = require(id);
+        if (!Set.of("approved", "sent").contains(q.get("status"))) {
+            throw ApiException.badRequest("Only approved quotations can be sent");
+        }
+        Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?", q.get("partnerId"));
+        String address = !blank(to) ? to.trim() : p == null ? null : str(p.get("email"));
+        if (blank(address)) {
+            throw ApiException.badRequest("Customer has no email on file. Add one in Partners or pass \"to\".");
+        }
+        boolean sent = mail.sendExternalEmail(address, "Quotation " + q.get("number"), "Please find attached quotation "
+                + q.get("number") + ", valid until " + q.get("validUntil") + ".", new com.inventoryerp.kernel.notifications
+                        .NotificationsService.Attachment(q.get("number") + ".pdf", "application/pdf", pdf(id)));
+        send(id);
+        return Obj.of("ok", true, "sentTo", address, "delivered", sent);
+    }
+
     void expireOverdue() {
         db.update("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW + " WHERE \"organizationId\" ="
                 + " ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < CURRENT_DATE AND \"deletedAt\" IS"

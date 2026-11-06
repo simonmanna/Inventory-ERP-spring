@@ -340,7 +340,8 @@ const NAV_SECTIONS: NavSection[] = [
     icon: ShoppingCart,
     items: [
       { to: '/sales', label: tx('Sales Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.sales.reportRead },
-      { to: '/crm/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.crm.quotationRead, feature: 'crm' },
+      { to: '/sales/quotations', label: tx('Quotations'), icon: FileText, permission: PERMISSIONS.sales.quotationRead },
+      { to: '/sales/proformas', label: tx('Proforma Invoices'), icon: Receipt, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/cash-sales', label: tx('Branch Cash Sales'), icon: Store, permission: PERMISSIONS.sales.cashSaleRead },
       { to: '/sales/cash-sales/processing', label: tx('Branch Sales Processing'), icon: ClipboardCheck, permission: PERMISSIONS.sales.cashSaleReadAll },
@@ -366,6 +367,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/pricelists', label: tx('Pricelists'), icon: Tags, permission: PERMISSIONS.sales.pricingRead, group: 'Configuration' },
       { to: '/sales/margin-floors', label: tx('Margin Floors'), icon: Percent, permission: PERMISSIONS.sales.pricingRead, group: 'Configuration' },
       { to: '/sales/agreements', label: tx('Agreements & Rebates'), icon: FileSignature, permission: PERMISSIONS.sales.agreementRead, group: 'Configuration' },
+      { to: '/sales/settings', label: tx('Sales Settings'), icon: Settings2, permission: PERMISSIONS.sales.configure, group: 'Configuration' },
       { to: '/sales/branch-profiles', label: tx('Branch Sales Profiles'), icon: Settings2, permission: PERMISSIONS.sales.branchProfileManage, group: 'Configuration' },
     ],
   },

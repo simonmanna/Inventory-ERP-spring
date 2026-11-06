@@ -95,6 +95,7 @@ public class PrintContextProviders {
                 if (d == null) {
                     throw ApiException.notFound("Record not found");
                 }
+                d.remove("internalNotes");
                 doc = document(kind, d.get("number"), d.get("status"), order ? d.get("createdAt") : d.get("issueDate"),
                         order ? d.get("commitmentDate") : d.get("validUntil"), order ? d.get("customerRef") : null,
                         d.get("currencyCode"), d.get("notes"), d.get("terms"), d.get("subtotal"), d.get("discountTotal"),

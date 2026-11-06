@@ -141,6 +141,7 @@ export function SalesOrderPage() {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
     if (has(P.orderWrite)) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => run('duplicate') });
     if (!['cancelled', 'done'].includes(status) && has(P.orderCancel)) menu.push({ key: 'cancel', label: tx('Cancel order'), icon: <XCircle className={ico} />, danger: true, onSelect: () => { setReason(''); setDialog('cancel'); } });
     if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
@@ -185,7 +186,7 @@ export function SalesOrderPage() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/crm/quotations/${rel.quotation.id}`)} />
+          <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/sales/quotations/${rel.quotation.id}`)} />
           <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/fleet/delivery-orders/${rel.deliveries[0].id}`)} />
           <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
           <SmartButton icon={<FileSignature className="h-4 w-4" />} count={rel?.changeRequests ?? 0} label={tx('Change requests')} disabled={!rel?.changeRequests} onClick={() => setTab('other')} />
@@ -211,7 +212,7 @@ export function SalesOrderPage() {
               <>
                 <InlineField label={tx('Source Doc')}>
                   {o.quotationId && o.quotationNumber
-                    ? <Link to={`/crm/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
+                    ? <Link to={`/sales/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
                     : <span className="text-muted-foreground">-</span>}
                 </InlineField>
                 <InlineField label={tx('Salesperson')}>{o.ownerName ?? <span className="text-muted-foreground">-</span>}</InlineField>
