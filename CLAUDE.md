@@ -17,7 +17,13 @@
   3. New ITs extend `ApiTestSupport` (one cached context). No new `@MockitoBean`/profile combos — each forks a
      fresh context.
   4. Never read `build/`, `.gradle/`, `node_modules/`, `var/`. Use tokensave/Grep to locate code before Read.
-- Run `cd backend && ./gradlew build` before declaring anything done. Docker must be running
-  (Testcontainers). On Windows use Git Bash; `JAVA_HOME` may point at any JDK 17+.
+- **Build rule (overrides every other doc, phase brief and memory):** NEVER run `./gradlew build`, `clean`,
+  `check`, a bare `./gradlew test`, or `docker compose ... --build` unless the owner explicitly asks in the
+  current request. Finishing a task, phase or merge is not a request. CI runs the full build on push.
+  - Enough to call a change done: `compileJava compileTestJava -q` once, plus `fastTest --tests` for the
+    affected classes. Docs/config-only change: no Gradle at all. Web-only change: no Gradle.
+  - Before a commit: `./gradlew spotlessApply` (CI rejects unformatted code).
+  - In the done report, state which tests ran and that the full build did not.
+- Testcontainers needs Docker running. On Windows use Git Bash; `JAVA_HOME` may point at any JDK 17+.
 - Prefer small PRs per module or sub-area (e.g. `pos/tables`, `pos/kds`), branch `phase/Pn-<area>`.
 - When the Nest code and these docs disagree, the Nest code wins — fix the doc in the same PR.

@@ -5,11 +5,17 @@
       "Bash(./gradlew compileTestJava*)",
       "Bash(./gradlew fastTest*)",
       "Bash(./gradlew test --tests*)",
-      "Bash(./gradlew build*)",
       "Bash(./gradlew spotlessApply*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)"
+    ],
+    "ask": [
+      "Bash(./gradlew build*)",
+      "Bash(./gradlew clean*)",
+      "Bash(./gradlew check*)",
+      "Bash(./gradlew test)",
+      "Bash(docker compose * --build*)"
     ],
     "deny": [
       "Read(**/build/**)",

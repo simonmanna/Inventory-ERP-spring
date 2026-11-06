@@ -121,7 +121,8 @@ Gradle provisions JDK 25 automatically (foojay). Any JDK 17+ can launch Gradle.
 7. **Tests**: port each listed Jest spec to JUnit 5 (unit) or `@SpringBootTest` + Testcontainers
    (integration). Add an authorization test per route (403 without permission). Add parity scenarios
    in `contract-tests/scenarios/<m>-*.json`.
-8. **Verify**: `./gradlew build` green, parity diff empty for the module, web screens for the module
+8. **Verify**: affected test classes green (full `./gradlew build` only when the owner asks; CI runs it on
+   push), parity diff empty for the module, web screens for the module
    work against Spring with zero console errors.
 9. **Record**: tick routes in `docs/PORT_STATUS.md`, note any deliberate deviation in
    `docs/spec/<m>.md` under "Deviations" (must be approved by the owner).
