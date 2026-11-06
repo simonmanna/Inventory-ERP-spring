@@ -728,6 +728,12 @@ export const PERMISSIONS = {
     /// Override fulfilment / recognition policies on an order.
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
+    /// Customer profile, duplicates, export (SG-5).
+    customerRead: 'sales:customer:read',
+    /// Edit profile, suspend, import (SG-5).
+    customerManage: 'sales:customer:manage',
+    /// Merge two customer records (SG-5).
+    customerMerge: 'sales:customer:merge',
     /// See product cost and margin in Sales (SG-1).
     costRead: 'sales:cost:read',
     /// Sales data beyond the user's branch scope (SG-1).

@@ -93,10 +93,17 @@ public class SalesDb {
 
     /** The customer a new sales document is for must exist and be active. */
     void requireActivePartner(String partnerId) {
-        Map<String, Object> p = partnerId == null ? null : row("SELECT status::text AS status, \"deletedAt\" FROM"
-                + " \"Partner\" WHERE id = ? AND \"organizationId\" = ?", partnerId, org());
+        Map<String, Object> p = partnerId == null ? null : row("SELECT status::text AS status, \"deletedAt\","
+                + " \"suspendedAt\", \"suspendedReason\", \"mergedIntoPartnerId\" FROM \"Partner\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", partnerId, org());
         if (p == null) {
             throw ApiException.notFound("Partner not found");
+        }
+        if (p.get("mergedIntoPartnerId") != null) {
+            throw ApiException.badRequest("This customer was merged into another record; use that record");
+        }
+        if (p.get("suspendedAt") != null) {
+            throw ApiException.badRequest("This customer is suspended: " + p.get("suspendedReason"));
         }
         if (!"active".equals(p.get("status")) || p.get("deletedAt") != null) {
             throw ApiException.badRequest("This customer is not active");

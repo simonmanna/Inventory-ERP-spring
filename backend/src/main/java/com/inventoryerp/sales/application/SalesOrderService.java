@@ -244,6 +244,7 @@ public class SalesOrderService {
         }
         requirePartner(partnerId);
         Map<String, Object> header = header(in, true);
+        customerDefaults(header, partnerId);
         header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
         agreement(header, partnerId);
@@ -426,6 +427,24 @@ public class SalesOrderService {
             d.put("terms", settings.settings().get("defaultQuoteTerms"));
         }
         return d;
+    }
+
+    /** SG-5: the customer's home branch, currency and payment term fill what the order leaves empty. */
+    private void customerDefaults(Map<String, Object> header, String partnerId) {
+        Map<String, Object> p = db.row("SELECT \"homeBranchId\", \"defaultCurrencyCode\", \"paymentTermId\" FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", partnerId, org());
+        if (p == null) {
+            return;
+        }
+        if (header.get("branchId") == null && p.get("homeBranchId") != null) {
+            header.put("branchId", p.get("homeBranchId"));
+        }
+        if (header.get("currencyCode") == null && p.get("defaultCurrencyCode") != null) {
+            header.put("currencyCode", p.get("defaultCurrencyCode"));
+        }
+        if (header.get("paymentTermId") == null && p.get("paymentTermId") != null) {
+            header.put("paymentTermId", p.get("paymentTermId"));
+        }
     }
 
     /** Validate the header's agreement for {@code partnerId}; its payment term applies when none is given. */

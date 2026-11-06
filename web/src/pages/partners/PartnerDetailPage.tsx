@@ -29,6 +29,7 @@ import {
   SalesConfigFields, cleanProfile, generalPayload, type GeneralValues,
 } from './profile-forms';
 import { FollowupPanel } from './FollowupTab';
+import { CustomerProfileTab } from './CustomerProfileTab';
 import { useOpenCreditInvoices } from '@/pages/pos/api';
 import { RecordCreditPaymentDialog, type CreditPaymentTarget } from '@/pages/pos/RecordCreditPaymentDialog';
 import { useSupplierLedger } from '@/features/invoicing/api';
@@ -894,6 +895,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
     { value: 'contacts', label: tx('Contacts'), icon: Users },
     { value: 'addresses', label: tx('Addresses'), icon: MapPin },
   ];
+  if (isCustomer) tabs.push({ value: 'customer-profile', label: tx('Customer Profile'), icon: Users });
   if (isCustomer) tabs.push({ value: 'sales-config', label: tx('Sales Config'), icon: SlidersHorizontal });
   tabs.push({ value: 'accounting', label: tx('Accounting'), icon: Landmark });
   tabs.push({ value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? tx('Invoices') : tx('Expenses/Purchases'), icon: isCustomer ? DollarSign : Receipt });
@@ -999,6 +1001,12 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
         <TabsContent value="addresses" className="mt-5">
           <TabAddresses partner={partner} />
         </TabsContent>
+
+        {isCustomer && (
+          <TabsContent value="customer-profile" className="mt-5">
+            <CustomerProfileTab partnerId={partner.id} />
+          </TabsContent>
+        )}
 
         {isCustomer && (
           <TabsContent value="sales-config" className="mt-5">
