@@ -53,6 +53,13 @@ public class SalesCollectionsService {
     private final CreditService credit;
     private final AuditService audit;
 
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     public SalesCollectionsService(SalesDb db, StatementService statements, NotificationsService notifications,
             InvoiceService invoices, AccountResolverService accounts, CreditService credit, AuditService audit) {
         this.db = db;
@@ -135,6 +142,7 @@ public class SalesCollectionsService {
     /** Run dunning as of {@code asOf} (default today). */
     @Transactional
     public Map<String, Object> run(LocalDate asOfIn, String trigger) {
+        access.assertAllBranches();
         LocalDate asOf = asOfIn == null ? LocalDate.now() : asOfIn;
         List<Map<String, Object>> levels = db.rows("SELECT * FROM \"DunningLevel\" WHERE \"organizationId\" = ? AND"
                 + " \"isActive\" ORDER BY \"daysOverdue\" DESC, sequence DESC", org());
@@ -337,6 +345,7 @@ public class SalesCollectionsService {
             extra += " AND d.\"branchId\" = ?";
             params.add(p.get("branchId"));
         }
+        extra += access.branchClause("d.\"branchId\"", params);
         List<Map<String, Object>> rows = db.rows("""
                 SELECT d."partnerId", pa.name AS "partnerName", pa."creditHold", pa."salespersonId",
                        COALESCE(sum(d."amountResidual"), 0) AS open,
@@ -381,6 +390,8 @@ public class SalesCollectionsService {
         if (p == null) {
             throw ApiException.notFound("Partner not found");
         }
+        List<Object> lineParams = new ArrayList<>(List.of(org(), partnerId));
+        String lineScope = access.branchClause("d.\"branchId\"", lineParams);
         List<Map<String, Object>> lines = db.rows("""
                 SELECT d.id, d."documentNumber", d."documentType"::text AS "documentType", d."issueDate", d."dueDate",
                        CASE WHEN d."documentType"::text = 'credit_note' THEN -d."amountResidual" ELSE d."amountResidual" END
@@ -391,8 +402,8 @@ public class SalesCollectionsService {
                   LEFT JOIN "Organization" o ON o.id = d."organizationId"
                  WHERE d."organizationId" = ? AND d."partnerId" = ? AND d.status::text = 'posted'
                    AND d."documentType"::text IN ('sales_invoice', 'debit_note', 'credit_note')
-                   AND d."amountResidual" <> 0
-                 ORDER BY d."issueDate" DESC, d."documentNumber" DESC""", org(), partnerId);
+                   AND d."amountResidual" <> 0""" + lineScope + " " + """
+                 ORDER BY d."issueDate" DESC, d."documentNumber" DESC""", lineParams);
         LocalDate today = LocalDate.now();
         BigDecimal due = BigDecimal.ZERO;
         BigDecimal overdue = BigDecimal.ZERO;
@@ -558,6 +569,7 @@ public class SalesCollectionsService {
     /** E-mail statements to customers with an open balance (and an e-mail). Returns counts. */
     @Transactional(readOnly = true)
     public Map<String, Object> statementRun(LocalDate asOfIn) {
+        access.assertAllBranches();
         LocalDate asOf = asOfIn == null ? LocalDate.now() : asOfIn;
         int sent = 0;
         int skipped = 0;

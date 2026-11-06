@@ -728,6 +728,10 @@ export const PERMISSIONS = {
     /// Override fulfilment / recognition policies on an order.
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
+    /// See product cost and margin in Sales (SG-1).
+    costRead: 'sales:cost:read',
+    /// Sales data beyond the user's branch scope (SG-1).
+    branchOverride: 'sales:branch:override',
     configure: 'sales:configure',
     /// Raise invoices / down-payment invoices from sales orders.
     invoiceCreate: 'sales:invoice:create',

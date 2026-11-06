@@ -73,6 +73,12 @@ public class SalesQuotationService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
 
     public SalesQuotationService(SalesDb db, SalesSettingsService config, ObjectProvider<QuotationPricingPort> pricing,
             ObjectProvider<QuotationOpportunityPort> opportunities, DocumentBuilderService builder,
@@ -249,7 +255,9 @@ public class SalesQuotationService {
                 : str(in.get("contactId")), "ownerId", owner, "issueDate", issue, "validUntil", valid, "currencyCode",
                 currency, "notes", str(in.get("notes")), "terms", in.containsKey("terms") ? str(in.get("terms"))
                 : str(settings.get("defaultQuoteTerms")), "createdById", user()));
-        row = db.patch("SalesQuotation", str(row.get("id")), commercial(in), true);
+        Map<String, Object> commercial = new LinkedHashMap<>(commercial(in));
+        commercial.put("branchId", access.documentBranch(str(commercial.get("branchId"))));
+        row = db.patch("SalesQuotation", str(row.get("id")), commercial, true);
         String id = str(row.get("id"));
         writeLines(id, partnerId, issue, in.get("lines"), row);
         audit.record(AuditInput.of("SalesQuotation", id, "create", null, Obj.of("number", number, "dealId", dealId)));
@@ -286,6 +294,9 @@ public class SalesQuotationService {
             d.put("validUntil", SalesDb.date(str(in.get("validUntil"))));
         }
         d.putAll(commercial(in));
+        if (d.containsKey("branchId")) {
+            d.put("branchId", access.documentBranch(str(d.get("branchId"))));
+        }
         d.put("status", "draft");
         d.put("approvalReasons", List.of());
         d.put("rejectionReason", null);
@@ -733,6 +744,7 @@ public class SalesQuotationService {
     }
 
     private void visibility(StringBuilder where, List<Object> params) {
+        access.filterDocument(where, params, "q");
         if (TenantContext.has(Permissions.CRM__DEAL_VIEW_ALL) || TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
             return;
         }

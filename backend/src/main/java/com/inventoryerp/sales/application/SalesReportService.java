@@ -21,13 +21,16 @@ import org.springframework.transaction.annotation.Transactional;
 public class SalesReportService {
 
     private final SalesDb db;
+    private final SalesAccess access;
 
-    public SalesReportService(SalesDb db) {
+    public SalesReportService(SalesDb db, SalesAccess access) {
         this.db = db;
+        this.access = access;
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> summary() {
+        access.assertAllBranches();
         Map<String, Object> quotes = new LinkedHashMap<>();
         for (Map<String, Object> r : db.rows("SELECT status, count(*) AS count, COALESCE(sum(total), 0) AS total FROM"
                 + " \"SalesQuotation\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL GROUP BY status", org())) {

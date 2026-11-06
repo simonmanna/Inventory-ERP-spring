@@ -643,6 +643,8 @@
     "billingOverride": "sales:billing:override",
     "policyOverride": "sales:policy:override",
     "reportRead": "sales:report:read",
+    "costRead": "sales:cost:read",
+    "branchOverride": "sales:branch:override",
     "configure": "sales:configure",
     "invoiceCreate": "sales:invoice:create",
     "depositRecord": "sales:deposit:record",

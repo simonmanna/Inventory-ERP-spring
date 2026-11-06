@@ -98,8 +98,35 @@ public class SalesReportingService {
         return Obj.of("categories", cats, "count", count);
     }
 
-    private static boolean allowed(Def d) {
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
+    private boolean allowed(Def d) {
+        if (SalesRevenueReports.PROFIT.equals(d.category()) && !access.canSeeCost()) {
+            return false;
+        }
+        if (!d.filters().contains("branch") && access.scope().restricted()) {
+            return false;
+        }
         return Permissions.SALES__REPORT_READ.equals(d.permission()) || TenantContext.has(d.permission());
+    }
+
+    /** The filter narrowed to the caller's branches. */
+    private Filter scoped(Map<String, String> params) {
+        Filter f = Filter.parse(params);
+        if ("margin".equals(f.measure())) {
+            access.assertCost();
+        }
+        var s = access.scope();
+        return s.restricted() ? f.inScope(s.branchIds()) : f;
+    }
+
+    private Report guarded(Report r) {
+        return access.canSeeCost() ? r : r.stripCost();
     }
 
     Def def(String key) {
@@ -117,8 +144,8 @@ public class SalesReportingService {
     @Transactional(readOnly = true)
     public Map<String, Object> run(String key, Map<String, String> params) {
         Def d = def(key);
-        Filter f = Filter.parse(params);
-        return d.run().apply(f).toMap(d, f);
+        Filter f = scoped(params);
+        return guarded(d.run().apply(f)).toMap(d, f);
     }
 
     /** Report keys (tests and tooling). */
@@ -137,8 +164,8 @@ public class SalesReportingService {
         String format = p.remove("format");
         format = format == null ? "xlsx" : format;
         Def d = def(key);
-        Filter f = Filter.parse(p);
-        Report r = d.run().apply(f);
+        Filter f = scoped(p);
+        Report r = guarded(d.run().apply(f));
         String base = key + "_" + f.from() + "_" + f.to();
         return switch (format) {
             case "csv" -> new Export(base + ".csv", "text/csv", csv(d, f, r));
@@ -258,7 +285,13 @@ public class SalesReportingService {
     /** Executive sales overview for the filter period (default: year to date). */
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard(Map<String, String> params) {
-        Filter f = Filter.parse(params);
+        Filter f = scoped(params);
+        List<Object> arParams = new ArrayList<>(List.of(org()));
+        String arScope = access.branchClause("\"branchId\"", arParams);
+        List<Object> orderParams = new ArrayList<>(List.of(f.from(), f.to().plusDays(1), org()));
+        String orderScope = access.branchClause("\"branchId\"", orderParams);
+        List<Object> quoteParams = new ArrayList<>(List.of(org()));
+        String quoteScope = access.branchClause("\"branchId\"", quoteParams);
         Map<String, Object> cur = facts.totals(f);
         Map<String, Object> prev = facts.totals(f.previous());
         BigDecimal rev = dec(cur.get("revenue"));
@@ -267,23 +300,23 @@ public class SalesReportingService {
                 + " COALESCE(sum(\"amountResidual\" * \"exchangeRate\") FILTER (WHERE \"dueDate\" < CURRENT_DATE), 0) AS overdue,"
                 + " count(*) FILTER (WHERE \"dueDate\" < CURRENT_DATE) AS \"overdueCount\" FROM \"Document\" WHERE"
                 + " \"organizationId\" = ? AND \"documentType\" = 'sales_invoice' AND status = 'posted' AND"
-                + " \"amountResidual\" > 0", org());
+                + " \"amountResidual\" > 0" + arScope, arParams.toArray());
         Map<String, Object> orders = db.row("SELECT count(*) FILTER (WHERE COALESCE(\"confirmedAt\", \"createdAt\") >= ?"
                 + " AND COALESCE(\"confirmedAt\", \"createdAt\") < ? AND status <> 'cancelled') AS period,"
                 + " count(*) FILTER (WHERE status IN ('draft', 'pending_approval')) AS pending,"
                 + " count(*) FILTER (WHERE status IN ('confirmed', 'in_fulfilment') AND \"deliveryStatus\" <> 'full')"
                 + " AS \"toDeliver\", COALESCE(sum(total) FILTER (WHERE status IN ('confirmed', 'in_fulfilment') AND"
                 + " \"deliveryStatus\" <> 'full'), 0) AS \"toDeliverValue\" FROM \"SalesOrder\" WHERE \"organizationId\" = ?"
-                + " AND \"deletedAt\" IS NULL", f.from(), f.to().plusDays(1), org());
+                + " AND \"deletedAt\" IS NULL" + orderScope, orderParams.toArray());
         Map<String, Object> quotes = db.row("SELECT count(*) AS count, COALESCE(sum(subtotal), 0) AS value FROM"
                 + " \"SalesQuotation\" WHERE \"organizationId\" = ? AND status IN ('pending_approval', 'approved', 'sent')"
-                + " AND \"deletedAt\" IS NULL", org());
+                + " AND \"deletedAt\" IS NULL" + quoteScope, quoteParams.toArray());
         Map<String, Object> target = db.row("SELECT COALESCE(sum(amount), 0) AS amount FROM \"SalesTarget\" WHERE"
                 + " \"organizationId\" = ? AND month >= ? AND month <= ? AND \"salespersonId\" IS NULL AND \"teamId\" IS"
                 + " NULL AND \"branchId\" IS NULL AND \"productCategoryId\" IS NULL", org(), f.from().withDayOfMonth(1),
                 f.to());
         BigDecimal tg = dec(target.get("amount"));
-        List<Map<String, Object>> kpis = List.of(
+        List<Map<String, Object>> kpis = new ArrayList<>(List.of(
                 kpi("revenue", "Net sales", cur.get("revenue"), "money", pct(rev.subtract(prevRev), prevRev.abs()),
                         "monthly-sales"),
                 kpi("margin", "Gross profit", cur.get("margin"), "money", cur.get("marginPercent"), "gross-profit"),
@@ -298,7 +331,10 @@ public class SalesReportingService {
                         "pending-deliveries"),
                 kpi("pendingOrders", "Pending orders", orders.get("pending"), "count", null, "pending-orders"),
                 kpi("target", "Target achievement", tg.signum() == 0 ? null : pct(rev, tg), "percent", money(tg),
-                        "target-vs-actual"));
+                        "target-vs-actual")));
+        if (!access.canSeeCost()) {
+            kpis.removeIf(k -> SalesAccess.isCostField(String.valueOf(k.get("key"))));
+        }
         LocalDate trendFrom = f.to().withDayOfMonth(1).minusMonths(11);
         List<Map<String, Object>> trend = SalesReportFacts.fill(facts.aggregate(f.withPeriod(trendFrom, f.to()),
                 Dim.MONTH), Bucket.MONTH, trendFrom, f.to());
@@ -327,13 +363,22 @@ public class SalesReportingService {
 
     // ------------------------------------------------------------------ lookups
 
+    private String branchLookupScope() {
+        return access.scope().restricted() ? " AND id = ANY(?::text[])" : "";
+    }
+
+    private Object[] branchLookupParams(String o) {
+        var s = access.scope();
+        return s.restricted() ? new Object[] {o, s.branchArray()} : new Object[] {o};
+    }
+
     /** Options for the filter bar. */
     @Transactional(readOnly = true)
     public Map<String, Object> lookups() {
         String o = org();
         return Obj.of(
                 "branches", db.rows("SELECT id, name FROM \"Branch\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
-                        + " ORDER BY name", o),
+                        + branchLookupScope() + " ORDER BY name", branchLookupParams(o)),
                 "salespeople", db.rows("SELECT id, trim(\"firstName\" || ' ' || COALESCE(\"lastName\", '')) AS name FROM"
                         + " \"User\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"isActive\" ORDER BY 2", o),
                 "customers", db.rows("SELECT id, name FROM \"Partner\" WHERE \"organizationId\" = ? AND \"isCustomer\" AND"

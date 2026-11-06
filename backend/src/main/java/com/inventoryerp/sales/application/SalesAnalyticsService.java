@@ -39,6 +39,12 @@ public class SalesAnalyticsService {
     private final SalesDb db;
     private final SalesRevenueQuery revenue;
     private final SalesCommissionService commissions;
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
 
     public SalesAnalyticsService(SalesDb db, SalesRevenueQuery revenue, SalesCommissionService commissions) {
         this.db = db;
@@ -68,6 +74,7 @@ public class SalesAnalyticsService {
     /** Odoo-style tiles: this month vs last, pipeline, work queues, overdue receivables and a 12-month chart. */
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard() {
+        access.assertAllBranches();
         LocalDate first = LocalDate.now().withDayOfMonth(1);
         LocalDate from12 = first.minusMonths(11);
         List<Map<String, Object>> lines = revenue.invoiced(from12, LocalDate.now());
@@ -135,6 +142,7 @@ public class SalesAnalyticsService {
     /** Revenue, quantity, cost and margin of {@code [from, to]} grouped by {@code groupBy}. */
     @Transactional(readOnly = true)
     public Map<String, Object> analysis(String groupBy, String fromRaw, String toRaw) {
+        access.assertAllBranches();
         String dim = blank(groupBy) ? "product" : groupBy;
         if (!DIMENSIONS.contains(dim)) {
             throw ApiException.badRequest("groupBy must be one of: " + String.join(", ", new java.util.TreeSet<>(
@@ -203,6 +211,8 @@ public class SalesAnalyticsService {
     /** Per customer: revenue − cost − freight − rebates − commissions. */
     @Transactional(readOnly = true)
     public Map<String, Object> profitability(String fromRaw, String toRaw) {
+        access.assertAllBranches();
+        access.assertCost();
         LocalDate to = date(toRaw, LocalDate.now());
         LocalDate from = date(fromRaw, to.withDayOfMonth(1).minusMonths(2));
         Map<String, BigDecimal[]> acc = new LinkedHashMap<>();
@@ -259,6 +269,7 @@ public class SalesAnalyticsService {
      */
     @Transactional(readOnly = true)
     public Map<String, Object> forecast(int monthsRaw) {
+        access.assertAllBranches();
         int months = Math.max(1, Math.min(12, monthsRaw));
         LocalDate first = LocalDate.now().withDayOfMonth(1);
         BigDecimal history = sum(revenue.invoiced(first.minusMonths(3), first.minusDays(1)), "revenue");

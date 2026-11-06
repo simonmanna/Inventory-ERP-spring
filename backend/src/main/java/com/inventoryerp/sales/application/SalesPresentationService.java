@@ -45,6 +45,13 @@ public class SalesPresentationService {
     private final SalesAnalyticsService analytics;
     private final SalesAdvisorService advisor;
 
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     public SalesPresentationService(SalesDb db, SalesRevenueQuery revenue, SalesAnalyticsService analytics,
             SalesAdvisorService advisor) {
         this.db = db;
@@ -89,6 +96,7 @@ public class SalesPresentationService {
     /** The full deck data set of {@code [from, to]} (default: the last seven days). */
     @Transactional(readOnly = true)
     public Map<String, Object> snapshot(String fromRaw, String toRaw) {
+        access.assertAllBranches();
         LocalDate to = blank(toRaw) ? LocalDate.now() : SalesDb.date(toRaw);
         LocalDate from = blank(fromRaw) ? to.minusDays(6) : SalesDb.date(fromRaw);
         if (from.isAfter(to)) {

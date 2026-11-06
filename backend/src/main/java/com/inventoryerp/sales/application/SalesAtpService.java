@@ -43,6 +43,13 @@ public class SalesAtpService {
     private final UomConversionService uoms;
     private final List<SupplyProvider> suppliers;
 
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     public SalesAtpService(SalesDb db, StockReservationService reservations, UomConversionService uoms,
             List<SupplyProvider> suppliers) {
         this.db = db;
@@ -317,6 +324,7 @@ public class SalesAtpService {
     /** Backorder report: open confirmed lines not fully reserved, by priority and confirmation. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> backorders() {
+        access.assertAllBranches();
         return db.rows("""
                 SELECT o.id AS "orderId", o.number, o.priority, p.name AS "partnerName", l.id AS "lineId", l.description,
                        l."productId", l.quantity - l."qtyCancelled" - l."qtyDelivered" AS open, l."qtyReserved" AS reserved,

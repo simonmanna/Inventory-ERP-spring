@@ -73,6 +73,7 @@ public class SalesOrderService {
     private final EventBus events;
     private final ProductVariantService variants;
     private SalesAgreementService agreements;
+    private SalesAccess access;
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
@@ -220,6 +221,11 @@ public class SalesOrderService {
         this.agreements = agreements;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     /** New draft order (direct order flow). */
     @Transactional
     public Map<String, Object> create(Map<String, Object> in) {
@@ -229,6 +235,7 @@ public class SalesOrderService {
         }
         requirePartner(partnerId);
         Map<String, Object> header = header(in, true);
+        header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
         agreement(header, partnerId);
         header.put("number", nextNumber());
@@ -255,7 +262,8 @@ public class SalesOrderService {
         header.put("contactId", q.get("contactId"));
         header.put("quotationId", q.get("id"));
         header.put("dealId", q.get("dealId"));
-        header.putIfAbsent("branchId", q.get("branchId"));
+        header.put("branchId", access.documentBranch(str(header.containsKey("branchId") ? header.get("branchId")
+                : q.get("branchId"))));
         header.putIfAbsent("siteId", q.get("siteId"));
         header.putIfAbsent("deliveryAddress", q.get("deliveryAddress"));
         header.putIfAbsent("paymentTermId", q.get("paymentTermId"));
@@ -298,6 +306,9 @@ public class SalesOrderService {
             throw ApiException.badRequest("Only draft orders can be edited; request a change for a confirmed order");
         }
         Map<String, Object> d = header(in, false);
+        if (d.containsKey("branchId")) {
+            d.put("branchId", access.documentBranch(str(d.get("branchId"))));
+        }
         if (in.containsKey("partnerId")) {
             String p = str(in.get("partnerId"));
             requirePartner(p);
@@ -874,6 +885,7 @@ public class SalesOrderService {
     }
 
     private void visibility(StringBuilder where, List<Object> params) {
+        access.filterDocument(where, params, "o");
         if (TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
             return;
         }
