@@ -79,6 +79,17 @@ Same as Nest, kept on purpose:
   services write them through Prisma; approval gates that Nest runs outside `$transaction` run in
   `REQUIRES_NEW` so a refused request survives.
 
+SG-0 stabilization (2026-11-06), pending owner approval:
+
+- **Failed restock fails the credit note.** Nest logged a failed restock and posted anyway, so the books could credit
+  goods that never came back. `POST /credit-notes/{id}/post` now answers 400 and posts nothing. Goods that are not
+  coming back use `disposition=scrap`. A missing stock location fails the same way.
+- **Invoice list payment status.** Nest derived `paid` or `unpaid` from the residual; the port had hard-coded `unpaid`.
+  Back-office rows now also report `partially_paid` / `partially_settled`, and the filters run in SQL.
+- **`GET /invoices/{id}` also opens a proforma**, read-only, so a quotation converted to a proforma can be viewed. List
+  and write routes still only accept `sales_invoice`.
+- **Credit note currency.** A credit note against an invoice takes that invoice's currency and rate unless it names one.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

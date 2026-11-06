@@ -120,6 +120,13 @@ Bug fixes where the Nest code could never work (pending owner approval):
    gauges keep their names (JVM heap/non-heap instead of Node RSS); `erp_node_info` becomes `erp_jvm_info`,
    followed by the Micrometer Prometheus registry (JVM, HTTP, Hikari). Actuator web endpoints are not exposed.
 
+SG-0 stabilization (2026-11-06), pending owner approval:
+
+- **Global search is scoped.** Nest returned every type to any signed-in user. `GET /search` now returns only types the
+  caller has read permission for, applies the caller's branch scope, and honours own-orders-only for sales orders. It
+  also finds sales orders and quotations. Scope is checked after the per-type limit, so a restricted user can see fewer
+  than five hits of a type.
+
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

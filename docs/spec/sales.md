@@ -259,3 +259,25 @@ row per `sourceType` + `sourceId`, created on first update; until then defaults 
 - Site details (V365, 2026-11-05 owner request): `landmark` (GPS / landmark), `loadingSite`, `deliveryScope`
   (`full|partial`, 400 `deliveryScope must be one of: full, partial`) and `offloadingEquipment` (`yes|no`, 400
   `offloadingEquipment must be one of: yes, no`). All optional; web drops landmark / offloading for customer collect.
+
+## SG-0 stabilization (2026-11-06)
+
+Defects fixed from the Sales gap audit; `SalesStabilizationIT` and `SalesReturnIT` pin them.
+
+- `priceSource` accepts `price_list` on quotation and order lines (V400).
+- A return closed with a refund pays only the credit left after the invoice's open balance (`takeOpenCredit`). When the
+  credit clears the balance entirely, no payment is made and `refundPaymentId` stays null.
+- A sales order's invoice carries the order's currency and rate. Sales reports convert documents, order totals and
+  payments to base currency at the stored rate.
+- Quotations save `branchId`, `paymentTermId`, `siteId`, `deliveryAddress` and line `uomId`, and price with the header's
+  site, branch and currency. Orders price with theirs too.
+- New quotations and orders, and confirming a draft order, answer 400 `This customer is not active`.
+
+Known limits, left for later phases:
+
+- Quotations have no `exchangeRate`, so a foreign quotation converts to an order at rate 1 and quotation reports stay in
+  document currency (SG-3).
+- Customer deposits in reports are not converted (no rate stored).
+- `SalesRevenueQuery` (analytics, commissions, the Targets tab) is still in document currency (SG-11, SG-12).
+- Invoices already billed at rate 1 from foreign orders are not changed; check production before relying on old totals.
+- `InvoiceService.list` reports a total capped by its fetch limit (SG-9).
