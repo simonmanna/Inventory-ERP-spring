@@ -92,6 +92,22 @@ public class SalesDb {
     }
 
     /** The customer a new sales document is for must exist and be active. */
+    /** A JSON array column as rows, whichever form the driver handed it over in. */
+    @SuppressWarnings("unchecked")
+    static List<Map<String, Object>> jsonList(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (raw instanceof List<?> l) {
+            return (List<Map<String, Object>>) l;
+        }
+        try {
+            return new tools.jackson.databind.ObjectMapper().readValue(raw.toString(), List.class);
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
     void requireActivePartner(String partnerId) {
         Map<String, Object> p = partnerId == null ? null : row("SELECT status::text AS status, \"deletedAt\","
                 + " \"suspendedAt\", \"suspendedReason\", \"mergedIntoPartnerId\" FROM \"Partner\" WHERE id = ? AND"

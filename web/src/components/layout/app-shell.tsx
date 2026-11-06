@@ -348,6 +348,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/fleet/delivery-orders', label: tx('Deliveries'), icon: Truck, permission: PERMISSIONS.fleetDispatch.read, feature: 'fleet' },
       { to: '/invoices', label: tx('Invoices'), icon: Receipt, permission: PERMISSIONS.invoice.read },
       { to: '/sales/deliveries', label: tx('Deliveries'), icon: Truck, permission: PERMISSIONS.sales.deliveryRead },
+      { to: '/sales/statements', label: tx('Customer Statements'), icon: FileText, permission: PERMISSIONS.sales.collectionsRead },
       { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
       { to: '/sales/credit-notes', label: tx('Credit Notes'), icon: Receipt, permission: PERMISSIONS.sales.returnRead },
       { to: '/sales/returns', label: tx('Returns'), icon: Undo2, permission: PERMISSIONS.sales.returnRead },

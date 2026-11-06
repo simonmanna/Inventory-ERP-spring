@@ -115,7 +115,7 @@ export function ReturnDetailPage() {
                       <option value="restock">{tx('Restock')}</option><option value="quarantine">{tx('Quarantine')}</option><option value="damaged">{tx('Damaged')}</option><option value="scrap">{tx('Scrap')}</option>
                     </select>
                     {['quarantine', 'damaged'].includes(disp[l.id]?.disposition ?? '') && <HeaderSelect value={disp[l.id]?.locationId ?? ''} options={options.locations} none={tx('Location…')} onChange={(locationId) => setDisp({ ...disp, [l.id]: { ...disp[l.id], locationId } })} />}
-                    <Input aria-label={tx('Rejected quantity')} title={tx('Rejected quantity: refused, goes back to the customer, no credit')} className="h-8 w-20" type="number" min={0} placeholder={tx('Reject')} onChange={(e) => setDisp({ ...disp, [l.id]: { disposition: 'restock', ...disp[l.id], rejectedQty: Number(e.target.value) } })} />
+                    <Input aria-label={tx('Rejected quantity')} title={tx('Rejected quantity: refused, goes back to the customer, no credit')} className="h-8 w-20" type="number" min={0} placeholder={tx('Reject')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock', rejectedQty: Number(e.target.value) } })} />
                     {Number(disp[l.id]?.rejectedQty ?? 0) > 0 && <Input className="h-8 w-40" placeholder={tx('Why rejected')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], rejectReason: e.target.value } })} />}
                   </div>) : l.disposition ?? '—'}</td>
                 <td className="py-1 text-right">{l.creditQty == null ? '—' : Number(l.creditQty)}</td>
@@ -124,6 +124,7 @@ export function ReturnDetailPage() {
           </tbody>
         </table>
       </div>
+      <AttachmentPanel resType="sales_return" resId={r.id} />
     </div>
   );
 }

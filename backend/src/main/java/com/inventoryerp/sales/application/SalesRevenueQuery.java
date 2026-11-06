@@ -40,17 +40,30 @@ public class SalesRevenueQuery {
             + " 'credit_note') AND d.status IN ('posted', 'paid') AND l.\"productId\" IS NOT NULL";
 
     private final SalesDb db;
+    private final SalesReportFacts facts;
 
-    public SalesRevenueQuery(SalesDb db) {
+    public SalesRevenueQuery(SalesDb db, SalesReportFacts facts) {
         this.db = db;
+        this.facts = facts;
     }
 
-    /** Lines of documents issued in {@code [from, to]} (basis {@code invoiced}). */
+    /**
+     * Lines of documents issued in {@code [from, to]} (basis {@code invoiced}), read from the report center's fact so that
+     * commissions, targets, analytics and reports share one revenue: net of tax and discount, in base currency, at actual
+     * cost where the ledger knows it.
+     */
     List<Map<String, Object>> invoiced(LocalDate from, LocalDate to) {
-        return db.rows(COLUMNS + SIGN + " * l.quantity AS quantity, " + SIGN + " * l.subtotal AS revenue, " + SIGN
-                + " * l.quantity * COALESCE(pr.\"costPrice\", 0) AS cost, 'invoiced' AS basis" + JOINS + " WHERE" + SCOPE
-                + " AND d.\"issueDate\" >= ? AND d.\"issueDate\" < ? ORDER BY d.\"issueDate\", d.\"documentNumber\"",
-                org(), from, to.plusDays(1));
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Map<String, Object> f : facts.lines(SalesReportKit.Filter.parse(Map.of("from", from.toString(), "to", to.toString())), null,
+                "f.date, f.number")) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>(f);
+            m.put("productCategoryId", f.get("categoryId"));
+            m.put("partnerCategoryId", f.get("customerCategoryId"));
+            m.put("description", f.get("productName") != null ? f.get("productName") : f.get("number"));
+            m.put("basis", "invoiced");
+            out.add(m);
+        }
+        return out;
     }
 
     /**
@@ -60,11 +73,11 @@ public class SalesRevenueQuery {
     List<Map<String, Object>> paid(LocalDate from, LocalDate to) {
         String share = "(a.amount - COALESCE(a.\"refundedAmount\", 0)) / NULLIF(d.\"totalAmount\", 0)";
         List<Map<String, Object>> out = new java.util.ArrayList<>(db.rows(COLUMNS + "l.quantity * " + share
-                + " AS quantity, l.subtotal * " + share + " AS revenue, l.quantity * COALESCE(pr.\"costPrice\", 0) * "
-                + share + " AS cost, 'paid' AS basis" + JOINS + " JOIN \"PaymentAllocation\" a ON COALESCE(a.\"documentId\","
+                + " AS quantity, l.subtotal * d.\"exchangeRate\" * " + share + " AS revenue, l.quantity * COALESCE(pr.\"costPrice\", 0) * "
+                + share + " AS cost, 'paid' AS basis, a.\"paymentId\"" + JOINS + " JOIN \"PaymentAllocation\" a ON COALESCE(a.\"documentId\","
                 + " a.\"invoiceId\") = d.id WHERE" + SCOPE + " AND d.\"documentType\" = 'sales_invoice' AND"
                 + " a.\"createdAt\" >= ? AND a.\"createdAt\" < ? ORDER BY a.\"createdAt\"", org(), from, to.plusDays(1)));
-        out.addAll(db.rows(COLUMNS + "-l.quantity AS quantity, -l.subtotal AS revenue, -l.quantity *"
+        out.addAll(db.rows(COLUMNS + "-l.quantity AS quantity, -l.subtotal * d.\"exchangeRate\" AS revenue, -l.quantity *"
                 + " COALESCE(pr.\"costPrice\", 0) AS cost, 'paid' AS basis" + JOINS + " WHERE" + SCOPE
                 + " AND d.\"documentType\" = 'credit_note' AND d.\"issueDate\" >= ? AND d.\"issueDate\" < ?", org(), from,
                 to.plusDays(1)));

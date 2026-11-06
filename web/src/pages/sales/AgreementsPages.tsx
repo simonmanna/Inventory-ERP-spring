@@ -265,8 +265,11 @@ function Statements({ canManage }: { canManage: boolean }) {
   const { data } = useQuery({ queryKey: ['sales', 'commission-statements'], queryFn: async () => (await api.get<Statement[]>('/sales/commissions/statements')).data });
   const generate = useSave(async () => (await api.post('/sales/commissions/statements', { month })).data, () => toast.success(tx('Statements generated')));
   const act = useSave(async ({ id, action }: { id: string; action: string }) => (await api.post(`/sales/commissions/statements/${id}/${action}`, {})).data);
+  const paid = useSave(async (id: string) => (await api.post(`/sales/commissions/statements/${id}/paid`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data);
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="space-y-2">
+      {open && <StatementDetail id={open} canManage={canManage} onClose={() => setOpen(null)} />}
       {canManage && (
         <div className="flex gap-2"><Input type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} />
           <Button onClick={() => generate.mutate(undefined)} disabled={generate.isPending}>{tx('Generate statements')}</Button></div>
@@ -281,7 +284,7 @@ function Statements({ canManage }: { canManage: boolean }) {
                 <td className={cn(th, 'font-medium')}>{s.number}</td><td className={th}>{s.salespersonName}</td><td className={th}>{s.periodStart.slice(0, 7)}</td>
                 <td className={cn(th, 'text-right tabular-nums', Number(s.total) < 0 && 'text-rose-600')}>{money(s.total)}</td>
                 <td className={th}>{s.status}{s.payrollInputId && ` · ${tx('in payroll')}`}</td>
-                <td className={cn(th, 'space-x-1 text-right')}>{canManage && s.status === 'draft' && <>
+                <td className={cn(th, 'space-x-1 text-right')}><Button size="sm" variant="ghost" onClick={() => setOpen(s.id)}>{tx('Details')}</Button>{canManage && s.status === 'approved' && Number(s.total) > 0 && <Button size="sm" variant="outline" onClick={() => paid.mutate(s.id)}>{tx('Mark paid')}</Button>}{canManage && s.status === 'draft' && <>
                   <Button size="sm" onClick={() => act.mutate({ id: s.id, action: 'approve' })}>{tx('Approve')}</Button>
                   <Button size="sm" variant="outline" onClick={() => act.mutate({ id: s.id, action: 'cancel' })}>{tx('Cancel')}</Button></>}</td>
               </tr>
@@ -294,11 +297,49 @@ function Statements({ canManage }: { canManage: boolean }) {
   );
 }
 
+interface StatementFull { id: string; number: string; status: string; total: number; linesTotal: number | null; adjustmentTotal: number; carriedIn: number; lines: Array<{ number: string; description: string; revenue: number; rate: number; amount: number; basis: string; paymentId?: string | null; splitFrom?: string | null }> | null; adjustments: Array<{ id: string; amount: number; reason: string }>; disputes: Array<{ id: string; reason: string; status: string; resolution: string | null }> }
+
+/** One statement: every line, adjustments, what was carried in, disputes and the PDF. */
+function StatementDetail({ id, canManage, onClose }: { id: string; canManage: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const key = ['sales', 'commission-statement', id];
+  const { data: s } = useQuery({ queryKey: key, queryFn: async () => (await api.get<StatementFull>(`/sales/commissions/statements/${id}`)).data });
+  const refresh = () => { void qc.invalidateQueries({ queryKey: key }); void qc.invalidateQueries({ queryKey: ['sales', 'commission-statements'] }); };
+  const fail = (e: unknown) => toast.error(apiErrorMessage(e, tx('Action failed')));
+  const pdf = async () => {
+    try {
+      const r = await api.get(`/sales/commissions/statements/${id}/pdf`, { responseType: 'blob' });
+      const url = URL.createObjectURL(r.data as Blob);
+      const a = document.createElement('a'); a.href = url; a.download = `${s?.number}.pdf`; a.click(); URL.revokeObjectURL(url);
+    } catch (e) { fail(e); }
+  };
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogHeader><DialogTitle>{s?.number}</DialogTitle></DialogHeader>
+        {s && <div className="space-y-3 text-sm">
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={pdf}>PDF</Button>
+            {canManage && s.status === 'draft' && <Button size="sm" variant="outline" onClick={() => { const amount = Number(prompt(tx('Adjustment amount (negative to reduce)'))); const reason = amount ? prompt(tx('Reason')) : null; if (amount && reason) api.post(`/sales/commissions/statements/${id}/adjustments`, { amount, reason }).then(refresh).catch(fail); }}>{tx('Add adjustment')}</Button>}
+            <Button size="sm" variant="outline" onClick={() => { const reason = prompt(tx('What is wrong with this statement?')); if (reason) api.post(`/sales/commissions/statements/${id}/disputes`, { reason }).then(refresh).catch(fail); }}>{tx('Dispute')}</Button>
+          </div>
+          <p>{tx('Lines')} {money(s.linesTotal ?? 0)} + {tx('adjustments')} {money(s.adjustmentTotal)} + {tx('carried in')} {money(s.carriedIn)} = <strong>{money(s.total)}</strong></p>
+          <table className="w-full"><thead className="text-left text-xs text-muted-foreground"><tr><th>{tx('Document')}</th><th>{tx('Description')}</th><th className="text-right">{tx('Base')}</th><th className="text-right">{tx('Rate')}</th><th className="text-right">{tx('Amount')}</th></tr></thead>
+            <tbody>{(s.lines ?? []).map((l, i) => <tr key={i} className="border-t"><td className="py-1">{l.number}{l.paymentId && <span className="block text-[11px] text-muted-foreground">{tx('payment')} {l.paymentId.slice(0, 8)}</span>}{l.splitFrom && <span className="block text-[11px] text-muted-foreground">{tx('split')}</span>}</td><td className="py-1">{l.description}</td><td className="py-1 text-right tabular-nums">{money(l.revenue)}</td><td className="py-1 text-right tabular-nums">{Number(l.rate)}</td><td className="py-1 text-right tabular-nums">{money(l.amount)}</td></tr>)}</tbody></table>
+          {s.adjustments.length > 0 && <div><h3 className="font-semibold">{tx('Adjustments')}</h3><ul className="list-disc pl-4">{s.adjustments.map((a) => <li key={a.id}>{money(a.amount)}: {a.reason}</li>)}</ul></div>}
+          {s.disputes.length > 0 && <div><h3 className="font-semibold">{tx('Disputes')}</h3><ul className="space-y-1">{s.disputes.map((d) => <li key={d.id} className="flex items-center justify-between gap-2 rounded border p-2"><span>{d.reason} · {tx(d.status)}{d.resolution && ` · ${d.resolution}`}</span>{canManage && d.status === 'open' && <Button size="sm" variant="outline" onClick={() => { const resolution = prompt(tx('How was this resolved?')); if (resolution) api.post(`/sales/commissions/disputes/${d.id}/resolve`, { resolution }).then(refresh).catch(fail); }}>{tx('Resolve')}</Button>}</li>)}</ul></div>}
+        </div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function Rules() {
   const { data } = useQuery({ queryKey: ['sales', 'commission-rules'], queryFn: async () => (await api.get<Rule[]>('/sales/commissions/rules')).data });
   const { data: lk } = useCrmLookups();
   const [edit, setEdit] = useState<Partial<Rule> | null>(null);
-  const pick = (r: Partial<Rule>) => ({ name: r.name, salespersonId: r.salespersonId ?? null, basis: r.basis, method: r.method, rate: r.rate, priority: r.priority ?? 0, isActive: r.isActive !== false });
+  const parseTiers = (t: string) => t.split(',').map((x) => x.trim()).filter(Boolean).map((x) => { const [from, rate] = x.split(':'); return { from: Number(from), rate: Number(rate) }; });
+  const pick = (r: Partial<Rule> & { tierText?: string }) => ({ name: r.name, salespersonId: r.salespersonId ?? null, basis: r.basis, method: r.method, rate: r.rate, priority: r.priority ?? 0, isActive: r.isActive !== false, ...(r.tierText !== undefined ? { tiers: parseTiers(r.tierText) } : {}) });
   const save = useSave(async (r: Partial<Rule>) => (r.id ? await api.put(`/sales/commissions/rules/${r.id}`, pick(r)) : await api.post('/sales/commissions/rules', pick(r))).data, () => setEdit(null));
   const METHOD: Record<string, string> = { percent_revenue: tx('% of revenue'), percent_margin: tx('% of margin'), per_unit: tx('per unit') };
   return (
@@ -320,6 +361,7 @@ function Rules() {
               <Field label={tx('Method')}><select className={sel} value={edit.method} onChange={(e) => setEdit({ ...edit, method: e.target.value })}>{Object.entries(METHOD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
               <Field label={tx('Rate')}><Input type="number" value={edit.rate ?? 0} onChange={(e) => setEdit({ ...edit, rate: Number(e.target.value) })} /></Field>
               <Field label={tx('Priority')}><Input type="number" value={edit.priority ?? 0} onChange={(e) => setEdit({ ...edit, priority: Number(e.target.value) })} /></Field>
+              <Field label={tx('Tiers: from:rate, from:rate (optional)')} className="sm:col-span-2"><Input placeholder="0:1, 1000000:2" onChange={(e) => setEdit({ ...edit, tierText: e.target.value } as Partial<Rule>)} /></Field>
               <label className="flex items-center gap-2 self-end text-sm"><input type="checkbox" checked={edit.isActive !== false} onChange={(e) => setEdit({ ...edit, isActive: e.target.checked })} />{tx('Active')}</label>
             </div>
             <DialogFooter><Button variant="outline" onClick={() => setEdit(null)}>{tx('Cancel')}</Button><Button disabled={!edit.name} onClick={() => save.mutate(edit)}>{tx('Save')}</Button></DialogFooter>
@@ -335,13 +377,14 @@ function Targets() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const { data } = useQuery({ queryKey: ['sales', 'targets', month], queryFn: async () => (await api.get<Target[]>('/sales/targets/achievement', { params: { month } })).data });
   const { data: lk } = useCrmLookups();
-  const [form, setForm] = useState<{ salespersonId: string; amount: number } | null>(null);
-  const save = useSave(async () => (await api.post('/sales/targets', { ...form, month, salespersonId: form?.salespersonId || null })).data, () => setForm(null));
+  const [form, setForm] = useState<{ id?: string; salespersonId: string; amount: number; metric: string; periodType: string } | null>(null);
+  const save = useSave(async () => { const body = { salespersonId: form?.salespersonId || null, amount: form?.amount, metric: form?.metric, periodType: form?.periodType, periodStart: `${month}-01` }; return (form?.id ? await api.put(`/sales/targets/${form.id}`, body) : await api.post('/sales/targets', body)).data; }, () => setForm(null));
+  const METRIC: Record<string, string> = { revenue: tx('Revenue'), gross_profit: tx('Gross profit'), collection: tx('Collections'), new_customers: tx('New customers'), order_count: tx('Number of orders'), order_value: tx('Order value') };
   const del = useSave(async (id: string) => (await api.delete(`/sales/targets/${id}`)).data);
   return (
     <div className="space-y-2">
       <div className="flex gap-2"><Input type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} />
-        {canManage && <Button onClick={() => setForm({ salespersonId: '', amount: 0 })}><Plus className="mr-1 h-4 w-4" />{tx('New target')}</Button>}</div>
+        {canManage && <Button onClick={() => setForm({ salespersonId: '', amount: 0, metric: 'revenue', periodType: 'month' })}><Plus className="mr-1 h-4 w-4" />{tx('New target')}</Button>}</div>
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
         <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr>
@@ -349,10 +392,10 @@ function Targets() {
           <tbody>
             {(data ?? []).map((t) => (
               <tr key={t.id} className="border-t">
-                <td className={th}>{[t.salespersonName, t.teamName, t.branchName, t.productCategoryName].filter(Boolean).join(' · ') || tx('Whole company')}</td>
+                <td className={th}>{[t.salespersonName, t.teamName, t.branchName, t.productCategoryName].filter(Boolean).join(' · ') || tx('Whole company')}<span className="block text-xs text-muted-foreground">{METRIC[(t as Target & { metric?: string }).metric ?? 'revenue']} · {tx((t as Target & { periodType?: string }).periodType ?? 'month')}</span></td>
                 <td className={cn(th, 'text-right tabular-nums')}>{money(t.amount)}</td><td className={cn(th, 'text-right tabular-nums')}>{money(t.actualAmount ?? 0)}</td>
                 <td className={th}><div className="flex items-center gap-2"><div className="h-2 w-32 overflow-hidden rounded bg-muted"><div className={cn('h-full', Number(t.achievementPercent) >= 100 ? 'bg-emerald-500' : 'bg-primary')} style={{ width: `${Math.min(100, Number(t.achievementPercent ?? 0))}%` }} /></div><span className="text-xs tabular-nums">{t.achievementPercent ?? '—'}%</span></div></td>
-                <td className={th}>{canManage && <Button size="icon" variant="ghost" onClick={() => del.mutate(t.id)}><Trash2 className="h-4 w-4" /></Button>}</td>
+                <td className={th}>{canManage && <><Button size="sm" variant="ghost" onClick={() => setForm({ id: t.id, salespersonId: (t as Target & { salespersonId?: string | null }).salespersonId ?? '', amount: Number(t.amount), metric: (t as Target & { metric?: string }).metric ?? 'revenue', periodType: (t as Target & { periodType?: string }).periodType ?? 'month' })}>{tx('Edit')}</Button><Button size="icon" variant="ghost" onClick={() => del.mutate(t.id)}><Trash2 className="h-4 w-4" /></Button></>}</td>
               </tr>
             ))}
             {data && data.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{tx('No targets for this month.')}</td></tr>}
@@ -365,7 +408,9 @@ function Targets() {
             <DialogHeader><DialogTitle>{tx('Sales target')} {month}</DialogTitle></DialogHeader>
             <Field label={tx('Salesperson')}><select className={sel} value={form.salespersonId} onChange={(e) => setForm({ ...form, salespersonId: e.target.value })}>
               <option value="">{tx('Whole company')}</option>{(lk?.users ?? []).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Field>
-            <Field label={tx('Amount')}><Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
+            <Field label={tx('Measure')}><select className={sel} value={form.metric} onChange={(e) => setForm({ ...form, metric: e.target.value })}>{Object.entries(METRIC).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+            <Field label={tx('Period')}><select className={sel} value={form.periodType} onChange={(e) => setForm({ ...form, periodType: e.target.value })}><option value="week">{tx('Week')}</option><option value="month">{tx('Month')}</option><option value="quarter">{tx('Quarter')}</option><option value="year">{tx('Year')}</option></select></Field>
+            <Field label={tx('Target')}><Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></Field>
             <DialogFooter><Button variant="outline" onClick={() => setForm(null)}>{tx('Cancel')}</Button><Button onClick={() => save.mutate(undefined)}>{tx('Save')}</Button></DialogFooter>
           </DialogContent>
         </Dialog>

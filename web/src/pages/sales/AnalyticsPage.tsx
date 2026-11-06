@@ -43,7 +43,7 @@ export function AnalyticsPage() {
       <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
         {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={cn('rounded-md px-3 py-1.5 text-sm', tab === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{l}</button>)}
       </div>
-      {tab === 'overview' && <Overview />}
+      {tab === 'overview' && <><CustomerKpis /><Overview /></>}
       {tab === 'analysis' && <AnalysisTab />}
       {tab === 'profitability' && <Profitability />}
       {tab === 'forecast' && <ForecastTab />}
@@ -111,6 +111,21 @@ function Range({ from, to, onChange }: { from: string; to: string; onChange: (f:
     <div className="flex gap-2">
       <Input type="date" className="w-40" value={from} onChange={(e) => onChange(e.target.value, to)} />
       <Input type="date" className="w-40" value={to} onChange={(e) => onChange(from, e.target.value)} />
+    </div>
+  );
+}
+
+/** Average order value, lifetime value, churn and bad debt, this month. */
+function CustomerKpis() {
+  const { data: k } = useQuery({ queryKey: ['sales', 'analytics', 'kpis'], queryFn: async () => (await api.get<{ averageOrderValue: number; lifetimeValue: number; activeCustomers: number; newCustomers: number; churnPercent: number | null; lostCustomers: number; badDebt: number }>('/sales/analytics/kpis')).data, retry: false });
+  if (!k) return null;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <KpiCard label={tx('Average order value')} value={money(k.averageOrderValue)} />
+      <KpiCard label={tx('Customer lifetime value')} value={money(k.lifetimeValue)} />
+      <KpiCard label={tx('New customers')} value={k.newCustomers} sub={`${k.activeCustomers} ${tx('active')}`} />
+      <KpiCard label={tx('Churn')} value={k.churnPercent == null ? '—' : `${k.churnPercent}%`} sub={`${k.lostCustomers} ${tx('lost')}`} />
+      <KpiCard label={tx('Bad debt written off')} value={money(k.badDebt)} />
     </div>
   );
 }

@@ -209,6 +209,38 @@ public final class SalesAgreementController {
             return svc.approve(id);
         }
 
+        @PostMapping("/commissions/statements/{id}/adjustments")
+        @RequirePermissions(Permissions.SALES__COMMISSION_MANAGE)
+        public Map<String, Object> adjust(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.addAdjustment(id, b);
+        }
+
+        @PostMapping("/commissions/statements/{id}/disputes")
+        @RequirePermissions(Permissions.SALES__COMMISSION_READ)
+        public Map<String, Object> dispute(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.dispute(id, b);
+        }
+
+        @PostMapping("/commissions/disputes/{id}/resolve")
+        @RequirePermissions(Permissions.SALES__COMMISSION_MANAGE)
+        public Map<String, Object> resolveDispute(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.resolveDispute(id, b);
+        }
+
+        @PostMapping("/commissions/statements/{id}/paid")
+        @com.inventoryerp.kernel.idempotency.Idempotent
+        @RequirePermissions(Permissions.SALES__COMMISSION_MANAGE)
+        public Map<String, Object> paid(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.markPaid(id, b == null ? Map.of() : b);
+        }
+
+        @GetMapping("/commissions/statements/{id}/pdf")
+        @RequirePermissions(Permissions.SALES__COMMISSION_READ)
+        public org.springframework.http.ResponseEntity<byte[]> pdf(@PathVariable String id) {
+            return org.springframework.http.ResponseEntity.ok().header(org.springframework.http.HttpHeaders.CONTENT_TYPE, "application/pdf")
+                    .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"commission-" + id + ".pdf\"").body(svc.pdf(id));
+        }
+
         @PostMapping("/commissions/statements/{id}/cancel")
         @RequirePermissions(Permissions.SALES__COMMISSION_MANAGE)
         public Map<String, Object> cancel(@PathVariable String id) {

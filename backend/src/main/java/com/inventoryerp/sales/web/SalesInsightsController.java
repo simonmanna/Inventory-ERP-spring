@@ -45,9 +45,11 @@ public final class SalesInsightsController {
         private final SalesAnalyticsService analytics;
         private final SalesAdvisorService advisor;
         private final SalesPresentationService presentation;
+        private final com.inventoryerp.sales.application.SalesTargetService targets;
 
         public Analytics(SalesAnalyticsService analytics, SalesAdvisorService advisor,
-                SalesPresentationService presentation) {
+                SalesPresentationService presentation, com.inventoryerp.sales.application.SalesTargetService targets) {
+            this.targets = targets;
             this.analytics = analytics;
             this.advisor = advisor;
             this.presentation = presentation;
@@ -64,6 +66,13 @@ public final class SalesInsightsController {
         public Map<String, Object> analysis(@RequestParam(required = false) String groupBy,
                 @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
             return analytics.analysis(groupBy, from, to);
+        }
+
+        @GetMapping("/analytics/kpis")
+        @RequirePermissions(Permissions.SALES__REPORT_READ)
+        public Map<String, Object> kpis(@RequestParam(required = false) String from, @RequestParam(required = false) String to) {
+            java.time.LocalDate end = to == null || to.isBlank() ? java.time.LocalDate.now() : java.time.LocalDate.parse(to);
+            return targets.kpis(from == null || from.isBlank() ? end.withDayOfMonth(1) : java.time.LocalDate.parse(from), end);
         }
 
         @GetMapping("/analytics/profitability")
