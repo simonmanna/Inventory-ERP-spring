@@ -269,6 +269,12 @@ public class SalesQuotationService {
                 currency, "notes", str(in.get("notes")), "terms", in.containsKey("terms") ? str(in.get("terms"))
                 : str(settings.get("defaultQuoteTerms")), "createdById", user()));
         Map<String, Object> commercial = new LinkedHashMap<>(commercial(in));
+        if (commercial.get("agreementId") == null) {
+            String project = engine.projectAgreement(partnerId, str(commercial.get("siteId")), issue);
+            if (project != null) {
+                commercial.put("agreementId", project);
+            }
+        }
         commercial.put("branchId", access.documentBranch(str(commercial.get("branchId"))));
         row = db.patch("SalesQuotation", str(row.get("id")), commercial, true);
         String id = str(row.get("id"));
@@ -342,6 +348,11 @@ public class SalesQuotationService {
             }
             d.put("exchangeRate", r);
         }
+        for (String k : List.of("orderDiscountPercent", "orderDiscountAmount")) {
+            if (in.containsKey(k)) {
+                d.put(k, in.get(k) == null || dec(in.get(k)).signum() == 0 ? null : dec(in.get(k)));
+            }
+        }
         if (d.get("branchId") != null && !db.exists("Branch", str(d.get("branchId")))) {
             throw ApiException.notFound("Branch not found");
         }
@@ -411,6 +422,20 @@ public class SalesQuotationService {
                     + " \"maxDiscountPercent\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
             return;
         }
+        BigDecimal orderNet = BigDecimal.ZERO;
+        for (LineInput li : inputs) {
+            orderNet = orderNet.add(SalesDiscounts.net(li.quantity(), li.unitPrice(), li.discountPercent()));
+        }
+        BigDecimal orderPercent = SalesDiscounts.orderPercent(header.get("orderDiscountPercent") == null ? null
+                : dec(header.get("orderDiscountPercent")), header.get("orderDiscountAmount") == null ? null
+                        : dec(header.get("orderDiscountAmount")), orderNet);
+        if (orderPercent.signum() > 0) {
+            for (int k = 0; k < inputs.size(); k++) {
+                LineInput li = inputs.get(k);
+                meta.get(k).put("lineDiscountPercent", li.discountPercent());
+                inputs.set(k, li.withDiscountPercent(SalesDiscounts.combine(li.discountPercent(), orderPercent)));
+            }
+        }
         Totals totals = builder.prepareLines(inputs);
         BigDecimal maxDisc = BigDecimal.ZERO;
         int i = 0;
@@ -426,7 +451,7 @@ public class SalesQuotationService {
                     "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
-                    "priceRuleId", m.get("ruleId"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
+                    "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(), "lineTotal", pl.total()));
             i++;
         }

@@ -43,6 +43,12 @@ public class DocumentBuilderService {
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
             String lineType, Boolean taxInclusive, String uomId) {
 
+        /** The same line with another discount. */
+        public LineInput withDiscountPercent(BigDecimal percent) {
+            return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice, percent,
+                    discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive, uomId);
+        }
+
         /** Line in the role's default unit (ADR-S003: {@code uomId} picks another unit of the product). */
         public LineInput(String productId, String menuItemId, String variantId, String variantName, String accountId,
                 String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,

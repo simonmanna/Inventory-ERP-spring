@@ -60,6 +60,17 @@ public class SalesReturnService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final EventBus events;
+    private SalesAccess access;
+    private SalesSettingsService settings;
+    private SalesCreditFlowService creditFlow;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCollaborators(SalesAccess access, SalesSettingsService settings,
+            @org.springframework.context.annotation.Lazy SalesCreditFlowService creditFlow) {
+        this.access = access;
+        this.settings = settings;
+        this.creditFlow = creditFlow;
+    }
 
     public SalesReturnService(SalesDb db, SalesOrderService orders, StockService stock, CreditNoteService creditNotes,
             PaymentService payments, SequenceService sequence, AuditService audit, EventBus events) {
@@ -79,6 +90,7 @@ public class SalesReturnService {
     public List<Map<String, Object>> list(Map<String, String> p) {
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" WHERE r.\"organizationId\" = ?");
+        where.append(access.branchClause("o.\"branchId\"", params));
         for (String k : List.of("orderId", "partnerId", "status")) {
             if (!blank(p.get(k))) {
                 where.append(" AND r.\"").append(k).append("\" = ?");
@@ -212,12 +224,14 @@ public class SalesReturnService {
             if (qty.signum() < 0 || qty.compareTo(dec(l.get("quantity"))) > 0) {
                 throw ApiException.badRequest("Received quantity of " + l.get("description") + " is out of range");
             }
+            BigDecimal issueCost = issueUnitCost(str(l.get("orderLineId")));
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
-                stock.receiveReturn(StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
-                        .uom(str(l.get("uomId")),
-                        dec(l.get("uomFactor"))).reference(str(r.get("number"))).source("sales_return", id));
+                StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
+                        .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
+                        .source("sales_return", id);
+                stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
             }
-            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ? WHERE id = ?", qty, l.get("id"));
+            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?", qty, issueCost, l.get("id"));
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'received', \"receiveLocationId\" = ?, \"receivedAt\" = now(),"
                 + " \"updatedAt\" = now() WHERE id = ?", location, id);
@@ -228,7 +242,21 @@ public class SalesReturnService {
         return get(id);
     }
 
-    /** Inspect: {@code lines [{lineId, disposition: restock|quarantine|scrap, locationId?, notes?}]}. */
+    /** SG-7: what the goods cost when they left, so the return reverses that and not today's average. Per base unit. */
+    private BigDecimal issueUnitCost(String orderLineId) {
+        Map<String, Object> c = db.row("SELECT sum(ll.\"stockValue\") AS v, sum(COALESCE(ll.\"dispatchedQty\", 0) * ll.\"uomFactor\") AS q FROM \"FleetLoadLine\" ll"
+                + " JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\" WHERE dl.\"sourceLineId\" = ? AND ll.\"organizationId\" = ? AND"
+                + " ll.\"stockValue\" IS NOT NULL", orderLineId, org());
+        if (c == null || c.get("v") == null || dec(c.get("q")).signum() <= 0) {
+            return null;
+        }
+        return dec(c.get("v")).divide(dec(c.get("q")), 6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Inspect: {@code lines [{lineId, disposition: restock|quarantine|damaged|scrap, locationId?, rejectedQty?, rejectReason?,
+     * notes?}]}. A rejected quantity is refused: it goes back to the customer out of stock and earns no credit.
+     */
     @Transactional
     @SuppressWarnings("unchecked")
     public Map<String, Object> inspect(String id, Map<String, Object> in) {
@@ -245,15 +273,27 @@ public class SalesReturnService {
                 + " p.id = rl.\"productId\" WHERE rl.\"returnId\" = ?", id)) {
             Map<String, Object> g = given.getOrDefault(str(l.get("id")), Map.of());
             String disposition = g.get("disposition") == null ? "restock" : str(g.get("disposition"));
-            if (!Set.of("restock", "quarantine", "scrap").contains(disposition)) {
-                throw ApiException.badRequest("disposition must be one of: quarantine, restock, scrap");
+            if (!Set.of("restock", "quarantine", "damaged", "scrap").contains(disposition)) {
+                throw ApiException.badRequest("disposition must be one of: damaged, quarantine, restock, scrap");
             }
-            BigDecimal qty = dec(l.get("receivedQty"));
+            BigDecimal rejected = dec(g.get("rejectedQty"));
+            if (rejected.signum() < 0 || rejected.compareTo(dec(l.get("receivedQty"))) > 0) {
+                throw ApiException.badRequest("Rejected quantity of " + l.get("description") + " is out of range");
+            }
+            if (rejected.signum() > 0 && blank(str(g.get("rejectReason")))) {
+                throw ApiException.badRequest("Give a reason for rejecting " + l.get("description"));
+            }
+            BigDecimal qty = dec(l.get("receivedQty")).subtract(rejected);
             String target = str(g.get("locationId"));
             boolean tracked = Boolean.TRUE.equals(l.get("trackInventory")) && qty.signum() > 0;
-            if (tracked && "quarantine".equals(disposition)) {
+            if (rejected.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
+                stock.issue(StockMove.of(str(l.get("productId")), from, rejected).variant(str(l.get("variantId")))
+                        .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).moveType("issue").reference(str(r.get("number")))
+                        .source("sales_return", id).notes("Rejected on return " + r.get("number") + ": " + g.get("rejectReason")));
+            }
+            if (tracked && Set.of("quarantine", "damaged").contains(disposition)) {
                 if (target == null) {
-                    throw ApiException.badRequest("Choose the quarantine location for " + l.get("description"));
+                    throw ApiException.badRequest("Choose the " + disposition + " location for " + l.get("description"));
                 }
                 if (!target.equals(from)) {
                     StockMove m = StockMove.transfer(str(l.get("productId")), from, target, qty)
@@ -267,9 +307,9 @@ public class SalesReturnService {
                         "uomFactor"))).moveType("waste").reference(str(r.get("number"))).source("sales_return", id)
                         .notes("Scrapped return " + r.get("number")));
             }
-            db.update("UPDATE \"SalesReturnLine\" SET disposition = ?, \"dispositionLocationId\" = ?, \"inspectionNotes\" = ?"
-                    + " WHERE id = ?", disposition, "quarantine".equals(disposition) ? target : from, str(g.get("notes")),
-                    l.get("id"));
+            db.update("UPDATE \"SalesReturnLine\" SET disposition = ?, \"dispositionLocationId\" = ?, \"inspectionNotes\" = ?,"
+                    + " \"rejectedQty\" = ?, \"rejectReason\" = ? WHERE id = ?", disposition, Set.of("quarantine", "damaged").contains(disposition)
+                    ? target : from, str(g.get("notes")), rejected, str(g.get("rejectReason")), l.get("id"));
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'inspected', \"inspectedAt\" = now(), \"updatedAt\" = now() WHERE"
                 + " id = ?", id);
@@ -302,7 +342,7 @@ public class SalesReturnService {
         for (Map<String, Object> l : db.rows("SELECT rl.*, ol.* , rl.id AS \"returnLineId\", rl.quantity AS \"claimQty\","
                 + " ol.id AS \"lineId\" FROM \"SalesReturnLine\" rl JOIN \"SalesOrderLine\" ol ON ol.id = rl.\"orderLineId\""
                 + " WHERE rl.\"returnId\" = ?", id)) {
-            BigDecimal qty = physical ? dec(l.get("receivedQty")) : dec(l.get("claimQty"));
+            BigDecimal qty = physical ? dec(l.get("receivedQty")).subtract(dec(l.get("rejectedQty"))) : dec(l.get("claimQty"));
             if (qty.signum() <= 0) {
                 continue;
             }
@@ -318,7 +358,8 @@ public class SalesReturnService {
             BigDecimal credit = qty.min(net);
             BigDecimal uninvoiced = qty.subtract(credit);
             if (credit.signum() > 0) {
-                cnLines.add(new LineInput(str(l.get("productId")), null, null, null, null, "Return " + r.get("number")
+                cnLines.add(new LineInput(str(l.get("productId")), null, null, null, str(settings.settings().get(
+                        "salesReturnsAccountId")), "Return " + r.get("number")
                         + ": " + l.get("description"), credit, dec(l.get("unitPrice")), dec(l.get("discountPercent")), null,
                         null, null, "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
                         str(l.get("uomId"))));
@@ -351,6 +392,7 @@ public class SalesReturnService {
                             "number"), invoiceId, cnLines));
             creditNoteId = str(cn.get("id"));
             creditNotes.post(creditNoteId, "none");
+            creditFlow.markType(creditNoteId, "return");
             for (Map<String, Object> k : cnLinks) {
                 db.update("INSERT INTO \"SalesInvoiceLink\" (id, \"organizationId\", \"orderId\", \"orderLineId\","
                         + " \"documentId\", kind, quantity, amount) VALUES (?, ?, ?, ?, ?, 'credit_note', ?, 0)",

@@ -728,6 +728,10 @@ export const PERMISSIONS = {
     /// Override fulfilment / recognition policies on an order.
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
+    /// Credit notes without a return; allocate and refund their credit (SG-7).
+    creditNoteWrite: 'sales:credit_note:write',
+    /// Write off a receivable (SG-7).
+    writeOffPost: 'sales:write_off:post',
     /// Deliveries without the Fleet module (SG-9).
     deliveryRead: 'sales:delivery:read',
     deliveryWrite: 'sales:delivery:write',

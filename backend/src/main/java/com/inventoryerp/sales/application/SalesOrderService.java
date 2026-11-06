@@ -172,6 +172,10 @@ public class SalesOrderService {
                 + " l.\"sortOrder\"", orderId);
         for (Map<String, Object> l : lines) {
             l.put("closedShort", l.get("closedShortAt") != null);
+            if (l.get("lineDiscountPercent") != null) {
+                l.put("netDiscountPercent", l.get("discountPercent"));
+                l.put("discountPercent", l.get("lineDiscountPercent"));
+            }
             l.put("qty", quantities(l));
         }
         return lines;
@@ -247,6 +251,12 @@ public class SalesOrderService {
         customerDefaults(header, partnerId);
         header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
+        if (header.get("agreementId") == null) {
+            String project = engine.projectAgreement(partnerId, str(header.get("siteId")), LocalDate.now());
+            if (project != null) {
+                header.put("agreementId", project);
+            }
+        }
         agreement(header, partnerId);
         header.put("number", nextNumber(str(header.get("branchId"))));
         header.putIfAbsent("currencyCode", orgCurrency());
@@ -363,7 +373,8 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         Map<String, Object> in = new LinkedHashMap<>();
         for (String k : List.of("partnerId", "contactId", "branchId", "locationId", "siteId", "deliveryAddress",
-                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId")) {
+                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId",
+                "orderDiscountPercent", "orderDiscountAmount")) {
             in.put(k, o.get(k));
         }
         List<Map<String, Object>> lines = new ArrayList<>();
@@ -404,6 +415,14 @@ public class SalesOrderService {
                 throw ApiException.badRequest("deliveryMethod must be one of: collect, delivery");
             }
             d.put("deliveryMethod", m);
+        }
+        for (String k : List.of("orderDiscountPercent", "orderDiscountAmount")) {
+            if (in.containsKey(k)) {
+                d.put(k, in.get(k) == null || dec(in.get(k)).signum() == 0 ? null : dec(in.get(k)));
+            }
+        }
+        if (!create && (d.containsKey("orderDiscountPercent") || d.containsKey("orderDiscountAmount")) && !in.containsKey("lines")) {
+            throw ApiException.badRequest("Send the lines with an order discount change");
         }
         if (in.containsKey("exchangeRate")) {
             BigDecimal r = dec(in.get("exchangeRate"));
@@ -484,8 +503,27 @@ public class SalesOrderService {
         for (Map<String, Object> l : lines) {
             rows.add(line(partnerId, agreementId, on, l, defaultLocation, scope));
         }
+        applyOrderDiscount(orderId, rows);
         insertLines(orderId, rows, 0);
         retotal(orderId);
+    }
+
+    /** SG-6: spread the header discount over the lines. The line keeps its own discount for later edits. */
+    private void applyOrderDiscount(String orderId, List<Map<String, Object>> rows) {
+        Map<String, Object> h = db.row("SELECT \"orderDiscountPercent\" AS p, \"orderDiscountAmount\" AS a FROM \"SalesOrder\" WHERE id = ?", orderId);
+        BigDecimal net = BigDecimal.ZERO;
+        for (Map<String, Object> m : rows) {
+            net = net.add(SalesDiscounts.net(dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent"))));
+        }
+        BigDecimal percent = SalesDiscounts.orderPercent(h.get("p") == null ? null : dec(h.get("p")), h.get("a") == null ? null
+                : dec(h.get("a")), net);
+        if (percent.signum() == 0) {
+            return;
+        }
+        for (Map<String, Object> m : rows) {
+            m.put("lineDiscountPercent", m.get("discountPercent"));
+            m.put("discountPercent", SalesDiscounts.combine(dec(m.get("discountPercent")), percent));
+        }
     }
 
     /** Validated, priced line values (not yet taxed). */
@@ -504,10 +542,13 @@ public class SalesOrderService {
         BigDecimal unit;
         BigDecimal disc;
         String source;
-        if (l.get("unitPrice") != null || l.get("discountPercent") != null) {
+        if (l.get("unitPrice") != null || l.get("discountPercent") != null || l.get("discountAmount") != null) {
             unit = l.get("unitPrice") == null ? price == null ? BigDecimal.ZERO : price.unitPrice() : dec(l.get("unitPrice"));
             disc = l.get("discountPercent") == null ? price == null ? BigDecimal.ZERO : price.discountPercent()
                     : dec(l.get("discountPercent"));
+            if (l.get("discountAmount") != null) {
+                disc = SalesDiscounts.lineAmountToPercent(dec(l.get("discountAmount")), qty, unit);
+            }
             boolean same = price != null && unit.compareTo(price.unitPrice()) == 0
                     && disc.compareTo(price.discountPercent()) == 0;
             source = !blank(str(l.get("priceSource"))) ? str(l.get("priceSource")) : same ? price.source() : "manual";
@@ -582,6 +623,7 @@ public class SalesOrderService {
             ins.put("listPrice", m.get("listPrice"));
             ins.put("unitPrice", pl.unitPrice());
             ins.put("discountPercent", pl.discountPercent());
+            ins.put("lineDiscountPercent", m.get("lineDiscountPercent"));
             ins.put("priceSource", m.get("priceSource"));
             ins.put("priceRuleId", m.get("priceRuleId"));
             ins.put("taxId", pl.taxId());

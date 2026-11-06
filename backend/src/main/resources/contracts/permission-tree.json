@@ -643,6 +643,8 @@
     "billingOverride": "sales:billing:override",
     "policyOverride": "sales:policy:override",
     "reportRead": "sales:report:read",
+    "creditNoteWrite": "sales:credit_note:write",
+    "writeOffPost": "sales:write_off:post",
     "deliveryRead": "sales:delivery:read",
     "deliveryWrite": "sales:delivery:write",
     "deliveryApprove": "sales:delivery:approve",

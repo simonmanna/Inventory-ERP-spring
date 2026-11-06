@@ -51,8 +51,15 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     /** Tiers in their default order (ADR-S022 §4); {@code list} is implicit and always last. */
-    public static final List<String> TIERS = List.of("agreement", "customer_rule", "crm_rule", "customer_pricelist",
+    public static final List<String> TIERS = List.of("agreement", "promotion", "customer_rule", "crm_rule", "customer_pricelist",
             "category_pricelist", "price_list", "branch_default", "org_default", "standing_discount");
+
+    private SalesPricingToolsService limits;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLimits(SalesPricingToolsService limits) {
+        this.limits = limits;
+    }
 
     private final SalesDb db;
     private final UomConversionService uoms;
@@ -222,6 +229,8 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         for (String tier : precedence()) {
             Priced p = switch (tier) {
                 case "agreement" -> agreement(line, taxId, incl, name, floor);
+                // Sales documents only: POS, invoice and delivery quotes come through quote() and keep their prices.
+                case "promotion" -> named != null ? null : promotion(line, taxId, incl, name, floor);
                 case "customer_rule" -> c.partnerId() == null ? null
                         : pricelist(line, bestItem(line, null, true), taxId, incl, name, floor);
                 case "crm_rule" -> crm(line, taxId, incl, name, floor);
@@ -243,6 +252,42 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         }
         return new Priced(new Result(c.productId(), c.quantity(), list, list, BigDecimal.ZERO, "list", null, null, null,
                 taxId, incl, name, cost, floor.min, floor.price), false);
+    }
+
+    /** The active project agreement of this customer that covers this site, or null. */
+    public String projectAgreement(String partnerId, String siteId, LocalDate on) {
+        if (blank(partnerId) || blank(siteId)) {
+            return null;
+        }
+        return str(value("SELECT id FROM \"SalesAgreement\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'active'"
+                + " AND \"startDate\" <= ? AND \"endDate\" >= ? AND ? = ANY(\"siteIds\") ORDER BY \"startDate\" DESC LIMIT 1", org(),
+                partnerId, on, on, siteId));
+    }
+
+    /** Best active promotion: product over category over everything, then priority, then the largest quantity break. */
+    private Priced promotion(Line l, String taxId, boolean incl, String name, Floor floor) {
+        Context c = l.c();
+        Map<String, Object> p = db.row("""
+                SELECT s.id, s.name, s.kind, s.value FROM "SalesPromotion" s
+                 WHERE s."organizationId" = ? AND s."isActive" AND s."startDate" <= ? AND s."endDate" >= ? AND s."minQuantity" <= ?
+                   AND (s."productId" = ? OR s."productCategoryId" = ? OR (s."productId" IS NULL AND s."productCategoryId" IS NULL))
+                   AND (s."branchId" IS NULL OR s."branchId" = ?) AND (s."partnerCategoryId" IS NULL OR s."partnerCategoryId" = ?)
+                 ORDER BY (s."productId" IS NOT NULL) DESC, (s."productCategoryId" IS NOT NULL) DESC, s.priority DESC, s."minQuantity" DESC
+                 LIMIT 1""", org(), l.on(), l.on(), c.quantity(), c.productId(), str(l.product().get("categoryId")), c.branchId(),
+                l.partnerCat());
+        if (p == null) {
+            return null;
+        }
+        BigDecimal v = dec(p.get("value"));
+        BigDecimal unit = l.list();
+        BigDecimal disc = BigDecimal.ZERO;
+        switch (str(p.get("kind"))) {
+            case "percent" -> disc = v;
+            case "fixed_price" -> unit = v.multiply(l.factor()).setScale(6, RoundingMode.HALF_UP);
+            default -> unit = l.list().subtract(v.multiply(l.factor())).max(BigDecimal.ZERO).setScale(6, RoundingMode.HALF_UP);
+        }
+        return new Priced(new Result(c.productId(), c.quantity(), l.list(), unit, disc, "promotion", null, str(p.get("name")),
+                str(p.get("id")), taxId, incl, name, l.cost(), floor.min, floor.price), false);
     }
 
     private Priced agreement(Line l, String taxId, boolean incl, String name, Floor floor) {
@@ -422,6 +467,11 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             BigDecimal authorised = r.net();
             if (authorised.signum() > 0 && net.compareTo(authorised) < 0) {
                 extra = extra.max(BigDecimal.ONE.subtract(net.divide(authorised, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
+            }
+            String limit = limits.limitBreach(str(l.get("productId")), net, l.get("uomFactor") == null ? BigDecimal.ONE
+                    : dec(l.get("uomFactor")), str(l.get("description")));
+            if (limit != null) {
+                out.add(limit);
             }
             if (marginCheck && r.floorPrice() != null && net.compareTo(r.floorPrice()) < 0) {
                 out.add("Price of " + l.get("description") + " is below the " + r.minMarginPercent().stripTrailingZeros()

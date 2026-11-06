@@ -76,6 +76,7 @@ export interface SalesOrder {
   exchangeRate: number;
   customerRef: string | null;
   priority?: number;
+  orderDiscountPercent?: number | null;
   stockWarnings?: Array<{ lineId: string; productId: string; shortage: number; available: number; fullFillLocation: string | null; earliestDate: string | null }>;
   agreementId?: string | null;
   requestedDate: string | null;

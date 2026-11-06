@@ -40,6 +40,8 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['requireLineTax', 'Every product line needs a tax before invoicing', 'bool'],
     ['requireTaxNumberAbove', 'Customer tax number required above this amount (0 = off)', 'num'],
     ['numberingScope', 'Order numbers run per', ['organization', 'branch']],
+    ['salesReturnsAccountId', 'Sales Returns account ID (empty = reverse revenue)', 'text'],
+    ['badDebtAccountId', 'Bad debt account ID, for write-offs', 'text'],
   ]],
   ['Credit', [
     ['overLimitPolicy', 'Order over the credit limit', ['flag', 'approve', 'block']],

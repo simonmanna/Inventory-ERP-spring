@@ -76,6 +76,8 @@ public class SalesFulfilmentService {
         if (o == null) {
             throw ApiException.notFound("Sales order not found");
         }
+        // Lock first, then read: a rebuild from an earlier event must not write back a quantity older than the lock holder's.
+        db.rows("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ? FOR UPDATE", orderId);
         Map<String, Map<String, Object>> fromFleet = fleetQuantities(orderId);
         List<Map<String, Object>> changed = new ArrayList<>();
         for (Map<String, Object> l : db.rows("SELECT l.*, p.\"billingBasis\" FROM \"SalesOrderLine\" l LEFT JOIN"

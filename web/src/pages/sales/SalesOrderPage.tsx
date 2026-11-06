@@ -60,6 +60,7 @@ export function SalesOrderPage() {
   const [requestedDate, setRequestedDate] = useState('');
   const [notes, setNotes] = useState('');
   const [header, setHeader] = useState<OrderHeader>(blankHeader);
+  const [orderDiscount, setOrderDiscount] = useState(0);
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
@@ -72,6 +73,7 @@ export function SalesOrderPage() {
     if (o) {
       setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
+      setOrderDiscount(Number(o.orderDiscountPercent ?? 0));
       setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0) });
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
@@ -90,6 +92,7 @@ export function SalesOrderPage() {
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
       branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
+      orderDiscountPercent: orderDiscount || null,
       ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
       ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
@@ -296,7 +299,8 @@ export function SalesOrderPage() {
             <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
             <div className="text-sm">
               <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est : o.subtotal, currency)} />
+              <div className="mb-1 flex items-center justify-between gap-2"><span className="text-muted-foreground">{tx('Order discount %')}</span><Input aria-label={tx('Order discount %')} disabled={!editable} type="number" min={0} max={100} className="h-8 w-24 text-right" value={orderDiscount} onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDirty(true); }} /></div>
+              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est * (1 - orderDiscount / 100) : o.subtotal, currency)} />
               {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
               {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
             </div>

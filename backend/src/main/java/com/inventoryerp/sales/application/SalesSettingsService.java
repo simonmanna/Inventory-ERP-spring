@@ -113,6 +113,16 @@ public class SalesSettingsService {
                 params.add(str(in.get(k)));
             }
         }
+        for (String k : List.of("salesReturnsAccountId", "badDebtAccountId")) {
+            if (in.containsKey(k)) {
+                String v = SalesDb.blank(str(in.get(k))) ? null : str(in.get(k));
+                if (v != null && !db.exists("Account", v)) {
+                    throw ApiException.badRequest(k + " is not an account of this organization");
+                }
+                sets.add("\"" + k + "\" = ?");
+                params.add(v);
+            }
+        }
         if (in.containsKey("requireTaxNumberAbove")) {
             BigDecimal v = dec(in.get("requireTaxNumberAbove"));
             if (v.signum() < 0) {
