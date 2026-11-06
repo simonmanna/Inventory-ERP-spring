@@ -4,8 +4,8 @@ import { api } from '@/lib/api';
 import { tx } from '@/lib/i18n/tx';
 import { InlineField } from './sales-ui';
 
-export interface OrderHeader { branchId: string; locationId: string; paymentTermId: string; currencyCode: string; exchangeRate: number; priority: number }
-export const blankHeader: OrderHeader = { branchId: '', locationId: '', paymentTermId: '', currencyCode: '', exchangeRate: 1, priority: 0 };
+export interface OrderHeader { branchId: string; locationId: string; paymentTermId: string; currencyCode: string; exchangeRate: number; priority: number; paymentMode: 'credit' | 'cash' }
+export const blankHeader: OrderHeader = { branchId: '', locationId: '', paymentTermId: '', currencyCode: '', exchangeRate: 1, priority: 0, paymentMode: 'credit' };
 
 type Opt = { id: string; name?: string; code?: string };
 const list = (d: unknown): Opt[] => (Array.isArray(d) ? d : ((d as { data?: Opt[] })?.data ?? []));
@@ -49,6 +49,11 @@ export function OrderHeaderFields({ value, customerRef, disabled, onChange, onCu
           <HeaderSelect value={value.currencyCode} options={currencies} disabled={disabled} none={tx('Base currency')} onChange={(currencyCode) => set({ currencyCode })} />
           <Input aria-label={tx('Exchange rate')} title={tx('Exchange rate')} disabled={disabled || !value.currencyCode} type="number" min={0} step="any" className="w-28" value={value.exchangeRate} onChange={(e) => set({ exchangeRate: Number(e.target.value) })} />
         </div>
+      </InlineField>
+      <InlineField label={tx('Payment')}>
+        <select className={cls} disabled={disabled} value={value.paymentMode} onChange={(e) => set({ paymentMode: e.target.value as 'credit' | 'cash' })}>
+          <option value="credit">{tx('On credit')}</option><option value="cash">{tx('Cash')}</option>
+        </select>
       </InlineField>
       <InlineField label={tx('Priority')}>
         <select className={cls} disabled={disabled} value={value.priority} onChange={(e) => set({ priority: Number(e.target.value) })}>

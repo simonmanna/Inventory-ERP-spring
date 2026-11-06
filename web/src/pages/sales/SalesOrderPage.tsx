@@ -74,7 +74,7 @@ export function SalesOrderPage() {
       setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
       setOrderDiscount(Number(o.orderDiscountPercent ?? 0));
-      setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0) });
+      setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0), paymentMode: o.paymentMode ?? 'credit' });
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
@@ -92,7 +92,7 @@ export function SalesOrderPage() {
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
       branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
-      orderDiscountPercent: orderDiscount || null,
+      orderDiscountPercent: orderDiscount || null, paymentMode: header.paymentMode,
       ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
       ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
@@ -143,6 +143,7 @@ export function SalesOrderPage() {
   const menu: MenuItem[] = [];
   if (o) {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
+    if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: () => { const reason = prompt(tx('Why should this order be allowed over the limit?')); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });

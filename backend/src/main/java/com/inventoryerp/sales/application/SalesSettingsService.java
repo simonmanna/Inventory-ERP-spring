@@ -26,17 +26,18 @@ public class SalesSettingsService {
 
     static final Set<String> FLOWS = Set.of("wholesale", "direct_order", "advance", "contract", "collect",
             "make_to_order");
-    private static final Map<String, Set<String>> CHOICES = Map.of(
-            "reservationTrigger", Set.of("none", "confirm"),
-            "physicalMovement", Set.of("direct", "via_transit"),
-            "ownershipTransfer", Set.of("at_dispatch", "at_delivery", "at_acceptance"),
-            "cogsRecognition", Set.of("at_ownership_transfer", "at_revenue_recognition"),
-            "revenueRecognition", Set.of("at_ownership_transfer", "at_invoice"),
-            "billingPolicy", Set.of("ordered", "delivered"),
-            "depositApplication", Set.of("manual", "oldest_first"),
-            "depositTaxPoint", Set.of("delivery", "receipt"),
-            "stockCheckPolicy", Set.of("none", "warn", "block"),
-            "numberingScope", Set.of("organization", "branch"));
+    private static final Map<String, Set<String>> CHOICES = Map.ofEntries(
+            Map.entry("reservationTrigger", Set.of("none", "confirm")),
+            Map.entry("physicalMovement", Set.of("direct", "via_transit")),
+            Map.entry("ownershipTransfer", Set.of("at_dispatch", "at_delivery", "at_acceptance")),
+            Map.entry("cogsRecognition", Set.of("at_ownership_transfer", "at_revenue_recognition")),
+            Map.entry("revenueRecognition", Set.of("at_ownership_transfer", "at_invoice")),
+            Map.entry("billingPolicy", Set.of("ordered", "delivered")),
+            Map.entry("depositApplication", Set.of("manual", "oldest_first")),
+            Map.entry("depositTaxPoint", Set.of("delivery", "receipt")),
+            Map.entry("stockCheckPolicy", Set.of("none", "warn", "block")),
+            Map.entry("numberingScope", Set.of("organization", "branch")),
+            Map.entry("overLimitPolicy", Set.of("flag", "approve", "block")));
 
     private final SalesDb db;
     private final AuditService audit;
@@ -101,7 +102,7 @@ public class SalesSettingsService {
         }
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
                 "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
-                "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax")) {
+                "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax", "cashBypassesCredit")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

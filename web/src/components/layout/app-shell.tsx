@@ -381,6 +381,7 @@ const NAV_SECTIONS: NavSection[] = [
     icon: Users,
     items: [
       { to: '/customers', label: tx('Customers'), icon: Users, permission: PERMISSIONS.partners.view },
+      { to: '/sales/credit-requests', label: tx('Credit Requests'), icon: ShieldAlert, permission: PERMISSIONS.credit.read },
       { to: '/sales/credit', label: tx('Credit Control'), icon: ShieldAlert, permission: PERMISSIONS.credit.read },
       { to: '/sales/reports/customers', label: tx('Customer Reports'), icon: BarChart3, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/portal-access', label: tx('Customer Portal'), icon: Globe, permission: PERMISSIONS.sales.portalManage, group: 'Configuration' },

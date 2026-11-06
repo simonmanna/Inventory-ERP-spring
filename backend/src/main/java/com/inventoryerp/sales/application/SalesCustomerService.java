@@ -65,7 +65,7 @@ public class SalesCustomerService {
         Map<String, Object> p = require(id);
         Map<String, Object> out = new LinkedHashMap<>();
         for (String k : List.of("id", "code", "name", "status", "customerType", "homeBranchId", "defaultCurrencyCode", "altPhone",
-                "district", "suspendedAt", "suspendedReason", "mergedIntoPartnerId", "mergedAt", "mergeReason")) {
+                "creditControllerId", "district", "suspendedAt", "suspendedReason", "mergedIntoPartnerId", "mergedAt", "mergeReason")) {
             out.put(k, p.get(k));
         }
         out.put("mergedFrom", db.rows("SELECT id, code, name, \"mergedAt\" FROM \"Partner\" WHERE \"mergedIntoPartnerId\" = ? AND"
@@ -97,7 +97,7 @@ public class SalesCustomerService {
     public Map<String, Object> saveProfile(String id, Map<String, Object> in) {
         Map<String, Object> before = require(id);
         Map<String, Object> d = new LinkedHashMap<>();
-        for (String k : List.of("homeBranchId", "defaultCurrencyCode", "altPhone", "district", "customerType")) {
+        for (String k : List.of("homeBranchId", "defaultCurrencyCode", "altPhone", "district", "customerType", "creditControllerId")) {
             if (in.containsKey(k)) {
                 d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
             }

@@ -75,10 +75,12 @@ public class SalesOrderService {
     private SalesAgreementService agreements;
     private SalesAccess access;
     private SalesAlerts alerts;
+    private SalesCreditRequestService creditRequests;
 
     @org.springframework.beans.factory.annotation.Autowired
-    void setAlerts(SalesAlerts alerts) {
+    void setAlerts(SalesAlerts alerts, @org.springframework.context.annotation.Lazy SalesCreditRequestService creditRequests) {
         this.alerts = alerts;
+        this.creditRequests = creditRequests;
     }
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
@@ -374,7 +376,7 @@ public class SalesOrderService {
         Map<String, Object> in = new LinkedHashMap<>();
         for (String k : List.of("partnerId", "contactId", "branchId", "locationId", "siteId", "deliveryAddress",
                 "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId",
-                "orderDiscountPercent", "orderDiscountAmount")) {
+                "orderDiscountPercent", "orderDiscountAmount", "paymentMode")) {
             in.put(k, o.get(k));
         }
         List<Map<String, Object>> lines = new ArrayList<>();
@@ -400,6 +402,13 @@ public class SalesOrderService {
         }
         if (in.containsKey("currencyCode") && !blank(str(in.get("currencyCode")))) {
             d.put("currencyCode", str(in.get("currencyCode")));
+        }
+        if (in.containsKey("paymentMode")) {
+            String m = str(in.get("paymentMode"));
+            if (!Set.of("credit", "cash").contains(m)) {
+                throw ApiException.badRequest("paymentMode must be one of: cash, credit");
+            }
+            d.put("paymentMode", m);
         }
         if (in.containsKey("priority")) {
             d.put("priority", in.get("priority") instanceof Number n ? n.intValue() : 0);
@@ -785,10 +794,29 @@ public class SalesOrderService {
 
     private Map<String, Object> finishConfirm(String id) {
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? FOR UPDATE", id);
-        CreditService.Decision c = credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id,
-                str(o.get("number")), dec(o.get("total")), str(o.get("branchId")));
-        boolean hold = !c.passed();
+        Map<String, Object> policy0 = settings.settings();
+        boolean cash = "cash".equals(o.get("paymentMode")) && Boolean.TRUE.equals(policy0.get("cashBypassesCredit"));
+        CreditService.Decision c = cash ? new CreditService.Decision(null, "pass", List.of(), Map.of())
+                : credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id, str(o.get("number")),
+                        dec(o.get("total")), str(o.get("branchId")));
         String reason = String.join("; ", c.reasons());
+        // SG-8: a hold on the customer always stops the order; going over the limit follows the organization's policy.
+        boolean overLimit = !c.passed() && !"blocked".equals(c.result());
+        boolean covered = overLimit && creditRequests.approvedFor(id, dec(o.get("total")));
+        if (overLimit && !covered) {
+            String over = str(policy0.get("overLimitPolicy"));
+            if ("block".equals(over)) {
+                throw ApiException.badRequest("This order exceeds the customer's credit: " + reason + ". Ask for a credit approval"
+                        + " or take payment first.");
+            }
+            if ("approve".equals(over)) {
+                Map<String, Object> request = creditRequests.open(o, "Over the credit limit: " + reason);
+                Map<String, Object> waiting = get(id);
+                waiting.put("creditRequest", request);
+                return waiting;
+            }
+        }
+        boolean hold = !c.passed() && !covered;
         Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
                 "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1);
         if (hold) {
@@ -820,6 +848,12 @@ public class SalesOrderService {
         Map<String, Object> out = get(id);
         out.put("stockWarnings", shortages);
         return out;
+    }
+
+    /** SG-8: confirm after a credit request was approved, whatever the order's approval state was. */
+    @Transactional
+    public Map<String, Object> confirmAfterCredit(String id) {
+        return finishConfirm(id);
     }
 
     /** Put an open order on hold (no fulfilment while held). */
