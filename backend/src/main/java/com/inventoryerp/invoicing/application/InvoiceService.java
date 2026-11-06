@@ -173,6 +173,17 @@ public class InvoiceService {
                 ip.add(pIds.toArray(String[]::new));
             }
         }
+        // In SQL, because the rows are cut at LIMIT below: a later filter would miss matches past the first page.
+        if (notBlank(f.paymentStatus())) {
+            dw.append(" AND ").append(paymentSql(f.paymentStatus()));
+            iw.append(" AND \"paymentStatus\"::text = ?");
+            ip.add(f.paymentStatus());
+        }
+        if (notBlank(f.settlementStatus())) {
+            dw.append(" AND ").append(settlementSql(f.settlementStatus()));
+            iw.append(" AND \"settlementStatus\"::text = ?");
+            ip.add(f.settlementStatus());
+        }
         int take = page * pageSize;
         List<Map<String, Object>> merged = new ArrayList<>();
         for (Map<String, Object> d : SqlRows.list(com.inventoryerp.documents.domain.Document.class,
@@ -180,8 +191,9 @@ public class InvoiceService {
             d.put("partner", builder.partner(d.get("partnerId")));
             d.put("_count", Obj.of("lines", count("DocumentLine", "documentId", d.get("id"))));
             d.put("source", "manual");
-            d.put("paymentStatus", "unpaid");
-            d.put("settlementStatus", "unsettled");
+            String payment = paymentView(d);
+            d.put("paymentStatus", payment);
+            d.put("settlementStatus", settlementView(payment));
             merged.add(d);
         }
         List<Map<String, Object>> invs = SqlRows.list(Invoice.class, jdbc.sql("SELECT * FROM \"Invoice\" WHERE" + iw
@@ -220,6 +232,47 @@ public class InvoiceService {
                 total);
     }
 
+    /** The list's payment status of a back-office document, in the POS invoice vocabulary the screen shows. */
+    static String paymentView(Map<String, Object> doc) {
+        String status = String.valueOf(doc.get("status"));
+        if (!"posted".equals(status) && !"paid".equals(status)) {
+            return "unpaid";
+        }
+        BigDecimal residual = Money.dec(doc.get("amountResidual"));
+        if (residual.signum() <= 0) {
+            return "paid";
+        }
+        return residual.compareTo(Money.dec(doc.get("totalAmount"))) < 0 ? "partially_paid" : "unpaid";
+    }
+
+    /** {@link #paymentView} as a condition on {@code "Document"}; the value is matched, never concatenated. */
+    private static String paymentSql(String payment) {
+        String open = "status::text IN ('posted', 'paid')";
+        return switch (payment) {
+            case "paid" -> "(" + open + " AND \"amountResidual\" <= 0)";
+            case "partially_paid" -> "(" + open + " AND \"amountResidual\" > 0 AND \"amountResidual\" < \"totalAmount\")";
+            case "unpaid" -> "(NOT (" + open + ") OR (\"amountResidual\" > 0 AND \"amountResidual\" >= \"totalAmount\"))";
+            default -> "false";
+        };
+    }
+
+    private static String settlementSql(String settlement) {
+        return switch (settlement) {
+            case "settled" -> paymentSql("paid");
+            case "partially_settled" -> paymentSql("partially_paid");
+            case "unsettled" -> paymentSql("unpaid");
+            default -> "false";
+        };
+    }
+
+    static String settlementView(String payment) {
+        return switch (payment) {
+            case "paid" -> "settled";
+            case "partially_paid" -> "partially_settled";
+            default -> "unsettled";
+        };
+    }
+
     private long count(String table, String fk, Object id) {
         return jdbc.sql("SELECT count(*) FROM \"" + table + "\" WHERE \"" + fk + "\" = ?").param(id).query(Long.class)
                 .single();
@@ -236,6 +289,10 @@ public class InvoiceService {
     public Map<String, Object> findOne(String id) {
         DataScope scope = scopes.scope();
         Map<String, Object> doc = builder.document(id, "sales_invoice");
+        if (doc == null) {
+            // Read-only: every write on /invoices still loads a sales_invoice, so a proforma cannot be posted or paid.
+            doc = builder.document(id, "proforma_invoice");
+        }
         if (doc != null && !scope.allowsBranch((String) doc.get("branchId"))) {
             return null;
         }

@@ -126,9 +126,11 @@ export function InvoiceDetailPage() {
     );
   }
 
+  /** A proforma is not a tax invoice: shown read-only until it has its own screen. */
+  const isProforma = (inv as any).documentType === 'proforma_invoice';
   const isDraft = inv.status === 'draft';
   const residual = Number(inv.amountResidual);
-  const canPay = inv.status === 'posted' && residual > 0;
+  const canPay = !isProforma && inv.status === 'posted' && residual > 0;
   /** POS sale (Invoice table) rather than a back-office Document. */
   const isPosInvoice = (inv as any).source === 'pos';
   /** Sold on account and still owed — the receivable the cashier chases. */
@@ -222,14 +224,15 @@ export function InvoiceDetailPage() {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {isDraft && has(PERMISSIONS.invoice.post) && (
+          {isProforma && <span className="text-sm text-muted-foreground">{tx('Proforma, not a tax invoice')}</span>}
+          {!isProforma && isDraft && has(PERMISSIONS.invoice.post) && (
             <Button onClick={() => postInvoice.mutate(inv.id)} disabled={postInvoice.isPending}>
               {postInvoice.isPending ? tx('Posting...') : tx('Confirm')}
             </Button>
           )}
           {canPay && has(PERMISSIONS.payment.create) && <Button onClick={openPay}>{tx('Register Payment')}</Button>}
-          <Button variant="outline" onClick={() => openPdf(`/invoices/${inv.id}/pdf`)}><FileDown className="mr-1.5 h-4 w-4" />{tx('PDF')}</Button>
-          {(canEmail || canCancel) && (
+          {!isProforma && <Button variant="outline" onClick={() => openPdf(`/invoices/${inv.id}/pdf`)}><FileDown className="mr-1.5 h-4 w-4" />{tx('PDF')}</Button>}
+          {!isProforma && (canEmail || canCancel) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">{tx('Actions')}<ChevronDown className="ml-1.5 h-4 w-4" /></Button>
@@ -294,7 +297,7 @@ export function InvoiceDetailPage() {
           </TabsList>
 
           <TabsContent value="lines" className="mt-0 space-y-4 p-5">
-            <InvoiceLinesTable invoiceId={inv.id} status={inv.status} lines={inv.lines} withDelivery={!isPosInvoice} uomCode={uomCode} />
+            <InvoiceLinesTable invoiceId={inv.id} status={isProforma ? 'posted' : inv.status} lines={inv.lines} withDelivery={!isPosInvoice && !isProforma} uomCode={uomCode} />
             <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
               <div>
                 {inv.notes ? (
