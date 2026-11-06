@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores/auth.store';
 interface Profile {
   customerType: string | null; homeBranchId: string | null; defaultCurrencyCode: string | null; altPhone: string | null; district: string | null;
   suspendedAt: string | null; suspendedReason: string | null; mergedIntoPartnerId: string | null; mergedAt: string | null; mergeReason: string | null;
+  creditControllerId: string | null;
   mergedFrom: Array<{ id: string; code: string; name: string }>;
   kpis: { outstanding: number; overdue: number; lifetimeSales: number; invoices: number; orders: number; openOrders: number; lastInvoiceDate: string | null };
 }
@@ -29,9 +30,10 @@ export function CustomerProfileTab({ partnerId }: { partnerId: string }) {
   const opts = useHeaderOptions();
   const canManage = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.customerManage));
   const canMerge = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.customerMerge));
-  const [form, setForm] = useState({ customerType: '', homeBranchId: '', defaultCurrencyCode: '', altPhone: '', district: '' });
+  const [form, setForm] = useState({ customerType: '', homeBranchId: '', defaultCurrencyCode: '', altPhone: '', district: '', creditControllerId: '' });
+  const byBranch = useQuery({ queryKey: ['sales', 'credit-by-branch', partnerId], queryFn: async () => (await api.get<Array<{ branchId: string | null; branchName: string | null; outstanding: number; overdue: number; branchLimit: number | null }>>(`/sales/customers/${partnerId}/credit-by-branch`)).data, retry: false });
   const [intoCode, setIntoCode] = useState('');
-  useEffect(() => { if (p) setForm({ customerType: p.customerType ?? '', homeBranchId: p.homeBranchId ?? '', defaultCurrencyCode: p.defaultCurrencyCode ?? '', altPhone: p.altPhone ?? '', district: p.district ?? '' }); }, [p]);
+  useEffect(() => { if (p) setForm({ customerType: p.customerType ?? '', homeBranchId: p.homeBranchId ?? '', defaultCurrencyCode: p.defaultCurrencyCode ?? '', altPhone: p.altPhone ?? '', district: p.district ?? '', creditControllerId: p.creditControllerId ?? '' }); }, [p]);
   const act = useMutation({
     mutationFn: async ({ path, body, method }: { path: string; body?: unknown; method?: 'put' }) => (method === 'put' ? await api.put(`/sales/customers/${partnerId}/${path}`, body) : await api.post(`/sales/customers/${partnerId}/${path}`, body ?? {})).data,
     onSuccess: () => { toast.success(tx('Saved')); qc.invalidateQueries({ queryKey: key }); },
@@ -59,6 +61,7 @@ export function CustomerProfileTab({ partnerId }: { partnerId: string }) {
           <Field label={tx('Default currency')}><HeaderSelect value={form.defaultCurrencyCode} disabled={!canManage} options={currencies} none={tx('Base currency')} onChange={(defaultCurrencyCode) => set({ defaultCurrencyCode })} /></Field>
           <Field label={tx('Second phone')}><Input disabled={!canManage} value={form.altPhone} onChange={(e) => set({ altPhone: e.target.value })} /></Field>
           <Field label={tx('District')}><Input disabled={!canManage} value={form.district} onChange={(e) => set({ district: e.target.value })} /></Field>
+          <Field label={tx('Credit controller (user ID)')}><Input disabled={!canManage} value={form.creditControllerId} onChange={(e) => set({ creditControllerId: e.target.value })} /></Field>
         </div>
         {canManage && (
           <div className="mt-4 flex flex-wrap gap-2">
@@ -69,6 +72,13 @@ export function CustomerProfileTab({ partnerId }: { partnerId: string }) {
           </div>
         )}
       </section>
+      {(byBranch.data?.length ?? 0) > 0 && (
+        <section className="rounded-xl border bg-card p-5 text-sm shadow-sm">
+          <h2 className="mb-2 font-semibold">{tx('Receivables by branch')}</h2>
+          <table className="w-full"><thead className="text-left text-xs text-muted-foreground"><tr><th>{tx('Branch')}</th><th className="text-right">{tx('Outstanding')}</th><th className="text-right">{tx('Overdue')}</th><th className="text-right">{tx('Branch limit')}</th></tr></thead>
+            <tbody>{byBranch.data!.map((b) => <tr key={b.branchId ?? 'none'} className="border-t"><td className="py-1">{b.branchName ?? tx('No branch')}</td><td className="py-1 text-right tabular-nums">{money(b.outstanding)}</td><td className="py-1 text-right tabular-nums">{money(b.overdue)}</td><td className="py-1 text-right tabular-nums">{b.branchLimit == null ? '—' : money(b.branchLimit)}</td></tr>)}</tbody></table>
+        </section>
+      )}
       {canMerge && !p.mergedIntoPartnerId && (
         <section className="rounded-xl border bg-card p-5 shadow-sm">
           <h2 className="font-semibold">{tx('Merge into another customer')}</h2>

@@ -46,6 +46,7 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
   ['Credit', [
     ['overLimitPolicy', 'Order over the credit limit', ['flag', 'approve', 'block']],
     ['cashBypassesCredit', 'Cash orders skip the credit check', 'bool'],
+    ['commissionDefaultBasis', 'New commission rules pay on', ['paid', 'invoiced']],
   ]],
 ];
 

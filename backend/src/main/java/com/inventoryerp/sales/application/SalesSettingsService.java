@@ -37,7 +37,8 @@ public class SalesSettingsService {
             Map.entry("depositTaxPoint", Set.of("delivery", "receipt")),
             Map.entry("stockCheckPolicy", Set.of("none", "warn", "block")),
             Map.entry("numberingScope", Set.of("organization", "branch")),
-            Map.entry("overLimitPolicy", Set.of("flag", "approve", "block")));
+            Map.entry("overLimitPolicy", Set.of("flag", "approve", "block")),
+            Map.entry("commissionDefaultBasis", Set.of("paid", "invoiced")));
 
     private final SalesDb db;
     private final AuditService audit;

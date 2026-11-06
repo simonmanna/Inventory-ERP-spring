@@ -15,7 +15,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 /**
  * SG-1: the one place cost and margin leave Sales. Without {@code sales:cost:read} every matching field is removed from
- * the JSON of Sales routes and of the CRM quotation facade, however deep it sits.
+ * the JSON of Sales routes and of the CRM quotation and pricing facades, however deep it sits.
  */
 @RestControllerAdvice(basePackages = {"com.inventoryerp.sales.web", "com.inventoryerp.crm.web"})
 public class SalesCostGuard implements ResponseBodyAdvice<Object> {
@@ -28,7 +28,9 @@ public class SalesCostGuard implements ResponseBodyAdvice<Object> {
 
     @Override
     public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
-        return true;
+        // In CRM only the quotation and pricing facades go through here: other CRM figures are not product cost.
+        Class<?> owner = returnType.getContainingClass();
+        return owner.getName().startsWith("com.inventoryerp.sales.web.") || owner.getSimpleName().contains("Quotation") || owner.getSimpleName().equals("PricingController");
     }
 
     @Override

@@ -260,6 +260,34 @@ row per `sourceType` + `sourceId`, created on first update; until then defaults 
   (`full|partial`, 400 `deliveryScope must be one of: full, partial`) and `offloadingEquipment` (`yes|no`, 400
   `offloadingEquipment must be one of: yes, no`). All optional; web drops landmark / offloading for customer collect.
 
+## SG-1 to SG-12 (2026-11-06)
+
+Decisions and behaviour changes: [ADR-S059](../adr/ADR-S059-sales-gap-closure.md). Migrations V401-V409.
+
+| Phase | Routes and settings | Tests |
+|---|---|---|
+| SG-1 access | `sales:cost:read`, `sales:branch:override`; scope on orders, quotes, collections, report center | `SalesAccessIT` |
+| SG-2 orders | `stockCheckPolicy`, `orderApprovalAlways`, `notifyOnHold`, `notifyOnShortage`; `POST /sales/orders/{id}/lines/{lineId}/source-location` | `SalesOrderPolicyIT` |
+| SG-3 quotes | `/sales/quotations/{id}/pdf`, `/email`; `/sales/lost-reasons`; daily expiry job; TRIP and LOAD units | `SalesQuoteProformaIT` |
+| SG-4 proforma | `/sales/proformas`, `/{id}/pdf`, `/{id}/email`; `POST /sales/orders/{id}/proforma` | `SalesQuoteProformaIT` |
+| SG-5 customers | `/sales/customers/duplicates`, `/import`, `/export`, `/{id}/profile`, `/suspend`, `/reinstate`, `/merge` | `SalesCustomerIT` |
+| SG-9 delivery | `/sales/deliveries`, `/reconciliation`, `/{id}/issue`, `/approve`, `/confirm`, `/photos`, `/note`; `/sales/orders/{id}/milestones`, `/recurring` | `SalesDeliveryIT` |
+| SG-6 pricing | `/sales/promotions`, `/sales/price-limits`, `/sales/pricing/grid`, `/lists`, `/history` | `SalesPricingToolsIT` |
+| SG-7 returns | `damaged` disposition, `rejectedQty`; `/sales/credit-notes`, `/allocate`, `/refund`, `/pdf`; `/sales/invoices/{id}/write-off` | `SalesReturnFlowIT` |
+| SG-8 credit | `overLimitPolicy`, `cashBypassesCredit`; `/sales/credit-requests`; `/sales/customers/{id}/credit-by-branch`; policy `enforcePeriodAndReview` | `SalesCreditPolicyIT` |
+| SG-10 statements | `/sales/statements/{id}`, `/outstanding`, `/send-bulk`, `/log/{id}/confirm`, `/disputes` | `SalesStatementIT` |
+| SG-11 commissions | rule tiers, splits, product and customer scope; statement adjustments, disputes, paid, carry-forward, PDF | `SalesCommissionTargetIT` |
+| SG-12 targets | target `metric`, `periodType`, alerts job; `/sales/analytics/kpis` | `SalesCommissionTargetIT` |
+
+Known limits:
+
+- `Pricelist` and `PriceList` are not merged (ADR-S059 §4).
+- A merged customer's balance rolls up in Sales KPIs and Sales statements only.
+- Numbering per branch covers sales orders. The organization is the legal entity.
+- Agreement on a quotation has an API field and project auto-pick, no picker on the quotation screen.
+- Commission `paid` basis costs lines at current product cost; only `invoiced` uses actual cost.
+- Customer deposits in reports are still not converted (no rate stored).
+
 ## SG-0 stabilization (2026-11-06)
 
 Defects fixed from the Sales gap audit; `SalesStabilizationIT` and `SalesReturnIT` pin them.
@@ -275,9 +303,6 @@ Defects fixed from the Sales gap audit; `SalesStabilizationIT` and `SalesReturnI
 
 Known limits, left for later phases:
 
-- Quotations have no `exchangeRate`, so a foreign quotation converts to an order at rate 1 and quotation reports stay in
-  document currency (SG-3).
+- Quotation reports stay in document currency. Quotations gained `exchangeRate` and pass it to the order in SG-3.
 - Customer deposits in reports are not converted (no rate stored).
-- `SalesRevenueQuery` (analytics, commissions, the Targets tab) is still in document currency (SG-11, SG-12).
 - Invoices already billed at rate 1 from foreign orders are not changed; check production before relying on old totals.
-- `InvoiceService.list` reports a total capped by its fetch limit (SG-9).
