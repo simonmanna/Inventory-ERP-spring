@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Boxes, Plus } from 'lucide-react';
@@ -17,8 +18,10 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function RentalUnitsPage() {
-  const [status, setStatus] = useState('');
-  const [search, setSearch] = useState('');
+  // A dashboard link can open this list already filtered.
+  const [params] = useSearchParams();
+  const [status, setStatus] = useState(params.get('status') ?? '');
+  const [search, setSearch] = useState(params.get('search') ?? '');
   const { data } = useRentalUnits({ status: status || undefined, search: search || undefined, pageSize: 100 });
   const generate = useGenerateUnits();
   const retire = useRetireUnit();

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CalendarDays, Plus } from 'lucide-react';
 import { useRentalAgreements } from '@/features/rental/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,8 +32,10 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export function RentalAgreementsPage() {
-  const [status, setStatus] = useState('');
-  const [search, setSearch] = useState('');
+  // A dashboard link can open this list already filtered.
+  const [params] = useSearchParams();
+  const [status, setStatus] = useState(params.get('status') ?? '');
+  const [search, setSearch] = useState(params.get('search') ?? '');
   const { data } = useRentalAgreements({ status: status || undefined, search: search || undefined, pageSize: 50 });
 
   const rows = useMemo(() => data?.items ?? [], [data]);
