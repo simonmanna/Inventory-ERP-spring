@@ -21,6 +21,7 @@ import { qualityRoutes } from '@/pages/quality/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
 import { analyticsRoutes } from '@/pages/analytics/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
+import { processingRoutes } from '@/pages/processing/routes';
 import { driverRoutes } from '@/pages/driver/routes';
 import { portalRoutes } from '@/pages/portal/routes';
 
@@ -504,6 +505,8 @@ export function App() {
             {precastRoutes}
             {/* Crushing & screening (ADR-S016) — screens in pages/crushing/routes.tsx */}
             {crushingRoutes}
+            {/* Multi-stage processing (ADR-S060) */}
+            {processingRoutes}
             <Route path="/manufacturing/planning" element={<ManufacturingPlanningPage />} />
             <Route path="/manufacturing/reports" element={<RequireReport reportId="manufacturing.reports"><ManufacturingReportsPage /></RequireReport>} />
             <Route path="/manufacturing/resources" element={<ManufacturingResourcesPage />} />

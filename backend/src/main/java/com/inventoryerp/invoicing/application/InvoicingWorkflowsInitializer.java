@@ -80,6 +80,21 @@ public class InvoicingWorkflowsInitializer {
                 : com.inventoryerp.kernel.crud.EntityPatch.toInstant(String.valueOf(v));
     }
 
+    /**
+     * A lot-tracked sale ships from a warehouse that holds it (ADR-S060): the default warehouse when it has enough,
+     * otherwise the one with the oldest lot that covers the line. No such warehouse keeps the default, so the issue
+     * reports the shortage.
+     */
+    private String lotWarehouse(String org, String productId, Map<String, Object> line, String fallback) {
+        BigDecimal factor = line.get("uomFactor") == null ? BigDecimal.ONE : d(line.get("uomFactor"));
+        return jdbc.sql("SELECT b.\"locationId\" FROM \"InventoryBatch\" b JOIN \"InventoryLocation\" l ON l.id = b.\"locationId\""
+                        + " WHERE b.\"organizationId\" = ? AND b.\"productId\" = ? AND b.quantity > 0 AND b.\"isActive\" = true AND"
+                        + " l.type = 'warehouse' AND l.\"isActive\" = true AND l.\"deletedAt\" IS NULL GROUP BY b.\"locationId\""
+                        + " HAVING SUM(b.quantity) >= ? ORDER BY (b.\"locationId\" = ?) DESC, MIN(b.\"receivedAt\") LIMIT 1")
+                .params(org, productId, d(line.get("quantity")).multiply(factor), fallback).query(String.class).optional()
+                .orElse(fallback);
+    }
+
     private String warehouse(String org) {
         return jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
                         + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" ASC LIMIT 1")
@@ -115,6 +130,9 @@ public class InvoicingWorkflowsInitializer {
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
                 String location = warehouse(ctx.organizationId());
+                if (Boolean.TRUE.equals(product.get("batchTracking"))) {
+                    location = lotWarehouse(ctx.organizationId(), productId, line, location);
+                }
                 if (location == null) {
                     throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
                 }

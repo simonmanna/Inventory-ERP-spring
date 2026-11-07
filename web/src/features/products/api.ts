@@ -38,6 +38,9 @@ export interface Product {
   trackInventory: boolean;
   // Inventory tracking configuration.
   batchTracking?: boolean;
+  canBeSold?: boolean;
+  stockPolicy?: string;
+  manufacturingRole?: string | null;
   expiryTracking?: boolean;
   serialTracking?: boolean;
   pickingStrategy?: string;
@@ -121,6 +124,9 @@ export interface CreateProductInput {
   trackInventory?: boolean;
   // Inventory tracking configuration.
   batchTracking?: boolean;
+  canBeSold?: boolean;
+  stockPolicy?: string;
+  manufacturingRole?: string | null;
   expiryTracking?: boolean;
   serialTracking?: boolean;
   pickingStrategy?: string;

@@ -58,6 +58,9 @@ const PICKING_STRATEGIES = [
 
 const INVENTORY_DEFAULTS = {
   batchTracking: false,
+  canBeSold: true,
+  stockPolicy: 'warn',
+  manufacturingRole: '',
   expiryTracking: false,
   serialTracking: false,
   pickingStrategy: 'FEFO',
@@ -99,6 +102,9 @@ const schema = z.object({
   minSaleQty: z.string().optional().or(z.literal('')),
   maxSaleQty: z.string().optional().or(z.literal('')),
   batchTracking: z.boolean(),
+  canBeSold: z.boolean(),
+  stockPolicy: z.string(),
+  manufacturingRole: z.string(),
   expiryTracking: z.boolean(),
   serialTracking: z.boolean(),
   pickingStrategy: z.string(),
@@ -303,6 +309,9 @@ export function ProductEditPage() {
       minSaleQty: toStr(p.minSaleQty),
       maxSaleQty: toStr(p.maxSaleQty),
       batchTracking: p.batchTracking ?? false,
+      canBeSold: p.canBeSold ?? true,
+      stockPolicy: p.stockPolicy ?? 'warn',
+      manufacturingRole: p.manufacturingRole ?? '',
       expiryTracking: p.expiryTracking ?? false,
       serialTracking: p.serialTracking ?? false,
       pickingStrategy: p.pickingStrategy ?? 'FEFO',
@@ -384,6 +393,7 @@ export function ProductEditPage() {
       const payload = {
         ...values,
         sku: values.sku || undefined,
+        manufacturingRole: values.manufacturingRole || undefined,
         categoryId: values.categoryId || undefined,
         uomId: values.uomId || undefined,
         purchaseUomId: values.purchaseUomId || undefined,
@@ -851,7 +861,30 @@ export function ProductEditPage() {
                       </Select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="product-stage" className="text-sm font-medium">{tx('Production stage')}</Label>
+                      <select id="product-stage" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={form.watch('manufacturingRole')} onChange={(e) => form.setValue('manufacturingRole', e.target.value)}>
+                        <option value="">{tx('Not set')}</option>
+                        <option value="raw">{tx('Raw material')}</option>
+                        <option value="semi_finished">{tx('Semi-finished')}</option>
+                        <option value="finished">{tx('Finished')}</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="product-stock-policy" className="text-sm font-medium">{tx('When stock runs out')}</Label>
+                      <select id="product-stock-policy" className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={form.watch('stockPolicy')} onChange={(e) => form.setValue('stockPolicy', e.target.value)}>
+                        <option value="block">{tx('Block the issue')}</option>
+                        <option value="warn">{tx('Warn and allow')}</option>
+                        <option value="silent">{tx('Allow silently')}</option>
+                      </select>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-6">
+                    <label className="flex items-center gap-2 text-sm cursor-pointer" title={tx('Off takes the product off quotations, orders, invoices and deliveries. Stock is untouched.')}>
+                      <input type="checkbox" className="rounded" checked={form.watch('canBeSold')} onChange={(e) => form.setValue('canBeSold', e.target.checked)} />
+                      {tx('Can be sold')}
+                    </label>
                     <label className="flex items-center gap-2 text-sm cursor-pointer">
                       <input type="checkbox" className="rounded" checked={form.watch('batchTracking')} onChange={(e) => form.setValue('batchTracking', e.target.checked)} disabled={!form.watch('trackInventory')} />
                       {tx('Batch Tracking')}

@@ -288,6 +288,7 @@ class LandedCostLayers {
         BigDecimal consumed = allocated.subtract(capitalized);
         Map<String, BigDecimal> weights = new LinkedHashMap<>();
         BigDecimal weightTotal = Money.ZERO;
+        List<Map<String, Object>> wipRows = new ArrayList<>();
         if (consumed.signum() != 0) {
             for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.id, l.type::text AS type, l.\"referenceType\","
                             + " l.\"referenceId\", -l.\"quantityChange\" AS q FROM \"InventoryLedger\" l JOIN"
@@ -298,6 +299,9 @@ class LandedCostLayers {
                         (String) r.get("type"), (String) r.get("referenceType"), (String) r.get("referenceId"),
                         Money.ZERO));
                 weights.merge(target, SqlRows.dec(r, "q"), BigDecimal::add);
+                if ("wip".equals(target)) {
+                    wipRows.add(r);
+                }
                 weightTotal = weightTotal.add(SqlRows.dec(r, "q"));
             }
         }
@@ -306,6 +310,9 @@ class LandedCostLayers {
         if (weightTotal.signum() > 0) {
             wip = dp2(Money.div(mul(consumed, weights.getOrDefault("wip", Money.ZERO)), weightTotal));
             returned = dp2(Money.div(mul(consumed, weights.getOrDefault("return", Money.ZERO)), weightTotal));
+        }
+        if (write && source != null && wip.signum() != 0 && !wipRows.isEmpty()) {
+            recordLotWip(g, wip, wipRows, weights.get("wip"), source);
         }
         Map<String, Object> extra = new LinkedHashMap<>();
         Map<String, BigDecimal> targets = new LinkedHashMap<>();
@@ -330,6 +337,22 @@ class LandedCostLayers {
         }
         return disposed(new Applied(capitalized, onHand, before, after, wip), allocated, "lot", extra, Money.ZERO,
                 returned, policy);
+    }
+
+    /** The WIP share of a lot, one lineage line per consuming ledger row: a later cost adjustment run cascades them. */
+    private void recordLotWip(Group g, BigDecimal wip, List<Map<String, Object>> rows, BigDecimal weight, Source source) {
+        List<AvcoLineageCalculator.Share> shares = new ArrayList<>();
+        BigDecimal left = wip;
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> r = rows.get(i);
+            BigDecimal part = i == rows.size() - 1 ? left : dp2(Money.div(mul(wip, SqlRows.dec(r, "q")), weight));
+            left = left.subtract(part);
+            shares.add(new AvcoLineageCalculator.Share((String) r.get("id"), (String) r.get("type"),
+                    (String) r.get("referenceType"), (String) r.get("referenceId"), part));
+        }
+        lineage.recordAdjustment(new AdjustmentInput("landed_cost", source.sourceType(), source.sourceId(), g.productId(),
+                g.variantId(), g.locationId(), g.batchId(), null, wip, null, null,
+                new Distribution(Money.ZERO, shares, Money.ZERO, BigDecimal.ZERO)));
     }
 
     /**

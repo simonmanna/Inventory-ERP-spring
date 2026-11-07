@@ -44,6 +44,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CostAdjustmentService {
 
+    /** Levels of a chain followed by one run request; a longer chain finishes on the next request. */
+    private static final int MAX_LEVELS = 10;
+
     static final String SOURCE = "cost_adjustment_run";
 
     private final JdbcClient jdbc;
@@ -117,7 +120,8 @@ public class CostAdjustmentService {
             if (amount.signum() == 0) {
                 continue;
             }
-            List<Layer> layers = capitalisation.receipts("production_order", List.of(e.getKey()));
+            List<Layer> layers = new ArrayList<>(capitalisation.receipts("production_order", List.of(e.getKey())));
+            layers.addAll(capitalisation.receipts("production_stage", stagePostings(e.getKey())));
             List<Part> parts = capitalisation.spread(amount, layers);
             allParts.addAll(parts);
             Map<String, Object> dims = Obj.of("productionOrderCode", e.getKey(), "costAdjustmentRunId", id);
@@ -149,7 +153,18 @@ public class CostAdjustmentService {
         }
         audit.recordInTx(AuditInput.of("CostAdjustmentRun", id, "post", null, Obj.of("number", number, "total",
                 total)));
+        // A share that reached a later order's input waits in that order's WIP: follow it to the end of the chain.
+        for (int depth = 0; depth < MAX_LEVELS && !pending().isEmpty(); depth++) {
+            run(fromText, toText);
+        }
         return get(id);
+    }
+
+    /** Output postings of a stage order: its receipts are referenced by posting (ADR-S060). */
+    private List<String> stagePostings(String orderCode) {
+        return jdbc.sql("SELECT p.id FROM \"ProductionStagePosting\" p JOIN \"ProductionOrder\" o ON o.id = p.\"orderId\""
+                + " WHERE p.\"organizationId\" = ? AND o.\"orderCode\" = ? AND p.\"reversedAt\" IS NULL")
+                .params(org(), orderCode).query(String.class).list();
     }
 
     @Transactional

@@ -58,7 +58,11 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     private final UomConversionService uoms;
     private final PriceListService namedLists;
 
-    public SalesPricingEngine(SalesDb db, UomConversionService uoms, PriceListService namedLists) {
+    private final com.inventoryerp.core.application.SaleableProducts saleable;
+
+    public SalesPricingEngine(SalesDb db, UomConversionService uoms, PriceListService namedLists,
+            com.inventoryerp.core.application.SaleableProducts saleable) {
+        this.saleable = saleable;
         this.db = db;
         this.uoms = uoms;
         this.namedLists = namedLists;
@@ -188,6 +192,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         if (product == null) {
             throw ApiException.notFound("Product not found");
         }
+        saleable.assertSaleable(c.productId());
         if (!blank(c.variantId())) {
             // ADR-S058: the variant's price (fixed, else product price + value extras) is the list price.
             Map<String, Object> v = db.row("SELECT v.name, " + ProductVariantService.PRICE_SQL + " AS price, "

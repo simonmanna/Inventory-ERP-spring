@@ -604,6 +604,11 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/precast/mix-designs', label: tx('Mix Designs'), icon: ScrollText, permission: PERMISSIONS.bom.read, group: 'Precast' },
       { to: '/manufacturing/precast/reports', label: tx('Precast Reports'), icon: BarChart3, permission: PERMISSIONS.production.report, group: 'Precast' },
       // crushing & screening 2.3 (ADR-S016)
+      { to: '/manufacturing/processing', label: tx('Processing Dashboard'), icon: BarChart3, permission: PERMISSIONS.processing.read, group: 'Processing' },
+      { to: '/manufacturing/processing/jobs', label: tx('Processing Jobs'), icon: ClipboardList, permission: PERMISSIONS.processing.read, group: 'Processing' },
+      { to: '/manufacturing/processing/stock', label: tx('Stock by Stage'), icon: Layers, permission: PERMISSIONS.processing.read, group: 'Processing' },
+      { to: '/manufacturing/processing/templates', label: tx('Processing Steps'), icon: ScrollText, permission: PERMISSIONS.processing.read, group: 'Processing' },
+      { to: '/manufacturing/processing/routes', label: tx('Processing Routes'), icon: Target, permission: PERMISSIONS.processing.read, group: 'Processing' },
       { to: '/manufacturing/crushing', label: tx('Crushing Runs'), icon: Factory, permission: PERMISSIONS.crushing.read, group: 'Crushing' },
       { to: '/manufacturing/crushing/stockpiles', label: tx('Aggregate Stockpiles'), icon: Layers, permission: PERMISSIONS.crushing.read, group: 'Crushing' },
       { to: '/manufacturing/crushing/reports', label: tx('Crushing Reports'), icon: BarChart3, permission: PERMISSIONS.production.report, group: 'Crushing' },

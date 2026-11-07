@@ -457,8 +457,24 @@ public class StockService {
         stockItem = lookups.stockItem(dto.productId, variantId, dto.locationId);
         String stockItemId = str(stockItem, "id");
         boolean usesLayers = "FIFO".equals(str(product, "costingMethod")) || bool(product, "batchTracking");
+        assertNotReservedForProcessing(dto, org, variantKey, qty, dec(stockItem, "quantity"), productName);
+        if (dto.requireAvailable && usesLayers && "MANUAL".equals(strategy) && dto.batchNumber != null) {
+            // A named lot must cover the issue itself: other lots never make up for it (ADR-S060).
+            BigDecimal inLot = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE \"organizationId\" = ?"
+                            + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?"
+                            + " AND \"batchNumber\" = ? AND quantity > 0 AND \"isActive\" = true" + pickable)
+                    .params(org, dto.productId, variantId, dto.locationId, dto.batchNumber).query(BigDecimal.class)
+                    .single();
+            if (qty.compareTo(inLot) > 0) {
+                throw ApiException.badRequest("Insufficient stock in lot " + dto.batchNumber + " of " + productName
+                        + ": on hand " + JsNumbers.dec(inLot) + ", requested " + JsNumbers.dec(qty) + ".");
+            }
+        }
 
-        if (!allowNegative || dto.requireAvailable) {
+        // A lot-tracked item set to block never goes short, whatever the negative-stock setting: a shortfall would have
+        // no lot and no cost (ADR-S060).
+        boolean lotBlock = bool(product, "batchTracking") && "block".equals(str(product, "stockPolicy"));
+        if (!allowNegative || dto.requireAvailable || lotBlock) {
             BigDecimal available = usesLayers
                     ? jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE \"organizationId\" = ?"
                                     + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?"
@@ -632,6 +648,28 @@ public class StockService {
                         "unitCost", JsNumbers.dec(unitCost), "totalValue", JsNumbers.dec(totalValue), "ledgerCode",
                         ledgerCode)));
         return new Issued(ledgerCode, dto.quantity, qty, str(product, "uomId"), unitCost, totalValue);
+    }
+
+    /**
+     * Stock reserved for a draft processing job (ADR-S060) cannot be taken by another movement. Only processing
+     * reservations count, so an organisation not using processing sees no change; reversals are never blocked and POS
+     * is out of scope. Runs under the StockItem row lock.
+     */
+    private void assertNotReservedForProcessing(StockMove dto, String org, String variantKey, BigDecimal qty,
+            BigDecimal onHand, String productName) {
+        String source = dto.sourceType == null ? "" : dto.sourceType;
+        if (source.contains("reversal") || source.startsWith("pos")) {
+            return;
+        }
+        BigDecimal reserved = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND status = 'active' AND"
+                        + " \"sourceType\" = 'processing_job_input'")
+                .params(org, dto.productId, variantKey, dto.locationId).query(BigDecimal.class).single();
+        if (reserved.signum() > 0 && qty.compareTo(onHand.subtract(reserved)) > 0) {
+            throw ApiException.badRequest("Insufficient unreserved stock for " + productName + ": on hand "
+                    + JsNumbers.dec(onHand) + ", reserved for processing jobs " + JsNumbers.dec(reserved)
+                    + ", requested " + JsNumbers.dec(qty) + ".");
+        }
     }
 
     /** Per-issue constants for writing ledger rows. */

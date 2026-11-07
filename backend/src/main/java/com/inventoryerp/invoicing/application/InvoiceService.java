@@ -508,6 +508,9 @@ public class InvoiceService {
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
+        if (dto.lines() != null) {
+            builder.assertSaleable(dto.lines());
+        }
         scopes.assertBranch((String) doc.get("branchId"));
         if (!"draft".equals(String.valueOf(doc.get("status")))) {
             throw ApiException.badRequest("Only draft invoices can be edited");

@@ -201,10 +201,36 @@ public class CostLineageService {
                 SqlRows.dec(layer, "qtyBefore"), eventsAfter(layer), SCALE);
     }
 
-    /** True while the production order a consumption fed is still open (its cost sits in WIP). */
+    /** The order behind a stage posting (ADR-S060: stage moves reference the posting, not the order), or null. */
+    private String stageOrderId(String postingId) {
+        return jdbc.sql("SELECT \"orderId\" FROM \"ProductionStagePosting\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(postingId, org()).query(String.class).optional().orElse(null);
+    }
+
+    /** The {@code targetRef} of a lineage line: a WIP share names its order, so a cost adjustment run can find it. */
+    public String wipRef(String target, String referenceId) {
+        if (!"wip".equals(target) || referenceId == null) {
+            return referenceId;
+        }
+        String order = stageOrderId(referenceId);
+        return order != null ? order : referenceId;
+    }
+
+    /**
+     * True while the production order a consumption fed is still open (its cost sits in WIP). A stage order counts as
+     * open until cancelled or reversed: its completed output can receive the share through a cost adjustment run
+     * (ADR-S060). Single-leg orders keep ADR-S055: a closed order is cost of sales.
+     */
     boolean openProductionOrder(String referenceType, String referenceId) {
         if (referenceId == null || referenceType == null || !referenceType.startsWith("production")) {
             return false;
+        }
+        if ("production_stage".equals(referenceType)) {
+            String orderId = stageOrderId(referenceId);
+            String stageStatus = orderId == null ? null : jdbc.sql("SELECT status::text FROM \"ProductionOrder\" WHERE"
+                    + " \"organizationId\" = ? AND id = ?").params(org(), orderId).query(String.class).optional()
+                    .orElse(null);
+            return stageStatus != null && !List.of("cancelled", "reversed").contains(stageStatus);
         }
         String status = jdbc.sql("SELECT status::text FROM \"ProductionOrder\" WHERE \"organizationId\" = ? AND (id = ? OR"
                         + " \"orderCode\" = ?) LIMIT 1").params(org(), referenceId, referenceId).query(String.class)
@@ -262,7 +288,8 @@ public class CostLineageService {
                 .update();
         if (d != null) {
             for (Share s : d.consumed()) {
-                line(id, s.ledgerId(), target(s), s.referenceId(), s.amount());
+                String lineTarget = target(s);
+                line(id, s.ledgerId(), lineTarget, wipRef(lineTarget, s.referenceId()), s.amount());
             }
             if (d.negativeStock().signum() != 0) {
                 line(id, null, "negative_stock", null, d.negativeStock());

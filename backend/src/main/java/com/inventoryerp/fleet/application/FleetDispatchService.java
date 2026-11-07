@@ -97,6 +97,14 @@ public class FleetDispatchService {
 
     private final CreditService credit;
 
+    private com.inventoryerp.core.application.SaleableProducts saleable;
+
+    /** Sell at any stage (ADR-S060): only the product's own switch stops a sale. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSaleable(com.inventoryerp.core.application.SaleableProducts saleable) {
+        this.saleable = saleable;
+    }
+
     public FleetDispatchService(FleetDb db, FleetDeliveryOrderService orders, FleetDiscrepancyService discrepancies,
             FleetVehicleService vehicles, FleetDriverService drivers, FleetDispatchEligibilityService eligibility,
             FleetMeterService meters, FleetTelematicsService telematics, FleetLoadFactors factors, StockService stock,
@@ -827,6 +835,9 @@ public class FleetDispatchService {
         for (Map<String, Object> l : lines(id)) {
             BigDecimal qty = l.get("loadedQty") != null ? SqlRows.dec(l, "loadedQty") : SqlRows.dec(l, "plannedQty");
             Map<String, Object> data = Obj.of("dispatchedQty", qty, "billableQty", qty, "loadedQty", qty);
+            if (qty.signum() > 0 && moveStock) {
+                saleable.assertSaleable((String) l.get("productId"));
+            }
             if (qty.signum() > 0 && moveStock && tracked((String) l.get("productId"))) {
                 String batch = (String) l.get("batchNumber");
                 StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)

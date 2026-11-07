@@ -242,8 +242,9 @@ public class LineageFollower {
             return false;
         }
         String status = jdbc.sql("SELECT status::text FROM \"ProductionOrder\" WHERE \"organizationId\" = ? AND (id = ?"
-                        + " OR \"orderCode\" = ?) LIMIT 1").params(org(), referenceId, referenceId).query(String.class)
-                .optional().orElse(null);
+                        + " OR \"orderCode\" = ? OR id = (SELECT \"orderId\" FROM \"ProductionStagePosting\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?)) LIMIT 1")
+                .params(org(), referenceId, referenceId, referenceId, org()).query(String.class).optional().orElse(null);
         return status != null && !List.of("cancelled", "reversed").contains(status);
     }
 
@@ -327,7 +328,7 @@ public class LineageFollower {
             ids.add(id);
             Map<String, Object[]> lines = new LinkedHashMap<>();
             for (Placement p : mine) {
-                String ref = "on_hand".equals(p.target()) ? p.locationId() : p.referenceId();
+                String ref = "on_hand".equals(p.target()) ? p.locationId() : lineage.wipRef(p.target(), p.referenceId());
                 lines.merge(p.consumptionLedgerId() + "|" + p.target(), new Object[] {p.consumptionLedgerId(),
                         p.target(), ref, p.amount()}, (a, b) -> new Object[] {a[0], a[1], a[2],
                         ((BigDecimal) a[3]).add((BigDecimal) b[3])});

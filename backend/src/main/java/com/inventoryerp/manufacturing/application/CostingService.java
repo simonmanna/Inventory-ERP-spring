@@ -166,7 +166,17 @@ public class CostingService {
         Map<String, Object> r = SqlRows.one(db.jdbc().sql("SELECT sum(quantity * \"runningAverageCost\") AS v,"
                 + " sum(quantity) AS q FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                 + " AND quantity > 0").params(MfgDb.org(), productId));
-        return r == null || r.get("q") == null || dec(r, "q").signum() <= 0 ? null : Money.div(dec(r, "v"), dec(r, "q"));
+        if (r == null || r.get("q") == null || dec(r, "q").signum() <= 0) {
+            return null;
+        }
+        if (dec(r, "v").signum() > 0) {
+            return Money.div(dec(r, "v"), dec(r, "q"));
+        }
+        // FIFO and lot-tracked stock carries its cost on the batches, not on the running average (ADR-S060).
+        Map<String, Object> b = SqlRows.one(db.jdbc().sql("SELECT sum(quantity * \"unitCost\") AS v, sum(quantity) AS q"
+                + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND quantity > 0 AND"
+                + " \"isActive\" = true").params(MfgDb.org(), productId));
+        return b == null || b.get("q") == null || dec(b, "q").signum() <= 0 ? null : Money.div(dec(b, "v"), dec(b, "q"));
     }
 
     // ================================================================== standard cost

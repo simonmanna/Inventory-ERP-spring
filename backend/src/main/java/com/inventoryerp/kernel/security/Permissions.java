@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (675 permissions). Constant name = GROUP__ACTION.
+ * exactly (680 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -223,6 +223,11 @@ public final class Permissions {
     public static final String ROUTING__READ = "routing:read";
     public static final String ROUTING__CREATE = "routing:create";
     public static final String ROUTING__DELETE = "routing:delete";
+    public static final String PROCESSING__READ = "processing:read";
+    public static final String PROCESSING__CREATE = "processing:create";
+    public static final String PROCESSING__POST = "processing:post";
+    public static final String PROCESSING__REVERSE = "processing:reverse";
+    public static final String PROCESSING__APPROVE_LOSS = "processing:approve_loss";
     public static final String CRUSHING__READ = "crushing:read";
     public static final String CRUSHING__SETUP = "crushing:setup";
     public static final String CRUSHING_RUN__RECORD = "crushing_run:record";
@@ -901,6 +906,11 @@ public final class Permissions {
             "routing:read",
             "routing:create",
             "routing:delete",
+            "processing:read",
+            "processing:create",
+            "processing:post",
+            "processing:reverse",
+            "processing:approve_loss",
             "crushing:read",
             "crushing:setup",
             "crushing_run:record",

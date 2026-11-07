@@ -370,6 +370,19 @@ export const PERMISSIONS = {
   },
   // ---- Crushing, screening & aggregate processing (manufacturing 2.3, ADR-S016) ----
   // Route ↔ permission matrix: docs/spec/manufacturing.md §2.3. Reports use production:report.
+  // ---- Multi-stage processing: sell at any stage (ADR-S060) ----
+  processing: {
+    /// Templates, jobs, routes, stock by stage and lot, genealogy, stage margin and the dashboard.
+    read: 'processing:read',
+    /// Create and version templates and routes.
+    create: 'processing:create',
+    /// Draft, start, cost and output a job (moves stock and posts journals).
+    post: 'processing:post',
+    /// Reverse a started job.
+    reverse: 'processing:reverse',
+    /// Record a loss above the expected yield, or a write-off.
+    approveLoss: 'processing:approve_loss',
+  },
   crushing: {
     /// Plants / circuits, grading profiles, runs, stockpiles and surveys (and the crushing form lookups).
     read: 'crushing:read',

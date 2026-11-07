@@ -27,6 +27,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.manufacturing.application.JointCostAllocator.Share;
 import com.inventoryerp.manufacturing.application.StageCommands.InitializeStages;
 import com.inventoryerp.manufacturing.application.StageCommands.IssueLine;
+import com.inventoryerp.manufacturing.application.StageCommands.OutputOverrides;
 import com.inventoryerp.manufacturing.application.StageCommands.OutputQty;
 import com.inventoryerp.manufacturing.application.StageCommands.StageConversion;
 import com.inventoryerp.manufacturing.application.StageCommands.StageIssue;
@@ -336,6 +337,15 @@ public class StageExecutionService implements StageCheckpointResults {
      */
     @Transactional
     public Map<String, Object> output(String stageId, StageOutput dto) {
+        return output(stageId, dto, null);
+    }
+
+    /**
+     * {@link #output(String, StageOutput)} with a processing job's common yield basis and frozen allocation values
+     * (ADR-S060). {@code overrides} null is exactly today's behaviour.
+     */
+    @Transactional
+    public Map<String, Object> output(String stageId, StageOutput dto, OutputOverrides overrides) {
         Ctx c = open(stageId);
         quality.validateReason(dto.scrapReasonCode());
         boolean completes = Boolean.TRUE.equals(dto.complete());
@@ -416,9 +426,11 @@ public class StageExecutionService implements StageCheckpointResults {
 
         // 3) Relieve the stage WIP: yield, abnormal scrap.
         BigDecimal pool = wip(stageTotals(str(c.stage, "id"), activeLines(c.orderId)));
-        StageYieldCalculator.Result y = StageYieldCalculator.compute(new StageYieldCalculator.Input(pool, direct,
-                good.add(others), scrap, planned.add(othersExpected), dec(c.stage, "qtyProcessed"), yieldPct,
-                completes), SCALE);
+        StageYieldCalculator.Result y = StageYieldCalculator.compute(overrides != null
+                ? new StageYieldCalculator.Input(pool, direct, overrides.goodBasis(), overrides.scrapBasis(),
+                        overrides.plannedBasis(), overrides.processedBasis(), yieldPct, completes)
+                : new StageYieldCalculator.Input(pool, direct, good.add(others), scrap, planned.add(othersExpected),
+                        dec(c.stage, "qtyProcessed"), yieldPct, completes), SCALE);
         if (y.abnormalValue().signum() > 0 || y.abnormalQty().signum() > 0) {
             if (y.abnormalValue().signum() > 0) {
                 stockPosting.postProductionScrap(y.abnormalValue(), date, SOURCE, pid, "Stage abnormal scrap · "
@@ -436,8 +448,12 @@ public class StageExecutionService implements StageCheckpointResults {
         if (mainMarket == null && mainProduct != null) {
             mainMarket = salesPrice(mainProduct);
         }
-        shares.add(new Share("main", "main", good, "allocated", SetupValues.dec(rule, "mainWeightPerUnit"), mainMarket,
-                null, null));
+        BigDecimal mainWeight = SetupValues.dec(rule, "mainWeightPerUnit");
+        if (overrides != null && overrides.frozen().get("main") != null) {
+            mainWeight = overrides.frozen().get("main").weightPerUnit();
+            mainMarket = overrides.frozen().get("main").marketValue();
+        }
+        shares.add(new Share("main", "main", good, "allocated", mainWeight, mainMarket, null, null));
         Map<String, Map<String, Object>> config = new HashMap<>();
         Map<String, Map<String, Object>> bomCo = new HashMap<>();
         if (c.order.get("bomId") != null) {
@@ -461,8 +477,14 @@ public class StageExecutionService implements StageCheckpointResults {
                     : salesPrice(str(o, "productId"));
             BigDecimal nrv = cp != null && cp.get("nrvUnitValue") != null ? dec(cp, "nrvUnitValue")
                     : salesPrice(str(o, "productId"));
-            shares.add(new Share(str(o, "id"), str(o, "outputRole"), otherQty.get(str(o, "id")), valuation,
-                    SetupValues.dec(cp, "weightPerUnit"), market, fixed, nrv));
+            BigDecimal weight = SetupValues.dec(cp, "weightPerUnit");
+            StageCommands.FrozenOutput frozen = overrides == null ? null : overrides.frozen().get(str(o, "id"));
+            if (frozen != null) {
+                weight = frozen.weightPerUnit();
+                market = frozen.marketValue();
+            }
+            shares.add(new Share(str(o, "id"), str(o, "outputRole"), otherQty.get(str(o, "id")), valuation, weight,
+                    market, fixed, nrv));
         }
         String method = rule == null ? "quantity" : str(rule, "method");
         JointCostAllocator.Result alloc = JointCostAllocator.allocate(y.goodValue(), shares, method, SCALE);

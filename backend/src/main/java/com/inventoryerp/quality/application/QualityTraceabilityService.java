@@ -139,6 +139,24 @@ public class QualityTraceabilityService {
             order.put("children", inputs);
             children.add(order);
         }
+        for (Map<String, Object> o : SqlRows.list(db.jdbc().sql("SELECT DISTINCT po.id, po.\"orderCode\","
+                + " po.\"completedAt\", po.\"postedAt\", po.\"producedQty\" FROM \"InventoryLedger\" g JOIN \"InventoryBatch\""
+                + " b ON b.id = g.\"batchId\" JOIN \"ProductionStagePosting\" p ON p.id = g.\"referenceId\" JOIN"
+                + " \"ProductionOrder\" po ON po.id = p.\"orderId\" WHERE g.\"organizationId\" = ? AND g.\"productId\" = ? AND"
+                + " b.\"batchNumber\" = ? AND g.\"referenceType\" = 'production_stage' AND g.\"quantityChange\" > 0 AND"
+                + " p.\"reversedAt\" IS NULL").params(org, productId, batch))) {
+            if (children.stream().anyMatch(c -> o.get("id").equals(c.get("ref")))) {
+                continue;
+            }
+            Map<String, Object> order = orderNode(o);
+            List<Map<String, Object>> inputs = new ArrayList<>();
+            for (Map<String, Object> m : stageLots(o.get("id"), "< 0", "-SUM(g.\"quantityChange\")")) {
+                inputs.add(batchNode(Q.str(m, "productId"), Q.str(m, "batchNumber"), Q.dec(m, "qty"), "backward",
+                        level + 1, max, seen));
+            }
+            order.put("children", inputs);
+            children.add(order);
+        }
         for (Map<String, Object> d : SqlRows.list(db.jdbc().sql("SELECT d.\"downgradeQty\", d.\"decidedAt\","
                 + " l.\"lotNumber\", l.\"productId\", l.\"batchNumber\", l.id AS \"lotId\" FROM \"QualityLotDecision\" d"
                 + " JOIN \"QualityInspectionLot\" l ON l.id = d.\"lotId\" WHERE d.\"organizationId\" = ? AND"
@@ -184,7 +202,8 @@ public class QualityTraceabilityService {
                 + " WHERE g.\"organizationId\" = ? AND g.\"productId\" = ? AND b.\"batchNumber\" = ? AND"
                 + " g.\"quantityChange\" > 0 AND g.type::text IN ('receipt', 'opening_balance', 'adjustment_in', 'return_in',"
                 + " 'reversal_in') AND COALESCE(g.\"referenceType\", '') NOT IN ('goods_receipt', 'production_order',"
-                + " 'quality_downgrade', 'quality_lot') GROUP BY g.\"referenceType\", g.\"referenceId\" ORDER BY at")
+                + " 'quality_downgrade', 'quality_lot', 'production_stage') GROUP BY g.\"referenceType\","
+                + " g.\"referenceId\" ORDER BY at")
                 .params(QualityDb.org(), productId, batch));
     }
 
@@ -218,6 +237,21 @@ public class QualityTraceabilityService {
                     && o.get("postedAt") != null) {
                 outputs.add(batchNode(Q.str(o, "outputProductId"), Q.str(o, "batchNumber"), Q.dec(o, "producedQty"),
                         "forward", level + 1, max, seen));
+            }
+            order.put("children", outputs);
+            children.add(order);
+        }
+        for (Map<String, Object> o : SqlRows.list(db.jdbc().sql("SELECT DISTINCT po.id, po.\"orderCode\","
+                + " po.\"completedAt\", po.\"postedAt\", po.\"producedQty\" FROM \"InventoryLedger\" g JOIN \"InventoryBatch\""
+                + " b ON b.id = g.\"batchId\" JOIN \"ProductionStagePosting\" p ON p.id = g.\"referenceId\" JOIN"
+                + " \"ProductionOrder\" po ON po.id = p.\"orderId\" WHERE g.\"organizationId\" = ? AND g.\"productId\" = ? AND"
+                + " b.\"batchNumber\" = ? AND g.\"referenceType\" = 'production_stage' AND g.\"quantityChange\" < 0 AND"
+                + " p.\"reversedAt\" IS NULL AND po.status <> 'cancelled'").params(org, productId, batch))) {
+            Map<String, Object> order = orderNode(o);
+            List<Map<String, Object>> outputs = new ArrayList<>();
+            for (Map<String, Object> m : stageLots(o.get("id"), "> 0", "SUM(g.\"quantityChange\")")) {
+                outputs.add(batchNode(Q.str(m, "productId"), Q.str(m, "batchNumber"), Q.dec(m, "qty"), "forward",
+                        level + 1, max, seen));
             }
             order.put("children", outputs);
             children.add(order);
@@ -271,7 +305,8 @@ public class QualityTraceabilityService {
                 + " g.\"referenceId\", -SUM(g.\"quantityChange\") AS qty, MIN(g.\"createdAt\") AS at FROM \"InventoryLedger\" g"
                 + " JOIN \"InventoryBatch\" b ON b.id = g.\"batchId\" WHERE g.\"organizationId\" = ? AND g.\"productId\" = ?"
                 + " AND b.\"batchNumber\" = ? AND g.\"quantityChange\" < 0 AND COALESCE(g.\"referenceType\", '') NOT IN"
-                + " ('production_order', 'fleet_trip', 'quality_downgrade') GROUP BY g.type, g.\"referenceType\","
+                + " ('production_order', 'production_stage', 'fleet_trip', 'quality_downgrade') GROUP BY g.type,"
+                + " g.\"referenceType\","
                 + " g.\"referenceId\" ORDER BY at").params(org, productId, batch))) {
             Map<String, Object> n = node("issue", "ledger|" + r.get("type") + "|" + r.get("referenceType") + "|"
                     + r.get("referenceId"), label(Q.str(r, "type")) + (r.get("referenceId") == null ? ""
@@ -287,6 +322,15 @@ public class QualityTraceabilityService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Lots a stage order consumed or produced, from its stage ledger rows (ADR-S060). */
+    private List<Map<String, Object>> stageLots(Object orderId, String sign, String qty) {
+        return SqlRows.list(db.jdbc().sql("SELECT g.\"productId\", b.\"batchNumber\", " + qty + " AS qty FROM"
+                + " \"InventoryLedger\" g JOIN \"InventoryBatch\" b ON b.id = g.\"batchId\" JOIN \"ProductionStagePosting\" p"
+                + " ON p.id = g.\"referenceId\" WHERE g.\"organizationId\" = ? AND g.\"referenceType\" = 'production_stage'"
+                + " AND g.\"quantityChange\" " + sign + " AND p.\"orderId\" = ? AND p.\"reversedAt\" IS NULL GROUP BY"
+                + " g.\"productId\", b.\"batchNumber\"").params(QualityDb.org(), orderId));
+    }
 
     private List<Map<String, Object>> ledgerBatches(Object referenceId, String referenceType, String type) {
         return SqlRows.list(db.jdbc().sql("SELECT g.\"productId\", b.\"batchNumber\", -SUM(g.\"quantityChange\") AS qty"

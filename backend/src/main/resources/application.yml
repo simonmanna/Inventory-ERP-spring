@@ -118,6 +118,7 @@ app:
     assets: ${ENABLE_ASSETS:false}
     tasks: ${ENABLE_TASKS:false}
     manufacturing: ${ENABLE_MANUFACTURING:false}
+    processing: ${ENABLE_PROCESSING:${ENABLE_MANUFACTURING:false}}
     rental: ${ENABLE_RENTAL:false}
     repair: ${ENABLE_REPAIR:false}
     hr: ${ENABLE_HR:false}

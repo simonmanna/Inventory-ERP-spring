@@ -335,6 +335,13 @@
     "create": "routing:create",
     "delete": "routing:delete"
   },
+  "processing": {
+    "read": "processing:read",
+    "create": "processing:create",
+    "post": "processing:post",
+    "reverse": "processing:reverse",
+    "approveLoss": "processing:approve_loss"
+  },
   "crushing": {
     "read": "crushing:read",
     "setup": "crushing:setup"

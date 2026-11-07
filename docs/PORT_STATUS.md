@@ -1401,3 +1401,7 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] GET /api/v1/communication/templates — CommunicationController.listTemplates
 - [x] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
 - [x] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
+
+## Multi-stage processing (ADR-S060, extension: no Nest counterpart)
+
+- [x] Templates, jobs, routes, lots, WIP, genealogy, stage margin and dashboard under /api/v1/manufacturing/processing — ProcessingController; see docs/spec/processing.md

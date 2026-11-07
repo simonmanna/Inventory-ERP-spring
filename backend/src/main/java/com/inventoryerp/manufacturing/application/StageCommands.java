@@ -114,6 +114,16 @@ public final class StageCommands {
             @Pattern(regexp = MfgCommands.ISO_DATE, message = MfgCommands.DATE_MSG) String date,
             String notes) {}
 
+    /** Frozen allocation values of one output of a processing job (ADR-S060). */
+    public record FrozenOutput(BigDecimal weightPerUnit, BigDecimal marketValue) {}
+
+    /**
+     * A processing job's yield in its common basis and its frozen allocation values, by output line id ({@code "main"}
+     * for the main output). Internal: never part of a request body.
+     */
+    public record OutputOverrides(BigDecimal goodBasis, BigDecimal scrapBasis, BigDecimal plannedBasis,
+            BigDecimal processedBasis, java.util.Map<String, FrozenOutput> frozen) {}
+
     /** {@code POST /production-stages/{id}/conversion-costs}: labour / machine / overhead / utility applied. */
     public record StageConversion(
             @NotNull(message = "amount " + POS) @Positive(message = "amount " + POS) BigDecimal amount,

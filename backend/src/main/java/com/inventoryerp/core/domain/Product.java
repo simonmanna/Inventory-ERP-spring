@@ -212,6 +212,10 @@ public class Product {
     @Column(name = "isRentable", nullable = false)
     private Boolean isRentable;
 
+    /** ADR-S060: false takes the product off quotations, orders, invoices and deliveries; stock is untouched. */
+    @Column(name = "canBeSold", nullable = false)
+    private Boolean canBeSold = true;
+
     @Column(name = "rentalIsPooled", nullable = false)
     private Boolean rentalIsPooled;
 
@@ -759,6 +763,14 @@ public class Product {
 
     public void setVarianceToleranceG(BigDecimal varianceToleranceG) {
         this.varianceToleranceG = varianceToleranceG;
+    }
+
+    public Boolean getCanBeSold() {
+        return canBeSold;
+    }
+
+    public void setCanBeSold(Boolean canBeSold) {
+        this.canBeSold = canBeSold;
     }
 
     public Boolean getIsRentable() {

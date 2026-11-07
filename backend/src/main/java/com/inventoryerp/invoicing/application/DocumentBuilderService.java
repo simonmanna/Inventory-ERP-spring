@@ -37,6 +37,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class DocumentBuilderService {
 
+
+    private com.inventoryerp.core.application.SaleableProducts saleable;
+
+    /** Sell at any stage (ADR-S060): only the product's own switch stops a sale. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSaleable(com.inventoryerp.core.application.SaleableProducts saleable) {
+        this.saleable = saleable;
+    }
+
     /** One requested line ({@code DocumentLineInput}). */
     public record LineInput(String productId, String menuItemId, String variantId, String variantName,
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
@@ -311,7 +320,15 @@ public class DocumentBuilderService {
     }
 
     /** Create a draft document (numbered per type and issue year) with its lines; returns it with lines + partner. */
+    /** Refuses a line whose product is switched off for sale (ADR-S060). */
+    public void assertSaleable(List<LineInput> lines) {
+        lines.forEach(l -> saleable.assertSaleable(l.productId()));
+    }
+
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
+        if ("sales_invoice".equals(documentType)) {
+            assertSaleable(lines);
+        }
         Totals totals = prepareLines(lines, "vendor_bill".equals(documentType) ? UnitRole.PURCHASE : UnitRole.SALES,
                 fiscalTaxMap(h.fiscalPositionId(), h.partnerId()));
         int year = EntityPatch.toInstant(h.issueDate()).atOffset(ZoneOffset.UTC).getYear();

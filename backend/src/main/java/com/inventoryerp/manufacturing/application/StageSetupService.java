@@ -150,6 +150,12 @@ public class StageSetupService {
     /** Replace the BOM's co-products; set / clear its allocation override. */
     @Transactional
     public Map<String, Object> saveBomSetup(String bomId, BomStageSetup dto) {
+        // A processing template's recipe is immutable once active (ADR-S060): history must keep what it ran on.
+        Integer locked = db.jdbc().sql("SELECT count(*)::int FROM \"ProcessingTemplate\" WHERE \"bomId\" = ? AND"
+                + " \"organizationId\" = ?").params(bomId, MfgDb.org()).query(Integer.class).single();
+        if (locked > 0) {
+            throw ApiException.badRequest("This recipe belongs to a processing step. Create a new version of the step instead.");
+        }
         Map<String, Object> bom = bom(bomId);
         if ("archived".equals(bom.get("status"))) {
             throw ApiException.badRequest("An archived BOM cannot be changed.");
