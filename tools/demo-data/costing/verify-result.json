@@ -1,0 +1,102 @@
+{
+ "BLK-A good qty": {
+  "actual": "12500",
+  "expected": 12500,
+  "ok": true
+ },
+ "BLK-A unit cost": {
+  "actual": "1930.926668",
+  "expected": 1930.93,
+  "ok": true
+ },
+ "BLK-B good qty": {
+  "actual": "12500",
+  "expected": 12500,
+  "ok": true
+ },
+ "BLK-B unit cost": {
+  "actual": "1942.126668",
+  "expected": 1942.13,
+  "ok": true
+ },
+ "BLK-C good qty": {
+  "actual": "12500",
+  "expected": 12500,
+  "ok": true
+ },
+ "BLK-C unit cost": {
+  "actual": "1906.526668",
+  "expected": 1906.53,
+  "ok": true
+ },
+ "BLK-D good qty": {
+  "actual": "11800",
+  "expected": 11800,
+  "ok": true
+ },
+ "BLK-D unit cost": {
+  "actual": "2049.180792",
+  "expected": 2049.18,
+  "ok": true
+ },
+ "BOM roll-up per 1,000 blocks": {
+  "actual": "1933956.266556",
+  "expected": 1933956.27,
+  "ok": true
+ },
+ "BOM conversion per 1,000 blocks": {
+  "actual": "257500.0",
+  "expected": 257500,
+  "ok": true
+ },
+ "Landed on cement": {
+  "actual": "8149780.012571",
+  "expected": 8149780.01,
+  "ok": true
+ },
+ "Landed on sand": {
+  "actual": "5040000",
+  "expected": 5040000,
+  "ok": true
+ },
+ "Landed on stone dust": {
+  "actual": "350000",
+  "expected": 350000,
+  "ok": true
+ },
+ "Clearing 2155 difference": {
+  "actual": "0",
+  "expected": 0,
+  "ok": true
+ },
+ "Clearing 2155 balance": {
+  "actual": "0",
+  "expected": 0,
+  "ok": true
+ },
+ "WIP after cost adjustment run": {
+  "actual": "0",
+  "expected": 0,
+  "ok": true
+ },
+ "Stock sub-ledger vs GL, whole org": {
+  "actual": "0.03",
+  "expected": 0,
+  "ok": true
+ },
+ "Blocks sold": {
+  "actual": "16000",
+  "expected": 16000,
+  "ok": true
+ },
+ "Block revenue": {
+  "actual": "38400000",
+  "expected": 38400000,
+  "ok": true
+ },
+ "Demo purchase orders": {
+  "actual": "13",
+  "expected": 13,
+  "ok": true
+ }
+}

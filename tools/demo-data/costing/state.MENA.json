@@ -1,0 +1,196 @@
+{
+ "partial": {
+  "A-CEM": {
+   "bill": "c404afda-b984-4c3b-af18-7dbf10dbf9ad",
+   "grn": "52534231-342b-49d4-bf41-b17829f7196e",
+   "po": "9bb15499-55ff-413d-9882-0d2fe6d31a13"
+  },
+  "A-DUST": {
+   "bill": "4b4fa728-98a8-4be4-b916-202461609f72",
+   "grn": "49da3d43-97b8-4951-b54f-ce3e82394d69",
+   "po": "e15a8292-00f8-410e-9681-e1db2e306310"
+  },
+  "A-SAND": {
+   "bill": "9107d8a9-32ba-451c-880d-751c2ced3bb5",
+   "grn": "c3c66143-24f3-48de-b932-0daaab287a54",
+   "po": "dcda8ef6-de6d-4177-9b52-6826cb2e9326"
+  },
+  "ADMIX-LOCAL": {
+   "bill": "6f33a5cd-dbe5-43f3-88bb-b04f6664c9f7",
+   "grn": "c32f57a0-c86e-4393-95b7-6f4fe2bda76b",
+   "po": "9a0c575a-f040-4ac6-8ae7-77a9f361eed4"
+  },
+  "B-CEM": {
+   "bill": "a5874aab-d8e9-4082-b090-889a44f93fa6",
+   "grn": "17a5e915-235b-46cd-82d2-9be5d3276283",
+   "po": "0dd8a490-fcb2-4181-bcc1-4d3afd69f08e"
+  },
+  "B-DUST": {
+   "bill": "4d566458-4f37-44e1-81bb-e24139d857ef",
+   "grn": "18ba56f0-28f6-4296-a322-183dcef18c4f",
+   "po": "189d7491-7f9f-43e7-add6-2e42bdf34f6c"
+  },
+  "B-SAND": {
+   "bill": "739d9e0e-2732-4709-b866-8c8d87f62511",
+   "grn": "2043d6a9-c4a1-49d2-8867-7c8c4b673579",
+   "po": "a44cf6ca-8b98-43ed-8eb7-5b4468dd19e2"
+  },
+  "C-ADMIX": {
+   "bill": "64cf2a22-7f81-4732-9d86-930cbc737ea8",
+   "grn": "7b44deb8-87ef-4067-b7b8-e05022754218",
+   "po": "8d57ea79-b6c2-4145-b293-e4c4d83f16ad"
+  },
+  "C-CEM": {
+   "bill": "c595d181-be03-434d-9bda-b5160e1e82bd",
+   "grn": "6cc9b55b-91b3-49d3-8047-70e202a24f61",
+   "po": "3c74a8a9-d96b-48af-a52d-7a263e1332ba"
+  },
+  "C-DUST": {
+   "bill": "5d5b7d9d-d73d-4011-88c0-27b99b76a320",
+   "grn": "55e4d545-08f1-413b-b6c9-b22632d65031",
+   "po": "0e5bab34-8e12-4849-b1eb-8ba9b31f544c"
+  },
+  "C-SAND": {
+   "bill": "45f9eedb-9012-4a53-bc5b-275852bb8ee5",
+   "grn": "47fbada0-b081-4d87-9445-2ef684acf2a2",
+   "po": "0bf90784-65fe-4e76-a6d1-0f306d5287ec"
+  },
+  "E-CEM": {
+   "bill": "262bdf17-d95a-41fd-b9d7-c0e64281de27",
+   "grn": "b50d311d-fe8d-40cf-8e12-4314f106f935",
+   "po": "43655d03-a3b5-4b23-835e-94aa42577f82"
+  },
+  "WATER": {
+   "bill": "57c850c1-7550-422c-8e9b-cf27937c3919",
+   "grn": "0a246b05-77eb-4c2a-ac73-67c983a58ae5",
+   "po": "d2ad3201-3026-4dbe-8fa6-2741d7de1816"
+  }
+ },
+ "partner": {
+  "S-ADMIX": "74d3bfd5-eca1-4676-a5c7-2328e26ceff2",
+  "S-INSURE": "648b14d5-09e4-4389-8521-33cccfa96870",
+  "S-KASESE": "7afe063e-7683-400e-a49d-3359c1705215",
+  "S-MASAKA": "41b13798-ba31-4110-8620-1c20f21ef97d",
+  "S-MOMBASA": "d3c372b0-f8b2-44c7-9014-5f8c38a4897f",
+  "S-MUKONO": "42747081-9d5d-42ff-8700-0b8fbb083262",
+  "S-NAMANVE": "1cc5c046-323f-4524-b6b5-c8c7f38a71ad",
+  "S-WATER": "22375745-6053-4763-80ef-aef92c296f35"
+ },
+ "product": {
+  "CD-ADMIX": "7b2b2bfc-ad8b-4662-b53d-3baabb07b23c",
+  "CD-BLK6": "6a564dbe-0645-4833-a32c-4f3f741b9310",
+  "CD-CEM": "ff919092-38ef-4bb3-9ba7-6c8dfcf1454b",
+  "CD-DUST": "b953e546-47b2-4471-b70f-0d7f0602cf6a",
+  "CD-MIX": "827e8944-f1c8-4870-898f-4d9abafd0e0b",
+  "CD-SAND": "611357e2-1cdd-41e4-acc0-1c2d041029a9",
+  "CD-WATER": "41dea2e7-567f-47c9-aa2b-354b69e6a77c",
+  "CD-WRAP": "d49be596-a5db-41b6-b2b9-f6fa7e2c1f28"
+ },
+ "steps": {
+  "bom:blk": "7a3b02f8-ea5b-4cb5-a5b4-1737fe3184cf",
+  "bom:mix": "6f8966f9-d7e6-4cae-8acb-ef114ca92e03",
+  "cost-adjustment": "9eb1749d-c864-43b2-ad8d-1e71df52c14c",
+  "mo:BLK-A": "32b6b2c4-384b-4d8e-a3e0-39dbedcc8f39",
+  "mo:BLK-B": "90d72cc8-d484-4276-85dc-4e90c5dcf1b1",
+  "mo:BLK-C": "517ee9e2-f362-4640-9bff-18b67a2e5e00",
+  "mo:BLK-D": "b2a0e40a-6a6f-4048-8674-468c86b6b7e9",
+  "mo:MIX-A": "7cb70dbf-66f0-4ccc-ba3f-31ae9e316c97",
+  "mo:MIX-B": "54b4a364-8ac3-4689-8c12-aec34385feb1",
+  "mo:MIX-C": "de939894-829c-4358-a766-6da79b9d7f89",
+  "mo:MIX-D": "7f1317b7-9775-42bf-93f7-8aa9825d2cc1",
+  "po:A-CEM": {
+   "bill": "c404afda-b984-4c3b-af18-7dbf10dbf9ad",
+   "grn": "52534231-342b-49d4-bf41-b17829f7196e",
+   "po": "9bb15499-55ff-413d-9882-0d2fe6d31a13"
+  },
+  "po:A-DUST": {
+   "bill": "4b4fa728-98a8-4be4-b916-202461609f72",
+   "grn": "49da3d43-97b8-4951-b54f-ce3e82394d69",
+   "po": "e15a8292-00f8-410e-9681-e1db2e306310"
+  },
+  "po:A-SAND": {
+   "bill": "9107d8a9-32ba-451c-880d-751c2ced3bb5",
+   "grn": "c3c66143-24f3-48de-b932-0daaab287a54",
+   "po": "dcda8ef6-de6d-4177-9b52-6826cb2e9326"
+  },
+  "po:ADMIX-LOCAL": {
+   "bill": "6f33a5cd-dbe5-43f3-88bb-b04f6664c9f7",
+   "grn": "c32f57a0-c86e-4393-95b7-6f4fe2bda76b",
+   "po": "9a0c575a-f040-4ac6-8ae7-77a9f361eed4"
+  },
+  "po:B-CEM": {
+   "bill": "a5874aab-d8e9-4082-b090-889a44f93fa6",
+   "grn": "17a5e915-235b-46cd-82d2-9be5d3276283",
+   "po": "0dd8a490-fcb2-4181-bcc1-4d3afd69f08e"
+  },
+  "po:B-DUST": {
+   "bill": "4d566458-4f37-44e1-81bb-e24139d857ef",
+   "grn": "18ba56f0-28f6-4296-a322-183dcef18c4f",
+   "po": "189d7491-7f9f-43e7-add6-2e42bdf34f6c"
+  },
+  "po:B-SAND": {
+   "bill": "739d9e0e-2732-4709-b866-8c8d87f62511",
+   "grn": "2043d6a9-c4a1-49d2-8867-7c8c4b673579",
+   "po": "a44cf6ca-8b98-43ed-8eb7-5b4468dd19e2"
+  },
+  "po:C-ADMIX": {
+   "bill": "64cf2a22-7f81-4732-9d86-930cbc737ea8",
+   "grn": "7b44deb8-87ef-4067-b7b8-e05022754218",
+   "po": "8d57ea79-b6c2-4145-b293-e4c4d83f16ad"
+  },
+  "po:C-CEM": {
+   "bill": "c595d181-be03-434d-9bda-b5160e1e82bd",
+   "grn": "6cc9b55b-91b3-49d3-8047-70e202a24f61",
+   "po": "3c74a8a9-d96b-48af-a52d-7a263e1332ba"
+  },
+  "po:C-DUST": {
+   "bill": "5d5b7d9d-d73d-4011-88c0-27b99b76a320",
+   "grn": "55e4d545-08f1-413b-b6c9-b22632d65031",
+   "po": "0e5bab34-8e12-4849-b1eb-8ba9b31f544c"
+  },
+  "po:C-SAND": {
+   "bill": "45f9eedb-9012-4a53-bc5b-275852bb8ee5",
+   "grn": "47fbada0-b081-4d87-9445-2ef684acf2a2",
+   "po": "0bf90784-65fe-4e76-a6d1-0f306d5287ec"
+  },
+  "po:E-CEM": {
+   "bill": "262bdf17-d95a-41fd-b9d7-c0e64281de27",
+   "grn": "b50d311d-fe8d-40cf-8e12-4314f106f935",
+   "po": "43655d03-a3b5-4b23-835e-94aa42577f82"
+  },
+  "po:WATER": {
+   "bill": "57c850c1-7550-422c-8e9b-cf27937c3919",
+   "grn": "0a246b05-77eb-4c2a-ac73-67c983a58ae5",
+   "po": "d2ad3201-3026-4dbe-8fa6-2741d7de1816"
+  },
+  "rate:CD-CURE": "e9b99419-a199-4cc5-a2ed-3e74ab71f6d0",
+  "rate:CD-MIXER": "815b4a0a-f45f-4573-9249-e961a893897f",
+  "rate:CD-PACK": "8f17d785-04c1-4d57-9774-5c1130ec465f",
+  "rate:CD-PRESS": "b3ad2dc4-1037-414c-a971-f2691489bc83",
+  "routing:blk": "69fc523c-2bd5-4c60-a48d-0b9f77212db2",
+  "routing:mix": "2ad16e5f-7897-4645-8af7-ca6f6c5bc248",
+  "sale:SALE-1": "590c8119-ff8e-4d8d-8a75-adbf5d3a7955",
+  "sale:SALE-2": "45cacc38-23a9-4e4d-82ca-b9699787d3ba",
+  "shipment-receipt:adm": "7b44deb8-87ef-4067-b7b8-e05022754218",
+  "shipment-receipt:cem": "6cc9b55b-91b3-49d3-8047-70e202a24f61",
+  "shipment:C": "30a675ff-1f9c-4eaa-95b5-ce390d7ed8dd",
+  "standard:blk": "d3c09bff-57e3-46b4-8021-1766f927dde2",
+  "standard:mix": "a3df1e64-28b4-46cd-80d1-2bb3a7ab6316",
+  "voucher:B-CEM": "d8461616-1e1c-4fe5-8395-148a50b6b84d",
+  "voucher:B-DUST": "32fe0a6a-dc1b-4b73-be83-02b0489eb030",
+  "voucher:B-SAND": "2895f396-2ea7-468f-967a-9f11f0bf013e",
+  "voucher:C-LATE": "d710e466-13ed-4ee4-bb58-b43d9420ae4c",
+  "voucher:C-SAND": "c273fc68-b54a-47e0-8eb4-29697d751dbb",
+  "voucher:C-SHIP": "dac992bb-eba2-4763-aacd-4ef7928b9677",
+  "wccost:CD-CURE": 10000,
+  "wccost:CD-MIXER": 65000,
+  "wccost:CD-PACK": 20000,
+  "wccost:CD-PRESS": 93000
+ },
+ "wc": {
+  "CD-CURE": "a201cd63-6275-4a7f-bf59-d5214e7cd0b9",
+  "CD-MIXER": "b7a92140-2e1e-4d57-aa70-41d88c87adb8",
+  "CD-PACK": "f33a7de1-669a-491c-979e-fc7d27692f5c",
+  "CD-PRESS": "2909996f-d103-49c8-ab79-3bb32320e746"
+ }
+}
