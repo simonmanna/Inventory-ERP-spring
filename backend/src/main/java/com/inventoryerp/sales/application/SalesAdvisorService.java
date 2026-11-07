@@ -42,6 +42,13 @@ public class SalesAdvisorService {
         this.revenue = revenue;
     }
 
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     private static Map<String, Object> advice(String kind, String severity, String title, String detail,
             String entityType, Object entityId, Object partnerId) {
         Map<String, Object> m = Obj.of("kind", kind, "severity", severity, "title", title, "detail", detail,
@@ -56,10 +63,13 @@ public class SalesAdvisorService {
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> advisories() {
+        access.assertAllBranches();
         List<Map<String, Object>> out = new ArrayList<>();
         LocalDate today = LocalDate.now();
         churn(out, today);
-        negativeMargin(out, today);
+        if (access.canSeeCost()) {
+            negativeMargin(out, today);
+        }
         discountOutliers(out);
         for (Map<String, Object> q : db.rows("SELECT q.id, q.number, q.\"validUntil\", q.total, q.\"partnerId\", p.name"
                 + " FROM \"SalesQuotation\" q LEFT JOIN \"Partner\" p ON p.id = q.\"partnerId\" WHERE q.\"organizationId\" = ?"

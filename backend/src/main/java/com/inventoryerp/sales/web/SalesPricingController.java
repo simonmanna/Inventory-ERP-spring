@@ -25,10 +25,13 @@ public class SalesPricingController {
 
     private final SalesPricelistService svc;
     private final SalesPricingEngine engine;
+    private final com.inventoryerp.sales.application.SalesPricingToolsService tools;
 
-    public SalesPricingController(SalesPricelistService svc, SalesPricingEngine engine) {
+    public SalesPricingController(SalesPricelistService svc, SalesPricingEngine engine,
+            com.inventoryerp.sales.application.SalesPricingToolsService tools) {
         this.svc = svc;
         this.engine = engine;
+        this.tools = tools;
     }
 
     private static Map<String, Object> body(Map<String, Object> b) {
@@ -115,6 +118,67 @@ public class SalesPricingController {
     @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
     public Map<String, Object> deleteFloor(@PathVariable String id) {
         return svc.deleteFloor(id);
+    }
+
+    @GetMapping("/promotions")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public java.util.List<Map<String, Object>> promotions() {
+        return tools.promotions();
+    }
+
+    @PostMapping("/promotions")
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    public Map<String, Object> addPromotion(@RequestBody Map<String, Object> b) {
+        return tools.savePromotion(null, body(b));
+    }
+
+    @PutMapping("/promotions/{id}")
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    public Map<String, Object> savePromotion(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return tools.savePromotion(id, body(b));
+    }
+
+    @DeleteMapping("/promotions/{id}")
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    public Map<String, Object> deletePromotion(@PathVariable String id) {
+        return tools.deletePromotion(id);
+    }
+
+    @GetMapping("/price-limits")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public java.util.List<Map<String, Object>> limits() {
+        return tools.limits();
+    }
+
+    @PutMapping("/price-limits")
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    public Map<String, Object> saveLimit(@RequestBody Map<String, Object> b) {
+        return tools.saveLimit(body(b));
+    }
+
+    @DeleteMapping("/price-limits/{id}")
+    @RequirePermissions(Permissions.SALES__PRICING_MANAGE)
+    public Map<String, Object> deleteLimit(@PathVariable String id) {
+        return tools.deleteLimit(id);
+    }
+
+    @GetMapping("/pricing/grid")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public java.util.List<Map<String, Object>> grid(@org.springframework.web.bind.annotation.RequestParam String productId) {
+        return tools.grid(productId);
+    }
+
+    @GetMapping("/pricing/lists")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public Map<String, Object> lists() {
+        return tools.lists();
+    }
+
+    @GetMapping("/pricing/history")
+    @RequirePermissions(Permissions.SALES__PRICING_READ)
+    public java.util.List<Map<String, Object>> history(@org.springframework.web.bind.annotation.RequestParam Map<String, String> q) {
+        return tools.history(q);
     }
 
     @PostMapping("/pricing/resolve")

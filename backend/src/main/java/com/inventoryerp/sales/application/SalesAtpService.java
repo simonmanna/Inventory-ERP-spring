@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,13 @@ public class SalesAtpService {
     private final UomConversionService uoms;
     private final List<SupplyProvider> suppliers;
 
+    private SalesAccess access;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     public SalesAtpService(SalesDb db, StockReservationService reservations, UomConversionService uoms,
             List<SupplyProvider> suppliers) {
         this.db = db;
@@ -62,7 +70,8 @@ public class SalesAtpService {
             for (Object o : lines) {
                 Map<String, Object> l = (Map<String, Object>) o;
                 BigDecimal qty = l.get("quantity") == null ? BigDecimal.ONE : dec(l.get("quantity"));
-                out.add(atp(str(l.get("productId")), qty, str(l.get("uomId")), str(in.get("locationId")), null));
+                out.add(atp(str(l.get("productId")), str(l.get("variantId")), qty, str(l.get("uomId")),
+                        str(in.get("locationId")), null));
             }
         }
         return Obj.of("lines", out, "production", Obj.of("connected", suppliers.stream().anyMatch(s -> "production"
@@ -84,8 +93,8 @@ public class SalesAtpService {
                 continue;
             }
             BigDecimal open = open(l);
-            Map<String, Object> a = atp(str(l.get("productId")), open, str(l.get("uomId")), location(l, o), str(l.get(
-                    "id")));
+            Map<String, Object> a = atp(str(l.get("productId")), str(l.get("variantId")), open, str(l.get("uomId")),
+                    location(l, o), str(l.get("id")));
             a.put("lineId", l.get("id"));
             a.put("reserved", JsNumbers.js(dec(l.get("qtyReserved"))));
             a.put("promisedDate", l.get("promisedDate"));
@@ -103,7 +112,9 @@ public class SalesAtpService {
      * location and a split proposal. Quantities in the line unit ({@code uomId}); {@code ownLine} excludes that line's
      * own reservation and pegs (re-planning an existing line).
      */
-    Map<String, Object> atp(String productId, BigDecimal qty, String uomId, String locationId, String ownLine) {
+    Map<String, Object> atp(String productId, String variantId, BigDecimal qty, String uomId, String locationId,
+            String ownLine) {
+        String variantKey = variantId == null ? "" : variantId;
         BigDecimal factor = blank(uomId) ? BigDecimal.ONE : uoms.factorToBase(productId, uomId);
         BigDecimal need = qty.multiply(factor);
         List<Map<String, Object>> locs = new ArrayList<>();
@@ -113,12 +124,15 @@ public class SalesAtpService {
                 SELECT s."locationId", l.name, sum(s.quantity) AS onhand,
                        COALESCE((SELECT sum(r.quantity) FROM "StockReservation" r WHERE r."organizationId" = s."organizationId"
                            AND r."productId" = s."productId" AND r."locationId" = s."locationId" AND r.status = 'active'
+                           AND (? = '' OR r."variantKey" = ?)
                            AND NOT (r."sourceType" = ? AND r."sourceId" = ?)), 0) AS reserved
                   FROM "StockItem" s JOIN "InventoryLocation" l ON l.id = s."locationId"
-                 WHERE s."organizationId" = ? AND s."productId" = ? AND l."deletedAt" IS NULL AND l."isActive"
+                 WHERE s."organizationId" = ? AND s."productId" = ? AND (? = '' OR s."variantKey" = ?)
+                   AND l."deletedAt" IS NULL AND l."isActive"
                    AND l.type::text NOT IN ('virtual', 'production', 'transit')
                  GROUP BY s."locationId", l.name, s."organizationId", s."productId"
-                 ORDER BY sum(s.quantity) DESC""", SOURCE, ownLine == null ? "" : ownLine, org(), productId)) {
+                 ORDER BY sum(s.quantity) DESC""", variantKey, variantKey, SOURCE, ownLine == null ? "" : ownLine, org(),
+                productId, variantKey, variantKey)) {
             BigDecimal free = dec(r.get("onhand")).subtract(dec(r.get("reserved"))).max(BigDecimal.ZERO);
             Map<String, Object> m = Obj.of("locationId", r.get("locationId"), "name", r.get("name"), "onHand",
                     unit(dec(r.get("onhand")), factor), "reserved", unit(dec(r.get("reserved")), factor), "available",
@@ -218,6 +232,8 @@ public class SalesAtpService {
     private BigDecimal[] reserveLine(Map<String, Object> o, Map<String, Object> l) {
         String lineId = str(l.get("id"));
         String productId = str(l.get("productId"));
+        String variantId = str(l.get("variantId"));
+        String variantKey = variantId == null ? "" : variantId;
         BigDecimal factor = dec(l.get("uomFactor")).signum() > 0 ? dec(l.get("uomFactor")) : BigDecimal.ONE;
         BigDecimal desired = open(l).multiply(factor);
         String location = str(l.get("reservedLocationId"));
@@ -225,25 +241,27 @@ public class SalesAtpService {
             location = location(l, o);
         }
         if (location == null) {
-            Object best = atp(productId, BigDecimal.ONE, null, null, lineId).get("bestLocation");
+            Object best = atp(productId, variantId, BigDecimal.ONE, null, null, lineId).get("bestLocation");
             location = best == null ? null : str(best);
         }
         BigDecimal reservable = BigDecimal.ZERO;
         if (location != null && desired.signum() > 0) {
             // lock the stock cell, then measure what is free (other sources' active reservations) inside the lock
-            db.rows("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ''"
-                    + " AND \"locationId\" = ? FOR UPDATE", org(), productId, location);
+            db.rows("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                    + " AND \"locationId\" = ? FOR UPDATE", org(), productId, variantKey, location);
             Map<String, Object> cell = db.row("""
                     SELECT COALESCE((SELECT sum(quantity) FROM "StockItem" WHERE "organizationId" = ? AND "productId" = ?
-                               AND "locationId" = ?), 0) AS onhand,
+                               AND "locationId" = ? AND (? = '' OR "variantKey" = ?)), 0) AS onhand,
                            COALESCE((SELECT sum(quantity) FROM "StockReservation" WHERE "organizationId" = ? AND "productId" = ?
-                               AND "locationId" = ? AND status = 'active' AND NOT ("sourceType" = ? AND "sourceId" = ?)), 0)
-                               AS reserved""", org(), productId, location, org(), productId, location, SOURCE, lineId);
+                               AND "locationId" = ? AND (? = '' OR "variantKey" = ?) AND status = 'active'
+                               AND NOT ("sourceType" = ? AND "sourceId" = ?)), 0)
+                               AS reserved""", org(), productId, location, variantKey, variantKey, org(), productId,
+                    location, variantKey, variantKey, SOURCE, lineId);
             BigDecimal free = dec(cell.get("onhand")).subtract(dec(cell.get("reserved"))).max(BigDecimal.ZERO);
             reservable = desired.min(free);
         }
         if (reservable.signum() > 0) {
-            reservations.reserve(new StockReservationService.Reserve(productId, null, location, reservable, SOURCE, lineId,
+            reservations.reserve(new StockReservationService.Reserve(productId, variantId, location, reservable, SOURCE, lineId,
                     "Sales order " + o.get("number")));
         } else {
             reservations.release(SOURCE, lineId);
@@ -284,6 +302,61 @@ public class SalesAtpService {
                 RoundingMode.HALF_UP)};
     }
 
+    /** Lines of a draft or open order that stock cannot cover today, with the shortage in line units. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> shortages(String orderId) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> a : castLines(forOrder(orderId).get("lines"))) {
+            if (dec(a.get("shortage")).signum() > 0) {
+                out.add(Obj.of("lineId", a.get("lineId"), "productId", a.get("productId"), "shortage", a.get("shortage"),
+                        "available", a.get("availableNow"), "fullFillLocation", a.get("fullFillLocation"),
+                        "earliestDate", a.get("earliestDate")));
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> castLines(Object v) {
+        return (List<Map<String, Object>>) v;
+    }
+
+    /** Move a line to another warehouse and re-plan its reservation; refused when that warehouse cannot cover it. */
+    @Transactional
+    public Map<String, Object> pickLocation(String orderId, String lineId, String locationId) {
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                orderId, org());
+        if (o == null) {
+            throw ApiException.notFound("Sales order not found");
+        }
+        if (Set.of("cancelled", "done").contains(o.get("status"))) {
+            throw ApiException.badRequest("This order is closed");
+        }
+        if (!db.exists("InventoryLocation", locationId)) {
+            throw ApiException.notFound("Location not found");
+        }
+        if (!access.scope().allowsLocation(locationId)) {
+            throw ApiException.forbidden("This warehouse is outside your data access");
+        }
+        Map<String, Object> l = db.row("SELECT * FROM \"SalesOrderLine\" WHERE id = ? AND \"orderId\" = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE", lineId, orderId, org());
+        if (l == null) {
+            throw ApiException.notFound("Order line not found");
+        }
+        if (dec(l.get("qtyDelivered")).signum() > 0) {
+            throw ApiException.badRequest("This line has deliveries; its warehouse can no longer change");
+        }
+        Map<String, Object> a = atp(str(l.get("productId")), str(l.get("variantId")), open(l), str(l.get("uomId")),
+                locationId, lineId);
+        if (dec(a.get("shortage")).signum() > 0) {
+            throw ApiException.badRequest("This warehouse has only " + a.get("availableNow") + " available");
+        }
+        releaseLine(lineId);
+        db.update("UPDATE \"SalesOrderLine\" SET \"sourceLocationId\" = ?, \"reservedLocationId\" = NULL WHERE id = ?",
+                locationId, lineId);
+        return SalesOrderService.OPEN.contains(o.get("status")) ? reserveOrder(orderId) : Obj.of("orderId", orderId);
+    }
+
     /** Release a line's reservation and pegs. */
     @Transactional
     public void releaseLine(String lineId) {
@@ -317,6 +390,7 @@ public class SalesAtpService {
     /** Backorder report: open confirmed lines not fully reserved, by priority and confirmation. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> backorders() {
+        access.assertAllBranches();
         return db.rows("""
                 SELECT o.id AS "orderId", o.number, o.priority, p.name AS "partnerName", l.id AS "lineId", l.description,
                        l."productId", l.quantity - l."qtyCancelled" - l."qtyDelivered" AS open, l."qtyReserved" AS reserved,

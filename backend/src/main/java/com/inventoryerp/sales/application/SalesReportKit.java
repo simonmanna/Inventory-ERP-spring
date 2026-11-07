@@ -133,6 +133,20 @@ public final class SalesReportKit {
             return this;
         }
 
+        /** SG-1: drop cost and margin from the table, totals, KPIs and chart. */
+        Report stripCost() {
+            columns.removeIf(c -> SalesAccess.isCostField(c.key()));
+            kpis.removeIf(c -> SalesAccess.isCostField(c.key()));
+            rows.forEach(r -> r.keySet().removeIf(SalesAccess::isCostField));
+            totals.keySet().removeIf(SalesAccess::isCostField);
+            if (chartData != null) {
+                chartData.forEach(r -> r.keySet().removeIf(SalesAccess::isCostField));
+            }
+            chart = new Chart(chart.kind(), chart.x(), chart.series().stream()
+                    .filter(s -> !SalesAccess.isCostField(s.key())).toList(), chart.stacked());
+            return this;
+        }
+
         Map<String, Object> toMap(Def def, Filter f) {
             Map<String, Object> m = Obj.of("key", def.key(), "category", def.category(), "title", def.title(),
                     "description", def.description(), "from", f.from(), "to", f.to(), "columns", columns, "rows", rows,
@@ -313,6 +327,16 @@ public final class SalesReportKit {
 
         private static String nz(String v) {
             return blank(v) ? null : v.trim();
+        }
+
+        /** The same filter limited to the caller's branch scope. */
+        Filter inScope(java.util.Set<String> allowed) {
+            List<String> wanted = branchIds.isEmpty() ? List.copyOf(allowed)
+                    : branchIds.stream().filter(allowed::contains).toList();
+            // An empty list means "all branches" to the query builders, so an empty scope must match nothing.
+            return new Filter(from, to, wanted.isEmpty() ? List.of("-") : wanted, salespersonId, partnerId, productId,
+                    categoryId, customerCategoryId, channel, status, groupBy, dimension, compare, threshold, days, limit,
+                    measure, asOf);
         }
 
         Filter withPeriod(LocalDate f, LocalDate t) {

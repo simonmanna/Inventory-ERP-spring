@@ -73,6 +73,15 @@ public class SalesOrderService {
     private final EventBus events;
     private final ProductVariantService variants;
     private SalesAgreementService agreements;
+    private SalesAccess access;
+    private SalesAlerts alerts;
+    private SalesCreditRequestService creditRequests;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAlerts(SalesAlerts alerts, @org.springframework.context.annotation.Lazy SalesCreditRequestService creditRequests) {
+        this.alerts = alerts;
+        this.creditRequests = creditRequests;
+    }
 
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
@@ -148,6 +157,9 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         List<Map<String, Object>> lines = lines(id);
         o.put("lines", lines);
+        if ("draft".equals(o.get("status"))) {
+            o.put("stockWarnings", atp.shortages(id));
+        }
         o.put("relations", relations(o));
         o.put("canAmend", OPEN.contains(o.get("status")) && TenantContext.has(Permissions.SALES__ORDER_AMEND));
         return o;
@@ -162,6 +174,10 @@ public class SalesOrderService {
                 + " l.\"sortOrder\"", orderId);
         for (Map<String, Object> l : lines) {
             l.put("closedShort", l.get("closedShortAt") != null);
+            if (l.get("lineDiscountPercent") != null) {
+                l.put("netDiscountPercent", l.get("discountPercent"));
+                l.put("discountPercent", l.get("lineDiscountPercent"));
+            }
             l.put("qty", quantities(l));
         }
         return lines;
@@ -220,6 +236,11 @@ public class SalesOrderService {
         this.agreements = agreements;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setAccess(SalesAccess access) {
+        this.access = access;
+    }
+
     /** New draft order (direct order flow). */
     @Transactional
     public Map<String, Object> create(Map<String, Object> in) {
@@ -229,9 +250,17 @@ public class SalesOrderService {
         }
         requirePartner(partnerId);
         Map<String, Object> header = header(in, true);
+        customerDefaults(header, partnerId);
+        header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
+        if (header.get("agreementId") == null) {
+            String project = engine.projectAgreement(partnerId, str(header.get("siteId")), LocalDate.now());
+            if (project != null) {
+                header.put("agreementId", project);
+            }
+        }
         agreement(header, partnerId);
-        header.put("number", nextNumber());
+        header.put("number", nextNumber(str(header.get("branchId"))));
         header.putIfAbsent("currencyCode", orgCurrency());
         header.putIfAbsent("ownerId", user());
         header.put("createdById", user());
@@ -255,17 +284,20 @@ public class SalesOrderService {
         header.put("contactId", q.get("contactId"));
         header.put("quotationId", q.get("id"));
         header.put("dealId", q.get("dealId"));
-        header.putIfAbsent("branchId", q.get("branchId"));
+        header.put("branchId", access.documentBranch(str(header.containsKey("branchId") ? header.get("branchId")
+                : q.get("branchId"))));
         header.putIfAbsent("siteId", q.get("siteId"));
         header.putIfAbsent("deliveryAddress", q.get("deliveryAddress"));
         header.putIfAbsent("paymentTermId", q.get("paymentTermId"));
         header.putIfAbsent("pricelistId", q.get("pricelistId"));
         header.put("currencyCode", q.get("currencyCode"));
+        header.putIfAbsent("exchangeRate", q.get("exchangeRate"));
+        header.putIfAbsent("agreementId", q.get("agreementId"));
         header.putIfAbsent("ownerId", q.get("ownerId") == null ? user() : q.get("ownerId"));
         header.putIfAbsent("teamId", q.get("teamId"));
         header.putIfAbsent("notes", q.get("notes"));
         header.putIfAbsent("terms", q.get("terms"));
-        header.put("number", nextNumber());
+        header.put("number", nextNumber(str(header.get("branchId"))));
         header.put("createdById", user());
         Map<String, Object> row = db.insert("SalesOrder", header);
         String id = str(row.get("id"));
@@ -298,6 +330,9 @@ public class SalesOrderService {
             throw ApiException.badRequest("Only draft orders can be edited; request a change for a confirmed order");
         }
         Map<String, Object> d = header(in, false);
+        if (d.containsKey("branchId")) {
+            d.put("branchId", access.documentBranch(str(d.get("branchId"))));
+        }
         if (in.containsKey("partnerId")) {
             String p = str(in.get("partnerId"));
             requirePartner(p);
@@ -340,7 +375,8 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         Map<String, Object> in = new LinkedHashMap<>();
         for (String k : List.of("partnerId", "contactId", "branchId", "locationId", "siteId", "deliveryAddress",
-                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId")) {
+                "deliveryMethod", "paymentTermId", "currencyCode", "incoterm", "notes", "terms", "agreementId",
+                "orderDiscountPercent", "orderDiscountAmount", "paymentMode")) {
             in.put(k, o.get(k));
         }
         List<Map<String, Object>> lines = new ArrayList<>();
@@ -367,6 +403,13 @@ public class SalesOrderService {
         if (in.containsKey("currencyCode") && !blank(str(in.get("currencyCode")))) {
             d.put("currencyCode", str(in.get("currencyCode")));
         }
+        if (in.containsKey("paymentMode")) {
+            String m = str(in.get("paymentMode"));
+            if (!Set.of("credit", "cash").contains(m)) {
+                throw ApiException.badRequest("paymentMode must be one of: cash, credit");
+            }
+            d.put("paymentMode", m);
+        }
         if (in.containsKey("priority")) {
             d.put("priority", in.get("priority") instanceof Number n ? n.intValue() : 0);
         }
@@ -381,6 +424,14 @@ public class SalesOrderService {
                 throw ApiException.badRequest("deliveryMethod must be one of: collect, delivery");
             }
             d.put("deliveryMethod", m);
+        }
+        for (String k : List.of("orderDiscountPercent", "orderDiscountAmount")) {
+            if (in.containsKey(k)) {
+                d.put(k, in.get(k) == null || dec(in.get(k)).signum() == 0 ? null : dec(in.get(k)));
+            }
+        }
+        if (!create && (d.containsKey("orderDiscountPercent") || d.containsKey("orderDiscountAmount")) && !in.containsKey("lines")) {
+            throw ApiException.badRequest("Send the lines with an order discount change");
         }
         if (in.containsKey("exchangeRate")) {
             BigDecimal r = dec(in.get("exchangeRate"));
@@ -404,6 +455,24 @@ public class SalesOrderService {
             d.put("terms", settings.settings().get("defaultQuoteTerms"));
         }
         return d;
+    }
+
+    /** SG-5: the customer's home branch, currency and payment term fill what the order leaves empty. */
+    private void customerDefaults(Map<String, Object> header, String partnerId) {
+        Map<String, Object> p = db.row("SELECT \"homeBranchId\", \"defaultCurrencyCode\", \"paymentTermId\" FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", partnerId, org());
+        if (p == null) {
+            return;
+        }
+        if (header.get("branchId") == null && p.get("homeBranchId") != null) {
+            header.put("branchId", p.get("homeBranchId"));
+        }
+        if (header.get("currencyCode") == null && p.get("defaultCurrencyCode") != null) {
+            header.put("currencyCode", p.get("defaultCurrencyCode"));
+        }
+        if (header.get("paymentTermId") == null && p.get("paymentTermId") != null) {
+            header.put("paymentTermId", p.get("paymentTermId"));
+        }
     }
 
     /** Validate the header's agreement for {@code partnerId}; its payment term applies when none is given. */
@@ -443,8 +512,27 @@ public class SalesOrderService {
         for (Map<String, Object> l : lines) {
             rows.add(line(partnerId, agreementId, on, l, defaultLocation, scope));
         }
+        applyOrderDiscount(orderId, rows);
         insertLines(orderId, rows, 0);
         retotal(orderId);
+    }
+
+    /** SG-6: spread the header discount over the lines. The line keeps its own discount for later edits. */
+    private void applyOrderDiscount(String orderId, List<Map<String, Object>> rows) {
+        Map<String, Object> h = db.row("SELECT \"orderDiscountPercent\" AS p, \"orderDiscountAmount\" AS a FROM \"SalesOrder\" WHERE id = ?", orderId);
+        BigDecimal net = BigDecimal.ZERO;
+        for (Map<String, Object> m : rows) {
+            net = net.add(SalesDiscounts.net(dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent"))));
+        }
+        BigDecimal percent = SalesDiscounts.orderPercent(h.get("p") == null ? null : dec(h.get("p")), h.get("a") == null ? null
+                : dec(h.get("a")), net);
+        if (percent.signum() == 0) {
+            return;
+        }
+        for (Map<String, Object> m : rows) {
+            m.put("lineDiscountPercent", m.get("discountPercent"));
+            m.put("discountPercent", SalesDiscounts.combine(dec(m.get("discountPercent")), percent));
+        }
     }
 
     /** Validated, priced line values (not yet taxed). */
@@ -463,10 +551,13 @@ public class SalesOrderService {
         BigDecimal unit;
         BigDecimal disc;
         String source;
-        if (l.get("unitPrice") != null || l.get("discountPercent") != null) {
+        if (l.get("unitPrice") != null || l.get("discountPercent") != null || l.get("discountAmount") != null) {
             unit = l.get("unitPrice") == null ? price == null ? BigDecimal.ZERO : price.unitPrice() : dec(l.get("unitPrice"));
             disc = l.get("discountPercent") == null ? price == null ? BigDecimal.ZERO : price.discountPercent()
                     : dec(l.get("discountPercent"));
+            if (l.get("discountAmount") != null) {
+                disc = SalesDiscounts.lineAmountToPercent(dec(l.get("discountAmount")), qty, unit);
+            }
             boolean same = price != null && unit.compareTo(price.unitPrice()) == 0
                     && disc.compareTo(price.discountPercent()) == 0;
             source = !blank(str(l.get("priceSource"))) ? str(l.get("priceSource")) : same ? price.source() : "manual";
@@ -541,6 +632,7 @@ public class SalesOrderService {
             ins.put("listPrice", m.get("listPrice"));
             ins.put("unitPrice", pl.unitPrice());
             ins.put("discountPercent", pl.discountPercent());
+            ins.put("lineDiscountPercent", m.get("lineDiscountPercent"));
             ins.put("priceSource", m.get("priceSource"));
             ins.put("priceRuleId", m.get("priceRuleId"));
             ins.put("taxId", pl.taxId());
@@ -608,6 +700,13 @@ public class SalesOrderService {
         if (lines.isEmpty()) {
             throw ApiException.badRequest("Add at least one line before confirming");
         }
+        Map<String, Object> policy = settings.settings();
+        List<Map<String, Object>> shortages = "none".equals(policy.get("stockCheckPolicy")) ? List.of()
+                : atp.shortages(id);
+        if ("block".equals(policy.get("stockCheckPolicy")) && !shortages.isEmpty()) {
+            throw ApiException.badRequest("Not enough stock to confirm this order: short by "
+                    + shortages.get(0).get("shortage") + " on " + shortDescription(lines, shortages.get(0)));
+        }
         List<String> reasons = approvalReasons(o, lines);
         if (!reasons.isEmpty()) {
             Map<String, Object> snapshot = Obj.of("number", o.get("number"), "partnerId", o.get("partnerId"), "total",
@@ -624,6 +723,11 @@ public class SalesOrderService {
         return finishConfirm(id);
     }
 
+    private static String shortDescription(List<Map<String, Object>> lines, Map<String, Object> shortage) {
+        return lines.stream().filter(l -> l.get("id").equals(shortage.get("lineId"))).map(l -> str(l.get("description")))
+                .findFirst().orElse("a line");
+    }
+
     /** Why this order needs commercial approval (empty = within policy). */
     List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
         Map<String, Object> s = settings.settings();
@@ -632,6 +736,9 @@ public class SalesOrderService {
                         "priceSource")))).toList(), dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get(
                                 "marginCheck"))));
         reasons.addAll(agreements.releaseReasons(o, lines));
+        if (Boolean.TRUE.equals(s.get("orderApprovalAlways"))) {
+            reasons.add("Every sales order needs approval");
+        }
         BigDecimal amount = dec(s.get("orderApprovalAmount"));
         if (amount.signum() > 0 && dec(o.get("total")).compareTo(amount) > 0) {
             reasons.add("Total exceeds the approval amount of " + amount.stripTrailingZeros().toPlainString());
@@ -687,10 +794,29 @@ public class SalesOrderService {
 
     private Map<String, Object> finishConfirm(String id) {
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? FOR UPDATE", id);
-        CreditService.Decision c = credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id,
-                str(o.get("number")), dec(o.get("total")), str(o.get("branchId")));
-        boolean hold = !c.passed();
+        Map<String, Object> policy0 = settings.settings();
+        boolean cash = "cash".equals(o.get("paymentMode")) && Boolean.TRUE.equals(policy0.get("cashBypassesCredit"));
+        CreditService.Decision c = cash ? new CreditService.Decision(null, "pass", List.of(), Map.of())
+                : credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id, str(o.get("number")),
+                        dec(o.get("total")), str(o.get("branchId")));
         String reason = String.join("; ", c.reasons());
+        // SG-8: a hold on the customer always stops the order; going over the limit follows the organization's policy.
+        boolean overLimit = !c.passed() && !"blocked".equals(c.result());
+        boolean covered = overLimit && creditRequests.approvedFor(id, dec(o.get("total")));
+        if (overLimit && !covered) {
+            String over = str(policy0.get("overLimitPolicy"));
+            if ("block".equals(over)) {
+                throw ApiException.badRequest("This order exceeds the customer's credit: " + reason + ". Ask for a credit approval"
+                        + " or take payment first.");
+            }
+            if ("approve".equals(over)) {
+                Map<String, Object> request = creditRequests.open(o, "Over the credit limit: " + reason);
+                Map<String, Object> waiting = get(id);
+                waiting.put("creditRequest", request);
+                return waiting;
+            }
+        }
+        boolean hold = !c.passed() && !covered;
         Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
                 "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1);
         if (hold) {
@@ -701,15 +827,33 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, d, true);
         audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "onHold", hold,
                 "creditDecision", c.id())));
-        if ("confirm".equals(settings.settings().get("reservationTrigger"))) {
+        Map<String, Object> policy = settings.settings();
+        if ("confirm".equals(policy.get("reservationTrigger"))) {
             atp.reserveOrder(id);
         }
         snapshots.record("sales_order", id);
         publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
         if (hold) {
             publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
+            if (Boolean.TRUE.equals(policy.get("notifyOnHold"))) {
+                alerts.order(o, "sales_order_hold", "Order " + o.get("number") + " is on hold", reason);
+            }
         }
-        return get(id);
+        List<Map<String, Object>> shortages = "none".equals(policy.get("stockCheckPolicy")) ? List.of()
+                : atp.shortages(id);
+        if (!shortages.isEmpty() && Boolean.TRUE.equals(policy.get("notifyOnShortage"))) {
+            alerts.order(o, "sales_order_shortage", "Order " + o.get("number") + " is short of stock", shortages.size()
+                    + " line(s) cannot be covered from stock today.");
+        }
+        Map<String, Object> out = get(id);
+        out.put("stockWarnings", shortages);
+        return out;
+    }
+
+    /** SG-8: confirm after a credit request was approved, whatever the order's approval state was. */
+    @Transactional
+    public Map<String, Object> confirmAfterCredit(String id) {
+        return finishConfirm(id);
     }
 
     /** Put an open order on hold (no fulfilment while held). */
@@ -726,6 +870,9 @@ public class SalesOrderService {
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("onHold", true, "reason", reason)));
         publish(DomainEvents.SALES_ORDER_HELD, id, Map.of("reason", reason));
+        if (Boolean.TRUE.equals(settings.settings().get("notifyOnHold"))) {
+            alerts.order(o, "sales_order_hold", "Order " + o.get("number") + " is on hold", reason);
+        }
         return get(id);
     }
 
@@ -765,6 +912,22 @@ public class SalesOrderService {
         if (db.count("SELECT count(*) FROM \"FleetDeliveryOrder\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
                 + " 'sales_order' AND \"sourceId\" = ? AND status NOT IN ('cancelled')", List.of(org(), id)) > 0) {
             throw ApiException.badRequest("Cancel the delivery orders of this order first");
+        }
+        if (OPEN.contains(o.get("status")) && blank(reason)) {
+            throw ApiException.badRequest("reason should not be empty");
+        }
+        if (db.count("SELECT count(*) FROM \"Document\" WHERE \"organizationId\" = ? AND \"sourceType\" = 'sales_order'"
+                + " AND \"sourceId\" = ? AND \"documentType\"::text <> 'proforma_invoice' AND status::text NOT IN"
+                + " ('cancelled', 'rejected')", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Cancel the invoices of this order first");
+        }
+        if (db.count("SELECT count(*) FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"salesOrderId\" = ? AND"
+                + " status = 'open' AND amount - \"appliedAmount\" - \"refundedAmount\" > 0", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Refund or apply the deposits of this order first");
+        }
+        if (db.count("SELECT count(*) FROM \"SalesOrderChangeRequest\" WHERE \"organizationId\" = ? AND \"orderId\" = ? AND"
+                + " status = 'pending_approval'", List.of(org(), id)) > 0) {
+            throw ApiException.badRequest("Decide the pending change requests of this order first");
         }
         db.patch("SalesOrder", id, Obj.of("status", "cancelled", "cancelledAt", Instant.now(), "cancelledById", user(),
                 "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",
@@ -868,12 +1031,27 @@ public class SalesOrderService {
         events.publish(event, payload);
     }
 
-    String nextNumber() {
+    /** SG-9: numbers run per branch when the setting says so; the branch code in the prefix keeps series apart. */
+    String nextNumber(String branchId) {
         int year = LocalDate.now().getYear();
-        return sequence.next("sales_order:" + year, "SO-" + year + "-", 5);
+        String code = branchCode(branchId);
+        return code == null ? sequence.next("sales_order:" + year, "SO-" + year + "-", 5)
+                : sequence.next("sales_order:" + code + ":" + year, "SO-" + code + "-" + year + "-", 5);
+    }
+
+    private String branchCode(String branchId) {
+        if (branchId == null || !"branch".equals(settings.settings().get("numberingScope"))) {
+            return null;
+        }
+        Map<String, Object> b = db.row("SELECT code FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ?", branchId, org());
+        return b == null ? null : str(b.get("code"));
     }
 
     private void visibility(StringBuilder where, List<Object> params) {
+        if (user() == null) {
+            return; // scheduled work has no user and is not limited to one
+        }
+        access.filterDocument(where, params, "o");
         if (TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
             return;
         }

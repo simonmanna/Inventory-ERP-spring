@@ -215,7 +215,7 @@ public class FleetDeliveryOrderService {
     }
 
     /** Lines with product / unit names, remaining (unplanned) quantity and planning factors per line unit. */
-    List<Map<String, Object>> lines(String id) {
+    public List<Map<String, Object>> lines(String id) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT l.*, p.code AS \"productCode\", p.name AS"
                 + " \"productName\", p.\"trackInventory\", u.code AS \"uomCode\" FROM \"FleetDeliveryOrderLine\" l JOIN"

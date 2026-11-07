@@ -151,7 +151,7 @@ public class CreditService {
     }
 
     private Map<String, Object> partner(String partnerId) {
-        return partnerId == null ? null : db.row("SELECT id, name, \"creditLimit\", \"creditHold\","
+        return partnerId == null ? null : db.row("SELECT id, name, \"creditLimit\", \"creditHold\", \"creditPeriodDays\", \"creditReviewDate\","
                 + " \"creditRiskCategory\", \"parentId\" FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?",
                 partnerId, org());
     }
@@ -269,6 +269,19 @@ public class CreditService {
         if (limit.signum() > 0 && projected.compareTo(effective) > 0) {
             reasons.add("Customer credit limit would be exceeded");
             result = max(result, "hold");
+        }
+        if (Boolean.TRUE.equals(policy.get("enforcePeriodAndReview"))) {
+            if (p.get("creditReviewDate") != null && LocalDate.parse(p.get("creditReviewDate").toString().substring(0, 10))
+                    .isBefore(LocalDate.now())) {
+                reasons.add("Credit review date has passed");
+                result = max(result, "hold");
+            }
+            if (p.get("creditPeriodDays") != null && db.row("SELECT 1 AS x FROM \"Document\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND"
+                    + " \"documentType\"::text = 'sales_invoice' AND status::text = 'posted' AND \"amountResidual\" > 0 AND \"issueDate\" < now() -"
+                    + " make_interval(days => ?) LIMIT 1", org(), partnerId, ((Number) p.get("creditPeriodDays")).intValue()) != null) {
+                reasons.add("An invoice is older than the customer's credit period");
+                result = max(result, "hold");
+            }
         }
         if (e.get("group") instanceof Map<?, ?> g) {
             BigDecimal gl = dec(g.get("limit"));
@@ -636,6 +649,9 @@ public class CreditService {
     public Map<String, Object> updatePolicy(Map<String, Object> in) {
         Map<String, Object> before = policy();
         Map<String, Object> d = new LinkedHashMap<>();
+        if (in.containsKey("enforcePeriodAndReview")) {
+            d.put("enforcePeriodAndReview", Boolean.TRUE.equals(in.get("enforcePeriodAndReview")));
+        }
         if (in.containsKey("overdueDays")) {
             int v = in.get("overdueDays") instanceof Number n ? n.intValue() : -1;
             if (v < 0) {

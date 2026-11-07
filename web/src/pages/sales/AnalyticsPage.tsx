@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PERMISSIONS } from '@erp/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -10,6 +11,7 @@ import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { KpiCard } from '@/pages/crm/crm-ui';
+import { useAuthStore } from '@/stores/auth.store';
 
 // ---- Types (ADR-S011 S10) ----
 
@@ -33,14 +35,15 @@ const monthStart = (back: number) => { const d = new Date(); d.setDate(1); d.set
 /** Sales analytics: dashboard, analysis, profitability, forecast and the advisor. */
 export function AnalyticsPage() {
   const [tab, setTab] = useState<Tab>('overview');
-  const TABS: Array<[Tab, string]> = [['overview', tx('Overview')], ['analysis', tx('Analysis')], ['profitability', tx('Customer profitability')], ['forecast', tx('Forecast')]];
+  const seesCost = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.costRead));
+  const TABS: Array<[Tab, string]> = [['overview', tx('Overview')], ['analysis', tx('Analysis')], ...(seesCost ? [['profitability', tx('Customer profitability')] as [Tab, string]] : []), ['forecast', tx('Forecast')]];
   return (
     <div className="space-y-4">
       <ListPageHeader icon={LineChart} title={tx('Sales analytics')} description={tx('Net invoiced revenue and margin, customer profitability, forecast and advisories.')} />
       <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
         {TABS.map(([k, l]) => <button key={k} onClick={() => setTab(k)} className={cn('rounded-md px-3 py-1.5 text-sm', tab === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{l}</button>)}
       </div>
-      {tab === 'overview' && <Overview />}
+      {tab === 'overview' && <><CustomerKpis /><Overview /></>}
       {tab === 'analysis' && <AnalysisTab />}
       {tab === 'profitability' && <Profitability />}
       {tab === 'forecast' && <ForecastTab />}
@@ -98,7 +101,7 @@ function Overview() {
 }
 
 function adviceLink(a: Advice) {
-  const to = a.entityType === 'sales_order' ? `/sales/orders/${a.entityId}` : a.entityType === 'sales_quotation' ? `/crm/quotations/${a.entityId}`
+  const to = a.entityType === 'sales_order' ? `/sales/orders/${a.entityId}` : a.entityType === 'sales_quotation' ? `/sales/quotations/${a.entityId}`
     : a.entityType === 'document' ? `/invoices/${a.entityId}` : a.entityType === 'sales_agreement' ? '/sales/agreements' : a.partnerId ? '/partners' : null;
   return to ? <Link to={to} className="text-xs text-primary hover:underline">{tx('Open')}</Link> : null;
 }
@@ -112,7 +115,23 @@ function Range({ from, to, onChange }: { from: string; to: string; onChange: (f:
   );
 }
 
+/** Average order value, lifetime value, churn and bad debt, this month. */
+function CustomerKpis() {
+  const { data: k } = useQuery({ queryKey: ['sales', 'analytics', 'kpis'], queryFn: async () => (await api.get<{ averageOrderValue: number; lifetimeValue: number; activeCustomers: number; newCustomers: number; churnPercent: number | null; lostCustomers: number; badDebt: number }>('/sales/analytics/kpis')).data, retry: false });
+  if (!k) return null;
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <KpiCard label={tx('Average order value')} value={money(k.averageOrderValue)} />
+      <KpiCard label={tx('Customer lifetime value')} value={money(k.lifetimeValue)} />
+      <KpiCard label={tx('New customers')} value={k.newCustomers} sub={`${k.activeCustomers} ${tx('active')}`} />
+      <KpiCard label={tx('Churn')} value={k.churnPercent == null ? '—' : `${k.churnPercent}%`} sub={`${k.lostCustomers} ${tx('lost')}`} />
+      <KpiCard label={tx('Bad debt written off')} value={money(k.badDebt)} />
+    </div>
+  );
+}
+
 function AnalysisTab() {
+  const seesCost = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.costRead));
   const [groupBy, setGroupBy] = useState('product');
   const [from, setFrom] = useState(monthStart(2));
   const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
@@ -128,15 +147,15 @@ function AnalysisTab() {
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr>
             <th className={th}>{DIMS.find(([k]) => k === groupBy)?.[1]}</th><th className={cn(th, 'text-right')}>{tx('Qty')}</th><th className={cn(th, 'text-right')}>{tx('Revenue')}</th>
-            <th className={cn(th, 'text-right')}>{tx('Cost')}</th><th className={cn(th, 'text-right')}>{tx('Margin')}</th><th className={cn(th, 'text-right')}>{tx('Margin %')}</th></tr></thead>
+            {seesCost && <><th className={cn(th, 'text-right')}>{tx('Cost')}</th><th className={cn(th, 'text-right')}>{tx('Margin')}</th><th className={cn(th, 'text-right')}>{tx('Margin %')}</th></>}</tr></thead>
           <tbody>
             {(data?.rows ?? []).map((r) => (
               <tr key={r.key ?? 'none'} className="border-t"><td className={th}>{r.label}</td><td className={cn(th, 'text-right tabular-nums')}>{r.quantity}</td>
-                <td className={cn(th, 'text-right tabular-nums')}>{money(r.revenue)}</td><td className={cn(th, 'text-right tabular-nums')}>{money(r.cost)}</td>
-                <td className={cn(th, 'text-right tabular-nums', Number(r.margin) < 0 && 'text-rose-600')}>{money(r.margin)}</td><td className={cn(th, 'text-right')}>{r.marginPercent ?? '—'}%</td></tr>
+                <td className={cn(th, 'text-right tabular-nums')}>{money(r.revenue)}</td>{seesCost && <><td className={cn(th, 'text-right tabular-nums')}>{money(r.cost)}</td>
+                <td className={cn(th, 'text-right tabular-nums', Number(r.margin) < 0 && 'text-rose-600')}>{money(r.margin)}</td><td className={cn(th, 'text-right')}>{r.marginPercent ?? '—'}%</td></>}</tr>
             ))}
             {data && <tr className="border-t bg-muted/30 font-semibold"><td className={th}>{tx('Total')}</td><td /><td className={cn(th, 'text-right tabular-nums')}>{money(data.totals.revenue)}</td>
-              <td className={cn(th, 'text-right tabular-nums')}>{money(data.totals.cost)}</td><td className={cn(th, 'text-right tabular-nums')}>{money(data.totals.margin)}</td><td className={cn(th, 'text-right')}>{data.totals.marginPercent ?? '—'}%</td></tr>}
+              {seesCost && <><td className={cn(th, 'text-right tabular-nums')}>{money(data.totals.cost)}</td><td className={cn(th, 'text-right tabular-nums')}>{money(data.totals.margin)}</td><td className={cn(th, 'text-right')}>{data.totals.marginPercent ?? '—'}%</td></>}</tr>}
           </tbody>
         </table>
       </div>

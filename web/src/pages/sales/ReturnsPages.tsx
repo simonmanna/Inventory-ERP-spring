@@ -17,6 +17,8 @@ import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import type { SalesOrder } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { HeaderSelect, useHeaderOptions } from './OrderHeaderFields';
 
 interface ReturnLine { id: string; orderLineId: string; description: string; quantity: number; receivedQty: number; disposition: string | null; creditQty: number | null; inspectionNotes: string | null }
 interface SalesReturn {
@@ -67,7 +69,8 @@ export function ReturnDetailPage() {
   const navigate = useNavigate();
   const has = useAuthStore((s) => s.hasPermission);
   const { data: r } = useQuery({ queryKey: ['sales', 'return', id], queryFn: async () => (await api.get<SalesReturn>(`/sales/returns/${id}`)).data, enabled: !!id });
-  const [disp, setDisp] = useState<Record<string, { disposition: string; locationId?: string }>>({});
+  const options = useHeaderOptions();
+  const [disp, setDisp] = useState<Record<string, { disposition: string; locationId?: string; rejectedQty?: number; rejectReason?: string }>>({});
   const [outcome, setOutcome] = useState('credit_note');
   const act = useMutation({
     mutationFn: async ({ action, body }: { action: string; body?: Record<string, unknown> }) =>
@@ -109,9 +112,11 @@ export function ReturnDetailPage() {
                 <td className="py-1">{r.status === 'received' ? (
                   <div className="flex gap-1">
                     <select className="h-8 rounded border bg-background px-1" value={disp[l.id]?.disposition ?? 'restock'} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: e.target.value } })}>
-                      <option value="restock">{tx('Restock')}</option><option value="quarantine">{tx('Quarantine')}</option><option value="scrap">{tx('Scrap')}</option>
+                      <option value="restock">{tx('Restock')}</option><option value="quarantine">{tx('Quarantine')}</option><option value="damaged">{tx('Damaged')}</option><option value="scrap">{tx('Scrap')}</option>
                     </select>
-                    {disp[l.id]?.disposition === 'quarantine' && <Input className="h-8 w-40" placeholder={tx('Location id')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], locationId: e.target.value } })} />}
+                    {['quarantine', 'damaged'].includes(disp[l.id]?.disposition ?? '') && <HeaderSelect value={disp[l.id]?.locationId ?? ''} options={options.locations} none={tx('Location…')} onChange={(locationId) => setDisp({ ...disp, [l.id]: { ...disp[l.id], locationId } })} />}
+                    <Input aria-label={tx('Rejected quantity')} title={tx('Rejected quantity: refused, goes back to the customer, no credit')} className="h-8 w-20" type="number" min={0} placeholder={tx('Reject')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock', rejectedQty: Number(e.target.value) } })} />
+                    {Number(disp[l.id]?.rejectedQty ?? 0) > 0 && <Input className="h-8 w-40" placeholder={tx('Why rejected')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], rejectReason: e.target.value } })} />}
                   </div>) : l.disposition ?? '—'}</td>
                 <td className="py-1 text-right">{l.creditQty == null ? '—' : Number(l.creditQty)}</td>
               </tr>
@@ -119,6 +124,7 @@ export function ReturnDetailPage() {
           </tbody>
         </table>
       </div>
+      <AttachmentPanel resType="sales_return" resId={r.id} />
     </div>
   );
 }

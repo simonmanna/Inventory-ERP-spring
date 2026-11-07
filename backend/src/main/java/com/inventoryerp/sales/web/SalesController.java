@@ -126,7 +126,7 @@ public final class SalesController {
         @PostMapping("/{id}/decline")
         @RequirePermissions(Permissions.SALES__QUOTATION_WRITE)
         public Map<String, Object> decline(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
-            return svc.decline(id, text(b, "reason"));
+            return svc.decline(id, text(b, "reason"), text(b, "lostReasonId"));
         }
 
         @PostMapping("/{id}/cancel")
@@ -267,6 +267,15 @@ public final class SalesController {
         public Map<String, Object> atp(@PathVariable String id) {
             svc.require(id);
             return atp.forOrder(id);
+        }
+
+        @PostMapping("/{id}/lines/{lineId}/source-location")
+        @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
+        public Map<String, Object> pickLocation(@PathVariable String id, @PathVariable String lineId,
+                @RequestBody Map<String, Object> b) {
+            svc.require(id);
+            atp.pickLocation(id, lineId, text(b, "locationId"));
+            return svc.get(id);
         }
 
         @GetMapping("/{id}/reservations")

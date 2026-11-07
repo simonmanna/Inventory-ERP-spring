@@ -1,0 +1,99 @@
+package com.inventoryerp.sales.application;
+
+import org.openpdf.text.Document;
+import org.openpdf.text.DocumentException;
+import org.openpdf.text.Element;
+import org.openpdf.text.Font;
+import org.openpdf.text.FontFactory;
+import org.openpdf.text.PageSize;
+import org.openpdf.text.Paragraph;
+import org.openpdf.text.Phrase;
+import org.openpdf.text.pdf.PdfPCell;
+import org.openpdf.text.pdf.PdfPTable;
+import org.openpdf.text.pdf.PdfWriter;
+import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
+
+/** Plain A4 PDF of a customer-facing sales document (quotation, proforma, credit note, statement). */
+public final class SalesDocumentPdf {
+
+    /** One row of the money block at the bottom. */
+    public record Total(String label, BigDecimal amount) {}
+
+    /** A titled text block after the totals: terms, bank details and so on. */
+    public record Block(String title, String text) {}
+
+    private SalesDocumentPdf() {}
+
+    /**
+     * @param lines rows with {@code description}, {@code quantity}, {@code unitPrice}, {@code discountPercent},
+     *     {@code total}; values may be null
+     */
+    public static byte[] render(String company, String title, String number, List<String> facts,
+            List<Map<String, Object>> lines, String currency, List<Total> totals, List<Block> blocks) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Document pdf = new Document(PageSize.A4, 50, 50, 50, 50);
+        try {
+            PdfWriter.getInstance(pdf, out);
+            pdf.open();
+            Font body = FontFactory.getFont(FontFactory.HELVETICA, 10);
+            Font bold = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10);
+            pdf.add(new Paragraph(company == null ? "" : company, FontFactory.getFont(FontFactory.HELVETICA, 18)));
+            Paragraph heading = new Paragraph(title + " " + number, FontFactory.getFont(FontFactory.HELVETICA, 14));
+            heading.setAlignment(Element.ALIGN_RIGHT);
+            pdf.add(heading);
+            for (String f : facts) {
+                pdf.add(new Paragraph(f, body));
+            }
+            pdf.add(new Paragraph(" "));
+            if (!lines.isEmpty()) {
+                PdfPTable t = new PdfPTable(new float[] {5, 1.2f, 1.6f, 1, 1.8f});
+                t.setWidthPercentage(100);
+                for (String h : List.of("Description", "Qty", "Unit price", "Disc %", "Amount")) {
+                    t.addCell(new PdfPCell(new Phrase(h, bold)));
+                }
+                for (Map<String, Object> l : lines) {
+                    t.addCell(new PdfPCell(new Phrase(String.valueOf(l.get("description")), body)));
+                    t.addCell(right(num(l.get("quantity"), 3), body));
+                    t.addCell(right(num(l.get("unitPrice"), 2), body));
+                    t.addCell(right(num(l.get("discountPercent"), 2), body));
+                    t.addCell(right(num(l.get("total"), 2), body));
+                }
+                pdf.add(t);
+                pdf.add(new Paragraph(" "));
+            }
+            PdfPTable m = new PdfPTable(new float[] {3, 2});
+            m.setWidthPercentage(45);
+            m.setHorizontalAlignment(Element.ALIGN_RIGHT);
+            for (Total r : totals) {
+                m.addCell(new PdfPCell(new Phrase(r.label(), bold)));
+                m.addCell(right((currency == null ? "" : currency + " ") + num(r.amount(), 2), body));
+            }
+            pdf.add(m);
+            for (Block b : blocks) {
+                if (b.text() != null && !b.text().isBlank()) {
+                    pdf.add(new Paragraph(" "));
+                    pdf.add(new Paragraph(b.title(), bold));
+                    pdf.add(new Paragraph(b.text(), body));
+                }
+            }
+            pdf.close();
+        } catch (DocumentException e) {
+            throw new IllegalStateException(e);
+        }
+        return out.toByteArray();
+    }
+
+    private static PdfPCell right(String text, Font f) {
+        PdfPCell c = new PdfPCell(new Phrase(text, f));
+        c.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        return c;
+    }
+
+    private static String num(Object v, int scale) {
+        return v == null ? "" : new BigDecimal(v.toString()).setScale(scale, RoundingMode.HALF_UP).toPlainString();
+    }
+}

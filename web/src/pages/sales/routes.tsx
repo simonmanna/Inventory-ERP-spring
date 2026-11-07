@@ -6,6 +6,17 @@ import { RequirePermission } from '@/components/require-permission';
 const SalesDashboardPage = lazy(() => import('./SalesDashboardPage').then((m) => ({ default: m.SalesDashboardPage })));
 const SalesOrdersPage = lazy(() => import('./SalesOrdersPage').then((m) => ({ default: m.SalesOrdersPage })));
 const SalesOrderPage = lazy(() => import('./SalesOrderPage').then((m) => ({ default: m.SalesOrderPage })));
+const QuotationsPage = lazy(() => import('@/pages/crm/QuotationsPage').then((m) => ({ default: m.QuotationsPage })));
+const QuotationEditorPage = lazy(() => import('@/pages/crm/QuotationEditorPage').then((m) => ({ default: m.QuotationEditorPage })));
+const ProformasPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformasPage })));
+const ProformaPage = lazy(() => import('./ProformasPage').then((m) => ({ default: m.ProformaPage })));
+const SalesSettingsPage = lazy(() => import('./SalesSettingsPage').then((m) => ({ default: m.SalesSettingsPage })));
+const DeliveriesPage = lazy(() => import('./DeliveriesPages').then((m) => ({ default: m.DeliveriesPage })));
+const DeliveryPage = lazy(() => import('./DeliveriesPages').then((m) => ({ default: m.DeliveryPage })));
+const PricingToolsPage = lazy(() => import('./PricingToolsPage').then((m) => ({ default: m.PricingToolsPage })));
+const CreditNotesPage = lazy(() => import('./CreditNotesPage').then((m) => ({ default: m.CreditNotesPage })));
+const CreditRequestsPage = lazy(() => import('./CreditRequestsPage').then((m) => ({ default: m.CreditRequestsPage })));
+const StatementsPage = lazy(() => import('./StatementsPage').then((m) => ({ default: m.StatementsPage })));
 const PricelistsPage = lazy(() => import('./PricelistsPage').then((m) => ({ default: m.PricelistsPage })));
 const PricelistPage = lazy(() => import('./PricelistPage').then((m) => ({ default: m.PricelistPage })));
 const MarginFloorsPage = lazy(() => import('./MarginFloorsPage').then((m) => ({ default: m.MarginFloorsPage })));
@@ -35,8 +46,18 @@ export const salesRoutes = (
     <Route path="/sales/orders" element={<RequirePermission permission={P.orderRead}><SalesOrdersPage /></RequirePermission>} />
     <Route path="/sales/orders/new" element={<RequirePermission permission={P.orderWrite}><SalesOrderPage /></RequirePermission>} />
     <Route path="/sales/orders/:id" element={<RequirePermission permission={P.orderRead}><SalesOrderPage /></RequirePermission>} />
+    <Route path="/sales/quotations" element={<RequirePermission permission={P.quotationRead}><QuotationsPage /></RequirePermission>} />
+    <Route path="/sales/quotations/new" element={<RequirePermission permission={P.quotationWrite}><QuotationEditorPage /></RequirePermission>} />
+    <Route path="/sales/quotations/:id" element={<RequirePermission permission={P.quotationRead}><QuotationEditorPage /></RequirePermission>} />
+    <Route path="/sales/proformas" element={<RequirePermission permission={P.orderRead}><ProformasPage /></RequirePermission>} />
+    <Route path="/sales/proformas/:id" element={<RequirePermission permission={P.orderRead}><ProformaPage /></RequirePermission>} />
+    <Route path="/sales/deliveries" element={<RequirePermission permission={P.deliveryRead}><DeliveriesPage /></RequirePermission>} />
+    <Route path="/sales/deliveries/:id" element={<RequirePermission permission={P.deliveryRead}><DeliveryPage /></RequirePermission>} />
+    <Route path="/sales/settings" element={<RequirePermission permission={P.configure}><SalesSettingsPage /></RequirePermission>} />
+    <Route path="/sales/pricing-tools" element={<RequirePermission permission={P.pricingRead}><PricingToolsPage /></RequirePermission>} />
     <Route path="/sales/pricelists" element={<RequirePermission permission={P.pricingRead}><PricelistsPage /></RequirePermission>} />
     <Route path="/sales/pricelists/:id" element={<RequirePermission permission={P.pricingRead}><PricelistPage /></RequirePermission>} />
+    <Route path="/sales/statements" element={<RequirePermission permission={P.collectionsRead}><StatementsPage /></RequirePermission>} />
     <Route path="/sales/collections" element={<RequirePermission permission={P.collectionsRead}><CollectionsPage /></RequirePermission>} />
     <Route path="/sales/reports" element={<RequirePermission permission={P.reportRead}><SalesReportsHubPage /></RequirePermission>} />
     <Route path="/sales/reports/:page" element={<RequirePermission permission={P.reportRead}><SalesReportPage /></RequirePermission>} />
@@ -45,10 +66,12 @@ export const salesRoutes = (
     <Route path="/sales/portal-access" element={<RequirePermission permission={P.portalManage}><PortalAccessPage /></RequirePermission>} />
     <Route path="/sales/agreements" element={<RequirePermission permission={P.agreementRead}><AgreementsPage /></RequirePermission>} />
     <Route path="/sales/commissions" element={<RequirePermission permission={P.commissionRead}><CommissionsPage /></RequirePermission>} />
+    <Route path="/sales/credit-notes" element={<RequirePermission permission={P.returnRead}><CreditNotesPage /></RequirePermission>} />
     <Route path="/sales/returns" element={<RequirePermission permission={P.returnRead}><ReturnsPage /></RequirePermission>} />
     <Route path="/sales/returns/:id" element={<RequirePermission permission={P.returnRead}><ReturnDetailPage /></RequirePermission>} />
     <Route path="/sales/complaints" element={<RequirePermission permission={P.complaintRead}><ComplaintsPage /></RequirePermission>} />
     <Route path="/sales/backorders" element={<RequirePermission permission={P.reportRead}><BackordersPage /></RequirePermission>} />
+    <Route path="/sales/credit-requests" element={<RequirePermission permission={PERMISSIONS.credit.read}><CreditRequestsPage /></RequirePermission>} />
     <Route path="/sales/credit" element={<RequirePermission permission={PERMISSIONS.credit.read}><CreditPage /></RequirePermission>} />
     <Route path="/sales/cash-sales" element={<RequirePermission permission={P.cashSaleRead}><CashSalesPage scope="branch" /></RequirePermission>} />
     <Route path="/sales/cash-sales/processing" element={<RequirePermission permission={P.cashSaleReadAll}><CashSalesPage scope="head_office" /></RequirePermission>} />

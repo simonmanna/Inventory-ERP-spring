@@ -741,6 +741,24 @@ export const PERMISSIONS = {
     /// Override fulfilment / recognition policies on an order.
     policyOverride: 'sales:policy:override',
     reportRead: 'sales:report:read',
+    /// Credit notes without a return; allocate and refund their credit (SG-7).
+    creditNoteWrite: 'sales:credit_note:write',
+    /// Write off a receivable (SG-7).
+    writeOffPost: 'sales:write_off:post',
+    /// Deliveries without the Fleet module (SG-9).
+    deliveryRead: 'sales:delivery:read',
+    deliveryWrite: 'sales:delivery:write',
+    deliveryApprove: 'sales:delivery:approve',
+    /// Customer profile, duplicates, export (SG-5).
+    customerRead: 'sales:customer:read',
+    /// Edit profile, suspend, import (SG-5).
+    customerManage: 'sales:customer:manage',
+    /// Merge two customer records (SG-5).
+    customerMerge: 'sales:customer:merge',
+    /// See product cost and margin in Sales (SG-1).
+    costRead: 'sales:cost:read',
+    /// Sales data beyond the user's branch scope (SG-1).
+    branchOverride: 'sales:branch:override',
     configure: 'sales:configure',
     /// Raise invoices / down-payment invoices from sales orders.
     invoiceCreate: 'sales:invoice:create',

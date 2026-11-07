@@ -1,3 +1,4 @@
+import { api } from '@/lib/api';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -157,6 +158,12 @@ export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | '
       setTab('overview');
       notify.error(tx('Invalid email'));
       return;
+    }
+    if (isCustomer) {
+      try {
+        const dups = (await api.get<Array<{ code: string; name: string }>>('/sales/customers/duplicates', { params: { name: general.name, email: general.email || undefined, phone: general.phone || undefined } })).data;
+        if (dups.length && !confirm(`${tx('Possible duplicate')}: ${dups.map((d) => `${d.code} ${d.name}`).join(', ')}. ${tx('Create anyway?')}`)) return;
+      } catch { /* the check is advisory: a user without access still creates */ }
     }
     const clean = cleanProfile(profile);
     const body: Record<string, unknown> = {

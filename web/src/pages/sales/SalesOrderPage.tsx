@@ -36,6 +36,8 @@ import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { MilestonesPanel, NewDeliveryDialog } from './DeliveriesPages';
+import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
@@ -57,10 +59,12 @@ export function SalesOrderPage() {
   const [agreementId, setAgreementId] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [header, setHeader] = useState<OrderHeader>(blankHeader);
+  const [orderDiscount, setOrderDiscount] = useState(0);
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
-  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | null>(null);
+  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | 'delivery' | null>(null);
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
   const [tab, setTab] = useState('lines');
@@ -69,6 +73,8 @@ export function SalesOrderPage() {
     if (o) {
       setPartnerId(o.partnerId); setPartnerName(o.partnerName); setCustomerRef(o.customerRef ?? ''); setAgreementId(o.agreementId ?? '');
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
+      setOrderDiscount(Number(o.orderDiscountPercent ?? 0));
+      setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0), paymentMode: o.paymentMode ?? 'credit' });
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
@@ -85,6 +91,9 @@ export function SalesOrderPage() {
   const save = useSalesMutation(async () => {
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
+      branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
+      orderDiscountPercent: orderDiscount || null, paymentMode: header.paymentMode,
+      ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
       ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
@@ -134,8 +143,12 @@ export function SalesOrderPage() {
   const menu: MenuItem[] = [];
   if (o) {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
+    if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: () => { const reason = prompt(tx('Why should this order be allowed over the limit?')); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
+    if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
+    if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'recurring', label: tx('Repeat this order'), icon: <History className={ico} />, onSelect: () => { const frequency = prompt(tx('How often? weekly, monthly, quarterly or yearly'), 'monthly'); if (frequency) api.post(`/sales/orders/${o.id}/recurring`, { frequency }).then(() => toast.success(tx('A draft copy will be created when due'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (has(P.orderWrite)) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => run('duplicate') });
     if (!['cancelled', 'done'].includes(status) && has(P.orderCancel)) menu.push({ key: 'cancel', label: tx('Cancel order'), icon: <XCircle className={ico} />, danger: true, onSelect: () => { setReason(''); setDialog('cancel'); } });
     if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
@@ -180,8 +193,8 @@ export function SalesOrderPage() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/crm/quotations/${rel.quotation.id}`)} />
-          <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/fleet/delivery-orders/${rel.deliveries[0].id}`)} />
+          <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/sales/quotations/${rel.quotation.id}`)} />
+          <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/sales/deliveries?orderId=${o?.id}`)} />
           <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
           <SmartButton icon={<FileSignature className="h-4 w-4" />} count={rel?.changeRequests ?? 0} label={tx('Change requests')} disabled={!rel?.changeRequests} onClick={() => setTab('other')} />
           <SmartButton icon={<History className="h-4 w-4" />} count={rel?.revisions ?? 0} label={tx('Revisions')} disabled={!rel?.revisions} onClick={() => setDialog('revisions')} />
@@ -206,7 +219,7 @@ export function SalesOrderPage() {
               <>
                 <InlineField label={tx('Source Doc')}>
                   {o.quotationId && o.quotationNumber
-                    ? <Link to={`/crm/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
+                    ? <Link to={`/sales/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
                     : <span className="text-muted-foreground">-</span>}
                 </InlineField>
                 <InlineField label={tx('Salesperson')}>{o.ownerName ?? <span className="text-muted-foreground">-</span>}</InlineField>
@@ -214,6 +227,7 @@ export function SalesOrderPage() {
             )}
           </div>
           <div className="space-y-3">
+            <OrderHeaderFields value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
               <InlineField label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
@@ -287,7 +301,8 @@ export function SalesOrderPage() {
             <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
             <div className="text-sm">
               <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est : o.subtotal, currency)} />
+              <div className="mb-1 flex items-center justify-between gap-2"><span className="text-muted-foreground">{tx('Order discount %')}</span><Input aria-label={tx('Order discount %')} disabled={!editable} type="number" min={0} max={100} className="h-8 w-24 text-right" value={orderDiscount} onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDirty(true); }} /></div>
+              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est * (1 - orderDiscount / 100) : o.subtotal, currency)} />
               {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
               {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
             </div>
@@ -309,7 +324,7 @@ export function SalesOrderPage() {
                 <HandoverTab path={`/sales/orders/${o.id}/handover`} canEdit={has(P.orderWrite)} sourceLabel={tx('sales order')} readyHint={tx('Confirm the sales order first')} issuedLabel={tx('Delivered from stock')} />
               </>
             )}
-            {o && o.status !== 'draft' && (
+            {o && (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {fulfilling && <FulfilmentPanel order={o} />}
                 <AvailabilityPanel order={o} />
@@ -325,6 +340,7 @@ export function SalesOrderPage() {
             {(o?.partnerId || partnerId) ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {o && fulfilling && <BillingPanel order={o} />}
+                {o && fulfilling && <MilestonesPanel orderId={o.id} total={Number(o.total)} />}
                 <CreditPanel partnerId={o?.partnerId ?? partnerId} />
               </div>
             ) : <p className="text-sm text-muted-foreground">{tx('Choose a customer to see credit and billing details.')}</p>}
@@ -334,6 +350,7 @@ export function SalesOrderPage() {
             {o ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 <ChangeRequestsPanel orderId={o.id} />
+                <AmendmentHistory orderId={o.id} />
                 <AttachmentPanel resType="sales_order" resId={o.id} />
               </div>
             ) : <p className="text-sm text-muted-foreground">{tx('Save the order to add attachments and change requests.')}</p>}
@@ -357,6 +374,7 @@ export function SalesOrderPage() {
       </Dialog>
 
       {o && dialog === 'change' && <ChangeDialog order={o} onClose={() => setDialog(null)} />}
+      {o && dialog === 'delivery' && <NewDeliveryDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
     </div>
@@ -447,6 +465,25 @@ function ChangeRequestsPanel({ orderId }: { orderId: string }) {
             {cr.status === 'pending_approval' && canApprove && (
               <div className="mt-1 flex gap-2"><Button size="sm" onClick={() => go(cr, 'approve')}>{tx('Approve & apply')}</Button><Button size="sm" variant="outline" onClick={() => go(cr, 'reject')}>{tx('Reject')}</Button></div>
             )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Every applied amendment of this order, newest first, with what changed. */
+function AmendmentHistory({ orderId }: { orderId: string }) {
+  const { data } = useOrderRevisions(orderId, true);
+  if (!data?.length) return null;
+  return (
+    <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
+      <h2 className="mb-2 font-semibold">{tx('Amendment history')}</h2>
+      <ul className="space-y-2">
+        {data.map((r) => (
+          <li key={r.id} className="rounded-lg border p-2">
+            <div className="flex justify-between"><span className="font-medium">r{r.revision} · {r.reason}</span><span className="text-xs text-muted-foreground">{date(r.createdAt)} · {money(r.total)}</span></div>
+            {r.diff != null && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] text-muted-foreground">{JSON.stringify(r.diff, null, 1)}</pre>}
           </li>
         ))}
       </ul>

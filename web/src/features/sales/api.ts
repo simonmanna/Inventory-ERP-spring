@@ -75,6 +75,10 @@ export interface SalesOrder {
   currencyCode: string;
   exchangeRate: number;
   customerRef: string | null;
+  priority?: number;
+  paymentMode?: 'credit' | 'cash';
+  orderDiscountPercent?: number | null;
+  stockWarnings?: Array<{ lineId: string; productId: string; shortage: number; available: number; fullFillLocation: string | null; earliestDate: string | null }>;
   agreementId?: string | null;
   requestedDate: string | null;
   commitmentDate: string | null;
@@ -174,7 +178,7 @@ export function useChangeRequests(orderId: string | undefined) {
 export function useOrderRevisions(orderId: string | undefined, enabled: boolean) {
   return useQuery({
     queryKey: ['sales', 'revisions', orderId],
-    queryFn: async () => (await api.get<Array<{ id: string; revision: number; reason: string | null; createdAt: string; total: number }>>(`/sales/orders/${orderId}/revisions`)).data,
+    queryFn: async () => (await api.get<Array<{ id: string; revision: number; reason: string | null; createdAt: string; total: number; diff?: unknown }>>(`/sales/orders/${orderId}/revisions`)).data,
     enabled: !!orderId && enabled,
   });
 }
