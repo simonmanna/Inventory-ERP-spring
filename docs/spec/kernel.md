@@ -143,6 +143,15 @@ Status: built, not compiled, not run. Tests in `ApprovalControlsIT`.
 - **Stale approvals**: `ApprovalsService.checkOrRequestApprovalOfAmount` cancels an approval given for a lower amount.
 - **Controlled changes**: `ControlledConfigService.holdIfControlled`, applied through `ConfigChangeApplier` beans on `approval.decided`.
 
+### Configurable rules and approval hub (ADR-S061)
+
+Status: built and compiled; `ApprovalConditionsTest` run; `ApprovalRulesIT` written, not yet run (needs Docker). Extension, no Nest counterpart, pending owner approval.
+
+- **Rule conditions**: `ApprovalWorkflow.conditions` is an AND/OR tree (`ApprovalConditions`) on snapshot fields; `precedence` orders rules before specificity; `priority` is stamped on requests (snapshot `priority` wins).
+- **Stage conditions and assignees**: `ApprovalStep.conditions` skips a stage when false; `approverScope` `user` / `role` with `approverUserIds` / `approverRoleIds`. Named scopes drop the requester and fall back to the stage permissions when nobody else resolves.
+- **Hub**: `ApprovalHubService` — `/approvals/inbox`, `/approvals/summary`, `/approvals/{id}/timeline`; builder helpers `/approval-workflows/meta`, `/approval-workflows/simulate`.
+- **Wire**: additive JSON fields on approval requests, workflows and steps (see ADR). Migration V421.
+
 ## Document numbering (CTRL-2)
 
 Status: built, not compiled, not run. Tests in `DocumentNumberingIT`.

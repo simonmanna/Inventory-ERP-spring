@@ -17,14 +17,28 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** CRUD for approval policies and multi-step workflows (port of the two Nest admin controllers). */
 @Service
 public class ApprovalAdminService {
 
-    /** One workflow step. */
+    /**
+     * One workflow step. {@code conditions} is a condition tree ({@link ApprovalConditions}) the step needs to apply;
+     * {@code approverUserIds} / {@code approverRoleIds} name the deciders of {@code user} / {@code role} scopes.
+     */
     public record Step(Integer stepOrder, String name, List<String> approverPermissions, Integer requiredCount,
-            BigDecimal minAmount, BigDecimal maxAmount, String branchId, String departmentId, String approverScope) {
+            BigDecimal minAmount, BigDecimal maxAmount, String branchId, String departmentId, String approverScope,
+            Map<String, Object> conditions, List<String> approverUserIds, List<String> approverRoleIds) {
+
+        /** A step without the ADR-S061 rule fields. */
+        public Step(Integer stepOrder, String name, List<String> approverPermissions, Integer requiredCount,
+                BigDecimal minAmount, BigDecimal maxAmount, String branchId, String departmentId,
+                String approverScope) {
+            this(stepOrder, name, approverPermissions, requiredCount, minAmount, maxAmount, branchId, departmentId,
+                    approverScope, null, null, null);
+        }
 
         /** A step with no branch or department condition, decided by permission holders. */
         public Step(Integer stepOrder, String name, List<String> approverPermissions, Integer requiredCount,
@@ -32,6 +46,14 @@ public class ApprovalAdminService {
             this(stepOrder, name, approverPermissions, requiredCount, minAmount, maxAmount, null, null, null);
         }
     }
+
+    /** Rule-level fields of ADR-S061 ({@code null} = default: no condition, precedence 0, medium priority). */
+    public record RuleOptions(String description, Map<String, Object> conditions, Integer precedence,
+            String priority) {
+        static final RuleOptions NONE = new RuleOptions(null, null, null, null);
+    }
+
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     /** Field-presence aware patch: {@code present} lists the JSON keys sent. */
     public record Patch(Map<String, Object> values) {
@@ -152,7 +174,19 @@ public class ApprovalAdminService {
     @Transactional
     public Map<String, Object> createWorkflow(String name, String entityType, BigDecimal minAmount, String branchId,
             String departmentId, Boolean enforceDistinctApprovers, Boolean isActive, List<Step> steps) {
+        return createWorkflow(name, entityType, minAmount, branchId, departmentId, enforceDistinctApprovers, isActive,
+                steps, RuleOptions.NONE);
+    }
+
+    /** A workflow with the rules-builder fields: a condition tree, a precedence and a default priority. */
+    @Transactional
+    public Map<String, Object> createWorkflow(String name, String entityType, BigDecimal minAmount, String branchId,
+            String departmentId, Boolean enforceDistinctApprovers, Boolean isActive, List<Step> steps,
+            RuleOptions rule) {
         assertSteps(steps);
+        RuleOptions r = rule == null ? RuleOptions.NONE : rule;
+        ApprovalConditions.validate(tree(r.conditions()), "conditions");
+        assertPriority(r.priority());
         String orgId = TenantContext.organizationId();
         ApprovalWorkflow w = new ApprovalWorkflow();
         w.setOrganizationId(orgId);
@@ -163,6 +197,10 @@ public class ApprovalAdminService {
         w.setDepartmentId(departmentId);
         w.setEnforceDistinctApprovers(enforceDistinctApprovers != null && enforceDistinctApprovers);
         w.setIsActive(isActive == null || isActive);
+        w.setDescription(r.description());
+        w.setConditions(json(r.conditions()));
+        w.setPrecedence(r.precedence() == null ? 0 : r.precedence());
+        w.setPriority(r.priority() == null ? "medium" : r.priority());
         em.persist(w);
         em.flush();
         insertSteps(orgId, w.getId(), steps);
@@ -210,6 +248,24 @@ public class ApprovalAdminService {
             w.setIsActive((Boolean) dto.get("isActive"));
             scalar.put("isActive", dto.get("isActive"));
         }
+        if (dto.has("description")) {
+            w.setDescription((String) dto.get("description"));
+            scalar.put("description", dto.get("description"));
+        }
+        if (dto.has("conditions")) {
+            ApprovalConditions.validate(tree(dto.get("conditions")), "conditions");
+            w.setConditions(json(dto.get("conditions")));
+            scalar.put("conditions", dto.get("conditions"));
+        }
+        if (dto.has("precedence") && dto.get("precedence") != null) {
+            w.setPrecedence(((Number) dto.get("precedence")).intValue());
+            scalar.put("precedence", dto.get("precedence"));
+        }
+        if (dto.has("priority") && dto.get("priority") != null) {
+            assertPriority((String) dto.get("priority"));
+            w.setPriority((String) dto.get("priority"));
+            scalar.put("priority", dto.get("priority"));
+        }
         em.flush();
         if (steps != null) {
             em.createQuery("delete from ApprovalStep s where s.workflowId = :id").setParameter("id", id).executeUpdate();
@@ -244,6 +300,9 @@ public class ApprovalAdminService {
             row.setBranchId(s.branchId());
             row.setDepartmentId(s.departmentId());
             row.setApproverScope(s.approverScope() == null ? "permission" : s.approverScope());
+            row.setConditions(json(s.conditions()));
+            row.setApproverUserIds(s.approverUserIds() == null ? null : new ArrayList<>(s.approverUserIds()));
+            row.setApproverRoleIds(s.approverRoleIds() == null ? null : new ArrayList<>(s.approverRoleIds()));
             em.persist(row);
         }
         em.flush();
@@ -278,6 +337,38 @@ public class ApprovalAdminService {
                 throw ApiException.badRequest("Duplicate stepOrder values");
             }
         }
+        for (Step s : steps) {
+            String at = "Step " + s.stepOrder();
+            if (ApprovalsService.USER.equals(s.approverScope())) {
+                if (s.approverUserIds() == null || s.approverUserIds().isEmpty()) {
+                    throw ApiException.badRequest(at + " is assigned to users but names none");
+                }
+                if (s.requiredCount() > new HashSet<>(s.approverUserIds()).size()) {
+                    throw ApiException.badRequest(at + " requires more approvals than it has assigned users");
+                }
+            }
+            if (ApprovalsService.ROLE.equals(s.approverScope())
+                    && (s.approverRoleIds() == null || s.approverRoleIds().isEmpty())) {
+                throw ApiException.badRequest(at + " is assigned to roles but names none");
+            }
+            ApprovalConditions.validate(tree(s.conditions()), "steps." + s.stepOrder() + ".conditions");
+        }
+    }
+
+    private static void assertPriority(String priority) {
+        if (priority != null && !ApprovalsService.PRIORITIES.contains(priority)) {
+            throw ApiException.badRequest("priority must be one of the following values: "
+                    + String.join(", ", ApprovalsService.PRIORITIES));
+        }
+    }
+
+    private static JsonNode tree(Object conditions) {
+        return conditions == null ? null : MAPPER.valueToTree(conditions);
+    }
+
+    /** A condition tree to store; an empty tree is stored as no condition. */
+    private static String json(Object conditions) {
+        return ApprovalConditions.isEmpty(tree(conditions)) ? null : EntityJson.toJson(conditions);
     }
 
     private static BigDecimal dec(Object v) {

@@ -57,19 +57,25 @@ public class ApprovalsNotificationsSubscriber {
             if (req == null || !"pending".equals(req.status())) {
                 return;
             }
-            record Step(String name, List<String> perms) {}
+            record Step(String name, List<String> perms, String scope, List<String> users, List<String> roles) {}
             Step step = req.workflowId() == null ? null : jdbc.sql("""
-                            SELECT name, "approverPermissions" FROM "ApprovalStep" WHERE "workflowId" = ? AND "stepOrder" = ? LIMIT 1""")
+                            SELECT name, "approverPermissions", "approverScope", "approverUserIds", "approverRoleIds"
+                            FROM "ApprovalStep" WHERE "workflowId" = ? AND "stepOrder" = ? LIMIT 1""")
                     .params(req.workflowId(), req.currentStep())
                     .query((rs, n) -> new Step(rs.getString("name"),
-                            com.inventoryerp.kernel.auth.UserAccounts.array(rs, "approverPermissions")))
+                            com.inventoryerp.kernel.auth.UserAccounts.array(rs, "approverPermissions"),
+                            rs.getString("approverScope"),
+                            com.inventoryerp.kernel.auth.UserAccounts.array(rs, "approverUserIds"),
+                            com.inventoryerp.kernel.auth.UserAccounts.array(rs, "approverRoleIds")))
                     .optional()
                     .orElse(null);
+            // ADR-S061: stages assigned to named users or roles notify exactly those people.
+            List<String> named = step == null ? List.of() : namedApprovers(orgId, step.scope(), step.users(), step.roles());
             List<String> perms = step == null ? List.of() : step.perms();
-            if (perms.isEmpty()) {
+            if (named.isEmpty() && perms.isEmpty()) {
                 return;
             }
-            List<String> approvers = jdbc.sql("""
+            List<String> approvers = !named.isEmpty() ? named : jdbc.sql("""
                             SELECT u.id FROM "User" u WHERE u."organizationId" = :org AND EXISTS (
                               SELECT 1 FROM "_UserRoles" ur JOIN "Role" r ON r.id = ur."A"
                               WHERE ur."B" = u.id AND r.permissions && CAST(:perms AS text[]))""")
@@ -89,7 +95,7 @@ public class ApprovalsNotificationsSubscriber {
                 payload.put("dedupeKey", dedupeKey);
                 payload.put("requestId", requestId);
                 payload.put("stepOrder", req.currentStep());
-                payload.put("href", "/approvals");
+                payload.put("href", "/approvals?request=" + requestId);
                 String name = step.name() != null && !step.name().isEmpty() ? " — " + step.name() : "";
                 notifications.send(new NotificationsService.SendInput(orgId, userId, "in_app", "approval",
                         "Approval needed: " + humanize(entityType),
@@ -123,13 +129,30 @@ public class ApprovalsNotificationsSubscriber {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("dedupeKey", dedupeKey);
             payload.put("requestId", requestId);
-            payload.put("href", "/approvals");
+            payload.put("href", "/approvals?request=" + requestId);
             notifications.send(new NotificationsService.SendInput(orgId, createdById, "in_app", "approval",
                     "Approval " + status + ": " + humanize(entityType),
                     "Your " + humanize(entityType) + " request was " + status + ".", payload));
         } catch (RuntimeException err) {
             log.warn("onDecided failed for {}: {}", requestId, err.toString());
         }
+    }
+
+    private List<String> namedApprovers(String orgId, String scope, List<String> users, List<String> roles) {
+        if (ApprovalsService.USER.equals(scope) && users != null && !users.isEmpty()) {
+            return jdbc.sql("""
+                            SELECT id FROM "User" WHERE "organizationId" = :org AND id IN (:ids) AND "isActive" = true
+                              AND "deletedAt" IS NULL""")
+                    .param("org", orgId).param("ids", users).query(String.class).list();
+        }
+        if (ApprovalsService.ROLE.equals(scope) && roles != null && !roles.isEmpty()) {
+            return jdbc.sql("""
+                            SELECT DISTINCT u.id FROM "User" u JOIN "_UserRoles" ur ON ur."B" = u.id
+                            WHERE u."organizationId" = :org AND ur."A" IN (:roles) AND u."isActive" = true
+                              AND u."deletedAt" IS NULL""")
+                    .param("org", orgId).param("roles", roles).query(String.class).list();
+        }
+        return List.of();
     }
 
     private boolean alreadyNotified(String orgId, String dedupeKey) {

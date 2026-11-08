@@ -68,6 +68,18 @@ public class ApprovalStep {
     @Column(name = "approverScope", nullable = false)
     private String approverScope;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conditions")
+    private String conditions;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "approverUserIds")
+    private List<String> approverUserIds;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "approverRoleIds")
+    private List<String> approverRoleIds;
+
     @CreationTimestamp
     @Column(name = "createdAt", nullable = false)
     private Instant createdAt;
@@ -204,5 +216,29 @@ public class ApprovalStep {
 
     public void setWorkflow(ApprovalWorkflow workflow) {
         this.workflow = workflow;
+    }
+
+    public String getConditions() {
+        return conditions;
+    }
+
+    public void setConditions(String conditions) {
+        this.conditions = conditions;
+    }
+
+    public List<String> getApproverUserIds() {
+        return approverUserIds;
+    }
+
+    public void setApproverUserIds(List<String> approverUserIds) {
+        this.approverUserIds = approverUserIds;
+    }
+
+    public List<String> getApproverRoleIds() {
+        return approverRoleIds;
+    }
+
+    public void setApproverRoleIds(List<String> approverRoleIds) {
+        this.approverRoleIds = approverRoleIds;
     }
 }
