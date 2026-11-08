@@ -7,10 +7,13 @@ import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.sales.application.BranchSalesProfileService;
+import com.inventoryerp.sales.application.CashSaleFormExporter;
 import com.inventoryerp.sales.application.CashSaleService;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -33,9 +36,11 @@ public final class CashSaleController {
     public static class Submissions {
 
         private final CashSaleService svc;
+        private final CashSaleFormExporter form;
 
-        public Submissions(CashSaleService svc) {
+        public Submissions(CashSaleService svc, CashSaleFormExporter form) {
             this.svc = svc;
+            this.form = form;
         }
 
         @GetMapping
@@ -60,6 +65,17 @@ public final class CashSaleController {
         @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
         public Map<String, Object> get(@PathVariable String id) {
             return svc.get(id);
+        }
+
+        /** The sale as the printable "CASH SALES FORM" Excel workbook. */
+        @GetMapping("/{id}/excel")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public ResponseEntity<byte[]> formXlsx(@PathVariable String id) {
+            CashSaleFormExporter.Export e = form.export(id);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, CashSaleFormExporter.CONTENT_TYPE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + e.filename() + "\"")
+                    .body(e.content());
         }
 
         @GetMapping("/{id}/timeline")

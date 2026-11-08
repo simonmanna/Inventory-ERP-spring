@@ -27,7 +27,7 @@ import {
 } from '@/features/crm/suite-api';
 import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
-import { SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
+import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 
 const blankLine = (): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const SOURCE_LABEL: Record<string, string> = { list: tx('List price'), rule: tx('Price rule'), customer: tx('Customer discount'), manual: tx('Manual') };
@@ -152,6 +152,7 @@ export function QuotationEditorPage() {
   if (!isNew && !q) return <p className="text-sm text-muted-foreground">{tx('Quotation not found.')}</p>;
   const status = q?.status ?? 'draft';
   const currency = q?.currencyCode ?? deal?.currencyCode;
+  const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
 
   const ribbon = [tx('Draft'), tx('Approved'), tx('Sent'), tx('Accepted'), tx('Converted')];
   const step = ({ approved: 1, sent: 2, accepted: 3, converted: 4 } as Record<string, number>)[status] ?? 0;
@@ -230,39 +231,40 @@ export function QuotationEditorPage() {
 
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="px-5 pt-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{tx('Quotation')}</p>
-          <h1 className="text-2xl font-bold">{q ? q.number : tx('New')}</h1>
+          <h1 className="flex items-baseline gap-1.5 text-2xl font-bold">
+            <span>{q ? q.number : tx('New')}</span>
+            <span className="text-sm font-medium text-muted-foreground">{tx('Quotation')}</span>
+          </h1>
         </div>
-        <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
-          <div className="space-y-3">
-            <Field label={tx('Customer')}>
+        <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
+          <div>
+            <InlineField label={tx('Customer')}>
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
-            </Field>
-            <Field label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></Field>
-            <Field label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></Field>
-            <Field label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></Field>
-            <Field label={tx('Salesperson')}>
+            </InlineField>
+            <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Salesperson')}>
               <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
-            </Field>
+            </InlineField>
+            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
           </div>
-          <div className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></Field>
-              <Field label={tx('Valid until')}><Input type="date" disabled={!editable} value={validUntil} placeholder={tx('Default validity')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></Field>
-            </div>
+          <div>
+            <InlineField label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Valid until')}><Input type="date" disabled={!editable} value={validUntil} placeholder={tx('Default validity')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Currency')}><span className="text-sm">{currency ?? orgCurrency}</span></InlineField>
             {q && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={tx('Created')}><p className="py-2 text-sm">{date(q.createdAt)}</p></Field>
-                {q.approvedAt && <Field label={tx('Approved')}><p className="py-2 text-sm">{date(q.approvedAt)}</p></Field>}
-                {q.sentAt && <Field label={tx('Sent')}><p className="py-2 text-sm">{date(q.sentAt)}</p></Field>}
-                {q.acceptedAt && <Field label={tx('Accepted')}><p className="py-2 text-sm">{date(q.acceptedAt)}</p></Field>}
-              </div>
+              <>
+                <InlineField label={tx('Created')}><p className="py-2 text-sm">{date(q.createdAt)}</p></InlineField>
+                {q.approvedAt && <InlineField label={tx('Approved')}><p className="py-2 text-sm">{date(q.approvedAt)}</p></InlineField>}
+                {q.sentAt && <InlineField label={tx('Sent')}><p className="py-2 text-sm">{date(q.sentAt)}</p></InlineField>}
+                {q.acceptedAt && <InlineField label={tx('Accepted')}><p className="py-2 text-sm">{date(q.acceptedAt)}</p></InlineField>}
+              </>
             )}
           </div>
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
+          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
             {([['lines', tx('Quotation lines')], ['terms', tx('Terms & conditions')], ['other', tx('Other info')]] as const).map(([v, label]) => (
               <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
             ))}

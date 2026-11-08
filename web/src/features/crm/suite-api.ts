@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { api } from '@/lib/api';
 import { PERMISSIONS } from '@erp/shared';
 import { useAuthStore } from '@/stores/auth.store';
+import type { UnitAwareProduct } from '@/features/products/units';
 import { tx } from '@/lib/i18n/tx';
 
 // ---- Types (CRM sales suite, ADR-S010) ----
@@ -585,7 +586,8 @@ export function useCrmDashboard(scope: string) {
   });
 }
 
-export interface ProductOption { id: string; name: string; code: string | null; salesPrice: number | string | null; taxId: string | null }
+/** A product as `/products` lists it; also carries its units (ADR-S003) for line unit pickers. */
+export interface ProductOption extends UnitAwareProduct { id: string; name: string; code: string | null; salesPrice: number | string | null; taxId: string | null }
 
 export function useProductOptions() {
   return useQuery({

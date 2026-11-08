@@ -6,10 +6,9 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from '@/pages/sales/handover-draft';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Plus, Section, StickyNote, Trash2, Loader2 } from 'lucide-react';
+import { Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { money } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
@@ -33,16 +32,23 @@ import {
 import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
 
-const selectClass =
-  'flex h-10 w-full rounded-md border border-sky-200 bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400';
+/** Odoo-style flat field: no box, a hairline underline that turns blue on focus. */
+const fieldClass =
+  'h-8 w-full rounded-none border-0 border-b border-slate-200 bg-transparent px-1 text-sm shadow-none hover:border-slate-400 focus:border-blue-600 focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0';
+const selectClass = fieldClass;
+const selectClassSm = fieldClass;
+/** Same flat field for line cells: invisible until hovered/focused. */
+const cellClass =
+  'h-8 w-full rounded-none border-0 border-b border-transparent bg-transparent px-1 text-sm shadow-none hover:border-slate-300 focus:border-blue-600 focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0';
 
-/** Compact variant for the condensed header table. */
-const selectClassSm =
-  'flex h-8 w-full rounded-md border border-sky-200 bg-background px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400';
+/** Optional columns of the invoice lines editor (Odoo-style column picker). */
+type LineCol = 'description' | 'uom' | 'discount';
+const LINE_COLS: Array<LineColumn<LineCol>> = [['description', tx('Description')], ['uom', tx('UoM')], ['discount', tx('Disc.%')]];
 
 /** Local date → yyyy-mm-dd without timezone shifting. */
 function fmtLocal(d: Date): string {
@@ -76,14 +82,16 @@ const PAYMENT_MODE_LABELS: Record<string, string> = {
 
 const INCOTERM_OPTIONS = ['EXW', 'FCA', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP', 'FAS', 'FOB', 'CFR', 'CIF'];
 
-/** Odoo file-tab: bold uppercase micro-label row. */
+/** Odoo notebook tab: the active tab is a raised, bordered page. */
 function TabBtn({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
-        active ? 'border-sky-600 text-sky-700' : 'border-transparent text-muted-foreground hover:text-sky-700'
+      className={`-mb-px whitespace-nowrap rounded-t-md border px-5 py-2.5 text-sm transition-colors ${
+        active
+          ? 'border-slate-200 border-b-white bg-white font-medium text-slate-900'
+          : 'border-transparent text-slate-500 hover:text-blue-700'
       }`}
     >
       {children}
@@ -91,23 +99,23 @@ function TabBtn({ active, children, onClick }: { active: boolean; children: Reac
   );
 }
 
-/** Right-panel totals row (mirrors invoice-detail). */
+/** Totals row under the lines (right-aligned, Odoo style). */
 function SummaryRow({ label, value, bold, accent }: { label: string; value: string; bold?: boolean; accent?: boolean }) {
   return (
-    <div className={`flex justify-between gap-8 text-sm ${bold ? 'font-bold' : ''} ${accent ? 'text-red-700' : ''}`}>
-      <span className={bold ? '' : 'text-muted-foreground'}>{label}</span>
-      <span className={bold ? 'font-bold' : ''}>{value}</span>
+    <div className={`grid grid-cols-[1fr_auto] gap-6 py-0.5 text-sm ${accent ? 'text-blue-700' : 'text-slate-700'}`}>
+      <span className="text-right">{label}:</span>
+      <span className={`min-w-[7rem] text-right tabular-nums ${bold ? 'font-bold text-slate-900' : ''}`}>{value}</span>
     </div>
   );
 }
 
-/** Right-side meta table row holding a form control (mirrors detail's Odoo header). */
+/** Header field: bold label on the left, flat control on the right. */
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <tr>
-      <th className="text-left text-sky-600 font-medium py-0.5 w-32 align-top">{label}</th>
-      <td className="py-0.5">{children}</td>
-    </tr>
+    <div className="grid min-h-12 grid-cols-[9rem_1fr] items-center gap-3 py-1.5">
+      <span className="text-sm font-semibold text-slate-800">{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 
@@ -184,6 +192,8 @@ export function InvoiceCreatePage() {
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'lines' });
   const lines = watch('lines');
+  const { cols, show, toggle: toggleCol } = useLineColumns<LineCol>('invoice-edit.columns', LINE_COLS, ['description', 'uom', 'discount']);
+  const colCount = 5 + LINE_COLS.filter(([c]) => show(c)).length;
   const productList = products.data?.data ?? [];
   const terms = paymentTerms?.filter((t) => t.isActive) ?? [];
   const fiscalPositionList = (fiscalPositions ?? []).filter((f) => f.isActive);
@@ -348,259 +358,280 @@ export function InvoiceCreatePage() {
 
   const busy = createInvoice.isPending || postInvoice.isPending;
 
+  const partnerOptions = (partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
+  const linkBtn = 'text-sm text-blue-600 hover:text-blue-800 hover:underline';
+  const thBase = 'py-2.5 px-2 text-sm font-semibold text-slate-800';
+
   return (
-    <form onSubmit={onSubmit} className="max-w-[1600px] mx-auto space-y-0 px-1 md:px-2">
+    <form onSubmit={onSubmit} className="mx-auto max-w-[1400px] px-1 md:px-2">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={() => navigate('/invoices')}
-          className="flex items-center gap-1 text-sm text-sky-700 hover:text-sky-900"
-        >
+      <div className="mb-3 flex items-center gap-2 text-sm">
+        <button type="button" onClick={() => navigate('/invoices')} className="text-blue-600 hover:text-blue-800">
           {tx('Invoices')}
         </button>
-        <span className="text-sky-300">/</span>
-        <span className="text-sm text-sky-900 font-semibold">{tx('New Invoice')}</span>
+        <span className="text-slate-400">/</span>
+        <span className="text-slate-700">{tx('New')}</span>
       </div>
 
-      {/* Title bar */}
-      <div className="rounded-t-lg bg-gradient-to-r from-sky-400 to-sky-500 px-6 py-3 flex items-center justify-between shadow-sm gap-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <h1 className="text-white font-bold text-base tracking-wide whitespace-nowrap">{tx('NEW CUSTOMER INVOICE')}</h1>
-          <Badge className="bg-white text-sky-700 border-white/60">{tx('Draft')}</Badge>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <Button
-            type="submit"
-            name="action"
-            value="save"
-            size="sm"
-            variant="outline"
-            className="bg-white/15 border-white/40 text-white hover:bg-white/25"
-            disabled={busy}
-          >
-            {tx('Save draft')}
-          </Button>
+      {/* Control panel: actions left, status bar right */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
           <Button
             type="submit"
             name="action"
             value="post"
             size="sm"
-            className="bg-white text-sky-700 hover:bg-sky-50 font-semibold shadow-sm"
+            className="bg-blue-600 px-4 font-medium text-white hover:bg-blue-700"
             disabled={busy}
           >
-            {tx('Save & Post')}
+            {tx('Confirm')}
           </Button>
+          <Button
+            type="submit"
+            name="action"
+            value="save"
+            size="sm"
+            variant="secondary"
+            className="bg-slate-100 px-4 text-slate-800 hover:bg-slate-200"
+            disabled={busy}
+          >
+            {tx('Save draft')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="text-slate-600"
+            onClick={() => navigate('/invoices')}
+            disabled={busy}
+          >
+            {tx('Discard')}
+          </Button>
+        </div>
+        <div className="flex overflow-hidden rounded-md border border-slate-200 text-sm">
+          <span className="bg-blue-50 px-4 py-1.5 font-semibold text-blue-700">{tx('Draft')}</span>
+          <span className="border-l border-slate-200 px-4 py-1.5 text-slate-400">{tx('Posted')}</span>
         </div>
       </div>
 
-      {/* Document card */}
-      <div className="bg-white border border-t-0 border-sky-100 shadow-sm rounded-b-lg overflow-hidden">
-        {/* Odoo header: customer left, meta right */}
-        <div className="grid grid-cols-1 md:grid-cols-2 divide-x divide-sky-100 text-xs">
-          <div className="px-4 py-3 bg-sky-50/30">
-            <table className="w-full text-xs">
-              <tbody className="divide-y divide-sky-100">
-                <MetaRow label={tx('Customer')}>
-                  <input type="hidden" {...register('partnerId', { required: true })} />
-                  <SearchableSelect
-                    value={watch('partnerId') ?? ''}
-                    onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
-                    options={(partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }))}
-                    placeholder={tx('Select customer')}
-                    searchPlaceholder={tx('Search customers…')}
-                  />
-                </MetaRow>
-                <MetaRow label={tx('Reference')}>
-                  <Input id="reference" className="h-8 text-xs px-2 py-1 border-sky-200 focus-visible:ring-sky-400" {...register('reference')} />
-                </MetaRow>
-                <MetaRow label={tx('Invoice Date')}>
-                  <Input id="issueDate" type="date" className="h-8 text-xs px-2 py-1 border-sky-200 focus-visible:ring-sky-400" {...register('issueDate', { required: true })} />
-                </MetaRow>
-                <MetaRow label={tx('Payment Terms')}>
-                  <select id="paymentTermId" className={selectClassSm} {...register('paymentTermId')}>
-                    <option value="">{tx('No payment terms')}</option>
-                    {terms.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </MetaRow>
-              </tbody>
-            </table>
-          </div>
+      {/* Document sheet */}
+      <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+        <div className="px-6 pt-6 md:px-8">
+          <div className="text-sm font-medium text-slate-700">{tx('Customer Invoice')}</div>
+          <h1 className="mt-1 text-3xl font-bold text-slate-900">{tx('Draft')}</h1>
 
-          <div className="px-4 py-3 bg-sky-50/20">
-            <table className="w-full text-xs">
-              <tbody className="divide-y divide-sky-100">
-                <MetaRow label={tx('Due Date')}>
-                  <Input id="dueDate" type="date" className="h-8 text-xs px-2 py-1 border-sky-200 focus-visible:ring-sky-400" {...register('dueDate')} />
-                </MetaRow>
-                <MetaRow label={tx('Currency')}>
-                  <span className="text-sky-800 font-semibold">{currency}</span>
-                </MetaRow>
-                <MetaRow label={tx('Salesperson')}>
-                  <select id="salespersonId" className={selectClassSm} {...register('salespersonId')}>
-                    <option value="">{tx('— Not assigned —')}</option>
-                    {salespersonList.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.firstName} {e.lastName ?? ''}
-                      </option>
-                    ))}
-                  </select>
-                </MetaRow>
-                <MetaRow label={tx('Source Doc')}>
-                  <Input id="sourceDocument" placeholder={tx('SO/PO/reference of the originating doc')} className="h-8 text-xs px-2 py-1 border-sky-200 focus-visible:ring-sky-400" {...register('sourceDocument')} />
-                </MetaRow>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {selectedTerm && (
-          <div className="border-t border-sky-100 bg-muted/30">
-            <div className="flex items-center justify-between px-6 py-3 text-sm">
-              <span className="text-muted-foreground">
-                {tx('Due date derived from')} <strong className="text-foreground">{selectedTerm.name}</strong>
-              </span>
-              <span className="font-mono">{dueDateForTerm(selectedTerm, issueDate)}</span>
+          {/* Header fields: customer left, dates & terms right */}
+          <div className="mt-5 grid grid-cols-1 gap-x-12 md:grid-cols-2">
+            <div>
+              <MetaRow label={tx('Customer')}>
+                <input type="hidden" {...register('partnerId', { required: true })} />
+                <SearchableSelect
+                  value={watch('partnerId') ?? ''}
+                  onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+                  options={partnerOptions}
+                  placeholder={tx('Search a customer…')}
+                  searchPlaceholder={tx('Search customers…')}
+                  className={fieldClass}
+                />
+              </MetaRow>
+              <MetaRow label={tx('Reference')}>
+                <Input id="reference" className={fieldClass} {...register('reference')} />
+              </MetaRow>
+              <MetaRow label={tx('Salesperson')}>
+                <select id="salespersonId" className={selectClassSm} {...register('salespersonId')}>
+                  <option value="">{tx('— Not assigned —')}</option>
+                  {salespersonList.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.firstName} {e.lastName ?? ''}
+                    </option>
+                  ))}
+                </select>
+              </MetaRow>
+              <MetaRow label={tx('Source Doc')}>
+                <Input id="sourceDocument" placeholder={tx('e.g. SO/0012')} className={fieldClass} {...register('sourceDocument')} />
+              </MetaRow>
+            </div>
+            <div>
+              <MetaRow label={tx('Invoice Date')}>
+                <Input id="issueDate" type="date" className={fieldClass} {...register('issueDate', { required: true })} />
+              </MetaRow>
+              <MetaRow label={tx('Payment terms')}>
+                <select id="paymentTermId" className={selectClassSm} {...register('paymentTermId')}>
+                  <option value="">{tx('No payment terms')}</option>
+                  {terms.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </MetaRow>
+              <MetaRow label={tx('Due Date')}>
+                <Input id="dueDate" type="date" className={fieldClass} {...register('dueDate')} />
+              </MetaRow>
+              <MetaRow label={tx('Currency')}>
+                <span className="px-1 text-sm text-slate-700">{currency}</span>
+              </MetaRow>
             </div>
           </div>
-        )}
+          {selectedTerm && (
+            <p className="mt-1 text-xs text-slate-500">
+              {tx('Due date derived from')} <span className="font-medium text-slate-700">{selectedTerm.name}</span>
+            </p>
+          )}
+        </div>
 
-        {/* Odoo file tabs */}
-        <div className="border-b border-sky-200 px-4 bg-sky-50/40 flex gap-1 overflow-x-auto">
+        {/* Notebook tabs */}
+        <div className="mt-6 flex gap-1 overflow-x-auto border-b border-slate-200 px-6 md:px-8">
           <TabBtn active={activeTab === 'lines'} onClick={() => setActiveTab('lines')}>
             {tx('Invoice Lines')}
+          </TabBtn>
+          <TabBtn active={activeTab === 'journal'} onClick={() => setActiveTab('journal')}>
+            {tx('Journal Items')}
           </TabBtn>
           <TabBtn active={activeTab === 'info'} onClick={() => setActiveTab('info')}>
             {tx('Other Info')}
           </TabBtn>
           <TabBtn active={activeTab === 'delivery'} onClick={() => setActiveTab('delivery')}>
-            {tx('Delivery & fulfilment')}
-          </TabBtn>
-          <TabBtn active={activeTab === 'journal'} onClick={() => setActiveTab('journal')}>
-            {tx('Journal Entry')}
+            {tx('Delivery')}
           </TabBtn>
         </div>
 
         {/* INVOICE LINES tab */}
         {activeTab === 'lines' && (
-          <div>
-            <div className="flex flex-col lg:flex-row">
-              <div className="flex-1 overflow-x-auto">
-                <div className="flex items-center justify-end gap-2 p-4 border-b border-sky-100 bg-sky-50/30">
-                  <Button type="button" variant="outline" size="sm" onClick={() => append({ quantity: 1 })}>
-                    <Plus className="h-4 w-4" /> {tx('Add a line')}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => append({ lineType: 'section', description: '', quantity: 0 })}>
-                    <Section className="h-4 w-4" /> {tx('Add a section')}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => append({ lineType: 'note', description: '', quantity: 0 })}>
-                    <StickyNote className="h-4 w-4" /> {tx('Add a note')}
-                  </Button>
-                </div>
-                <div className="space-y-2 p-4">
+          <div className="pb-6">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-sm">
+                <thead className="border-b border-slate-200 text-left">
+                  <tr>
+                    <th className="w-8" />
+                    <th className={thBase}>{tx('Product')}</th>
+                    {show('description') && <th className={thBase}>{tx('Description')}</th>}
+                    <th className={`${thBase} w-24 text-right`}>{tx('Quantity')}</th>
+                    {show('uom') && <th className={`${thBase} w-28`}>{tx('UoM')}</th>}
+                    <th className={`${thBase} w-32 text-right`}>{tx('Price')}</th>
+                    {show('discount') && <th className={`${thBase} w-24 text-right`}>{tx('Disc.%')}</th>}
+                    <th className={`${thBase} w-36 text-right`}>{tx('Amount')}</th>
+                    <th className="w-14 py-2.5 pr-6 text-right">
+                      <LineColumnsPicker columns={LINE_COLS} cols={cols} toggle={toggleCol} />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
                   {fields.map((field, index) => {
                     const rowType = watch(`lines.${index}.lineType`) ?? 'product';
                     const isMeta = rowType === 'section' || rowType === 'note';
+                    const removeBtn = (
+                      <button
+                        type="button"
+                        aria-label={tx('Remove line')}
+                        onClick={() => remove(index)}
+                        disabled={fields.length <= 1}
+                        className="rounded p-1 text-slate-400 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100 disabled:hidden"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    );
                     if (isMeta) {
                       return (
-                        <div key={field.id} className="grid grid-cols-12 items-center gap-2">
-                          <div className="col-span-11">
-                            <Label className="text-xs">{rowType === 'section' ? tx('Section title') : tx('Note')}</Label>
-                            <Input
-                              className={rowType === 'section' ? 'font-bold uppercase tracking-wide' : 'italic text-slate-600'}
+                        <tr key={field.id} className={`group border-b border-slate-100 ${rowType === 'section' ? 'bg-slate-50' : ''}`}>
+                          <td />
+                          <td colSpan={colCount - 1} className="px-2 py-1.5">
+                            <input
+                              aria-label={rowType === 'section' ? tx('Section title') : tx('Note')}
+                              className={`${cellClass} ${rowType === 'section' ? 'font-semibold' : 'italic text-slate-600'}`}
                               placeholder={rowType === 'section' ? tx('e.g. Services') : tx('e.g. Courtesy discount approved by manager')}
                               {...register(`lines.${index}.description`)}
                             />
-                          </div>
-                          <div className="col-span-1">
-                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} disabled={fields.length <= 1}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
+                          </td>
+                          <td className="py-1.5 pr-6 text-right">{removeBtn}</td>
+                        </tr>
                       );
                     }
                     return (
-                      <div key={field.id} className="grid grid-cols-12 items-end gap-2 border-b border-sky-50 pb-2">
-                        <div className="col-span-3">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Product')}</Label>
+                      <tr key={field.id} className="group border-b border-slate-100 align-middle hover:bg-slate-50/60">
+                        <td className="pl-3 text-slate-300">⠿</td>
+                        <td className="px-2 py-1.5">
                           <select
-                            className={selectClass}
+                            aria-label={tx('Product')}
+                            className={cellClass}
                             value={watch(`lines.${index}.productId`) ?? ''}
                             onChange={(e) => onProductChange(index, e.target.value)}
                           >
-                            <option value="">{tx('— none —')}</option>
+                            <option value="">{tx('Select a product')}</option>
                             {productList.map((p) => (
                               <option key={p.id} value={p.id}>
                                 {p.name}
                               </option>
                             ))}
                           </select>
-                        </div>
-                        <div className="col-span-2">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Description')}</Label>
-                          <Input {...register(`lines.${index}.description`)} />
-                        </div>
-                        <div className="col-span-1">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Qty')}</Label>
-                          <Input type="number" step="any" className="border-sky-200 focus-visible:ring-sky-400" {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
-                        </div>
-                        <div className="col-span-1 pb-1.5">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Unit')}</Label>
-                          <UnitSelect
-                            className={selectClass}
-                            product={productList.find((p) => p.id === watch(`lines.${index}.productId`))}
-                            role="sales"
-                            value={watch(`lines.${index}.uomId`)}
-                            onChange={(uomId) => onUnitChange(index, uomId)}
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Unit price')}</Label>
-                          <Input type="number" step="any" className="border-sky-200 focus-visible:ring-sky-400" {...register(`lines.${index}.unitPrice`, { valueAsNumber: true })} />
-                        </div>
-                        <div className="col-span-1">
-                          <Label className="text-xs text-sky-600 font-bold uppercase tracking-wider">{tx('Disc %')}</Label>
-                          <Input
-                            type="number"
-                            step="any"
-                            className="border-sky-200 focus-visible:ring-sky-400"
-                            {...register(`lines.${index}.discountPercent`, { valueAsNumber: true })}
-                          />
-                        </div>
-                        <div className="col-span-1 pb-2 text-right text-sm font-semibold text-sky-900">{money(lineTotal(lines?.[index]))}</div>
-                        <div className="col-span-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => remove(index)}
-                            disabled={fields.length <= 1}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
+                        </td>
+                        {show('description') && (
+                          <td className="px-2 py-1.5">
+                            <input aria-label={tx('Description')} className={cellClass} {...register(`lines.${index}.description`)} />
+                          </td>
+                        )}
+                        <td className="px-2 py-1.5">
+                          <input aria-label={tx('Quantity')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+                        </td>
+                        {show('uom') && (
+                          <td className="px-2 py-1.5">
+                            <UnitSelect
+                              className={cellClass}
+                              product={productList.find((p) => p.id === watch(`lines.${index}.productId`))}
+                              role="sales"
+                              value={watch(`lines.${index}.uomId`)}
+                              onChange={(uomId) => onUnitChange(index, uomId)}
+                            />
+                          </td>
+                        )}
+                        <td className="px-2 py-1.5">
+                          <input aria-label={tx('Unit price')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.unitPrice`, { valueAsNumber: true })} />
+                        </td>
+                        {show('discount') && (
+                          <td className="px-2 py-1.5">
+                            <input
+                              aria-label={tx('Disc.%')}
+                              type="number"
+                              step="any"
+                              className={`${cellClass} text-right tabular-nums`}
+                              {...register(`lines.${index}.discountPercent`, { valueAsNumber: true })}
+                            />
+                          </td>
+                        )}
+                        <td className="px-2 py-1.5 text-right tabular-nums text-slate-900">{money(lineTotal(lines?.[index]))}</td>
+                        <td className="py-1.5 pr-6 text-right">{removeBtn}</td>
+                      </tr>
                     );
                   })}
-                </div>
-              </div>
+                  <tr className="border-b border-slate-100">
+                    <td />
+                    <td colSpan={colCount} className="px-2 py-2.5">
+                      <div className="flex flex-wrap gap-6">
+                        <button type="button" className={linkBtn} onClick={() => append({ quantity: 1 })}>
+                          {tx('Add a line')}
+                        </button>
+                        <button type="button" className={linkBtn} onClick={() => append({ lineType: 'section', description: '', quantity: 0 })}>
+                          {tx('Add a section')}
+                        </button>
+                        <button type="button" className={linkBtn} onClick={() => append({ lineType: 'note', description: '', quantity: 0 })}>
+                          {tx('Add a note')}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-              {/* Odoo right totals panel */}
-              <div className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-sky-100 bg-gradient-to-b from-sky-50/60 to-sky-100/30 p-4 shrink-0">
-                <div className="space-y-2">
-                  <SummaryRow label={tx('Untaxed Amount')} value={money(subtotal)} />
-                  <div className="border-t-2 border-sky-200 pt-2">
-                    <SummaryRow label="TOTAL" value={money(subtotal)} bold />
-                  </div>
-                  <SummaryRow label={tx('Amount Due')} value={money(subtotal)} bold accent={subtotal > 0.005} />
+            {/* Footer: note left, totals right */}
+            <div className="mt-8 flex flex-col gap-6 px-6 md:flex-row md:items-start md:justify-between md:px-8">
+              <p className="max-w-md text-sm text-slate-400">{tx('Tax is applied from each product when the invoice is posted.')}</p>
+              <div className="w-full border-t border-slate-300 pt-2 md:w-80">
+                <SummaryRow label={tx('Untaxed Amount')} value={money(subtotal)} bold />
+                <div className="mt-1 border-t border-slate-200 pt-1">
+                  <SummaryRow label={tx('Total')} value={money(subtotal)} bold />
                 </div>
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {tx('Tax is applied from each product when the invoice is posted.')}
-                </p>
+                <SummaryRow label={tx('Amount Due')} value={money(subtotal)} bold accent={subtotal > 0.005} />
               </div>
             </div>
           </div>
@@ -608,196 +639,144 @@ export function InvoiceCreatePage() {
 
         {/* OTHER INFO tab */}
         {activeTab === 'info' && (
-          <div className="p-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
-              <dl>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Fiscal Position')}</dt>
-                  <dd className="mt-1">
-                    <select id="fiscalPositionId" className={selectClass} {...register('fiscalPositionId')}>
-                      <option value="">{tx('— No fiscal position —')}</option>
-                      {fiscalPositionList.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.name}
-                        </option>
-                      ))}
-                    </select>
-                  </dd>
-                </div>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Invoicing Journal')}</dt>
-                  <dd className="mt-1">
-                    <select id="invoicingJournalId" className={selectClass} {...register('invoicingJournalId')}>
-                      <option value="">{tx('— Default sales journal —')}</option>
-                      {journalList.map((j) => (
-                        <option key={j.id} value={j.id}>
-                          {j.name}
-                        </option>
-                      ))}
-                    </select>
-                  </dd>
-                </div>
-              </dl>
-              <dl>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Payment Method')}</dt>
-                  <dd className="mt-1">
-                    <select id="paymentMode" className={selectClass} {...register('paymentMode')}>
-                      <option value="">{tx('— Not set —')}</option>
-                      {Object.entries(PAYMENT_MODE_LABELS).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </dd>
-                </div>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Salesperson')}</dt>
-                  <dd className="mt-1 text-sm text-sky-900">
-                    {salespersonList.length === 0 ? '—' : tx('Set above in the header.')}
-                  </dd>
-                </div>
-              </dl>
+          <div className="grid grid-cols-1 gap-x-12 px-6 py-6 md:grid-cols-2 md:px-8">
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('Accounting')}</h3>
+              <MetaRow label={tx('Fiscal Position')}>
+                <select id="fiscalPositionId" className={selectClass} {...register('fiscalPositionId')}>
+                  <option value="">{tx('— No fiscal position —')}</option>
+                  {fiscalPositionList.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+              </MetaRow>
+              <MetaRow label={tx('Invoicing Journal')}>
+                <select id="invoicingJournalId" className={selectClass} {...register('invoicingJournalId')}>
+                  <option value="">{tx('— Default sales journal —')}</option>
+                  {journalList.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.name}
+                    </option>
+                  ))}
+                </select>
+              </MetaRow>
+            </div>
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('Payment')}</h3>
+              <MetaRow label={tx('Payment Method')}>
+                <select id="paymentMode" className={selectClass} {...register('paymentMode')}>
+                  <option value="">{tx('— Not set —')}</option>
+                  {Object.entries(PAYMENT_MODE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </MetaRow>
             </div>
           </div>
         )}
 
         {/* DELIVERY tab */}
         {activeTab === 'delivery' && (
-          <div className="p-5">
+          <div className="px-6 py-6 md:px-8">
             <HandoverDraftPanel value={handover} onChange={setHandover} hint={tx('Plan how the goods reach the customer. Saved with the invoice; dispatch and delivery follow once it is posted.')} />
-            <h3 className="mb-2 mt-6 text-sm font-semibold">{tx('Shipping terms')}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
-              <dl>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Incoterm')}</dt>
-                  <dd className="mt-1">
-                    <select id="incoterm" className={selectClass} {...register('incoterm')}>
-                      <option value="">{tx('— None —')}</option>
-                      {INCOTERM_OPTIONS.map((code) => (
-                        <option key={code} value={code}>
-                          {code}
-                        </option>
-                      ))}
-                    </select>
-                  </dd>
-                </div>
-                <div className="py-1.5">
-                  <dt className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">{tx('Incoterm Location')}</dt>
-                  <dd className="mt-1">
-                    <Input id="incotermLocation" placeholder={tx('e.g. Jakarta (ID)')} className="border-sky-200 focus-visible:ring-sky-400" {...register('incotermLocation')} />
-                  </dd>
-                </div>
-              </dl>
+            <h3 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-500">{tx('Shipping terms')}</h3>
+            <div className="grid grid-cols-1 gap-x-12 md:grid-cols-2">
+              <div>
+                <MetaRow label={tx('Incoterm')}>
+                  <select id="incoterm" className={selectClass} {...register('incoterm')}>
+                    <option value="">{tx('— None —')}</option>
+                    {INCOTERM_OPTIONS.map((code) => (
+                      <option key={code} value={code}>
+                        {code}
+                      </option>
+                    ))}
+                  </select>
+                </MetaRow>
+                <MetaRow label={tx('Incoterm Location')}>
+                  <Input id="incotermLocation" placeholder={tx('e.g. Jakarta (ID)')} className={fieldClass} {...register('incotermLocation')} />
+                </MetaRow>
+              </div>
             </div>
           </div>
         )}
 
-        {/* JOURNAL ENTRY tab — read-only preview of the entry created on post */}
+        {/* JOURNAL ITEMS tab — read-only preview of the entry created on post */}
         {activeTab === 'journal' && (
-          <div className="p-5 space-y-4">
-            <div className="rounded-md border border-sky-200 bg-sky-50/60 px-4 py-3 text-xs text-sky-800">
-              {tx('When this invoice is')} <strong>{tx('posted')}</strong>{tx(', a journal entry is created automatically: it debits the customer receivable and credits the income and tax accounts of each product line. The entry lands in the')} <strong>{tx('Invoicing Journal')}</strong> {tx('chosen under Other Info, or in the business\'s default sales journal (Company Settings → Sales Journals). The numbers below are a live preview — the final entry is computed at post time.')}
-            </div>
+          <div className="space-y-4 px-6 py-6 md:px-8">
+            <p className="text-sm text-slate-500">
+              {tx('Preview of the journal entry created when this invoice is posted: the customer receivable is debited and the income and tax accounts of each line are credited, in the Invoicing Journal chosen under Other Info (or the default sales journal).')}
+            </p>
 
             {!partnerId || !(lines ?? []).some((l) => l.productId) ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
+              <div className="py-12 text-center text-sm text-slate-400">
                 {tx('Select a customer and add at least one product line to preview the journal entry.')}
               </div>
             ) : previewError ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
-                {previewError}
-              </div>
+              <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{previewError}</div>
             ) : preview ? (
-              <div className="rounded-lg border border-sky-100 overflow-hidden bg-background">
-                <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border-b border-sky-100 bg-sky-50/60 px-4 py-3 text-xs">
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{tx('Journal')}</div>
-                    <div className="text-sm font-semibold text-sky-900">
-                      {preview.journal.name}{' '}
-                      <span className="font-mono text-xs font-normal text-muted-foreground">({preview.journal.code})</span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{tx('Entry Date')}</div>
-                    <div className="text-sm text-sky-900">{preview.postingDate}</div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{tx('Memo')}</div>
-                    <div className="truncate text-sm text-sky-900">{preview.description ?? '—'}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className={
-                        preview.balanced
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          : 'border-red-200 bg-red-50 text-red-700'
-                      }
-                    >
-                      {preview.balanced ? tx('Balanced') : tx('Unbalanced')}
-                    </Badge>
-                    {previewPending && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" /> {tx('updating…')}
-                      </span>
-                    )}
-                  </div>
+              <div>
+                <div className="mb-3 flex flex-wrap items-center gap-x-8 gap-y-1 text-sm">
+                  <span>
+                    <span className="font-semibold text-slate-800">{tx('Journal')}</span>{' '}
+                    <span className="text-slate-700">{preview.journal.name} ({preview.journal.code})</span>
+                  </span>
+                  <span>
+                    <span className="font-semibold text-slate-800">{tx('Entry Date')}</span>{' '}
+                    <span className="text-slate-700">{preview.postingDate}</span>
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={preview.balanced ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-red-200 bg-red-50 text-red-700'}
+                  >
+                    {preview.balanced ? tx('Balanced') : tx('Unbalanced')}
+                  </Badge>
+                  {previewPending && (
+                    <span className="flex items-center gap-1 text-xs text-slate-400">
+                      <Loader2 className="h-3 w-3 animate-spin" /> {tx('updating…')}
+                    </span>
+                  )}
                 </div>
-
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="border-b border-sky-100 bg-muted/30">
-                      <tr className="text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
-                        <th className="px-4 py-2 w-10">#</th>
-                        <th className="px-4 py-2">{tx('Account')}</th>
-                        <th className="px-4 py-2">{tx('Label')}</th>
-                        <th className="px-4 py-2">{tx('Partner')}</th>
-                        <th className="px-4 py-2 text-right">{tx('Debit')}</th>
-                        <th className="px-4 py-2 text-right">{tx('Credit')}</th>
+                    <thead className="border-b border-slate-200 text-left">
+                      <tr>
+                        <th className={thBase}>{tx('Account')}</th>
+                        <th className={thBase}>{tx('Label')}</th>
+                        <th className={thBase}>{tx('Partner')}</th>
+                        <th className={`${thBase} text-right`}>{tx('Debit')}</th>
+                        <th className={`${thBase} text-right`}>{tx('Credit')}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-sky-50">
+                    <tbody>
                       {preview.lines.map((line) => (
-                        <tr key={line.lineNumber}>
-                          <td className="px-4 py-2 text-muted-foreground">{line.lineNumber}</td>
-                          <td className="px-4 py-2">
-                            {line.account ? (
-                              <span className="font-mono text-xs text-sky-900">
-                                {line.account.code} <span className="text-muted-foreground">·</span>{' '}
-                                {line.account.name}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
+                        <tr key={line.lineNumber} className="border-b border-slate-100">
+                          <td className="px-2 py-2 text-slate-900">
+                            {line.account ? `${line.account.code} ${line.account.name}` : <span className="text-slate-400">—</span>}
                           </td>
-                          <td className="px-4 py-2 text-sky-900">{line.description ?? '—'}</td>
-                          <td className="px-4 py-2 text-xs text-muted-foreground">{line.partnerName ?? '—'}</td>
-                          <td className="px-4 py-2 text-right text-sky-900">
-                            {line.debit ? money(Number(line.debit)) : ''}
-                          </td>
-                          <td className="px-4 py-2 text-right text-sky-900">
-                            {line.credit ? money(Number(line.credit)) : ''}
-                          </td>
+                          <td className="px-2 py-2 text-slate-700">{line.description ?? '—'}</td>
+                          <td className="px-2 py-2 text-slate-500">{line.partnerName ?? '—'}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{line.debit ? money(Number(line.debit)) : ''}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{line.credit ? money(Number(line.credit)) : ''}</td>
                         </tr>
                       ))}
-                      <tr className="border-t border-sky-100 bg-muted/30 font-semibold text-sky-900">
-                        <td colSpan={4} className="px-4 py-2 text-right">
-                          {tx('Total')}
-                        </td>
-                        <td className="px-4 py-2 text-right">{money(Number(preview.debitTotal))}</td>
-                        <td className="px-4 py-2 text-right">{money(Number(preview.creditTotal))}</td>
+                      <tr className="font-semibold text-slate-900">
+                        <td colSpan={3} />
+                        <td className="px-2 py-2 text-right tabular-nums">{money(Number(preview.debitTotal))}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{money(Number(preview.creditTotal))}</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
-                <p className="border-t border-sky-100 px-4 py-2 text-[11px] text-muted-foreground">
+                <p className="mt-2 text-xs text-slate-400">
                   {tx('Preview only — the entry number and sequence are assigned when the invoice is posted.')}
                 </p>
               </div>
             ) : (
-              <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 py-12 text-sm text-slate-400">
                 <Loader2 className="h-4 w-4 animate-spin" /> {tx('Computing journal entry…')}
               </div>
             )}

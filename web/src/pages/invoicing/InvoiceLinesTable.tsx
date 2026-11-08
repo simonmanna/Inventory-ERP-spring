@@ -1,7 +1,5 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { SlidersHorizontal } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -9,25 +7,12 @@ import { cn } from '@/lib/utils';
 import type { Handover } from '@/pages/sales/HandoverTab';
 
 /** Optional columns of the invoice lines table (Odoo-style column picker). */
-type Col = 'account' | 'delivered' | 'invoiced' | 'discount' | 'taxes' | 'taxIncl';
-const COLS: Array<[Col, string]> = [
-  ['account', tx('Account')], ['delivered', tx('Delivered')], ['invoiced', tx('Invoiced')],
-  ['discount', tx('Discount')], ['taxes', tx('Taxes')], ['taxIncl', tx('Tax Incl.')],
+type Col = 'account' | 'uom' | 'delivered' | 'invoiced' | 'discount' | 'taxes' | 'taxIncl';
+const COLS: Array<LineColumn<Col>> = [
+  ['account', tx('Account')], ['uom', tx('UoM')], ['delivered', tx('Delivered')], ['invoiced', tx('Invoiced')],
+  ['discount', tx('Disc.%')], ['taxes', tx('Taxes')], ['taxIncl', tx('Tax Incl.')],
 ];
-const DEFAULT_COLS: Col[] = ['delivered', 'invoiced', 'taxes', 'taxIncl'];
-const STORE_KEY = 'invoice-lines.columns';
-
-function loadCols(): Set<Col> {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return new Set((JSON.parse(raw) as Col[]).filter((c) => COLS.some(([k]) => k === c)));
-  } catch { /* storage unavailable */ }
-  return new Set(DEFAULT_COLS);
-}
-
-function saveCols(cols: Set<Col>) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify([...cols])); } catch { /* storage unavailable */ }
-}
+const DEFAULT_COLS: Col[] = ['uom', 'delivered', 'invoiced', 'taxes', 'taxIncl'];
 
 /** Render a tax rate stored as fraction (0.15) or percent (15). */
 function rateLabel(rate: string | number | undefined | null): string {
@@ -54,7 +39,7 @@ export function InvoiceLinesTable({ invoiceId, status, lines, withDelivery, uomC
   invoiceId: string; status: string; lines: InvoiceLineRow[]; withDelivery: boolean;
   uomCode: (id?: string | null) => string;
 }) {
-  const [cols, setCols] = useState<Set<Col>>(loadCols);
+  const { cols, toggle } = useLineColumns<Col>('invoice-lines.columns.v2', COLS, DEFAULT_COLS);
   const path = `/sales/invoices/${invoiceId}/handover`;
   const { data: handover } = useQuery({
     queryKey: ['handover', path],
@@ -65,12 +50,6 @@ export function InvoiceLinesTable({ invoiceId, status, lines, withDelivery, uomC
   const invoicedFactor = ['posted', 'paid'].includes(status) ? 1 : 0;
 
   const show = (c: Col) => cols.has(c) && (withDelivery || c !== 'delivered');
-  const toggle = (c: Col) => setCols((prev) => {
-    const next = new Set(prev);
-    if (next.has(c)) next.delete(c); else next.add(c);
-    saveCols(next);
-    return next;
-  });
   const th = 'py-2 pr-2 text-left text-sm font-semibold';
   const span = 4 + COLS.filter(([c]) => show(c) && c !== 'taxIncl').length;
 
@@ -82,29 +61,15 @@ export function InvoiceLinesTable({ invoiceId, status, lines, withDelivery, uomC
             <th className={th}>{tx('Description')}</th>
             {show('account') && <th className={th}>{tx('Account')}</th>}
             <th className={cn(th, 'w-24 text-right')}>{tx('Quantity')}</th>
+            {show('uom') && <th className={cn(th, 'w-20 pl-2')}>{tx('UoM')}</th>}
             {show('delivered') && <th className={cn(th, 'w-24 text-right')}>{tx('Delivered')}</th>}
             {show('invoiced') && <th className={cn(th, 'w-24 text-right')}>{tx('Invoiced')}</th>}
             <th className={cn(th, 'w-28 text-right')}>{tx('Unit Price')}</th>
             {show('taxes') && <th className={cn(th, 'w-36 pl-3')}>{tx('Taxes')}</th>}
-            {show('discount') && <th className={cn(th, 'w-24 text-right')}>{tx('Discount')}</th>}
+            {show('discount') && <th className={cn(th, 'w-24 text-right')}>{tx('Disc.%')}</th>}
             <th className={cn(th, 'w-36 text-right')}>{tx('Amount')}</th>
             <th className="w-10 py-2 text-right">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button type="button" className="rounded border p-1 text-muted-foreground hover:text-foreground" aria-label={tx('Optional columns')}>
-                    <SlidersHorizontal className="h-4 w-4" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-[180px]">
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">{tx('Optional columns')}</DropdownMenuLabel>
-                  {COLS.filter(([c]) => withDelivery || c !== 'delivered').map(([c, label]) => (
-                    <DropdownMenuItem key={c} onSelect={(e) => { e.preventDefault(); toggle(c); }} className="gap-2">
-                      <input type="checkbox" readOnly checked={cols.has(c)} className="h-4 w-4 accent-primary" tabIndex={-1} />
-                      {label}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <LineColumnsPicker columns={COLS.filter(([c]) => withDelivery || c !== 'delivered')} cols={cols} toggle={toggle} />
             </th>
           </tr>
         </thead>
@@ -137,7 +102,8 @@ export function InvoiceLinesTable({ invoiceId, status, lines, withDelivery, uomC
                     {l.account ? <span><span className="font-mono text-xs">{l.account.code}</span> {l.account.name}</span> : '-'}
                   </td>
                 )}
-                <td className="py-2.5 pr-2 text-right tabular-nums">{qty(l.quantity)} <span className="text-xs text-muted-foreground">{uomCode(l.uomId)}</span></td>
+                <td className="py-2.5 pr-2 text-right tabular-nums">{qty(l.quantity)}</td>
+                {show('uom') && <td className="py-2.5 pl-2 pr-2 text-muted-foreground">{uomCode(l.uomId) || '-'}</td>}
                 {show('delivered') && <td className="py-2.5 pr-2 text-right tabular-nums">{qty(delivered.get(l.id))}</td>}
                 {show('invoiced') && <td className="py-2.5 pr-2 text-right tabular-nums">{qty(Number(l.quantity) * invoicedFactor)}</td>}
                 <td className="py-2.5 pr-2 text-right tabular-nums">{money(l.unitPrice)}</td>
