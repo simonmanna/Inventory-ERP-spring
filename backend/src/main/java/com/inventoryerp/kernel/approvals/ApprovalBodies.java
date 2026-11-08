@@ -47,7 +47,14 @@ public class ApprovalBodies {
                 errors.add(b + " must be a boolean value");
             }
         }
-        for (String s : List.of("name", "entityType", "branchId", "departmentId")) {
+        Object precedence = dto.get("precedence");
+        if (precedence != null && !(precedence instanceof Integer || precedence instanceof Long)) {
+            errors.add("precedence must be an integer number");
+        }
+        if (dto.get("conditions") != null && !(dto.get("conditions") instanceof Map<?, ?>)) {
+            errors.add("conditions must be an object");
+        }
+        for (String s : List.of("name", "entityType", "branchId", "departmentId", "description", "priority")) {
             if (dto.get(s) != null && !(dto.get(s) instanceof String)) {
                 errors.add(s + " must be a string");
             }

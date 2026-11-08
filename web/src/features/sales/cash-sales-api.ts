@@ -12,7 +12,7 @@ export interface CashSaleLine {
   id: string; productId: string; productName: string | null; productCode: string | null; description: string;
   /** ADR-S058: product variant. */
   variantId?: string | null; variantName?: string | null;
-  quantity: number; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
+  quantity: number; uomId?: string | null; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
   deliveredQty?: number; invoicedQty?: number;
 }
@@ -86,6 +86,18 @@ export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
 export const METHOD_LABEL: Record<string, string> = { cash: tx('Cash'), mobile_money: tx('Mobile money'), bank: tx('Bank') };
 
 export const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
+
+/** Download the sale as the printable "CASH SALES FORM" Excel workbook (server-rendered). */
+export async function downloadCashSaleExcel(id: string, number?: string) {
+  const res = await api.get<Blob>(`/sales/cash-sales/${id}/excel`, { responseType: 'blob' });
+  const match = /filename="([^"]+)"/.exec(String(res.headers?.['content-disposition'] ?? ''));
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = match?.[1] ?? `cash-sale-${number ?? id}.xlsx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export function useCashSale(id: string | undefined) {
   return useQuery({

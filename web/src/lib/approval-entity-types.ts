@@ -41,6 +41,8 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   supplier_bill_approval: tx('Supplier Bill Approval'),
   expense_payment: tx('Expense Payment'),
   config_change: tx('Configuration Changes'),
+  rfq_award: tx('RFQ Awards'),
+  bom_version: tx('BOM Versions'),
 };
 
 export function entityTypeLabel(entityType: string): string {

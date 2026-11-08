@@ -49,7 +49,7 @@ public class ApprovalConfigApplier implements ConfigChangeApplier {
                 CreateWorkflowRequest dto = mapper.convertValue(payload, CreateWorkflowRequest.class);
                 List<ApprovalAdminService.Step> steps = dto.steps().stream().map(StepRequest::toStep).toList();
                 admin.createWorkflow(dto.name(), dto.entityType(), dto.minAmount(), dto.branchId(), dto.departmentId(),
-                        dto.enforceDistinctApprovers(), dto.isActive(), steps);
+                        dto.enforceDistinctApprovers(), dto.isActive(), steps, dto.rule());
             }
             case WORKFLOW_UPDATE -> admin.updateWorkflow(targetId, new Patch(payload),
                     payload.get("steps") == null ? null : bodies.steps(payload.get("steps")));

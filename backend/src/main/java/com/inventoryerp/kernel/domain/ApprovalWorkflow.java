@@ -13,7 +13,9 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.DynamicInsert;
 import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Filter;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 /** Table {@code "ApprovalWorkflow"} (owned by module {@code kernel}). */
 @Entity
@@ -50,6 +52,19 @@ public class ApprovalWorkflow {
 
     @Column(name = "departmentId")
     private String departmentId;
+
+    @Column(name = "description")
+    private String description;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conditions")
+    private String conditions;
+
+    @Column(name = "precedence", nullable = false)
+    private Integer precedence;
+
+    @Column(name = "priority", nullable = false)
+    private String priority;
 
     @CreationTimestamp
     @Column(name = "createdAt", nullable = false)
@@ -151,5 +166,37 @@ public class ApprovalWorkflow {
 
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public String getConditions() {
+        return conditions;
+    }
+
+    public void setConditions(String conditions) {
+        this.conditions = conditions;
+    }
+
+    public Integer getPrecedence() {
+        return precedence;
+    }
+
+    public void setPrecedence(Integer precedence) {
+        this.precedence = precedence;
+    }
+
+    public String getPriority() {
+        return priority;
+    }
+
+    public void setPriority(String priority) {
+        this.priority = priority;
     }
 }

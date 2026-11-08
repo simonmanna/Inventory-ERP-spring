@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
@@ -33,33 +34,41 @@ export function HeaderSelect({ value, options, disabled, onChange, none }: { val
   );
 }
 
-/** PO number, branch, warehouse, terms, currency, rate and priority of a sales order. */
-export function OrderHeaderFields({ value, customerRef, disabled, onChange, onCustomerRef }: { value: OrderHeader; customerRef: string; disabled?: boolean; onChange: (h: OrderHeader) => void; onCustomerRef: (v: string) => void }) {
+export type OrderHeaderKey = 'customerRef' | 'branch' | 'warehouse' | 'terms' | 'currency' | 'payment' | 'priority';
+
+/** PO number, branch, warehouse, terms, currency, rate and priority of a sales order; `only` picks rows and their order. */
+export function OrderHeaderFields({ value, customerRef, disabled, onChange, onCustomerRef, only }: { value: OrderHeader; customerRef: string; disabled?: boolean; onChange: (h: OrderHeader) => void; onCustomerRef: (v: string) => void; only?: OrderHeaderKey[] }) {
   const o = useHeaderOptions();
   const set = (p: Partial<OrderHeader>) => onChange({ ...value, ...p });
   const currencies = o.currencies.map((c) => ({ id: c.code ?? c.id, name: c.code ?? c.name }));
-  return (
-    <>
-      <InlineField label={tx('Customer PO')}><Input disabled={disabled} value={customerRef} onChange={(e) => onCustomerRef(e.target.value)} /></InlineField>
-      <InlineField label={tx('Branch')}><HeaderSelect value={value.branchId} options={o.branches} disabled={disabled} none={tx('From my scope')} onChange={(branchId) => set({ branchId })} /></InlineField>
-      <InlineField label={tx('Warehouse')}><HeaderSelect value={value.locationId} options={o.locations} disabled={disabled} none={tx('Best available')} onChange={(locationId) => set({ locationId })} /></InlineField>
-      <InlineField label={tx('Payment terms')}><HeaderSelect value={value.paymentTermId} options={o.terms} disabled={disabled} none={tx('Customer default')} onChange={(paymentTermId) => set({ paymentTermId })} /></InlineField>
+  const rows: Record<OrderHeaderKey, ReactNode> = {
+    customerRef: <InlineField label={tx('Customer PO')}><Input disabled={disabled} value={customerRef} onChange={(e) => onCustomerRef(e.target.value)} /></InlineField>,
+    branch: <InlineField label={tx('Branch')}><HeaderSelect value={value.branchId} options={o.branches} disabled={disabled} none={tx('From my scope')} onChange={(branchId) => set({ branchId })} /></InlineField>,
+    warehouse: <InlineField label={tx('Warehouse')}><HeaderSelect value={value.locationId} options={o.locations} disabled={disabled} none={tx('Best available')} onChange={(locationId) => set({ locationId })} /></InlineField>,
+    terms: <InlineField label={tx('Payment terms')}><HeaderSelect value={value.paymentTermId} options={o.terms} disabled={disabled} none={tx('Customer default')} onChange={(paymentTermId) => set({ paymentTermId })} /></InlineField>,
+    currency: (
       <InlineField label={tx('Currency')}>
         <div className="flex gap-2">
           <HeaderSelect value={value.currencyCode} options={currencies} disabled={disabled} none={tx('Base currency')} onChange={(currencyCode) => set({ currencyCode })} />
           <Input aria-label={tx('Exchange rate')} title={tx('Exchange rate')} disabled={disabled || !value.currencyCode} type="number" min={0} step="any" className="w-28" value={value.exchangeRate} onChange={(e) => set({ exchangeRate: Number(e.target.value) })} />
         </div>
       </InlineField>
+    ),
+    payment: (
       <InlineField label={tx('Payment')}>
         <select className={cls} disabled={disabled} value={value.paymentMode} onChange={(e) => set({ paymentMode: e.target.value as 'credit' | 'cash' })}>
           <option value="credit">{tx('On credit')}</option><option value="cash">{tx('Cash')}</option>
         </select>
       </InlineField>
+    ),
+    priority: (
       <InlineField label={tx('Priority')}>
         <select className={cls} disabled={disabled} value={value.priority} onChange={(e) => set({ priority: Number(e.target.value) })}>
           <option value={0}>{tx('Normal')}</option><option value={1}>{tx('High')}</option><option value={2}>{tx('Urgent')}</option>
         </select>
       </InlineField>
-    </>
-  );
+    ),
+  };
+  const keys = only ?? (Object.keys(rows) as OrderHeaderKey[]);
+  return <>{keys.map((k) => <Fragment key={k}>{rows[k]}</Fragment>)}</>;
 }

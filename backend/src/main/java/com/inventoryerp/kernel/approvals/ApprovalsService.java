@@ -28,6 +28,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Generic multi-step approval runner (port of {@code approvals.service.ts}). A request must clear every
@@ -41,12 +42,27 @@ import tools.jackson.databind.JsonNode;
  * of permission holders, {@link ApprovalLimitService} caps what each approver may approve, and
  * {@link SegregationOfDutiesService} keeps the makers named in the snapshot key {@code makerIds} (comma separated) from
  * deciding on the sensitive pairs.
+ *
+ * <p>ADR-S061: rules also carry a condition tree ({@link ApprovalConditions}) evaluated on the snapshot, and a
+ * {@code precedence} that orders rules of one document type before specificity. A stage may carry its own condition
+ * (it is skipped when false) and may be assigned to named users ({@code approverScope = user}) or to the holders of
+ * roles ({@code role}). Every named scope falls back to the stage permissions when nobody but the requester resolves,
+ * so a request is never left without a possible decider. Requests carry a priority: the snapshot's {@code priority}
+ * when valid, else the rule's.
  */
 @Service
 public class ApprovalsService {
 
     /** Step scope: the manager of the document's department decides, not permission holders. */
     public static final String DEPARTMENT_MANAGER = "department_manager";
+    /** Step scope: the users listed in {@code approverUserIds} decide. */
+    public static final String USER = "user";
+    /** Step scope: the holders of any role in {@code approverRoleIds} decide. */
+    public static final String ROLE = "role";
+    /** Request priorities, lowest first. */
+    public static final List<String> PRIORITIES = List.of("low", "medium", "high", "critical");
+
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final EntityManager em;
     private final AuditService audit;
@@ -55,10 +71,11 @@ public class ApprovalsService {
     private final ApprovalLimitService limits;
     private final SegregationOfDutiesService sod;
     private final ObjectProvider<ApprovalOrgDirectory> directory;
+    private final ApprovalAssignees assignees;
 
     public ApprovalsService(EntityManager em, AuditService audit, EventBus events, PermissionService permissions,
             ApprovalLimitService limits, SegregationOfDutiesService sod,
-            ObjectProvider<ApprovalOrgDirectory> directory) {
+            ObjectProvider<ApprovalOrgDirectory> directory, ApprovalAssignees assignees) {
         this.em = em;
         this.audit = audit;
         this.events = events;
@@ -66,19 +83,22 @@ public class ApprovalsService {
         this.limits = limits;
         this.sod = sod;
         this.directory = directory;
+        this.assignees = assignees;
     }
 
-    private record Workflow(ApprovalWorkflow row, List<ApprovalStep> steps) {}
+    record Workflow(ApprovalWorkflow row, List<ApprovalStep> steps) {}
 
     /** What the conditions are evaluated against. The requester's department is only looked up when one is needed. */
-    private final class Scope {
+    final class Scope {
         final double amount;
         final String branchId;
+        private final Map<String, Object> snapshot;
         private final String requesterId;
         private String departmentId;
         private boolean looked;
 
         Scope(Map<String, Object> snapshot, String requesterId) {
+            this.snapshot = snapshot == null ? Map.of() : snapshot;
             this.amount = amountOf(snapshot);
             this.branchId = text(snapshot, "branchId");
             this.departmentId = text(snapshot, "departmentId");
@@ -93,6 +113,24 @@ public class ApprovalsService {
                 departmentId = dir == null || requesterId == null ? null : dir.departmentOf(requesterId);
             }
             return departmentId;
+        }
+
+        /** A field of the condition builder: the engine's own keys first, then a dot path into the snapshot. */
+        Object value(String field) {
+            return switch (field) {
+                case "amount" -> snapshot.get("amount") == null ? null : amount;
+                case "departmentId" -> departmentId();
+                case "requesterId" -> requesterId;
+                default -> ApprovalConditions.path(snapshot, field);
+            };
+        }
+
+        boolean holds(String conditionsJson) {
+            return conditionsJson == null || ApprovalConditions.matches(EntityJson.tree(conditionsJson), this::value);
+        }
+
+        String requesterId() {
+            return requesterId;
         }
 
         boolean matches(String conditionBranchId, String conditionDepartmentId) {
@@ -117,11 +155,19 @@ public class ApprovalsService {
     }
 
     private static int specificity(ApprovalWorkflow w) {
-        return (w.getBranchId() != null ? 1 : 0) + (w.getDepartmentId() != null ? 1 : 0);
+        return (w.getBranchId() != null ? 1 : 0) + (w.getDepartmentId() != null ? 1 : 0)
+                + (ApprovalConditions.isEmpty(EntityJson.tree(w.getConditions())) ? 0 : 1);
     }
 
-    /** Most-specific active workflow for the scope: branch and department conditions first, then minAmount. */
-    private Workflow resolveWorkflow(String entityType, Scope scope) {
+    private static int precedence(ApprovalWorkflow w) {
+        return w.getPrecedence() == null ? 0 : w.getPrecedence();
+    }
+
+    /**
+     * Active workflow for the scope: highest precedence first, then the most specific (branch, department and rule
+     * conditions), then minAmount.
+     */
+    Workflow resolveWorkflow(String entityType, Scope scope) {
         double amount = scope.amount;
         List<ApprovalWorkflow> wfs = em.createQuery("select w from ApprovalWorkflow w where w.organizationId = :org"
                         + " and w.entityType = :type and w.isActive = true order by w.minAmount desc nulls last",
@@ -131,30 +177,32 @@ public class ApprovalsService {
                 .getResultList();
         // Stable sort: workflows of equal specificity keep the minAmount order above.
         List<ApprovalWorkflow> ranked = new ArrayList<>(wfs);
-        ranked.sort(Comparator.comparingInt(ApprovalsService::specificity).reversed());
+        ranked.sort(Comparator.comparingInt(ApprovalsService::precedence)
+                .thenComparingInt(ApprovalsService::specificity).reversed());
         for (ApprovalWorkflow w : ranked) {
             if (scope.matches(w.getBranchId(), w.getDepartmentId())
-                    && (w.getMinAmount() == null || amount >= w.getMinAmount().doubleValue())) {
+                    && (w.getMinAmount() == null || amount >= w.getMinAmount().doubleValue())
+                    && scope.holds(w.getConditions())) {
                 return new Workflow(w, steps(w.getId()));
             }
         }
         return null;
     }
 
-    private List<ApprovalStep> steps(String workflowId) {
+    List<ApprovalStep> steps(String workflowId) {
         return em.createQuery("select s from ApprovalStep s where s.workflowId = :id order by s.stepOrder asc",
                         ApprovalStep.class)
                 .setParameter("id", workflowId)
                 .getResultList();
     }
 
-    private static List<ApprovalStep> applicableSteps(Workflow wf, Scope scope) {
+    static List<ApprovalStep> applicableSteps(Workflow wf, Scope scope) {
         double amount = scope.amount;
         List<ApprovalStep> out = new ArrayList<>();
         for (ApprovalStep s : wf.steps()) {
             boolean lo = s.getMinAmount() == null || amount >= s.getMinAmount().doubleValue();
             boolean hi = s.getMaxAmount() == null || amount < s.getMaxAmount().doubleValue();
-            if (lo && hi && scope.matches(s.getBranchId(), s.getDepartmentId())) {
+            if (lo && hi && scope.matches(s.getBranchId(), s.getDepartmentId()) && scope.holds(s.getConditions())) {
                 out.add(s);
             }
         }
@@ -197,6 +245,7 @@ public class ApprovalsService {
         req.setCurrentStep(first.getStepOrder());
         req.setRequiredCount(first.getRequiredCount());
         req.setCreatedById(TenantContext.userId());
+        req.setPriority(priorityOf(snapshot, wf.row()));
         em.persist(req);
         em.flush();
         em.refresh(req);
@@ -241,33 +290,16 @@ public class ApprovalsService {
         List<ApprovalDecision> decisions = decisions(req.getId());
         Map<String, Object> snapshot = snapshot(req);
         Scope scope = new Scope(snapshot, req.getCreatedById());
-        List<String> approverPermissions;
-        int requiredCount;
-        boolean managerStep = false;
-        if (wf != null) {
-            ApprovalStep step = wf.steps().stream().filter(s -> s.getStepOrder().equals(req.getCurrentStep())).findFirst()
-                    .orElse(null);
-            approverPermissions = step == null ? List.of() : nn(step.getApproverPermissions());
-            requiredCount = step == null ? req.getRequiredCount() : step.getRequiredCount();
-            managerStep = step != null && DEPARTMENT_MANAGER.equals(step.getApproverScope());
-        } else {
-            approverPermissions = policy == null ? List.of() : nn(policy.getApproverPermissions());
-            requiredCount = req.getRequiredCount();
-        }
+        ApprovalStep step = currentStep(wf, req);
+        int requiredCount = step == null ? req.getRequiredCount() : step.getRequiredCount();
+        Deciders deciders = deciders(wf, step, policy, scope, req.getCreatedById());
 
         List<String> perms = permissions.current();
-        // A department-manager step falls back to its permissions when no manager resolves (no HR link, or the
-        // manager is the requester), so a request can never be left without a possible decider.
-        String manager = managerStep ? departmentManager(scope, req.getCreatedById()) : null;
-        if (manager != null && !manager.equals(userId)) {
-            throw ApiException.badRequest("Only the department manager can decide on this step");
+        String refusal = deciders.refusal(userId, perms);
+        if (refusal != null) {
+            throw ApiException.badRequest(refusal);
         }
-        if (manager == null && !approverPermissions.isEmpty()
-                && approverPermissions.stream().noneMatch(perms::contains)) {
-            throw ApiException.badRequest("You are not allowed to decide on this step");
-        }
-        boolean selfGuard = !approverPermissions.isEmpty() || manager != null
-                || ControlledConfigService.ENTITY_TYPE.equals(req.getEntityType());
+        boolean selfGuard = deciders.guarded() || ControlledConfigService.ENTITY_TYPE.equals(req.getEntityType());
         if (req.getCreatedById() != null && req.getCreatedById().equals(userId) && selfGuard) {
             throw ApiException.badRequest("You cannot approve a request you created");
         }
@@ -474,6 +506,7 @@ public class ApprovalsService {
         req.setStatus(ApprovalStatus.APPROVED);
         req.setDecidedAt(Instant.now());
         req.setCreatedById(TenantContext.userId());
+        req.setPriority(priorityOf(snapshot, wf == null ? null : wf.row()));
         em.persist(req);
         em.flush();
         ApprovalDecision d = new ApprovalDecision();
@@ -541,7 +574,7 @@ public class ApprovalsService {
         return out;
     }
 
-    private Workflow workflow(String id) {
+    Workflow workflow(String id) {
         ApprovalWorkflow w = em.find(ApprovalWorkflow.class, id);
         return w == null ? null : new Workflow(w, steps(id));
     }
@@ -552,16 +585,93 @@ public class ApprovalsService {
                 .getResultList();
     }
 
+    /** The stored snapshot as plain JSON values (nested objects and arrays included, for rule conditions). */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> snapshot(ApprovalRequest r) {
+    static Map<String, Object> snapshot(ApprovalRequest r) {
         Object parsed = EntityJson.parseJson(r.getSnapshot());
         if (parsed instanceof JsonNode node && node.isObject()) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            node.properties().forEach(e -> m.put(e.getKey(), e.getValue().isNumber() ? e.getValue().numberValue()
-                    : e.getValue().isString() ? e.getValue().asString() : null));
-            return m;
+            return MAPPER.convertValue(node, LinkedHashMap.class);
         }
         return Map.of();
+    }
+
+    Scope scope(Map<String, Object> snapshot, String requesterId) {
+        return new Scope(snapshot, requesterId);
+    }
+
+    static ApprovalStep currentStep(Workflow wf, ApprovalRequest req) {
+        return wf == null ? null : wf.steps().stream().filter(s -> s.getStepOrder().equals(req.getCurrentStep()))
+                .findFirst().orElse(null);
+    }
+
+    /** The snapshot's own priority when it names one, else the rule's, else medium. */
+    static String priorityOf(Map<String, Object> snapshot, ApprovalWorkflow wf) {
+        Object own = snapshot == null ? null : snapshot.get("priority");
+        if (own != null && PRIORITIES.contains(String.valueOf(own).toLowerCase(java.util.Locale.ROOT))) {
+            return String.valueOf(own).toLowerCase(java.util.Locale.ROOT);
+        }
+        return wf != null && wf.getPriority() != null ? wf.getPriority() : "medium";
+    }
+
+    /**
+     * Who may decide a step. {@code kind} is {@code department_manager}, {@code user} or {@code role} when named users
+     * resolved ({@code users} then holds them), else {@code permission} with the permissions any decider must hold
+     * (none = anyone signed in).
+     */
+    record Deciders(String kind, Set<String> users, List<String> permissions) {
+
+        /** Why this user may not decide, or {@code null}. */
+        String refusal(String userId, List<String> held) {
+            if (users != null) {
+                if (users.contains(userId)) {
+                    return null;
+                }
+                return DEPARTMENT_MANAGER.equals(kind) ? "Only the department manager can decide on this step"
+                        : "You are not assigned to decide on this step";
+            }
+            if (!permissions.isEmpty() && permissions.stream().noneMatch(held::contains)) {
+                return "You are not allowed to decide on this step";
+            }
+            return null;
+        }
+
+        /** Whether the requester is kept from deciding (any restriction at all). */
+        boolean guarded() {
+            return users != null || !permissions.isEmpty();
+        }
+    }
+
+    /**
+     * The deciders of a step. Named scopes drop the requester and fall back to the step permissions when nobody else
+     * resolves (no HR link, a deactivated user, an empty role), so a request is never stranded.
+     */
+    Deciders deciders(Workflow wf, ApprovalStep step, ApprovalPolicy policy, Scope scope, String requesterId) {
+        if (wf == null) {
+            return new Deciders("permission", null, policy == null ? List.of() : nn(policy.getApproverPermissions()));
+        }
+        if (step == null) {
+            return new Deciders("permission", null, List.of());
+        }
+        String kind = step.getApproverScope() == null ? "permission" : step.getApproverScope();
+        Set<String> named = switch (kind) {
+            case DEPARTMENT_MANAGER -> {
+                String manager = departmentManager(scope, requesterId);
+                yield manager == null ? Set.of() : Set.of(manager);
+            }
+            case USER -> new LinkedHashSet<>(assignees.activeUsers(nn(step.getApproverUserIds())));
+            case ROLE -> new LinkedHashSet<>(assignees.membersOf(nn(step.getApproverRoleIds())));
+            default -> null;
+        };
+        if (named != null) {
+            named = new LinkedHashSet<>(named);
+            if (requesterId != null) {
+                named.remove(requesterId);
+            }
+            if (!named.isEmpty()) {
+                return new Deciders(kind, Set.copyOf(named), List.of());
+            }
+        }
+        return new Deciders("permission", null, nn(step.getApproverPermissions()));
     }
 
     /** The user who manages the document's department, unless that is the requester or nobody resolves. */
@@ -584,7 +694,7 @@ public class ApprovalsService {
         return ev;
     }
 
-    private static List<String> nn(List<String> l) {
+    static List<String> nn(List<String> l) {
         return l == null ? List.of() : l;
     }
 }

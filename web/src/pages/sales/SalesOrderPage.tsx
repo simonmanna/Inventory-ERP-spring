@@ -21,6 +21,9 @@ import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
+import { UnitSelect } from '@/components/unit-select';
+import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
+import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import {
   salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrderLine,
 } from '@/features/sales/api';
@@ -41,6 +44,12 @@ import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderF
 
 const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 const n = (v: unknown) => Number(v ?? 0);
+
+/** Optional columns of the order lines table (Odoo-style column picker). */
+type LineCol = 'description' | 'uom' | 'discount' | 'taxes';
+const LINE_COLS: Array<LineColumn<LineCol>> = [
+  ['description', tx('Description')], ['uom', tx('UoM')], ['discount', tx('Disc.%')], ['taxes', tx('Taxes')],
+];
 
 /** Create / edit (draft) / process a sales order (ADR-S011). Confirmed orders change through change requests. */
 export function SalesOrderPage() {
@@ -68,6 +77,7 @@ export function SalesOrderPage() {
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
   const [tab, setTab] = useState('lines');
+  const { cols, show, toggle } = useLineColumns<LineCol>('sales-order-lines.columns', LINE_COLS, ['description', 'uom', 'discount', 'taxes']);
 
   useEffect(() => {
     if (o) {
@@ -98,6 +108,7 @@ export function SalesOrderPage() {
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
         productId: l.productId || undefined, variantId: l.variantId || undefined, description: l.description || undefined, quantity: n(l.quantity),
+        uomId: l.productId ? l.uomId || undefined : undefined,
         unitPrice: (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
         discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
       })),
@@ -207,14 +218,17 @@ export function SalesOrderPage() {
 
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="px-5 pt-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{tx('Sales order')}</p>
-          <h1 className="text-2xl font-bold">{o ? o.number : tx('New')}</h1>
+          <h1 className="flex items-baseline gap-1.5 text-2xl font-bold">
+            <span>{o ? o.number : tx('New')}</span>
+            <span className="text-sm font-medium text-muted-foreground">{tx('Sales order')}</span>
+          </h1>
         </div>
-        <div className="grid gap-x-10 gap-y-3 p-5 md:grid-cols-2">
-          <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
+          <div>
             <InlineField label={tx('Customer')}>
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <span className="font-medium">{o?.partnerName}</span>}
             </InlineField>
+            <OrderHeaderFields only={['customerRef', 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {o && (
               <>
                 <InlineField label={tx('Source Doc')}>
@@ -226,8 +240,8 @@ export function SalesOrderPage() {
               </>
             )}
           </div>
-          <div className="space-y-3">
-            <OrderHeaderFields value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
+          <div>
+            <OrderHeaderFields only={['branch', 'warehouse', 'terms', 'currency']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {(agreementId || (agreements.data?.length ?? 0) > 0) && (
               <InlineField label={tx('Agreement')}>
                 <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
@@ -248,7 +262,7 @@ export function SalesOrderPage() {
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
+          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
             {([['lines', tx('Order lines')], ['delivery', tx('Delivery & fulfilment')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
               <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
             ))}
@@ -258,27 +272,37 @@ export function SalesOrderPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm">
               <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
-                  <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-16 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-32 py-2 pr-2">{tx('Tax')}</th>
+                <tr><th className="py-2 pr-2">{tx('Product')}</th>{show('description') && <th className="py-2 pr-2">{tx('Description')}</th>}<th className="w-20 py-2 pr-2 text-right">{tx('Quantity')}</th>
+                  {show('uom') && <th className="w-24 py-2 pr-2">{tx('UoM')}</th>}
+                  <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th>{show('discount') && <th className="w-16 py-2 pr-2 text-right">{tx('Disc.%')}</th>}{show('taxes') && <th className="w-32 py-2 pr-2">{tx('Taxes')}</th>}
                   {!editable && <><th className="py-2 pr-2 text-right">{tx('Delivered')}</th><th className="py-2 pr-2 text-right">{tx('Invoiced')}</th><th className="py-2 pr-2 text-right">{tx('Remaining')}</th></>}
-                  <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
+                  <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-10 py-2 text-right"><LineColumnsPicker columns={LINE_COLS} cols={cols} toggle={toggle} /></th></tr>
               </thead>
               <tbody>
                 {lines.map((l, i) => (
                   <tr key={l.id ?? i} className={cn('border-b align-top', l.closedShort && 'text-muted-foreground')}>
                     <td className="py-1.5 pr-2">
                       {editable
-                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                         : <span className="font-medium">{l.productName ?? '—'}</span>}
                       <VariantSelect productId={l.productId} value={l.variantId} disabled={!editable} label={l.variantName} className="w-52"
                         onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} />
                       {l.closedShort && <span className="mt-1 block text-[11px]">{tx('Closed short')}: {l.closeShortReason}</span>}
                     </td>
-                    <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>
+                    {show('description') && <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
                     <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
+                    {show('uom') && (
+                      <td className="py-1.5 pr-2 pt-2.5">
+                        {editable && l.productId
+                          ? <UnitSelect product={products.data?.find((p) => p.id === l.productId)} role="sales" value={l.uomId ?? undefined}
+                              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                              onChange={(uomId) => { const price = priceForUnit(products.data?.find((p) => p.id === l.productId), uomId, 'sales'); patchLine(i, { uomId, priceSource: undefined, ...(price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}) }); }} />
+                          : <span className="text-muted-foreground">{l.uomCode ?? '—'}</span>}
+                      </td>
+                    )}
                     <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value), priceSource: 'manual' })} /></td>
-                    <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
-                    <td className="py-1.5 pr-2"><OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>
+                    {show('discount') && <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>}
+                    {show('taxes') && <td className="py-1.5 pr-2"><OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>}
                     {!editable && <>
                       <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{n(l.qty?.delivered)}</td>
                       <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{n(l.qty?.netInvoiced)}</td>

@@ -1404,6 +1404,15 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
 - [x] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
 
+## Configurable approval rules and hub (ADR-S061, extension: no Nest counterpart)
+
+- [x] GET /api/v1/approvals/inbox — ApprovalsController.inbox
+- [x] GET /api/v1/approvals/summary — ApprovalsController.summary
+- [x] GET /api/v1/approvals/:id/timeline — ApprovalsController.timeline
+- [x] GET /api/v1/approval-workflows/meta — ApprovalWorkflowController.meta
+- [x] POST /api/v1/approval-workflows/simulate — ApprovalWorkflowController.simulate
+- Rule / stage conditions, precedence, priority, user and role assignees (V421). Tests: `ApprovalConditionsTest` (run), `ApprovalRulesIT` (written, not run locally). Web: Approval Hub (`/approvals`), Workflow Configuration (`/approval-workflows`), typecheck clean.
+
 ## Multi-stage processing (ADR-S060, extension: no Nest counterpart)
 
 - [x] Templates, jobs, routes, lots, WIP, genealogy, stage margin and dashboard under /api/v1/manufacturing/processing — ProcessingController; see docs/spec/processing.md

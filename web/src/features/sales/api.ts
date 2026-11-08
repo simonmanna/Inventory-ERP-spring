@@ -34,6 +34,7 @@ export interface SalesOrderLine {
   description: string;
   quantity: number;
   uomId?: string | null;
+  uomCode?: string | null;
   uomFactor?: number;
   unitPrice: number;
   listPrice?: number;

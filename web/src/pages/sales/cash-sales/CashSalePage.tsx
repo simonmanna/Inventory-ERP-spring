@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, Wallet, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,11 +23,14 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
+import { UnitSelect } from '@/components/unit-select';
+import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
+import { defaultUnitId } from '@/features/products/units';
 import { useCrmUsers } from '@/features/crm/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import {
-  DELIVERY_STATUS_LABEL, METHOD_LABEL, idem, useBranchProfiles, useCashSale, usePaymentModes,
+  DELIVERY_STATUS_LABEL, METHOD_LABEL, downloadCashSaleExcel, idem, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
@@ -35,7 +38,14 @@ import { CashSaleDelivery } from './CashSaleDelivery';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/handover-draft';
 
-interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; unitPrice: number | ''; discountPercent: number; taxId: string | null }
+interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; uomId?: string | null; unitPrice: number | ''; discountPercent: number; taxId: string | null }
+
+/** Optional columns of the sale lines table (Odoo-style column picker). */
+type LineCol = 'description' | 'uom' | 'delivered' | 'invoiced' | 'discount' | 'taxes';
+const LINE_COLS: Array<LineColumn<LineCol>> = [
+  ['description', tx('Description')], ['uom', tx('UoM')], ['delivered', tx('Delivered')], ['invoiced', tx('Invoiced')],
+  ['discount', tx('Disc.%')], ['taxes', tx('Taxes')],
+];
 
 const CHECKS = [
   tx('Customer information verified'), tx('Products and prices verified'), tx('Tax verified'),
@@ -47,6 +57,16 @@ const CHECKS = [
  * the sale and handover (stock, payments and revenue post once). Afterwards the financial fields are frozen; head
  * office reviews it side by side with a verification checklist and returns, rejects, approves and invoices it.
  */
+/** Header field: label on the left, control on the right (matches the invoice form). */
+function MetaRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-h-12 grid-cols-[9rem_1fr] items-center gap-3 py-1.5">
+      <span className="text-sm font-semibold">{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
 export function CashSalePage() {
   const { id } = useParams();
   const isNew = !id || id === 'new';
@@ -71,6 +91,7 @@ export function CashSalePage() {
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<null | 'return' | 'reject' | 'reopen' | 'void' | 'cancel_invoice' | 'amend' | 'payment'>(null);
   const [tab, setTab] = useState('lines');
+  const { cols, show, toggle } = useLineColumns<LineCol>('cash-sale-lines.columns', LINE_COLS, LINE_COLS.map(([c]) => c));
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
   const editable = isNew || s?.executionStatus === 'draft';
 
@@ -81,7 +102,7 @@ export function CashSalePage() {
     setCustomer({ customerPhone: s.customerPhone ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
     setSaleDate(String(s.saleDate).slice(0, 10));
     setSalespersonId(s.salespersonId ?? '');
-    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
+    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), uomId: l.uomId ?? null, unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
   }, [s]);
   const activeProfiles = useMemo(() => (profiles.data ?? []).filter((p) => p.isActive), [profiles.data]);
   const profile = activeProfiles.find((p) => p.branchId === (isNew ? branchId : s?.branchId));
@@ -113,7 +134,7 @@ export function CashSalePage() {
   };
   const body = () => {
     const b: Record<string, unknown> = {
-      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), unitPrice: l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
+      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), uomId: l.uomId || undefined, unitPrice: l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
     };
     if (partnerId) b.partnerId = partnerId;
     Object.entries(customer).forEach(([k, v]) => { b[k] = v || null; });
@@ -145,6 +166,9 @@ export function CashSalePage() {
   const ico = 'mr-2 h-4 w-4';
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
+  if (s) menu.push({ key: 'excel', label: tx('Download Excel'), icon: <FileSpreadsheet className={ico} />, onSelect: () => {
+    downloadCashSaleExcel(s.id, s.number).catch((e) => toast.error(apiErrorMessage(e, tx('Could not download the Excel file'))));
+  } });
   if (has('amend')) menu.push({ key: 'amend', label: tx('Correct details'), icon: <Pencil className={ico} />, onSelect: () => setDialog('amend') });
   if (has('reopen')) menu.push({ key: 'reopen', label: tx('Reopen'), icon: <RotateCcw className={ico} />, onSelect: () => setDialog('reopen') });
   if (has('cancel_invoice')) menu.push({ key: 'cancel_invoice', label: tx('Cancel invoice'), icon: <FileX className={ico} />, danger: true, onSelect: () => setDialog('cancel_invoice') });
@@ -156,10 +180,10 @@ export function CashSalePage() {
   const est = lines.reduce((a, l, i) => a + (lineEst(l, i) ?? 0), 0);
   const paymentsCount = s?.payments?.length ?? 0;
   const custLabel = { customerPhone: tx('Phone'), customerAddress: tx('Address') };
-  const custField = (k: keyof typeof custLabel, className?: string) => (
-    <Field key={k} label={custLabel[k]} className={className}>
+  const custField = (k: keyof typeof custLabel) => (
+    <MetaRow key={k} label={custLabel[k]}>
       {editable ? <Input value={customer[k]} onChange={(e) => setCustomer({ ...customer, [k]: e.target.value })} /> : <p className="py-2 text-sm">{s?.[k] ?? '—'}</p>}
-    </Field>
+    </MetaRow>
   );
 
   return (
@@ -227,39 +251,43 @@ export function CashSalePage() {
               <span className="text-sm font-medium text-muted-foreground">{tx('Cash Sale')}</span>
             </h1>
           </div>
-          {/* 4-col grid, rows aligned: Customer | Branch | Sale date / Address | Phone | Salesperson. */}
-          <div className="grid items-start gap-x-6 gap-y-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label={tx('Customer')} className="sm:col-span-2">
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
-                : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
-            </Field>
-            {isNew ? (
-              <Field label={tx('Branch')}>
-                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={branchId} onChange={(e) => { setBranchId(e.target.value); setPartnerTouched(false); }}>
-                  {activeProfiles.length === 0 && <option value="">{tx('No branch sales profile')}</option>}
-                  {activeProfiles.map((p) => <option key={p.id} value={p.branchId}>{p.branchName}</option>)}
-                </select>
-              </Field>
-            ) : (
-              <Field label={tx('Branch')}><p className="py-2 text-sm">{s?.branchName} · {s?.locationName}</p></Field>
-            )}
-            <Field label={tx('Sale date')}>
-              {editable ? <Input type="date" max={new Date().toLocaleDateString('en-CA')} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
-                : <p className="py-2 text-sm">{s ? date(s.saleDate) : '—'}</p>}
-            </Field>
-            {custField('customerAddress', 'sm:col-span-2')}
-            {custField('customerPhone')}
-            <Field label={tx('Salesperson')}>
-              {editable ? (
-                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
-                  {userOpts.map((u) => <option key={u.id} value={u.id}>{u.id === me?.id ? `${u.name} (${tx('me')})` : u.name}</option>)}
-                </select>
-              ) : <p className="py-2 text-sm">{s?.salespersonName ?? '—'}</p>}
-            </Field>
+          {/* Two columns of label | control rows (same layout as the invoice form). */}
+          <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
+            <div>
+              <MetaRow label={tx('Customer')}>
+                {editable ? <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
+                  : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
+              </MetaRow>
+              {custField('customerAddress')}
+              {custField('customerPhone')}
+            </div>
+            <div>
+              {isNew ? (
+                <MetaRow label={tx('Branch')}>
+                  <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={branchId} onChange={(e) => { setBranchId(e.target.value); setPartnerTouched(false); }}>
+                    {activeProfiles.length === 0 && <option value="">{tx('No branch sales profile')}</option>}
+                    {activeProfiles.map((p) => <option key={p.id} value={p.branchId}>{p.branchName}</option>)}
+                  </select>
+                </MetaRow>
+              ) : (
+                <MetaRow label={tx('Branch')}><p className="py-2 text-sm">{s?.branchName} · {s?.locationName}</p></MetaRow>
+              )}
+              <MetaRow label={tx('Sale date')}>
+                {editable ? <Input type="date" max={new Date().toLocaleDateString('en-CA')} value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
+                  : <p className="py-2 text-sm">{s ? date(s.saleDate) : '—'}</p>}
+              </MetaRow>
+              <MetaRow label={tx('Salesperson')}>
+                {editable ? (
+                  <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
+                    {userOpts.map((u) => <option key={u.id} value={u.id}>{u.id === me?.id ? `${u.name} (${tx('me')})` : u.name}</option>)}
+                  </select>
+                ) : <p className="py-2 text-sm">{s?.salespersonName ?? '—'}</p>}
+              </MetaRow>
+            </div>
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5">
+            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
               {([['lines', tx('Sale lines')], ['payments', `${tx('Billing & payments details')}${paymentsCount ? ` (${paymentsCount})` : ''}`], ['delivery', tx('Delivery and Fulfilment')], ['documents', tx('Supporting documents')], ['history', tx('Timeline')]] as const).map(([v, label]) => (
                 <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
               ))}
@@ -269,26 +297,36 @@ export function CashSalePage() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[900px] text-sm">
                   <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
-                      <th className="w-20 py-2 pr-2 text-right">{tx('Delivered')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Invoiced')}</th>
-                      <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-16 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-32 py-2 pr-2">{tx('Tax')}</th>
-                      <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
+                    <tr><th className="py-2 pr-2">{tx('Product')}</th>{show('description') && <th className="py-2 pr-2">{tx('Description')}</th>}<th className="w-20 py-2 pr-2 text-right">{tx('Quantity')}</th>
+                      {show('uom') && <th className="w-24 py-2 pr-2">{tx('UoM')}</th>}
+                      {show('delivered') && <th className="w-20 py-2 pr-2 text-right">{tx('Delivered')}</th>}{show('invoiced') && <th className="w-20 py-2 pr-2 text-right">{tx('Invoiced')}</th>}
+                      <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th>{show('discount') && <th className="w-16 py-2 pr-2 text-right">{tx('Disc.%')}</th>}{show('taxes') && <th className="w-32 py-2 pr-2">{tx('Taxes')}</th>}
+                      <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-10 py-2 text-right"><LineColumnsPicker columns={LINE_COLS} cols={cols} toggle={toggle} /></th></tr>
                   </thead>
                   <tbody>
                     {editable ? lines.map((l, i) => {
                       const sub = lineEst(l, i);
                       return (
                         <tr key={i} className="border-b align-top">
-                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, variantId: null, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                             <VariantSelect productId={l.productId} value={l.variantId} className="w-52"
                               onChange={(v, opt) => patchLine(i, { variantId: v, unitPrice: '', ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} /></td>
-                          <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>
+                          {show('description') && <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
                           <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
-                          <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.deliveredQty)}</td>
-                          <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.invoicedQty)}</td>
+                          {show('uom') && (
+                            <td className="py-1.5 pr-2 pt-2.5">
+                              {l.productId
+                                ? <UnitSelect product={products.data?.find((p) => p.id === l.productId)} role="sales" value={l.uomId ?? undefined}
+                                    className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                                    onChange={(uomId) => patchLine(i, { uomId, unitPrice: '' })} />
+                                : <span className="text-muted-foreground">—</span>}
+                            </td>
+                          )}
+                          {show('delivered') && <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.deliveredQty)}</td>}
+                          {show('invoiced') && <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.invoicedQty)}</td>}
                           <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" placeholder={tx('List')} value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value === '' ? '' : Number(e.target.value) })} /></td>
-                          <td className="py-1.5 pr-2"><Input type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
-                          <td className="py-1.5 pr-2"><OptionalSelect value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={taxOpts} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>
+                          {show('discount') && <td className="py-1.5 pr-2"><Input type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>}
+                          {show('taxes') && <td className="py-1.5 pr-2"><OptionalSelect value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={taxOpts} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>}
                           <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{sub == null ? <span className="text-xs text-muted-foreground">{tx('List')}</span> : money(sub)}</td>
                           <td className="py-1.5 pt-2"><button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button></td>
                         </tr>
@@ -296,17 +334,18 @@ export function CashSalePage() {
                     }) : (s?.lines ?? []).map((l) => (
                       <tr key={l.id} className="border-b align-top">
                         <td className="py-2 pr-2 font-medium">{l.productName}{l.variantName && <span className="block text-xs font-normal text-muted-foreground">{l.variantName}</span>}</td>
-                        <td className="py-2 pr-2 text-muted-foreground">{l.description}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.quantity)} {l.uomCode ?? ''}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.deliveredQty)}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.invoicedQty)}</td>
+                        {show('description') && <td className="py-2 pr-2 text-muted-foreground">{l.description}</td>}
+                        <td className="py-2 pr-2 text-right tabular-nums">{qty(l.quantity)}</td>
+                        {show('uom') && <td className="py-2 pr-2 text-muted-foreground">{l.uomCode ?? '—'}</td>}
+                        {show('delivered') && <td className="py-2 pr-2 text-right tabular-nums">{qty(l.deliveredQty)}</td>}
+                        {show('invoiced') && <td className="py-2 pr-2 text-right tabular-nums">{qty(l.invoicedQty)}</td>}
                         <td className="py-2 pr-2 text-right tabular-nums">{money(l.unitPrice)}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{Number(l.discountPercent) || '—'}</td>
-                        <td className="py-2 pr-2">{l.taxName ?? '—'}</td>
+                        {show('discount') && <td className="py-2 pr-2 text-right tabular-nums">{Number(l.discountPercent) || '—'}</td>}
+                        {show('taxes') && <td className="py-2 pr-2">{l.taxName ?? '—'}</td>}
                         <td className="py-2 pr-2 text-right tabular-nums">{money(l.lineTotal)}</td><td />
                       </tr>
                     ))}
-                    {editable && lines.length === 0 && <tr><td colSpan={10} className="py-4 text-center text-muted-foreground">{tx('No lines yet.')}</td></tr>}
+                    {editable && lines.length === 0 && <tr><td colSpan={11} className="py-4 text-center text-muted-foreground">{tx('No lines yet.')}</td></tr>}
                   </tbody>
                 </table>
               </div>
