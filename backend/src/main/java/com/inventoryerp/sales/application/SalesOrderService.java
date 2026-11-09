@@ -297,6 +297,7 @@ public class SalesOrderService {
         header.putIfAbsent("teamId", q.get("teamId"));
         header.putIfAbsent("notes", q.get("notes"));
         header.putIfAbsent("terms", q.get("terms"));
+        header.putIfAbsent("commitmentDate", q.get("commitmentDate"));
         header.put("number", nextNumber(str(header.get("branchId"))));
         header.put("createdById", user());
         Map<String, Object> row = db.insert("SalesOrder", header);
