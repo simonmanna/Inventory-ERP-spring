@@ -235,4 +235,10 @@ public final class DomainEvents {
     public static final String HELPDESK_TICKET_CLOSED = "helpdesk.ticket.closed";
     public static final String HELPDESK_LETTER_RECEIVED = "helpdesk.letter.received";
     public static final String HELPDESK_LETTER_DISPATCHED = "helpdesk.letter.dispatched";
+    public static final String PROJECT_TASK_CREATED = "project.task.created";
+    public static final String PROJECT_TASK_ASSIGNED = "project.task.assigned";
+    public static final String PROJECT_TASK_STAGE_CHANGED = "project.task.stage_changed";
+    public static final String PROJECT_TASK_COMPLETED = "project.task.completed";
+    public static final String PROJECT_MILESTONE_REACHED = "project.milestone.reached";
+    public static final String PROJECT_UPDATE_POSTED = "project.update.posted";
 }

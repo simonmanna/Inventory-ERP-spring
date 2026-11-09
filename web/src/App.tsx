@@ -279,6 +279,13 @@ const StaffPage = lazy(() => import('@/pages/staff/StaffPage').then((m) => ({ de
 const RolesPage = lazy(() => import('@/pages/staff/RolesPage').then((m) => ({ default: m.RolesPage })));
 const RoleEditPage = lazy(() => import('@/pages/staff/RoleEditPage').then((m) => ({ default: m.RoleEditPage })));
 const TasksPage = lazy(() => import('@/pages/tasks/TasksPage').then((m) => ({ default: m.TasksPage })));
+const ProjectsPage = lazy(() => import('@/pages/projects/ProjectsPage').then((m) => ({ default: m.ProjectsPage })));
+const ProjectDetailPage = lazy(() => import('@/pages/projects/ProjectDetailPage').then((m) => ({ default: m.ProjectDetailPage })));
+const ProjectMyTasksPage = lazy(() => import('@/pages/projects/MyTasksPage').then((m) => ({ default: m.MyTasksPage })));
+const ProjectTimesheetsPage = lazy(() => import('@/pages/projects/TimesheetsPage').then((m) => ({ default: m.TimesheetsPage })));
+const ProjectDashboardPage = lazy(() => import('@/pages/projects/ProjectDashboardPage').then((m) => ({ default: m.ProjectDashboardPage })));
+const ProjectReportsPage = lazy(() => import('@/pages/projects/ProjectReportsPage').then((m) => ({ default: m.ProjectReportsPage })));
+const ProjectTagsPage = lazy(() => import('@/pages/projects/ProjectTagsPage').then((m) => ({ default: m.ProjectTagsPage })));
 const TaskEditPage = lazy(() => import('@/pages/tasks/TaskEditPage').then((m) => ({ default: m.TaskEditPage })));
 
 const SharePage = lazy(() => import('@/pages/public/SharePage').then((m) => ({ default: m.SharePage })));
@@ -601,6 +608,13 @@ export function App() {
             <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
             <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
             <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
+            <Route path="/projects" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectsPage /></RequirePermission>} />
+            <Route path="/projects/dashboard" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectDashboardPage /></RequirePermission>} />
+            <Route path="/projects/my-tasks" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectMyTasksPage /></RequirePermission>} />
+            <Route path="/projects/timesheets" element={<RequirePermission permission={PERMISSIONS.projectTimesheet.log}><ProjectTimesheetsPage /></RequirePermission>} />
+            <Route path="/projects/reports" element={<RequirePermission permission={PERMISSIONS.projectReport.read}><ProjectReportsPage /></RequirePermission>} />
+            <Route path="/projects/tags" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectTagsPage /></RequirePermission>} />
+            <Route path="/projects/:id" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectDetailPage /></RequirePermission>} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/tasks/new" element={<TaskEditPage />} />
             <Route path="/tasks/:id/edit" element={<TaskEditPage />} />

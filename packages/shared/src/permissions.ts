@@ -1266,6 +1266,25 @@ export const PERMISSIONS = {
     teamManage: 'helpdesk:team:manage',
     reportRead: 'helpdesk:report:read',
   },
+  // ---- Project management (ADR-S062; Spring-native, extends `project`) ----
+  projectTask: {
+    /// See project tasks, boards, milestones and updates of the projects you can access.
+    read: 'project_task:read',
+    /// Create and change tasks, move them between stages, comment, follow and tick checklists.
+    write: 'project_task:write',
+    /// Delete tasks and change tasks of every project, members-only projects included.
+    manage: 'project_task:manage',
+  },
+  projectTimesheet: {
+    /// Log your own time on tasks (timer or manual entries).
+    log: 'project_timesheet:log',
+    /// See and correct everyone's time on projects.
+    manage: 'project_timesheet:manage',
+  },
+  projectReport: {
+    /// Project dashboards, task analysis, timesheet analysis and workload.
+    read: 'project_report:read',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

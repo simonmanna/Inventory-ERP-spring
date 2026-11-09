@@ -984,5 +984,17 @@
     "letterDispatch": "helpdesk:letter:dispatch",
     "teamManage": "helpdesk:team:manage",
     "reportRead": "helpdesk:report:read"
+  },
+  "projectTask": {
+    "read": "project_task:read",
+    "write": "project_task:write",
+    "manage": "project_task:manage"
+  },
+  "projectTimesheet": {
+    "log": "project_timesheet:log",
+    "manage": "project_timesheet:manage"
+  },
+  "projectReport": {
+    "read": "project_report:read"
   }
 }

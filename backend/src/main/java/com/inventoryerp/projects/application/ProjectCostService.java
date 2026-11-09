@@ -157,7 +157,8 @@ public class ProjectCostService {
         String to = required(day(in.to()), "to");
         List<Map<String, Object>> entries = SqlRows.list(jdbc.sql("SELECT e.id, e.minutes, e.date, t.\"employeeId\""
                 + " FROM \"HrTimesheetEntry\" e JOIN \"HrTimesheet\" t ON t.id = e.\"timesheetId\" WHERE"
-                + " e.\"organizationId\" = ? AND t.status::text = 'APPROVED' AND e.\"linkedEntityType\" = 'project' AND"
+                + " e.\"organizationId\" = ? AND e.\"deletedAt\" IS NULL AND t.status::text = 'APPROVED' AND"
+                + " e.\"linkedEntityType\" = 'project' AND"
                 + " e.\"linkedEntityId\" = ? AND e.date >= ?::date AND e.date < (?::date + 1) AND NOT EXISTS (SELECT 1"
                 + " FROM \"ProjectCostLine\" c WHERE c.\"sourceType\" = 'project_timesheet' AND c.status = 'posted' AND"
                 + " c.\"sourceLineId\" = e.id) ORDER BY e.date, e.id FOR UPDATE OF e").params(org(), projectId, from,

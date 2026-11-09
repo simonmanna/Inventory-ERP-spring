@@ -120,6 +120,7 @@ import {
   Microscope,
   AlertOctagon,
   ListTodo,
+  FolderKanban,
   FlaskRound,
   GitFork,
   // quarry 2.2
@@ -806,6 +807,20 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/hr/departments', label: tx('Departments'), icon: Building2, permission: PERMISSIONS.hr.employee, group: 'Configuration' },
       { to: '/hr/positions', label: tx('Positions'), icon: Briefcase, permission: PERMISSIONS.hr.employee, group: 'Configuration' },
       { to: '/hr/payroll/settings', label: tx('Payroll Settings'), icon: SettingsIcon, permission: PERMISSIONS.hr.payroll, group: 'Configuration' },
+    ],
+  },
+  {
+    // Project management (ADR-S062): projects, task boards, timesheets and reports.
+    zone: 'People',
+    title: 'Projects',
+    icon: FolderKanban,
+    items: [
+      { to: '/projects/dashboard', label: tx('Project Dashboard'), icon: LayoutDashboard, permission: PERMISSIONS.projectTask.read },
+      { to: '/projects', label: tx('Projects'), icon: FolderKanban, permission: PERMISSIONS.projectTask.read },
+      { to: '/projects/my-tasks', label: tx('My Tasks'), icon: ListTodo, permission: PERMISSIONS.projectTask.read },
+      { to: '/projects/timesheets', label: tx('Timesheets'), icon: Timer, permission: PERMISSIONS.projectTimesheet.log },
+      { to: '/projects/reports', label: tx('Project Reports'), icon: BarChart3, permission: PERMISSIONS.projectReport.read, group: 'Reporting' },
+      { to: '/projects/tags', label: tx('Task Tags'), icon: Tags, permission: PERMISSIONS.projectTask.read, group: 'Configuration' },
     ],
   },
   {
