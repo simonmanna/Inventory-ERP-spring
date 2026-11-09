@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { CheckCircle2, Rocket, XCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle2, GitBranch, Rocket, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,6 +42,20 @@ export function EngineeringChangesPage() {
         <h1 className="text-2xl font-semibold">{tx('Engineering & costing')}</h1>
         <p className="text-sm text-muted-foreground">{tx('BOM revisions under change control, and how actual production compares with standard cost.')}</p>
       </div>
+
+      {hasPermission(PERMISSIONS.plm.read) && (
+        <Link
+          to="/manufacturing/plm/changes"
+          className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm hover:bg-primary/10"
+        >
+          <GitBranch className="h-5 w-5 shrink-0 text-primary" />
+          <span className="flex-1">
+            <span className="font-medium">{tx('Product lifecycle management')}</span>{' '}
+            <span className="text-muted-foreground">{tx('Staged approvals, impact analysis, routing and document changes: use the PLM change orders for the full workflow.')}</span>
+          </span>
+          <ArrowRight className="h-4 w-4 text-primary" />
+        </Link>
+      )}
 
       <Card>
         <CardHeader><CardTitle>{tx('Engineering change orders')}</CardTitle></CardHeader>

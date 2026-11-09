@@ -7,6 +7,7 @@ import com.inventoryerp.manufacturing.application.CostingService;
 import com.inventoryerp.manufacturing.application.EngineeringService;
 import com.inventoryerp.manufacturing.application.MfgCommands.ReviseBom;
 import com.inventoryerp.manufacturing.application.MfgCommands.SubstituteList;
+import com.inventoryerp.manufacturing.application.PlmChangeService;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -31,10 +32,12 @@ public class CostingController {
 
     private final CostingService costing;
     private final EngineeringService engineering;
+    private final PlmChangeService changes;
 
-    public CostingController(CostingService costing, EngineeringService engineering) {
+    public CostingController(CostingService costing, EngineeringService engineering, PlmChangeService changes) {
         this.costing = costing;
         this.engineering = engineering;
+        this.changes = changes;
     }
 
     @GetMapping("/boms/{id}/cost")
@@ -109,21 +112,21 @@ public class CostingController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.BOM__ACTIVATE)
     public Map<String, Object> approve(@PathVariable String id) {
-        return engineering.approve(id);
+        return changes.approveDirect(id);
     }
 
     @PostMapping("/engineering-changes/{id}/reject")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.BOM__ACTIVATE)
     public Map<String, Object> reject(@PathVariable String id) {
-        return engineering.reject(id);
+        return changes.cancel(id, null);
     }
 
     @PostMapping("/engineering-changes/{id}/apply")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.BOM__ACTIVATE)
     public Map<String, Object> apply(@PathVariable String id) {
-        return engineering.apply(id);
+        return changes.apply(id, true);
     }
 
     @GetMapping("/reports/variances")

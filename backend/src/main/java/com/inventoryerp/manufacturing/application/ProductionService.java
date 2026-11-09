@@ -81,6 +81,7 @@ public class ProductionService {
     private static final java.time.format.DateTimeFormatter ISO_MS = java.time.format.DateTimeFormatter
             .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
 
+    private final PlmGate plmGate;
     private final MfgDb db;
     private final SequenceService seq;
     private final AuditService audit;
@@ -102,7 +103,8 @@ public class ProductionService {
             StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm, PlmGate plmGate) {
+        this.plmGate = plmGate;
         this.standards = standards;
         this.quality = quality;
         this.costing = costing;
@@ -203,6 +205,7 @@ public class ProductionService {
 
         // ADR-S006 A7: unknown references answer 404 instead of a foreign-key 500.
         getProduct(outputProductId);
+        plmGate.requireProducible(outputProductId);
         for (MaterialPlan m : materials) {
             getProduct(m.productId());
         }

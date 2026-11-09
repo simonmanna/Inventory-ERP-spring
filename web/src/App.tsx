@@ -13,6 +13,7 @@ import { precastRoutes } from '@/pages/manufacturing/precast/routes';
 import { shopFloorRoutes } from '@/pages/manufacturing/shop-floor/routes';
 import { planningBoardRoutes } from '@/pages/manufacturing/planning-board/routes';
 import { mfgCostingRoutes } from '@/pages/manufacturing/costing/routes';
+import { plmRoutes } from '@/pages/manufacturing/plm/routes';
 import { RequirePermission } from '@/components/require-permission';
 import { RequireReport } from '@/components/require-report';
 import { PERMISSIONS } from '@erp/shared';
@@ -523,6 +524,8 @@ export function App() {
             {shopFloorRoutes}
             {planningBoardRoutes}
             {mfgCostingRoutes}
+            {/* Product lifecycle management (ADR-S063) */}
+            {plmRoutes}
             <Route path="/inventory" element={<InventoryItemsPage />} />
             <Route path="/inventory/items" element={<InventoryItemsPage />} />
             <Route path="/inventory/items/:productId" element={<InventoryDetailPage />} />

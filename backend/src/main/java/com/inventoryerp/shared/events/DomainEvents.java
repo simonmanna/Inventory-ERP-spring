@@ -241,4 +241,10 @@ public final class DomainEvents {
     public static final String PROJECT_TASK_COMPLETED = "project.task.completed";
     public static final String PROJECT_MILESTONE_REACHED = "project.milestone.reached";
     public static final String PROJECT_UPDATE_POSTED = "project.update.posted";
+    public static final String PLM_CHANGE_CREATED = "plm.change.created";
+    public static final String PLM_CHANGE_STAGE_CHANGED = "plm.change.stage_changed";
+    public static final String PLM_CHANGE_APPROVED = "plm.change.approved";
+    public static final String PLM_CHANGE_APPLIED = "plm.change.applied";
+    public static final String PLM_CHANGE_REQUEST_CREATED = "plm.request.created";
+    public static final String PLM_LIFECYCLE_CHANGED = "plm.lifecycle.changed";
 }
