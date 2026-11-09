@@ -78,6 +78,43 @@ class SalesQuoteProformaIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("section and note rows keep their place, add no amount and never reach the order; delivery date passes on")
+    void sectionsAndNotes() {
+        String delivery = LocalDate.now().plusDays(10).toString();
+        JsonNode q = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "commitmentDate", delivery, "lines",
+                List.of(Map.of("displayType", "line_section", "description", "Materials"),
+                        Map.of("productId", product, "quantity", 2, "unitPrice", 100, "leadTimeDays", 5),
+                        Map.of("displayType", "line_note", "description", "Delivered to site"),
+                        Map.of("description", "Transport charge", "quantity", 1, "unitPrice", 50))));
+        assertThat(q.get("total").asDouble()).isEqualTo(250);
+        assertThat(q.get("commitmentDate").asString()).startsWith(delivery);
+        JsonNode lines = q.get("lines");
+        assertThat(lines.size()).isEqualTo(4);
+        assertThat(lines.get(0).get("displayType").asString()).isEqualTo("line_section");
+        assertThat(lines.get(0).get("lineTotal").asDouble()).isZero();
+        assertThat(lines.get(1).get("leadTimeDays").asInt()).isEqualTo(5);
+        assertThat(lines.get(2).get("displayType").asString()).isEqualTo("line_note");
+        assertThat(lines.get(2).get("description").asString()).isEqualTo("Delivered to site");
+        assertThat(as("POST", "/sales/quotations", Map.of("partnerId", customer, "lines", List.of(Map.of("displayType",
+                "heading", "description", "x")))).status()).isEqualTo(400);
+
+        String id = approved(q);
+        String so = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "sales_order")).get("convertedId")
+                .asString();
+        JsonNode o = ok(200, "GET", "/sales/orders/" + so, null);
+        assertThat(o.get("lines").size()).as("only the priced lines").isEqualTo(2);
+        assertThat(o.get("commitmentDate").asString()).startsWith(delivery);
+    }
+
+    @Test
+    @DisplayName("a quotation with only section rows cannot be submitted")
+    void sectionsOnlyCannotSubmit() {
+        String id = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines", List.of(Map.of("displayType",
+                "line_section", "description", "Empty")))).get("id").asString();
+        assertThat(as("POST", "/sales/quotations/" + id + "/submit", null).status()).isEqualTo(400);
+    }
+
+    @Test
     @DisplayName("the expiry job expires overdue quotations and alerts the owner once")
     void expiry() {
         String id = quote(Map.of("validUntil", LocalDate.now().minusDays(1).toString())).get("id").asString();

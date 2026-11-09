@@ -13,7 +13,6 @@ import com.inventoryerp.manufacturing.domain.BomLineSubstitute;
 import com.inventoryerp.manufacturing.domain.EngineeringChange;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,8 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Engineering changes (ADR-S006 package D): revise a BOM into its next draft version under an ECO, review it
- * (approve / reject), apply it (activation through the BOM approval gate) and compare any two versions.
+ * Engineering changes (ADR-S006 package D): revise a BOM into its next draft version under an ECO and compare any
+ * two versions. Review (stages, approvals) and apply live in {@link PlmChangeService} (ADR-S063).
  */
 @Service
 public class EngineeringService {
@@ -36,17 +35,28 @@ public class EngineeringService {
     private final MfgDb db;
     private final SequenceService seq;
     private final BomService boms;
+    private final PlmStageService stages;
+    private final PlmSupport plm;
 
-    public EngineeringService(MfgDb db, SequenceService seq, BomService boms) {
+    public EngineeringService(MfgDb db, SequenceService seq, BomService boms, PlmStageService stages,
+            PlmSupport plm) {
         this.db = db;
         this.seq = seq;
         this.boms = boms;
+        this.stages = stages;
+        this.plm = plm;
     }
 
     /** Clone the BOM (lines + substitutes) into the next draft version and open an ECO for it. */
     @Transactional
     public Map<String, Object> revise(String bomId, ReviseBom dto) {
         Map<String, Object> src = boms.getOrThrow(bomId);
+        List<Map<String, Object>> open = db.list(EngineeringChange.class, " AND \"bomId\" = ? AND status IN"
+                + " ('draft', 'approved') ORDER BY \"createdAt\"", bomId);
+        if (!open.isEmpty()) {
+            throw ApiException.badRequest("BOM " + src.get("code") + " already has an open change "
+                    + open.getFirst().get("number") + ".");
+        }
         String product = str(src, "outputProductId");
         String variantKey = str(src, "outputVariantKey");
         db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
@@ -99,7 +109,12 @@ public class EngineeringService {
         Map<String, Object> eco = db.insert(EngineeringChange.class, Obj.of("number", seq.next("engineering_change",
                 "ECO-", 5), "title", dto != null && dto.title() != null ? dto.title() : "Revision of " + src.get("code"),
                 "reason", dto == null ? null : dto.reason(), "bomId", bomId, "newBomId", copy.get("id"), "status",
-                "draft", "createdBy", TenantContext.userId()));
+                "draft", "createdBy", TenantContext.userId(), "type", "bom", "productId", product, "stageId",
+                stages.first().get("id"), "ownerId", TenantContext.userId()));
+        plm.activity(str(eco, "id"), "created", "Created from " + src.get("code") + " v" + src.get("version")
+                + "; new draft version v" + version + ".");
+        plm.event(com.inventoryerp.shared.events.DomainEvents.PLM_CHANGE_CREATED, Obj.of("changeId", eco.get("id"),
+                "number", eco.get("number"), "type", "bom", "productId", product));
         return Obj.of("change", eco, "bom", boms.withLines(copy));
     }
 
@@ -112,38 +127,11 @@ public class EngineeringService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> eco = require(id);
-        eco.put("comparison", compare(str(eco, "bomId"), str(eco, "newBomId")));
+        // A cancelled ECO's draft version is soft-deleted (ADR-S063): no comparison then.
+        boolean both = eco.get("bomId") != null && eco.get("newBomId") != null
+                && db.byId(Bom.class, str(eco, "bomId")) != null && db.byId(Bom.class, str(eco, "newBomId")) != null;
+        eco.put("comparison", both ? compare(str(eco, "bomId"), str(eco, "newBomId")) : null);
         return eco;
-    }
-
-    @Transactional
-    public Map<String, Object> approve(String id) {
-        Map<String, Object> eco = require(id);
-        if (!"draft".equals(eco.get("status"))) {
-            throw ApiException.badRequest("Only a draft change can be approved (status " + eco.get("status") + ").");
-        }
-        return db.update(EngineeringChange.class, id, Obj.of("status", "approved", "approvedById",
-                TenantContext.userId(), "approvedAt", Instant.now()));
-    }
-
-    @Transactional
-    public Map<String, Object> reject(String id) {
-        Map<String, Object> eco = require(id);
-        if (!"draft".equals(eco.get("status")) && !"approved".equals(eco.get("status"))) {
-            throw ApiException.badRequest("Cannot reject a " + eco.get("status") + " change.");
-        }
-        return db.update(EngineeringChange.class, id, Obj.of("status", "rejected"));
-    }
-
-    /** Apply an approved change: activate the new version (archiving the old one through the BOM rules). */
-    @Transactional
-    public Map<String, Object> apply(String id) {
-        Map<String, Object> eco = require(id);
-        if (!"approved".equals(eco.get("status"))) {
-            throw ApiException.badRequest("Only an approved change can be applied (status " + eco.get("status") + ").");
-        }
-        boms.activate(str(eco, "newBomId"));
-        return db.update(EngineeringChange.class, id, Obj.of("status", "applied", "appliedAt", Instant.now()));
     }
 
     /** Header and line differences between two BOM versions (lines matched by component). */
@@ -209,7 +197,7 @@ public class EngineeringService {
         return v instanceof BigDecimal d ? JsNumbers.dec(d) : v;
     }
 
-    private Map<String, Object> require(String id) {
+    Map<String, Object> require(String id) {
         Map<String, Object> eco = db.byId(EngineeringChange.class, id);
         if (eco == null) {
             throw ApiException.notFound("Engineering change not found");

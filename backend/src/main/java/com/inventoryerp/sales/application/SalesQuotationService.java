@@ -58,6 +58,7 @@ public class SalesQuotationService {
     public static final String SALES_APPROVAL_ENTITY = "sales_quotation";
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     static final Set<String> EDITABLE = Set.of("draft", "rejected");
+    static final Set<String> DISPLAY_TYPES = Set.of("line_section", "line_note");
 
     private final SalesDb db;
     private final SalesSettingsService config;
@@ -341,6 +342,9 @@ public class SalesQuotationService {
                 d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
             }
         }
+        if (in.containsKey("commitmentDate")) {
+            d.put("commitmentDate", blank(str(in.get("commitmentDate"))) ? null : SalesDb.date(str(in.get("commitmentDate"))));
+        }
         if (in.containsKey("exchangeRate")) {
             BigDecimal r = dec(in.get("exchangeRate"));
             if (r.signum() <= 0) {
@@ -371,7 +375,25 @@ public class SalesQuotationService {
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         List<LineInput> inputs = new ArrayList<>();
         List<Map<String, Object>> meta = new ArrayList<>();
+        // Display order: an Integer is the index of a priced line in `inputs`; a Map is a section or note row.
+        List<Object> layout = new ArrayList<>();
         for (Map<String, Object> l : lines) {
+            String displayType = blank(str(l.get("displayType"))) ? null : str(l.get("displayType"));
+            if (displayType != null) {
+                if (!DISPLAY_TYPES.contains(displayType)) {
+                    throw ApiException.badRequest("displayType must be one of: line_section, line_note");
+                }
+                if (blank(str(l.get("description")))) {
+                    throw ApiException.badRequest("description should not be empty");
+                }
+                layout.add(Obj.of("displayType", displayType, "description", str(l.get("description"))));
+                continue;
+            }
+            Integer leadTime = l.get("leadTimeDays") == null || blank(str(l.get("leadTimeDays"))) ? null
+                    : dec(l.get("leadTimeDays")).intValue();
+            if (leadTime != null && leadTime < 0) {
+                throw ApiException.badRequest("leadTimeDays must not be less than 0");
+            }
             String productId = str(l.get("productId"));
             BigDecimal qty = dec(l.get("quantity"));
             if (qty.signum() <= 0) {
@@ -415,9 +437,12 @@ public class SalesQuotationService {
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
                     disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
-                    ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId));
+                    ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
+                    "leadTimeDays", leadTime));
+            layout.add(inputs.size() - 1);
         }
         if (inputs.isEmpty()) {
+            insertLayoutRows(id, layout, List.of());
             db.update("UPDATE \"SalesQuotation\" SET subtotal = 0, \"discountTotal\" = 0, \"taxAmount\" = 0, total = 0,"
                     + " \"maxDiscountPercent\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
             return;
@@ -438,6 +463,7 @@ public class SalesQuotationService {
         }
         Totals totals = builder.prepareLines(inputs);
         BigDecimal maxDisc = BigDecimal.ZERO;
+        List<Map<String, Object>> priced = new ArrayList<>();
         int i = 0;
         for (PreparedLine pl : totals.prepared()) {
             Map<String, Object> m = meta.get(i);
@@ -447,17 +473,37 @@ public class SalesQuotationService {
             if (list.signum() > 0 && net.compareTo(list) < 0) {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
-            db.insert("SalesQuotationLine", Obj.of("quotationId", id, "sortOrder", i, "productId", pl.productId(),
+            priced.add(Obj.of("quotationId", id, "productId", pl.productId(),
                     "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
-                    "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(), "lineTotal", pl.total()));
+                    "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
+                    "lineTotal", pl.total()));
             i++;
         }
+        insertLayoutRows(id, layout, priced);
         db.update("UPDATE \"SalesQuotation\" SET subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?, total = ?,"
                 + " \"maxDiscountPercent\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?", totals.subtotal(),
                 totals.discountTotal(), totals.taxAmount(), totals.total(), maxDisc.setScale(4, RoundingMode.HALF_UP), id);
+    }
+
+    /** Writes the priced lines and the section / note rows in display order; layout rows carry no amounts. */
+    private void insertLayoutRows(String id, List<Object> layout, List<Map<String, Object>> priced) {
+        int sort = 0;
+        for (Object entry : layout) {
+            Map<String, Object> row;
+            if (entry instanceof Integer k) {
+                row = priced.get(k);
+            } else {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> l = (Map<String, Object>) entry;
+                row = Obj.of("quotationId", id, "displayType", l.get("displayType"), "description", l.get("description"),
+                        "quantity", BigDecimal.ONE, "unitPrice", BigDecimal.ZERO, "priceSource", "manual");
+            }
+            row.put("sortOrder", sort++);
+            db.insert("SalesQuotationLine", row);
+        }
     }
 
     // ------------------------------------------------------------------ approval
@@ -472,7 +518,8 @@ public class SalesQuotationService {
         if (!EDITABLE.contains(q.get("status"))) {
             throw ApiException.badRequest("Only draft quotations can be submitted");
         }
-        if (db.count("SELECT count(*) FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ?", List.of(id)) == 0) {
+        if (db.count("SELECT count(*) FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL",
+                List.of(id)) == 0) {
             throw ApiException.badRequest("Add at least one line before submitting");
         }
         List<String> reasons = approvalReasons(q);
@@ -520,8 +567,8 @@ public class SalesQuotationService {
         }
         if (Boolean.TRUE.equals(s.get("marginCheck"))) {
             reasons.addAll(engine.breaches(str(q.get("partnerId")), str(q.get("branchId")), (LocalDate) q.get(
-                    "issueDate"), db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ?", str(q.get(
-                    "id"))), HUNDRED, true));
+                    "issueDate"), db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\""
+                    + " IS NULL", str(q.get("id"))), HUNDRED, true));
         }
         return reasons;
     }
@@ -529,7 +576,7 @@ public class SalesQuotationService {
     private BigDecimal extraDiscount(String id, String partnerId, LocalDate on) {
         BigDecimal max = BigDecimal.ZERO;
         for (Map<String, Object> l : db.rows("SELECT \"productId\", quantity, \"unitPrice\", \"discountPercent\","
-                + " \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ?", id)) {
+                + " \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL", id)) {
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
@@ -696,8 +743,8 @@ public class SalesQuotationService {
             throw ApiException.badRequest("Only approved, sent or accepted quotations can be converted");
         }
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.\"trackInventory\" FROM \"SalesQuotationLine\" l LEFT"
-                + " JOIN \"Product\" pr ON pr.id = l.\"productId\" WHERE l.\"quotationId\" = ? ORDER BY l.\"sortOrder\"",
-                id);
+                + " JOIN \"Product\" pr ON pr.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND l.\"displayType\" IS NULL"
+                + " ORDER BY l.\"sortOrder\"", id);
         if ("order".equals(target)) {
             List<String> shortages = shortages(lines);
             if (!shortages.isEmpty() && !Boolean.TRUE.equals(in.get("allowBackorder"))) {
@@ -813,7 +860,7 @@ public class SalesQuotationService {
         Map<String, Object> q = require(id);
         List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\","
                 + " \"lineTotal\" AS total FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ? AND NOT"
-                + " COALESCE(\"isOptional\", false) ORDER BY \"sortOrder\"", id, org());
+                + " COALESCE(\"isOptional\", false) AND \"displayType\" IS NULL ORDER BY \"sortOrder\"", id, org());
         String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
                 + " \"Organization\" WHERE id = ?", org()).get("n"));
         return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),

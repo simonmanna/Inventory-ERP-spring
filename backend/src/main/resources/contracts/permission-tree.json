@@ -293,6 +293,14 @@
     "activate": "bom:activate",
     "delete": "bom:delete"
   },
+  "plm": {
+    "read": "plm:read",
+    "manage": "plm:manage",
+    "request": "plm:request",
+    "change": "plm:change",
+    "approve": "plm:approve",
+    "apply": "plm:apply"
+  },
   "productionOrder": {
     "read": "production_order:read",
     "create": "production_order:create",

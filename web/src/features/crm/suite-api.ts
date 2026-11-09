@@ -197,6 +197,9 @@ export const quoteBase = () => (useAuthStore.getState().hasPermission(PERMISSION
 
 export interface QuoteLine {
   id?: string;
+  /** Section heading or free note row between priced lines (no amounts); null for a priced line. */
+  displayType?: 'line_section' | 'line_note' | null;
+  leadTimeDays?: number | null;
   productId: string | null;
   variantId?: string | null;
   variantName?: string | null;
@@ -233,6 +236,8 @@ export interface Quotation {
   branchId?: string | null;
   paymentTermId?: string | null;
   deliveryAddress?: string | null;
+  /** Promised delivery date; becomes the sales order's commitment date. */
+  commitmentDate?: string | null;
   lostReasonId?: string | null;
   number: string;
   revision: number;

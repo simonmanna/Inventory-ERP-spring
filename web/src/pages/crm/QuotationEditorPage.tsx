@@ -3,15 +3,14 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
-import { VariantSelect } from '@/features/products/variant-select';
+import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, PackageX, Plus, Printer, Send, ShoppingCart, Sparkles, ThumbsDown, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -28,9 +27,11 @@ import {
 import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
+import { QuoteLinesTable } from './QuoteLinesTable';
+import { isLayout, lineAmounts } from './quote-lines';
 
-const blankLine = (): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
-const SOURCE_LABEL: Record<string, string> = { list: tx('List price'), rule: tx('Price rule'), customer: tx('Customer discount'), manual: tx('Manual') };
+const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
+const layoutLine = (displayType: 'line_section' | 'line_note'): QuoteLine => ({ displayType, productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 
 /** Create / edit / process a quotation (ADR-S010). Editable while draft or rejected. */
 export function QuotationEditorPage() {
@@ -47,9 +48,12 @@ export function QuotationEditorPage() {
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
   const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
+  const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
   const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const [internalNotes, setInternalNotes] = useState('');
-  const [header, setHeader] = useState({ branchId: '', paymentTermId: '', deliveryAddress: '' });
+  const [header, setHeader] = useState({ branchId: '', paymentTermId: '', deliveryAddress: '', commitmentDate: '' });
+  /** Tax Excl. / Tax Incl. chosen by the user; null = as each product is priced. */
+  const [taxMode, setTaxMode] = useState<'excl' | 'incl' | null>(null);
   const [lostReasonId, setLostReasonId] = useState('');
   const opts = useHeaderOptions();
   const uoms = useQuery({ queryKey: ['header-options', 'uoms'], queryFn: async () => { try { const d = (await api.get('/uoms', { params: { pageSize: 500 } })).data; return (Array.isArray(d) ? d : d.data ?? []) as Array<{ id: string; code: string; name: string }>; } catch { return []; } }, staleTime: 300_000, retry: false });
@@ -62,7 +66,7 @@ export function QuotationEditorPage() {
   const [ownerId, setOwnerId] = useState('');
   const [notes, setNotes] = useState('');
   const [terms, setTerms] = useState('');
-  const [lines, setLines] = useState<QuoteLine[]>([blankLine()]);
+  const [lines, setLines] = useState<QuoteLine[]>([]);
   const [dirty, setDirty] = useState(false);
   const [dialog, setDialog] = useState<'reject' | 'decline' | 'convert' | null>(null);
   const [reason, setReason] = useState('');
@@ -75,8 +79,8 @@ export function QuotationEditorPage() {
     if (q) {
       setPartnerId(q.partnerId); setPartnerName(q.partnerName); setIssueDate(q.issueDate?.slice(0, 10) ?? '');
       setValidUntil(q.validUntil?.slice(0, 10) ?? ''); setOwnerId(q.ownerId ?? ''); setNotes(q.notes ?? ''); setTerms(q.terms ?? '');
-      setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '' });
-      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
+      setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '', commitmentDate: q.commitmentDate?.slice(0, 10) ?? '' });
+      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null })) : []); setDirty(false); setTaxMode(null);
     }
   }, [q]);
   useEffect(() => {
@@ -86,23 +90,86 @@ export function QuotationEditorPage() {
   useEffect(() => { if (isNew && lk?.settings.defaultQuoteTerms) setTerms((t) => t || lk.settings.defaultQuoteTerms || ''); }, [isNew, lk]);
 
   const editable = isNew || (!!q && ['draft', 'rejected'].includes(q.status) && canWrite);
-  const productOpts = useMemo(() => (products.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined })), [products.data]);
   const taxRate = (taxId: string | null) => Number(taxes.data?.find((t) => t.id === taxId)?.rate ?? 0);
+  const useServer = !!q && !dirty;
+  /** Untaxed amount, one row per tax and total: the saved figures, or an estimate while editing. */
   const est = useMemo(() => {
-    let sub = 0; let tax = 0;
+    let sub = 0; let tax = 0; let total = 0;
+    const byTax = new Map<string, { label: string; amount: number }>();
     for (const l of lines) {
-      const s = Number(l.quantity || 0) * Number(l.unitPrice || 0) * (1 - Number(l.discountPercent || 0) / 100);
-      sub += s; tax += s * taxRate(l.taxId) / 100;
+      if (isLayout(l)) continue;
+      const a = lineAmounts(l, taxRate(l.taxId), useServer);
+      sub += a.sub; tax += a.tax; total += a.total;
+      if (l.taxId && a.tax) {
+        const t = taxes.data?.find((x) => x.id === l.taxId);
+        const label = t ? `${t.name} ${Number(t.rate)}%` : l.taxName ?? tx('Tax');
+        const row = byTax.get(l.taxId) ?? { label, amount: 0 };
+        row.amount += a.tax; byTax.set(l.taxId, row);
+      }
     }
-    return { sub, tax, total: sub + tax };
+    return { sub, tax, total, byTax: [...byTax.values()] };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, taxes.data]);
+  }, [lines, taxes.data, useServer]);
+  const pricedWithTax = lines.filter((l) => !isLayout(l) && l.taxId);
+  const taxIncluded = taxMode ? taxMode === 'incl' : pricedWithTax.length > 0 && pricedWithTax.every((l) => l.taxInclusive);
+  const chooseTaxMode = (mode: 'excl' | 'incl') => {
+    setTaxMode(mode);
+    if (!editable) return;
+    setLines((ls) => ls.map((l) => (isLayout(l) ? l : { ...l, taxInclusive: mode === 'incl' })));
+    setDirty(true);
+  };
 
-  const patchLine = (i: number, p: Partial<QuoteLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p, priceSource: p.priceSource ?? (('unitPrice' in p || 'discountPercent' in p) ? 'manual' : l.priceSource) } : l))); setDirty(true); };
+  /** Edit a line; a new price or discount makes it a manual price unless `keepSource`. */
+  const patchLine = (i: number, p: Partial<QuoteLine>, keepSource = false) => {
+    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p, priceSource: p.priceSource ?? (!keepSource && ('unitPrice' in p || 'discountPercent' in p) ? 'manual' : l.priceSource) } : l)));
+    setDirty(true);
+  };
+  const productById = (pid: string | null) => (pid ? products.data?.find((x) => x.id === pid) : undefined);
+  const setProduct = (i: number, pid: string | null) => {
+    const prod = productById(pid);
+    const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
+      description: canPrice ? '' : prod?.name ?? '', unitPrice: prod ? Number(prod.salesPrice ?? 0) : x.unitPrice, taxId: prod?.taxId ?? x.taxId,
+      ...(taxMode ? { taxInclusive: taxMode === 'incl' } : {}) } : x));
+    setLines(next); setDirty(true); void priceLines(i, next);
+  };
+  const setUnit = (i: number, uomId: string) => {
+    const price = priceForUnit(productById(lines[i].productId), uomId, 'sales');
+    // The server reprices the line in its new unit on save.
+    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, uomId, priceSource: undefined, ...(price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}) } : l)));
+    setDirty(true);
+  };
+  const addRow = (kind: 'line' | 'section' | 'note' | 'charge') => {
+    const inclusive = taxMode ? taxMode === 'incl' : undefined;
+    const row = kind === 'section' ? layoutLine('line_section') : kind === 'note' ? layoutLine('line_note')
+      : kind === 'charge' ? { ...blankLine(inclusive), description: tx('Transport charge'), priceSource: 'manual' as const } : blankLine(inclusive);
+    setLines((ls) => [...ls, row]); setDirty(true);
+  };
+  const moveRow = (from: number, to: number) => {
+    setLines((ls) => { const next = [...ls]; const [row] = next.splice(from, 1); next.splice(to, 0, row); return next; });
+    setDirty(true);
+  };
+  const catalogAdd = (pid: string, delta: number) => {
+    const i = lines.findIndex((l) => !isLayout(l) && l.productId === pid);
+    if (i >= 0) {
+      const qty = Number(lines[i].quantity || 0) + delta;
+      const next = qty <= 0 ? lines.filter((_, j) => j !== i) : lines.map((l, j) => (j === i ? { ...l, quantity: qty } : l));
+      setLines(next); setDirty(true);
+      if (qty > 0 && lines[i].priceSource !== 'manual') void priceLines(i, next);
+      return;
+    }
+    if (delta <= 0) return;
+    const prod = productById(pid);
+    const row: QuoteLine = { ...blankLine(taxMode ? taxMode === 'incl' : undefined), productId: pid, uomId: defaultUnitId(prod, 'sales') ?? null,
+      description: canPrice ? '' : prod?.name ?? '', unitPrice: Number(prod?.salesPrice ?? 0), taxId: prod?.taxId ?? null };
+    // Replace a trailing empty line instead of leaving it behind.
+    const base = lines.length && !isLayout(lines[lines.length - 1]) && !lines[lines.length - 1].productId && !lines[lines.length - 1].description ? lines.slice(0, -1) : lines;
+    const next = [...base, row];
+    setLines(next); setDirty(true); void priceLines(next.length - 1, next);
+  };
 
   const priceLines = async (idx?: number, current: QuoteLine[] = lines) => {
     if (!canPrice) return;
-    const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => l.productId && (idx === undefined || i === idx));
+    const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => !isLayout(l) && l.productId && (idx === undefined || i === idx));
     if (!targets.length) return;
     try {
       const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({ productId: l.productId!, quantity: Number(l.quantity || 1) })) });
@@ -110,7 +177,8 @@ export function QuotationEditorPage() {
         const k = targets.findIndex((t) => t.i === i);
         if (k < 0) return l;
         const r = res.lines[k];
-        return { ...l, listPrice: r.listPrice, unitPrice: r.unitPrice, discountPercent: r.discountPercent, priceSource: r.source, taxId: l.taxId ?? r.taxId, description: l.description || r.description };
+        return { ...l, listPrice: r.listPrice, unitPrice: r.unitPrice, discountPercent: r.discountPercent, priceSource: r.source, taxId: l.taxId ?? r.taxId,
+          taxInclusive: taxMode ? taxMode === 'incl' : r.taxInclusive, description: l.description || r.description };
       }));
       setDirty(true);
       if (idx === undefined) toast.success(tx('Customer prices applied'));
@@ -121,12 +189,17 @@ export function QuotationEditorPage() {
     const body = {
       partnerId, issueDate, validUntil: validUntil || undefined, ownerId: ownerId || undefined, notes, terms, internalNotes,
       branchId: header.branchId || null, paymentTermId: header.paymentTermId || null, deliveryAddress: header.deliveryAddress || null,
-      lines: lines.filter((l) => l.productId || l.description).map((l) => ({
-        productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
-        unitPrice: l.priceSource === 'manual' || !l.productId ? Number(l.unitPrice) : undefined,
-        discountPercent: l.priceSource === 'manual' || !l.productId ? Number(l.discountPercent) : undefined,
-        taxId: l.taxId || null,
-      })),
+      commitmentDate: header.commitmentDate || null,
+      lines: lines.filter((l) => (isLayout(l) ? l.description.trim() : l.productId || l.description)).map((l) => (isLayout(l)
+        ? { displayType: l.displayType, description: l.description.trim() }
+        : {
+          productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
+          unitPrice: l.priceSource === 'manual' || !l.productId ? Number(l.unitPrice) : undefined,
+          discountPercent: l.priceSource === 'manual' || !l.productId ? Number(l.discountPercent) : undefined,
+          taxId: l.taxId || null,
+          ...(typeof l.taxInclusive === 'boolean' ? { taxInclusive: l.taxInclusive } : {}),
+          ...(l.leadTimeDays != null ? { leadTimeDays: l.leadTimeDays } : {}),
+        })),
     };
     if (isNew) return crmApi.createQuote({ ...body, dealId });
     return crmApi.updateQuote({ id: q!.id, ...body });
@@ -152,7 +225,6 @@ export function QuotationEditorPage() {
   if (!isNew && !q) return <p className="text-sm text-muted-foreground">{tx('Quotation not found.')}</p>;
   const status = q?.status ?? 'draft';
   const currency = q?.currencyCode ?? deal?.currencyCode;
-  const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
 
   const ribbon = [tx('Draft'), tx('Approved'), tx('Sent'), tx('Accepted'), tx('Converted')];
   const step = ({ approved: 1, sent: 2, accepted: 3, converted: 4 } as Record<string, number>)[status] ?? 0;
@@ -241,122 +313,101 @@ export function QuotationEditorPage() {
             <InlineField label={tx('Customer')}>
               {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
             </InlineField>
-            <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
-            <InlineField label={tx('Salesperson')}>
-              <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
-            </InlineField>
-            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} placeholder={tx('Same as customer')} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
           </div>
           <div>
-            <InlineField label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Expiration')}><Input type="date" disabled={!editable} value={validUntil} title={tx('After this date the quotation expires')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></InlineField>
-            <InlineField label={tx('Valid until')}><Input type="date" disabled={!editable} value={validUntil} placeholder={tx('Default validity')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
-            <InlineField label={tx('Currency')}><span className="text-sm">{currency ?? orgCurrency}</span></InlineField>
-            {q && (
-              <>
-                <InlineField label={tx('Created')}><p className="py-2 text-sm">{date(q.createdAt)}</p></InlineField>
-                {q.approvedAt && <InlineField label={tx('Approved')}><p className="py-2 text-sm">{date(q.approvedAt)}</p></InlineField>}
-                {q.sentAt && <InlineField label={tx('Sent')}><p className="py-2 text-sm">{date(q.sentAt)}</p></InlineField>}
-                {q.acceptedAt && <InlineField label={tx('Accepted')}><p className="py-2 text-sm">{date(q.acceptedAt)}</p></InlineField>}
-              </>
-            )}
+            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Delivery date')}><Input type="date" disabled={!editable} value={header.commitmentDate} title={tx('The delivery date promised to the customer; it becomes the order commitment date')} onChange={(e) => { const commitmentDate = e.target.value; setHeader((h) => ({ ...h, commitmentDate })); setDirty(true); }} /></InlineField>
           </div>
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
-            {([['lines', tx('Quotation lines')], ['terms', tx('Terms & conditions')], ['other', tx('Other info')]] as const).map(([v, label]) => (
-              <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
-            ))}
-          </TabsList>
-
-          <TabsContent value="lines" className="mt-0 space-y-4 p-5">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-sm">
-                <thead className="border-b text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  <tr><th className="py-2 pr-2">{tx('Product')}</th><th className="py-2 pr-2">{tx('Description')}</th><th className="w-20 py-2 pr-2 text-right">{tx('Qty')}</th>
-                    <th className="w-28 py-2 pr-2 text-right">{tx('Unit price')}</th><th className="w-16 py-2 pr-2 text-right">{tx('Disc. %')}</th><th className="w-32 py-2 pr-2">{tx('Tax')}</th>
-                    <th className="w-28 py-2 pr-2 text-right">{tx('Subtotal')}</th><th className="w-8" /></tr>
-                </thead>
-                <tbody>
-                  {lines.map((l, i) => {
-                    const sub = Number(l.quantity || 0) * Number(l.unitPrice || 0) * (1 - Number(l.discountPercent || 0) / 100);
-                    return (
-                      <tr key={i} className="border-b align-top">
-                        <td className="py-1.5 pr-2">
-                          {editable
-                            ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => {
-                                const next = lines.map((x, j) => (j === i ? { ...x, productId: v || null, priceSource: undefined, description: '' } : x));
-                                setLines(next); setDirty(true); void priceLines(i, next);
-                              }} options={productOpts} placeholder={tx('Product…')} className="w-52" />
-                            : <span className="font-medium">{l.productName ?? '—'}</span>}
-                          <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-52" onChange={(v) => patchLine(i, { variantId: v })} />
-                          <select aria-label={tx('Unit')} disabled={!editable} className="mt-1 h-8 w-52 rounded-md border bg-background px-2 text-xs" value={l.uomId ?? ''} onChange={(e) => patchLine(i, { uomId: e.target.value || null, priceSource: l.priceSource })}>
-                            <option value="">{tx('Default unit')}</option>
-                            {(uoms.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-                          </select>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                            {l.priceSource && <span className="rounded bg-muted px-1.5 py-0.5">{SOURCE_LABEL[l.priceSource]}</span>}
-                            {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span>{tx('List')} {money(l.listPrice, currency)}</span>}
-                            {l.stock && (l.stock.sufficient
-                              ? <span className="inline-flex items-center gap-0.5"><PackageCheck className="h-3 w-3" />{l.stock.available} {tx('available')}</span>
-                              : <span className="inline-flex items-center gap-0.5 text-destructive"><PackageX className="h-3 w-3" />{tx('Only')} {l.stock.available} {tx('available')}</span>)}
-                          </div>
-                        </td>
-                        <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value, priceSource: l.priceSource })} /></td>
-                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value), priceSource: l.priceSource })} onBlur={() => l.productId && l.priceSource !== 'manual' && priceLines(i)} /></td>
-                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value) })} /></td>
-                        <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>
-                        <td className="py-1.5 pr-2">
-                          <OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null, priceSource: l.priceSource })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} />
-                        </td>
-                        <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{money(l.lineSubtotal ?? sub, currency)}</td>
-                        <td className="py-1.5 pt-2">{editable && <button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}><Trash2 className="h-4 w-4" /></button>}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {editable && (
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>
-                <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, { ...blankLine(), description: tx('Transport charge'), priceSource: 'manual' }]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a charge')}</Button>
-                {canPrice && <Button variant="ghost" size="sm" onClick={() => priceLines()}><Sparkles className="mr-1 h-4 w-4" />{tx('Apply customer prices')}</Button>}
+          <div className="flex flex-wrap items-end justify-between gap-2 border-b px-5 pt-1.5">
+            <TabsList className="h-auto justify-start gap-1 overflow-x-auto rounded-none bg-transparent p-0">
+              {([['lines', tx('Order Lines')], ['other', tx('Other Info')]] as const).map(([v, label]) => (
+                <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
+              ))}
+            </TabsList>
+            {tab === 'lines' && (
+              <div className="mb-1.5 inline-flex overflow-hidden rounded-md border text-xs font-semibold" role="group" aria-label={tx('Tax display')}>
+                {(['excl', 'incl'] as const).map((mode) => (
+                  <button key={mode} type="button" onClick={() => chooseTaxMode(mode)} aria-pressed={taxIncluded === (mode === 'incl')}
+                    title={editable ? (mode === 'incl' ? tx('Unit prices include tax') : tx('Unit prices exclude tax')) : (mode === 'incl' ? tx('Show amounts with tax') : tx('Show amounts without tax'))}
+                    className={cn('px-3 py-1.5', mode === 'incl' && 'border-l', taxIncluded === (mode === 'incl') ? 'bg-primary/15 text-primary' : 'bg-muted/60 text-muted-foreground hover:text-foreground')}>
+                    {mode === 'excl' ? tx('Tax Excl.') : tx('Tax Incl.')}
+                  </button>
+                ))}
               </div>
             )}
-            <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
-              <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
+          </div>
+
+          <TabsContent value="lines" className="mt-0 space-y-4 px-2 pb-5 pt-1 sm:px-5">
+            <QuoteLinesTable lines={lines} editable={editable} useServer={useServer} currency={currency} taxIncluded={taxIncluded}
+              products={products.data ?? []} taxes={taxes.data ?? []} uoms={uoms.data ?? []} canPrice={canPrice}
+              onPatch={patchLine} onProduct={setProduct} onUnit={setUnit} onReprice={(i) => void priceLines(i)}
+              onRemove={(i) => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}
+              onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} />
+            <div className="grid gap-6 pt-2 md:grid-cols-[minmax(0,1fr)_340px]">
+              <Textarea disabled={!editable} rows={4} value={terms} placeholder={tx('Terms and conditions…')} aria-label={tx('Terms and conditions')}
+                className="resize-y border-transparent bg-transparent px-0 shadow-none focus-visible:border-input focus-visible:px-3 disabled:cursor-default disabled:opacity-100"
+                onChange={(e) => { setTerms(e.target.value); setDirty(true); }} />
               <div className="text-sm">
-                <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-                <Row label={tx('Untaxed amount')} value={money(dirty || !q ? est.sub : q.subtotal, currency)} />
-                {q && !dirty && Number(q.discountTotal) > 0 && <Row label={tx('Discount')} value={'− ' + money(q.discountTotal, currency)} />}
-                <Row label={tx('Taxes')} value={money(dirty || !q ? est.tax : q.taxAmount, currency)} />
-                <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(dirty || !q ? est.total : q.total, currency)}</strong>} /></div>
-                {q && Number(q.maxDiscountPercent) > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('Highest discount vs list')}: {Number(q.maxDiscountPercent).toFixed(1)}% · {tx('limit')} {lk?.settings.quoteMaxDiscountPercent}%</p>}
+                <div className="border-t pt-2">
+                  <Row label={tx('Untaxed Amount') + ':'} value={<strong>{money(useServer ? q!.subtotal : est.sub, currency)}</strong>} />
+                  {useServer && Number(q!.discountTotal) > 0 && <Row label={tx('Discount') + ':'} value={'− ' + money(q!.discountTotal, currency)} />}
+                  {est.byTax.length > 1 || (est.byTax.length === 1 && !useServer)
+                    ? est.byTax.map((t) => <Row key={t.label} label={t.label + ':'} value={money(t.amount, currency)} />)
+                    : <Row label={(est.byTax[0]?.label ?? tx('Taxes')) + ':'} value={money(useServer ? q!.taxAmount : est.tax, currency)} />}
+                </div>
+                <div className="mt-2 border-t pt-2"><Row label={<strong>{tx('Total')}:</strong>} value={<strong className="text-lg">{money(useServer ? q!.total : est.total, currency)}</strong>} /></div>
+                {dirty && q && <p className="mt-1 text-right text-xs text-amber-600">{tx('Estimate — save to recalculate')}</p>}
+                {q && Number(q.maxDiscountPercent) > 0 && <p className="mt-2 text-right text-xs text-muted-foreground">{tx('Highest discount vs list')}: {Number(q.maxDiscountPercent).toFixed(1)}% · {tx('limit')} {lk?.settings.quoteMaxDiscountPercent}%</p>}
               </div>
             </div>
           </TabsContent>
 
-          <TabsContent value="terms" className="mt-0 space-y-4 p-5">
-            <Field label={tx('Internal notes (never shown to the customer)')} className="lg:max-w-3xl"><Textarea disabled={!editable} rows={3} value={internalNotes} onChange={(e) => { setInternalNotes(e.target.value); setDirty(true); }} /></Field>
-            <Field label={tx('Terms & conditions')} className="lg:max-w-3xl"><Textarea disabled={!editable} rows={8} value={terms} onChange={(e) => { setTerms(e.target.value); setDirty(true); }} /></Field>
-          </TabsContent>
-
-          <TabsContent value="other" className="mt-0 space-y-4 p-5">
-            {q?.credit ? (
-              <div className="lg:max-w-md">
-                <h3 className="mb-3 border-b pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Customer credit')}</h3>
-                <div className="text-sm">
-                  {q.credit.creditHold && <p className="mb-2 flex items-center gap-1.5 text-destructive"><AlertTriangle className="h-4 w-4" />{tx('On credit hold')}</p>}
-                  <Row label={tx('Credit limit')} value={Number(q.credit.creditLimit) > 0 ? money(q.credit.creditLimit, currency) : tx('None')} />
-                  <Row label={tx('Open receivables')} value={money(q.credit.openReceivables, currency)} />
-                  <Row label={tx('Overdue')} value={<span className={Number(q.credit.overdueReceivables) > 0 ? 'text-destructive' : ''}>{money(q.credit.overdueReceivables, currency)}</span>} />
-                  {q.credit.headroom != null && <Row label={tx('Headroom')} value={money(q.credit.headroom, currency)} />}
-                  <Link to={`/crm/customers/${q.partnerId}`} className="mt-2 inline-block text-xs text-primary hover:underline">{tx('Customer 360')} →</Link>
+          <TabsContent value="other" className="mt-0 p-5">
+            <div className="grid gap-x-12 gap-y-6 md:grid-cols-2">
+              <div>
+                <SectionTitle>{tx('Sales')}</SectionTitle>
+                <InlineField label={tx('Salesperson')}>
+                  <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
+                </InlineField>
+                <InlineField label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></InlineField>
+                <InlineField label={tx('Currency')}><span className="text-sm">{currency ?? orgCurrency}</span></InlineField>
+                {opportunityId && <InlineField label={tx('Opportunity')}><Link to={`/crm/opportunities/${opportunityId}`} className="text-primary hover:underline">{q?.dealName ?? deal?.name ?? tx('Open')}</Link></InlineField>}
+                {q && (
+                  <>
+                    <InlineField label={tx('Created')}><span>{date(q.createdAt)}</span></InlineField>
+                    {q.approvedAt && <InlineField label={tx('Approved')}><span>{date(q.approvedAt)}</span></InlineField>}
+                    {q.sentAt && <InlineField label={tx('Sent')}><span>{date(q.sentAt)}</span></InlineField>}
+                    {q.acceptedAt && <InlineField label={tx('Accepted')}><span>{date(q.acceptedAt)}</span></InlineField>}
+                  </>
+                )}
+              </div>
+              <div>
+                <SectionTitle>{tx('Customer credit')}</SectionTitle>
+                {q?.credit ? (
+                  <div className="text-sm">
+                    {q.credit.creditHold && <p className="mb-2 flex items-center gap-1.5 text-destructive"><AlertTriangle className="h-4 w-4" />{tx('On credit hold')}</p>}
+                    <Row label={tx('Credit limit')} value={Number(q.credit.creditLimit) > 0 ? money(q.credit.creditLimit, currency) : tx('None')} />
+                    <Row label={tx('Open receivables')} value={money(q.credit.openReceivables, currency)} />
+                    <Row label={tx('Overdue')} value={<span className={Number(q.credit.overdueReceivables) > 0 ? 'text-destructive' : ''}>{money(q.credit.overdueReceivables, currency)}</span>} />
+                    {q.credit.headroom != null && <Row label={tx('Headroom')} value={money(q.credit.headroom, currency)} />}
+                    <Link to={`/crm/customers/${q.partnerId}`} className="mt-2 inline-block text-xs text-primary hover:underline">{tx('Customer 360')} →</Link>
+                  </div>
+                ) : <p className="text-sm text-muted-foreground">{q ? tx('No credit information for this customer.') : tx('Save the quotation to see customer credit.')}</p>}
+              </div>
+              <div className="md:col-span-2">
+                <SectionTitle>{tx('Notes')}</SectionTitle>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label={tx('Notes (printed on the quotation)')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
+                  <Field label={tx('Internal notes (never shown to the customer)')}><Textarea disabled={!editable} rows={3} value={internalNotes} onChange={(e) => { setInternalNotes(e.target.value); setDirty(true); }} /></Field>
                 </div>
               </div>
-            ) : <p className="text-sm text-muted-foreground">{q ? tx('No credit information for this customer.') : tx('Save the quotation to see customer credit.')}</p>}
+            </div>
           </TabsContent>
         </Tabs>
       </section>
@@ -408,7 +459,11 @@ export function QuotationEditorPage() {
   );
 }
 
-function Row({ label, value }: { label: string; value: ReactNode }) {
+function SectionTitle({ children }: { children: ReactNode }) {
+  return <h3 className="mb-2 border-b pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>;
+}
+
+function Row({ label, value }: { label: ReactNode; value: ReactNode }) {
   return <div className="flex items-center justify-between py-0.5"><span className="text-muted-foreground">{label}</span><span className="tabular-nums">{value}</span></div>;
 }
 
@@ -439,11 +494,13 @@ function printQuote(q: Quotation, owner?: string) {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return;
   const m = (v: number) => money(v, q.currencyCode);
-  const rows = (q.lines ?? []).map((l) => `<tr><td>${esc(l.description)}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
+  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="5">${esc(l.description)}</td></tr>`
+    : l.displayType === 'line_note' ? `<tr><td colspan="5" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
+    : `<tr><td>${esc(l.description)}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(q.number)}</title><style>
     body{font-family:system-ui,sans-serif;color:#111;margin:40px}h1{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:24px}
     th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}.r{text-align:right}.tot td{border:0}.muted{color:#666;font-size:13px}
-    .grid{display:flex;justify-content:space-between;margin-top:16px}</style></head><body>
+    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}</style></head><body>
     <h1>${esc(tx('Quotation'))} ${esc(q.number)}</h1><div class="muted">${esc(tx('Date'))}: ${esc(date(q.issueDate))} · ${esc(tx('Valid until'))}: ${esc(q.validUntil ? date(q.validUntil) : '—')}</div>
     <div class="grid"><div><strong>${esc(q.partnerName)}</strong></div><div class="muted">${esc(tx('Salesperson'))}: ${esc(owner ?? q.ownerName ?? '')}</div></div>
     <table><thead><tr><th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>

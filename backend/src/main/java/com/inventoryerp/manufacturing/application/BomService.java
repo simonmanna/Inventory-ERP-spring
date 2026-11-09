@@ -52,12 +52,15 @@ public class BomService {
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
+    private final PlmGate plmGate;
     private final MfgDb db;
     private final SequenceService seq;
     private final ApprovalsService approvals;
     private final TransactionTemplate newTx;
 
-    public BomService(MfgDb db, SequenceService seq, ApprovalsService approvals, PlatformTransactionManager txm) {
+    public BomService(MfgDb db, SequenceService seq, ApprovalsService approvals, PlatformTransactionManager txm,
+            PlmGate plmGate) {
+        this.plmGate = plmGate;
         this.db = db;
         this.seq = seq;
         this.approvals = approvals;
@@ -213,6 +216,7 @@ public class BomService {
         if ("archived".equals(bom.get("status"))) {
             throw ApiException.badRequest("Cannot re-activate an archived BOM version.");
         }
+        plmGate.requireActivatable(bom);
         Map<String, Object> snapshot = Obj.of("amount", 0, "code", bom.get("code"), "product",
                 bom.get("outputProductId"), "version", bom.get("version"));
         Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval("bom_version", id, snapshot));

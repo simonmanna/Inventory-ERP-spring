@@ -504,6 +504,92 @@ Screens: `/manufacturing/costing`, `/manufacturing/costing/orders/:id`, linked f
 
 Tests: `ReplenishmentMrpIT`.
 
+## ADR-S063 — Product lifecycle management (extension: no Nest counterpart)
+
+[ADR-S063](../adr/ADR-S063-product-lifecycle-management.md). Migrations `V440__plm_product_lifecycle.sql`, `V441__plm_dispositions.sql`. Services
+`PlmLifecycleService`, `PlmStageService`, `PlmChangeService`, `PlmRequestService`, `PlmDocumentService`,
+`PlmDispositionService`, `PlmGate`,
+`PlmEffectivityJob`; controller `PlmController`. Web: `/manufacturing/plm/*`.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/manufacturing/plm/overview` | `plm:read` |
+| GET | `/api/v1/manufacturing/plm/items` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/items` | `plm:manage` |
+| POST | `/api/v1/manufacturing/plm/items/register-active` | `plm:manage` |
+| GET | `/api/v1/manufacturing/plm/items/:id` | `plm:read` |
+| PATCH | `/api/v1/manufacturing/plm/items/:id` | `plm:manage` |
+| POST | `/api/v1/manufacturing/plm/items/:id/transition` | `plm:manage` |
+| GET | `/api/v1/manufacturing/plm/stages` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/stages` | `plm:manage` |
+| PATCH | `/api/v1/manufacturing/plm/stages/:id` | `plm:manage` |
+| DELETE | `/api/v1/manufacturing/plm/stages/:id` | `plm:manage` |
+| PUT | `/api/v1/manufacturing/plm/stages/:id/approvers` | `plm:manage` |
+| GET | `/api/v1/manufacturing/plm/requests` | `plm:read` |
+| GET | `/api/v1/manufacturing/plm/requests/:id` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/requests` | `plm:request` |
+| PATCH | `/api/v1/manufacturing/plm/requests/:id` | `plm:request` |
+| POST | `/api/v1/manufacturing/plm/requests/:id/review` | `plm:approve` |
+| POST | `/api/v1/manufacturing/plm/requests/:id/convert` | `plm:change` |
+| GET | `/api/v1/manufacturing/plm/changes` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/changes` | `plm:change` |
+| GET | `/api/v1/manufacturing/plm/changes/:id` | `plm:read` |
+| PATCH | `/api/v1/manufacturing/plm/changes/:id` | `plm:change` |
+| GET | `/api/v1/manufacturing/plm/changes/:id/impact` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/stage` | `plm:change` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/decisions` | `plm:approve` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/comments` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/documents` | `plm:change` |
+| PUT | `/api/v1/manufacturing/plm/changes/:id/routing-operations` | `plm:change` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/apply` | `plm:apply` |
+| POST | `/api/v1/manufacturing/plm/changes/:id/cancel` | `plm:apply` |
+| GET | `/api/v1/manufacturing/plm/documents` | `plm:read` |
+| GET | `/api/v1/manufacturing/plm/documents/:id` | `plm:read` |
+| POST | `/api/v1/manufacturing/plm/documents` | `plm:manage` |
+| PATCH | `/api/v1/manufacturing/plm/documents/:id` | `plm:manage` |
+| POST | `/api/v1/manufacturing/plm/documents/:id/release` | `plm:manage` |
+| POST | `/api/v1/manufacturing/plm/documents/:id/revise` | `plm:manage` |
+| POST | `/api/v1/manufacturing/plm/documents/:id/obsolete` | `plm:manage` |
+| DELETE | `/api/v1/manufacturing/plm/documents/:id` | `plm:manage` |
+
+Rules (verbatim messages are in the services):
+
+- **Gates**, only for products registered in PLM:
+  - A production order for a concept, design or obsolete product is refused: "Product X is design in its lifecycle
+    and cannot be produced."
+  - A BOM cannot be activated for an obsolete output, or with obsolete components ("BOM X uses obsolete
+    component(s): …").
+- **Transitions.** Only the listed ones are allowed.
+  - Release needs an active BOM when the product has any BOM.
+  - Obsolete is refused while the product is a component of a non-obsolete active BOM, or has open production
+    orders.
+- **Stages.** Ordered by `sequence`, and the last one means approved (defaults are created lazily).
+  - Forward moves need the current approval stage satisfied: required approvers approved, or one `plm:approve`
+    holder when the stage has no named approvers, and no rejection outstanding.
+  - Approval stages cannot be skipped.
+  - The approval that completes a stage advances the ECO one stage.
+  - Backward moves void the approvals from the target stage on.
+- **Legacy ECO routes** (`/engineering-changes/:id/approve|reject|apply`) keep their paths, permissions and messages:
+  approve fast-tracks to the last stage, reject cancels, apply forces (no use-up wait).
+- **Apply.**
+  - Queued (`applyQueued`, response `pending`) while the effective date is in the future on the org calendar
+    (`Organization.timezone`), or while a BOM change with `stockDisposition=use_up` still has stock of a removed
+    component. `PlmEffectivityJob` (hourly at :05) applies queued / date-effective ECOs once ready. Body
+    `{"force": true}` skips the use-up wait only.
+  - BOM changes run the dispositions for removed components not used by another active BOM: scrap → draft stock
+    adjustment to zero, rework → draft transfer to QC quarantine, return_to_supplier → draft debit note to the
+    preferred supplier. `wipDisposition` update / rework replaces draft and confirmed orders on the old BOM with new
+    orders on the new BOM (pegs and plan lines re-pointed); rework also flags in-progress orders for QC. Multi-stage /
+    pegged orders are kept. Result in `dispositionResult`.
+  - Releases the attached draft documents.
+  - Bumps the PLM revision (A → B; explicit `newRevision` wins; product changes only bump with `newRevision`).
+- **Cancel** soft-deletes the draft BOM version and the inactive routing copy, and detaches draft documents.
+- **Documents.** One draft per number. Releasing supersedes the previous released version. A draft attached to an
+  open ECO is released only by that ECO.
+- `POST /boms/:id/revise` refuses a second open ECO on the same BOM.
+
+Tests: `PlmIT`, `CostingEngineeringIT`.
+
 ## Cost Management CM-4 (ADR-S034)
 
 Stage standard-cost differences post through `StandardCostService.postStageVariance` (same 5950 / WIP lines, now in

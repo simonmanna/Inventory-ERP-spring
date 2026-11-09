@@ -321,6 +321,15 @@ export const PERMISSIONS = {
     activate: 'bom:activate',
     delete: 'bom:delete',
   },
+  // ---- Manufacturing — product lifecycle management (ADR-S063) ----
+  plm: {
+    read: 'plm:read',
+    manage: 'plm:manage',
+    request: 'plm:request',
+    change: 'plm:change',
+    approve: 'plm:approve',
+    apply: 'plm:apply',
+  },
   // ---- Manufacturing — production orders ----
   productionOrder: {
     read: 'production_order:read',

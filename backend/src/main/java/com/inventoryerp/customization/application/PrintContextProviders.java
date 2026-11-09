@@ -105,7 +105,8 @@ public class PrintContextProviders {
                         + " l.\"discountPercent\", t.name AS tax, l.\"lineSubtotal\" AS subtotal, l.\"lineTotal\" AS total"
                         + " FROM \"" + (order ? "SalesOrderLine" : "SalesQuotationLine") + "\" l LEFT JOIN \"Tax\" t ON"
                         + " t.id = l.\"taxId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\""
-                        + (order ? "orderId" : "quotationId") + "\" = ? AND l.\"organizationId\" = ? ORDER BY"
+                        + (order ? "orderId" : "quotationId") + "\" = ? AND l.\"organizationId\" = ?"
+                        + (order ? "" : " AND l.\"displayType\" IS NULL") + " ORDER BY"
                         + " l.\"sortOrder\", l.id").params(id, org)));
             }
             default -> throw new IllegalStateException(kind);

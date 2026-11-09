@@ -309,6 +309,13 @@ export const EVENTS = {
   ProjectTaskCompleted: 'project.task.completed',
   ProjectMilestoneReached: 'project.milestone.reached',
   ProjectUpdatePosted: 'project.update.posted',
+  // Product lifecycle management (ADR-S063) — Spring-native.
+  PlmChangeCreated: 'plm.change.created',
+  PlmChangeStageChanged: 'plm.change.stage_changed',
+  PlmChangeApproved: 'plm.change.approved',
+  PlmChangeApplied: 'plm.change.applied',
+  PlmChangeRequestCreated: 'plm.request.created',
+  PlmLifecycleChanged: 'plm.lifecycle.changed',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -445,6 +452,12 @@ export interface DomainEventMap {
   'project.task.completed': ProjectEventPayload;
   'project.milestone.reached': ProjectEventPayload;
   'project.update.posted': ProjectEventPayload;
+  'plm.change.created': PlmEventPayload;
+  'plm.change.stage_changed': PlmEventPayload;
+  'plm.change.approved': PlmEventPayload;
+  'plm.change.applied': PlmEventPayload;
+  'plm.request.created': PlmEventPayload;
+  'plm.lifecycle.changed': PlmEventPayload;
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;
@@ -924,6 +937,16 @@ export interface ProjectEventPayload {
   organizationId: string;
   projectId: string | null;
   taskId?: string;
+  [key: string]: unknown;
+}
+
+/** Payload of `plm.*` events (ADR-S063): the ECO, ECR or PLM item they are about. */
+export interface PlmEventPayload {
+  organizationId: string;
+  changeId?: string;
+  requestId?: string;
+  itemId?: string;
+  productId?: string | null;
   [key: string]: unknown;
 }
 

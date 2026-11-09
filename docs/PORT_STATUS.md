@@ -1537,3 +1537,46 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] GET /api/v1/project-reports/timesheets — ProjectTimesheetController.timesheetAnalysis
 - [x] GET /api/v1/project-reports/workload — ProjectTimesheetController.workload
 - [x] GET /api/v1/project-reports/gantt — ProjectTimesheetController.gantt
+
+## Product lifecycle management (ADR-S063, extension: no Nest counterpart)
+
+[Spec](spec/manufacturing.md). 38 routes in `PlmController`; ECO routes of ADR-S006 now run through `PlmChangeService`. Migrations V440, V441 (apply queue, stock / WIP dispositions on apply, org-time-zone effectivity, hourly `PlmEffectivityJob`). Tests: `PlmIT`, `CostingEngineeringIT`. Web: `/manufacturing/plm/*` (overview, products and cockpit, change requests, change board and detail, documents, settings).
+
+- [x] GET /api/v1/manufacturing/plm/overview — PlmController.overview
+- [x] GET /api/v1/manufacturing/plm/items — PlmController.items
+- [x] POST /api/v1/manufacturing/plm/items — PlmController.register
+- [x] POST /api/v1/manufacturing/plm/items/register-active — PlmController.registerActive
+- [x] GET /api/v1/manufacturing/plm/items/:id — PlmController.item
+- [x] PATCH /api/v1/manufacturing/plm/items/:id — PlmController.updateItem
+- [x] POST /api/v1/manufacturing/plm/items/:id/transition — PlmController.transition
+- [x] GET /api/v1/manufacturing/plm/stages — PlmController.stages
+- [x] POST /api/v1/manufacturing/plm/stages — PlmController.createStage
+- [x] PATCH /api/v1/manufacturing/plm/stages/:id — PlmController.updateStage
+- [x] DELETE /api/v1/manufacturing/plm/stages/:id — PlmController.deleteStage
+- [x] PUT /api/v1/manufacturing/plm/stages/:id/approvers — PlmController.approvers
+- [x] GET /api/v1/manufacturing/plm/requests — PlmController.requests
+- [x] GET /api/v1/manufacturing/plm/requests/:id — PlmController.request
+- [x] POST /api/v1/manufacturing/plm/requests — PlmController.createRequest
+- [x] PATCH /api/v1/manufacturing/plm/requests/:id — PlmController.updateRequest
+- [x] POST /api/v1/manufacturing/plm/requests/:id/review — PlmController.review
+- [x] POST /api/v1/manufacturing/plm/requests/:id/convert — PlmController.convert
+- [x] GET /api/v1/manufacturing/plm/changes — PlmController.changes
+- [x] POST /api/v1/manufacturing/plm/changes — PlmController.createChange
+- [x] GET /api/v1/manufacturing/plm/changes/:id — PlmController.change
+- [x] PATCH /api/v1/manufacturing/plm/changes/:id — PlmController.updateChange
+- [x] GET /api/v1/manufacturing/plm/changes/:id/impact — PlmController.impact
+- [x] POST /api/v1/manufacturing/plm/changes/:id/stage — PlmController.moveStage
+- [x] POST /api/v1/manufacturing/plm/changes/:id/decisions — PlmController.decide
+- [x] POST /api/v1/manufacturing/plm/changes/:id/comments — PlmController.comment
+- [x] POST /api/v1/manufacturing/plm/changes/:id/documents — PlmController.linkDocuments
+- [x] PUT /api/v1/manufacturing/plm/changes/:id/routing-operations — PlmController.routingOperations
+- [x] POST /api/v1/manufacturing/plm/changes/:id/apply — PlmController.apply
+- [x] POST /api/v1/manufacturing/plm/changes/:id/cancel — PlmController.cancel
+- [x] GET /api/v1/manufacturing/plm/documents — PlmController.documents
+- [x] GET /api/v1/manufacturing/plm/documents/:id — PlmController.document
+- [x] POST /api/v1/manufacturing/plm/documents — PlmController.createDocument
+- [x] PATCH /api/v1/manufacturing/plm/documents/:id — PlmController.updateDocument
+- [x] POST /api/v1/manufacturing/plm/documents/:id/release — PlmController.releaseDocument
+- [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
+- [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
+- [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument

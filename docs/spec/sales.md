@@ -306,3 +306,23 @@ Known limits, left for later phases:
 - Quotation reports stay in document currency. Quotations gained `exchangeRate` and pass it to the order in SG-3.
 - Customer deposits in reports are not converted (no rate stored).
 - Invoices already billed at rate 1 from foreign orders are not changed; check production before relying on old totals.
+
+## Quotation form layout (2026-11-09, V431)
+
+Odoo-style quotation form (`/sales/quotations/new`, `/sales/quotations/:id`; reference `references/invoice-reference/quotation-ui.png`).
+
+- **Section and note rows.** A quotation line may carry `displayType` = `line_section` or `line_note` with only a
+  `description`. These rows keep their place (`sortOrder`), carry no amounts, and are left out of submit
+  ("Add at least one line before submitting"), the discount and margin checks, conversion (sales order, counter
+  order, proforma), the PDF and print templates. An unknown value is refused with
+  `displayType must be one of: line_section, line_note`.
+- **Delivery date.** `SalesQuotation.commitmentDate` (optional) becomes the sales order's `commitmentDate` on conversion
+  unless the convert request sets one.
+- **Lead time.** `SalesQuotationLine.leadTimeDays` (optional, ≥ 0; `leadTimeDays must not be less than 0`).
+- **Web.** Header: Customer, Delivery address | Expiration, Quotation date, Payment terms, Delivery date. Tabs:
+  *Order Lines* (Description · Quantity · Unit Price · Amount; optional columns Product, Product Variant, Unit of
+  Measure, Lead Time, Disc.%, Taxes, Unit Cost, Margin, Margin (%), Tax Excl., Tax Incl., remembered per browser;
+  Add a line / section / note, Catalog, drag to reorder, section subtotals; terms below the lines; totals with one
+  row per tax) and *Other Info* (salesperson, branch, currency, dates, customer credit, notes). The
+  **Tax Excl. / Tax Incl.** toggle sets whether the unit prices on an editable quotation include tax (sent as
+  `taxInclusive` on every line) and switches the Amount column; on a locked quotation it only switches the display.
