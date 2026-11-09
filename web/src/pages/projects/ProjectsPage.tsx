@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays, Clock, FolderKanban, Lock, Milestone, Plus, Star, Users } from 'lucide-react';
+import { CalendarDays, Clock, FileText, FolderKanban, Lock, Milestone, Plus, Star, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListPageHeader } from '@/components/list/list-page';
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 import { num, usePmMutation, useProjectBoard, type ProjectCard } from '@/features/projects/api';
 import { ProjectDialog } from '@/features/projects/project-dialog';
+import { FromSalesOrderDialog } from '@/features/projects/from-sales-order-dialog';
 import {
   EmptyState, PROJECT_STATUS, ProgressBar, ProjectStatusPill, UpdateStatusPill, hours, pmColor, shortDate,
 } from '@/features/projects/ui';
@@ -24,13 +25,16 @@ const FILTERS = [
 
 /** Projects board: one card per project the user can see, with progress, people and the next milestone. */
 export function ProjectsPage() {
-  const canManage = useAuthStore((s) => s.hasPermission)(PERMISSIONS.project.manage);
+  const has = useAuthStore((s) => s.hasPermission);
+  const canManage = has(PERMISSIONS.project.manage);
+  const canReadOrders = has(PERMISSIONS.sales.orderRead);
   const [filter, setFilter] = useState('all');
   const [status, setStatus] = useState('open');
   const [templates, setTemplates] = useState(false);
   const [search, setSearch] = useState('');
   const q = useDebouncedValue(search, 250);
   const [creating, setCreating] = useState(false);
+  const [fromOrder, setFromOrder] = useState(false);
   const { data = [], isLoading } = useProjectBoard({ filter, status, search: q, templates });
 
   return (
@@ -40,7 +44,10 @@ export function ProjectsPage() {
         description={tx('Plan work, track tasks and time, and keep everyone on the same page.')}
         icon={FolderKanban}
         actions={canManage && (
-          <Button onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" /> {tx('New project')}</Button>
+          <div className="flex gap-2">
+            {canReadOrders && <Button variant="outline" onClick={() => setFromOrder(true)}><FileText className="mr-1 h-4 w-4" /> {tx('From sales order')}</Button>}
+            <Button onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" /> {tx('New project')}</Button>
+          </div>
         )}
       />
       <ListToolbar>
@@ -86,6 +93,7 @@ export function ProjectsPage() {
         </div>
       )}
       <ProjectDialog open={creating} onClose={() => setCreating(false)} />
+      <FromSalesOrderDialog open={fromOrder} onClose={() => setFromOrder(false)} />
     </div>
   );
 }

@@ -405,7 +405,8 @@ public class ProjectWorkspaceService {
         pm.requireManage(pm.visibleProject(projectId, true));
         List<String> current = pm.jdbc.sql("SELECT id FROM \"ProjectTaskStage\" WHERE \"projectId\" = ?").param(projectId)
                 .query(String.class).list();
-        if (stageIds == null || !new LinkedHashSet<>(stageIds).equals(new LinkedHashSet<>(current))) {
+        if (stageIds == null || stageIds.size() != current.size()
+                || !new LinkedHashSet<>(stageIds).equals(new LinkedHashSet<>(current))) {
             throw ApiException.badRequest("stageIds must list every stage of the project exactly once");
         }
         int seq = 10;
@@ -563,8 +564,11 @@ public class ProjectWorkspaceService {
 
     // ---- overview -------------------------------------------------------------------------------------------------------
 
-    /** Tasks by stage, time, milestones, latest update, linked records and — with {@code project:read} — costs. */
-    @Transactional(readOnly = true)
+    /**
+     * Tasks by stage, time, milestones, latest update, linked records and — with {@code project:read} — costs. Not
+     * read-only: the cost report creates the project WIP account on first use.
+     */
+    @Transactional
     public Map<String, Object> overview(String projectId) {
         Map<String, Object> p = pm.visibleProject(projectId, false);
         Map<String, Object> out = new LinkedHashMap<>();

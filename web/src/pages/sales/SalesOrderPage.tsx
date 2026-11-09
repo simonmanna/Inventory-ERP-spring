@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Copy, FileSignature, FileText, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, XCircle } from 'lucide-react';
+import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +39,7 @@ import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { FromSalesOrderDialog } from '@/features/projects/from-sales-order-dialog';
 import { MilestonesPanel, NewDeliveryDialog } from './DeliveriesPages';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
@@ -73,7 +74,7 @@ export function SalesOrderPage() {
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
   const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
-  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | 'delivery' | null>(null);
+  const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | 'delivery' | 'project' | null>(null);
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
   const [tab, setTab] = useState('lines');
@@ -158,6 +159,7 @@ export function SalesOrderPage() {
     if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (status !== 'cancelled' && has(PERMISSIONS.project.manage)) menu.push({ key: 'project', label: tx('Create project'), icon: <FolderKanban className={ico} />, onSelect: () => setDialog('project') });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'recurring', label: tx('Repeat this order'), icon: <History className={ico} />, onSelect: () => { const frequency = prompt(tx('How often? weekly, monthly, quarterly or yearly'), 'monthly'); if (frequency) api.post(`/sales/orders/${o.id}/recurring`, { frequency }).then(() => toast.success(tx('A draft copy will be created when due'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (has(P.orderWrite)) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => run('duplicate') });
@@ -399,6 +401,7 @@ export function SalesOrderPage() {
 
       {o && dialog === 'change' && <ChangeDialog order={o} onClose={() => setDialog(null)} />}
       {o && dialog === 'delivery' && <NewDeliveryDialog orderId={o.id} onClose={() => setDialog(null)} />}
+      {o && <FromSalesOrderDialog open={dialog === 'project'} onClose={() => setDialog(null)} salesOrder={{ id: o.id, number: o.number, partnerName: o.partnerName }} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
     </div>

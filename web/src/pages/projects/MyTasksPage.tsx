@@ -78,7 +78,7 @@ export function MyTasksPage() {
               <h2 className={cn('mb-2 text-sm font-semibold', g.key === 'overdue' && 'text-rose-600')}>
                 {g.label} <span className="font-normal text-muted-foreground">({g.tasks.length})</span>
               </h2>
-              <TaskList tasks={g.tasks} onOpen={setTask} showProject />
+              <TaskList tasks={g.tasks} onOpen={setTask} showProject bulk={canWrite ? {} : undefined} />
             </section>
           ))}
         </div>

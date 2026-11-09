@@ -7,8 +7,8 @@ import { CalendarDays, CheckCircle2, ChevronRight, Circle, GitBranch, ListChecks
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
-import { usePmMutation, type Stage, type Task } from './api';
-import { AvatarStack, PriorityFlag, TagChip, hours, pmColor, shortDate } from './ui';
+import { usePmMutation, type Member, type Priority, type Stage, type Task } from './api';
+import { AvatarStack, PRIORITY, PriorityFlag, TagChip, hours, pmColor, selectClass, shortDate } from './ui';
 
 /** Kanban of a project's stages; drag a card to move it (done / cancelled stages close the task). */
 export function TaskBoard({ projectId, stages, tasks, editable, onOpen }: {
@@ -187,13 +187,37 @@ export function Card({ task, overlay }: { task: Task; overlay?: boolean }) {
 }
 
 /** Flat sortable-looking list of tasks, grouped by nothing; used by the List tab and My Tasks. */
-export function TaskList({ tasks, onOpen, showProject }: { tasks: Task[]; onOpen: (id: string) => void; showProject?: boolean }) {
+export function TaskList({ tasks, onOpen, showProject, bulk }: {
+  tasks: Task[];
+  onOpen: (id: string) => void;
+  showProject?: boolean;
+  /** Enables row selection and bulk changes; stages only when every task belongs to one project. */
+  bulk?: { stages?: Stage[]; members?: Member[] };
+}) {
   const done = usePmMutation((v: { id: string; done: boolean }) => ({ method: 'post', url: `/project-tasks/${v.id}/done`, body: { done: v.done } }));
+  const [selected, setSelected] = useState<string[]>([]);
+  const visibleIds = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks]);
+  const picked = selected.filter((id) => visibleIds.has(id));
+  const allPicked = tasks.length > 0 && picked.length === tasks.length;
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   return (
+    <div className="space-y-2">
+      {bulk && picked.length > 0 && <BulkBar ids={picked} stages={bulk.stages} members={bulk.members} onDone={() => setSelected([])} />}
     <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
+            {bulk && (
+              <th className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  aria-label={tx('Select all')}
+                  checked={allPicked}
+                  onChange={() => setSelected(allPicked ? [] : tasks.slice(0, 200).map((t) => t.id))}
+                />
+              </th>
+            )}
             <th className="w-8 px-3 py-2" />
             <th className="px-3 py-2 text-left font-semibold">{tx('Task')}</th>
             {showProject && <th className="px-3 py-2 text-left font-semibold">{tx('Project')}</th>}
@@ -205,7 +229,12 @@ export function TaskList({ tasks, onOpen, showProject }: { tasks: Task[]; onOpen
         </thead>
         <tbody className="divide-y">
           {tasks.map((t) => (
-            <tr key={t.id} className="cursor-pointer hover:bg-muted/40" onClick={() => onOpen(t.id)}>
+            <tr key={t.id} className={cn('cursor-pointer hover:bg-muted/40', picked.includes(t.id) && 'bg-primary/5')} onClick={() => onOpen(t.id)}>
+              {bulk && (
+                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" className="h-4 w-4 accent-primary" aria-label={tx('Select task')} checked={picked.includes(t.id)} onChange={() => toggle(t.id)} />
+                </td>
+              )}
               <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                 <button type="button" onClick={() => done.mutate({ id: t.id, done: !t.isClosed })} aria-label={tx('Toggle done')}>
                   {t.isClosed ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Circle className="h-4 w-4 text-muted-foreground hover:text-emerald-600" />}
@@ -233,6 +262,46 @@ export function TaskList({ tasks, onOpen, showProject }: { tasks: Task[]; onOpen
           ))}
         </tbody>
       </table>
+    </div>
+    </div>
+  );
+}
+
+/** Changes the selected tasks at once (POST /project-tasks/bulk, at most 200 tasks). */
+function BulkBar({ ids, stages, members, onDone }: { ids: string[]; stages?: Stage[]; members?: Member[]; onDone: () => void }) {
+  const [deadline, setDeadline] = useState('');
+  const apply = usePmMutation<Record<string, unknown>, { changed: number }>(
+    (changes) => ({ method: 'post', url: '/project-tasks/bulk', body: { taskIds: ids, ...changes } }),
+    { success: tx('Tasks updated') },
+  );
+  const run = (changes: Record<string, unknown>) => apply.mutate(changes, { onSuccess: onDone });
+  const cls = cn(selectClass, 'h-8 w-40 text-xs');
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+      <span className="font-medium">{tx('{{count}} selected', { count: ids.length })}</span>
+      {stages && stages.length > 0 && (
+        <select className={cls} value="" disabled={apply.isPending} onChange={(e) => e.target.value && run({ stageId: e.target.value })} aria-label={tx('Move to stage')}>
+          <option value="">{tx('Move to stage…')}</option>
+          {stages.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+        </select>
+      )}
+      <select className={cls} value="" disabled={apply.isPending} onChange={(e) => e.target.value && run({ priority: e.target.value })} aria-label={tx('Set priority')}>
+        <option value="">{tx('Set priority…')}</option>
+        {(Object.keys(PRIORITY) as Priority[]).map((p) => <option key={p} value={p}>{PRIORITY[p].label}</option>)}
+      </select>
+      {members && members.length > 0 && (
+        <select className={cls} value="" disabled={apply.isPending} onChange={(e) => e.target.value && run({ addAssigneeId: e.target.value })} aria-label={tx('Add assignee')}>
+          <option value="">{tx('Add assignee…')}</option>
+          {members.map((m) => <option key={m.userId} value={m.userId}>{m.name || m.email}</option>)}
+        </select>
+      )}
+      <div className="flex items-center gap-1">
+        <Input type="date" className="h-8 w-36 text-xs" value={deadline} onChange={(e) => setDeadline(e.target.value)} aria-label={tx('Deadline')} />
+        <button type="button" className="rounded border bg-background px-2 py-1 text-xs hover:bg-muted disabled:opacity-50" disabled={apply.isPending} onClick={() => run({ deadline })}>
+          {deadline ? tx('Set deadline') : tx('Clear deadline')}
+        </button>
+      </div>
+      <button type="button" className="ml-auto text-xs text-muted-foreground hover:text-foreground" onClick={onDone}>{tx('Clear selection')}</button>
     </div>
   );
 }

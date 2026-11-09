@@ -182,6 +182,127 @@ public class ProjectService {
         return SqlRows.one(jdbc.sql("SELECT * FROM \"ProjectWbsElement\" WHERE id = ?").param(id));
     }
 
+    /** Change a site: code (unique on the project), name, address, delivery location; null fields stay. */
+    @Transactional
+    public Map<String, Object> updateSite(String siteId, SiteInput in) {
+        Map<String, Object> s = site(siteId);
+        String code = blank(in.code()) == null ? (String) s.get("code") : in.code().trim();
+        if (!code.equals(s.get("code")) && jdbc.sql("SELECT count(*) FROM \"ProjectSite\" WHERE \"projectId\" = ? AND"
+                + " code = ? AND id <> ?").params(s.get("projectId"), code, siteId).query(Long.class).single() > 0) {
+            throw ApiException.conflict("Site " + code + " already exists on this project");
+        }
+        if (blank(in.deliveryLocationId()) != null && jdbc.sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(in.deliveryLocationId(), org()).query(Long.class).single() == 0) {
+            throw ApiException.notFound("Location not found");
+        }
+        // "" clears the optional address / delivery location; null keeps them
+        jdbc.sql("UPDATE \"ProjectSite\" SET code = ?, name = coalesce(?, name), address = CASE WHEN ?::text IS NULL"
+                        + " THEN address ELSE nullif(?, '') END, \"deliveryLocationId\" = CASE WHEN ?::text IS NULL THEN"
+                        + " \"deliveryLocationId\" ELSE nullif(?, '') END WHERE id = ?")
+                .params(code, blank(in.name()) == null ? null : in.name().trim(), in.address(), in.address(),
+                        in.deliveryLocationId(), in.deliveryLocationId(), siteId)
+                .update();
+        audit.recordInTx(AuditInput.of("ProjectSite", siteId, "update", s, null));
+        return site(siteId);
+    }
+
+    /**
+     * Delete a site nothing was costed to. Tasks pointing at it lose the link; a site with project cost lines stays
+     * (the sub-ledger and its journal dimensions keep referring to it).
+     */
+    @Transactional
+    public Map<String, Object> deleteSite(String siteId) {
+        Map<String, Object> s = site(siteId);
+        if (jdbc.sql("SELECT count(*) FROM \"ProjectCostLine\" WHERE \"siteId\" = ?").param(siteId).query(Long.class)
+                .single() > 0) {
+            throw ApiException.badRequest("Site " + s.get("code") + " has project cost lines and cannot be deleted");
+        }
+        jdbc.sql("UPDATE \"ProjectTask\" SET \"siteId\" = NULL WHERE \"siteId\" = ?").param(siteId).update();
+        jdbc.sql("DELETE FROM \"ProjectSite\" WHERE id = ?").param(siteId).update();
+        audit.recordInTx(AuditInput.of("ProjectSite", siteId, "delete", s, null));
+        return Obj.of("id", siteId, "deleted", true);
+    }
+
+    /** A site of this organisation (404 otherwise). */
+    Map<String, Object> site(String siteId) {
+        Map<String, Object> s = siteId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"ProjectSite\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(siteId, org()));
+        if (s == null) {
+            throw ApiException.notFound("Site not found");
+        }
+        return s;
+    }
+
+    /**
+     * Change a WBS element: code (unique on the project), name, parent (same project, never itself or one of its own
+     * descendants; "" moves it to the top level), billable / costable flags. Null fields stay.
+     */
+    @Transactional
+    public Map<String, Object> updateWbs(String wbsId, WbsInput in) {
+        Map<String, Object> w = wbsElement(wbsId);
+        String projectId = (String) w.get("projectId");
+        String code = blank(in.code()) == null ? (String) w.get("code") : in.code().trim();
+        if (!code.equals(w.get("code")) && jdbc.sql("SELECT count(*) FROM \"ProjectWbsElement\" WHERE \"projectId\" = ?"
+                + " AND code = ? AND id <> ?").params(projectId, code, wbsId).query(Long.class).single() > 0) {
+            throw ApiException.conflict("WBS element " + code + " already exists on this project");
+        }
+        String parentId = in.parentId() == null ? (String) w.get("parentId") : blank(in.parentId());
+        if (parentId != null && !parentId.equals(w.get("parentId"))) {
+            wbs(projectId, parentId);
+            boolean cycle = jdbc.sql("WITH RECURSIVE sub AS (SELECT id FROM \"ProjectWbsElement\" WHERE id = ? UNION"
+                    + " SELECT e.id FROM \"ProjectWbsElement\" e JOIN sub ON e.\"parentId\" = sub.id) SELECT count(*)"
+                    + " FROM sub WHERE id = ?").params(wbsId, parentId).query(Long.class).single() > 0;
+            if (cycle) {
+                throw ApiException.badRequest("A WBS element cannot be placed under itself or one of its children");
+            }
+        }
+        jdbc.sql("UPDATE \"ProjectWbsElement\" SET code = ?, name = coalesce(?, name), \"parentId\" = ?, \"isBillable\" ="
+                        + " coalesce(?, \"isBillable\"), \"isCostable\" = coalesce(?, \"isCostable\") WHERE id = ?")
+                .params(code, blank(in.name()) == null ? null : in.name().trim(), parentId, in.isBillable(),
+                        in.isCostable(), wbsId)
+                .update();
+        audit.recordInTx(AuditInput.of("ProjectWbsElement", wbsId, "update", w, null));
+        return wbsElement(wbsId);
+    }
+
+    /**
+     * Delete a WBS element that nothing refers to: no child elements, no cost lines, budget or forecast lines,
+     * contract variations or subcontracts. Tasks pointing at it lose the link.
+     */
+    @Transactional
+    public Map<String, Object> deleteWbs(String wbsId) {
+        Map<String, Object> w = wbsElement(wbsId);
+        String code = (String) w.get("code");
+        if (jdbc.sql("SELECT count(*) FROM \"ProjectWbsElement\" WHERE \"parentId\" = ?").param(wbsId).query(Long.class)
+                .single() > 0) {
+            throw ApiException.badRequest("Move or delete the child elements of WBS element " + code + " first");
+        }
+        long used = jdbc.sql("SELECT (SELECT count(*) FROM \"ProjectCostLine\" WHERE \"wbsId\" = :w)"
+                + " + (SELECT count(*) FROM \"ProjectBudgetLine\" WHERE \"wbsId\" = :w)"
+                + " + (SELECT count(*) FROM \"ProjectForecastLine\" WHERE \"wbsId\" = :w)"
+                + " + (SELECT count(*) FROM \"ContractVariation\" WHERE \"wbsId\" = :w)"
+                + " + (SELECT count(*) FROM \"Subcontract\" WHERE \"wbsId\" = :w)").param("w", wbsId)
+                .query(Long.class).single();
+        if (used > 0) {
+            throw ApiException.badRequest("WBS element " + code + " is used by cost, budget or forecast lines,"
+                    + " variations or subcontracts and cannot be deleted");
+        }
+        jdbc.sql("UPDATE \"ProjectTask\" SET \"wbsId\" = NULL WHERE \"wbsId\" = ?").param(wbsId).update();
+        jdbc.sql("DELETE FROM \"ProjectWbsElement\" WHERE id = ?").param(wbsId).update();
+        audit.recordInTx(AuditInput.of("ProjectWbsElement", wbsId, "delete", w, null));
+        return Obj.of("id", wbsId, "deleted", true);
+    }
+
+    /** A WBS element of this organisation by id alone (404 otherwise). */
+    Map<String, Object> wbsElement(String wbsId) {
+        Map<String, Object> w = wbsId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"ProjectWbsElement\" WHERE"
+                + " id = ? AND \"organizationId\" = ?").params(wbsId, org()));
+        if (w == null) {
+            throw ApiException.notFound("WBS element not found");
+        }
+        return w;
+    }
+
     /** A WBS element of the project (404 otherwise). */
     public Map<String, Object> wbs(String projectId, String wbsId) {
         Map<String, Object> w = wbsId == null ? null : SqlRows.one(jdbc.sql("SELECT * FROM \"ProjectWbsElement\" WHERE"
@@ -205,10 +326,18 @@ public class ProjectService {
         boolean anyApproved = jdbc.sql("SELECT count(*) FROM \"ProjectBudget\" WHERE \"projectId\" = ? AND status IN"
                 + " ('approved', 'superseded')").param(projectId).query(Long.class).single() > 0;
         String id = UUID.randomUUID().toString();
-        BigDecimal total = BigDecimal.ZERO;
         jdbc.sql("INSERT INTO \"ProjectBudget\" (id, \"organizationId\", \"projectId\", version, kind, notes,"
                 + " \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?)").params(id, org(), projectId, version, anyApproved
                 ? "revised" : "original", notes, TenantContext.userId()).update();
+        BigDecimal total = writeLines(projectId, id, lines);
+        audit.recordInTx(AuditInput.of("ProjectBudget", id, "create", null, Obj.of("version", version, "total",
+                total)));
+        return budget(id);
+    }
+
+    /** Insert the budget lines (validated) and store the total. */
+    private BigDecimal writeLines(String projectId, String budgetId, List<BudgetLineInput> lines) {
+        BigDecimal total = BigDecimal.ZERO;
         for (BudgetLineInput l : lines) {
             wbs(projectId, l.wbsId());
             element(l.costElement());
@@ -217,15 +346,62 @@ public class ProjectService {
                 throw ApiException.badRequest("amount must not be negative");
             }
             BigDecimal revenue = l.revenue() == null ? BigDecimal.ZERO : money(l.revenue());
+            if (revenue.signum() < 0) {
+                throw ApiException.badRequest("revenue must not be negative");
+            }
             jdbc.sql("INSERT INTO \"ProjectBudgetLine\" (id, \"organizationId\", \"budgetId\", \"wbsId\","
                     + " \"costElement\", amount, revenue) VALUES (?, ?, ?, ?, ?, ?, ?)").params(UUID.randomUUID()
-                    .toString(), org(), id, l.wbsId(), l.costElement(), amount, revenue).update();
+                    .toString(), org(), budgetId, l.wbsId(), l.costElement(), amount, revenue).update();
             total = total.add(amount);
         }
-        jdbc.sql("UPDATE \"ProjectBudget\" SET total = ? WHERE id = ?").params(total, id).update();
-        audit.recordInTx(AuditInput.of("ProjectBudget", id, "create", null, Obj.of("version", version, "total",
-                total)));
-        return budget(id);
+        jdbc.sql("UPDATE \"ProjectBudget\" SET total = ? WHERE id = ?").params(total, budgetId).update();
+        return total;
+    }
+
+    /**
+     * Change a draft budget: {@code lines} (when given) replace every line, {@code notes} (when given) replace the
+     * notes. Approved and superseded versions are frozen.
+     */
+    @Transactional
+    public Map<String, Object> updateBudget(String budgetId, List<BudgetLineInput> lines, String notes) {
+        Map<String, Object> b = draftBudget(budgetId, "Only a draft budget can be changed");
+        String projectId = (String) b.get("projectId");
+        if (lines != null) {
+            if (lines.isEmpty()) {
+                throw ApiException.badRequest("lines should not be empty");
+            }
+            jdbc.sql("DELETE FROM \"ProjectBudgetLine\" WHERE \"budgetId\" = ?").param(budgetId).update();
+            writeLines(projectId, budgetId, lines);
+        }
+        if (notes != null) {
+            jdbc.sql("UPDATE \"ProjectBudget\" SET notes = nullif(?, '') WHERE id = ?").params(notes, budgetId).update();
+        }
+        Map<String, Object> after = budget(budgetId);
+        audit.recordInTx(AuditInput.of("ProjectBudget", budgetId, "update", Obj.of("total", b.get("total")),
+                Obj.of("total", after.get("total"))));
+        return after;
+    }
+
+    /** Delete a draft budget version (its lines go with it). */
+    @Transactional
+    public Map<String, Object> deleteBudget(String budgetId) {
+        Map<String, Object> b = draftBudget(budgetId, "Only a draft budget can be deleted");
+        jdbc.sql("DELETE FROM \"ProjectBudget\" WHERE id = ?").param(budgetId).update();
+        audit.recordInTx(AuditInput.of("ProjectBudget", budgetId, "delete", Obj.of("version", b.get("version"),
+                "total", b.get("total")), null));
+        return Obj.of("id", budgetId, "deleted", true);
+    }
+
+    /** The budget, locked with its project, when it is still a draft. */
+    private Map<String, Object> draftBudget(String budgetId, String message) {
+        Map<String, Object> b = budget(budgetId);
+        project((String) b.get("projectId"), true);
+        String status = jdbc.sql("SELECT status FROM \"ProjectBudget\" WHERE id = ? FOR UPDATE").param(budgetId)
+                .query(String.class).single();
+        if (!"draft".equals(status)) {
+            throw ApiException.badRequest(message);
+        }
+        return b;
     }
 
     @Transactional

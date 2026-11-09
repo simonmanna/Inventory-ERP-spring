@@ -66,12 +66,15 @@ function GroupPicker({ value, onChange, options }: { value: string; onChange: (v
 }
 
 function TaskReport({ projectId, from, to }: { projectId: string; from: string; to: string }) {
-  const [groupBy, setGroupBy] = useState('project');
+  const [picked, setGroupBy] = useState('project');
+  // Stages belong to one project, so the API only groups by stage within a project.
+  const groupBy = picked === 'stage' && !projectId ? 'project' : picked;
+  const groups = projectId ? TASK_GROUPS : TASK_GROUPS.filter(([v]) => v !== 'stage');
   const { data = [], isLoading } = useTaskAnalysis({ groupBy, projectId: projectId || undefined, from: from || undefined, to: to || undefined });
   const chart = data.slice(0, 15).map((r) => ({ label: r.label ?? tx('(none)'), open: Number(r.open), closed: Number(r.closed) }));
   return (
     <div className="space-y-3">
-      <GroupPicker value={groupBy} onChange={setGroupBy} options={TASK_GROUPS} />
+      <GroupPicker value={groupBy} onChange={setGroupBy} options={groups} />
       {isLoading ? <Skeleton className="h-64 w-full" /> : (
         <>
           {chart.length > 0 && (

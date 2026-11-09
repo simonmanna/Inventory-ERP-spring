@@ -228,7 +228,7 @@ class ProjectCostScenarioIT extends ApiTestSupport {
         // tenant isolation and free-text project references
         assertThat(call("GET", "/projects/" + pid, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/projects/" + pid + "/report", null, otherToken).status()).isEqualTo(404);
-        assertThat(assertAuthorizationMatrix(ProjectController.class)).isEqualTo(20);
+        assertThat(assertAuthorizationMatrix(ProjectController.class)).isEqualTo(27);
     }
 
     @Test

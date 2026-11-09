@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, BarChart3, CalendarRange, Copy, KanbanSquare, List, Lock, MessageSquare, Milestone as MilestoneIcon,
+  ArrowLeft, BarChart3, CalendarRange, Coins, Copy, FileSignature, KanbanSquare, List, Lock, MessageSquare, Milestone as MilestoneIcon,
   Settings2, Star, TrendingUp,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,15 +16,19 @@ import { usePmMutation, useTags, useTasks, useWorkspace } from '@/features/proje
 import { TaskBoard, TaskList } from '@/features/projects/task-board';
 import { TaskDialog } from '@/features/projects/task-dialog';
 import { ProjectDialog } from '@/features/projects/project-dialog';
-import { ProjectStatusPill, UpdateStatusPill, pmColor, selectClass } from '@/features/projects/ui';
+import { PROJECT_STATUS, ProjectStatusPill, UpdateStatusPill, pmColor, selectClass } from '@/features/projects/ui';
+import type { ProjectStatus } from '@/features/projects/api';
 import { OverviewTab } from './tabs/OverviewTab';
 import { MilestonesTab } from './tabs/MilestonesTab';
 import { UpdatesTab } from './tabs/UpdatesTab';
 import { DiscussionTab } from './tabs/DiscussionTab';
 import { SettingsTab } from './tabs/SettingsTab';
 import { GanttTab } from './tabs/GanttTab';
+import { ContractTab } from './tabs/ContractTab';
+import { CostingTab } from './tabs/CostingTab';
 
-type Tab = 'board' | 'list' | 'overview' | 'timeline' | 'milestones' | 'updates' | 'discussion' | 'settings';
+type Tab = 'board' | 'list' | 'overview' | 'timeline' | 'milestones' | 'updates' | 'discussion' | 'costing' | 'contract'
+  | 'settings';
 
 /** One project: kanban / list of tasks plus overview, timeline, milestones, status updates, chatter and settings. */
 export function ProjectDetailPage() {
@@ -39,7 +43,10 @@ export function ProjectDetailPage() {
   };
 
   const me = useAuthStore((s) => s.user?.id);
-  const canDuplicate = useAuthStore((s) => s.hasPermission)(PERMISSIONS.project.manage);
+  const has = useAuthStore((s) => s.hasPermission);
+  const canDuplicate = has(PERMISSIONS.project.manage);
+  const canContract = has(PERMISSIONS.contract.read);
+  const canCosting = has(PERMISSIONS.project.read);
   const { data: ws, isLoading, error } = useWorkspace(id);
   const { data: tags = [] } = useTags();
   const [search, setSearch] = useState('');
@@ -54,6 +61,14 @@ export function ProjectDetailPage() {
     !!id && taskView,
   );
   const fav = usePmMutation(() => ({ method: 'post', url: `/projects/${id}/favorite` }));
+  const setStatus = usePmMutation((status: ProjectStatus) => ({ method: 'post', url: `/projects/${id}/status`, body: { status } }),
+    { success: tx('Project status changed') });
+  const changeStatus = (status: ProjectStatus) => {
+    // Closed and cancelled are final: the server refuses any later status change.
+    if ((status === 'closed' || status === 'cancelled')
+      && !confirm(tx('A {{status}} project cannot change status again. Continue?', { status: PROJECT_STATUS[status].label.toLowerCase() }))) return;
+    setStatus.mutate(status);
+  };
 
   const tabs = useMemo(() => ([
     { id: 'board', label: tx('Board'), icon: KanbanSquare },
@@ -63,8 +78,10 @@ export function ProjectDetailPage() {
     ...(ws?.allowMilestones ? [{ id: 'milestones', label: tx('Milestones'), icon: MilestoneIcon }] : []),
     { id: 'updates', label: tx('Status updates'), icon: TrendingUp },
     { id: 'discussion', label: tx('Discussion'), icon: MessageSquare },
+    ...(canCosting && !ws?.isTemplate ? [{ id: 'costing', label: tx('Costing'), icon: Coins }] : []),
+    ...(canContract && !ws?.isTemplate ? [{ id: 'contract', label: tx('Contract'), icon: FileSignature }] : []),
     ...(ws?.canManage ? [{ id: 'settings', label: tx('Settings'), icon: Settings2 }] : []),
-  ] as Array<{ id: Tab; label: string; icon: typeof List }>), [ws?.allowMilestones, ws?.canManage]);
+  ] as Array<{ id: Tab; label: string; icon: typeof List }>), [ws?.allowMilestones, ws?.canManage, ws?.isTemplate, canContract, canCosting]);
 
   if (error) {
     return (
@@ -105,6 +122,17 @@ export function ProjectDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {canDuplicate && !ws.isTemplate && (
+            <select
+              className={cn(selectClass, 'h-9 w-36')}
+              aria-label={tx('Project status')}
+              value={ws.status}
+              disabled={setStatus.isPending || ws.status === 'closed' || ws.status === 'cancelled'}
+              onChange={(e) => changeStatus(e.target.value as ProjectStatus)}
+            >
+              {(Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS[s].label}</option>)}
+            </select>
+          )}
           <Button variant="outline" size="sm" onClick={() => fav.mutate()}>
             <Star className={cn('mr-1.5 h-4 w-4', ws.isFavorite && 'fill-amber-400 text-amber-400')} />
             {ws.isFavorite ? tx('Favourite') : tx('Add to favourites')}
@@ -157,12 +185,16 @@ export function ProjectDetailPage() {
       {tab === 'board' && (
         <TaskBoard projectId={ws.id} stages={ws.stages} tasks={visible} editable={ws.canEditTasks} onOpen={(t) => setParam('task', t)} />
       )}
-      {tab === 'list' && <TaskList tasks={visible} onOpen={(t) => setParam('task', t)} />}
+      {tab === 'list' && (
+        <TaskList tasks={visible} onOpen={(t) => setParam('task', t)} bulk={ws.canEditTasks ? { stages: ws.stages, members: ws.members } : undefined} />
+      )}
       {tab === 'overview' && <OverviewTab ws={ws} onOpenTask={(t) => setParam('task', t)} />}
       {tab === 'timeline' && <GanttTab projectId={ws.id} onOpenTask={(t) => setParam('task', t)} />}
       {tab === 'milestones' && <MilestonesTab ws={ws} />}
       {tab === 'updates' && <UpdatesTab ws={ws} />}
       {tab === 'discussion' && <DiscussionTab ws={ws} onOpenTask={(t) => setParam('task', t)} />}
+      {tab === 'costing' && canCosting && <CostingTab ws={ws} />}
+      {tab === 'contract' && canContract && <ContractTab ws={ws} />}
       {tab === 'settings' && ws.canManage && <SettingsTab ws={ws} />}
 
       <TaskDialog taskId={openTask} onClose={() => setParam('task', null)} onOpenTask={(t) => setParam('task', t)} />
