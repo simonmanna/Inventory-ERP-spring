@@ -107,6 +107,9 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
                 .isEqualTo(403);
         assertThat(call("POST", "/projects/revenue-criteria/" + crit + "/approve", null, checkerToken).status())
                 .isEqualTo(200);
+        JsonNode crits = ok(200, "GET", "/projects/" + pid + "/revenue-criteria", null);
+        assertThat(crits.size()).isEqualTo(1);
+        assertThat(crits.get(0).get("status").asString()).isEqualTo("approved");
         String policy = ok(201, "POST", "/costing/policies", election).get("id").asString();
         assertThat(call("POST", "/costing/policies/" + policy + "/approve", null, checkerToken).status())
                 .isEqualTo(200);
@@ -124,6 +127,9 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
 
         // advance and costs
         posted("/projects/" + pid + "/advances", Map.of("amount", 20000, "recoveryPct", 10));
+        JsonNode advances = ok(200, "GET", "/projects/" + pid + "/advances", null);
+        assertThat(advances.size()).isEqualTo(1);
+        assertThat(num(advances.get(0).get("outstanding"))).isEqualByComparingTo("20000");
         posted("/projects/" + pid + "/costs/equipment", Map.of("wbsId", w, "equipmentRef", "CRANE", "hours", 300,
                 "ratePerHour", 100));
         ok(200, "PUT", "/projects/" + pid + "/forecast", Map.of("lines", List.of(Map.of("wbsId", w, "costElement",
@@ -173,6 +179,10 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
                 "scope", "Piling", "value", 10000, "retentionPct", 5)).get("id").asString();
         JsonNode val = posted("/projects/subcontracts/" + sc + "/valuations", Map.of("cumulativeValue", 6000));
         assertThat(num(val.get("retention"))).isEqualByComparingTo("300");
+        JsonNode subs = ok(200, "GET", "/projects/" + pid + "/subcontracts", null);
+        assertThat(subs.size()).isEqualTo(1);
+        assertThat(subs.get(0).get("supplierName").isNull()).isFalse();
+        assertThat(subs.get(0).get("valuations").size()).isEqualTo(1);
         assertThat(entry(val.get("journalEntryId").asString(), "1460")).isEqualByComparingTo("6000");
         assertThat(entry(val.get("journalEntryId").asString(), "2485")).isEqualByComparingTo("-300");
         String payable = null;
@@ -239,8 +249,11 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
         assertTied(ok(200, "GET", "/projects/" + pid + "/contract-position", null));
 
         assertThat(call("GET", "/projects/" + pid + "/contract-position", null, otherToken).status()).isEqualTo(404);
+        for (String list : List.of("revenue-criteria", "advances", "subcontracts")) {
+            assertThat(call("GET", "/projects/" + pid + "/" + list, null, otherToken).status()).isEqualTo(404);
+        }
         assertThat(call("GET", "/projects/claims/" + c1, null, otherToken).status()).isEqualTo(404);
-        assertThat(assertAuthorizationMatrix(ContractController.class)).isEqualTo(27);
+        assertThat(assertAuthorizationMatrix(ContractController.class)).isEqualTo(32);
     }
 
     @Test

@@ -302,6 +302,13 @@ export const EVENTS = {
   HelpdeskTicketClosed: 'helpdesk.ticket.closed',
   HelpdeskLetterReceived: 'helpdesk.letter.received',
   HelpdeskLetterDispatched: 'helpdesk.letter.dispatched',
+  // Project management (ADR-S062) — Spring-native.
+  ProjectTaskCreated: 'project.task.created',
+  ProjectTaskAssigned: 'project.task.assigned',
+  ProjectTaskStageChanged: 'project.task.stage_changed',
+  ProjectTaskCompleted: 'project.task.completed',
+  ProjectMilestoneReached: 'project.milestone.reached',
+  ProjectUpdatePosted: 'project.update.posted',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -432,6 +439,12 @@ export interface DomainEventMap {
   'helpdesk.ticket.closed': HelpdeskEventPayload;
   'helpdesk.letter.received': HelpdeskEventPayload;
   'helpdesk.letter.dispatched': HelpdeskEventPayload;
+  'project.task.created': ProjectEventPayload;
+  'project.task.assigned': ProjectEventPayload;
+  'project.task.stage_changed': ProjectEventPayload;
+  'project.task.completed': ProjectEventPayload;
+  'project.milestone.reached': ProjectEventPayload;
+  'project.update.posted': ProjectEventPayload;
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;
@@ -903,6 +916,14 @@ export interface HelpdeskEventPayload {
   organizationId: string;
   ticketId: string;
   number: string;
+  [key: string]: unknown;
+}
+
+/** Payload of `project.*` events (ADR-S062). */
+export interface ProjectEventPayload {
+  organizationId: string;
+  projectId: string | null;
+  taskId?: string;
   [key: string]: unknown;
 }
 

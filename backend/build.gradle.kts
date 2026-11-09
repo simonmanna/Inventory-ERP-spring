@@ -168,7 +168,7 @@ val acc0VerificationTest by tasks.registering(Test::class) {
 // Inner dev loop (`./gradlew fastTest [--tests X]`): no JaCoCo, C1-only JIT for faster Spring startup, the
 // Testcontainers Postgres kept alive between runs (TESTCONTAINERS_REUSE_ENABLE), and the multi-minute seed /
 // architecture suites skipped. NOT the gate: `./gradlew build` still runs everything on a fresh container.
-// Reset the reused DB: docker rm -f $(docker ps -q --filter label=org.testcontainers.reuse.hash)
+// Reset the reused DB: docker rm -f $(docker ps -aq --filter label=org.testcontainers.hash)
 val fastTest by tasks.registering(Test::class) {
     description = "Fast inner-loop tests: reused DB container, no coverage, slow suites skipped."
     group = "verification"

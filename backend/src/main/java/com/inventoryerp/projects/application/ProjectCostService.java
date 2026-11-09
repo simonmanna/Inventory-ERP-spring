@@ -157,7 +157,8 @@ public class ProjectCostService {
         String to = required(day(in.to()), "to");
         List<Map<String, Object>> entries = SqlRows.list(jdbc.sql("SELECT e.id, e.minutes, e.date, t.\"employeeId\""
                 + " FROM \"HrTimesheetEntry\" e JOIN \"HrTimesheet\" t ON t.id = e.\"timesheetId\" WHERE"
-                + " e.\"organizationId\" = ? AND t.status::text = 'APPROVED' AND e.\"linkedEntityType\" = 'project' AND"
+                + " e.\"organizationId\" = ? AND e.\"deletedAt\" IS NULL AND t.status::text = 'APPROVED' AND"
+                + " e.\"linkedEntityType\" = 'project' AND"
                 + " e.\"linkedEntityId\" = ? AND e.date >= ?::date AND e.date < (?::date + 1) AND NOT EXISTS (SELECT 1"
                 + " FROM \"ProjectCostLine\" c WHERE c.\"sourceType\" = 'project_timesheet' AND c.status = 'posted' AND"
                 + " c.\"sourceLineId\" = e.id) ORDER BY e.date, e.id FOR UPDATE OF e").params(org(), projectId, from,
@@ -276,6 +277,57 @@ public class ProjectCostService {
                 in.journalLineId(), date, null, null, amount, Boolean.TRUE.equals(in.excludeFromProgress()), account,
                 je, in.notes() == null ? text : in.notes());
         return line(id);
+    }
+
+    /** A posted journal line that {@link #reclass} would accept, with what is already reclassed and still open. */
+    public record ReclassableLine(String journalLineId, String journalEntryId, String entryNumber, Instant postingDate,
+            String accountId, String accountCode, String accountName, String description, String partnerName,
+            BigDecimal amount, BigDecimal reclassed, BigDecimal open) {}
+
+    /**
+     * Candidates for {@link #reclass}: debit lines of posted (not reversed, not reversal) journal entries on expense /
+     * cost-of-sales accounts that are not project postings and still have an open amount — newest first, at most
+     * {@code limit} (1–200, default 50). {@code search} matches the entry number, line / entry text, account code or
+     * name and partner name; {@code from} / {@code to} bound the posting date (inclusive).
+     */
+    @Transactional(readOnly = true)
+    public List<ReclassableLine> reclassable(String projectId, String search, String from, String to, Integer limit) {
+        projects.project(projectId, false);
+        int max = limit == null ? 50 : Math.max(1, Math.min(200, limit));
+        String q = blank(search) == null ? null : search.trim();
+        String f = day(from);
+        String t = day(to);
+        return jdbc.sql("SELECT * FROM (SELECT jl.id, jl.\"journalEntryId\", e.\"entryNumber\", e.\"postingDate\","
+                        + " a.id AS \"accountId\", a.code AS \"accountCode\", a.name AS \"accountName\","
+                        + " coalesce(jl.description, e.description) AS description, pa.name AS \"partnerName\","
+                        + " round(jl.\"baseDebit\" - jl.\"baseCredit\", 2) AS amount, (SELECT coalesce(sum(c.amount), 0)"
+                        + " FROM \"ProjectCostLine\" c WHERE c.\"sourceType\" = 'project_reclass' AND c.status = 'posted'"
+                        + " AND c.\"sourceLineId\" = jl.id) AS reclassed, jl.\"lineNumber\""
+                        + " FROM \"JournalLine\" jl JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\""
+                        + " JOIN \"Account\" a ON a.id = jl.\"accountId\" JOIN \"AccountCategory\" cat ON cat.id ="
+                        + " a.\"categoryId\" LEFT JOIN \"Partner\" pa ON pa.id = jl.\"partnerId\""
+                        + " WHERE jl.\"organizationId\" = :org AND e.status::text = 'posted' AND e.\"reversalOfId\" IS NULL"
+                        + " AND cat.key IN ('operating_expense', 'cost_of_goods_sold', 'other_expense')"
+                        + " AND coalesce(e.\"sourceType\", '') NOT LIKE 'project\\_%' AND jl.\"baseDebit\" > jl.\"baseCredit\""
+                        + " AND (CAST(:from AS date) IS NULL OR e.\"postingDate\" >= CAST(:from AS date))"
+                        + " AND (CAST(:to AS date) IS NULL OR e.\"postingDate\" < CAST(:to AS date) + 1)"
+                        + " AND (CAST(:q AS text) IS NULL OR e.\"entryNumber\" ILIKE '%' || :q || '%' OR jl.description"
+                        + " ILIKE '%' || :q || '%' OR e.description ILIKE '%' || :q || '%' OR a.code ILIKE :q || '%' OR"
+                        + " a.name ILIKE '%' || :q || '%' OR pa.name ILIKE '%' || :q || '%')) x"
+                        + " WHERE x.amount - x.reclassed > 0"
+                        + " ORDER BY x.\"postingDate\" DESC, x.\"entryNumber\" DESC, x.\"lineNumber\" LIMIT :max")
+                .param("org", org()).param("from", f).param("to", t).param("q", q).param("max", max)
+                .query((rs, i) -> {
+                    BigDecimal amount = rs.getBigDecimal("amount").setScale(2, RoundingMode.HALF_UP);
+                    BigDecimal reclassed = rs.getBigDecimal("reclassed").setScale(2, RoundingMode.HALF_UP);
+                    Instant posted = rs.getTimestamp("postingDate").toLocalDateTime().toInstant(ZoneOffset.UTC);
+                    return new ReclassableLine(rs.getString("id"), rs.getString("journalEntryId"),
+                            rs.getString("entryNumber"), posted,
+                            rs.getString("accountId"), rs.getString("accountCode"), rs.getString("accountName"),
+                            rs.getString("description"), rs.getString("partnerName"), amount, reclassed,
+                            amount.subtract(reclassed));
+                })
+                .list();
     }
 
     /** Reverse a capture: the journal entry (with every cost line it carries) and, for an issue, the stock. */

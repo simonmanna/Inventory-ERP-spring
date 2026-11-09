@@ -42,6 +42,8 @@ public class DmsWorkspaceService {
                     false, 70),
             new SystemWorkspace("correspondence", "Correspondence", "mail", "#6366f1",
                     Permissions.HELPDESK__TICKET_READ, false, 80),
+            new SystemWorkspace("projects", "Projects", "kanban", "#0d9488", Permissions.PROJECT_TASK__READ, false,
+                    85),
             new SystemWorkspace("shared_uploads", "Shared uploads", "inbox", "#ef4444", null, true, 90));
 
     static final Set<String> LEVELS = Set.of("read", "write", "manage");

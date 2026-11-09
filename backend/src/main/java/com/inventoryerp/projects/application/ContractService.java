@@ -264,6 +264,37 @@ public class ContractService {
         return variation(id);
     }
 
+    /** IFRS 15.35 criteria assessments of a project, newest first. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> criteriaAssessments(String projectId) {
+        projects.project(projectId, false);
+        return SqlRows.list(jdbc.sql("SELECT * FROM \"ContractCriteriaAssessment\" WHERE \"projectId\" = ? AND"
+                + " \"organizationId\" = ? ORDER BY \"createdAt\" DESC").params(projectId, org()));
+    }
+
+    /** Customer advances of a project with what is recovered and still outstanding, oldest first. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> advances(String projectId) {
+        projects.project(projectId, false);
+        return SqlRows.list(jdbc.sql("SELECT a.*, a.amount - a.recovered AS outstanding FROM \"CustomerAdvance\" a"
+                + " WHERE a.\"projectId\" = ? AND a.\"organizationId\" = ? ORDER BY a.\"createdAt\"")
+                .params(projectId, org()));
+    }
+
+    /** Subcontracts of a project with the supplier name and their valuations (oldest first). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> subcontracts(String projectId) {
+        projects.project(projectId, false);
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT s.*, pa.name AS \"supplierName\" FROM"
+                + " \"Subcontract\" s LEFT JOIN \"Partner\" pa ON pa.id = s.\"supplierId\" WHERE s.\"projectId\" = ?"
+                + " AND s.\"organizationId\" = ? ORDER BY s.number").params(projectId, org()));
+        for (Map<String, Object> r : rows) {
+            r.put("valuations", SqlRows.list(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE"
+                    + " \"subcontractId\" = ? ORDER BY \"valuationDate\", number").param(r.get("id"))));
+        }
+        return rows;
+    }
+
     @Transactional(readOnly = true)
     public List<Map<String, Object>> variations(String projectId) {
         projects.project(projectId, false);
@@ -518,6 +549,32 @@ public class ContractService {
                         money(in.value()), pct, condition, TenantContext.userId())
                 .update();
         return SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ?").param(id));
+    }
+
+    /**
+     * Close an active subcontract: {@code complete} once the work is done (valuations stop; held retentions stay in
+     * the retention ledger until released), {@code cancel} only while nothing has been valued (a valued subcontract is
+     * completed instead, so its cost and retention trail stays intact).
+     */
+    @Transactional
+    public Map<String, Object> closeSubcontract(String subcontractId, boolean cancel) {
+        Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE").params(subcontractId, org()));
+        if (s == null) {
+            throw ApiException.notFound("Subcontract not found");
+        }
+        if (!"active".equals(s.get("status"))) {
+            throw ApiException.badRequest("This subcontract is already " + s.get("status"));
+        }
+        if (cancel && jdbc.sql("SELECT count(*) FROM \"SubcontractValuation\" WHERE \"subcontractId\" = ?")
+                .param(subcontractId).query(Long.class).single() > 0) {
+            throw ApiException.badRequest("A subcontract with valuations cannot be cancelled; complete it instead");
+        }
+        String status = cancel ? "cancelled" : "completed";
+        jdbc.sql("UPDATE \"Subcontract\" SET status = ? WHERE id = ?").params(status, subcontractId).update();
+        audit.recordInTx(AuditInput.of("Subcontract", subcontractId, cancel ? "cancel" : "update",
+                Obj.of("status", "active"), Obj.of("status", status)));
+        return SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ?").param(subcontractId));
     }
 
     /** A subcontractor valuation: gross to project cost, retention payable held, the net billed through clearing. */

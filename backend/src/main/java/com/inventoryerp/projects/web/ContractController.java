@@ -83,6 +83,12 @@ public class ContractController {
         return contracts.assessCriteria(id, r.criterionA(), r.criterionB(), r.criterionC(), r.evidence());
     }
 
+    @GetMapping("/{id}/revenue-criteria")
+    @RequirePermissions(Permissions.CONTRACT__READ)
+    public List<Map<String, Object>> criteriaAssessments(@PathVariable String id) {
+        return contracts.criteriaAssessments(id);
+    }
+
     @PostMapping("/revenue-criteria/{assessmentId}/approve")
     @RequirePermissions(Permissions.CONTRACT__APPROVE)
     public Map<String, Object> approveCriteria(@PathVariable String assessmentId) {
@@ -116,6 +122,12 @@ public class ContractController {
     }
 
     // ---- advances and claims ------------------------------------------------------------------------------------------
+
+    @GetMapping("/{id}/advances")
+    @RequirePermissions(Permissions.CONTRACT__READ)
+    public List<Map<String, Object>> advances(@PathVariable String id) {
+        return contracts.advances(id);
+    }
 
     @PostMapping("/{id}/advances")
     @ResponseStatus(HttpStatus.CREATED)
@@ -160,6 +172,12 @@ public class ContractController {
 
     // ---- subcontracts and retentions ----------------------------------------------------------------------------------
 
+    @GetMapping("/{id}/subcontracts")
+    @RequirePermissions(Permissions.CONTRACT__READ)
+    public List<Map<String, Object>> subcontracts(@PathVariable String id) {
+        return contracts.subcontracts(id);
+    }
+
     @PostMapping("/{id}/subcontracts")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.CONTRACT__MANAGE)
@@ -174,6 +192,18 @@ public class ContractController {
     @RequirePermissions(Permissions.CONTRACT__POST)
     public Map<String, Object> valuation(@PathVariable String subcontractId, @RequestBody ValuationRequest r) {
         return contracts.valuation(subcontractId, r.cumulativeValue(), r.date());
+    }
+
+    @PostMapping("/subcontracts/{subcontractId}/complete")
+    @RequirePermissions(Permissions.CONTRACT__MANAGE)
+    public Map<String, Object> completeSubcontract(@PathVariable String subcontractId) {
+        return contracts.closeSubcontract(subcontractId, false);
+    }
+
+    @PostMapping("/subcontracts/{subcontractId}/cancel")
+    @RequirePermissions(Permissions.CONTRACT__MANAGE)
+    public Map<String, Object> cancelSubcontract(@PathVariable String subcontractId) {
+        return contracts.closeSubcontract(subcontractId, true);
     }
 
     @GetMapping("/{id}/retentions")

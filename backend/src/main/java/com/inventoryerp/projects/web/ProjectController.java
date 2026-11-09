@@ -7,6 +7,7 @@ import com.inventoryerp.projects.application.ProjectCostService;
 import com.inventoryerp.projects.application.ProjectCostService.EquipmentInput;
 import com.inventoryerp.projects.application.ProjectCostService.IssueInput;
 import com.inventoryerp.projects.application.ProjectCostService.ReclassInput;
+import com.inventoryerp.projects.application.ProjectCostService.ReclassableLine;
 import com.inventoryerp.projects.application.ProjectCostService.TimesheetInput;
 import com.inventoryerp.projects.application.ProjectService;
 import com.inventoryerp.projects.application.ProjectService.BudgetLineInput;
@@ -21,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -69,6 +71,19 @@ public class ProjectController {
     public record WbsRequest(
             @NotBlank(message = "code should not be empty") String code,
             @NotBlank(message = "name should not be empty") String name,
+            String parentId,
+            Boolean isBillable,
+            Boolean isCostable) {}
+
+    public record SiteUpdateRequest(
+            @Size(max = 40, message = "code must be at most 40 characters") String code,
+            @Size(max = 200, message = "name must be at most 200 characters") String name,
+            @Size(max = 500, message = "address must be at most 500 characters") String address,
+            String deliveryLocationId) {}
+
+    public record WbsUpdateRequest(
+            @Size(max = 40, message = "code must be at most 40 characters") String code,
+            @Size(max = 200, message = "name must be at most 200 characters") String name,
             String parentId,
             Boolean isBillable,
             Boolean isCostable) {}
@@ -170,6 +185,31 @@ public class ProjectController {
         return projects.addWbs(id, new WbsInput(r.code(), r.name(), r.parentId(), r.isBillable(), r.isCostable()));
     }
 
+    @PatchMapping("/sites/{siteId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> updateSite(@PathVariable String siteId, @Valid @RequestBody SiteUpdateRequest r) {
+        return projects.updateSite(siteId, new SiteInput(r.code(), r.name(), r.address(), r.deliveryLocationId()));
+    }
+
+    @DeleteMapping("/sites/{siteId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> deleteSite(@PathVariable String siteId) {
+        return projects.deleteSite(siteId);
+    }
+
+    @PatchMapping("/wbs/{wbsId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> updateWbs(@PathVariable String wbsId, @Valid @RequestBody WbsUpdateRequest r) {
+        return projects.updateWbs(wbsId, new WbsInput(r.code(), r.name(), r.parentId(), r.isBillable(),
+                r.isCostable()));
+    }
+
+    @DeleteMapping("/wbs/{wbsId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> deleteWbs(@PathVariable String wbsId) {
+        return projects.deleteWbs(wbsId);
+    }
+
     @GetMapping("/{id}/budgets")
     @RequirePermissions(Permissions.PROJECT__READ)
     public List<Map<String, Object>> budgets(@PathVariable String id) {
@@ -196,6 +236,19 @@ public class ProjectController {
         return projects.approveBudget(budgetId);
     }
 
+    @PatchMapping("/budgets/{budgetId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> updateBudget(@PathVariable String budgetId, @RequestBody BudgetRequest r) {
+        return projects.updateBudget(budgetId, r.lines() == null ? null : r.lines().stream().map(l ->
+                new BudgetLineInput(l.wbsId(), l.costElement(), l.amount(), l.revenue())).toList(), r.notes());
+    }
+
+    @DeleteMapping("/budgets/{budgetId}")
+    @RequirePermissions(Permissions.PROJECT__MANAGE)
+    public Map<String, Object> deleteBudget(@PathVariable String budgetId) {
+        return projects.deleteBudget(budgetId);
+    }
+
     @GetMapping("/{id}/forecast")
     @RequirePermissions(Permissions.PROJECT__READ)
     public List<Map<String, Object>> forecast(@PathVariable String id) {
@@ -214,6 +267,14 @@ public class ProjectController {
     @RequirePermissions(Permissions.PROJECT__READ)
     public List<Map<String, Object>> costs(@PathVariable String id) {
         return costs.costs(id);
+    }
+
+    @GetMapping("/{id}/costs/reclassable")
+    @RequirePermissions(Permissions.PROJECT__POST)
+    public List<ReclassableLine> reclassable(@PathVariable String id, @RequestParam(required = false) String search,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer limit) {
+        return costs.reclassable(id, search, from, to, limit);
     }
 
     @PostMapping("/{id}/costs/issue")
