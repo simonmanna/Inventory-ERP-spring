@@ -58,6 +58,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -151,7 +152,9 @@ public class PosInvoiceService {
         boolean anyCash = tenders.stream().anyMatch(t -> "cash".equals(t.get("method")));
         if (handedRaw != null) {
             double handed = num(handedRaw);
-            if (!Double.isFinite(handed) || handed < total || (!anyCash && handed > total)) {
+            BigDecimal handedDec = Double.isFinite(handed) ? PosSql.dec(handedRaw) : null;
+            BigDecimal totalDec = PosSql.decOf(total);
+            if (handedDec == null || handedDec.compareTo(totalDec) < 0 || (!anyCash && handedDec.compareTo(totalDec) > 0)) {
                 throw ApiException.badRequest("Cash handed over is invalid for these tenders");
             }
         }
@@ -386,6 +389,12 @@ public class PosInvoiceService {
             if (locked == null || PosSql.intOf(locked.get("version")) != PosSql.intOf(order.get("version"))) {
                 throw ApiException.badRequest("Order changed while billing. Refresh the saved order and quote.");
             }
+            // Post-parity (owner-approved 2026-11-10): re-check split bills under the Order lock. The settle routes
+            // checked before taking any lock, so a full settle racing a split-bill settle billed the split items twice.
+            if (jdbc.sql("SELECT count(*) FROM \"SplitBill\" WHERE \"sourceOrderId\" = ? AND \"organizationId\" = ?"
+                    + " AND status::text <> 'void'").params(orderId, orgId).query(Long.class).single() > 0) {
+                throw ApiException.badRequest("This order has a split in progress — settle each split bill instead.");
+            }
             if (order.get("cashSessionId") == null && cashSessionId != null) {
                 db.update(Order.class, Obj.of("cashSessionId", cashSessionId), "id = ?", orderId);
             }
@@ -581,33 +590,54 @@ public class PosInvoiceService {
 
     // ─── payments ───
 
+    /** Tolerance of the tender equality checks (Nest: 0.000001 on JS numbers). */
+    private static final BigDecimal TENDER_EPSILON = new BigDecimal("0.000001");
+
+    /**
+     * Sum of the tender amounts as an exact decimal. Post-parity: Nest added JS doubles, so a change or tender sum
+     * could come back as {@code 10.670000000000002}; each amount is now taken as the decimal the client sent.
+     */
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> normalizeTenders(Map<String, Object> dto, double residual, boolean allowPartial) {
+    static BigDecimal tenderSum(List<Map<String, Object>> tenders) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map<String, Object> t : tenders) {
+            sum = sum.add(PosSql.dec(t.get("amount")));
+        }
+        return sum;
+    }
+
+    /** {@code max(0, handed − tendered)} as an exact decimal, as a JSON number. */
+    static Number changeOf(Object amountTendered, BigDecimal tendersSum) {
+        BigDecimal handed = amountTendered != null ? PosSql.dec(amountTendered) : tendersSum;
+        return PosSql.js(handed.subtract(tendersSum).max(BigDecimal.ZERO));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> normalizeTenders(Map<String, Object> dto, double residualIn, boolean allowPartial) {
         List<Object> tenders = PosSql.list(dto.get("tenders"));
         if (!tenders.isEmpty()) {
-            double sum = 0;
             for (Object o : tenders) {
                 double amt = num(((Map<String, Object>) o).get("amount"));
                 if (!Double.isFinite(amt) || amt <= 0) {
                     throw ApiException.badRequest("Tender amounts must be positive finite numbers");
                 }
             }
-            for (Object o : tenders) {
-                sum += num(((Map<String, Object>) o).get("amount"));
-            }
-            if (sum > residual + 0.000001) {
-                throw ApiException.badRequest("Tenders sum " + JsFormat.str(sum) + " exceeds amount due " + JsFormat.str(residual));
-            }
-            if (sum < residual - 0.000001 && !allowPartial) {
-                throw ApiException.badRequest("Tenders sum " + JsFormat.str(sum) + " does not match amount due "
-                        + JsFormat.str(residual));
-            }
             List<Map<String, Object>> out = new ArrayList<>();
             tenders.forEach(o -> out.add((Map<String, Object>) o));
+            BigDecimal sum = tenderSum(out);
+            BigDecimal residual = PosSql.decOf(residualIn);
+            if (sum.compareTo(residual.add(TENDER_EPSILON)) > 0) {
+                throw ApiException.badRequest("Tenders sum " + JsFormat.str(sum.doubleValue()) + " exceeds amount due "
+                        + JsFormat.str(residualIn));
+            }
+            if (sum.compareTo(residual.subtract(TENDER_EPSILON)) < 0 && !allowPartial) {
+                throw ApiException.badRequest("Tenders sum " + JsFormat.str(sum.doubleValue()) + " does not match amount due "
+                        + JsFormat.str(residualIn));
+            }
             return out;
         }
         Object method = dto.get("paymentMethod");
-        return List.of(Obj.of("method", method == null ? "cash" : method, "amount", residual));
+        return List.of(Obj.of("method", method == null ? "cash" : method, "amount", residualIn));
     }
 
     private boolean sharedDrawer() {
@@ -649,10 +679,7 @@ public class PosInvoiceService {
                         "Legacy invoice uses a cash/bank posting. Reconcile its original journal before collecting payment.");
             }
             List<Map<String, Object>> tenders = normalizeTenders(dto, residual, Boolean.TRUE.equals(dto.get("allowPartial")));
-            double tendersSum = 0;
-            for (Map<String, Object> t : tenders) {
-                tendersSum += num(t.get("amount"));
-            }
+            BigDecimal tendersSum = tenderSum(tenders);
             boolean anyCash = tenders.stream().anyMatch(t -> "cash".equals(t.get("method")));
             if (anyCash && !PosSql.truthy(cashSessionId)) {
                 throw ApiException.badRequest("Select an open register for a cash payment");
@@ -660,7 +687,8 @@ public class PosInvoiceService {
             Object amountTendered = dto.get("amountTendered");
             if (amountTendered != null) {
                 double h = num(amountTendered);
-                if (!Double.isFinite(h) || h < tendersSum || (!anyCash && h > tendersSum)) {
+                if (!Double.isFinite(h) || PosSql.dec(amountTendered).compareTo(tendersSum) < 0
+                        || (!anyCash && PosSql.dec(amountTendered).compareTo(tendersSum) > 0)) {
                     throw ApiException.badRequest("Cash handed over is invalid for these tenders");
                 }
             }
@@ -720,11 +748,11 @@ public class PosInvoiceService {
                 createReceipt(invoice, "merchant_copy", lastPaymentId);
             }
             Map<String, Object> closed = settled ? closeOrderForInvoice(invoiceId) : null;
-            double change = Math.max(0, (amountTendered != null ? num(amountTendered) : tendersSum) - tendersSum);
+            Number change = changeOf(amountTendered, tendersSum);
             BusinessOutcome.record(jdbc, Obj.of("invoiceId", invoiceId, "invoiceNumber", invoice.get("invoiceNumber"),
                     "total", PosSql.js(invoice.get("totalAmount")), "settlementStatus", settlementStatus,
                     "paymentMode", paymentMode, "receiptId", receipt.get("id"), "paymentIds", paymentIds,
-                    "change", PosSql.js(change), "amountDue", PosSql.js(fresh.get("amountResidual")), "settleMode", "tender"),
+                    "change", change, "amountDue", PosSql.js(fresh.get("amountResidual")), "settleMode", "tender"),
                     true);
             return Obj.of("paymentIds", paymentIds, "tendersSum", tendersSum, "settled", settled, "paymentMode", paymentMode,
                     "settlementStatus", settlementStatus, "receiptId", receipt.get("id"), "closed", closed,
@@ -742,11 +770,10 @@ public class PosInvoiceService {
             events.publish(DomainEvents.POS_INVOICE_SETTLED, Obj.of("organizationId", orgId, "invoiceId", invoiceId,
                     "invoiceNumber", result.get("invoiceNumber"), "paymentMode", result.get("paymentMode")));
         }
-        double tendersSum = (double) result.get("tendersSum");
-        double tendered = dto.get("amountTendered") != null ? num(dto.get("amountTendered")) : tendersSum;
+        BigDecimal tendersSum = (BigDecimal) result.get("tendersSum");
         return Obj.of("paymentIds", result.get("paymentIds"), "invoiceId", invoiceId,
                 "settlementStatus", result.get("settlementStatus"), "paymentMode", result.get("paymentMode"),
-                "receiptId", result.get("receiptId"), "change", PosSql.js(Math.max(0, tendered - tendersSum)));
+                "receiptId", result.get("receiptId"), "change", changeOf(dto.get("amountTendered"), tendersSum));
     }
 
     /** Post-commit side effects of a payment taken inside a caller's transaction. */
@@ -940,6 +967,15 @@ public class PosInvoiceService {
             List<PostingRequest.Line> journal = new ArrayList<>();
             List<Map<String, Object>> refundItems = new ArrayList<>();
             String partnerId = (String) inv.get("partnerId");
+            // Value already refunded per line (earlier partial refunds), for the last-units rule below.
+            Map<String, BigDecimal[]> refundedValue = new HashMap<>();
+            jdbc.sql("SELECT e->>'lineId' AS line, coalesce(sum((e->>'subtotal')::numeric), 0) AS sub,"
+                            + " coalesce(sum((e->>'taxAmount')::numeric), 0) AS tax FROM \"PosRefund\" r,"
+                            + " jsonb_array_elements(r.items::jsonb) e WHERE r.\"invoiceId\" = ? AND r.\"organizationId\" = ?"
+                            + " GROUP BY 1")
+                    .params(invoiceId, orgId).query((rs, n) -> refundedValue.put(rs.getString("line"),
+                            new BigDecimal[] {rs.getBigDecimal("sub"), rs.getBigDecimal("tax")}))
+                    .list();
             for (Object[] s : selections) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> src = (Map<String, Object>) s[0];
@@ -947,6 +983,15 @@ public class PosInvoiceService {
                 BigDecimal fraction = Money.div(quantity, SqlRows.dec(src, "quantity"));
                 BigDecimal subtotal = SqlRows.dec(src, "subtotal").multiply(fraction).setScale(6, RoundingMode.HALF_UP);
                 BigDecimal tax = SqlRows.dec(src, "taxAmount").multiply(fraction).setScale(6, RoundingMode.HALF_UP);
+                // Post-parity: the last units of a line refund exactly what is left of its value. Nest rounded each
+                // partial refund on its own, so the overshoot (e.g. 6 × 6.666667 = 40.000002) rejected the last unit.
+                BigDecimal remainingQty = SqlRows.dec(src, "quantity").subtract(SqlRows.dec(src, "refundedQty"));
+                if (quantity.compareTo(remainingQty) == 0) {
+                    BigDecimal[] done = refundedValue.getOrDefault((String) src.get("id"),
+                            new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
+                    subtotal = SqlRows.dec(src, "subtotal").subtract(done[0]).max(BigDecimal.ZERO);
+                    tax = SqlRows.dec(src, "taxAmount").subtract(done[1]).max(BigDecimal.ZERO);
+                }
                 total = total.add(subtotal).add(tax);
                 if (src.get("accountId") == null) {
                     throw ApiException.badRequest(

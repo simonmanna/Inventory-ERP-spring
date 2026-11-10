@@ -24,9 +24,11 @@ public class PosShiftService {
             String incomingPin, String approvedById, String managerPin, String varianceReason, BigDecimal openingFloat,
             String notes, Map<String, Object> closingDenomination, Map<String, Object> closingAccounts,
             Map<String, Object> uncountedAccounts) {
-        auth.pinLogin(incomingUserId, incomingPin);
-        auth.pinLogin(approvedById, managerPin);
-        overrides.assertCanOverride(approvedById, "shift_handover");
+        // Post-parity hardening (owner-approved 2026-11-10): verify-only checks. Nest ran two full PIN logins here,
+        // which minted tokens, clocked the manager in (HR), wrote login audit rows and reset failure counters even
+        // when the handover then failed. The manager PIN goes through the override lockout after the permission check.
+        auth.verifyPin(incomingUserId, incomingPin);
+        overrides.verifyPinForOverride(approvedById, managerPin == null ? "" : managerPin, "shift_handover");
         return sessions.handover(new CashSessionService.HandoverInput(cashRegisterId, closingCounted, incomingUserId,
                 varianceReason, openingFloat, notes, approvedById, closingDenomination, closingAccounts, uncountedAccounts));
     }

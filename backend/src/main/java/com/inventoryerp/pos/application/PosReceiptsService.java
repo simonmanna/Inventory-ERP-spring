@@ -1215,7 +1215,12 @@ public class PosReceiptsService {
         // Both copies render the same resolution: marking the receipt printed only bumps its print counters.
         Map<String, Object> inv = resolveInvoice(invoiceId);
         String customerText = buildTextReceipt(inv, isReprint, "CUSTOMER COPY");
-        printLifecycle.markReceiptPrinted(invoiceId, userId);
+        if (isReprint) {
+            printLifecycle.markReceiptPrinted(invoiceId, userId);
+        } else if (!printLifecycle.claimOriginalReceipt(invoiceId, userId)) {
+            throw ApiException.forbidden(
+                    "Receipt already printed. Use the reprint endpoint (Admin/Manager only, with a reason).");
+        }
         boolean printCashierCopy = !"false".equals(settingValue("pos.printCashierCopy"));
         String merchantText = printCashierCopy ? buildTextReceipt(inv, isReprint, "CASHIER COPY") : null;
         int copies = merchantText != null ? 2 : 1;

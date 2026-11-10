@@ -42,7 +42,11 @@ public class CashSessionController {
             String notes,
             Boolean autoAdjust,
             Map<String, Object> openingDenomination,
-            @Pattern(regexp = ISO, message = "must be a valid ISO 8601 date string") String occurredAt) {}
+            @Pattern(regexp = ISO, message = "must be a valid ISO 8601 date string") String occurredAt,
+            String adjustmentReason,
+            String approvedById,
+            String approverEmail,
+            String managerPin) {}
 
     /** {@code CloseSessionDto}. */
     public record CloseSessionRequest(
@@ -234,7 +238,7 @@ public class CashSessionController {
     public Map<String, Object> open(@Valid @RequestBody OpenSessionRequest dto) {
         return sessions.open(new CashSessionService.OpenInput(dto.openingSourceAccountId(), dto.openingAccounts(),
                 dto.cashRegisterId(), dto.openingFloat(), dto.notes(), dto.openingDenomination(), dto.autoAdjust(),
-                dto.occurredAt()));
+                dto.occurredAt(), dto.adjustmentReason(), dto.approvedById(), dto.approverEmail(), dto.managerPin()));
     }
 
     @PostMapping("/close")

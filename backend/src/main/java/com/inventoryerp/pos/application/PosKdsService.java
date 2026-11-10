@@ -312,9 +312,12 @@ public class PosKdsService {
             }
             return out;
         }
+        // Post-parity: active tickets are bounded (last 24 h, at most 500). Nest returned every new / preparing /
+        // ready ticket ever raised, and tickets nobody bumps pile up for months while each screen polls every 2 s.
         for (Map<String, Object> t : SqlRows.list(KitchenTicket.class, jdbc.sql("SELECT * FROM \"KitchenTicket\""
                 + " WHERE \"organizationId\" = ?" + stationWhere + " AND status::text IN ('new', 'preparing', 'ready')"
-                + " ORDER BY priority DESC, \"createdAt\" ASC").params(base))) {
+                + " AND \"createdAt\" > now() - interval '24 hours'"
+                + " ORDER BY priority DESC, \"createdAt\" ASC LIMIT 500").params(base))) {
             out.add(serialize(t));
         }
         for (Map<String, Object> t : SqlRows.list(KitchenTicket.class, jdbc.sql("SELECT * FROM \"KitchenTicket\""
@@ -432,18 +435,37 @@ public class PosKdsService {
         return serialize(updated);
     }
 
-    /** SSE: {@code retry: 5000}, then a snapshot every second (Nest polls at 1 s), scoped to this tenant. */
+    /** Consecutive failed snapshot fetches after which a KDS stream is ended (the browser reconnects). */
+    private static final int STREAM_MAX_FAILURES = 30;
+    private static final long STREAM_TIMEOUT_MS = 30 * 60_000L;
+    private final java.util.concurrent.ExecutorService streamWriters = Executors.newVirtualThreadPerTaskExecutor();
+
+    /**
+     * SSE: {@code retry: 5000}, then a snapshot every second (Nest polls at 1 s), scoped to this tenant.
+     *
+     * <p>Post-parity hardening (no contract change): the one scheduler thread only dispatches; each tick's query and
+     * write run on a virtual thread and a client never has two ticks in flight, so one slow screen cannot stall every
+     * other KDS stream. A stream ends after 30 min (the browser reconnects and re-authenticates) or after 30
+     * consecutive failed fetches, and its task is always cancelled when it ends.
+     */
     public SseEmitter streamTickets(String station) {
         TenantContext.TenantStore store = TenantContext.current().orElseThrow();
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         final ScheduledFuture<?>[] task = new ScheduledFuture<?>[1];
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean busy = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicInteger failures = new java.util.concurrent.atomic.AtomicInteger();
         Runnable stop = () -> {
+            done.set(true);
             if (task[0] != null) {
                 task[0].cancel(false);
             }
         };
         emitter.onCompletion(stop);
-        emitter.onTimeout(stop);
+        emitter.onTimeout(() -> {
+            stop.run();
+            emitter.complete();
+        });
         emitter.onError(e -> stop.run());
         try {
             emitter.send(SseEmitter.event().reconnectTime(5000));
@@ -451,24 +473,41 @@ public class PosKdsService {
             return emitter;
         }
         Runnable send = () -> {
-            String payload;
             try {
-                List<Map<String, Object>> tickets = TenantContext.run(store, () -> listTickets(station, null));
-                payload = mapper.writeValueAsString(Obj.of("type", "snapshot", "tickets", tickets));
-            } catch (RuntimeException e) {
-                log.warn("KDS stream ticket fetch failed: {}", e.getMessage());
-                return;
-            }
-            try {
-                synchronized (emitter) {
-                    emitter.send(SseEmitter.event().data(payload, MediaType.TEXT_PLAIN));
+                if (done.get()) {
+                    return;
                 }
-            } catch (IOException | IllegalStateException e) {
-                stop.run();
+                String payload;
+                try {
+                    List<Map<String, Object>> tickets = TenantContext.run(store, () -> listTickets(station, null));
+                    payload = mapper.writeValueAsString(Obj.of("type", "snapshot", "tickets", tickets));
+                    failures.set(0);
+                } catch (RuntimeException e) {
+                    log.warn("KDS stream ticket fetch failed: {}", e.getMessage());
+                    if (failures.incrementAndGet() >= STREAM_MAX_FAILURES) {
+                        stop.run();
+                        emitter.complete();
+                    }
+                    return;
+                }
+                try {
+                    synchronized (emitter) {
+                        emitter.send(SseEmitter.event().data(payload, MediaType.TEXT_PLAIN));
+                    }
+                } catch (IOException | IllegalStateException e) {
+                    stop.run();
+                }
+            } finally {
+                busy.set(false);
             }
         };
+        busy.set(true);
         send.run();
-        task[0] = streamPool.scheduleWithFixedDelay(send, 1, 1, TimeUnit.SECONDS);
+        task[0] = streamPool.scheduleWithFixedDelay(() -> {
+            if (!done.get() && busy.compareAndSet(false, true)) {
+                streamWriters.execute(send);
+            }
+        }, 1, 1, TimeUnit.SECONDS);
         return emitter;
     }
 

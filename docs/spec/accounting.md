@@ -70,6 +70,12 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
+Post-parity hardening (owner-approved 2026-11-10): opening shortage approval (`adjustmentReason` /
+`approvedById` / `approverEmail` / `managerPin` on `POST /cash-sessions/open`), auto-adjusted close keeps the variance
+review, `cash.varianceApprovalThreshold` setting, approver-PIN lockout through `CredentialGuard`, ambiguous-shift
+error, per-branch close lock and open-order check, handover carries open orders. Details: `docs/spec/pos.md`
+"Post-parity hardening".
+
 Pending owner approval:
 
 1. **`GET /reports/accounting/pos-gl-reconciliation`**: `inventory.jobCounts` values are numbers and

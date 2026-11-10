@@ -95,6 +95,23 @@ public class PosPrintLifecycleService {
                 + ", \"lastPrintedById\" = ?", userId);
     }
 
+    /**
+     * Mark the <em>original</em> receipt printed only if no receipt was printed yet; {@code false} when another request
+     * already printed it. Post-parity hardening (2026-11-10): Nest read the counter and bumped it in two steps, so two
+     * simultaneous "print receipt" taps both printed an unmarked original. The conditional update is atomic.
+     */
+    public boolean claimOriginalReceipt(String recordId, String userId) {
+        String t = target(recordId);
+        if (!"Invoice".equals(t)) {
+            markReceiptPrinted(recordId, userId);
+            return true;
+        }
+        return jdbc.sql("UPDATE \"Invoice\" SET \"receiptPrintCount\" = \"receiptPrintCount\" + 1, \"receiptLastPrintedAt\" = "
+                        + NOW + ", \"lastPrintedById\" = ?, \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ? AND \"receiptPrintCount\" = 0")
+                .params(userId, recordId, org()).update() > 0;
+    }
+
     public int getReceiptCopyNumber(String recordId) {
         String t = target(recordId);
         if ("Order".equals(t)) {

@@ -25,36 +25,59 @@ const QUICK_FLOATS = [0, 50000, 100000, 200000, 500000];
 export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, preselectedRegisterId }) => {
   const { data: registers = [] } = useCashRegisters();
   const [registerId, setRegisterId] = useState<string>('');
-  const [openingFloat, setOpeningFloat] = useState('50000');
+  // The float starts at what the drawer's ledger says it holds (filled in once the balance loads), not a fixed
+  // 50,000: a pre-filled figure the cashier never counted turned every opening into a silent drawer adjustment.
+  const [openingFloat, setOpeningFloatRaw] = useState('');
+  const [floatTouched, setFloatTouched] = useState(false);
+  const setOpeningFloat = (v: string) => { setFloatTouched(true); setOpeningFloatRaw(v); };
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [approverEmail, setApproverEmail] = useState('');
+  const [managerPin, setManagerPin] = useState('');
+  const canApproveVariance = useAuthStore((s) => s.hasPermission('cash_session:approve_variance'));
   const [notes, setNotes] = useState('');
   const { data: fundingAccounts = [] } = usePaymentAccounts();
   const [openingSourceAccountId, setOpeningSourceAccountId] = useState('');
   const [accountCounts, setAccountCounts] = useState<Record<string, number>>({});
   const [err, setErr] = useState<string | null>(null);
   /** When accepted, a count above/below the drawer is auto-recorded as cash-in / withdrawal. */
-  const [autoAdjust, setAutoAdjust] = useState(true);
+  const [autoAdjust, setAutoAdjust] = useState(false);
   const openShift = useOpenShift();
   const { data: drawer } = useDrawerBalance(registerId || undefined, open);
   const drawerLedger = drawer ? Number(drawer.ledger) : null;
   const floatNum = Number(openingFloat);
-  const drawerDiff = drawerLedger != null && Number.isFinite(floatNum) ? floatNum - drawerLedger : null;
+  const drawerDiff = drawerLedger != null && openingFloat !== '' && Number.isFinite(floatNum) ? floatNum - drawerLedger : null;
+  /** Taking cash out of the drawer at opening needs a reason and a variance approver (the server enforces it). */
+  const shortageAccepted = autoAdjust && drawerDiff != null && drawerDiff < -0.005;
+  const needsManager = shortageAccepted && !canApproveVariance;
+
 
   useEffect(() => {
     if (open) {
       setRegisterId(preselectedRegisterId ?? registers[0]?.id ?? '');
-      setOpeningFloat('50000');
+      setOpeningFloatRaw('');
+      setFloatTouched(false);
       setNotes('');
       setAccountCounts({});
       setErr(null);
-      setAutoAdjust(true);
+      setAutoAdjust(false);
+      setAdjustmentReason('');
+      setApproverEmail('');
+      setManagerPin('');
     }
   }, [open, registers.length]);
+
+  // After the reset above (effects run in order): pre-fill the drawer's ledger balance until the cashier types.
+  useEffect(() => {
+    if (open && !floatTouched && drawerLedger != null) setOpeningFloatRaw(String(drawerLedger));
+  }, [open, floatTouched, drawerLedger, registerId]);
 
   const submit = async () => {
     setErr(null);
     if (!registerId) { setErr(tx('Pick a cash register')); return; }
     const float = Number(openingFloat);
-    if (!Number.isFinite(float) || float < 0) { setErr(tx('Opening float must be a non-negative number')); return; }
+    if (openingFloat.trim() === '' || !Number.isFinite(float) || float < 0) { setErr(tx('Opening float must be a non-negative number')); return; }
+    if (shortageAccepted && !adjustmentReason.trim()) { setErr(tx('Explain why the drawer holds less than its ledger')); return; }
+    if (needsManager && (!approverEmail.trim() || !managerPin.trim())) { setErr(tx('A manager must approve removing cash from the drawer')); return; }
     try {
       await openShift.mutateAsync({
         cashRegisterId: registerId,
@@ -63,6 +86,9 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
         openingAccounts: accountCounts,
         notes: notes.trim() || undefined,
         autoAdjust,
+        adjustmentReason: shortageAccepted ? adjustmentReason.trim() : undefined,
+        approverEmail: needsManager ? approverEmail.trim() : undefined,
+        managerPin: needsManager ? managerPin.trim() : undefined,
       });
       toast.success(tx('Shift opened — you can now sell'));
       onOpened();
@@ -155,6 +181,37 @@ export const ShiftOpenDialog: React.FC<Props> = ({ open, onClose, onOpened, pres
               <p className="mt-1 text-xs text-amber-800">
                 {tx('Without accepting, the count must match the drawer')}{drawerDiff > 0 ? tx(' (and a funding source is required)') : ''}.
               </p>
+            ) : null}
+            {shortageAccepted ? (
+              <div className="mt-2 space-y-2">
+                <Input
+                  value={adjustmentReason}
+                  onChange={(e) => setAdjustmentReason(e.target.value)}
+                  placeholder={tx('Why is cash missing? (required)')}
+                />
+                {needsManager ? (
+                  <>
+                    <p className="text-xs text-amber-800">
+                      {tx('Removing cash from the drawer needs a manager. The manager enters their own login below.')}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        value={approverEmail}
+                        onChange={(e) => setApproverEmail(e.target.value)}
+                        placeholder={tx('Manager email')}
+                        autoComplete="off"
+                      />
+                      <Input
+                        type="password"
+                        value={managerPin}
+                        onChange={(e) => setManagerPin(e.target.value)}
+                        placeholder={tx('Manager PIN')}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}

@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -217,12 +218,18 @@ public class SessionReconciliation {
                 + " AND i.cancelled = false)";
     }
 
-    private List<Map<String, Object>> openOrderSummaries(String organizationId, String sessionId) {
-        var spec = jdbc.sql("SELECT o.*" + heldOrderSql() + (sessionId == null ? "" : " AND o.\"cashSessionId\" = :sid")
+    /**
+     * Held orders an open shift answers for: the whole floor of its branch. Post-parity (owner-approved 2026-11-10):
+     * Nest counted every held order in the organization, so one open table in branch B blocked every close and
+     * handover in branch A. Orders explicitly in another branch are now left out; orders without a branch still count.
+     */
+    private static final String SAME_BRANCH = " AND (o.\"branchId\" IS NULL OR CAST(:branch AS text) IS NULL"
+            + " OR o.\"branchId\" = CAST(:branch AS text))";
+
+    private List<Map<String, Object>> openOrderSummaries(String organizationId, String sessionId, String branchId) {
+        var spec = jdbc.sql("SELECT o.*" + heldOrderSql() + (sessionId == null ? SAME_BRANCH : " AND o.\"cashSessionId\" = :sid")
                 + " ORDER BY o.\"openedAt\" ASC LIMIT " + OPEN_ORDER_DISPLAY_LIMIT).param("org", organizationId);
-        if (sessionId != null) {
-            spec = spec.param("sid", sessionId);
-        }
+        spec = sessionId != null ? spec.param("sid", sessionId) : spec.param("branch", branchId);
         List<Map<String, Object>> orders = SqlRows.list(spec);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> o : orders) {
@@ -250,11 +257,10 @@ public class SessionReconciliation {
         String sessionId = (String) session.get("id");
         boolean open = "open".equals(session.get("status"));
         String orderScope = open ? null : sessionId;
-        var countSpec = jdbc.sql("SELECT count(*)" + heldOrderSql() + (orderScope == null ? "" : " AND o.\"cashSessionId\" = :sid"))
+        String branchId = (String) session.get("branchId");
+        var countSpec = jdbc.sql("SELECT count(*)" + heldOrderSql() + (orderScope == null ? SAME_BRANCH : " AND o.\"cashSessionId\" = :sid"))
                 .param("org", organizationId);
-        if (orderScope != null) {
-            countSpec = countSpec.param("sid", orderScope);
-        }
+        countSpec = orderScope != null ? countSpec.param("sid", orderScope) : countSpec.param("branch", branchId);
         long unsettledOrders = countSpec.query(Long.class).single();
         List<Map<String, Object>> payments = SqlRows.list(jdbc.sql("SELECT * FROM \"Payment\" WHERE \"organizationId\" = ?"
                 + " AND \"cashSessionId\" = ? AND status::text <> 'cancelled'").params(organizationId, sessionId));
@@ -267,7 +273,7 @@ public class SessionReconciliation {
                 .params(organizationId, organizationId, sessionId).query(Long.class).single();
         Map<String, Object> register = SqlRows.one(jdbc.sql("SELECT * FROM \"CashRegister\" WHERE id = ? AND \"organizationId\" = ?")
                 .params(session.get("cashRegisterId"), organizationId));
-        List<Map<String, Object>> openOrders = unsettledOrders > 0 ? openOrderSummaries(organizationId, orderScope) : List.of();
+        List<Map<String, Object>> openOrders = unsettledOrders > 0 ? openOrderSummaries(organizationId, orderScope, branchId) : List.of();
         List<String> issues = new ArrayList<>();
         String drawerAccountId = session.get("drawerAccountId") != null ? (String) session.get("drawerAccountId")
                 : register == null ? null : (String) register.get("defaultAccountId");
@@ -279,6 +285,21 @@ public class SessionReconciliation {
         long pendingPayments = invoices.stream().filter(i -> !"credit".equals(i.get("paymentMode"))
                 && List.of("unsettled", "partially_settled").contains(String.valueOf(i.get("settlementStatus")))
                 && SqlRows.dec(i, "amountResidual").signum() > 0).count();
+        // Post-parity (2026-11-10, same result): the per-payment / per-item lookups are loaded once per session.
+        // The X-report, the close and the terminal's 10 s poll all run this; a busy shift issued thousands of queries.
+        List<String> allPaymentIds = payments.stream().map(p -> (String) p.get("id")).toList();
+        Map<String, List<Map<String, Object>>> postedByEntry = linesOfEntries(organizationId,
+                payments.stream().map(p -> (String) p.get("journalEntryId")).filter(Objects::nonNull).toList(),
+                "e.status::text = 'posted'");
+        Map<String, List<Map<String, Object>>> allocationsByPayment = new HashMap<>();
+        if (!allPaymentIds.isEmpty()) {
+            for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.*, i.\"receivableAccountId\" AS \"_receivable\""
+                            + " FROM \"PaymentAllocation\" a LEFT JOIN \"Invoice\" i ON i.id = a.\"invoiceId\""
+                            + " AND i.\"organizationId\" = :org WHERE a.\"paymentId\" IN (:ids) AND a.\"invoiceId\" IS NOT NULL")
+                    .param("org", organizationId).param("ids", allPaymentIds))) {
+                allocationsByPayment.computeIfAbsent((String) a.get("paymentId"), k -> new ArrayList<>()).add(a);
+            }
+        }
         for (Map<String, Object> p : payments) {
             int sign = "inbound".equals(p.get("direction")) ? 1 : -1;
             BigDecimal settled = SqlRows.dec(p, "amount").subtract(SqlRows.dec(p, "withholdingAmount"));
@@ -303,7 +324,7 @@ public class SessionReconciliation {
             paymentIds.add(p.get("id"));
             String number = (String) p.get("paymentNumber");
             List<Map<String, Object>> journalLines = p.get("journalEntryId") == null ? null
-                    : postedLines(organizationId, (String) p.get("journalEntryId"), "e.status::text = 'posted'");
+                    : postedByEntry.get((String) p.get("journalEntryId"));
             if (journalLines == null) {
                 issues.add("Payment " + number + " has no active posted journal");
                 continue;
@@ -318,10 +339,8 @@ public class SessionReconciliation {
                 issues.add("Payment " + number + " differs from its account journal");
             }
             Map<String, BigDecimal> allocatedAr = new LinkedHashMap<>();
-            for (Map<String, Object> allocation : SqlRows.list(jdbc.sql("SELECT * FROM \"PaymentAllocation\""
-                    + " WHERE \"paymentId\" = ? AND \"invoiceId\" IS NOT NULL").param(p.get("id")))) {
-                String receivable = jdbc.sql("SELECT \"receivableAccountId\" FROM \"Invoice\" WHERE id = ? AND \"organizationId\" = ?")
-                        .params(allocation.get("invoiceId"), organizationId).query(String.class).optional().orElse(null);
+            for (Map<String, Object> allocation : allocationsByPayment.getOrDefault((String) p.get("id"), List.of())) {
+                String receivable = (String) allocation.get("_receivable");
                 if (receivable == null) {
                     issues.add("Payment " + number + " has an unverified invoice receivable");
                 } else {
@@ -390,9 +409,16 @@ public class SessionReconciliation {
             }
             a.put("tracked", true);
         }
+        Map<String, Map<String, Object>> masters = new HashMap<>();
+        List<String> accountIds = byAccount.keySet().stream().filter(Objects::nonNull).toList();
+        if (!accountIds.isEmpty()) {
+            for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT id, code, name FROM \"Account\" WHERE id IN (:ids)"
+                    + " AND \"organizationId\" = :org").param("ids", accountIds).param("org", organizationId))) {
+                masters.put((String) a.get("id"), a);
+            }
+        }
         for (Map<String, Object> account : byAccount.values()) {
-            Map<String, Object> master = SqlRows.one(jdbc.sql("SELECT code, name FROM \"Account\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(account.get("accountId"), organizationId));
+            Map<String, Object> master = masters.get((String) account.get("accountId"));
             account.put("name", master == null ? null : master.get("name"));
             account.put("code", master == null ? null : master.get("code"));
             BigDecimal settled = BigDecimal.ZERO;
@@ -444,17 +470,25 @@ public class SessionReconciliation {
         }
         Map<String, Map<String, Object>> categories = new LinkedHashMap<>();
         BigDecimal approvedDiscounts = BigDecimal.ZERO;
+        Map<String, List<Map<String, Object>>> itemsByInvoice = new HashMap<>();
+        List<String> invoiceIds = invoices.stream().map(i -> (String) i.get("id")).toList();
+        if (!invoiceIds.isEmpty()) {
+            for (Map<String, Object> item : SqlRows.list(jdbc.sql("SELECT ii.*, coalesce(mc.id, pc.id) AS \"_catId\","
+                            + " coalesce(mc.name, pc.name) AS \"_catName\" FROM \"InvoiceItem\" ii"
+                            + " LEFT JOIN \"MenuItem\" m ON m.id = ii.\"menuItemId\" AND m.\"organizationId\" = :org"
+                            + " LEFT JOIN \"MenuCategory\" mc ON mc.id = m.\"categoryId\""
+                            + " LEFT JOIN \"Product\" pr ON ii.\"menuItemId\" IS NULL AND pr.id = ii.\"productId\""
+                            + " AND pr.\"organizationId\" = :org"
+                            + " LEFT JOIN \"ProductCategory\" pc ON pc.id = pr.\"categoryId\""
+                            + " WHERE ii.\"invoiceId\" IN (:ids) ORDER BY ii.\"lineNumber\" ASC")
+                    .param("org", organizationId).param("ids", invoiceIds))) {
+                itemsByInvoice.computeIfAbsent((String) item.get("invoiceId"), k -> new ArrayList<>()).add(item);
+            }
+        }
         for (Map<String, Object> invoice : invoices) {
-            for (Map<String, Object> item : SqlRows.list(jdbc.sql("SELECT * FROM \"InvoiceItem\" WHERE \"invoiceId\" = ?"
-                    + " ORDER BY \"lineNumber\" ASC").param(invoice.get("id")))) {
-                Map<String, Object> category = null;
-                if (item.get("menuItemId") != null) {
-                    category = SqlRows.one(jdbc.sql("SELECT c.id, c.name FROM \"MenuItem\" m JOIN \"MenuCategory\" c ON c.id = m.\"categoryId\""
-                            + " WHERE m.id = ? AND m.\"organizationId\" = ?").params(item.get("menuItemId"), organizationId));
-                } else if (item.get("productId") != null) {
-                    category = SqlRows.one(jdbc.sql("SELECT c.id, c.name FROM \"Product\" p JOIN \"ProductCategory\" c ON c.id = p.\"categoryId\""
-                            + " WHERE p.id = ? AND p.\"organizationId\" = ?").params(item.get("productId"), organizationId));
-                }
+            for (Map<String, Object> item : itemsByInvoice.getOrDefault((String) invoice.get("id"), List.of())) {
+                Map<String, Object> category = item.get("_catId") == null ? null
+                        : Map.of("id", item.get("_catId"), "name", item.get("_catName"));
                 String key = category == null ? "uncategorised" : (String) category.get("id");
                 Map<String, Object> cat = category;
                 Map<String, Object> bucket = categories.computeIfAbsent(key, k -> {
@@ -631,6 +665,27 @@ public class SessionReconciliation {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Lines of the entries (matching {@code statusClause}) among {@code entryIds}, keyed by entry; absent = not found. */
+    private Map<String, List<Map<String, Object>>> linesOfEntries(String organizationId, List<String> entryIds,
+            String statusClause) {
+        Map<String, List<Map<String, Object>>> out = new HashMap<>();
+        if (entryIds.isEmpty()) {
+            return out;
+        }
+        for (String id : jdbc.sql("SELECT e.id FROM \"JournalEntry\" e WHERE e.id IN (:ids) AND e.\"organizationId\" = :org AND "
+                + statusClause).param("ids", entryIds).param("org", organizationId).query(String.class).list()) {
+            out.put(id, new ArrayList<>());
+        }
+        if (out.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"JournalLine\" WHERE \"journalEntryId\" IN (:ids)")
+                .param("ids", List.copyOf(out.keySet())))) {
+            out.get((String) l.get("journalEntryId")).add(l);
+        }
+        return out;
+    }
 
     private List<Map<String, Object>> postedLines(String organizationId, String entryId, String statusClause) {
         long n = jdbc.sql("SELECT count(*) FROM \"JournalEntry\" e WHERE e.id = ? AND e.\"organizationId\" = ? AND " + statusClause)

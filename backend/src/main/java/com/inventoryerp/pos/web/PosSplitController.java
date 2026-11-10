@@ -53,42 +53,51 @@ public class PosSplitController {
         return (List<Map<String, Object>>) PosDtos.js(dto.items());
     }
 
+    // Post-parity (owner-approved 2026-11-10): Nest left every split route except settle without a permission, so
+    // any signed-in user could create, assign or delete splits (a stray split blocks the tab's settle).
     @GetMapping("/tabs/{tableId}/split")
+    @RequirePermissions(Permissions.POS__READ)
     public Map<String, Object> getState(@PathVariable String tableId) {
         return svc.getState(tableId);
     }
 
     @PostMapping("/tabs/{tableId}/split/bills")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> addBills(@PathVariable String tableId, @Valid @RequestBody AddBillsRequest dto) {
         return svc.addBills(tableId, dto.count() == null ? 1 : dto.count());
     }
 
     @PostMapping("/tabs/{tableId}/split/equal")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> splitEqually(@PathVariable String tableId, @Valid @RequestBody AddBillsRequest dto) {
         return svc.splitEqually(tableId, dto.count() == null ? 2 : dto.count());
     }
 
     @PostMapping("/tabs/{tableId}/split/cancel")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> cancelSplit(@PathVariable String tableId) {
         return svc.cancelSplit(tableId);
     }
 
     @PostMapping("/split-bills/{billId}/assign")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> assign(@PathVariable String billId, @Valid @RequestBody AssignItemsRequest dto) {
         return svc.assign(billId, items(dto));
     }
 
     @PostMapping("/split-bills/{billId}/unassign")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> unassign(@PathVariable String billId, @Valid @RequestBody AssignItemsRequest dto) {
         return svc.unassign(billId, items(dto));
     }
 
     @PostMapping("/split-bills/{billId}/move/{targetBillId}")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> move(@PathVariable String billId, @PathVariable String targetBillId,
             @Valid @RequestBody AssignItemsRequest dto) {
@@ -96,12 +105,14 @@ public class PosSplitController {
     }
 
     @PostMapping("/split-bills/{billId}/merge/{targetBillId}")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, Object> merge(@PathVariable String billId, @PathVariable String targetBillId) {
         return svc.merge(targetBillId, billId);
     }
 
     @DeleteMapping("/split-bills/{billId}")
+    @RequirePermissions(Permissions.POS__CHECKOUT)
     public Map<String, Object> deleteBill(@PathVariable String billId) {
         return svc.deleteBill(billId);
     }

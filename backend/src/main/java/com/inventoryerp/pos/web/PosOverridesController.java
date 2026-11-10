@@ -62,6 +62,7 @@ public class PosOverridesController {
     }
 
     @PostMapping("/verify-pin")
+    @Throttle(limit = 30, ttlMs = 60_000)
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.POS__READ)
     public Map<String, Object> verifyPin(AuthUser user, @Valid @RequestBody VerifyPinRequest dto) {

@@ -223,7 +223,6 @@ public class PosService {
         events.publish(DomainEvents.POS_SALE_COMPLETED, Obj.of("organizationId", orgId, "invoiceId", invoice.get("id"),
                 "invoiceNumber", invoice.get("invoiceNumber"), "cashSessionId", input.get("cashSessionId"),
                 "total", PosSql.jsString(invoice.get("totalAmount"))));
-        double tendered = input.get("amountTendered") != null ? num(input.get("amountTendered")) : total;
         String receiptText = null;
         String receiptHtml = null;
         try {
@@ -234,7 +233,8 @@ public class PosService {
             // non-fatal
         }
         Object change = isCredit ? 0 : pay != null && pay.get("change") != null ? pay.get("change")
-                : PosSql.js(Math.max(0, tendered - total));
+                : PosSql.js(PosSql.dec(input.get("amountTendered") != null ? input.get("amountTendered") : PosSql.decOf(total))
+                        .subtract(PosSql.decOf(total)).max(java.math.BigDecimal.ZERO));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("paymentIds", pay != null && pay.get("paymentIds") != null ? pay.get("paymentIds") : List.of());
         out.put("total", PosSql.js(total));
@@ -607,6 +607,11 @@ public class PosService {
         }
         Object partnerId = input.get("partnerId");
         if (PosSql.truthy(partnerId) && !partnerId.equals(order.get("partnerId"))) {
+            // Post-parity: the customer attached at settle must belong to this organization (Nest wrote any id).
+            if (jdbc.sql("SELECT count(*) FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                    .params(partnerId, orgId).query(Long.class).single() == 0) {
+                throw ApiException.badRequest("Customer not found");
+            }
             db.update(Order.class, Obj.of("partnerId", partnerId), "id = ? AND \"organizationId\" = ?", orderId, orgId);
             order.put("partnerId", partnerId);
         }
@@ -659,6 +664,11 @@ public class PosService {
 
     /** Credit needs a real, named customer within their limit. */
     private void assertCreditCustomer(String partnerId) {
+        // Post-parity (owner-approved 2026-11-10): an on-account sale needs pos:credit on every route. Nest checked it
+        // only on POST /pos/invoices/:id/credit, so settleMode=credit on checkout / settle needed just pos:checkout.
+        if (!pricing.currentPermissions(PosSql.user()).contains("pos:credit")) {
+            throw ApiException.forbidden("Missing required permission(s): pos:credit");
+        }
         if (partnerId == null || partnerId.isEmpty()) {
             throw ApiException.badRequest("Select a customer to charge on account");
         }

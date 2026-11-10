@@ -6,6 +6,7 @@ import static com.inventoryerp.pos.application.PosSql.user;
 
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.auth.CredentialGuard;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -31,6 +32,11 @@ import org.springframework.stereotype.Service;
  * Manager override by PIN / password (port of {@code pos-overrides.service.ts}). An approval is bound to what it
  * authorises: each override kind names the right the approver must also hold, on top of {@code pos:override}.
  * Failed credential attempts lock a manager's overrides for 10 minutes after 5 failures (A-005).
+ *
+ * <p>Post-parity hardening (owner-approved 2026-11-10): the lockout is counted on {@link CredentialGuard#MANAGER_PIN}
+ * (one atomic upsert before the compare, in its own transaction). Nest and the first port counted {@code LoginAttempt}
+ * rows, which parallel guesses raced past and which a rolled-back void / cancel transaction erased, so the lockout never
+ * engaged on those routes. {@code LoginAttempt} rows are still written as the audit trail.
  */
 @Service
 public class PosOverridesService {
@@ -44,8 +50,6 @@ public class PosOverridesService {
             "write_off", "pos:write_off",
             "shift_handover", "pos:override");
 
-    private static final int OVERRIDE_MAX_FAILED_ATTEMPTS = 5;
-    private static final long OVERRIDE_LOCKOUT_MS = 10 * 60_000L;
     private static final String PIN_ONLY_SENTINEL = "pin-only-override";
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -57,8 +61,13 @@ public class PosOverridesService {
     private final PasswordService password;
     private final AuditService audit;
     private final EventBus events;
+    private final CredentialGuard guard;
+    private final com.inventoryerp.kernel.common.DetachedWrites detached;
 
-    public PosOverridesService(JdbcClient jdbc, PasswordService password, AuditService audit, EventBus events) {
+    public PosOverridesService(JdbcClient jdbc, PasswordService password, AuditService audit, EventBus events,
+            CredentialGuard guard, com.inventoryerp.kernel.common.DetachedWrites detached) {
+        this.guard = guard;
+        this.detached = detached;
         this.jdbc = jdbc;
         this.password = password;
         this.audit = audit;
@@ -145,8 +154,10 @@ public class PosOverridesService {
         boolean ok = false;
         String failedReason = "override_pin_invalid";
         if (!empty(pin) && manager.pinHash() != null) {
+            countAttempt(manager.id());
             ok = password.compare(pin, manager.pinHash());
         } else if (!empty(pwd)) {
+            countAttempt(manager.id());
             ok = password.compare(pwd, manager.passwordHash());
             failedReason = "override_password_invalid";
         } else if (!empty(pin) && manager.pinHash() == null) {
@@ -156,7 +167,7 @@ public class PosOverridesService {
             recordOverrideFailure(manager, failedReason);
             throw ApiException.unauthorized("Invalid credentials");
         }
-        clearOverrideFailures(manager.email());
+        clearOverrideFailures(manager.id());
         audit.record(AuditInput.of("User", manager.id(), "login", null,
                 Obj.of("overrideVerified", true, "overrideKind", overrideKind)));
         events.publish(DomainEvents.POS_OVERRIDE_APPROVED, Obj.of("organizationId", orgId, "approverId", manager.id(),
@@ -177,6 +188,7 @@ public class PosOverridesService {
             throw ApiException.badRequest("Unknown override kind");
         }
         assertPinOnlyNotLocked();
+        countAttempt(PIN_ONLY_SENTINEL);
         List<Manager> candidates = findManagers("u.\"organizationId\" = ? AND u.\"isActive\" = true"
                 + " AND u.\"pinHash\" IS NOT NULL ORDER BY u.id", orgId);
         List<Manager> matches = new ArrayList<>();
@@ -194,7 +206,7 @@ public class PosOverridesService {
             throw ApiException.badRequest("Two managers share this PIN — enter the manager email to identify them");
         }
         Manager manager = matches.getFirst();
-        clearOverrideFailures(manager.email() == null ? "" : manager.email());
+        clearOverrideFailures(manager.id());
         clearOverrideFailures(PIN_ONLY_SENTINEL);
         audit.record(AuditInput.of("User", manager.id(), "login", null,
                 Obj.of("overrideVerified", true, "overrideKind", overrideKind, "viaPinOnly", true)));
@@ -203,29 +215,28 @@ public class PosOverridesService {
         return result(manager, overrideKind);
     }
 
-    private long recentFailures(String email) {
-        return jdbc.sql("SELECT count(*) FROM \"LoginAttempt\" WHERE \"organizationId\" = ? AND email = ?"
-                        + " AND success = false AND \"createdAt\" >= ?"
-                        + " AND reason IN ('override_pin_invalid', 'override_password_invalid')")
-                .params(org(), email, SqlRows.ts(Instant.now().minusMillis(OVERRIDE_LOCKOUT_MS)))
-                .query(Long.class).single();
-    }
+    private static final String LOCKED_MESSAGE =
+            "Manager overrides are temporarily locked after repeated failed attempts. Try again in a few minutes.";
 
     private void assertPinOnlyNotLocked() {
-        long recent = recentFailures(PIN_ONLY_SENTINEL);
-        if (recent >= OVERRIDE_MAX_FAILED_ATTEMPTS) {
-            safeAudit(PIN_ONLY_SENTINEL, recent);
-            throw ApiException.unauthorized(
-                    "Manager overrides are temporarily locked after repeated failed attempts. Try again in a few minutes.");
+        if (guard.lockedFor(org(), CredentialGuard.MANAGER_PIN, PIN_ONLY_SENTINEL).isPresent()) {
+            safeAudit(PIN_ONLY_SENTINEL, CredentialGuard.MANAGER_PIN.maxAttempts());
+            throw ApiException.unauthorized(LOCKED_MESSAGE);
         }
     }
 
     private void assertOverrideNotLocked(String managerId, String email) {
-        long recent = recentFailures(email);
-        if (recent >= OVERRIDE_MAX_FAILED_ATTEMPTS) {
-            safeAudit(managerId, recent);
-            throw ApiException.unauthorized(
-                    "Manager overrides are temporarily locked after repeated failed attempts. Try again in a few minutes.");
+        if (guard.lockedFor(org(), CredentialGuard.MANAGER_PIN, managerId).isPresent()) {
+            safeAudit(managerId, CredentialGuard.MANAGER_PIN.maxAttempts());
+            throw ApiException.unauthorized(LOCKED_MESSAGE);
+        }
+    }
+
+    /** Count one credential attempt for {@code subject} before comparing; throws when the subject is locked. */
+    private void countAttempt(String subject) {
+        if (guard.attempt(org(), CredentialGuard.MANAGER_PIN, subject).locked()) {
+            safeAudit(subject, CredentialGuard.MANAGER_PIN.maxAttempts());
+            throw ApiException.unauthorized(LOCKED_MESSAGE);
         }
     }
 
@@ -238,37 +249,37 @@ public class PosOverridesService {
         }
     }
 
+    /** Audit row of a failed attempt; detached so a rolled-back business transaction cannot erase it. */
     private void insertAttempt(String email, String reason) {
-        jdbc.sql("INSERT INTO \"LoginAttempt\" (id, \"organizationId\", email, success, reason, \"createdAt\")"
-                        + " VALUES (?, ?, ?, false, ?, " + NOW + ")")
-                .params(UUID.randomUUID().toString(), org(), email, reason).update();
+        String orgId = org();
+        detached.submit(() -> {
+            try {
+                jdbc.sql("INSERT INTO \"LoginAttempt\" (id, \"organizationId\", email, success, reason, \"createdAt\")"
+                                + " VALUES (?, ?, ?, false, ?, " + NOW + ")")
+                        .params(UUID.randomUUID().toString(), orgId, email, reason).update();
+            } catch (RuntimeException ignored) {
+                // logging must never break the rejection
+            }
+        });
     }
 
     private void recordPinOnlyFailure() {
-        try {
-            insertAttempt(PIN_ONLY_SENTINEL, "override_pin_invalid");
-        } catch (RuntimeException ignored) {
-            // logging must never break the rejection
-        }
+        insertAttempt(PIN_ONLY_SENTINEL, "override_pin_invalid");
     }
 
     private void recordOverrideFailure(Manager manager, String reason) {
+        insertAttempt(manager.email(), reason);
         try {
-            insertAttempt(manager.email(), reason);
-            long recent = recentFailures(manager.email());
             events.publish("pos.override.lockout_warning", Obj.of("organizationId", org(), "managerId", manager.id(),
-                    "failedAttempts", recent));
+                    "locked", guard.lockedFor(org(), CredentialGuard.MANAGER_PIN, manager.id()).isPresent()));
         } catch (RuntimeException ignored) {
             // logging must never break the rejection
         }
     }
 
-    private void clearOverrideFailures(String email) {
+    private void clearOverrideFailures(String subject) {
         try {
-            jdbc.sql("UPDATE \"LoginAttempt\" SET success = true, reason = 'override_unlocked_on_success'"
-                            + " WHERE \"organizationId\" = ? AND email = ? AND success = false"
-                            + " AND reason IN ('override_pin_invalid', 'override_password_invalid')")
-                    .params(org(), email).update();
+            guard.succeeded(org(), CredentialGuard.MANAGER_PIN, subject);
         } catch (RuntimeException ignored) {
             // best-effort bookkeeping
         }
@@ -299,19 +310,23 @@ public class PosOverridesService {
         Manager manager = assertCanOverride(overrideById, overrideKind == null ? "discount" : overrideKind);
         assertOverrideNotLocked(manager.id(), manager.email());
         if (pin.startsWith("password:")) {
+            countAttempt(manager.id());
             if (!password.compare(pin.substring(9), manager.passwordHash())) {
                 recordOverrideFailure(manager, "override_password_invalid");
                 throw ApiException.unauthorized("Invalid manager credentials");
             }
+            clearOverrideFailures(manager.id());
             return manager;
         }
         if (manager.pinHash() == null) {
             throw ApiException.badRequest("Manager has not set an override PIN");
         }
+        countAttempt(manager.id());
         if (!password.compare(pin, manager.pinHash())) {
             recordOverrideFailure(manager, "override_pin_invalid");
             throw ApiException.unauthorized("Invalid override PIN");
         }
+        clearOverrideFailures(manager.id());
         return manager;
     }
 
@@ -326,9 +341,18 @@ public class PosOverridesService {
         if (pinHash == null) {
             throw ApiException.badRequest("You have not set a PIN. Set one in your profile.");
         }
-        if (!password.compare(pin, pinHash)) {
+        String orgId = org();
+        java.util.Optional<java.time.Duration> held = guard.lockedFor(orgId, CredentialGuard.POS_PIN, userId);
+        CredentialGuard.Attempt attempt = held.isPresent() ? new CredentialGuard.Attempt(true, held.get())
+                : guard.attempt(orgId, CredentialGuard.POS_PIN, userId);
+        if (attempt.locked()) {
+            throw ApiException.unauthorized("Account locked. Try again in " + CredentialGuard.minutes(attempt.remaining())
+                    + " min");
+        }
+        if (pin == null || !password.compare(pin, pinHash)) {
             throw ApiException.unauthorized("Invalid PIN");
         }
+        guard.succeeded(orgId, CredentialGuard.POS_PIN, userId);
         audit.record(AuditInput.of("User", userId, "login", null,
                 Obj.of("pinVerified", true, "purpose", "delete_item")));
         return Obj.of("ok", true);

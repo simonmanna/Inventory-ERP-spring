@@ -339,10 +339,19 @@ class KernelIT {
         assertThat(revoked.body().get("message").asString()).isEqualTo("This cashier can no longer use the POS. Sign in with another PIN.");
         // PIN screen: falls back to the bearer identity (not 401).
         assertThat(call("GET", "/pos/auth/staff", null, h2).status()).isEqualTo(200);
-        // POS token of another org is ignored.
+        // Post-parity hardening (2026-11-10): a POS token that does not verify for this organization (foreign org,
+        // expired, forged) no longer falls back to the bearer identity; the till goes back to the PIN screen.
         String foreign = jwt.signPos(cashier, otherOrg, email);
-        Res ignored = call("GET", "/auth/me", null, Map.of("Authorization", "Bearer " + adminToken, "X-Pos-User", foreign));
-        assertThat(ignored.body().get("email").asString()).isEqualTo("admin@demo.test");
+        for (String bad : List.of(foreign, "not-a-pos-token", posToken.substring(0, posToken.length() - 4) + "AAAA")) {
+            Res rejected = call("GET", "/auth/me", null, Map.of("Authorization", "Bearer " + adminToken, "X-Pos-User", bad));
+            assertThat(rejected.status()).isEqualTo(401);
+            assertThat(rejected.raw().headers().firstValue("X-Pos-Session")).contains("revoked");
+            assertThat(rejected.body().get("message").asString())
+                    .isEqualTo("Your POS sign-in has expired. Sign in again with your PIN.");
+        }
+        // ... except on the PIN screens, which still answer for the bearer identity.
+        assertThat(call("GET", "/pos/auth/staff", null,
+                Map.of("Authorization", "Bearer " + adminToken, "X-Pos-User", "not-a-pos-token")).status()).isEqualTo(200);
     }
 
     // ---------------------------------------------------------------- idempotency

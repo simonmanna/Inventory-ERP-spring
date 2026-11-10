@@ -57,7 +57,10 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
-_None. Any deviation from Nest behaviour must be listed here with the owner's approval._
+- Post-parity hardening (owner-approved 2026-11-10): a dead-lettered push operation is stored with `managerPin`,
+  `incomingPin`, `overridePin`, `pin`, `password` and `approvalToken` replaced by `[redacted]` (Nest stored the raw
+  payload). `cash_session.open` replays pass no shortage approval, so an offline open that would remove cash from the
+  drawer is not auto-adjusted. See `docs/spec/pos.md` "Post-parity hardening".
 
 ## Notes
 

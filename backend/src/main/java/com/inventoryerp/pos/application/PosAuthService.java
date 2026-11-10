@@ -5,6 +5,7 @@ import static com.inventoryerp.pos.application.PosSql.org;
 
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.auth.CredentialGuard;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -31,8 +32,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PosAuthService {
 
     private static final Logger log = LoggerFactory.getLogger(PosAuthService.class);
-    private static final int MAX_FAILED_ATTEMPTS = 10;
-    private static final long LOCKOUT_DURATION_MS = 15 * 60 * 1000L;
 
     private final JdbcClient jdbc;
     private final PasswordService password;
@@ -40,9 +39,11 @@ public class PosAuthService {
     private final JwtTokenService jwt;
     private final EventBus events;
     private final TransactionTemplate tx;
+    private final CredentialGuard guard;
 
     public PosAuthService(JdbcClient jdbc, PasswordService password, AuditService audit, JwtTokenService jwt,
-            EventBus events, PlatformTransactionManager txm) {
+            EventBus events, PlatformTransactionManager txm, CredentialGuard guard) {
+        this.guard = guard;
         this.jdbc = jdbc;
         this.password = password;
         this.audit = audit;
@@ -69,33 +70,9 @@ public class PosAuthService {
     /** Verify the POS PIN and mint a POS token. */
     public Map<String, Object> pinLogin(String userId, String pin) {
         String organizationId = org();
-        Map<String, Object> user = SqlRows.one(jdbc.sql("SELECT u.*, e.\"employmentStatus\"::text AS \"empStatus\","
-                + " e.\"deletedAt\" AS \"empDeletedAt\", e.id AS \"empId\" FROM \"User\" u LEFT JOIN \"HrEmployee\" e"
-                + " ON e.\"userId\" = u.id WHERE u.id = ? AND u.\"organizationId\" = ? AND u.\"isActive\" = true"
-                + " AND u.\"deletedAt\" IS NULL LIMIT 1").params(userId, organizationId));
-        if (user == null) {
-            throw ApiException.notFound("Staff not found");
-        }
-        PosEligibility.Employee emp = user.get("empId") == null ? null
-                : new PosEligibility.Employee((String) user.get("empStatus"), (Instant) user.get("empDeletedAt"));
-        if (PosEligibility.employmentBlocksPos(emp)) {
-            throw ApiException.unauthorized("Your employment is not active. Ask a manager.");
-        }
-        Instant lockedUntil = (Instant) user.get("lockedUntil");
-        if (lockedUntil != null && Instant.now().isBefore(lockedUntil)) {
-            long remaining = (long) Math.ceil((lockedUntil.toEpochMilli() - System.currentTimeMillis()) / 1000.0 / 60);
-            throw ApiException.unauthorized("Account locked. Try again in " + remaining + " min");
-        }
-        String pinHash = (String) user.get("pinHash");
-        if (pinHash == null) {
-            throw ApiException.unauthorized("No POS PIN set. Ask a manager to set one.");
-        }
-        if (!password.compare(pin, pinHash)) {
-            recordFailedAttempt(user);
-            throw ApiException.unauthorized("Invalid PIN");
-        }
-        jdbc.sql("UPDATE \"User\" SET \"failedLoginCount\" = 0, \"lockedUntil\" = NULL, \"lastLoginAt\" = " + NOW
-                + ", \"updatedAt\" = " + NOW + " WHERE id = ?").param(user.get("id")).update();
+        Map<String, Object> user = verifyPin(userId, pin);
+        jdbc.sql("UPDATE \"User\" SET \"lastLoginAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .param(user.get("id")).update();
         String email = (String) user.get("email");
         recordAttempt(organizationId, email, true, null);
         List<String> permissions = jdbc.sql("SELECT p FROM (SELECT DISTINCT ON (p) p, ord FROM (SELECT p, row_number()"
@@ -110,29 +87,62 @@ public class PosAuthService {
                 "email", email, "permissions", permissions, "posToken", posToken);
     }
 
+    /**
+     * Check a staff member's POS PIN without signing them in (no token, no login event, no audit "login" row): the
+     * shift handover uses it for the incoming cashier and the approving manager. Same eligibility, lockout and error
+     * messages as {@link #pinLogin}. Returns the user row.
+     *
+     * <p>Post-parity hardening (owner-approved 2026-11-10): attempts are counted on {@link CredentialGuard#POS_PIN}
+     * (atomic, before the compare) instead of the back-office {@code failedLoginCount} / {@code lockedUntil}, so
+     * parallel guesses cannot slip past the lockout and wrong PINs never lock the user's web login.
+     */
+    public Map<String, Object> verifyPin(String userId, String pin) {
+        String organizationId = org();
+        Map<String, Object> user = SqlRows.one(jdbc.sql("SELECT u.*, e.\"employmentStatus\"::text AS \"empStatus\","
+                + " e.\"deletedAt\" AS \"empDeletedAt\", e.id AS \"empId\" FROM \"User\" u LEFT JOIN \"HrEmployee\" e"
+                + " ON e.\"userId\" = u.id WHERE u.id = ? AND u.\"organizationId\" = ? AND u.\"isActive\" = true"
+                + " AND u.\"deletedAt\" IS NULL LIMIT 1").params(userId, organizationId));
+        if (user == null) {
+            throw ApiException.notFound("Staff not found");
+        }
+        PosEligibility.Employee emp = user.get("empId") == null ? null
+                : new PosEligibility.Employee((String) user.get("empStatus"), (Instant) user.get("empDeletedAt"));
+        if (PosEligibility.employmentBlocksPos(emp)) {
+            throw ApiException.unauthorized("Your employment is not active. Ask a manager.");
+        }
+        String subject = (String) user.get("id");
+        guard.lockedFor(organizationId, CredentialGuard.POS_PIN, subject).ifPresent(left -> {
+            throw locked(left);
+        });
+        String pinHash = (String) user.get("pinHash");
+        if (pinHash == null) {
+            throw ApiException.unauthorized("No POS PIN set. Ask a manager to set one.");
+        }
+        CredentialGuard.Attempt attempt = guard.attempt(organizationId, CredentialGuard.POS_PIN, subject);
+        if (attempt.locked()) {
+            recordAttempt(organizationId, (String) user.get("email"), false, "account_locked");
+            throw locked(attempt.remaining());
+        }
+        if (pin == null || !password.compare(pin, pinHash)) {
+            recordAttempt(organizationId, (String) user.get("email"), false, "invalid_pin");
+            if (guard.lockedFor(organizationId, CredentialGuard.POS_PIN, subject).isPresent()) {
+                log.warn("User POS PIN locked after {} failed attempts", CredentialGuard.POS_PIN.maxAttempts());
+            }
+            throw ApiException.unauthorized("Invalid PIN");
+        }
+        guard.succeeded(organizationId, CredentialGuard.POS_PIN, subject);
+        return user;
+    }
+
+    private static ApiException locked(java.time.Duration remaining) {
+        return ApiException.unauthorized("Account locked. Try again in " + CredentialGuard.minutes(remaining) + " min");
+    }
+
     /** The cashier left the terminal. */
     public Map<String, Object> logoff(String userId) {
         events.publish(DomainEvents.POS_PIN_LOGOFF, Obj.of("userId", userId, "organizationId", org(),
                 "at", JsonConfig.toJsIso(Instant.now()), "deviceId", null));
         return Obj.of("ok", true);
-    }
-
-    private void recordFailedAttempt(Map<String, Object> user) {
-        int next = PosSql.intOf(user.get("failedLoginCount")) + 1;
-        boolean locked = next >= MAX_FAILED_ATTEMPTS;
-        if (locked) {
-            jdbc.sql("UPDATE \"User\" SET \"failedLoginCount\" = ?, \"lockedUntil\" = ?, \"updatedAt\" = " + NOW
-                            + " WHERE id = ?")
-                    .params(next, SqlRows.ts(Instant.now().plusMillis(LOCKOUT_DURATION_MS)), user.get("id")).update();
-        } else {
-            jdbc.sql("UPDATE \"User\" SET \"failedLoginCount\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                    .params(next, user.get("id")).update();
-        }
-        recordAttempt((String) user.get("organizationId"), (String) user.get("email"), false,
-                locked ? "account_locked" : "invalid_pin");
-        if (locked) {
-            log.warn("User POS PIN locked after {} failed attempts", next);
-        }
     }
 
     private void recordAttempt(String organizationId, String email, boolean success, String reason) {
@@ -160,9 +170,18 @@ public class PosAuthService {
         if (pinHash == null) {
             throw ApiException.badRequest("No POS PIN set. Use the PIN login screen to set one first.");
         }
-        if (!password.compare(currentPin, pinHash)) {
+        String orgId = (String) user.get("organizationId");
+        guard.lockedFor(orgId, CredentialGuard.POS_PIN, userId).ifPresent(left -> {
+            throw locked(left);
+        });
+        CredentialGuard.Attempt attempt = guard.attempt(orgId, CredentialGuard.POS_PIN, userId);
+        if (attempt.locked()) {
+            throw locked(attempt.remaining());
+        }
+        if (currentPin == null || !password.compare(currentPin, pinHash)) {
             throw ApiException.badRequest("Current PIN is incorrect");
         }
+        guard.succeeded(orgId, CredentialGuard.POS_PIN, userId);
         if (currentPin.equals(newPin)) {
             throw ApiException.badRequest("New PIN must be different from the current PIN");
         }
