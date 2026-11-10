@@ -49,6 +49,12 @@ public class InvoicingWorkflowsInitializer {
     private final AccountDeterminationService determination;
     private final JournalService journals;
     private final BillReceiptMatcherService matcher;
+    private WithholdingCertificateService withholdingCertificates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setWithholdingCertificates(WithholdingCertificateService withholdingCertificates) {
+        this.withholdingCertificates = withholdingCertificates;
+    }
 
     public InvoicingWorkflowsInitializer(WorkflowRegistry registry, JdbcClient jdbc, PostingService posting,
             StockService stock, DocumentBuilderService builder, AccountDeterminationService determination,
@@ -258,6 +264,9 @@ public class InvoicingWorkflowsInitializer {
                                         "Void of " + doc.get("documentNumber"));
                             }
                             matcher.releaseForBill(ctx.organizationId(), (String) doc.get("id"));
+                            jdbc.sql("UPDATE \"WithholdingCertificate\" SET status = 'cancelled', \"cancelledAt\" = "
+                                    + NOW + " WHERE \"documentId\" = ? AND \"organizationId\" = ? AND status = 'issued'")
+                                    .params(doc.get("id"), ctx.organizationId()).update();
                             jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"paymentStatus\" = 'not_paid',"
                                     + " \"updatedAt\" = " + NOW + " WHERE id = ?").param(doc.get("id")).update();
                         }, null)));
@@ -335,12 +344,26 @@ public class InvoicingWorkflowsInitializer {
             part.put("subtotal", d(line.get("subtotal")).multiply(factor));
             part.put("taxAmount", d(line.get("taxAmount")).multiply(factor));
             part.put("total", d(line.get("total")).multiply(factor));
+            if (line.get("taxes") instanceof List<?> taxes) {
+                // ADR-S071: the breakdown scales with the postable share (withholding / reverse charge post whole).
+                List<Map<String, Object>> scaled = new ArrayList<>();
+                for (Object o : taxes) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> t = new LinkedHashMap<>((Map<String, Object>) o);
+                    t.put("amount", d(t.get("amount")).multiply(factor));
+                    scaled.add(t);
+                }
+                part.put("taxes", scaled);
+            }
             postable.add(part);
             postableTotal = postableTotal.add(d(line.get("total")).multiply(factor));
         }
         String entryId = null;
         postableTotal = postableTotal.add(voucheredVariance);
-        if (postableTotal.signum() > 0) {
+        // ADR-S071: withholding (deducted from the payable) and reverse-charge VAT apply to the whole bill.
+        DocumentBuilderService.SpecialTaxes special = builder.specialTaxes(lines);
+        BigDecimal withholding = special.withholding();
+        if (postableTotal.signum() > 0 || special.any()) {
             String grni = determination.mapped("grni_accrued");
             Grouped g = builder.groupForPosting(partnerId, postable, "purchase", grni);
             List<MutableLine> post = new ArrayList<>();
@@ -368,8 +391,29 @@ public class InvoicingWorkflowsInitializer {
                 post.add(new MutableLine(priceVarianceAccount(), voucheredVariance, null, null,
                         "Purchase price variance (billed above receipt)"));
             }
-            post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
-                    "Bill " + full.get("documentNumber")));
+            BigDecimal counterCredit = postableTotal.subtract(withholding);
+            if (!special.any()) {
+                post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
+                        "Bill " + full.get("documentNumber")));
+            } else {
+                if (counterCredit.signum() > 0) {
+                    post.add(new MutableLine(g.counterAccount(), null, counterCredit, partnerId,
+                            "Bill " + full.get("documentNumber")));
+                } else if (counterCredit.signum() < 0) {
+                    post.add(new MutableLine(g.counterAccount(), counterCredit.negate(), null, partnerId,
+                            "Bill " + full.get("documentNumber") + " · withholding on vouchered receipts"));
+                }
+                if (withholding.signum() > 0) {
+                    post.add(new MutableLine(determination.mapped("withholding_payable"), null, withholding, partnerId,
+                            "Withholding tax · bill " + full.get("documentNumber")));
+                }
+                special.reverseChargeByTax().forEach((taxId, amt) -> {
+                    post.add(new MutableLine(determination.mapped("tax_receivable"), amt, null, null,
+                            "Reverse-charge input VAT"));
+                    post.add(new MutableLine(determination.mapped("tax_payable"), null, amt, null,
+                            "Reverse-charge output VAT"));
+                });
+            }
             List<Line> req = post.stream().map(MutableLine::toLine).toList();
             Map<String, Object> entry = posting.post(new PostingRequest("PURCH", instant(full.get("issueDate")),
                     "Bill " + full.get("documentNumber"), (String) full.get("currencyId"),
@@ -408,10 +452,28 @@ public class InvoicingWorkflowsInitializer {
         // ACC-4 (B15): the bill is the open AP item for its whole amount. Vouchered quantities were raised on AP by the
         // receipt voucher, so the bill posts no second AP for them, but the supplier is paid against this bill — its
         // residual carries the vouchered share at bill price (the billed-above-receipt variance is part of that share).
-        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal);
+        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal).subtract(withholding);
+        if (withholding.signum() > 0) {
+            issueWithholdingCertificates(full, special, entryId);
+        }
         jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entryId, openPayable, id).update();
+    }
+
+    /** ADR-S071: one issued withholding certificate per withholding tax of the posted bill. */
+    private void issueWithholdingCertificates(Map<String, Object> bill, DocumentBuilderService.SpecialTaxes special,
+            String entryId) {
+        Instant date = instant(bill.get("issueDate"));
+        int year = date.atOffset(java.time.ZoneOffset.UTC).getYear();
+        special.withholdingByTax().forEach((taxId, v) -> {
+            if (v[2].signum() == 0) {
+                return;
+            }
+            withholdingCertificates.issue(new WithholdingCertificateService.NewCertificate("issued",
+                    (String) bill.get("partnerId"), (String) bill.get("id"), null, taxId, date, v[0], v[1], v[2],
+                    (String) bill.get("currencyId"), entryId, null, "Bill " + bill.get("documentNumber")), year);
+        });
     }
 
     private static final class MutableLine {
@@ -566,6 +628,9 @@ public class InvoicingWorkflowsInitializer {
         }
         jdbc.sql("UPDATE \"Payment\" SET \"allocatedAmount\" = 0, \"unallocatedAmount\" = 0, \"updatedAt\" = " + NOW
                 + " WHERE id = ?").param(payment.get("id")).update();
+        jdbc.sql("UPDATE \"WithholdingCertificate\" SET status = 'cancelled', \"cancelledAt\" = " + NOW
+                + " WHERE \"paymentId\" = ? AND \"organizationId\" = ? AND status = 'issued'")
+                .params(payment.get("id"), org).update();
         Map<String, Object> outcome = new LinkedHashMap<>();
         outcome.put("id", payment.get("id"));
         outcome.put("voided", true);
@@ -576,8 +641,9 @@ public class InvoicingWorkflowsInitializer {
     private void restore(String table, String statusType, Map<String, Object> row, BigDecimal amount) {
         BigDecimal newPaid = d(row.get("amountPaid")).subtract(amount);
         BigDecimal newResidual = d(row.get("amountResidual")).add(amount);
+        BigDecimal payable = d(row.get("totalAmount")).subtract(d(row.get("withholdingAmount")));
         String paymentStatus = newResidual.signum() <= 0 ? "paid"
-                : newResidual.compareTo(d(row.get("totalAmount"))) < 0 ? "partial" : "not_paid";
+                : newResidual.compareTo(payable) < 0 ? "partial" : "not_paid";
         String status = "paid".equals(String.valueOf(row.get("status"))) && newResidual.signum() > 0 ? "posted"
                 : String.valueOf(row.get("status"));
         jdbc.sql("UPDATE \"" + table + "\" SET \"amountPaid\" = ?, \"amountResidual\" = ?, \"paymentStatus\" ="

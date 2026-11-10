@@ -296,10 +296,33 @@ public class DebitNotesService {
         if (ln.get("taxId") == null) {
             return Money.ZERO;
         }
-        Map<String, Object> tax = SqlRows.one(jdbc.sql("SELECT rate, \"accountId\", type::text AS type FROM \"Tax\""
-                + " WHERE id = ? AND \"organizationId\" = ?").params(ln.get("taxId"), org()));
+        Map<String, Object> tax = SqlRows.one(jdbc.sql("SELECT rate, \"accountId\", type::text AS type, \"isGroup\""
+                + " FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ?").params(ln.get("taxId"), org()));
         if (tax == null || "withholding".equals(tax.get("type"))) {
             return Money.ZERO;
+        }
+        if (Boolean.TRUE.equals(tax.get("isGroup"))) {
+            // ADR-S071: a group applies its ordered children (exclusive; compound on the running total), one tax line
+            // per account; withholding and reverse-charge children do not apply to a note.
+            BigDecimal net = Money.dec(ln.get("subtotal"));
+            BigDecimal total = Money.ZERO;
+            for (Map<String, Object> c : SqlRows.list(jdbc.sql("SELECT t.rate, t.\"accountId\", t.\"isCompound\" FROM"
+                    + " \"TaxGroupMember\" m JOIN \"Tax\" t ON t.id = m.\"childTaxId\" WHERE m.\"groupTaxId\" = ? AND"
+                    + " m.\"organizationId\" = ? AND t.\"deletedAt\" IS NULL AND t.type::text <> 'withholding' AND NOT"
+                    + " t.\"reverseCharge\" ORDER BY m.sequence").params(ln.get("taxId"), org()))) {
+                BigDecimal base = Boolean.TRUE.equals(c.get("isCompound")) ? net.add(total) : net;
+                BigDecimal amount = base.multiply(Money.dec(c.get("rate"))).divide(BigDecimal.valueOf(100), 2,
+                        java.math.RoundingMode.HALF_UP);
+                if (amount.signum() == 0) {
+                    continue;
+                }
+                String account = outbound
+                        ? (c.get("accountId") != null ? (String) c.get("accountId") : determination.mapped("tax_payable"))
+                        : determination.mapped("tax_receivable");
+                byAccount.merge(account, amount, BigDecimal::add);
+                total = total.add(amount);
+            }
+            return total;
         }
         BigDecimal amount = Money.dec(ln.get("subtotal")).multiply(Money.dec(tax.get("rate")))
                 .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);

@@ -26,12 +26,14 @@ import {
   useFiscalPositions,
   useJournals,
   useCompanySettings,
+  useTaxes,
   type PaymentTerm,
   type Journal,
 } from '@/features/accounting/api';
 import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { TaxPicker } from '@/components/tax-picker';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
@@ -129,6 +131,8 @@ interface LineForm {
   discountPercent?: number;
   /** Product unit (ADR-S003): Pack, Box, … defaults to the product's sales unit. */
   uomId?: string;
+  /** ADR-S071: several taxes / a tax group (empty = the product's tax). */
+  taxIds?: string[];
 }
 interface FormValues {
   partnerId: string;
@@ -154,6 +158,8 @@ export function InvoiceCreatePage() {
   const navigate = useNavigate();
   const partners = usePartners({ page: 1, pageSize: 200 });
   const products = useProducts({ page: 1, pageSize: 200 });
+  const taxQuery = useTaxes({ page: 1, pageSize: 200 });
+  const taxList = taxQuery.data?.data ?? [];
   const { data: paymentTerms } = usePaymentTerms();
   const { data: fiscalPositions } = useFiscalPositions();
   const { data: journalsData } = useJournals();
@@ -253,6 +259,7 @@ export function InvoiceCreatePage() {
           unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
           discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
           uomId: l.uomId || undefined,
+          taxIds: l.taxIds && l.taxIds.length > 0 ? l.taxIds : undefined,
         })),
     };
     const t = setTimeout(async () => {
@@ -344,6 +351,7 @@ export function InvoiceCreatePage() {
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
         uomId: l.productId ? l.uomId || undefined : undefined,
+        taxIds: l.taxIds && l.taxIds.length > 0 ? l.taxIds : undefined,
       })),
     };
 
@@ -564,6 +572,14 @@ export function InvoiceCreatePage() {
                               </option>
                             ))}
                           </select>
+                          <div className="mt-1">
+                            <TaxPicker
+                              kind="sales"
+                              taxes={taxList}
+                              value={watch(`lines.${index}.taxIds`) ?? []}
+                              onChange={(ids) => setValue(`lines.${index}.taxIds`, ids)}
+                            />
+                          </div>
                         </td>
                         {show('description') && (
                           <td className="px-2 py-1.5">

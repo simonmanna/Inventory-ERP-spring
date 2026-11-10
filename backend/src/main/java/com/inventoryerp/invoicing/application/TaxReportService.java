@@ -58,7 +58,8 @@ public class TaxReportService {
                 + " sum(dl.subtotal * d.\"exchangeRate\") AS taxable, sum(dl.\"taxAmount\" * d.\"exchangeRate\") AS tax,"
                 + " count(DISTINCT d.id) AS docs FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\""
                 + " WHERE d.\"organizationId\" = ? AND d.\"documentType\"::text IN ('sales_invoice', 'credit_note',"
-                + " 'vendor_bill', 'debit_note') AND d.status::text IN " + POSTED);
+                + " 'vendor_bill', 'debit_note') AND d.status::text IN " + POSTED
+                + " AND NOT EXISTS (SELECT 1 FROM \"DocumentLineTax\" x WHERE x.\"documentLineId\" = dl.id)");
         List<Object> params = new ArrayList<>(List.of(org()));
         range(docSql, params, "d.\"issueDate\"", from, to);
         if (branchId != null && !branchId.isBlank()) {
@@ -66,6 +67,32 @@ public class TaxReportService {
             params.add(branchId);
         }
         docSql.append(" GROUP BY 1, 2");
+        // ADR-S071: multi-tax lines report per tax from their breakdown; reverse charge is output AND input VAT.
+        StringBuilder brkSql = new StringBuilder("SELECT d.\"documentType\"::text AS type, x.\"taxId\", x.kind,"
+                + " sum(x.base * d.\"exchangeRate\") AS taxable, sum(x.amount * d.\"exchangeRate\") AS tax,"
+                + " count(DISTINCT d.id) AS docs FROM \"DocumentLineTax\" x JOIN \"Document\" d ON d.id = x.\"documentId\""
+                + " WHERE d.\"organizationId\" = ? AND x.kind IN ('tax', 'reverse_charge') AND d.\"documentType\"::text"
+                + " IN ('sales_invoice', 'credit_note', 'vendor_bill', 'debit_note') AND d.status::text IN " + POSTED);
+        List<Object> brkParams = new ArrayList<>(List.of(org()));
+        range(brkSql, brkParams, "d.\"issueDate\"", from, to);
+        if (branchId != null && !branchId.isBlank()) {
+            brkSql.append(" AND d.\"branchId\" = ?");
+            brkParams.add(branchId);
+        }
+        brkSql.append(" GROUP BY 1, 2, 3");
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql(brkSql.toString()).params(brkParams))) {
+            String type = (String) r.get("type");
+            boolean sales = "sales_invoice".equals(type) || "credit_note".equals(type);
+            boolean negative = "credit_note".equals(type) || "debit_note".equals(type);
+            long docs = ((Number) r.get("docs")).longValue();
+            if ("reverse_charge".equals(r.get("kind"))) {
+                add(output, (String) r.get("taxId"), SqlRows.dec(r, "taxable"), SqlRows.dec(r, "tax"), docs, negative);
+                add(input, (String) r.get("taxId"), SqlRows.dec(r, "taxable"), SqlRows.dec(r, "tax"), docs, negative);
+            } else {
+                add(sales ? output : input, (String) r.get("taxId"), SqlRows.dec(r, "taxable"), SqlRows.dec(r, "tax"),
+                        docs, negative);
+            }
+        }
         for (Map<String, Object> r : SqlRows.list(jdbc.sql(docSql.toString()).params(params))) {
             String type = (String) r.get("type");
             boolean sales = "sales_invoice".equals(type) || "credit_note".equals(type);

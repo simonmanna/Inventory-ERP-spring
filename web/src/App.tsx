@@ -108,6 +108,7 @@ const PrintTemplatesPage = lazy(() => import('@/pages/settings/print-templates')
 const AutomationRulesPage = lazy(() => import('@/pages/settings/automation-rules'));
 const ApiClientsPage = lazy(() => import('@/pages/settings/api-clients'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
+const WithholdingCertificatesPage = lazy(() => import('@/pages/accounting/withholding-certificates'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
 const CostCentersPage = lazy(() => import('@/pages/accounting/cost-centers').then((m) => ({ default: m.CostCentersPage })));
@@ -458,6 +459,7 @@ export function App() {
             <Route path="/settings/api-clients" element={<RequirePermission permission={PERMISSIONS.apiClient.read}><ApiClientsPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<RequirePermission permission={PERMISSIONS.tax.read}><TaxesPage /></RequirePermission>} />
+            <Route path="/withholding-certificates" element={<RequirePermission permission={PERMISSIONS.withholding.read}><WithholdingCertificatesPage /></RequirePermission>} />
             <Route path="/accounts/payment-terms" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentTermsPage /></RequirePermission>} />
             <Route path="/accounts/fiscal-positions" element={<RequirePermission permission={PERMISSIONS.account.read}><FiscalPositionsPage /></RequirePermission>} />
             <Route path="/cost-centers" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCentersPage /></RequirePermission>} />

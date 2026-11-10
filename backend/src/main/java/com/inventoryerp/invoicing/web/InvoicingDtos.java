@@ -31,15 +31,25 @@ public final class InvoicingDtos {
             @OneOf({"product", "section", "note"}) String lineType,
             String uomId,
             /* ADR-S058: the product variant of the line (null = product without variants). */
-            String variantId) {
+            String variantId,
+            /* ADR-S071: several taxes / groups / withholding / reverse charge (null = the single taxId applies). */
+            List<String> taxIds) {
+
+        /** A line without a tax list. */
+        public InvoiceLine(String productId, String accountId, String description, BigDecimal quantity,
+                BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType, String uomId,
+                String variantId) {
+            this(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType, uomId,
+                    variantId, null);
+        }
 
         LineInput toInput() {
-            if (variantId == null || variantId.isBlank()) {
-                return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
-                        lineType, uomId);
-            }
-            return new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
-                    discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            LineInput in = variantId == null || variantId.isBlank()
+                    ? LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
+                            lineType, uomId)
+                    : new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
+                            discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            return taxIds == null ? in : in.withTaxIds(taxIds);
         }
     }
 

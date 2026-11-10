@@ -183,6 +183,14 @@ export const ACCOUNT_MAPPING_REGISTRY: readonly AccountMappingDef[] = [
     expectedCategories: ['tax', 'current_liability'],
     required: true,
   },
+  {
+    key: 'withholding_receivable',
+    label: 'Withholding Tax Receivable',
+    group: 'tax',
+    expectedCategories: ['current_asset', 'receivable'],
+    required: false,
+    description: 'Tax withheld by customers from our receipts (ADR-S071); created as 1455 on first use.',
+  },
 
   // ------------------------------------------------------------- treasury ---
   {

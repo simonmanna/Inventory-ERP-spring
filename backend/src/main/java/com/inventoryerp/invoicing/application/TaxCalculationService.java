@@ -66,7 +66,8 @@ public class TaxCalculationService {
         BigDecimal whTotal = Money.ZERO;
         List<TaxAmount> whBreakdown = new ArrayList<>();
         for (TaxLike t : withholding) {
-            BigDecimal amt = round(net.multiply(Money.div(t.rate(), BigDecimal.valueOf(100))), 6);
+            // ADR-S071: withholding rounds to the currency like output tax (it is deducted from a payable).
+            BigDecimal amt = round(net.multiply(Money.div(t.rate(), BigDecimal.valueOf(100))), scale != null ? scale : 6);
             whTotal = whTotal.add(amt);
             whBreakdown.add(new TaxAmount(t.id(), amt));
         }

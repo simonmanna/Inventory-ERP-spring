@@ -56,7 +56,8 @@ public class ContractController {
             BigDecimal retentionPct,
             String retentionCondition) {}
 
-    public record ValuationRequest(BigDecimal cumulativeValue, String date) {}
+    /** Valuation body ({@code withholdingTaxId}: withholding tax deducted on the valuation bill, ADR-S071). */
+    public record ValuationRequest(BigDecimal cumulativeValue, String date, String withholdingTaxId) {}
 
     public record BackChargeRequest(BigDecimal amount, String reason) {}
 
@@ -191,7 +192,7 @@ public class ContractController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.CONTRACT__POST)
     public Map<String, Object> valuation(@PathVariable String subcontractId, @RequestBody ValuationRequest r) {
-        return contracts.valuation(subcontractId, r.cumulativeValue(), r.date());
+        return contracts.valuation(subcontractId, r.cumulativeValue(), r.date(), r.withholdingTaxId());
     }
 
     @PostMapping("/subcontracts/{subcontractId}/complete")

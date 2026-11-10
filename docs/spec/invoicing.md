@@ -158,3 +158,32 @@ balances. Screen: `/credit-control`. Test: `CreditControlIT`.
 Status: built, not compiled or run. `GET /reports/ar/sales-analysis` (`report:ar`, `SalesAnalysisService`), screen
 `/reports/sales-analysis`. Test: `SalesAnalysisIT`.
 
+## Tax groups, several taxes per line, withholding and reverse charge (ADR-S071, built)
+
+These are Spring-native extensions. Lines that use none of them behave exactly as before. See
+[ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+
+- **Line taxes:**
+  - Invoice, vendor bill and credit-note lines accept `taxIds` (ordered).
+  - A single `taxId` may now name a group or a reverse-charge tax.
+  - Such lines store `DocumentLine.taxIds` and a `DocumentLineTax` breakdown, and render `taxIds` and `taxes` (taxId,
+    name, code, kind, rate, base, amount, sequence).
+  - GL posts one tax line per tax account.
+- **Vendor bills:**
+  - `withholdingTaxId` on create and update adds the withholding tax to every product line.
+  - Posting credits AP net of withholding and credits `withholding_payable`.
+  - `Document.withholdingAmount` (shown only when not zero) holds the withholding, and the residual is net of it.
+  - An issued `WithholdingCertificate` is written per withholding tax and cancelled with the bill.
+  - Reverse-charge taxes post Dr `tax_receivable` / Cr `tax_payable` and add nothing to the payable.
+- **Payments:**
+  - A customer receipt may carry `withholdingAmount` (+ `withholdingTaxId`, `withholdingCertificateNumber`): Dr cash
+    net, Dr `withholding_receivable` (1455, created on first use), Cr AR gross, and a received certificate.
+  - A supplier payment cannot withhold on a bill that already withheld.
+  - Manual supplier-payment withholding writes an issued certificate.
+  - Voiding a payment cancels its certificate.
+- **Routes** (`withholding:read` / `withholding:update`):
+  - `GET /withholding-certificates`;
+  - `GET /withholding-certificates/report`;
+  - `GET /withholding-certificates/:id`;
+  - `PATCH /withholding-certificates/:id`.
+- **Tax summary and pack:** read breakdown lines per tax. Reverse charge counts as output and input.

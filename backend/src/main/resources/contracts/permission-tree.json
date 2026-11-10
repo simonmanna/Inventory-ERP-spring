@@ -59,6 +59,10 @@
     "update": "tax:update",
     "delete": "tax:delete"
   },
+  "withholding": {
+    "read": "withholding:read",
+    "update": "withholding:update"
+  },
   "currency": {
     "create": "currency:create",
     "read": "currency:read",

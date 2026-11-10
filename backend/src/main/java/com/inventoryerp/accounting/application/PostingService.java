@@ -263,7 +263,8 @@ public class PostingService {
             return;
         }
         java.util.Set<String> taxAccounts = new java.util.HashSet<>(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\""
-                        + " WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable', 'withholding_payable')"
+                        + " WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable', 'withholding_payable',"
+                        + " 'withholding_receivable')"
                         + " AND \"deletedAt\" IS NULL UNION SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ?"
                         + " AND \"accountId\" IS NOT NULL").params(org, org).query(String.class).list());
         for (NormalizedLine l : lines) {

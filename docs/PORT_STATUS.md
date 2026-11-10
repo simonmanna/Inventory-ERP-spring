@@ -1596,3 +1596,4 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+- [x] ADR-S071 tax groups, multi-tax lines, withholding (bills, receipts, certificates: GET/PATCH /api/v1/withholding-certificates, GET /api/v1/withholding-certificates/report) and reverse-charge VAT — WithholdingCertificateController, TaxController
