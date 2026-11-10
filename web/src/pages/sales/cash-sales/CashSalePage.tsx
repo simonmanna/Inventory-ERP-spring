@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, Wallet, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, UserPlus, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +30,7 @@ import { pricingApi } from '@/features/sales/api';
 import { useCrmUsers } from '@/features/crm/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import {
   DELIVERY_STATUS_LABEL, METHOD_LABEL, downloadCashSaleExcel, idem, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
@@ -91,6 +92,8 @@ export function CashSalePage() {
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
   const [customer, setCustomer] = useState({ customerPhone: '', customerAddress: '', remarks: '' });
+  const canCreatePartner = useAuthStore((st) => st.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const me = useAuthStore((st) => st.user);
   const currentBranchId = useAuthStore((st) => st.currentBranchId);
   const users = useCrmUsers();
@@ -301,9 +304,30 @@ export function CashSalePage() {
           <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
             <div>
               <MetaRow label={tx('Customer')}>
-                {editable ? <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
-                  : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
+                {editable ? (
+                  <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
+                    </div>
+                    {canCreatePartner && (
+                      <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                        <UserPlus className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                ) : <p className="py-2 text-sm font-medium">{s?.partnerName}</p>}
               </MetaRow>
+              <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+                // Use the new customer at once: select it and carry its phone / address into empty sale fields.
+                setPartnerTouched(true);
+                setPartnerId(c.id);
+                setPartnerName(c.name);
+                setCustomer((cur) => ({
+                  ...cur,
+                  customerPhone: cur.customerPhone || c.phone || '',
+                  customerAddress: cur.customerAddress || c.address || '',
+                }));
+              }} />
               {custField('customerAddress')}
               {custField('customerPhone')}
             </div>

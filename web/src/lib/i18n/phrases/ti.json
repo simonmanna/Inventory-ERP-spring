@@ -13481,5 +13481,8 @@
   "{{done}} of {{total}} tasks done": "{{done}} ካብ {{total}} ዕማማት ተዛዚሞም",
   "{{spent}} of {{planned}} planned": "{{spent}} ካብ {{planned}} ዝተመደበ",
   "{{spent}} spent of {{planned}}": "{{spent}} ወጺኡ ካብ {{planned}}",
-  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} ተመዝጊቡ፡ {{billable}} ዝኽፈል ({{pct}}%)"
+  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} ተመዝጊቡ፡ {{billable}} ዝኽፈል ({{pct}}%)",
+  "New supplier": "ሓድሽ ኣቕራቢ",
+  "Saved customers are selected on this document straight away.": "ዝተዓቀበ ዓሚል ብቕጽበት ኣብዚ ሰነድ ይምረጽ።",
+  "Saved suppliers are selected on this document straight away.": "ዝተዓቀበ ኣቕራቢ ብቕጽበት ኣብዚ ሰነድ ይምረጽ።"
 }

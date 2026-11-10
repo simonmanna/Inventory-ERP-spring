@@ -13481,5 +13481,8 @@
   "{{done}} of {{total}} tasks done": "Emirimu {{done}} ku {{total}} gikoleddwa",
   "{{spent}} of {{planned}} planned": "{{spent}} ku {{planned}} ebitegekeddwa",
   "{{spent}} spent of {{planned}}": "{{spent}} bisaasaanyiziddwa ku {{planned}}",
-  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} biwandiikiddwa, {{billable}} bibanjibwa ({{pct}}%)"
+  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} biwandiikiddwa, {{billable}} bibanjibwa ({{pct}}%)",
+  "New supplier": "Omugabi omupya",
+  "Saved customers are selected on this document straight away.": "Omuguzi aterekeddwa alondebwa ku kiwandiiko kino amangu ddala.",
+  "Saved suppliers are selected on this document straight away.": "Omugabi aterekeddwa alondebwa ku kiwandiiko kino amangu ddala."
 }

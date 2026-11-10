@@ -103,21 +103,22 @@ function AddressesEditor({ rows, onChange }: { rows: AddressDraft[]; onChange: (
   );
 }
 
+/** What a caller needs right after the partner is created (e.g. to use it on a document at once). */
+export interface CreatedPartner {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  /** Primary address on one line, or null when none was entered. */
+  address: string | null;
+}
+
 /** Full-page form for a new customer / supplier, laid out like the detail page. */
 export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | 'supplier' }) {
   const navigate = useNavigate();
   const canCreate = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
-  const create = useCreatePartner();
-  const updateProfile = useUpdatePartnerProfile();
   const isCustomer = partnerType === 'customer';
   const plural = isCustomer ? 'customers' : 'suppliers';
-  const [general, setGeneral] = useState<GeneralValues>({ ...EMPTY_GENERAL, isCompany: !isCustomer });
-  const [profile, setProfile] = useState<PartnerProfile>(EMPTY_PROFILE);
-  const [contacts, setContacts] = useState<PartnerContact[]>([]);
-  const [addresses, setAddresses] = useState<AddressDraft[]>([]);
-  const [tab, setTab] = useState('overview');
-  const [nameError, setNameError] = useState(false);
-  const saving = create.isPending || updateProfile.isPending;
 
   if (!canCreate) {
     return (
@@ -129,6 +130,44 @@ export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | '
       </div>
     );
   }
+
+  return (
+    <div className="space-y-5 px-2 md:px-4 py-3 mx-auto">
+      <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <button onClick={() => navigate(`/${plural}`)} className="hover:text-foreground transition-colors">
+          {isCustomer ? tx('Customers') : tx('Suppliers')}
+        </button>
+        <ChevronRight className="h-3.5 w-3.5" />
+        <span className="text-foreground font-medium">{tx('New')}</span>
+      </nav>
+      <PartnerCreateForm
+        partnerType={partnerType}
+        onCreated={(created) => navigate(`/${plural}/${created.id}`, { replace: true })}
+        onCancel={() => navigate(`/${plural}`)}
+      />
+    </div>
+  );
+}
+
+/**
+ * The new customer / supplier form (header, overview, contacts, addresses, sales config, accounting). Used by the
+ * full page and by {@link PartnerCreateDialog}, so both create partners the same way.
+ */
+export function PartnerCreateForm({ partnerType, onCreated, onCancel }: {
+  partnerType: 'customer' | 'supplier';
+  onCreated: (created: CreatedPartner) => void;
+  onCancel: () => void;
+}) {
+  const create = useCreatePartner();
+  const updateProfile = useUpdatePartnerProfile();
+  const isCustomer = partnerType === 'customer';
+  const [general, setGeneral] = useState<GeneralValues>({ ...EMPTY_GENERAL, isCompany: !isCustomer });
+  const [profile, setProfile] = useState<PartnerProfile>(EMPTY_PROFILE);
+  const [contacts, setContacts] = useState<PartnerContact[]>([]);
+  const [addresses, setAddresses] = useState<AddressDraft[]>([]);
+  const [tab, setTab] = useState('overview');
+  const [nameError, setNameError] = useState(false);
+  const saving = create.isPending || updateProfile.isPending;
 
   // Local contacts behave like the API: one primary at a time.
   const addContact = (c: ContactInput) => {
@@ -200,7 +239,15 @@ export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | '
         }
       }
       notify.success(isCustomer ? tx('Customer created') : tx('Supplier created'));
-      navigate(`/${plural}/${created.id}`, { replace: true });
+      const primary = addr.find((a) => a.isPrimary) ?? addr[0];
+      onCreated({
+        id: created.id,
+        name: created.name ?? general.name.trim(),
+        email: general.email.trim() || null,
+        phone: general.phone.trim() || null,
+        address: primary ? [primary.line1, primary.line2, primary.city, primary.state, primary.country]
+          .map((x) => x.trim()).filter(Boolean).join(', ') : null,
+      });
     } catch (e: any) {
       notify.error(tx('Could not create partner'), e?.response?.data?.message ?? e?.message);
     }
@@ -216,17 +263,14 @@ export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | '
   ];
 
   return (
-    <div className="space-y-5 px-2 md:px-4 py-3 mx-auto">
-      <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <button onClick={() => navigate(`/${plural}`)} className="hover:text-foreground transition-colors">
-          {isCustomer ? tx('Customers') : tx('Suppliers')}
-        </button>
-        <ChevronRight className="h-3.5 w-3.5" />
-        <span className="text-foreground font-medium">{tx('New')}</span>
-      </nav>
-
+    <div className="space-y-5">
       <form
-        onSubmit={(e) => { e.preventDefault(); void onSave(); }}
+        onSubmit={(e) => {
+          // A dialog renders in a portal, but React still bubbles its submit to an enclosing form: keep it here.
+          e.preventDefault();
+          e.stopPropagation();
+          void onSave();
+        }}
         className="space-y-5"
       >
         <div className="rounded-xl border bg-card px-5 py-4 shadow-sm">
@@ -252,7 +296,7 @@ export function PartnerCreatePage({ partnerType }: { partnerType: 'customer' | '
               </div>
             </div>
             <div className="flex flex-shrink-0 gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/${plural}`)}>{tx('Discard')}</Button>
+              <Button type="button" size="sm" variant="outline" onClick={onCancel}>{tx('Discard')}</Button>
               <Button type="submit" size="sm" disabled={saving}>
                 <Save className="mr-1.5 h-4 w-4" /> {saving ? tx('Saving...') : tx('Save')}
               </Button>

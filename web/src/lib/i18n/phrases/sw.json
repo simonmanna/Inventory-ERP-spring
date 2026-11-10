@@ -13481,5 +13481,8 @@
   "{{done}} of {{total}} tasks done": "Kazi {{done}} kati ya {{total}} zimekamilika",
   "{{spent}} of {{planned}} planned": "{{spent}} kati ya {{planned}} zilizopangwa",
   "{{spent}} spent of {{planned}}": "{{spent}} zimetumika kati ya {{planned}}",
-  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} zimerekodiwa, {{billable}} zinatozwa ({{pct}}%)"
+  "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} zimerekodiwa, {{billable}} zinatozwa ({{pct}}%)",
+  "New supplier": "Msambazaji mpya",
+  "Saved customers are selected on this document straight away.": "Mteja aliyehifadhiwa anachaguliwa kwenye hati hii mara moja.",
+  "Saved suppliers are selected on this document straight away.": "Msambazaji aliyehifadhiwa anachaguliwa kwenye hati hii mara moja."
 }
