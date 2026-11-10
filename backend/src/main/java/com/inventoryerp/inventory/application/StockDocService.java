@@ -612,6 +612,65 @@ public class StockDocService {
         return withItems(adjustment(id));
     }
 
+    /**
+     * One count variance to post: the change to apply ({@code delta}, against the on-hand read under the quant lock),
+     * the lot it belongs to (by number; null = the quant without a named lot) and the serial units that went missing
+     * (loss) or were found (gain). {@code qtySystem} / {@code qtyActual} are what the adjustment document shows.
+     */
+    public record CountVariance(String productId, String variantId, String unit, String batchNumber,
+            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {}
+
+    /**
+     * Post a count's variances as one completed stock adjustment ({@code cycle_count}) inside the caller's
+     * transaction. Unlike {@link #approveAdjustment} each line applies a delta, so several lots of one quant can be
+     * counted and movements made after the count stay in the on-hand; the count submit owns approval, separation of
+     * duties and branch scope.
+     */
+    @Transactional
+    public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
+            List<CountVariance> lines) {
+        lookups.requireLocation(locationId);
+        Map<String, String> names = lookups.productNames(new LinkedHashSet<>(lines.stream()
+                .map(CountVariance::productId).toList()));
+        String adjCode = seq.next("stock_adj", "ADJ-", 5);
+        String id = UUID.randomUUID().toString();
+        String user = TenantContext.userId();
+        jdbc.sql("INSERT INTO \"StockAdjustment\" (id, \"organizationId\", \"adjCode\", \"locationId\", reason, status,"
+                        + " notes, \"performedById\", \"responsibleById\", \"approvedById\", \"createdBy\", \"createdAt\","
+                        + " \"updatedAt\") VALUES (?, ?, ?, ?, 'cycle_count'::\"StockAdjustmentReason\", 'approved', ?, ?, ?, ?, ?,"
+                        + " " + NOW + ", " + NOW + ")")
+                .params(id, org(), adjCode, locationId, notes, user, responsibleById, user != null ? user : "", user)
+                .update();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (CountVariance l : lines) {
+            jdbc.sql("INSERT INTO \"StockAdjustmentItem\" (id, \"organizationId\", \"adjId\", \"productId\", \"variantId\","
+                            + " \"productName\", unit, \"qtySystem\", \"qtyActual\", \"qtyDiff\", \"batchNumber\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                    .params(UUID.randomUUID().toString(), org(), id, l.productId(), l.variantId(),
+                            names.getOrDefault(l.productId(), "Unknown"), l.unit(), l.qtySystem(), l.qtyActual(),
+                            l.delta(), l.batchNumber())
+                    .update();
+            Map<String, Object> row = new HashMap<>();
+            row.put("productId", l.productId());
+            row.put("variantId", l.variantId());
+            row.put("line", l);
+            rows.add(row);
+        }
+        for (Map<String, Object> row : lockOrder(rows)) {
+            CountVariance l = (CountVariance) row.get("line");
+            StockMove m = StockMove.of(l.productId(), locationId, null).variant(l.variantId())
+                    .notes(adjCode + " · cycle_count").batch(l.batchNumber()).source("stock_adjustment", adjCode)
+                    .serials(l.serialNumbers() == null || l.serialNumbers().isEmpty() ? null : l.serialNumbers())
+                    .people(responsibleById, user);
+            m.deltaQuantity = l.delta();
+            stock.adjust(m);
+        }
+        jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
+                        + ", \"postedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(user, id).update();
+        return withItems(adjustment(id));
+    }
+
     /** Discard a not-yet-posted adjustment. */
     @Transactional
     public Map<String, Object> cancelAdjustment(String id) {

@@ -100,6 +100,42 @@ Approved by the owner — stock engine hardening (`phase/inv-hardening`, migrati
    re-reserve updates it); `GET /inventory/reservations/atp` requires `productId` (400 `productId is required`) and
    sums all locations when `locationId` is absent.
 
+Approved by the owner — counts, warehouse and idempotency hardening (`phase/inv-hardening`, migration `V465`); Nest
+has the same count / idempotency gaps (the warehouse module is a Spring extension, see ADR-S026):
+
+10. **Count variance posts against the count time.** A counted line posts `counted + net ledger change on its cell
+    (or lot) after countedAt − on-hand at submit`, applied as a delta under the quant lock (`StockMove.deltaQuantity`),
+    so sales made while counting are kept. Movements after the count no longer block submit (Nest: 400 "… moved after
+    they were counted …" unless `force`); `force=true` now means "the count is the on-hand of now" (overwrites later
+    movements, reason required when lines moved, `[FORCED]` note as before). `countedAt` / `countedById` change only
+    when a line's counted quantity changes. A reason is required on lines whose posting delta is not zero (Nest: snapshot
+    variance). Draft `GET /inventory/counts/:id[/review]` lines also carry `onHandNow`, `movementsSinceCount`,
+    `postingDelta`; `variance` stays counted − systemQty.
+11. **Count approval sees the variance.** The `inventory_count_submit` snapshot carries `amount` = `varianceValue`
+    (Σ |posting delta| × lot cost / running average / cost price, 2 dp HALF_UP), `varianceQty`, `lines`, `countCode`,
+    `locationId`, `makerIds`, so value rules apply; no matching rule still posts at once. All validation (nothing
+    counted, reasons, serials) runs before the gate, so a rejected submit leaves no approval request.
+12. **Count maker-checker.** With the `stock_adjustment` separation-of-duties pair on, whoever started or counted the
+    session cannot submit a count that posts a variance (403 `Separation of duties: …`). Offline device counts
+    (`stock.count` sync op) are subject to it too.
+13. **Per-lot counts.** Counts started from the screen (`POST /inventory/counts/start`, preview, ABC cycle counts)
+    give a batch-tracked product one line per open lot (`batchId`, `batchNumber`, `lotLine=true`) plus a "no lot" line
+    (system = on-hand − open lots; a gain there goes to the newest lot / a new `ADJ-` lot). Each lot posts to its own
+    lot (`batchNumber`, MANUAL). Device counts stay one line per product; a device count cannot resume a per-lot screen
+    draft (409 as for an uncovered product).
+14. **Serial-tracked count lines** carry `missingSerials` / `foundSerials` (`PATCH …/draft`; omitted keeps, `[]`
+    clears). A loss must list exactly the missing units, which must be in stock at the location (400 at submit, before
+    anything posts: `… is serial-tracked: a loss of N needs the N missing serial number(s) on the count line, got M` /
+    `Serial number(s) of … not in stock at this location: …`); a gain may list the found units (then as many as the gain).
+15. **Count branch scope.** `GET /inventory/counts/preview`, `PATCH …/draft`, `POST …/submit` and `POST …/cancel`
+    check the session location against the caller's data scope (403 `This location is outside your data access`), like
+    start. Offline sync is not scoped (as before).
+16. **Idempotency-Key required** on `POST /inventory/direct-stock/in`, `/direct-stock/out` and
+    `/inventory/counts/:id/submit` (400 `An Idempotency-Key header is required for this operation so a retry can never
+    charge twice.`); Nest accepts a missing key. Document approve / reverse / receive routes keep the key optional:
+    each posts behind an atomic status claim (a second run answers 400/409 and posts nothing), and the creates only
+    write pending documents. Web screens send one key per action.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation

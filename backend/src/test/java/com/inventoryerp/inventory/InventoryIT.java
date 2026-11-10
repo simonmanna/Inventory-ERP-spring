@@ -397,6 +397,265 @@ class InventoryIT extends ApiTestSupport {
         assertThat(modify.body().get("message").asString()).isEqualTo("Cannot modify a submitted count");
     }
 
+    JsonNode startSpot(String loc, List<String> products) {
+        return ok(201, "POST", "/inventory/counts/start", Map.of("locationId", loc, "countType", "spot",
+                "scopeProductIds", products));
+    }
+
+    String lineOf(JsonNode session, String productId, String batchNumber) {
+        for (JsonNode l : session.get("lines")) {
+            boolean batchMatch = batchNumber == null ? l.get("batchNumber").isNull()
+                    : !l.get("batchNumber").isNull() && batchNumber.equals(l.get("batchNumber").asString());
+            if (productId.equals(l.get("productId").asString()) && batchMatch) {
+                return l.get("id").asString();
+            }
+        }
+        throw new AssertionError("line not found for " + productId + " / " + batchNumber);
+    }
+
+    static Map<String, Object> counted(String lineId, Object qty, String reason) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("lineId", lineId);
+        m.put("countedQty", qty);
+        if (reason != null) {
+            m.put("reason", reason);
+        }
+        return m;
+    }
+
+    @Test
+    @DisplayName("counts post against the count time: movements before the count are not a variance, later ones stay")
+    void countsAgainstCountTime() {
+        String loc = location("warehouse");
+        String a = product("AVCO", false, false);
+        String b = product("AVCO", false, false);
+        stockIn(loc, List.of(line(a, 10, 2), line(b, 10, 2)));
+        JsonNode session = startSpot(loc, List.of(a, b));
+        String id = session.get("id").asString();
+        // a sale between start and the count of A: the snapshot (10) is stale, the shelf really holds 9
+        ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(line(a, 1, null))));
+        ok(200, "PATCH", "/inventory/counts/" + id + "/draft", Map.of("lines", List.of(counted(lineOf(session, a, null),
+                9, null), counted(lineOf(session, b, null), 8, "breakage"))));
+        // sales after the count: they must survive the posting
+        ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(line(a, 3, null), line(b, 3, null))));
+        JsonNode review = ok(200, "GET", "/inventory/counts/" + id + "/review", null);
+        for (JsonNode l : review.get("lines")) {
+            boolean isA = a.equals(l.get("productId").asString());
+            assertThat(new BigDecimal(l.get("variance").asString())).isEqualByComparingTo(isA ? "-1" : "-2");
+            assertThat(new BigDecimal(l.get("postingDelta").asString())).isEqualByComparingTo(isA ? "0" : "-2");
+            assertThat(new BigDecimal(l.get("movementsSinceCount").asString())).isEqualByComparingTo("-3");
+        }
+        Res forcedNoReason = as("POST", "/inventory/counts/" + id + "/submit", Map.of("force", true));
+        assertThat(forcedNoReason.body().get("message").asString())
+                .isEqualTo("A reason is required to force-submit a count over lines that moved after being counted.");
+        JsonNode submitted = ok(200, "POST", "/inventory/counts/" + id + "/submit", Map.of());
+        assertThat(submitted.get("status").asString()).isEqualTo("submitted");
+        assertThat(onHand(a, loc)).isEqualByComparingTo("6");
+        assertThat(onHand(b, loc)).isEqualByComparingTo("5");
+        String adj = submitted.get("adjustmentId").asString();
+        assertThat(jdbc.sql("SELECT count(*) FROM \"StockAdjustmentItem\" WHERE \"adjId\" = ?").param(adj)
+                .query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("count approval: a value rule holds large variances, validation runs first, maker-checker applies")
+    void countApprovalAndSegregation() {
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, "Count checker " + suffix(), new String[] {
+                    "inventory_count:read", "inventory_count:submit", "approvals:read", "approvals:decide"}).update();
+        String email = "checker-" + suffix() + "@demo.test";
+        createUser(demoOrg, email, "Check@12345", role);
+        String checker = login("DEMO", email, "Check@12345");
+
+        String loc = location("warehouse");
+        String p = product("AVCO", false, false);
+        stockIn(loc, List.of(line(p, 10, 10)));
+        String wf = ok(201, "POST", "/approval-workflows", Map.of("name", "Count variance " + suffix(), "entityType",
+                "inventory_count_submit", "minAmount", 50, "steps", List.of(Map.of("stepOrder", 1, "name",
+                        "Controller", "approverPermissions", List.of("approvals:decide"), "requiredCount", 1))))
+                .get("id").asString();
+        try {
+            // 1 unit × 10 = 10 < 50: no rule matches, posts at once
+            JsonNode small = startSpot(loc, List.of(p));
+            ok(200, "PATCH", "/inventory/counts/" + small.get("id").asString() + "/draft", Map.of("lines",
+                    List.of(counted(lineOf(small, p, null), 9, "spillage"))));
+            ok(200, "POST", "/inventory/counts/" + small.get("id").asString() + "/submit", Map.of());
+            assertThat(onHand(p, loc)).isEqualByComparingTo("9");
+
+            // a rejected submit (no reason) leaves no approval request behind
+            JsonNode big = startSpot(loc, List.of(p));
+            String bigId = big.get("id").asString();
+            ok(200, "PATCH", "/inventory/counts/" + bigId + "/draft", Map.of("lines",
+                    List.of(counted(lineOf(big, p, null), 2, null))));
+            assertThat(as("POST", "/inventory/counts/" + bigId + "/submit", Map.of()).status()).isEqualTo(400);
+            assertThat(jdbc.sql("SELECT count(*) FROM \"ApprovalRequest\" WHERE \"entityId\" = ?").param(bigId)
+                    .query(Long.class).single()).isZero();
+
+            // 7 × 10 = 70 ≥ 50: held for approval with the variance value on the request
+            ok(200, "PATCH", "/inventory/counts/" + bigId + "/draft", Map.of("lines",
+                    List.of(counted(lineOf(big, p, null), 2, "theft"))));
+            Res held = as("POST", "/inventory/counts/" + bigId + "/submit", Map.of());
+            assertThat(held.status()).isEqualTo(403);
+            String message = held.body().get("message").asString();
+            assertThat(message).startsWith("Inventory count submission requires approval. Request ID: ");
+            String requestId = message.substring(message.indexOf("Request ID: ") + 12, message.length() - 1);
+            assertThat(jdbc.sql("SELECT (snapshot->>'amount')::numeric FROM \"ApprovalRequest\" WHERE id = ?")
+                    .param(requestId).query(BigDecimal.class).single()).isEqualByComparingTo("70");
+            assertThat(onHand(p, loc)).isEqualByComparingTo("9");
+            assertThat(call("POST", "/approvals/" + requestId + "/decide", Map.of("status", "approved"), checker)
+                    .status()).isLessThan(300);
+            ok(200, "POST", "/inventory/counts/" + bigId + "/submit", Map.of());
+            assertThat(onHand(p, loc)).isEqualByComparingTo("2");
+        } finally {
+            ok(200, "DELETE", "/approval-workflows/" + wf, null);
+        }
+
+        // maker-checker: with the stock adjustment pair on, whoever counted cannot submit; another user can
+        String rule = "/approval-controls/sod-rules/stock_adjustment";
+        ok(200, "PUT", rule, Map.of("isActive", true));
+        try {
+            JsonNode sod = startSpot(loc, List.of(p));
+            String sodId = sod.get("id").asString();
+            ok(200, "PATCH", "/inventory/counts/" + sodId + "/draft", Map.of("lines",
+                    List.of(counted(lineOf(sod, p, null), 3, "found one"))));
+            Res own = as("POST", "/inventory/counts/" + sodId + "/submit", Map.of());
+            assertThat(own.status()).isEqualTo(403);
+            assertThat(own.body().get("message").asString()).startsWith("Separation of duties");
+            assertThat(onHand(p, loc)).isEqualByComparingTo("2");
+            Res other = call("POST", "/inventory/counts/" + sodId + "/submit", Map.of(), checker);
+            assertThat(other.status()).as(other.raw().body()).isEqualTo(200);
+            assertThat(onHand(p, loc)).isEqualByComparingTo("3");
+        } finally {
+            ok(200, "PUT", rule, Map.of("isActive", false));
+        }
+    }
+
+    @Test
+    @DisplayName("batch-tracked products are counted per lot; serial losses must name the missing units")
+    void lotsAndSerials() {
+        String loc = location("warehouse");
+        String p = product("AVCO", true, false);
+        Map<String, Object> la = line(p, 5, 2);
+        la.put("batchNumber", "LOT-A");
+        la.put("expiryDate", "2098-01-31");
+        Map<String, Object> lb = line(p, 3, 2);
+        lb.put("batchNumber", "LOT-B");
+        lb.put("expiryDate", "2099-12-31");
+        stockIn(loc, List.of(la, lb));
+        JsonNode preview = ok(200, "GET", "/inventory/counts/preview?locationId=" + loc + "&countType=spot"
+                + "&scopeProductIds=" + p, null);
+        assertThat(preview.get("lines")).hasSize(3);
+        JsonNode session = startSpot(loc, List.of(p));
+        assertThat(session.get("lines")).hasSize(3);
+        String id = session.get("id").asString();
+        ok(200, "PATCH", "/inventory/counts/" + id + "/draft", Map.of("lines", List.of(
+                counted(lineOf(session, p, "LOT-A"), 4, "damaged"),
+                counted(lineOf(session, p, "LOT-B"), 3, null),
+                counted(lineOf(session, p, null), 0, null))));
+        ok(200, "POST", "/inventory/counts/" + id + "/submit", Map.of());
+        BigDecimal lotA = jdbc.sql("SELECT quantity FROM \"InventoryBatch\" WHERE \"productId\" = ? AND \"batchNumber\" ="
+                + " 'LOT-A'").param(p).query(BigDecimal.class).single();
+        BigDecimal lotB = jdbc.sql("SELECT quantity FROM \"InventoryBatch\" WHERE \"productId\" = ? AND \"batchNumber\" ="
+                + " 'LOT-B'").param(p).query(BigDecimal.class).single();
+        assertThat(lotA).isEqualByComparingTo("4");
+        assertThat(lotB).isEqualByComparingTo("3");
+        assertThat(onHand(p, loc)).isEqualByComparingTo("7");
+
+        String sp = product("SPECIFIC", false, true);
+        stockIn(loc, List.of(line(sp, 2, 10)));
+        for (String sn : List.of("SN-" + suffix(), "SN-" + suffix())) {
+            jdbc.sql("INSERT INTO \"InventorySerial\" (id, \"organizationId\", \"productId\", \"locationId\","
+                    + " \"serialNumber\", \"unitCost\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, 10, now())")
+                    .params(UUID.randomUUID().toString(), demoOrg, sp, loc, sn).update();
+        }
+        String lost = jdbc.sql("SELECT \"serialNumber\" FROM \"InventorySerial\" WHERE \"productId\" = ?"
+                + " ORDER BY \"serialNumber\" LIMIT 1").param(sp).query(String.class).single();
+        JsonNode sc = startSpot(loc, List.of(sp));
+        String scId = sc.get("id").asString();
+        String scLine = lineOf(sc, sp, null);
+        ok(200, "PATCH", "/inventory/counts/" + scId + "/draft", Map.of("lines", List.of(counted(scLine, 1, "missing"))));
+        Res noSerials = as("POST", "/inventory/counts/" + scId + "/submit", Map.of());
+        assertThat(noSerials.status()).isEqualTo(400);
+        assertThat(noSerials.body().get("message").asString()).endsWith("is serial-tracked: a loss of 1 needs the 1"
+                + " missing serial number(s) on the count line, got 0");
+        Map<String, Object> wrong = counted(scLine, 1, "missing");
+        wrong.put("missingSerials", List.of("NOPE-" + suffix()));
+        ok(200, "PATCH", "/inventory/counts/" + scId + "/draft", Map.of("lines", List.of(wrong)));
+        assertThat(as("POST", "/inventory/counts/" + scId + "/submit", Map.of()).body().get("message").asString())
+                .contains("not in stock at this location");
+        Map<String, Object> right = counted(scLine, 1, "missing");
+        right.put("missingSerials", List.of(lost));
+        ok(200, "PATCH", "/inventory/counts/" + scId + "/draft", Map.of("lines", List.of(right)));
+        ok(200, "POST", "/inventory/counts/" + scId + "/submit", Map.of());
+        assertThat(onHand(sp, loc)).isEqualByComparingTo("1");
+        assertThat(jdbc.sql("SELECT status::text FROM \"InventorySerial\" WHERE \"productId\" = ? AND \"serialNumber\" = ?")
+                .params(sp, lost).query(String.class).single()).isEqualTo("issued");
+    }
+
+    @Test
+    @DisplayName("count preview / draft / submit / cancel stay inside the user's data scope")
+    void countScope() {
+        String inside = location("warehouse");
+        String outside = location("warehouse");
+        String p = product("AVCO", false, false);
+        stockIn(outside, List.of(line(p, 2, 1)));
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, "Scoped counter " + suffix(), new String[] {
+                    "inventory_count:read", "inventory_count:count", "inventory_count:submit"}).update();
+        String email = "counter-" + suffix() + "@demo.test";
+        String userId = createUser(demoOrg, email, "Count@12345", role);
+        ok(200, "PUT", "/user-data-scopes/" + userId, Map.of("branchIds", List.of(), "locationIds", List.of(inside)));
+        String token = login("DEMO", email, "Count@12345");
+        JsonNode session = startSpot(outside, List.of(p));
+        String id = session.get("id").asString();
+        assertThat(call("GET", "/inventory/counts/preview?locationId=" + outside + "&countType=spot&scopeProductIds="
+                + p, null, token).status()).isEqualTo(403);
+        assertThat(call("GET", "/inventory/counts/preview?locationId=" + inside + "&countType=spot&scopeProductIds="
+                + p, null, token).status()).isEqualTo(200);
+        assertThat(call("PATCH", "/inventory/counts/" + id + "/draft", Map.of("lines", List.of(counted(
+                lineOf(session, p, null), 2, null))), token).status()).isEqualTo(403);
+        assertThat(call("POST", "/inventory/counts/" + id + "/submit", Map.of(), token).status()).isEqualTo(403);
+        assertThat(call("POST", "/inventory/counts/" + id + "/cancel", null, token).status()).isEqualTo(403);
+        assertThat(ok(201, "POST", "/inventory/counts/" + id + "/cancel", null).get("ok").asBoolean()).isTrue();
+    }
+
+    @Test
+    @DisplayName("direct stock and count submit refuse a request without an Idempotency-Key")
+    void idempotencyKeyRequired() {
+        String loc = location("warehouse");
+        String p = product("AVCO", false, false);
+        Map<String, String> noKey = Map.of("Authorization", "Bearer " + adminToken, NO_IDEMPOTENCY_KEY, "1");
+        String msg = "An Idempotency-Key header is required for this operation so a retry can never charge twice.";
+        Res in = call("POST", "/inventory/direct-stock/in", Map.of("locationId", loc, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(line(p, 3, 1))), noKey);
+        assertThat(in.status()).isEqualTo(400);
+        assertThat(in.body().get("message").asString()).isEqualTo(msg);
+        assertThat(onHand(p, loc)).isEqualByComparingTo("0");
+        Res out = call("POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(line(p, 1, null))), noKey);
+        assertThat(out.body().get("message").asString()).isEqualTo(msg);
+        stockIn(loc, List.of(line(p, 3, 1)));
+        JsonNode session = startSpot(loc, List.of(p));
+        String id = session.get("id").asString();
+        ok(200, "PATCH", "/inventory/counts/" + id + "/draft", Map.of("lines", List.of(counted(lineOf(session, p,
+                null), 1, "lost"))));
+        Res submit = call("POST", "/inventory/counts/" + id + "/submit", Map.of(), noKey);
+        assertThat(submit.body().get("message").asString()).isEqualTo(msg);
+        // a replayed submit answers the cached response and posts once
+        Map<String, String> key = Map.of("Authorization", "Bearer " + adminToken, "Idempotency-Key",
+                UUID.randomUUID().toString());
+        Res first = call("POST", "/inventory/counts/" + id + "/submit", Map.of(), key);
+        Res again = call("POST", "/inventory/counts/" + id + "/submit", Map.of(), key);
+        assertThat(first.status()).isEqualTo(200);
+        assertThat(again.status()).isEqualTo(200);
+        assertThat(again.body().get("adjustmentId").asString()).isEqualTo(first.body().get("adjustmentId").asString());
+        assertThat(onHand(p, loc)).isEqualByComparingTo("1");
+    }
+
     @Test
     @DisplayName("reservations: reserve is idempotent per line, ATP, release")
     void reservations() {
@@ -527,6 +786,6 @@ class InventoryIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every inventory route answers 401 without a token and 403 without its permission")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(140);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(142);
     }
 }

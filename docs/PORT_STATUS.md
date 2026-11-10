@@ -66,6 +66,15 @@ on every receipt, lot shortfall netting (open lots = max(0, on-hand)), strict `a
 move their own lots/serials (`StockTransferLayer`), variant / serial / reservation / ATP guards — `StockConcurrencyIT`,
 `LockConflictMappingTest`.
 
+**Counts / warehouse / idempotency hardening (`phase/inv-hardening`, V465; owner-approved deviations 10–16 in
+[inventory](spec/inventory.md#deviations), ADR-S026 amendment):** count variance posted against the count time (delta
+under the quant lock), value-based `inventory_count_submit` approval + `stock_adjustment` maker-checker, validation
+before the approval gate, per-lot count lines and serial units on count lines, branch scope on preview / draft / submit
+/ cancel, required `Idempotency-Key` on direct stock in / out and count submit (web sends one per action); manual pick
+orders issue stock + GL on ship, no empty shipments, bin adjust (`POST /warehouse/bins/:id/adjust`) and reconcile
+(`POST /warehouse/locations/:id/reconcile`), release capped by ledger on-hand, `WarehouseSettings.enabled` enforced,
+bin row lock in putaway, order-then-task lock order — `InventoryIT`, `WarehouseIT`.
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |

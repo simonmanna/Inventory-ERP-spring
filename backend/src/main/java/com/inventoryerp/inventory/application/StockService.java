@@ -792,7 +792,9 @@ public class StockService {
         requireVariant(product, dto.variantId, dto.locationId);
         BigDecimal counted = dto.countedQuantity;
         String variantId = dto.variantId;
-        if (counted.signum() == 0 && lookups.stockItem(dto.productId, variantId, dto.locationId) == null) {
+        boolean deltaMode = dto.deltaQuantity != null;
+        if (deltaMode ? dto.deltaQuantity.signum() == 0
+                : counted.signum() == 0 && lookups.stockItem(dto.productId, variantId, dto.locationId) == null) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
         }
         // Read the counted-against quantity under the quant lock: a concurrent move can no longer slip between the
@@ -800,6 +802,9 @@ public class StockService {
         LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, dec(product, "costPrice"));
         Map<String, Object> stockItem = quant.created() ? null : quant.row();
         BigDecimal currentQty = quant.quantity();
+        if (deltaMode) {
+            counted = currentQty.add(dto.deltaQuantity);
+        }
         BigDecimal delta = counted.subtract(currentQty);
         if (delta.signum() == 0) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
@@ -831,7 +836,7 @@ public class StockService {
         events.publish("stock.adjusted", payload);
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
-                        JsNumbers.js(dto.countedQuantity), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
+                        JsNumbers.js(counted), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
                         ledgerCode)));
         return new Adjusted(ledgerCode, currentQty, counted, delta, unitCost);
     }
@@ -896,7 +901,7 @@ public class StockService {
         }
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
-                        JsNumbers.js(dto.countedQuantity), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
+                        JsNumbers.js(counted), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
                         ledgerCode, "layered", true)));
         return new Adjusted(ledgerCode, currentQty, counted, delta,
                 absQty.signum() > 0 ? Money.div(totalValue, absQty) : Money.ZERO);

@@ -20,6 +20,11 @@ public final class StockMove {
     public BigDecimal quantity;
     /** Adjust only: the counted on-hand. */
     public BigDecimal countedQuantity;
+    /**
+     * Adjust only, instead of {@link #countedQuantity}: the signed change to apply to the on-hand read under the quant
+     * lock (a count posting that must keep movements made after the count, or one lot of a quant).
+     */
+    public BigDecimal deltaQuantity;
     public BigDecimal unitCost;
     public String uomId;
     /**

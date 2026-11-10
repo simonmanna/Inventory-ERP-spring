@@ -425,6 +425,169 @@ class WarehouseIT extends ApiTestSupport {
                 .get("message").asString()).isEqualTo("No products are due for a cycle count");
     }
 
+    BigDecimal onHand(String product, String location) {
+        return jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
+                .params(product, location).query(BigDecimal.class).single();
+    }
+
+    void putaway(String location, String product, int qty, String binId) {
+        JsonNode t = ok(201, "POST", "/warehouse/tasks", Map.of("locationId", location, "type", "putaway", "productId",
+                product, "quantity", qty, "toBinId", binId));
+        ok(200, "POST", "/warehouse/tasks/" + t.get("id").asString() + "/complete", Map.of());
+    }
+
+    @Test
+    @DisplayName("a manual pick order issues the shipped stock with GL; a sourced one does not; empty picks never ship")
+    void manualShipIssuesStock() {
+        String loc = location();
+        String b1 = bin(loc, "M1", null, Map.of("pickSequence", 1));
+        String bolts = product("Bolts");
+        stockIn(bolts, loc, 10);
+        putaway(loc, bolts, 10, b1);
+
+        JsonNode manual = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "lines",
+                List.of(Map.of("productId", bolts, "quantity", 4))));
+        String id = manual.get("id").asString();
+        completeAll(ok(200, "POST", "/warehouse/pick-orders/" + id + "/release", null).get("tasks"));
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("10");
+        String code = manual.get("code").asString();
+        ok(200, "POST", "/warehouse/pick-orders/" + id + "/ship", Map.of("carrier", "Van"));
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
+        long rows = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                + " AND \"referenceType\" = 'WarehousePickOrder' AND \"referenceId\" = ? AND \"quantityChange\" = -4")
+                .params(demoOrg, code).query(Long.class).single();
+        assertThat(rows).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
+                + " 'WarehousePickOrder' AND \"sourceId\" = ?").params(demoOrg, code).query(Long.class).single())
+                .isEqualTo(1);
+        // a second ship is refused and posts nothing
+        assertThat(call("POST", "/warehouse/pick-orders/" + id + "/ship", Map.of(), adminToken).status()).isEqualTo(400);
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
+        JsonNode row = productRow(ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null), bolts);
+        assertThat(row.get("mismatch").asBoolean()).isFalse();
+        assertThat(new BigDecimal(row.get("binnedQty").asString())).isEqualByComparingTo("6");
+
+        // a sales-order pick order: the sales document posts the issue, shipping leaves the ledger alone
+        JsonNode sourced = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2,
+                "sourceType", "sales_order", "sourceRef", "SO-9", "lines", List.of(Map.of("productId", bolts,
+                        "quantity", 1))));
+        completeAll(ok(200, "POST", "/warehouse/pick-orders/" + sourced.get("id").asString() + "/release", null)
+                .get("tasks"));
+        ok(200, "POST", "/warehouse/pick-orders/" + sourced.get("id").asString() + "/ship", Map.of());
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
+
+        // one step, every pick task cancelled: back to draft, not shipped, nothing issued
+        JsonNode one = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 1, "lines",
+                List.of(Map.of("productId", bolts, "quantity", 2))));
+        String oneId = one.get("id").asString();
+        for (JsonNode t : ok(200, "POST", "/warehouse/pick-orders/" + oneId + "/release", null).get("tasks")) {
+            ok(200, "POST", "/warehouse/tasks/" + t.get("id").asString() + "/cancel", null);
+        }
+        assertThat(ok(200, "GET", "/warehouse/pick-orders/" + oneId, null).get("status").asString())
+                .isEqualTo("draft");
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
+        // released again and picked, it ships and issues once
+        completeAll(ok(200, "POST", "/warehouse/pick-orders/" + oneId + "/release", null).get("tasks"));
+        assertThat(ok(200, "GET", "/warehouse/pick-orders/" + oneId, null).get("status").asString())
+                .isEqualTo("shipped");
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("4");
+    }
+
+    @Test
+    @DisplayName("bin drift: release is capped by the ledger, reconcile trims the bins, adjust stays within on-hand")
+    void binDriftAdjustReconcile() {
+        String loc = location();
+        String pick = bin(loc, "D1", null, Map.of("pickSequence", 1));
+        String back = bin(loc, "D9", null, Map.of("pickSequence", 9, "usage", "quarantine"));
+        String rope = product("Rope");
+        stockIn(rope, loc, 10);
+        putaway(loc, rope, 8, pick);
+        // quarantine bins cannot be put away to by the planner, but a manual putaway names the bin
+        putaway(loc, rope, 2, back);
+        stockOut(rope, loc, 4); // issued without a pick order: the bins now hold 4 more than the ledger
+        JsonNode overview = ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null);
+        JsonNode row = productRow(overview, rope);
+        assertThat(row.get("mismatch").asBoolean()).isTrue();
+        assertThat(new BigDecimal(row.get("excessBinnedQty").asString())).isEqualByComparingTo("4");
+        assertThat(overview.get("mismatches").asInt()).isEqualTo(1);
+
+        JsonNode po = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "lines",
+                List.of(Map.of("productId", rope, "quantity", 7))));
+        Res capped = call("POST", "/warehouse/pick-orders/" + po.get("id").asString() + "/release", null, adminToken);
+        assertThat(capped.status()).isEqualTo(400);
+        assertThat(capped.body().get("message").asString()).startsWith("Not enough stock on hand to pick")
+                .contains("on hand 6");
+
+        JsonNode rec = ok(200, "POST", "/warehouse/locations/" + loc + "/reconcile", Map.of());
+        assertThat(rec.get("reconciled").asInt()).isEqualTo(1);
+        // pickable storage bins are trimmed first, the quarantine bin keeps its stock
+        assertThat(binQty(pick, rope)).isEqualByComparingTo("4");
+        assertThat(binQty(back, rope)).isEqualByComparingTo("2");
+        assertThat(productRow(ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null), rope)
+                .get("mismatch").asBoolean()).isFalse();
+        assertThat(ok(200, "POST", "/warehouse/locations/" + loc + "/reconcile", null).get("reconciled").asInt())
+                .isZero();
+
+        // adjust: never more than the ledger holds, a reason is required, decreases are free
+        Res over = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 5,
+                "reason", "found"), adminToken);
+        assertThat(over.status()).isEqualTo(400);
+        assertThat(over.body().get("message").asString()).startsWith("Only 0 of");
+        Res noReason = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -1),
+                adminToken);
+        assertThat(noReason.status()).isEqualTo(400);
+        Res both = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -1,
+                "newQty", 1, "reason", "x"), adminToken);
+        assertThat(both.body().get("message").asString()).isEqualTo("Give either newQty or delta");
+        JsonNode down = ok(200, "POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -3,
+                "reason", "damaged shelf count"));
+        assertThat(new BigDecimal(down.get("change").asString())).isEqualByComparingTo("-3");
+        assertThat(binQty(pick, rope)).isEqualByComparingTo("1");
+        ok(200, "POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 4,
+                "reason", "recounted"));
+        assertThat(binQty(pick, rope)).isEqualByComparingTo("4");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE entity = 'WarehouseBinStock' AND \"entityId\" = ?"
+                + " AND action = 'adjust'").param(pick).query(Long.class).single()).isEqualTo(2);
+        // the ledger never moved
+        assertThat(onHand(rope, loc)).isEqualByComparingTo("6");
+        // now the order fits the ledger: 6 on hand, 6 binned
+        JsonNode po2 = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "lines",
+                List.of(Map.of("productId", rope, "quantity", 4))));
+        ok(200, "POST", "/warehouse/pick-orders/" + po2.get("id").asString() + "/release", null);
+        // a held quantity cannot be adjusted away
+        Res held = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 0,
+                "reason", "x"), adminToken);
+        assertThat(held.body().get("message").asString()).contains("is held by open pick / move tasks");
+        assertThat(call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 1,
+                "reason", "x"), weakToken()).status()).isEqualTo(403);
+    }
+
+    @Test
+    @DisplayName("a location whose warehouse settings are switched off refuses warehouse work but still reads")
+    void settingsEnabledEnforced() {
+        String loc = location();
+        String b = bin(loc, "E1", null, Map.of());
+        ok(200, "PUT", "/warehouse/locations/" + loc + "/settings", Map.of("enabled", false));
+        Res create = call("POST", "/warehouse/bins", Map.of("locationId", loc, "code", "E2"), adminToken);
+        assertThat(create.status()).isEqualTo(400);
+        assertThat(create.body().get("message").asString())
+                .isEqualTo("Warehouse management is switched off for this location; turn it on in the warehouse"
+                        + " settings first");
+        String sand = product("Off sand");
+        stockIn(sand, loc, 3);
+        assertThat(call("POST", "/warehouse/tasks", Map.of("locationId", loc, "type", "putaway", "productId", sand,
+                "quantity", 1, "toBinId", b), adminToken).status()).isEqualTo(400);
+        assertThat(call("POST", "/warehouse/pick-orders", Map.of("locationId", loc, "lines", List.of(Map.of(
+                "productId", sand, "quantity", 1))), adminToken).status()).isEqualTo(400);
+        assertThat(call("POST", "/warehouse/putaway/generate", Map.of("locationId", loc), adminToken).status())
+                .isEqualTo(400);
+        assertThat(ok(200, "GET", "/warehouse/bins?locationId=" + loc, null)).hasSize(1);
+        ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null);
+        ok(200, "PUT", "/warehouse/locations/" + loc + "/settings", Map.of("enabled", true));
+        putaway(loc, sand, 1, b);
+        assertThat(binQty(b, sand)).isEqualByComparingTo("1");
+    }
+
     @Test
     @DisplayName("routes need warehouse permissions and stay inside the organization")
     void access() {

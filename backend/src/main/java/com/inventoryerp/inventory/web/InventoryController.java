@@ -257,14 +257,14 @@ public class InventoryController {
     // ---- Direct stock in / out
 
     @PostMapping("/direct-stock/in")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> directStockIn(@Valid @RequestBody DirectStockRequest dto) {
         return directStock.directInChecked(direct(dto));
     }
 
     @PostMapping("/direct-stock/out")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> directStockOut(@Valid @RequestBody DirectStockRequest dto) {
         return directStock.directOutChecked(direct(dto));

@@ -41,11 +41,16 @@ public class InventoryCountController {
             List<String> scopeProductIds,
             Boolean restart) {}
 
-    /** {@code SaveCountLineDto}. */
+    /**
+     * {@code SaveCountLineDto}; {@code missingSerials} / {@code foundSerials} (serial-tracked lines) are an extension:
+     * omitted keeps the stored list, an empty array clears it.
+     */
     public record SaveCountLine(
             @NotNull(message = "must be a string") @NotEmpty(message = "should not be empty") String lineId,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal countedQty,
-            String reason) {}
+            String reason,
+            List<String> missingSerials,
+            List<String> foundSerials) {}
 
     /** {@code SaveCountDraftDto}. */
     public record SaveCountDraftRequest(
@@ -100,16 +105,17 @@ public class InventoryCountController {
     @PatchMapping("/{id}/draft")
     @RequirePermissions(Permissions.INVENTORY_COUNT__COUNT)
     public Map<String, Object> saveDraft(@PathVariable String id, @Valid @RequestBody SaveCountDraftRequest dto) {
-        return counts.saveDraft(id, dto.lines().stream().map(l -> new DraftLine(l.lineId(), l.countedQty(), l.reason()))
-                .toList(), dto.name(), dto.notes());
+        return counts.saveDraftChecked(id, dto.lines().stream().map(l -> new DraftLine(l.lineId(), l.countedQty(),
+                l.reason(), l.missingSerials(), l.foundSerials())).toList(), dto.name(), dto.notes());
     }
 
+    /** Posts the variance adjustment: an {@code Idempotency-Key} is required (deviation 16). */
     @PostMapping("/{id}/submit")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_COUNT__SUBMIT)
     public Map<String, Object> submit(@PathVariable String id,
             @Valid @RequestBody(required = false) SubmitCountRequest dto) {
-        return counts.submit(id, dto == null ? null : dto.force(), dto == null ? null : dto.forceReason());
+        return counts.submitChecked(id, dto == null ? null : dto.force(), dto == null ? null : dto.forceReason());
     }
 
     @PostMapping("/{id}/cancel")
