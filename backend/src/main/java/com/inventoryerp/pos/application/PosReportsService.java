@@ -147,8 +147,16 @@ public class PosReportsService {
             start = parseLocalDay(f, true);
             end = parseLocalDay(t, false);
         }
+        // Post-parity hardening (owner-approved 2026-11-10): one request may not load an unbounded invoice history.
+        if (java.time.temporal.ChronoUnit.DAYS.between(local(start).toLocalDate(), local(end).toLocalDate())
+                >= MAX_RANGE_DAYS) {
+            throw ApiException.badRequest("Report range cannot exceed " + MAX_RANGE_DAYS + " days");
+        }
         return new Range(start, end);
     }
+
+    /** Longest report range (inclusive days) one request may cover. */
+    static final int MAX_RANGE_DAYS = 366;
 
     /** {@code d.toLocaleTimeString()} (en-US): {@code 3:04:05 PM}. */
     static String timeString(Instant i) {
@@ -335,6 +343,23 @@ public class PosReportsService {
 
     private static Object saleDate(Map<String, Object> inv) {
         return inv.get("issueDate") != null ? inv.get("issueDate") : inv.get("createdAt");
+    }
+
+    /**
+     * The business day a sale belongs to: {@code businessDate} (the shift's trading day, the same column the range
+     * filter uses) when set, else the local day of the sale. Post-parity hardening: Nest bucketed by
+     * {@code issueDate}, so a sale rung up after midnight on a late shift was counted in the range of one day but
+     * shown in the next day's bucket.
+     */
+    private static LocalDate saleDay(Map<String, Object> inv) {
+        Object bd = inv.get("businessDate");
+        if (bd instanceof java.sql.Date d) {
+            return d.toLocalDate();
+        }
+        if (bd instanceof LocalDate d) {
+            return d;
+        }
+        return local(instant(saleDate(inv))).toLocalDate();
     }
 
     // ───────────────────────────── category resolver ─────────────────────────────
@@ -633,10 +658,13 @@ public class PosReportsService {
     }
 
     private static String periodKey(Instant i, String groupBy) {
+        return periodKey(local(i).toLocalDate(), groupBy);
+    }
+
+    private static String periodKey(LocalDate d, String groupBy) {
         if ("day".equals(groupBy)) {
-            return localIso(i);
+            return d.toString();
         }
-        LocalDate d = local(i).toLocalDate();
         if ("week".equals(groupBy)) {
             int dow = d.getDayOfWeek() == DayOfWeek.SUNDAY ? 0 : d.getDayOfWeek().getValue();
             return d.plusDays(-dow + (dow == 0 ? -6 : 1)).toString();
@@ -655,7 +683,7 @@ public class PosReportsService {
         Map<String, Bucket> grouped = new LinkedHashMap<>();
         Bucket overall = new Bucket();
         for (Map<String, Object> row : invoices) {
-            Bucket cur = grouped.computeIfAbsent(periodKey(instant(saleDate(row)), groupBy), k -> new Bucket());
+            Bucket cur = grouped.computeIfAbsent(periodKey(saleDay(row), groupBy), k -> new Bucket());
             for (Bucket b : List.of(cur, overall)) {
                 b.gross = b.gross.add(dec(row.get("totalAmount")));
                 b.net = b.net.add(dec(row.get("subtotal")));
@@ -1323,11 +1351,11 @@ public class PosReportsService {
         Map<String, Row> rows = new LinkedHashMap<>();
         Map<String, Server> servers = new LinkedHashMap<>();
         for (Map<String, Object> inv : invoices) {
-            Instant when = instant(saleDate(inv));
+            String day = saleDay(inv).toString();
             Object sessionId = inv.get("cashSessionId");
-            String periodKey = "none".equals(groupBy) ? "all" : "day".equals(groupBy) ? localIso(when)
+            String periodKey = "none".equals(groupBy) ? "all" : "day".equals(groupBy) ? day
                     : sessionId != null ? (String) sessionId : "no-shift";
-            String periodLabel = "none".equals(groupBy) ? "All" : "day".equals(groupBy) ? localIso(when)
+            String periodLabel = "none".equals(groupBy) ? "All" : "day".equals(groupBy) ? day
                     : sessionId != null ? sessionLabel.getOrDefault((String) sessionId, (String) sessionId) : "No shift";
             for (Map<String, Object> it : PosOrdersService.maps(inv.get("items"))) {
                 SaleCategory c = cat.resolve(it);

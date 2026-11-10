@@ -19,7 +19,9 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Ships pending {@code EventOutbox} rows to in-process handlers (port of {@code outbox.worker.ts}).
  * Multi-replica safe: rows are claimed with a unique token via {@code FOR UPDATE SKIP LOCKED}; a claim
- * older than 30 s is considered stale and re-claimable. Polls every {@code OUTBOX_POLL_MS} (1 s).
+ * older than 30 s is considered stale and re-claimable. The claim sets {@code status = 'claimed'} (hardening
+ * 2026-11-10: it used to leave the row {@code pending}, so a second replica re-claimed it as soon as the claiming
+ * statement committed and the event was dispatched twice); a failed attempt puts it back to {@code pending}. Polls every {@code OUTBOX_POLL_MS} (1 s).
  * The per-row ship / fail marks commit with {@code synchronous_commit = off}: losing one in a database crash only
  * re-delivers that row, which at-least-once delivery already allows, and it saves a WAL flush per event.
  *
@@ -75,7 +77,7 @@ public class OutboxWorker {
         Timestamp staleBefore = Timestamp.from(Instant.now().minusMillis(STALE_CLAIM_MS));
         List<Claimed> claimed = jdbc.sql("""
                         UPDATE "EventOutbox"
-                        SET "claimToken" = ?, "claimedAt" = NOW()
+                        SET "status" = 'claimed', "claimToken" = ?, "claimedAt" = NOW()
                         WHERE "id" IN (
                           SELECT "id" FROM "EventOutbox"
                           WHERE (("status" = 'pending' AND ("nextAttemptAt" IS NULL OR "nextAttemptAt" <= NOW()))
@@ -112,7 +114,8 @@ public class OutboxWorker {
                     } else {
                         log.warn("Outbox row {} failed (attempt {}): {}", row.id(), failures, msg);
                         mark("""
-                                        UPDATE "EventOutbox" SET attempts = ?, "lastError" = ?, "claimToken" = NULL,
+                                        UPDATE "EventOutbox" SET status = 'pending', attempts = ?, "lastError" = ?,
+                                               "claimToken" = NULL,
                                                "claimedAt" = NULL, "nextAttemptAt" = ? WHERE id = ?""", failures, msg,
                                 Timestamp.from(Instant.now().plusMillis(backoffMs(failures))), row.id());
                     }

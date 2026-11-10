@@ -5,6 +5,7 @@ import static com.inventoryerp.pos.web.PosDtos.STR;
 import com.inventoryerp.kernel.security.AuthUser;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.kernel.security.Throttle;
 import com.inventoryerp.pos.application.PosAuthService;
 import com.inventoryerp.shared.validation.Length;
 import com.inventoryerp.shared.validation.MinLength;
@@ -53,6 +54,7 @@ public class PosAuthController {
     }
 
     @PostMapping("/pin-login")
+    @Throttle(limit = 30, ttlMs = 60_000)
     @RequirePermissions(Permissions.POS__READ)
     public Map<String, Object> pinLogin(@Valid @RequestBody PinLoginRequest dto) {
         return svc.pinLogin(dto.userId(), dto.pin());
@@ -65,12 +67,14 @@ public class PosAuthController {
     }
 
     @PostMapping("/change-pin")
+    @Throttle(limit = 10, ttlMs = 60_000)
     @RequirePermissions(Permissions.POS__READ)
     public void changePin(AuthUser user, @Valid @RequestBody ChangePinRequest dto) {
         svc.changePin(user.sub(), dto.currentPin(), dto.newPin());
     }
 
     @PostMapping("/change-password")
+    @Throttle(limit = 10, ttlMs = 60_000)
     @RequirePermissions(Permissions.POS__READ)
     public void changePassword(AuthUser user, @Valid @RequestBody ChangePasswordRequest dto) {
         svc.changePassword(user.sub(), dto.currentPassword(), dto.newPassword());

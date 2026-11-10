@@ -369,7 +369,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
   const [approverEmail, setApproverEmail] = useState('');
   const [managerPin, setManagerPin] = useState('');
   /** When accepted, a counted-short / counted-over drawer difference is booked as a withdrawal / cash-in movement. */
-  const [autoAdjustCash, setAutoAdjustCash] = useState(true);
+  const [autoAdjustCash, setAutoAdjustCash] = useState(false);
   const [problem, setProblem] = useState<Decoded | null>(null);
   const [result, setResult] = useState<CashSession | null>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
@@ -455,7 +455,7 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
       setUncounted({});
       setByDenom(false); setDenom({});
       setShowManager(false); setApproverEmail(''); setManagerPin('');
-      setAutoAdjustCash(true);
+      setAutoAdjustCash(false);
       setProblem(null); setResult(null);
       setDeviceOps([]); setDeviceOpsLoaded(false); setBusyOp(null); setConfirmDiscard(null);
     }
@@ -684,8 +684,17 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
   /* Small receipt-size closing statement: opening float, total sales and the
    * sales breakdown per payment mode — previewed on the done step as soon as
    * the shift closes; printed only when the cashier asks. */
-  const showSummary = () => {
-    const report: any = recon?.report ?? {};
+  const showSummary = async () => {
+    // The frozen Z-report written by the close is the authoritative record; the polled reconciliation can be up to
+    // one poll behind (a sale settled in the last seconds would be missing from the printed statement). Cashiers
+    // without pos:reports fall back to the last polled figures.
+    let report: any = recon?.report ?? {};
+    try {
+      const frozen = (await api.get('/pos/reports/z-report', { params: { cashSessionId: session.id } })).data;
+      if (frozen && typeof frozen === 'object') report = frozen;
+    } catch {
+      /* keep the polled figures */
+    }
     setStatement({
       openingFloat: session.openingFloat,
       openedAt: session.openedAt,
@@ -1119,21 +1128,17 @@ export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onCl
                       onChange={(e) => setAutoAdjustCash(e.target.checked)}
                       className="mt-0.5"
                     />
-                    {tx('Accept — record the difference automatically and close without a variance review')}
+                    {tx('Accept — record the difference as a drawer movement')}
                   </label>
-                  {!autoAdjustCash ? (
-                    <p className="mt-1 text-xs text-amber-800">
-                      {tx('Without accepting, write below why the drawer does not balance (a manager is asked for a big difference).')}
-                    </p>
-                  ) : null}
+                  <p className="mt-1 text-xs text-amber-800">
+                    {tx('Either way, write below why the drawer does not balance (a manager is asked for a big difference).')}
+                  </p>
                 </div>
               ) : null}
 
               <div>
                 <Label className="text-sm font-bold">
-                  {autoAdjustCash && cashVariance != null && Math.abs(cashVariance) > 0.005
-                    ? tx('Anything else worth noting?')
-                    : tx('If the drawer or a wallet doesn’t balance, why?')}{' '}
+                  {tx('If the drawer or a wallet doesn’t balance, why?')}{' '}
                   <span className="font-normal text-slate-400">{tx('(only needed if it does not balance)')}</span>
                 </Label>
                 <Textarea

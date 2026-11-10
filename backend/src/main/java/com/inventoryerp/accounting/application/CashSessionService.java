@@ -4,6 +4,7 @@ import static com.inventoryerp.accounting.application.PostingService.plain;
 
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.auth.CredentialGuard;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.OccurredAt;
@@ -11,6 +12,7 @@ import com.inventoryerp.kernel.crud.AfterCommit;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
@@ -51,7 +53,7 @@ public class CashSessionService {
     /** Open body. */
     public record OpenInput(String openingSourceAccountId, Map<String, Object> openingAccounts, String cashRegisterId,
             BigDecimal openingFloat, String notes, Map<String, Object> openingDenomination, Boolean autoAdjust,
-            String occurredAt) {}
+            String occurredAt, String adjustmentReason, String approvedById, String approverEmail, String managerPin) {}
 
     /** Close / force-close body. */
     public record CloseInput(Map<String, Object> closingAccounts, Map<String, Object> uncountedAccounts,
@@ -81,7 +83,7 @@ public class CashSessionService {
             String autoDirection, BigDecimal autoAmount) {
 
         Closing withRecomputed(Map<String, Object> rec, BigDecimal exp, BigDecimal diff) {
-            return new Closing(rec, closingAccounts, exp, diff, reason, null, approvedById, autoDirection, autoAmount);
+            return new Closing(rec, closingAccounts, exp, diff, reason, varianceStatus, approvedById, autoDirection, autoAmount);
         }
     }
 
@@ -97,11 +99,14 @@ public class CashSessionService {
     private final TransactionTemplate tx;
     private final BigDecimal largeVarianceThreshold;
 
+    private final CredentialGuard credentialGuard;
+
     public CashSessionService(JdbcClient jdbc, EventBus events, AuditService audit, PasswordService password,
             PostingService posting, AccountDeterminationService determination, SessionReconciliation recon,
             PosPaymentMethodService paymentMethods, ObjectProvider<CashSessionHooks> hooks,
             PlatformTransactionManager txm,
-            @Value("${CASH_VARIANCE_APPROVAL_THRESHOLD:}") String threshold) {
+            @Value("${CASH_VARIANCE_APPROVAL_THRESHOLD:}") String threshold, CredentialGuard credentialGuard) {
+        this.credentialGuard = credentialGuard;
         this.jdbc = jdbc;
         this.events = events;
         this.audit = audit;
@@ -122,6 +127,39 @@ public class CashSessionService {
 
     private static String org() {
         return TenantContext.organizationId();
+    }
+
+    /**
+     * Cash variance at or above which a manager must approve the close. Post-parity (owner-approved 2026-11-10): the
+     * organization setting {@code cash.varianceApprovalThreshold} (a positive number in the organization's currency)
+     * wins over the deployment-wide {@code CASH_VARIANCE_APPROVAL_THRESHOLD} (default 20000), so a USD or EUR
+     * organization is not left with a 20,000 threshold.
+     */
+    BigDecimal varianceApprovalThreshold(String organizationId) {
+        String raw = jdbc.sql("SELECT value::text FROM \"Setting\" WHERE \"organizationId\" = ? AND \"scopeType\" = 'organization'"
+                        + " AND \"scopeId\" = '' AND key = 'cash.varianceApprovalThreshold' LIMIT 1")
+                .param(organizationId).query(String.class).optional().orElse(null);
+        if (raw != null) {
+            try {
+                BigDecimal v = new BigDecimal(raw.replace("\"", "").trim());
+                if (v.signum() > 0) {
+                    return v;
+                }
+            } catch (NumberFormatException ignored) {
+                // fall back to the deployment default
+            }
+        }
+        return largeVarianceThreshold;
+    }
+
+    /** The first argument with non-blank text, trimmed; {@code null} when none. */
+    private static String firstText(String... values) {
+        for (String v : values) {
+            if (v != null && !v.trim().isEmpty()) {
+                return v.trim();
+            }
+        }
+        return null;
     }
 
     private static ApiException bad(Map<String, Object> body) {
@@ -202,6 +240,30 @@ public class CashSessionService {
                 throw ApiException.badRequest("Opening count is below the drawer ledger. Reconcile the prior count or"
                         + " record the removal before opening");
             }
+            // Post-parity hardening (owner-approved 2026-11-10): an opening count below the drawer ledger moves the
+            // missing cash to the clearing account. Nest let any opener do that silently (and the web ticks
+            // auto-adjust by default), so cash missing between shifts vanished with no reason or approver. It now needs
+            // a reason and a cash_session:approve_variance holder: the opener when they hold it, else a manager PIN.
+            String adjustmentReason = null;
+            String adjustmentApprover = null;
+            if (funding.signum() < 0) {
+                adjustmentReason = firstText(dto.adjustmentReason(), dto.notes());
+                if (adjustmentReason == null) {
+                    throw bad(body("code", "OPENING_SHORTAGE_REASON_REQUIRED", "message",
+                            "Explain why the drawer holds less than its ledger before opening",
+                            "drawerLedger", plain(ledger), "shortage", plain(funding.abs())));
+                }
+                if (permissionsOf(userId).contains(Permissions.CASH_SESSION__APPROVE_VARIANCE)) {
+                    adjustmentApprover = userId;
+                } else if (dto.approvedById() == null && dto.approverEmail() == null) {
+                    throw bad(body("code", "MANAGER_APPROVAL_REQUIRED", "message",
+                            "Removing cash from the drawer at opening requires manager approval",
+                            "drawerLedger", plain(ledger), "shortage", plain(funding.abs())));
+                } else {
+                    adjustmentApprover = (String) assertManagerApproval(dto.approvedById(), dto.approverEmail(), dto.managerPin(), userId,
+                            Permissions.CASH_SESSION__APPROVE_VARIANCE, "removing cash from the drawer at opening").get("id");
+                }
+            }
             if (funding.signum() > 0 && dto.openingSourceAccountId() != null) {
                 String sourceCategory = categoryOf(dto.openingSourceAccountId());
                 if (sourceCategory == null || dto.openingSourceAccountId().equals(drawerId)
@@ -244,7 +306,7 @@ public class CashSessionService {
                 }
             } else if (funding.signum() < 0) {
                 posting.post(PostingRequest.of("CASH", at, "Opening adjustment: cash withdrawn from the drawer to match the"
-                        + " declared opening float", "cash_session_opening", id, "cash_session_opening:" + id,
+                        + " declared opening float — " + adjustmentReason, "cash_session_opening", id, "cash_session_opening:" + id,
                         List.of(PostingRequest.Line.debit(clearingId, plain(funding.abs()), null),
                                 PostingRequest.Line.credit(drawerId, plain(funding.abs()), null))));
             }
@@ -254,6 +316,10 @@ public class CashSessionService {
                 values.put("drawerLedger", plain(ledger));
                 values.put("adjustment", plain(funding.abs()));
                 values.put("adjustmentKind", funding.signum() > 0 ? "cash_in" : "withdrawal");
+                if (adjustmentReason != null) {
+                    values.put("adjustmentReason", adjustmentReason);
+                    values.put("adjustmentApprovedById", adjustmentApprover);
+                }
             }
             audit.recordInTx(AuditInput.of("CashSession", id, "create", null, values));
             AfterCommit.run(() -> events.publish("cash.session.opened", Map.of("organizationId", organizationId,
@@ -287,7 +353,8 @@ public class CashSessionService {
             }
         }
         drainStockPostings(dto.sessionId() != null ? dto.sessionId()
-                : jdbc.sql("SELECT id FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"userId\" = ? AND status = 'open' LIMIT 1")
+                : jdbc.sql("SELECT id FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"userId\" = ? AND status = 'open'"
+                        + " ORDER BY \"openedAt\" LIMIT 1")
                         .params(organizationId, actorId).query(String.class).optional().orElse(null));
         return inTx(() -> {
             Map<String, Object> found = dto.sessionId() != null ? session(dto.sessionId()) : requireOpenSession();
@@ -309,7 +376,7 @@ public class CashSessionService {
             Closing closing = validateClosing(s, counted, dto.closingAccounts(), dto.uncountedAccounts(),
                     dto.varianceReason(), Boolean.TRUE.equals(dto.autoAdjustCash()),
                     force ? new Approval(actorId, null, null, null)
-                            : new Approval(null, dto.approvedById(), dto.approverEmail(), dto.managerPin()));
+                            : new Approval(null, dto.approvedById(), dto.approverEmail(), dto.managerPin()), false);
             if (closing.autoDirection() != null) {
                 applyClosingCashAdjustment(s, closing.autoDirection(), closing.autoAmount());
                 BigDecimal expected = computeExpected(s);
@@ -383,7 +450,7 @@ public class CashSessionService {
                 throw ApiException.badRequest("Incoming cashier not found");
             }
             Closing closing = validateClosing(outgoing, counted, dto.closingAccounts(), dto.uncountedAccounts(),
-                    dto.varianceReason(), false, new Approval(dto.approvedById(), null, null, null));
+                    dto.varianceReason(), false, new Approval(dto.approvedById(), null, null, null), true);
             finishClosing(outgoing, closing, counted, Instant.now(), (String) outgoing.get("notes"), dto.closingDenomination(),
                     body("kind", "handover_out", "actorId", TenantContext.userId(), "incomingUserId", dto.incomingUserId()));
             Map<String, Object> openingAccounts = new LinkedHashMap<>();
@@ -409,9 +476,18 @@ public class CashSessionService {
                             sanitizeDenomination(dto.closingDenomination()),
                             dto.notes() != null ? dto.notes() : "Opened by handover from session " + outgoing.get("id"))
                     .update();
+            // Post-parity (owner-approved 2026-11-10): open tabs of the outgoing shift move to the incoming one, so a
+            // handover works in the middle of service (Nest refused it while any table was open in the organization).
+            int carried = jdbc.sql("UPDATE \"Order\" SET \"cashSessionId\" = ?, \"updatedAt\" = now()"
+                            + " WHERE \"organizationId\" = ? AND \"cashSessionId\" = ? AND \"invoiceId\" IS NULL"
+                            + " AND status::text IN ('draft', 'confirmed', 'in_progress')")
+                    .params(incomingId, organizationId, outgoing.get("id")).update();
+            jdbc.sql("UPDATE \"PosHold\" SET \"cashSessionId\" = ?, \"updatedAt\" = now()"
+                            + " WHERE \"organizationId\" = ? AND \"cashSessionId\" = ? AND status::text = 'open'")
+                    .params(incomingId, organizationId, outgoing.get("id")).update();
             audit.recordInTx(AuditInput.of("CashSession", incomingId, "create", null, body("kind", "handover_in",
                     "handoverFromSessionId", outgoing.get("id"), "userId", dto.incomingUserId(), "openingFloat", plain(opening),
-                    "approvedById", dto.approvedById())));
+                    "approvedById", dto.approvedById(), "carriedOpenOrders", carried)));
             Map<String, Object> result = body("outgoingSessionId", outgoing.get("id"), "incomingSessionId", incomingId,
                     "expected", plain(closing.expected()), "counted", plain(counted), "variance", plain(closing.difference()));
             AfterCommit.run(() -> events.publish("cash.session.handover", body("organizationId", organizationId,
@@ -444,13 +520,16 @@ public class CashSessionService {
     /** The single closing rule set (close, force-close, handover). */
     @SuppressWarnings("unchecked")
     private Closing validateClosing(Map<String, Object> session, BigDecimal counted, Map<String, Object> observedInput,
-            Map<String, Object> uncountedInput, String varianceReason, boolean autoAdjustCash, Approval approval) {
+            Map<String, Object> uncountedInput, String varianceReason, boolean autoAdjustCash, Approval approval,
+            boolean carryOpenOrders) {
         String organizationId = org();
-        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?))::text").param("pos-floor-close:" + organizationId)
+        // One floor per branch (see SessionReconciliation#SAME_BRANCH): closes of different branches no longer queue.
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?))::text")
+                .param("pos-floor-close:" + organizationId + ":" + session.get("branchId"))
                 .query(String.class).single();
         Map<String, Object> reconciliation = recon.reconcileSession(organizationId, session);
         long openOrderCount = ((Number) reconciliation.get("openOrderCount")).longValue();
-        if (openOrderCount > 0) {
+        if (openOrderCount > 0 && !carryOpenOrders) {
             throw bad(body("code", "OPEN_ORDERS", "message", openOrderCount + " open order(s) must be settled or voided before"
                     + " closing — resolve unsettled orders first", "openOrderCount", openOrderCount,
                     "openOrders", reconciliation.get("openOrders"), "reconciliation", reconciliation));
@@ -554,21 +633,24 @@ public class CashSessionService {
         String approvedById = manager[0] == null ? null : (String) manager[0].get("id");
         String autoDirection = null;
         BigDecimal autoAmount = null;
-        if (difference.signum() != 0 && autoAdjustCash) {
-            autoDirection = difference.signum() > 0 ? "pay_in" : "pay_out";
-            autoAmount = difference.abs();
-        }
-        if (difference.signum() != 0 && autoDirection == null) {
+        // Post-parity hardening (owner-approved 2026-11-10): an auto-adjusted close (offline/legacy callers only — the
+        // HTTP route never forwards autoAdjustCash) still needs the reason and the threshold approval; the shortage is
+        // booked as a pay-out AND the variance status is kept, so it cannot vanish from review.
+        if (difference.signum() != 0) {
             if (reason == null) {
                 throw bad(body("code", "CASH_VARIANCE_REASON_REQUIRED", "message",
                         "A variance reason is required when counted cash differs from expected"));
             }
             boolean managerPresent = approval.verifiedManagerId() != null;
-            if (managerPresent || difference.abs().compareTo(largeVarianceThreshold) >= 0) {
+            if (managerPresent || difference.abs().compareTo(varianceApprovalThreshold(organizationId)) >= 0) {
                 approvedById = (String) approve.apply(managerPresent ? "the shift variance" : "a large cash variance").get("id");
                 varianceStatus = "approved";
             } else {
                 varianceStatus = "pending_review";
+            }
+            if (autoAdjustCash) {
+                autoDirection = difference.signum() > 0 ? "pay_in" : "pay_out";
+                autoAmount = difference.abs();
             }
         }
         return new Closing(reconciliation, closingAccounts, expected, difference, reason, varianceStatus, approvedById,
@@ -651,9 +733,7 @@ public class CashSessionService {
             throw ApiException.badRequest("Corrections to a closed shift are recorded as adjustments");
         }
         return inTx(() -> {
-            Map<String, Object> s = sessionId != null ? session(sessionId)
-                    : SqlRows.one(jdbc.sql("SELECT * FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"userId\" = ?"
-                            + " AND status = 'open' LIMIT 1").params(organizationId, TenantContext.userId()));
+            Map<String, Object> s = sessionId != null ? session(sessionId) : requireOpenSession();
             if (s == null) {
                 throw ApiException.notFound("No open cash session");
             }
@@ -1173,13 +1253,20 @@ public class CashSessionService {
 
     // ------------------------------------------------------------------ helpers
 
+    /**
+     * The caller's open session when no {@code sessionId} was sent. Post-parity: a cashier with shifts open on two
+     * registers got an arbitrary one ({@code LIMIT 1} without order); the request must now name the shift.
+     */
     private Map<String, Object> requireOpenSession() {
-        Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT * FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"userId\" = ?"
-                + " AND status = 'open' LIMIT 1").params(org(), TenantContext.userId()));
-        if (s == null) {
+        List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT * FROM \"CashSession\" WHERE \"organizationId\" = ?"
+                + " AND \"userId\" = ? AND status = 'open' ORDER BY \"openedAt\" LIMIT 2").params(org(), TenantContext.userId()));
+        if (open.isEmpty()) {
             throw ApiException.notFound("No open cash session");
         }
-        return s;
+        if (open.size() > 1) {
+            throw ApiException.badRequest("You have shifts open on more than one register; choose the shift");
+        }
+        return open.getFirst();
     }
 
     /** expected = opening + sales + pay-ins − pay-outs − refunds − supplier payouts ± adjustments. */
@@ -1304,17 +1391,28 @@ public class CashSessionService {
         if ((managerPin == null || managerPin.isEmpty()) && !managerId.equals(TenantContext.userId())) {
             throw bad(body("code", "MANAGER_APPROVAL_REQUIRED", "message", "Manager PIN is required"));
         }
+        // Post-parity hardening (owner-approved 2026-11-10): the permission is checked before the PIN (Nest compared
+        // the PIN first, so the two error messages told a caller whether a non-manager's PIN was right), and PIN
+        // attempts count on the shared manager-PIN lockout, atomically and outside this transaction.
+        if (!permissionsOf(managerId).contains(permission)) {
+            throw ApiException.unauthorized("Approver does not hold " + permission);
+        }
         if (managerPin != null && !managerPin.isEmpty()) {
             String pinHash = (String) manager.get("pinHash");
             if (pinHash == null) {
                 throw ApiException.badRequest("Manager has not set a PIN");
             }
+            CredentialGuard.Attempt attempt = credentialGuard.lockedFor(orgId, CredentialGuard.MANAGER_PIN, managerId)
+                    .map(left -> new CredentialGuard.Attempt(true, left))
+                    .orElseGet(() -> credentialGuard.attempt(orgId, CredentialGuard.MANAGER_PIN, managerId));
+            if (attempt.locked()) {
+                throw ApiException.unauthorized("Manager approvals are temporarily locked after repeated failed attempts."
+                        + " Try again in " + CredentialGuard.minutes(attempt.remaining()) + " min");
+            }
             if (!password.compare(managerPin, pinHash)) {
                 throw ApiException.unauthorized("Invalid manager PIN");
             }
-        }
-        if (!permissionsOf(managerId).contains(permission)) {
-            throw ApiException.unauthorized("Approver does not hold " + permission);
+            credentialGuard.succeeded(orgId, CredentialGuard.MANAGER_PIN, managerId);
         }
         return manager;
     }

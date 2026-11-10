@@ -121,6 +121,74 @@ Post-parity fixes (found in the 2026-10-24 web walkthrough, explicitly labelled)
 - Web: `SplitBillDialog` refetches the split state when it opens (the terminal caches the same query when the table
   opens, so a freshly filled tab showed "No open tab on this table" for 30 s). Same client bug in POS-CAFE.
 
+Post-parity hardening (owner-approved 2026-11-10, after the end-to-end POS review on the DEMO data; explicitly
+labelled, each a deliberate change from Nest):
+
+- **PIN lockout that holds.** Every PIN check (PIN login, change-PIN, own-PIN verify, manager override / operation
+  approval, void / refund / cancel with a manager PIN, cash-session approvals, shift handover) counts the attempt
+  with one atomic upsert on the new `CredentialThrottle` table (V442, RLS) **before** the hash compare, in its own
+  transaction (`kernel/auth/CredentialGuard`). Nest read-modify-wrote `User.failedLoginCount`, so parallel guesses
+  overwrote each other's increments (60 parallel wrong PINs never locked), and the void/refund routes rolled the
+  increment back with the business transaction (the manager-PIN lockout never engaged). Limits: own PIN 10 attempts /
+  15 min → 15 min lock (same message `Account locked. Try again in N min`); approver PIN 5 / 10 min → 10 min lock
+  (same `Manager overrides are temporarily locked…` message; cash-session approvals answer `Manager approvals are
+  temporarily locked after repeated failed attempts. Try again in N min`). Wrong PINs no longer lock the user's
+  back-office password login (`User.lockedUntil` is only for passwords). `POST /users/:id/unlock` also clears the PIN
+  counters. `@Throttle` added on `pin-login` (30/min), `change-pin` and `change-password` (10/min), override
+  `verify-pin` (30/min).
+- **Shift handover verifies PINs only** (incoming PIN + approver PIN through the same guard); it no longer issues a
+  POS token or touches the incoming user's login counters. Open orders and holds of the outgoing session move to the
+  incoming session (`carriedOpenOrders` in the audit row).
+- **Expired or invalid POS token → 401.** An `X-Pos-User` token that does not verify for the bearer's organization
+  (expired after `JWT_POS_TTL`, forged, other org) answers 401 with `X-Pos-Session: revoked` and
+  `Your POS sign-in has expired. Sign in again with your PIN.` Nest silently fell back to the bearer identity, so the
+  till kept selling as the back-office user who opened it (often a manager). The PIN screens
+  (`/pos/auth/pin-login`, `/pos/auth/staff`) still fall back. The web already handles the header (PIN screen).
+- **Opening below the drawer ledger.** `POST /cash-sessions/open` with `autoAdjust` and a count below the drawer's
+  ledger (cash removed between shifts) now needs `adjustmentReason` (400 `OPENING_SHORTAGE_REASON_REQUIRED`) and a
+  `cash_session:approve_variance` holder: the opener, or a manager via `approvedById` / `approverEmail` + `managerPin`
+  (400 `MANAGER_APPROVAL_REQUIRED` `Removing cash from the drawer at opening requires manager approval`). The reason
+  and approver are written to the audit row and the posting description. New optional body fields:
+  `adjustmentReason`, `approvedById`, `approverEmail`, `managerPin`. Nest let any opener move the shortage to the
+  clearing account silently (the DEMO review moved 107,500 that way with a 0 float).
+- **Auto-adjusted close keeps the variance review.** `autoAdjustCash` at close still books the difference as a drawer
+  movement but no longer skips the reason / approval threshold or clears `varianceStatus`.
+- **Variance threshold per organization.** Setting `cash.varianceApprovalThreshold` overrides the
+  `CASH_VARIANCE_APPROVAL_THRESHOLD` env value (default 20000).
+- **Ambiguous shift.** Close / cash movement without a session id, for a user with open shifts on more than one
+  register, answers 400 `You have shifts open on more than one register; choose the shift` (Nest picked one).
+  The close advisory lock is per organization + branch; the open-orders check is scoped to the session's branch.
+- **Selling.** Settling an order re-checks under the order lock that no split is in progress (`This order has a split
+  in progress — settle each split bill instead.`). Tender sums and change use `BigDecimal` (Nest used JS numbers). A
+  refund of the last remaining units refunds the exact remaining value (no rounding residue). Credit settlement needs
+  `pos:credit` and an existing customer of the organization (`Customer not found`). The catalog tax's
+  `isInclusive` wins over a client `taxInclusive` flag. Moving an order to a table that already has an open order is
+  refused (`Table already has an open order (…)`).
+- **Split routes have permissions.** `GET /pos/tabs/:tableId/split` needs `pos:read`; every other `/split*` route needs
+  `pos:checkout` (Nest had none, so any signed-in user could split or settle a tab).
+- **Receipts.** The original receipt is claimed with a conditional update (`receiptPrintCount = 0`), so two
+  simultaneous prints cannot both print an unmarked original; the loser gets the existing 403 reprint message.
+- **Reports.** A report range over 366 days answers 400 `Report range cannot exceed 366 days`. Sales summary and
+  items-by-server bucket a sale on its `businessDate` (the column the range filter already used) instead of
+  `issueDate`, so a late-shift sale after midnight is counted in the day it was filtered into.
+- **Posting monitor.** `GET /pos/posting-monitor/counts` adds `unpaidSales {count, oldestInvoice}` (POS invoices left
+  unsettled for over 5 minutes, credit sales excluded) and reports health `attention` when any exist. The session
+  drain handles at most 200 jobs / 15 s per call.
+- **Live streams.** `/pos/tables/stream` and `/pos/kds/stream`: changes are debounced (250 ms) and rendered once per
+  organization + channel, writes run per client on virtual threads, streams end after 30 min (the browser
+  reconnects and re-authenticates). KDS active tickets are limited to the last 24 h (500 max).
+- **Sync dead letters** store the payload with PINs, passwords and approval tokens replaced by `[redacted]`.
+- **Outbox claim** sets `status = 'claimed'` (it stayed `pending`, so a second API instance could dispatch the same
+  event again).
+- **Web** (`web/`): the open-shift dialog pre-fills the drawer's ledger balance instead of 50,000, leaves
+  auto-adjust off, and asks for the reason and manager login when cash is removed; the close dialog leaves
+  auto-adjust off and prints the closing statement from the frozen Z-report; a 401 on a PIN request is no longer
+  refreshed and re-sent (that counted a second failed attempt).
+
+Tests: `PosHardeningIT` (parallel PIN guesses lock after exactly 10 compares, void-PIN lockout survives the rollback,
+opening shortage approval, one original receipt under a race, range cap and business-day bucketing),
+`SyncDeadLetterRedactionTest`, `KernelIT#posRevocation` (expired / forged / foreign POS token → 401).
+
 Same as Nest, kept on purpose:
 
 - `/menu/public/*` ("public" digital menu) is **not** `@Public()` in Nest: the global JWT guard applies, so a bearer

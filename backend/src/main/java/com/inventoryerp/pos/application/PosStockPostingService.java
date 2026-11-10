@@ -7,6 +7,7 @@ import static com.inventoryerp.pos.application.PosSql.user;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.pos.domain.InventoryException;
 import com.inventoryerp.pos.domain.StockPostingJob;
 import com.inventoryerp.shared.web.ApiException;
@@ -83,11 +84,27 @@ public class PosStockPostingService {
         jobs.put("overdue", overdue);
         jobs.put("oldestPendingAgeMs", oldest == null ? 0 : now - ((Instant) oldest.get("createdAt")).toEpochMilli());
         jobs.put("oldestPendingInvoice", oldest == null ? null : oldest.get("invoiceNumber"));
+        // Post-parity: a checkout commits Order, Invoice and Payment in separate transactions (as in Nest). A sale whose
+        // payment step failed leaves a billed, unpaid, non-credit invoice; surface it so the pending-sale recovery or a
+        // refund resolves it instead of it sitting in AR unnoticed.
+        Map<String, Object> unpaid = SqlRows.one(db.jdbc().sql("""
+                SELECT count(*) AS n, min(i."invoiceNumber") FILTER (WHERE i."createdAt" = m.oldest) AS oldest
+                  FROM "Invoice" i
+                  CROSS JOIN (SELECT min("createdAt") AS oldest FROM "Invoice" WHERE "organizationId" = ? AND "orderId" IS NOT NULL
+                                 AND "settlementStatus"::text = 'unsettled' AND "paymentMode"::text IS DISTINCT FROM 'credit'
+                                 AND status::text NOT IN ('cancelled', 'refunded')
+                                 AND "createdAt" < now() - interval '5 minutes') m
+                 WHERE i."organizationId" = ? AND i."orderId" IS NOT NULL AND i."settlementStatus"::text = 'unsettled'
+                   AND i."paymentMode"::text IS DISTINCT FROM 'credit' AND i.status::text NOT IN ('cancelled', 'refunded')
+                   AND i."createdAt" < now() - interval '5 minutes'""").params(orgId, orgId));
+        long unpaidSales = unpaid == null ? 0 : ((Number) unpaid.get("n")).longValue();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("jobs", jobs);
         out.put("exceptions", Obj.of("open", openExceptions));
+        out.put("unpaidSales", Obj.of("count", unpaidSales, "oldestInvoice", unpaid == null ? null : unpaid.get("oldest")));
         out.put("stalled", overdue > 0);
-        out.put("health", failed > 0 || overdue > 0 ? "degraded" : openExceptions > 0 ? "attention" : "ok");
+        out.put("health", failed > 0 || overdue > 0 ? "degraded"
+                : openExceptions > 0 || unpaidSales > 0 ? "attention" : "ok");
         return out;
     }
 
@@ -157,14 +174,25 @@ public class PosStockPostingService {
      * Post one shift's due jobs now, in the caller's tenant scope (the close screen calls this so a cashier never
      * waits for the 30 s tick). Jobs in retry backoff are left alone.
      */
+    private static final int DRAIN_MAX_JOBS = 200;
+    private static final java.time.Duration DRAIN_BUDGET = java.time.Duration.ofSeconds(15);
+
     public void drainSession(String cashSessionId) {
         List<String> ids = db.jdbc().sql("""
                 SELECT j.id FROM "StockPostingJob" j
                  WHERE j."organizationId" = ? AND j.status = 'pending' AND j."nextRetryAt" <= date_trunc('milliseconds', clock_timestamp())::timestamp(3)
                    AND j."invoiceId" IN (SELECT i.id FROM "Invoice" i WHERE i."organizationId" = ? AND i."cashSessionId" = ?)
-                 ORDER BY j."createdAt" ASC""")
-                .params(org(), org(), cashSessionId).query(String.class).list();
+                 ORDER BY j."createdAt" ASC LIMIT ?""")
+                .params(org(), org(), cashSessionId, DRAIN_MAX_JOBS).query(String.class).list();
+        // Post-parity: bounded (job count + wall time) so a stalled worker or app.jobs.enabled=false cannot turn the
+        // close request into a time-out; whatever is left is posted by the 30 s worker and shows as pending postings.
+        long deadline = System.nanoTime() + DRAIN_BUDGET.toNanos();
         for (String id : ids) {
+            if (System.nanoTime() > deadline) {
+                log.warn("shift {} drain stopped after its {} s budget; the worker posts the rest", cashSessionId,
+                        DRAIN_BUDGET.toSeconds());
+                break;
+            }
             try {
                 billing.processStockPostingJob(id);
             } catch (RuntimeException err) {

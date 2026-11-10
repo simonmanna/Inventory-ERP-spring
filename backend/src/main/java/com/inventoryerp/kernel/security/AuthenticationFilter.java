@@ -122,7 +122,19 @@ public class AuthenticationFilter extends OncePerRequestFilter {
                             posUserId = pos.sub();
                         }
                     } catch (RuntimeException ignored) {
-                        // invalid/expired POS token: fall back to the JWT identity
+                        // invalid/expired POS token: handled below
+                    }
+                    // Post-parity hardening (owner-approved 2026-11-10): Nest fell back to the bearer identity when the
+                    // cashier's POS token was invalid or expired (JWT_POS_TTL), so a till kept selling as the
+                    // back-office user who opened the terminal — often a manager — with that user's rights and
+                    // attribution. A POS token that does not verify now sends the till back to the PIN screen.
+                    if (posUserId == null && !PIN_SCREEN.matcher(path).find()) {
+                        response.setHeader(PosSessionCheck.POS_SESSION_HEADER, "revoked");
+                        Map<String, Object> body = new LinkedHashMap<>();
+                        body.put("statusCode", 401);
+                        body.put("message", "Your POS sign-in has expired. Sign in again with your PIN.");
+                        JsonResponses.write(mapper, response, 401, body);
+                        return false;
                     }
                 }
                 if (posUserId == null) {

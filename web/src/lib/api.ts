@@ -139,7 +139,12 @@ api.interceptors.response.use(
       notify.error((err.response?.data as any)?.message || tx('This cashier can no longer use the POS.'));
       throw err;
     }
-    if (status === 401 && original && !original._retry && !original.url?.includes('/auth/')) {
+    // A 401 for a wrong PIN (manager override, approval, void/refund with a manager PIN) is an answer about the PIN,
+    // not an expired access token: refreshing and re-sending it would count a second failed attempt against the
+    // manager's lockout and hide the real message.
+    const pinRequest = !!original && (original.url?.includes('/pos/override') === true
+      || (typeof original.data === 'string' && /"(managerPin|overridePin|incomingPin|pin)"\s*:/.test(original.data)));
+    if (status === 401 && original && !original._retry && !original.url?.includes('/auth/') && !pinRequest) {
       original._retry = true;
       refreshing = refreshing ?? refresh();
       const newToken = await refreshing;

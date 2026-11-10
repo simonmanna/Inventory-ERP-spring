@@ -596,6 +596,18 @@ public class PosOrdersService {
             if ("out_of_service".equals(status)) {
                 throw ApiException.conflict("Target table is out of service");
             }
+            // Post-parity (owner-approved 2026-11-10): the same one-open-tab rule as opening an order, under the table
+            // lock. Nest moved the order onto an occupied table, which then held two tabs and showed only the newest.
+            if (!targetTableId.equals(order.get("tableId"))) {
+                jdbc.sql("SELECT id FROM \"PosTable\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(targetTableId, orgId).query().listOfRows();
+                Map<String, Object> held = SqlRows.one(jdbc.sql("SELECT id, \"orderNumber\" FROM \"Order\" WHERE"
+                        + " \"organizationId\" = ? AND \"tableId\" = ? AND \"invoiceId\" IS NULL AND id <> ?"
+                        + " AND status::text IN " + TableStatus.HELD_SQL + " LIMIT 1").params(orgId, targetTableId, orderId));
+                if (held != null) {
+                    throw ApiException.conflict("Table already has an open order (" + held.get("orderNumber") + ")");
+                }
+            }
             String sourceTableId = (String) order.get("tableId");
             Map<String, Object> updated = db.update(Order.class, Obj.of("tableId", targetTableId,
                     "version", PosDb.raw("version + 1")), "id = ? AND \"organizationId\" = ?", orderId, orgId);
@@ -1022,8 +1034,10 @@ public class PosOrdersService {
             Boolean taxRowInclusive = taxId == null ? null : ReadMemo.get(() -> jdbc.sql("SELECT \"isInclusive\" FROM"
                     + " \"Tax\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(taxId, orgId)
                     .query(Boolean.class).optional().orElse(null), "Tax.isInclusive", orgId, taxId);
-            boolean taxInclusive = l.get("taxInclusive") instanceof Boolean b ? b
-                    : taxRowInclusive != null ? taxRowInclusive : Boolean.TRUE.equals(catalog.get("taxInclusive"));
+            // Post-parity (owner-approved 2026-11-10): the catalog tax decides inclusivity. Nest let the request's
+            // taxInclusive override it, so a crafted line could sell an 18%-exclusive item at the net price.
+            boolean taxInclusive = taxRowInclusive != null ? taxRowInclusive
+                    : l.get("taxInclusive") instanceof Boolean b ? b : Boolean.TRUE.equals(catalog.get("taxInclusive"));
             List<String> noteParts = new ArrayList<>();
             if (PosSql.truthy(l.get("note"))) {
                 noteParts.add(l.get("note").toString());

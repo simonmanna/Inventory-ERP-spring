@@ -886,6 +886,22 @@ The authorization matrix covers all 158 procurement routes (`ProcurementIT`). Ro
 - [x] POST /api/v1/pos/tabs/:tableId/split/cancel — PosSplitController.cancelSplit
 - [x] POST /api/v1/pos/tabs/:tableId/split/equal — PosSplitController.splitEqually
 
+### pos — post-parity hardening (owner-approved 2026-11-10)
+
+End-to-end review of the POS terminal (PIN login → selling → close) on a copy of the DEMO data. No new routes; contract
+additions and behaviour changes are listed in `docs/spec/pos.md` "Post-parity hardening".
+
+- [x] Race-free PIN / approver-PIN lockout (`CredentialGuard`, V442 `CredentialThrottle`) — `PosHardeningIT`
+- [x] Expired / invalid POS token → 401 `X-Pos-Session: revoked` — `KernelIT#posRevocation`
+- [x] Opening shortage needs reason + variance approver — `PosHardeningIT`
+- [x] Auto-adjusted close keeps variance review; `cash.varianceApprovalThreshold`; ambiguous-shift error
+- [x] Split-in-progress re-check, BigDecimal tenders, exact last-unit refund, `pos:credit`, occupied-table move
+- [x] Split route permissions (`pos:read` / `pos:checkout`) — `PosSaleIT` authorization matrix
+- [x] Race-free original receipt; report range cap + business-day buckets — `PosHardeningIT`
+- [x] Unpaid-sale monitor, bounded drain, debounced SSE, bounded KDS stream
+- [x] Sync dead-letter redaction — `SyncDeadLetterRedactionTest`; outbox `claimed` status
+- [x] Web: shift open / close dialogs, no refresh-retry on PIN 401s
+
 ### pos — post-parity additions (sales returns)
 
 - [x] GET /api/v1/returns — SalesReturnsController.list

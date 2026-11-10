@@ -315,7 +315,7 @@ public class SyncPushService {
                 Map<String, Object> session = cashSessions.open(new CashSessionService.OpenInput(
                         str(payload.get("openingSourceAccountId")), obj(payload.get("openingAccounts")),
                         str(payload.get("cashRegisterId")), decimal(payload.get("openingFloat")), str(payload.get("notes")),
-                        obj(payload.get("openingDenomination")), null, occurredAt));
+                        obj(payload.get("openingDenomination")), null, occurredAt, null, null, null, null));
                 String sessionId = (String) session.get("id");
                 if (PosSql.truthy(payload.get("clientId"))) {
                     clientIdMap.put(String.valueOf(payload.get("clientId")), sessionId);
@@ -1012,6 +1012,28 @@ public class SyncPushService {
         }
     }
 
+    /** Credential fields never stored in a dead letter (it is listed by {@code GET /sync/dead-letters}). */
+    private static final java.util.Set<String> SECRET_KEYS = java.util.Set.of("managerPin", "incomingPin", "overridePin",
+            "pin", "password", "approvalToken");
+
+    /**
+     * The payload with PINs, passwords and approval tokens replaced by {@code "[redacted]"}, at any depth.
+     * Post-parity hardening (owner-approved 2026-11-10): Nest stored the raw payload, manager PIN included.
+     */
+    @SuppressWarnings("unchecked")
+    static Object withoutSecrets(Object value) {
+        if (value instanceof Map<?, ?> m) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            m.forEach((k, v) -> out.put(String.valueOf(k), SECRET_KEYS.contains(String.valueOf(k)) && v != null
+                    ? "[redacted]" : withoutSecrets(v)));
+            return out;
+        }
+        if (value instanceof java.util.List<?> l) {
+            return l.stream().map(SyncPushService::withoutSecrets).toList();
+        }
+        return value;
+    }
+
     private void deadLetter(Device device, Op op, String error, int httpStatus) {
         try {
             jdbc.sql("INSERT INTO \"SyncOpDeadLetter\" (id, \"organizationId\", \"deviceId\", \"opId\", \"deviceSeq\","
@@ -1021,7 +1043,7 @@ public class SyncPushService {
                     .params(java.util.UUID.randomUUID().toString(), device.organizationId(), device.id(), op.opId(),
                             op.deviceSeq(), op.type(), op.actorUserId(),
                             op.occurredAt() == null ? null : SqlRows.ts(jsDate(op.occurredAt())),
-                            com.inventoryerp.shared.web.EntityJson.toJson(op.payload()), error, httpStatus)
+                            com.inventoryerp.shared.web.EntityJson.toJson(withoutSecrets(op.payload())), error, httpStatus)
                     .update();
         } catch (RuntimeException e) {
             log.error("FAILED TO DEAD-LETTER sync op {}: {}", op.opId(), e.toString());

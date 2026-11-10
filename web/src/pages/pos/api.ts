@@ -159,7 +159,7 @@ export function useRegisterOpenSession(registerId?: string) {
 export function useOpenShift() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { openingSourceAccountId?: string; cashRegisterId: string; openingFloat?: number; notes?: string; openingAccounts?: Record<string, number>; autoAdjust?: boolean }) =>
+    mutationFn: async (body: { openingSourceAccountId?: string; cashRegisterId: string; openingFloat?: number; notes?: string; openingAccounts?: Record<string, number>; autoAdjust?: boolean; adjustmentReason?: string; approverEmail?: string; managerPin?: string }) =>
       submitCashOperation('/cash-sessions/open', body),
     onSuccess: (session: any) => { if (session?.cashRegisterId) localStorage.setItem(`pos-register:${useAuthStore.getState().organization?.id}`, session.cashRegisterId); qc.invalidateQueries({ queryKey: ['cash-session'] }); },
   });

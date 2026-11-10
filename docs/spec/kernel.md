@@ -98,6 +98,11 @@ outbox-ship 30 s, webhooks-retry 1 min, recurring-tick 10 min, cleanup-notificat
 
 ## Deviations
 
+Post-parity hardening (owner-approved 2026-11-10): `CredentialThrottle` (V442) + `CredentialGuard` for PIN lockouts;
+an invalid / expired / foreign `X-Pos-User` token answers 401 `X-Pos-Session: revoked` instead of falling back to the
+bearer identity (PIN screens excepted); `POST /users/:id/unlock` clears PIN counters; the outbox claim sets
+`status = 'claimed'`. Details: `docs/spec/pos.md` "Post-parity hardening".
+
 Bug fixes where the Nest code could never work (pending owner approval):
 
 1. **MFA login / enrollment lookups** - Nest looked the pending `IdempotencyRecord` up with

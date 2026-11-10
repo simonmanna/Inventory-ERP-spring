@@ -2,6 +2,7 @@ package com.inventoryerp.kernel.staff;
 
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.auth.CredentialGuard;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.licensing.LicenseLimits;
@@ -52,8 +53,11 @@ public class UsersService {
     private final PermissionService permissionCache;
     private final LicenseLimits licenseLimits;
 
+    private final CredentialGuard credentialGuard;
+
     public UsersService(JdbcClient jdbc, AuditService audit, EventBus events, PasswordService password,
-            PermissionService permissionCache, LicenseLimits licenseLimits) {
+            PermissionService permissionCache, LicenseLimits licenseLimits, CredentialGuard credentialGuard) {
+        this.credentialGuard = credentialGuard;
         this.jdbc = jdbc;
         this.audit = audit;
         this.events = events;
@@ -278,6 +282,8 @@ public class UsersService {
                         WHERE id = ? AND "organizationId" = ? AND "deletedAt" IS NULL""")
                 .params(id, orgId)
                 .update();
+        // Post-parity: PIN lockouts live in CredentialThrottle (V442); an admin unlock clears them too.
+        credentialGuard.clear(orgId, id);
         Map<String, Object> after = load(id).orElseThrow();
         // Nest's unlock response includes roles but not the employee relation.
         after.put("employee", null);
