@@ -25,7 +25,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
 import { UnitSelect } from '@/components/unit-select';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
-import { defaultUnitId } from '@/features/products/units';
+import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { pricingApi } from '@/features/sales/api';
 import { useCrmUsers } from '@/features/crm/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
@@ -38,7 +39,15 @@ import { CashSaleDelivery } from './CashSaleDelivery';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/handover-draft';
 
-interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; uomId?: string | null; unitPrice: number | ''; discountPercent: number; taxId: string | null }
+/**
+ * {@code priceAuto}: the unit price and discount were filled from the price lookup, so the server prices the line on
+ * save (same engine, same result). Typing a price or a discount makes the line manual.
+ */
+interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; uomId?: string | null; unitPrice: number | ''; discountPercent: number; taxId: string | null; priceAuto?: boolean }
+
+/** The fields the price of a line depends on: a lookup answer only applies while they are unchanged. */
+const samePricingInput = (a: DraftLine, b: DraftLine) => a.productId === b.productId && (a.variantId ?? null) === (b.variantId ?? null)
+  && (a.uomId ?? null) === (b.uomId ?? null) && Number(a.quantity) === Number(b.quantity);
 
 /** Optional columns of the sale lines table (Odoo-style column picker). */
 type LineCol = 'description' | 'uom' | 'delivered' | 'invoiced' | 'discount' | 'taxes';
@@ -127,6 +136,43 @@ export function CashSalePage() {
     return [...extra, ...cur, ...list];
   }, [users.data, me, s?.salespersonId, s?.salespersonName]);
 
+  // Auto price: picking a product (or changing its variant, unit or quantity) fills the unit price and discount from
+  // the pricing engine the server uses on save (customer price lists, quantity breaks, sale date). Without pricing
+  // access the catalogue price of the unit is shown instead.
+  const canResolvePrice = useAuthStore((st) => st.hasPermission(PERMISSIONS.sales.pricingRead));
+  const reprice = async (i: number, l: DraftLine) => {
+    if (!l.productId) return;
+    let unit: number | null = null;
+    let disc: number | null = null;
+    if (canResolvePrice) {
+      try {
+        const r = await pricingApi.resolve({
+          partnerId: partnerId || undefined, date: saleDate || undefined,
+          lines: [{ productId: l.productId, variantId: l.variantId || undefined, quantity: Number(l.quantity) > 0 ? Number(l.quantity) : 1, uomId: l.uomId || undefined }],
+        });
+        const p = r.lines[0];
+        if (p) { unit = Number(p.unitPrice); disc = Number(p.discountPercent) || 0; }
+      } catch { /* fall back to the catalogue price */ }
+    }
+    if (unit === null && !l.variantId) unit = priceForUnit(products.data?.find((p) => p.id === l.productId), l.uomId ?? undefined, 'sales');
+    if (unit === null || !Number.isFinite(unit)) return;
+    const price = Number(unit.toFixed(6));
+    setLines((cur) => cur.map((x, j) => (j === i && x.priceAuto && samePricingInput(x, l)
+      ? { ...x, unitPrice: price, ...(disc !== null ? { discountPercent: disc } : {}) } : x)));
+  };
+  /** Product, variant or unit changed: the line is priced afresh. */
+  const patchPricedLine = (i: number, p: Partial<DraftLine>) => {
+    const next: DraftLine = { ...lines[i], ...p, unitPrice: '', priceAuto: true };
+    setLines(lines.map((x, j) => (j === i ? next : x)));
+    void reprice(i, next);
+  };
+  // Customer or sale date changed: price lists and validity dates may differ, so re-price the auto-priced lines.
+  useEffect(() => {
+    if (!editable) return;
+    lines.forEach((l, i) => { if (l.productId && l.priceAuto) void reprice(i, l); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partnerId, saleDate]);
+
   const refresh = async () => { await qc.invalidateQueries({ queryKey: ['cash-sales'] }); };
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true);
@@ -134,7 +180,7 @@ export function CashSalePage() {
   };
   const body = () => {
     const b: Record<string, unknown> = {
-      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), uomId: l.uomId || undefined, unitPrice: l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
+      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), uomId: l.uomId || undefined, unitPrice: l.priceAuto || l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
     };
     if (partnerId) b.partnerId = partnerId;
     Object.entries(customer).forEach(([k, v]) => { b[k] = v || null; });
@@ -308,24 +354,28 @@ export function CashSalePage() {
                       const sub = lineEst(l, i);
                       return (
                         <tr key={i} className="border-b align-top">
-                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchLine(i, { productId: v, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, unitPrice: '', description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchPricedLine(i, { productId: v, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                             <VariantSelect productId={l.productId} value={l.variantId} className="w-52"
-                              onChange={(v, opt) => patchLine(i, { variantId: v, unitPrice: '', ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} /></td>
+                              onChange={(v, opt) => patchPricedLine(i, { variantId: v, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} /></td>
                           {show('description') && <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
-                          <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
+                          <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => {
+                            const quantity = Number(e.target.value);
+                            patchLine(i, { quantity });
+                            if (l.priceAuto) void reprice(i, { ...l, quantity });
+                          }} /></td>
                           {show('uom') && (
                             <td className="py-1.5 pr-2 pt-2.5">
                               {l.productId
                                 ? <UnitSelect product={products.data?.find((p) => p.id === l.productId)} role="sales" value={l.uomId ?? undefined}
                                     className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                                    onChange={(uomId) => patchLine(i, { uomId, unitPrice: '' })} />
+                                    onChange={(uomId) => patchPricedLine(i, { uomId })} />
                                 : <span className="text-muted-foreground">—</span>}
                             </td>
                           )}
                           {show('delivered') && <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.deliveredQty)}</td>}
                           {show('invoiced') && <td className="py-1.5 pr-2 pt-3 text-right tabular-nums text-muted-foreground">{qty(s?.lines?.[i]?.invoicedQty)}</td>}
-                          <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" placeholder={tx('List')} value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value === '' ? '' : Number(e.target.value) })} /></td>
-                          {show('discount') && <td className="py-1.5 pr-2"><Input type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>}
+                          <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" placeholder={tx('List')} value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: e.target.value === '' ? '' : Number(e.target.value), priceAuto: false })} /></td>
+                          {show('discount') && <td className="py-1.5 pr-2"><Input type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value), priceAuto: false })} /></td>}
                           {show('taxes') && <td className="py-1.5 pr-2"><OptionalSelect value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={taxOpts} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>}
                           <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{sub == null ? <span className="text-xs text-muted-foreground">{tx('List')}</span> : money(sub)}</td>
                           <td className="py-1.5 pt-2"><button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button></td>
