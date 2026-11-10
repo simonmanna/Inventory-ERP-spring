@@ -390,39 +390,51 @@ public class StockDocService {
         Map<String, Map<String, Object>> byCategory = new LinkedHashMap<>();
         Map<String, Map<String, Object>> byLocation = new LinkedHashMap<>();
         Map<String, Map<String, Object>> byProduct = new LinkedHashMap<>();
-        double totalValue = 0;
-        double expiryValue = 0;
+        BigDecimal totalValue = BigDecimal.ZERO;
+        BigDecimal expiryValue = BigDecimal.ZERO;
+        // The posted records' lines in one query (was one per record), grouped back per record.
+        Map<String, List<Map<String, Object>>> itemsByWaste = new HashMap<>();
+        if (!posted.isEmpty()) {
+            for (Map<String, Object> it : SqlRows.list(jdbc.sql("SELECT wi.\"wasteId\", wi.\"productId\","
+                    + " wi.\"productName\", wi.unit, wi.qty, wi.\"totalCost\", wi.\"isExpiry\" FROM \"WasteItem\" wi"
+                    + " JOIN \"WasteRecord\" w ON w.id = wi.\"wasteId\" WHERE w.\"organizationId\" = :org"
+                    + " AND wi.\"wasteId\" IN (:ids)").param("org", org())
+                    .param("ids", posted.stream().map(r -> str(r, "id")).toList()))) {
+                itemsByWaste.computeIfAbsent(str(it, "wasteId"), k -> new ArrayList<>()).add(it);
+            }
+        }
         for (Map<String, Object> r : posted) {
-            double value = dec(r, "totalValue").doubleValue();
-            totalValue += value;
+            BigDecimal value = dec(r, "totalValue");
+            totalValue = totalValue.add(value);
             Map<String, Object> c = byCategory.computeIfAbsent(str(r, "category"),
-                    k -> Obj.of("category", k, "records", 0, "value", 0.0));
+                    k -> Obj.of("category", k, "records", 0, "value", BigDecimal.ZERO));
             c.put("records", (int) c.get("records") + 1);
-            c.put("value", (double) c.get("value") + value);
+            c.put("value", ((BigDecimal) c.get("value")).add(value));
             Map<String, Object> l = byLocation.computeIfAbsent(str(r, "locationId"),
-                    k -> Obj.of("locationId", k, "code", r.get("code"), "name", r.get("name"), "records", 0, "value", 0.0));
+                    k -> Obj.of("locationId", k, "code", r.get("code"), "name", r.get("name"), "records", 0, "value",
+                            BigDecimal.ZERO));
             l.put("records", (int) l.get("records") + 1);
-            l.put("value", (double) l.get("value") + value);
-            for (Map<String, Object> it : SqlRows.list(jdbc.sql("SELECT \"productId\", \"productName\", unit, qty,"
-                    + " \"totalCost\", \"isExpiry\" FROM \"WasteItem\" WHERE \"wasteId\" = ?").param(r.get("id")))) {
+            l.put("value", ((BigDecimal) l.get("value")).add(value));
+            for (Map<String, Object> it : itemsByWaste.getOrDefault(str(r, "id"), List.of())) {
                 Map<String, Object> p = byProduct.computeIfAbsent(str(it, "productId"),
                         k -> Obj.of("productId", k, "productName", it.get("productName"), "unit", it.get("unit"), "qty",
-                                0.0, "value", 0.0, "lines", 0));
-                p.put("qty", (double) p.get("qty") + dec(it, "qty").doubleValue());
-                p.put("value", (double) p.get("value") + dec(it, "totalCost").doubleValue());
+                                BigDecimal.ZERO, "value", BigDecimal.ZERO, "lines", 0));
+                p.put("qty", ((BigDecimal) p.get("qty")).add(dec(it, "qty")));
+                p.put("value", ((BigDecimal) p.get("value")).add(dec(it, "totalCost")));
                 p.put("lines", (int) p.get("lines") + 1);
                 if (Boolean.TRUE.equals(it.get("isExpiry"))) {
-                    expiryValue += dec(it, "totalCost").doubleValue();
+                    expiryValue = expiryValue.add(dec(it, "totalCost"));
                 }
             }
         }
-        Comparator<Map<String, Object>> desc = (a, b) -> Double.compare((double) b.get("value"), (double) a.get("value"));
+        Comparator<Map<String, Object>> desc =
+                (a, b) -> ((BigDecimal) b.get("value")).compareTo((BigDecimal) a.get("value"));
         return Obj.of("period", Obj.of("from", q.from(), "to", q.to()),
                 "postedRecords", posted.size(),
                 "totalValue", JsNumbers.js(totalValue),
                 "expiryValue", JsNumbers.js(expiryValue),
                 "pendingRecords", ((Number) pending.get("n")).longValue(),
-                "pendingValue", JsNumbers.js(pending.get("v") == null ? 0 : dec(pending, "v").doubleValue()),
+                "pendingValue", JsNumbers.js(pending.get("v") == null ? BigDecimal.ZERO : dec(pending, "v")),
                 "byCategory", jsValues(sorted(byCategory.values(), desc)),
                 "byLocation", jsValues(sorted(byLocation.values(), desc)),
                 "topProducts", jsValues(sorted(byProduct.values(), desc).stream().limit(10).toList()));
@@ -435,10 +447,10 @@ public class StockDocService {
         return list;
     }
 
-    /** Double accumulators → JS numbers. */
+    /** Decimal accumulators → JS numbers. */
     private static List<Map<String, Object>> jsValues(List<Map<String, Object>> rows) {
         for (Map<String, Object> r : rows) {
-            r.replaceAll((k, v) -> v instanceof Double d ? JsNumbers.js(d) : v);
+            r.replaceAll((k, v) -> v instanceof BigDecimal d ? JsNumbers.js(d) : v);
         }
         return rows;
     }
@@ -534,9 +546,9 @@ public class StockDocService {
             if (pre == null) {
                 throw ApiException.notFound("Adjustment not found");
             }
-            double magnitude = 0;
+            BigDecimal magnitude = BigDecimal.ZERO;
             for (Map<String, Object> it : items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id)) {
-                magnitude += Math.abs(dec(it, "qtyDiff").doubleValue());
+                magnitude = magnitude.add(dec(it, "qtyDiff").abs());
             }
             List<String> makers = new ArrayList<>();
             makers.add(str(pre, "performedById"));
@@ -741,9 +753,9 @@ public class StockDocService {
         scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
         List<Map<String, Object>> items = items("StockTransferItem", StockTransferItem.class, "transferId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
-        double magnitude = 0;
+        BigDecimal magnitude = BigDecimal.ZERO;
         for (Map<String, Object> it : items) {
-            magnitude += dec(it, "qtyRequested").doubleValue();
+            magnitude = magnitude.add(dec(it, "qtyRequested"));
         }
         gateApproval("stock_transfer", id, Obj.of("amount", JsNumbers.js(magnitude), "transferCode",
                 doc.get("transferCode")), "transfer " + doc.get("transferCode"));

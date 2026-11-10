@@ -54,6 +54,25 @@ public class InventoryValuationService {
     /** Movement types that relocate value inside inventory and never hit the GL on their own. */
     private static final String GL_NEUTRAL = "l.\"type\"::text NOT IN ('transfer_in', 'transfer_out')";
 
+    /**
+     * Date basis of a stock ledger row, shared by both sides of the tie-out: the posting date of the inventory journal
+     * entry of its source (matched on the ledger code, else on the reference id) when that source's inventory entries
+     * all fall on one day, else the row's {@code createdAt}. The GL side filters on {@code postingDate}; dating ledger
+     * rows by {@code createdAt} alone put a backdated document, a late-drained POS sale or a late sync on different
+     * sides of {@code asOf} in the two ledgers. Needs {@code :org} and {@code :accts}.
+     */
+    private static final String JE_DATES = "je_dates AS (SELECT e.\"sourceId\" AS sid, MIN(e.\"postingDate\") AS pd,"
+            + " MAX(e.\"postingDate\") AS pd_max FROM \"JournalEntry\" e WHERE e.\"organizationId\" = :org"
+            + " AND e.status <> 'draft' AND e.\"sourceId\" IS NOT NULL AND EXISTS (SELECT 1 FROM \"JournalLine\" jl"
+            + " WHERE jl.\"journalEntryId\" = e.id AND jl.\"accountId\" IN (:accts)) GROUP BY e.\"sourceId\")";
+
+    private static final String JE_DATE_JOIN = " LEFT JOIN je_dates jc ON jc.sid = l.\"ledgerCode\""
+            + " LEFT JOIN je_dates jr ON jr.sid = l.\"referenceId\"";
+
+    private static final String LEDGER_DATE = "COALESCE("
+            + "CASE WHEN date_trunc('day', jc.pd) = date_trunc('day', jc.pd_max) THEN jc.pd END,"
+            + " CASE WHEN date_trunc('day', jr.pd) = date_trunc('day', jr.pd_max) THEN jr.pd END, l.\"createdAt\")";
+
     private static final String SIGNED_VALUE = "CASE WHEN l.\"quantityChange\" >= 0 THEN l.\"totalValue\" ELSE -l.\"totalValue\" END";
 
     private final JdbcClient jdbc;
@@ -139,46 +158,75 @@ public class InventoryValuationService {
         return new ArrayList<>(ids);
     }
 
-    /** Current remaining value per product, by costing method — one statement so quants, lots and serials agree. */
-    private List<Map<String, Object>> currentValueByProduct(String org) {
-        return SqlRows.list(jdbc.sql("WITH quant AS ("
+    /**
+     * Current remaining value per quant (product, variant, location) by costing method — one statement so quants, lots
+     * and serials agree: serial-tracked = in-stock serial costs (+ untracked remainder at the average), FIFO or
+     * lot-tracked = open lot costs (+ remainder at the average), STANDARD = quantity × cost price, otherwise quantity ×
+     * running average (cost price when the average is 0). CM-1 (ADR-S031) adjunct carrying-amount components (STANDARD
+     * price differences, IAS 2 NRV allowances) are added as quantity-0 rows at their ledger location. Rows:
+     * {@code product_id, variant_key, location_id, qty, value} (BigDecimal). {@code locationId} null = every location.
+     * The inventory reports (valuation) use this so the operational and the accounting valuation always agree.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> currentValueByQuant(String locationId) {
+        String org = TenantContext.organizationId();
+        String quantLoc = locationId == null ? "" : " AND s.\"locationId\" = :loc";
+        String lotLoc = locationId == null ? "" : " AND b.\"locationId\" = :loc";
+        String serLoc = locationId == null ? "" : " AND sr.\"locationId\" = :loc";
+        String adjLoc = locationId == null ? "" : " AND a.\"locationId\" = :loc";
+        var spec = jdbc.sql("WITH quant AS ("
                 + " SELECT s.\"productId\", s.\"variantKey\", s.\"locationId\", s.\"quantity\" AS qty,"
                 + " CASE WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\" ELSE COALESCE(p.\"costPrice\", 0) END AS avg_cost,"
                 + " COALESCE(p.\"costPrice\", 0) AS std_cost, p.\"costingMethod\"::text AS method, p.\"batchTracking\" AS lots,"
                 + " p.\"serialTracking\" AS serials"
-                + " FROM \"StockItem\" s JOIN \"Product\" p ON p.id = s.\"productId\" WHERE s.\"organizationId\" = :org),"
+                + " FROM \"StockItem\" s JOIN \"Product\" p ON p.id = s.\"productId\" AND p.\"organizationId\" = s.\"organizationId\""
+                + " WHERE s.\"organizationId\" = :org" + quantLoc + "),"
                 + " lot AS (SELECT b.\"productId\", COALESCE(b.\"variantId\", '') AS \"variantKey\", b.\"locationId\","
                 + " SUM(b.\"quantity\") AS qty, SUM(b.\"quantity\" * COALESCE(b.\"unitCost\", 0)) AS value"
                 + " FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = :org AND b.\"isActive\" = true AND b.\"quantity\" > 0"
-                + " GROUP BY 1, 2, 3),"
+                + lotLoc + " GROUP BY 1, 2, 3),"
                 + " ser AS (SELECT sr.\"productId\", COALESCE(sr.\"variantId\", '') AS \"variantKey\", sr.\"locationId\","
                 + " COUNT(*)::numeric AS qty, SUM(COALESCE(sr.\"unitCost\", p.\"costPrice\", 0)) AS value"
                 + " FROM \"InventorySerial\" sr JOIN \"Product\" p ON p.id = sr.\"productId\""
-                + " WHERE sr.\"organizationId\" = :org AND sr.status = 'in_stock' GROUP BY 1, 2, 3)"
-                + " SELECT q.\"productId\" AS product_id, SUM(q.qty) AS qty, SUM(CASE"
+                + " WHERE sr.\"organizationId\" = :org AND sr.status = 'in_stock'" + serLoc + " GROUP BY 1, 2, 3)"
+                + " SELECT q.\"productId\" AS product_id, q.\"variantKey\" AS variant_key, q.\"locationId\" AS location_id,"
+                + " q.qty AS qty, CASE"
                 + " WHEN q.serials THEN COALESCE(se.value, 0) + (q.qty - COALESCE(se.qty, 0)) * q.avg_cost"
                 + " WHEN q.method = 'FIFO' OR q.lots THEN COALESCE(l.value, 0) + (q.qty - COALESCE(l.qty, 0)) * q.avg_cost"
                 + " WHEN q.method = 'STANDARD' THEN q.qty * q.std_cost"
-                + " ELSE q.qty * q.avg_cost END) AS value"
+                + " ELSE q.qty * q.avg_cost END AS value"
                 + " FROM quant q"
                 + " LEFT JOIN lot l ON l.\"productId\" = q.\"productId\" AND l.\"locationId\" = q.\"locationId\" AND l.\"variantKey\" = q.\"variantKey\""
                 + " LEFT JOIN ser se ON se.\"productId\" = q.\"productId\" AND se.\"locationId\" = q.\"locationId\" AND se.\"variantKey\" = q.\"variantKey\""
-                + " GROUP BY q.\"productId\""
                 // CM-1 (ADR-S031): adjunct carrying-amount components held beside the quant cost — STANDARD price
                 // differences (landed cost, material ledger) and IAS 2 NRV allowances.
-                + " UNION ALL SELECT a.\"productId\", 0, SUM(a.\"totalValue\") FROM \"InventoryLedger\" a WHERE"
-                + " a.\"organizationId\" = :org AND a.\"valuationComponent\" IS NOT NULL GROUP BY a.\"productId\"")
-                .param("org", org)).stream().collect(java.util.stream.Collectors.groupingBy(
-                        r -> (String) r.get("product_id"), java.util.LinkedHashMap::new,
-                        java.util.stream.Collectors.toList())).entrySet().stream().map(e -> {
-                            Map<String, Object> m = new HashMap<>();
-                            m.put("product_id", e.getKey());
-                            m.put("qty", e.getValue().stream().map(r -> SqlRows.dec(r, "qty"))
-                                    .reduce(BigDecimal.ZERO, BigDecimal::add));
-                            m.put("value", e.getValue().stream().map(r -> SqlRows.dec(r, "value"))
-                                    .reduce(BigDecimal.ZERO, BigDecimal::add));
-                            return m;
-                        }).toList();
+                + " UNION ALL SELECT a.\"productId\", COALESCE(a.\"variantId\", ''), a.\"locationId\", 0, SUM(a.\"totalValue\")"
+                + " FROM \"InventoryLedger\" a WHERE a.\"organizationId\" = :org AND a.\"valuationComponent\" IS NOT NULL"
+                + adjLoc + " GROUP BY 1, 2, 3").param("org", org);
+        if (locationId != null) {
+            spec = spec.param("loc", locationId);
+        }
+        return SqlRows.list(spec);
+    }
+
+    /** Current remaining value per product, by costing method ({@link #currentValueByQuant} summed per product). */
+    private List<Map<String, Object>> currentValueByProduct() {
+        Map<String, BigDecimal[]> sums = new LinkedHashMap<>();
+        for (Map<String, Object> r : currentValueByQuant(null)) {
+            BigDecimal[] s = sums.computeIfAbsent((String) r.get("product_id"),
+                    k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
+            s[0] = s[0].add(SqlRows.dec(r, "qty"));
+            s[1] = s[1].add(SqlRows.dec(r, "value"));
+        }
+        List<Map<String, Object>> out = new ArrayList<>(sums.size());
+        sums.forEach((id, s) -> {
+            Map<String, Object> m = new HashMap<>();
+            m.put("product_id", id);
+            m.put("qty", s[0]);
+            m.put("value", s[1]);
+            out.add(m);
+        });
+        return out;
     }
 
     @Transactional(readOnly = true)
@@ -190,10 +238,10 @@ public class InventoryValuationService {
                 : SqlRows.one(jdbc.sql("SELECT code, name FROM \"Account\" WHERE id = ? LIMIT 1").param(accountIds.get(0)));
 
         List<Map<String, Object>> rows = asOf.historical()
-                ? SqlRows.list(jdbc.sql("SELECT l.\"productId\" AS product_id, SUM(l.\"quantityChange\") AS qty, SUM(" + SIGNED_VALUE
-                        + ") AS value FROM \"InventoryLedger\" l WHERE l.\"organizationId\" = ? AND l.\"createdAt\" <= ?"
-                        + " GROUP BY l.\"productId\"").params(org, FiscalPeriodControl.ts(asOf.date())))
-                : currentValueByProduct(org);
+                ? SqlRows.list(datedLedger("SELECT l.\"productId\" AS product_id, SUM(l.\"quantityChange\") AS qty, SUM("
+                        + SIGNED_VALUE + ") AS value FROM \"InventoryLedger\" l", "", " GROUP BY l.\"productId\"", org,
+                        accountIds, FiscalPeriodControl.ts(asOf.date())))
+                : currentValueByProduct();
         List<Map<String, Object>> nonZero = rows.stream()
                 .filter(r -> SqlRows.dec(r, "qty").signum() != 0 || SqlRows.dec(r, "value").signum() != 0).toList();
 
@@ -273,14 +321,13 @@ public class InventoryValuationService {
                         + " WHERE e.\"organizationId\" = :org AND e.status <> 'draft' AND e.\"postingDate\" <= :date"
                         + " AND jl.\"accountId\" IN (:accts) GROUP BY e.\"sourceType\"")
                 .param("org", org).param("date", date).param("accts", accountIds));
-        List<Map<String, Object>> ledgerBySource = SqlRows.list(jdbc.sql("SELECT l.\"referenceType\" AS source, SUM(" + SIGNED_VALUE
-                        + ") AS amount FROM \"InventoryLedger\" l WHERE l.\"organizationId\" = ? AND l.\"createdAt\" <= ?"
-                        + " GROUP BY l.\"referenceType\"").params(org, date));
-        List<Map<String, Object>> unposted = SqlRows.list(jdbc.sql("SELECT l.\"referenceType\" AS source, l.\"type\"::text AS move_type,"
-                        + " COUNT(*) AS rows, SUM(" + SIGNED_VALUE + ") AS value FROM \"InventoryLedger\" l"
-                        + " WHERE l.\"organizationId\" = :org AND l.\"createdAt\" <= :date AND l.\"totalValue\" > 0 AND " + GL_NEUTRAL
-                        + " AND " + UNPOSTED_PREDICATE + " GROUP BY l.\"referenceType\", l.\"type\"")
-                .param("org", org).param("date", date).param("accts", accountIds));
+        List<Map<String, Object>> ledgerBySource = SqlRows.list(datedLedger("SELECT l.\"referenceType\" AS source, SUM("
+                + SIGNED_VALUE + ") AS amount FROM \"InventoryLedger\" l", "", " GROUP BY l.\"referenceType\"", org,
+                accountIds, date));
+        List<Map<String, Object>> unposted = SqlRows.list(datedLedger("SELECT l.\"referenceType\" AS source,"
+                + " l.\"type\"::text AS move_type, COUNT(*) AS rows, SUM(" + SIGNED_VALUE + ") AS value"
+                + " FROM \"InventoryLedger\" l", " AND l.\"totalValue\" > 0 AND " + GL_NEUTRAL + " AND "
+                + UNPOSTED_PREDICATE, " GROUP BY l.\"referenceType\", l.\"type\"", org, accountIds, date));
 
         BigDecimal glBalance = glBySource.stream().map(r -> SqlRows.dec(r, "amount")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal ledgerTotal = ledgerBySource.stream().map(r -> SqlRows.dec(r, "amount")).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -319,6 +366,22 @@ public class InventoryValuationService {
                 "variance", money(variance), "tolerance", jsNumber(tolerance),
                 "withinTolerance", variance.abs().compareTo(tol) <= 0, "bySource", bySource,
                 "unpostedMovements", sortByAbsDesc(movements, movementAbs));
+    }
+
+    /**
+     * {@code select} (FROM the stock ledger as {@code l}) restricted to the organisation and to rows dated (see
+     * {@link #LEDGER_DATE}) on or before {@code asOf}, plus {@code where} and {@code tail}. Without inventory accounts
+     * there is no journal to date by: {@code createdAt}.
+     */
+    private JdbcClient.StatementSpec datedLedger(String select, String where, String tail, String org,
+            List<String> accountIds, Timestamp asOf) {
+        if (accountIds.isEmpty()) {
+            return jdbc.sql(select + " WHERE l.\"organizationId\" = :org AND l.\"createdAt\" <= :date" + where + tail)
+                    .param("org", org).param("date", asOf);
+        }
+        return jdbc.sql("WITH " + JE_DATES + " " + select + JE_DATE_JOIN + " WHERE l.\"organizationId\" = :org AND "
+                        + LEDGER_DATE + " <= :date" + where + tail)
+                .param("org", org).param("date", asOf).param("accts", accountIds);
     }
 
     private static String sourceOf(Map<String, Object> row) {

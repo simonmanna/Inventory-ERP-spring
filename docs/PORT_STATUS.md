@@ -75,6 +75,16 @@ orders issue stock + GL on ship, no empty shipments, bin adjust (`POST /warehous
 (`POST /warehouse/locations/:id/reconcile`), release capped by ledger on-hand, `WarehouseSettings.enabled` enforced,
 bin row lock in putaway, order-then-task lock order — `InventoryIT`, `WarehouseIT`.
 
+**Valuation / reports / infrastructure hardening (`phase/inv-hardening`, V470; owner-approved deviations 17–27 in
+[inventory](spec/inventory.md#deviations)):** costing method locked while stock is on hand, STANDARD cost-price change
+revalues stock, POS COGS dated at the sale, GL tie-out on one date basis + daily `inventory-gl-tieout-check`
+(`inventory.glTieOut.*`), register reports in SQL with the cap in SQL, method-correct set-based valuation report,
+BigDecimal report sums, batched item / expiring / reorder lookups, validated posting-rule / replenishment bodies
+(literal account checked on save), duplicate ledger indexes dropped, evidence-guard bypass limited to the schema owner,
+stock events only after commit, cost policy / standard activation hourly on the organisation calendar —
+`InventoryHardeningIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`, `DetachedWritesTest`, `PosStockPostingIT`,
+`InventoryIT`, `ReplenishmentIT`.
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |

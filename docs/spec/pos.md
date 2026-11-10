@@ -89,6 +89,11 @@ Pending owner approval:
    sales unit at billing); stock issue uses the snapshot. Order lines are unchanged. Quote/prepared-line
    payloads gain `uomId` / `uomFactor`.
 
+Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 19):
+
+2. **Stock-posting drain dates COGS at the sale.** Stock moves and COGS of a drained sale use the invoice `issueDate`
+   (else the order's `createdAt`); a date in a closed / locked period posts today with a ledger note.
+
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
 - **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's

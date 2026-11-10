@@ -84,6 +84,13 @@ Pending owner approval:
    reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
    development-only `error` detail text comes from Java rather than Prisma.
 
+Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 20):
+
+4. **Inventory GL tie-out date basis + daily check.** `GET /reports/inventory/gl-tieout` and the historical
+   `GET /reports/inventory/valuation?asOf=` date stock ledger rows by their source's inventory journal posting date
+   (else `createdAt`); job `inventory-gl-tieout-check` (daily 02:40 UTC) raises an `InventoryException`
+   (`gl_tieout_variance`) + in-app alert above `inventory.glTieOut.tolerance` (setting `inventory.glTieOut.enabled`).
+
 Same as Nest, kept on purpose:
 
 - `PATCH /cash-sessions/:id/reconcile` writes `notes` as sent. The `guard_cash_session` trigger lets a

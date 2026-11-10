@@ -129,9 +129,14 @@ public class PostingRuleAdminService {
         return Obj.of("created", missing.size(), "skipped", existing);
     }
 
-    /** Create a rule. */
+    /**
+     * Create a rule. An omitted {@code accountSource} takes the column default ({@code account_mapping}, as Prisma does);
+     * a {@code literal} rule's account is checked now (see {@link #assertLiteralAccount}).
+     */
     @Transactional
     public Map<String, Object> create(Map<String, Object> dto) {
+        String source = dto.get("accountSource") == null ? "account_mapping" : (String) dto.get("accountSource");
+        assertLiteralAccount(source, (String) dto.get("literalAccountId"));
         return SqlRows.one(InventoryPostingRule.class, jdbc.sql("INSERT INTO \"InventoryPostingRule\" (id,"
                         + " \"organizationId\", \"movementType\", \"lineIndex\", \"debitOrCredit\", \"accountSource\","
                         + " \"accountMappingKey\", \"literalAccountId\", \"productId\", \"categoryId\", \"createdAt\","
@@ -139,14 +144,30 @@ public class PostingRuleAdminService {
                         + NOW + ") RETURNING *")
                 .params(UUID.randomUUID().toString(), org(), dto.get("movementType"),
                         dto.get("lineIndex") instanceof Number n ? n.intValue() : dto.get("lineIndex"),
-                        dto.get("debitOrCredit"), dto.get("accountSource"), dto.get("accountMappingKey"),
+                        dto.get("debitOrCredit"), source, dto.get("accountMappingKey"),
                         dto.get("literalAccountId"), dto.get("productId"), dto.get("categoryId")));
     }
 
-    /** Update the account source / mapping / literal / active flag. */
+    /**
+     * Update the account source / mapping / literal / active flag (omitted = unchanged). The resulting source and
+     * literal account are checked like on create.
+     */
     @Transactional
     public Map<String, Object> update(String id, Map<String, Object> dto) {
         require(id);
+        if (dto.containsKey("accountSource") && dto.get("accountSource") == null) {
+            throw ApiException.badRequest("accountSource cannot be null");
+        }
+        if (dto.containsKey("accountSource") || dto.containsKey("literalAccountId")) {
+            Map<String, Object> row = jdbc.sql("SELECT \"accountSource\", \"literalAccountId\" FROM"
+                    + " \"InventoryPostingRule\" WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query()
+                    .singleRow();
+            String source = (String) (dto.containsKey("accountSource") ? dto.get("accountSource")
+                    : row.get("accountSource"));
+            String literal = (String) (dto.containsKey("literalAccountId") ? dto.get("literalAccountId")
+                    : row.get("literalAccountId"));
+            assertLiteralAccount(source, literal);
+        }
         List<Object> params = new ArrayList<>();
         StringBuilder set = new StringBuilder("\"updatedAt\" = " + NOW);
         for (String f : List.of("accountSource", "accountMappingKey", "literalAccountId", "isActive")) {
@@ -156,8 +177,41 @@ public class PostingRuleAdminService {
             }
         }
         params.add(id);
+        params.add(org());
         return SqlRows.one(InventoryPostingRule.class, jdbc.sql("UPDATE \"InventoryPostingRule\" SET " + set
-                + " WHERE id = ? RETURNING *").params(params));
+                + " WHERE id = ? AND \"organizationId\" = ? RETURNING *").params(params));
+    }
+
+    /**
+     * A literal account must be an account of this organisation that can take postings (postable, active, not
+     * deprecated), checked when the rule is saved instead of failing at the first stock posting. A {@code literal} rule
+     * needs one; other sources may carry one (ignored at posting) but it must still be valid.
+     */
+    private void assertLiteralAccount(String accountSource, String literalAccountId) {
+        if (literalAccountId == null || literalAccountId.isBlank()) {
+            if ("literal".equals(accountSource)) {
+                throw ApiException.badRequest("A literal posting rule needs a literalAccountId");
+            }
+            return;
+        }
+        Map<String, Object> account = SqlRows.one(jdbc.sql("SELECT code, \"isPostable\", \"isActive\","
+                + " \"deprecatedAt\" FROM \"Account\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                .params(literalAccountId, org()));
+        if (account == null) {
+            throw ApiException.badRequest("literalAccountId " + literalAccountId
+                    + " is not an account of this organization");
+        }
+        // Same wording as AccountResolverService.assertPostable (the check the posting engine applies later).
+        if (!Boolean.TRUE.equals(account.get("isPostable"))) {
+            throw ApiException.badRequest("Account " + account.get("code")
+                    + " is a summary/group account and cannot be posted to");
+        }
+        if (!Boolean.TRUE.equals(account.get("isActive"))) {
+            throw ApiException.badRequest("Account " + account.get("code") + " is inactive and cannot be posted to");
+        }
+        if (account.get("deprecatedAt") != null) {
+            throw ApiException.badRequest("Account " + account.get("code") + " is deprecated and cannot be posted to");
+        }
     }
 
     /** Hard-delete a rule. */

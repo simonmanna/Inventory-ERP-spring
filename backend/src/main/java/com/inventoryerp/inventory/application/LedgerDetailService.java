@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
 import com.inventoryerp.inventory.domain.InventoryLedger;
 import com.inventoryerp.kernel.common.JsNumbers;
+import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -69,17 +70,17 @@ public class LedgerDetailService {
         } else {
             lines = List.of(entry);
         }
-        double in = 0;
-        double out = 0;
-        double total = 0;
+        BigDecimal in = BigDecimal.ZERO;
+        BigDecimal out = BigDecimal.ZERO;
+        BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
-            double change = ((BigDecimal) l.get("quantityChange")).doubleValue();
-            if (change >= 0) {
-                in += change;
+            BigDecimal change = Money.dec(l.get("quantityChange"));
+            if (change.signum() >= 0) {
+                in = in.add(change);
             } else {
-                out += Math.abs(change);
+                out = out.add(change.abs());
             }
-            total += ((BigDecimal) l.get("totalValue")).doubleValue();
+            total = total.add(Money.dec(l.get("totalValue")));
         }
         return Obj.of("entry", entry, "lines", lines, "totals", Obj.of("lines", lines.size(), "quantityIn",
                 JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", JsNumbers.js(total)), "source",

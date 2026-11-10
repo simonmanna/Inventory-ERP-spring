@@ -387,7 +387,7 @@ public class StockService {
         if (cost.newRunningAverage() != null) {
             payload.put("newRunningAverage", JsNumbers.dec(cost.newRunningAverage()));
         }
-        events.publish("stock.received", payload);
+        events.publishOnCommit("stock.received", payload);
         audit.recordInTx(AuditInput.of("StockItem", str(stockItem, "id"), "receive", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
                         "unitCost", JsNumbers.dec(unitCost), "ledgerCode", ledgerCode)));
@@ -678,7 +678,7 @@ public class StockService {
         payload.put("quantity", JsNumbers.dec(dto.quantity));
         payload.put("unitCost", JsNumbers.dec(unitCost));
         payload.put("totalValue", JsNumbers.dec(totalValue));
-        events.publish("stock.issued", payload);
+        events.publishOnCommit("stock.issued", payload);
         audit.recordInTx(AuditInput.of("StockItem", stockItemId, "issue", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
                         "unitCost", JsNumbers.dec(unitCost), "totalValue", JsNumbers.dec(totalValue), "ledgerCode",
@@ -833,7 +833,7 @@ public class StockService {
         payload.put("ledgerCode", ledgerCode);
         payload.put("quantity", JsNumbers.dec(counted));
         payload.put("delta", JsNumbers.dec(delta));
-        events.publish("stock.adjusted", payload);
+        events.publishOnCommit("stock.adjusted", payload);
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
                         JsNumbers.js(counted), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
@@ -1123,7 +1123,7 @@ public class StockService {
         payload.put("locationId", dto.toLocationId);
         payload.put("ledgerCode", ledgerCode);
         payload.put("quantity", JsNumbers.dec(dto.quantity));
-        events.publish("stock.transferred", payload);
+        events.publishOnCommit("stock.transferred", payload);
         audit.recordInTx(AuditInput.of("StockItem", from.id(), "transfer", null,
                 Obj.of("productId", dto.productId, "fromLocationId", dto.fromLocationId, "toLocationId",
                         dto.toLocationId, "quantity", JsNumbers.js(dto.quantity), "ledgerCode", ledgerCode)));

@@ -703,6 +703,78 @@ class InventoryIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("posting rules: validated bodies, literal account of this organisation and postable")
+    void postingRuleValidation() {
+        ok(201, "POST", "/inventory/posting-rules/restore-defaults", null);
+        String p = product("AVCO", false, false);
+        Map<String, Object> base = new LinkedHashMap<>(Map.of("movementType", "WASTE", "lineIndex", 0,
+                "debitOrCredit", "debit", "accountSource", "account_mapping", "accountMappingKey", "default_expense",
+                "productId", p));
+        Map<String, Object> unknown = new LinkedHashMap<>(base);
+        unknown.put("colour", "red");
+        assertThat(as("POST", "/inventory/posting-rules", unknown).status()).isEqualTo(400);
+        Map<String, Object> badType = new LinkedHashMap<>(base);
+        badType.put("movementType", "TELEPORT");
+        assertThat(as("POST", "/inventory/posting-rules", badType).status()).isEqualTo(400);
+        Map<String, Object> badSide = new LinkedHashMap<>(base);
+        badSide.put("debitOrCredit", "both");
+        assertThat(as("POST", "/inventory/posting-rules", badSide).status()).isEqualTo(400);
+        Map<String, Object> noLine = new LinkedHashMap<>(base);
+        noLine.remove("lineIndex");
+        assertThat(as("POST", "/inventory/posting-rules", noLine).status()).isEqualTo(400);
+
+        String foreign = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Account\" (id, \"organizationId\", code, name, \"updatedAt\") VALUES (?, ?, ?, ?, now())")
+                .params(foreign, otherOrg, "9" + suffix().substring(0, 5), "Foreign account").update();
+        String group = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Account\" (id, \"organizationId\", code, name, \"isPostable\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, ?, false, now())").params(group, demoOrg, "G" + suffix().substring(0, 5),
+                "Group account").update();
+        String postable = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Account\" (id, \"organizationId\", code, name, \"updatedAt\") VALUES (?, ?, ?, ?, now())")
+                .params(postable, demoOrg, "L" + suffix().substring(0, 5), "Literal expense").update();
+
+        Map<String, Object> literal = new LinkedHashMap<>(base);
+        literal.put("accountSource", "literal");
+        literal.remove("accountMappingKey");
+        assertThat(as("POST", "/inventory/posting-rules", literal).body().get("message").asString())
+                .isEqualTo("A literal posting rule needs a literalAccountId");
+        literal.put("literalAccountId", foreign);
+        Res other = as("POST", "/inventory/posting-rules", literal);
+        assertThat(other.status()).isEqualTo(400);
+        assertThat(other.body().get("message").asString()).isEqualTo("literalAccountId " + foreign
+                + " is not an account of this organization");
+        literal.put("literalAccountId", UUID.randomUUID().toString());
+        assertThat(as("POST", "/inventory/posting-rules", literal).status()).isEqualTo(400);
+        literal.put("literalAccountId", group);
+        Res grp = as("POST", "/inventory/posting-rules", literal);
+        assertThat(grp.status()).isEqualTo(400);
+        assertThat(grp.body().get("message").asString()).endsWith("is a summary/group account and cannot be posted to");
+
+        literal.put("literalAccountId", postable);
+        JsonNode created = ok(201, "POST", "/inventory/posting-rules", literal);
+        assertThat(created.get("literalAccountId").asString()).isEqualTo(postable);
+        assertThat(created.get("accountSource").asString()).isEqualTo("literal");
+        String id = created.get("id").asString();
+        assertThat(as("PATCH", "/inventory/posting-rules/" + id, Map.of("literalAccountId", foreign)).status())
+                .isEqualTo(400);
+        assertThat(as("PATCH", "/inventory/posting-rules/" + id, Map.of("accountSource", "nowhere")).status())
+                .isEqualTo(400);
+        assertThat(as("PATCH", "/inventory/posting-rules/" + id, Map.of("isActive", false, "lineIndex", 1)).status())
+                .isEqualTo(400);
+        JsonNode patched = ok(200, "PATCH", "/inventory/posting-rules/" + id, Map.of("accountSource", "account_mapping",
+                "accountMappingKey", "default_expense", "isActive", false));
+        assertThat(patched.get("accountSource").asString()).isEqualTo("account_mapping");
+        assertThat(patched.get("isActive").asBoolean()).isFalse();
+        // Omitted accountSource takes the column default, as Prisma does.
+        Map<String, Object> defaulted = new LinkedHashMap<>(base);
+        defaulted.remove("accountSource");
+        defaulted.put("lineIndex", 1);
+        assertThat(ok(201, "POST", "/inventory/posting-rules", defaulted).get("accountSource").asString())
+                .isEqualTo("account_mapping");
+    }
+
+    @Test
     @DisplayName("reports: valuation, item movements, analysis, registers, stock health, exceptions, stats")
     void reports() {
         String loc = location("warehouse");

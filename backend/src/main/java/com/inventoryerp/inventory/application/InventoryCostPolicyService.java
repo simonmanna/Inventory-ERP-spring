@@ -1,13 +1,13 @@
 package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.core.application.ProductCostingPolicy;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -85,8 +86,9 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         return TenantContext.organizationId();
     }
 
-    private static LocalDate today() {
-        return LocalDate.now(BusinessZone.get());
+    /** Today on the organisation's calendar (its time zone; UTC when unset). */
+    private LocalDate today() {
+        return LocalDate.now(OrgDates.orgTimezone(jdbc, org()));
     }
 
     // ------------------------------------------------------------------ ProductCostingPolicy
@@ -255,17 +257,26 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         return get(id);
     }
 
-    /** Daily: activate approved policies whose effective date has come, for every organisation. */
-    @Scheduled(cron = "0 15 0 * * *", zone = "UTC")
-    @SchedulerLock(name = "inventory-cost-policy-activation", lockAtMostFor = "PT1H")
+    /**
+     * Hourly: activate approved policies whose effective date has come on their organisation's calendar. Candidates
+     * are dated up to tomorrow (UTC) so organisations east of UTC are covered; each is checked against its
+     * organisation's today. Activation is idempotent: a policy that is no longer approved is skipped.
+     */
+    @Scheduled(cron = "0 15 * * * *", zone = "UTC")
+    @SchedulerLock(name = "inventory-cost-policy-activation", lockAtMostFor = "PT50M")
     public void activateDue() {
-        List<Map<String, Object>> due = jdbc.sql("SELECT id, \"organizationId\" FROM \"InventoryCostPolicy\""
-                + " WHERE status = 'approved' AND \"effectiveFrom\" <= CURRENT_DATE ORDER BY \"effectiveFrom\"")
-                .query().listOfRows();
+        List<Map<String, Object>> due = jdbc.sql("SELECT id, \"organizationId\", \"effectiveFrom\" FROM"
+                + " \"InventoryCostPolicy\" WHERE status = 'approved' AND \"effectiveFrom\" <= ? ORDER BY \"effectiveFrom\"")
+                .param(LocalDate.now(ZoneOffset.UTC).plusDays(1)).query().listOfRows();
         for (Map<String, Object> d : due) {
+            String orgId = (String) d.get("organizationId");
             try {
-                TenantContext.run(TenantContext.TenantStore.organization((String) d.get("organizationId")),
-                        () -> activate((String) d.get("id")));
+                TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
+                    if (((LocalDate) toDate(d.get("effectiveFrom"))).isAfter(today())) {
+                        return;
+                    }
+                    activate((String) d.get("id"));
+                });
             } catch (RuntimeException e) {
                 log.warn("[cost-policy] activation of {} failed: {}", d.get("id"), e.getMessage());
             }
