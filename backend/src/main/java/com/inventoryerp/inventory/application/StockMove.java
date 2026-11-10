@@ -47,6 +47,18 @@ public final class StockMove {
     public boolean skipGlPosting;
     /** Issue only: refuse when pickable on-hand is short, regardless of the negative-stock setting. */
     public boolean requireAvailable;
+    /**
+     * Issue / transfer from a transit location: only these lots ({@code InventoryBatch} ids) may be drawn (the lots a
+     * transit transfer line dispatched). Null = any lot of the quant.
+     */
+    public List<String> pinnedBatchIds;
+    /** Issue / transfer: only these serial units ({@code InventorySerial} ids) may move. Null = any in-stock serial. */
+    public List<String> pinnedSerialIds;
+    /**
+     * Issue / transfer of an AVCO quant without lots: the unit cost the units entered this quant at (a transit
+     * transfer line's dispatch cost). The quant's average is re-derived so its remaining value stays exact.
+     */
+    public BigDecimal carriedUnitCost;
 
     public static StockMove of(String productId, String locationId, BigDecimal quantity) {
         StockMove m = new StockMove();
@@ -149,6 +161,14 @@ public final class StockMove {
         return this;
     }
 
+    /** Restrict the move to the given lots / serial units and carry {@code unitCost} for unlotted AVCO units. */
+    public StockMove pin(List<String> batchIds, List<String> serialIds, BigDecimal unitCost) {
+        this.pinnedBatchIds = batchIds;
+        this.pinnedSerialIds = serialIds;
+        this.carriedUnitCost = unitCost;
+        return this;
+    }
+
     /**
      * Result of a receipt: {@code quantity} echoes the caller's unit; values are per base unit. {@code totalValue} is
      * the value the stock entered at (the standard for STANDARD-costed products); {@code actualValue} is what the
@@ -165,6 +185,19 @@ public final class StockMove {
     public record Adjusted(String ledgerCode, BigDecimal previousQuantity, BigDecimal newQuantity, BigDecimal delta,
             BigDecimal unitCost) {}
 
-    /** Result of a transfer. */
-    public record Transferred(String ledgerCode, BigDecimal quantity, String fromLocationId, String toLocationId) {}
+    /**
+     * Result of a transfer. {@code layers} are what arrived at the destination: one entry per lot created there
+     * ({@code batchId}), per serial unit moved ({@code serialId}), and one for units carried without a lot at
+     * {@code carriedUnitCost}.
+     */
+    public record Transferred(String ledgerCode, BigDecimal quantity, String fromLocationId, String toLocationId,
+            List<MovedLayer> layers, BigDecimal carriedUnitCost) {
+
+        public Transferred(String ledgerCode, BigDecimal quantity, String fromLocationId, String toLocationId) {
+            this(ledgerCode, quantity, fromLocationId, toLocationId, List.of(), null);
+        }
+    }
+
+    /** One identified layer a transfer delivered: a destination lot or a serial unit. */
+    public record MovedLayer(String batchId, String serialId, BigDecimal quantity, BigDecimal unitCost) {}
 }

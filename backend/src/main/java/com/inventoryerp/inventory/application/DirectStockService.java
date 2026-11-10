@@ -103,8 +103,13 @@ public class DirectStockService {
         }
         String code = seq.next("direct_stock_in", "DSI-", 5);
         BigDecimal total = Money.ZERO;
-        List<Map<String, Object>> results = new ArrayList<>();
-        for (Line item : dto.items()) {
+        // Post in the engine's lock order (product, variant) so concurrent documents cannot deadlock; answer in the
+        // entered order.
+        List<Line> ordered = new ArrayList<>(dto.items());
+        ordered.sort(Comparator.comparing(Line::productId)
+                .thenComparing(l -> l.variantId() == null ? "" : l.variantId()));
+        Map<Line, Map<String, Object>> byLine = new java.util.IdentityHashMap<>();
+        for (Line item : ordered) {
             StockMove m = StockMove.of(item.productId(), dto.locationId(), item.quantity()).variant(item.variantId())
                     .unitCost(item.unitCost()).batch(item.batchNumber()).expiry(item.expiryDate())
                     .source("direct_stock_in", code).notes(item.notes() != null ? item.notes() : dto.notes())
@@ -113,9 +118,11 @@ public class DirectStockService {
                     StockService.GlReceiptContext.stockGain("direct_stock_in", code, Instant.now()));
             BigDecimal uc = res.unitCost() == null ? Money.ZERO : res.unitCost();
             total = total.add(uc.multiply(item.quantity()));
-            results.add(Obj.of("productId", item.productId(), "quantity", JsNumbers.js(item.quantity()),
+            byLine.put(item, Obj.of("productId", item.productId(), "quantity", JsNumbers.js(item.quantity()),
                     "unitCost", JsNumbers.dec(uc)));
         }
+        List<Map<String, Object>> results = new ArrayList<>();
+        dto.items().forEach(item -> results.add(byLine.get(item)));
         return Obj.of("code", code, "type", "IN", "locationId", dto.locationId(), "totalValue", JsNumbers.js(total),
                 "items", results, "notes", dto.notes(), "timestamp", Instant.now());
     }

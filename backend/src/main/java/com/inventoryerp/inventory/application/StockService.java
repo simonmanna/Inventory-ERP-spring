@@ -47,7 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * The stock engine (port of {@code stock.service.ts}): every quantity change goes through receive / issue /
  * adjust / transfer and writes append-only {@code InventoryLedger} rows chained {@code qtyBefore → balanceAfter}.
- * AVCO recomputes run under a per-quant advisory lock; issues row-lock the {@code StockItem}; FIFO / batch
+ * Every move locks its quants in one documented order ({@link #lockQuant}: advisory lock, then the {@code StockItem}
+ * row, several quants in key order) before reading quantity or average; FIFO / batch
  * products consume {@code InventoryBatch} layers; serial products move identified {@code InventorySerial} units.
  * Each method joins the caller's transaction (POS checkout, procurement, manufacturing) or opens its own.
  */
@@ -274,29 +275,36 @@ public class StockService {
             }
         }
         String variantId = dto.variantId;
-        String variantKey = variantId == null ? "" : variantId;
 
-        lockQuantForAvco(org, dto.productId, variantKey, dto.locationId);
+        // Average and quantity are read under the quant lock (advisory + row), so a concurrent issue cannot change
+        // the quantity this average is computed from.
+        LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, Money.ZERO);
         String ledgerCode = seq.next("stock_move", "STK/", 6);
-        Map<String, Object> existing = lookups.stockItem(dto.productId, variantId, dto.locationId);
+        BigDecimal qtyBefore = quant.quantity();
         Resolution cost = costResolver.resolveReceiptCost(
                 new ProductCost(costing, (BigDecimal) product.get("costPrice")),
-                existing == null ? null : new Quant(dec(existing, "quantity"), dec(existing, "runningAverageCost")),
-                qty, unitCost);
+                quant.created() ? null : new Quant(qtyBefore, quant.average()), qty, unitCost);
+        // A lot-tracked quant that went short (issued without a lot): the receipt first covers that shortfall, so only
+        // the remainder becomes an open lot (open lots always sum to max(0, on-hand)); the covered units are trued up
+        // from the cost they were issued at to this receipt's cost.
+        BigDecimal netted = batchTracking && qtyBefore.signum() < 0 ? Money.min(qty, qtyBefore.negate()) : Money.ZERO;
+        BigDecimal correction = batchTracking
+                ? netted.multiply(unitCost.subtract(shortfallCost(quant, product)))
+                : cost.costCorrection();
 
-        Map<String, Object> stockItem = upsertStockItem(org, dto.productId, variantId, variantKey, dto.locationId, qty,
-                cost.newRunningAverage() != null ? cost.newRunningAverage() : Money.ZERO, cost.newRunningAverage());
+        Map<String, Object> stockItem = addToQuant(quant.id(), qty, cost.newRunningAverage());
 
         String batchId = null;
         if (batchTracking) {
             String batchNumber = dto.batchNumber != null ? dto.batchNumber : generateBatchNumber();
             batchId = UUID.randomUUID().toString();
+            BigDecimal lotQty = qty.subtract(netted);
             jdbc.sql("INSERT INTO \"InventoryBatch\" (id, \"organizationId\", \"productId\", \"variantId\", \"locationId\","
-                            + " \"batchNumber\", quantity, \"unitCost\", \"expiryDate\", \"mfgDate\", \"receivedAt\","
-                            + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", "
-                            + NOW + ", " + NOW + ")")
-                    .params(batchId, org, dto.productId, variantId, dto.locationId, batchNumber, qty, unitCost,
-                            SqlRows.ts(toInstant(dto.expiryDate)), SqlRows.ts(toInstant(dto.mfgDate)))
+                            + " \"batchNumber\", quantity, \"unitCost\", \"expiryDate\", \"mfgDate\", \"isActive\","
+                            + " \"receivedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW
+                            + ", " + NOW + ", " + NOW + ")")
+                    .params(batchId, org, dto.productId, variantId, dto.locationId, batchNumber, lotQty, unitCost,
+                            SqlRows.ts(toInstant(dto.expiryDate)), SqlRows.ts(toInstant(dto.mfgDate)), lotQty.signum() > 0)
                     .update();
         }
 
@@ -358,11 +366,16 @@ public class StockService {
                 stockPosting.postReceipt(dto.productId, qty, unitCost, glCtx.date(), glCtx.sourceType(),
                         glCtx.sourceId(), "Stock receipt · " + productName + " · " + JsNumbers.dec(dto.quantity));
             }
-            if (cost.costCorrection() != null && cost.costCorrection().signum() != 0) {
-                stockPosting.postNegativeStockCostCorrection(dto.productId, cost.costCorrection(), glCtx.date(),
-                        glCtx.sourceType(), glCtx.sourceId(), "Negative-stock cost correction · " + productName);
-            }
         }
+        // Every receipt into a negative quant squares the value of the units issued short (not only purchase receipts):
+        // production output, returns, reversals, quality moves and adjustments-in all leave stock and GL apart otherwise.
+        postCostCorrection(org, dto.productId, productName, correction,
+                glCtx != null && glCtx.date() != null ? glCtx.date() : dto.date != null ? dto.date : Instant.now(),
+                glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType()
+                        : dto.sourceType != null ? dto.sourceType : "stock_receipt",
+                glCtx != null && glCtx.sourceId() != null ? glCtx.sourceId()
+                        : dto.sourceId != null ? dto.sourceId : ledgerCode,
+                ledgerCode);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
@@ -390,7 +403,17 @@ public class StockService {
      * location still holds a quant without one (stock or documents from before the product got variants).
      */
     private void requireVariant(Map<String, Object> product, String variantId, String locationId) {
-        if (variantId != null || !bool(product, "hasVariants")) {
+        if (variantId != null) {
+            // The variant must be one of this product's (any organisation's id would otherwise open a foreign quant).
+            boolean own = jdbc.sql("SELECT count(*) FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ?"
+                            + " AND \"organizationId\" = ?")
+                    .params(variantId, str(product, "id"), TenantContext.organizationId()).query(Long.class).single() > 0;
+            if (!own) {
+                throw ApiException.notFound("Variant not found");
+            }
+            return;
+        }
+        if (!bool(product, "hasVariants")) {
             return;
         }
         if (lookups.stockItem(str(product, "id"), null, locationId) == null) {
@@ -446,15 +469,9 @@ public class StockService {
         boolean allowNegative = settings.resolveBool("inventory.allowNegativeStock", ctx);
         String ledgerNotes = joinNotes(dto.notes, dto.reference);
 
-        Map<String, Object> stockItem = lookups.stockItem(dto.productId, variantId, dto.locationId);
-        if (stockItem == null) {
-            stockItem = upsertStockItem(org, dto.productId, variantId, variantKey, dto.locationId, Money.ZERO,
-                    dec(product, "costPrice"), null);
-        }
-        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
-                        + " AND \"locationId\" = ? FOR UPDATE")
-                .params(org, dto.productId, variantKey, dto.locationId).query().listOfRows();
-        stockItem = lookups.stockItem(dto.productId, variantId, dto.locationId);
+        // A-025 + the engine lock order: advisory then row lock; every quantity below is read under it.
+        Map<String, Object> stockItem = lockQuant(org, dto.productId, variantId, dto.locationId,
+                dec(product, "costPrice")).row();
         String stockItemId = str(stockItem, "id");
         boolean usesLayers = "FIFO".equals(str(product, "costingMethod")) || bool(product, "batchTracking");
         assertNotReservedForProcessing(dto, org, variantKey, qty, dec(stockItem, "quantity"), productName);
@@ -474,16 +491,17 @@ public class StockService {
         // A lot-tracked item set to block never goes short, whatever the negative-stock setting: a shortfall would have
         // no lot and no cost (ADR-S060).
         boolean lotBlock = bool(product, "batchTracking") && "block".equals(str(product, "stockPolicy"));
+        // inventory.allowNegativeStock=false blocks every issue except a POS / offline sale being drained (that sale
+        // already happened; it keeps following the item stock policy).
+        boolean strict = !allowNegative && !isSaleDrain(dto);
         if (!allowNegative || dto.requireAvailable || lotBlock) {
             BigDecimal available = usesLayers
-                    ? jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE \"organizationId\" = ?"
-                                    + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?"
-                                    + " AND quantity > 0 AND \"isActive\" = true" + pickable)
-                            .params(org, dto.productId, variantId, dto.locationId).query(BigDecimal.class).single()
+                    ? lots(org, dto, variantId, "SELECT COALESCE(SUM(quantity), 0)", pickable, "", null)
+                            .query(BigDecimal.class).single()
                     : dec(stockItem, "quantity");
             if (qty.compareTo(available) > 0) {
                 String policy = str(product, "stockPolicy");
-                if (dto.requireAvailable || "block".equals(policy)) {
+                if (dto.requireAvailable || "block".equals(policy) || strict) {
                     throw ApiException.badRequest("Insufficient stock for " + productName + ": on hand "
                             + JsNumbers.dec(available) + ", requested " + JsNumbers.dec(qty) + ".");
                 }
@@ -498,6 +516,8 @@ public class StockService {
         String ledgerCode = seq.next("stock_move", "STK/", 6);
         BigDecimal totalValue = Money.ZERO;
         BigDecimal unitCost;
+        boolean carriedCost = !serialTracking && !usesLayers && dto.carriedUnitCost != null
+                && "AVCO".equals(str(product, "costingMethod"));
         IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId);
 
         if (serialTracking) {
@@ -520,11 +540,19 @@ public class StockService {
                             + String.join(", ", missing));
                 }
             } else {
+                List<Object> sp = new ArrayList<>(List.of(org, dto.productId));
+                sp.add(variantId);
+                sp.add(dto.locationId);
+                if (dto.pinnedSerialIds != null) {
+                    sp.add(dto.pinnedSerialIds.toArray(String[]::new));
+                }
+                sp.add(Math.max(0, qty.intValue()));
                 serialRows = SqlRows.list(jdbc.sql("SELECT id, \"unitCost\", \"batchId\", \"serialNumber\" FROM"
                                 + " \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                                 + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND status = 'in_stock'"
+                                + (dto.pinnedSerialIds != null ? " AND id = ANY(?::text[])" : "")
                                 + " ORDER BY \"receivedAt\" ASC LIMIT ?")
-                        .params(org, dto.productId, variantId, dto.locationId, Math.max(0, qty.intValue())));
+                        .params(sp));
             }
             String issueRef = (dto.sourceType != null ? dto.sourceType : "issue") + ":"
                     + (dto.sourceId != null ? dto.sourceId : ledgerCode);
@@ -559,22 +587,22 @@ public class StockService {
         } else if (usesLayers) {
             String order = "FIFO".equals(strategy) ? " ORDER BY \"receivedAt\" ASC"
                     : " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC";
-            String manual = "MANUAL".equals(strategy) && dto.batchNumber != null ? " AND \"batchNumber\" = ?" : "";
-            var spec = jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
-                            + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND quantity > 0"
-                            + " AND \"isActive\" = true" + pickable + manual + order)
-                    .params(org, dto.productId, variantId, dto.locationId);
-            if (!manual.isEmpty()) {
-                spec = spec.param(dto.batchNumber);
-            }
+            boolean manualLot = "MANUAL".equals(strategy) && dto.batchNumber != null;
             LayerState st = new LayerState(qty, dec(stockItem, "quantity"));
-            consumeBatches(ic, SqlRows.list(spec), st, ledgerNotes);
-            if (st.remaining.signum() > 0 && skipExpired && !"MANUAL".equals(strategy)) {
-                List<Map<String, Object>> expiredLots = SqlRows.list(jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE"
-                                + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                                + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true AND \"expiryDate\" <= "
-                                + NOW + " ORDER BY \"expiryDate\" ASC, \"receivedAt\" ASC")
-                        .params(org, dto.productId, variantId, dto.locationId));
+            consumeBatches(ic, SqlRows.list(lots(org, dto, variantId, "SELECT *",
+                    pickable + (manualLot ? " AND \"batchNumber\" = ?" : ""), order,
+                    manualLot ? dto.batchNumber : null)), st, ledgerNotes);
+            if (st.remaining.signum() > 0 && manualLot) {
+                // The named lot is short: the other valid lots cover the rest before the quant goes short, so open lots
+                // keep summing to on-hand (a lot-less shortfall next to open lots would be issued twice).
+                consumeBatches(ic, SqlRows.list(lots(org, dto, variantId, "SELECT *", pickable,
+                        " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC", null)), st,
+                        joinNotes(ledgerNotes, "LOT " + dto.batchNumber + " SHORT: drawn from other lots"));
+            }
+            if (st.remaining.signum() > 0 && skipExpired) {
+                List<Map<String, Object>> expiredLots = SqlRows.list(lots(org, dto, variantId, "SELECT *",
+                        " AND \"expiryDate\" <= " + NOW, " ORDER BY \"expiryDate\" ASC, \"receivedAt\" ASC",
+                        null));
                 if (!expiredLots.isEmpty()) {
                     BigDecimal before = st.remaining;
                     String expiredNote = joinNotes(ledgerNotes,
@@ -601,16 +629,21 @@ public class StockService {
                 BigDecimal overflowUnit = consumedQty.signum() > 0 ? Money.div(st.totalValue, consumedQty)
                         : dec(product, "costPrice");
                 BigDecimal overflowValue = overflowUnit.multiply(st.remaining);
-                decrementStockItem(stockItemId, st.remaining);
-                ic.row(null, null, st.running, st.remaining.negate(), st.running.subtract(st.remaining), overflowUnit,
-                        overflowValue, ledgerNotes);
+                BigDecimal before = st.running;
+                BigDecimal after = decrementStockItem(stockItemId, st.remaining);
+                ic.row(null, null, before, st.remaining.negate(), after, overflowUnit, overflowValue, ledgerNotes);
+                recordShortfallCost(stockItemId, dec(stockItem, "runningAverageCost"), before, after, overflowUnit);
                 st.totalValue = st.totalValue.add(overflowValue);
                 st.remaining = Money.ZERO;
             }
             totalValue = st.totalValue;
             unitCost = totalValue.signum() > 0 ? Money.div(totalValue, qty) : Money.ZERO;
         } else {
-            if ("AVCO".equals(str(product, "costingMethod"))) {
+            if (carriedCost) {
+                // Units leaving at the cost they entered this quant at (a transit line's dispatch cost).
+                unitCost = Money.max(dto.carriedUnitCost, Money.ZERO);
+                totalValue = unitCost.multiply(qty);
+            } else if ("AVCO".equals(str(product, "costingMethod"))) {
                 unitCost = Money.max(dec(stockItem, "runningAverageCost"), Money.ZERO);
                 totalValue = unitCost.multiply(qty);
             } else {
@@ -623,6 +656,9 @@ public class StockService {
             BigDecimal before = dec(stockItem, "quantity");
             BigDecimal after = decrementStockItem(stockItemId, qty);
             ic.row(null, null, before, qty.negate(), after, unitCost, totalValue, ledgerNotes);
+            if (carriedCost) {
+                reAverage(stockItemId, before, dec(stockItem, "runningAverageCost"), totalValue, after);
+            }
         }
 
         if (totalValue.signum() > 0 && !dto.skipGlPosting) {
@@ -631,7 +667,7 @@ public class StockService {
                     dto.sourceId != null ? dto.sourceId : ledgerCode, "inventory:issue:" + org + ":" + ledgerCode,
                     "Stock issue · " + productName + " · " + JsNumbers.dec(dto.quantity),
                     INV_MOVE_TYPES.getOrDefault(moveType, "STOCK_OUT"),
-                    usesLayers || serialTracking ? totalValue : null));
+                    usesLayers || serialTracking || carriedCost ? totalValue : null));
         }
 
         Map<String, Object> payload = new HashMap<>();
@@ -756,9 +792,14 @@ public class StockService {
         requireVariant(product, dto.variantId, dto.locationId);
         BigDecimal counted = dto.countedQuantity;
         String variantId = dto.variantId;
-        String variantKey = variantId == null ? "" : variantId;
-        Map<String, Object> stockItem = lookups.stockItem(dto.productId, variantId, dto.locationId);
-        BigDecimal currentQty = stockItem != null ? dec(stockItem, "quantity") : Money.ZERO;
+        if (counted.signum() == 0 && lookups.stockItem(dto.productId, variantId, dto.locationId) == null) {
+            return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
+        }
+        // Read the counted-against quantity under the quant lock: a concurrent move can no longer slip between the
+        // read and the write (the layered path below applies a delta, so a stale read would be a lost update).
+        LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, dec(product, "costPrice"));
+        Map<String, Object> stockItem = quant.created() ? null : quant.row();
+        BigDecimal currentQty = quant.quantity();
         BigDecimal delta = counted.subtract(currentQty);
         if (delta.signum() == 0) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
@@ -771,22 +812,8 @@ public class StockService {
         String moveType = delta.signum() > 0 ? "adjustment_in" : "adjustment_out";
         BigDecimal unitCost = stockItem != null && dec(stockItem, "runningAverageCost").signum() > 0
                 ? dec(stockItem, "runningAverageCost") : dec(product, "costPrice");
-        if (stockItem != null) {
-            int upd = jdbc.sql("UPDATE \"StockItem\" SET quantity = ?, \"updatedAt\" = " + NOW
-                            + " WHERE id = ? AND \"organizationId\" = ? AND quantity = ?")
-                    .params(counted, stockItem.get("id"), org, currentQty).update();
-            if (upd == 0) {
-                throw ApiException.badRequest(
-                        "Stock was modified concurrently; please re-read the current quantity and retry.");
-            }
-        } else {
-            jdbc.sql("INSERT INTO \"StockItem\" (id, \"organizationId\", \"productId\", \"variantId\", \"variantKey\","
-                            + " \"locationId\", quantity, \"runningAverageCost\", \"createdAt\", \"updatedAt\")"
-                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ")")
-                    .params(UUID.randomUUID().toString(), org, dto.productId, variantId, variantKey, dto.locationId,
-                            counted, unitCost)
-                    .update();
-        }
+        jdbc.sql("UPDATE \"StockItem\" SET quantity = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(counted, quant.id(), org).update();
         String sourceType = dto.sourceType != null ? dto.sourceType : "stock_adjust";
         String sourceId = dto.sourceId != null ? dto.sourceId : ledgerCode;
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, null, null, moveType, currentQty, delta,
@@ -900,52 +927,59 @@ public class StockService {
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }
+        boolean serialTracking = bool(product, "serialTracking");
+        if (serialTracking) {
+            assertWholeSerialQuantity(str(product, "name"), qty);
+        }
         String variantId = dto.variantId;
-        String variantKey = variantId == null ? "" : variantId;
-        lockQuantForAvco(org, dto.productId, variantKey, dto.toLocationId);
-        Map<String, Object> sourceRow = lookups.stockItem(dto.productId, variantId, dto.fromLocationId);
-        if (sourceRow == null) {
+        if (lookups.stockItem(dto.productId, variantId, dto.fromLocationId) == null) {
             throw ApiException.badRequest("No stock found at source location");
         }
-        String ledgerCode = seq.next("stock_move", "STK/", 6);
-        int dec = jdbc.sql("UPDATE \"StockItem\" SET quantity = quantity - ?, \"updatedAt\" = " + NOW
-                        + " WHERE id = ? AND \"organizationId\" = ? AND quantity >= ?")
-                .params(qty, sourceRow.get("id"), org, qty).update();
-        if (dec == 0) {
-            Map<String, Object> fresh = SqlRows.one(jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE id = ?"
-                    + " AND \"organizationId\" = ?").params(sourceRow.get("id"), org));
-            throw ApiException.badRequest("Insufficient stock at source: available "
-                    + (fresh == null ? "0" : JsNumbers.dec(dec(fresh, "quantity"))) + ", requested "
-                    + JsNumbers.dec(qty));
+        // Both quants up front in location order (the engine lock order), so A→B and B→A cannot deadlock.
+        LockedQuant from;
+        LockedQuant to;
+        if (dto.fromLocationId.compareTo(dto.toLocationId) < 0) {
+            from = lockQuant(org, dto.productId, variantId, dto.fromLocationId, Money.ZERO);
+            to = lockQuant(org, dto.productId, variantId, dto.toLocationId, Money.ZERO);
+        } else {
+            to = lockQuant(org, dto.productId, variantId, dto.toLocationId, Money.ZERO);
+            from = lockQuant(org, dto.productId, variantId, dto.fromLocationId, Money.ZERO);
         }
-        Map<String, Object> fromItem = SqlRows.one(jdbc.sql("SELECT * FROM \"StockItem\" WHERE id = ?"
-                + " AND \"organizationId\" = ?").params(sourceRow.get("id"), org));
-        BigDecimal newFromQty = dec(fromItem, "quantity");
-        BigDecimal fromBefore = newFromQty.add(qty);
-        BigDecimal carriedAvg = dec(fromItem, "runningAverageCost");
+        String ledgerCode = seq.next("stock_move", "STK/", 6);
+        BigDecimal fromBefore = from.quantity();
+        if (fromBefore.compareTo(qty) < 0) {
+            throw ApiException.badRequest("Insufficient stock at source: available " + JsNumbers.dec(fromBefore)
+                    + ", requested " + JsNumbers.dec(qty));
+        }
+        BigDecimal newFromQty = decrementStockItem(from.id(), qty);
+        String costing = str(product, "costingMethod");
+        boolean batchTracking = bool(product, "batchTracking");
+        boolean carried = dto.carriedUnitCost != null && "AVCO".equals(costing) && !batchTracking;
+        BigDecimal sourceAvg = from.average();
+        BigDecimal carriedAvg = carried ? Money.max(dto.carriedUnitCost, Money.ZERO) : sourceAvg;
         BigDecimal carriedValue = carriedAvg.multiply(qty);
-        if (bool(product, "batchTracking")) {
+        BigDecimal toBefore = to.quantity();
+        // Destination lots that went short: arriving units cover that shortfall first (open lots = max(0, on-hand)).
+        BigDecimal toNet = batchTracking && toBefore.signum() < 0 ? Money.min(qty, toBefore.negate()) : Money.ZERO;
+        BigDecimal toShortCost = shortfallCost(to, product);
+        BigDecimal layerCorrection = Money.ZERO;
+        List<StockMove.MovedLayer> layers = new ArrayList<>();
+        Map<String, String> lotMap = new HashMap<>();
+        if (batchTracking) {
             // ADR-S013 (additive): a transfer that names a batch moves that lot only (quality quarantine / release);
-            // transfers without a batch number keep the oldest-first behaviour.
+            // transfers without a batch number keep the oldest-first behaviour; a transit line moves its own lots.
             boolean oneLot = dto.batchNumber != null && !dto.batchNumber.isBlank();
-            var batchSpec = jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE"
-                            + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                            + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true"
-                            + (oneLot ? " AND \"batchNumber\" = ?" : "") + " ORDER BY \"receivedAt\" ASC")
-                    .params(org, dto.productId, variantId, dto.fromLocationId);
             if (oneLot) {
-                batchSpec = batchSpec.param(dto.batchNumber);
-                BigDecimal inLot = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE"
-                                + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                                + " AND \"locationId\" = ? AND quantity > 0 AND \"isActive\" = true AND \"batchNumber\" = ?")
-                        .params(org, dto.productId, variantId, dto.fromLocationId, dto.batchNumber)
-                        .query(BigDecimal.class).single();
+                BigDecimal inLot = lots(org, dto, variantId, dto.fromLocationId, "SELECT COALESCE(SUM(quantity), 0)",
+                        " AND \"batchNumber\" = ?", "", dto.batchNumber).query(BigDecimal.class).single();
                 if (inLot.compareTo(qty) < 0) {
                     throw ApiException.badRequest("Insufficient stock in batch " + dto.batchNumber + " at source: available "
                             + JsNumbers.dec(inLot) + ", requested " + JsNumbers.dec(qty));
                 }
             }
-            List<Map<String, Object>> batches = SqlRows.list(batchSpec);
+            List<Map<String, Object>> batches = SqlRows.list(lots(org, dto, variantId, dto.fromLocationId, "SELECT *",
+                    oneLot ? " AND \"batchNumber\" = ?" : "", " ORDER BY \"receivedAt\" ASC",
+                    oneLot ? dto.batchNumber : null));
             BigDecimal remaining = qty;
             BigDecimal layerValue = Money.ZERO;
             for (Map<String, Object> batch : batches) {
@@ -965,50 +999,73 @@ public class StockService {
                                     + " WHERE id = ? AND \"organizationId\" = ? AND quantity <= 0")
                             .params(batch.get("id"), org).update();
                 }
+                BigDecimal lotCost = batch.get("unitCost") != null ? dec(batch, "unitCost") : carriedAvg;
+                BigDecimal netHere = Money.min(moved, toNet);
+                toNet = toNet.subtract(netHere);
+                BigDecimal destQty = moved.subtract(netHere);
+                String destId = UUID.randomUUID().toString();
                 jdbc.sql("INSERT INTO \"InventoryBatch\" (id, \"organizationId\", \"productId\", \"variantId\","
                                 + " \"locationId\", \"batchNumber\", quantity, \"unitCost\", \"expiryDate\", \"mfgDate\","
-                                + " \"receivedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                                + NOW + ", " + NOW + ")")
-                        .params(UUID.randomUUID().toString(), org, dto.productId, variantId, dto.toLocationId,
-                                batch.get("batchNumber"), moved, batch.get("unitCost"),
+                                + " \"receivedAt\", \"isActive\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
+                                + " ?, ?, ?, ?, " + NOW + ", " + NOW + ")")
+                        .params(destId, org, dto.productId, variantId, dto.toLocationId,
+                                batch.get("batchNumber"), destQty, batch.get("unitCost"),
                                 SqlRows.ts((Instant) batch.get("expiryDate")), SqlRows.ts((Instant) batch.get("mfgDate")),
-                                SqlRows.ts((Instant) batch.get("receivedAt")))
+                                SqlRows.ts((Instant) batch.get("receivedAt")), destQty.signum() > 0)
                         .update();
-                BigDecimal lotCost = batch.get("unitCost") != null ? dec(batch, "unitCost") : carriedAvg;
+                lotMap.put((String) batch.get("id"), destId);
+                if (destQty.signum() > 0) {
+                    layers.add(new StockMove.MovedLayer(destId, null, destQty, lotCost));
+                }
+                layerCorrection = layerCorrection.add(netHere.multiply(lotCost.subtract(toShortCost)));
                 layerValue = layerValue.add(lotCost.multiply(moved));
                 remaining = remaining.subtract(moved);
             }
             carriedValue = layerValue.add(carriedAvg.multiply(remaining));
+            if (remaining.signum() > 0 && toNet.signum() > 0) {
+                BigDecimal netHere = Money.min(remaining, toNet);
+                layerCorrection = layerCorrection.add(netHere.multiply(carriedAvg.subtract(toShortCost)));
+            }
         }
         BigDecimal carriedUnit = Money.div(carriedValue, qty);
-        Map<String, Object> existingTo = lookups.stockItem(dto.productId, variantId, dto.toLocationId);
         Resolution destCost = costResolver.resolveReceiptCost(
-                new ProductCost(str(product, "costingMethod"), (BigDecimal) product.get("costPrice")),
-                existingTo == null ? null : new Quant(dec(existingTo, "quantity"), dec(existingTo, "runningAverageCost")),
-                qty, carriedUnit);
-        Map<String, Object> toItem = upsertStockItem(org, dto.productId, variantId, variantKey, dto.toLocationId, qty,
-                destCost.newRunningAverage() != null ? destCost.newRunningAverage() : carriedUnit,
-                destCost.newRunningAverage());
+                new ProductCost(costing, (BigDecimal) product.get("costPrice")),
+                to.created() ? null : new Quant(toBefore, to.average()), qty, carriedUnit);
+        Map<String, Object> toItem = addToQuant(to.id(), qty, destCost.newRunningAverage() != null
+                ? destCost.newRunningAverage() : to.created() ? carriedUnit : null);
+        if (carried) {
+            reAverage(from.id(), fromBefore, sourceAvg, carriedValue, newFromQty);
+        }
 
-        if (bool(product, "serialTracking")) {
+        if (serialTracking) {
+            List<Object> sp = new ArrayList<>(List.of(org, dto.productId));
+            sp.add(variantId);
+            sp.add(dto.fromLocationId);
+            if (dto.pinnedSerialIds != null) {
+                sp.add(dto.pinnedSerialIds.toArray(String[]::new));
+            }
+            sp.add(qty.intValueExact());
             List<Map<String, Object>> moving = SqlRows.list(jdbc.sql("SELECT id, \"batchId\" FROM \"InventorySerial\""
                             + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                            + " AND \"locationId\" = ? AND status = 'in_stock' ORDER BY \"receivedAt\" ASC LIMIT ?")
-                    .params(org, dto.productId, variantId, dto.fromLocationId, Math.max(0, qty.intValue())));
+                            + " AND \"locationId\" = ? AND status = 'in_stock'"
+                            + (dto.pinnedSerialIds != null ? " AND id = ANY(?::text[])" : "")
+                            + " ORDER BY \"receivedAt\" ASC LIMIT ?")
+                    .params(sp));
             if (!moving.isEmpty()) {
                 Set<String> oldBatchIds = new LinkedHashSet<>();
                 moving.forEach(s -> {
-                    if (s.get("batchId") != null) {
+                    if (s.get("batchId") != null && !lotMap.containsKey((String) s.get("batchId"))) {
                         oldBatchIds.add((String) s.get("batchId"));
                     }
                 });
-                Map<String, String> batchIdMap = new HashMap<>();
+                Map<String, String> batchIdMap = new HashMap<>(lotMap);
                 if (!oldBatchIds.isEmpty()) {
                     List<Map<String, Object>> oldBatches = jdbc.sql("SELECT id, \"batchNumber\" FROM \"InventoryBatch\""
                                     + " WHERE id IN (:ids) AND \"organizationId\" = :org")
                             .param("ids", List.copyOf(oldBatchIds)).param("org", org).query().listOfRows();
                     List<String> numbers = oldBatches.stream().map(b -> (String) b.get("batchNumber")).toList();
-                    List<Map<String, Object>> destBatches = jdbc.sql("SELECT id, \"batchNumber\" FROM \"InventoryBatch\""
+                    List<Map<String, Object>> destBatches = numbers.isEmpty() ? List.of()
+                            : jdbc.sql("SELECT id, \"batchNumber\" FROM \"InventoryBatch\""
                                     + " WHERE \"organizationId\" = :org AND \"productId\" = :p"
                                     + " AND \"variantId\" IS NOT DISTINCT FROM :v AND \"locationId\" = :l"
                                     + " AND \"batchNumber\" IN (:n) ORDER BY \"receivedAt\" DESC")
@@ -1030,6 +1087,7 @@ public class StockService {
                     jdbc.sql("UPDATE \"InventorySerial\" SET \"locationId\" = ?, \"batchId\" = COALESCE(?, \"batchId\"),"
                                     + " \"updatedAt\" = " + NOW + " WHERE id = ?")
                             .params(dto.toLocationId, newBatch, s.get("id")).update();
+                    layers.add(new StockMove.MovedLayer(null, (String) s.get("id"), BigDecimal.ONE, null));
                 }
             }
         }
@@ -1051,6 +1109,9 @@ public class StockService {
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
                     "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(dto.quantity));
         }
+        postCostCorrection(org, dto.productId, str(product, "name"), batchTracking ? layerCorrection
+                        : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
+                dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -1058,10 +1119,10 @@ public class StockService {
         payload.put("ledgerCode", ledgerCode);
         payload.put("quantity", JsNumbers.dec(dto.quantity));
         events.publish("stock.transferred", payload);
-        audit.recordInTx(AuditInput.of("StockItem", str(fromItem, "id"), "transfer", null,
+        audit.recordInTx(AuditInput.of("StockItem", from.id(), "transfer", null,
                 Obj.of("productId", dto.productId, "fromLocationId", dto.fromLocationId, "toLocationId",
                         dto.toLocationId, "quantity", JsNumbers.js(dto.quantity), "ledgerCode", ledgerCode)));
-        return new Transferred(ledgerCode, dto.quantity, dto.fromLocationId, dto.toLocationId);
+        return new Transferred(ledgerCode, dto.quantity, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
     }
 
     // ================================================================== helpers
@@ -1099,24 +1160,148 @@ public class StockService {
         return new BigDecimal[] {baseQty, factor.signum() > 0 ? Money.div(unitCost, factor) : unitCost};
     }
 
-    /** Transaction-scoped advisory lock serialising one quant's AVCO recompute. */
+    /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */
     private void lockQuantForAvco(String org, String productId, String variantKey, String locationId) {
         String key = "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param(key).query().listOfRows();
     }
 
-    /** Prisma {@code stockItem.upsert}: create with {@code createAvg} or increment + optional new average. */
-    private Map<String, Object> upsertStockItem(String org, String productId, String variantId, String variantKey,
-            String locationId, BigDecimal qty, BigDecimal createAvg, BigDecimal updateAvg) {
-        return SqlRows.one(jdbc.sql("INSERT INTO \"StockItem\" (id, \"organizationId\", \"productId\", \"variantId\","
+    /** A quant held by {@link #lockQuant}; {@code created} when that call inserted it (quantity 0). */
+    private record LockedQuant(Map<String, Object> row, boolean created) {
+
+        String id() {
+            return (String) row.get("id");
+        }
+
+        BigDecimal quantity() {
+            return dec(row, "quantity");
+        }
+
+        BigDecimal average() {
+            return dec(row, "runningAverageCost");
+        }
+    }
+
+    /**
+     * THE lock order of the stock engine. Every path that reads a quant to compute from it (receipt average, issue
+     * chain, count, transfer) takes, per quant, first the transaction-scoped advisory lock
+     * {@code avco:<org>:<product>:<variantKey>:<location>} and then the {@code StockItem} row {@code FOR UPDATE}, and
+     * reads quantity / average only after both. A move touching two quants (transfer) locks them in ascending
+     * locationId order; multi-line documents feed their lines in ascending (productId, variantKey, locationId) order.
+     * The external average writers (landed cost, lineage follower, revaluation) take the same advisory lock first.
+     * The row is created (quantity 0, {@code createAvg}) when missing so the very first receipt has a row to lock.
+     */
+    private LockedQuant lockQuant(String org, String productId, String variantId, String locationId,
+            BigDecimal createAvg) {
+        String variantKey = variantId == null ? "" : variantId;
+        lockQuantForAvco(org, productId, variantKey, locationId);
+        int inserted = jdbc.sql("INSERT INTO \"StockItem\" (id, \"organizationId\", \"productId\", \"variantId\","
                         + " \"variantKey\", \"locationId\", quantity, \"runningAverageCost\", \"createdAt\", \"updatedAt\")"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ")"
-                        + " ON CONFLICT (\"organizationId\", \"productId\", \"variantKey\", \"locationId\") DO UPDATE SET"
-                        + " quantity = \"StockItem\".quantity + EXCLUDED.quantity,"
-                        + " \"runningAverageCost\" = COALESCE(?, \"StockItem\".\"runningAverageCost\"),"
-                        + " \"updatedAt\" = " + NOW + " RETURNING *")
-                .params(UUID.randomUUID().toString(), org, productId, variantId, variantKey, locationId, qty, createAvg,
-                        updateAvg));
+                        + " VALUES (?, ?, ?, ?, ?, ?, 0, ?, " + NOW + ", " + NOW + ")"
+                        + " ON CONFLICT (\"organizationId\", \"productId\", \"variantKey\", \"locationId\") DO NOTHING")
+                .params(UUID.randomUUID().toString(), org, productId, variantId, variantKey, locationId,
+                        createAvg == null ? Money.ZERO : createAvg)
+                .update();
+        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT * FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? FOR UPDATE")
+                .params(org, productId, variantKey, locationId));
+        return new LockedQuant(row, inserted == 1);
+    }
+
+    /** Add {@code qty} to a locked quant and set the new average when given; returns the row. */
+    private Map<String, Object> addToQuant(String id, BigDecimal qty, BigDecimal newAvg) {
+        return SqlRows.one(jdbc.sql("UPDATE \"StockItem\" SET quantity = quantity + ?,"
+                        + " \"runningAverageCost\" = COALESCE(?, \"runningAverageCost\"), \"updatedAt\" = " + NOW
+                        + " WHERE id = ? RETURNING *")
+                .params(qty, newAvg, id));
+    }
+
+    /**
+     * Unit cost the short (negative) units of a lot-tracked quant were issued at: kept in its running average while
+     * it is negative ({@link #recordShortfallCost}); the product cost when that is unknown (stock from before).
+     */
+    private static BigDecimal shortfallCost(LockedQuant quant, Map<String, Object> product) {
+        return quant.average().signum() > 0 ? quant.average() : dec(product, "costPrice");
+    }
+
+    /** A lot-tracked quant went (further) short at {@code unit}: its average becomes the cost of its short units. */
+    private void recordShortfallCost(String stockItemId, BigDecimal avg, BigDecimal before, BigDecimal after,
+            BigDecimal unit) {
+        BigDecimal oldShort = Money.max(before.negate(), Money.ZERO);
+        BigDecimal newShort = Money.max(after.negate(), Money.ZERO);
+        BigDecimal added = newShort.subtract(oldShort);
+        if (added.signum() <= 0) {
+            return;
+        }
+        BigDecimal shortAvg = oldShort.signum() > 0 && avg.signum() > 0
+                ? Money.div(oldShort.multiply(avg).add(added.multiply(unit)), newShort) : unit;
+        jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(shortAvg, stockItemId).update();
+    }
+
+    /** Units left an AVCO quant at a specific value: re-derive the average so the remaining value stays exact. */
+    private void reAverage(String stockItemId, BigDecimal before, BigDecimal avg, BigDecimal removedValue,
+            BigDecimal after) {
+        if (after.signum() <= 0) {
+            return;
+        }
+        BigDecimal remainingValue = before.multiply(avg).subtract(removedValue);
+        BigDecimal newAvg = Money.max(Money.div(remainingValue, after), Money.ZERO);
+        jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(newAvg, stockItemId).update();
+    }
+
+    /**
+     * Post the value difference of units received into a negative quant (Dr COGS / Cr stock when the receipt costs
+     * more than they were issued at). One entry per stock move: the posting key is the ledger code.
+     */
+    private void postCostCorrection(String org, String productId, String productName, BigDecimal amount, Instant date,
+            String sourceType, String sourceId, String ledgerCode) {
+        if (amount == null) {
+            return;
+        }
+        BigDecimal rounded = amount.setScale(6, java.math.RoundingMode.HALF_UP);
+        if (rounded.signum() == 0) {
+            return;
+        }
+        stockPosting.postNegativeStockCostCorrection(productId, rounded, date, sourceType, sourceId,
+                "Negative-stock cost correction · " + productName, COST_CORRECTION_KEY + org + ":" + ledgerCode);
+    }
+
+    /** Posting-key prefix of {@link #postCostCorrection} entries (reversals do not mirror them). */
+    public static final String COST_CORRECTION_KEY = "inventory:cost_correction:";
+
+    /** A POS / offline sale being drained into stock: it already happened, so the negative-stock setting never blocks. */
+    private static boolean isSaleDrain(StockMove dto) {
+        String source = dto.sourceType == null ? "" : dto.sourceType;
+        return source.startsWith("pos") || "menu_recipe".equals(source);
+    }
+
+    /**
+     * Statement over the open lots ({@code quantity > 0}, active) of the move's quant at {@code locationId}, restricted
+     * to the move's pinned lots when it has them, plus {@code extra} (binding {@code extraParam} when not null).
+     */
+    private JdbcClient.StatementSpec lots(String org, StockMove dto, String variantId, String locationId, String select,
+            String extra, String order, Object extraParam) {
+        List<Object> params = new ArrayList<>(List.of(org, dto.productId));
+        params.add(variantId);
+        params.add(locationId);
+        String pin = "";
+        if (dto.pinnedBatchIds != null) {
+            pin = " AND id = ANY(?::text[])";
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
+        }
+        if (extraParam != null) {
+            params.add(extraParam);
+        }
+        return jdbc.sql(select + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
+                + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND quantity > 0"
+                + " AND \"isActive\" = true" + pin + extra + order).params(params);
+    }
+
+    private JdbcClient.StatementSpec lots(String org, StockMove dto, String variantId, String select, String extra,
+            String order, Object extraParam) {
+        return lots(org, dto, variantId, dto.locationId, select, extra, order, extraParam);
     }
 
     /** Atomic decrement; returns the new quantity. */

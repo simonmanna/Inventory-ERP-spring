@@ -112,6 +112,18 @@ public class StockDocService {
         return TenantContext.organizationId();
     }
 
+    /**
+     * Lines in the stock engine's lock order (productId, variantKey): every multi-line posting feeds the engine in this
+     * order so two documents over the same items lock their quants in the same sequence and cannot deadlock. The
+     * documents' own rows and responses keep the entered order.
+     */
+    static <T extends Map<String, Object>> List<T> lockOrder(List<T> lines) {
+        List<T> sorted = new ArrayList<>(lines);
+        sorted.sort(Comparator.comparing((T i) -> String.valueOf(i.get("productId")))
+                .thenComparing(i -> i.get("variantId") == null ? "" : String.valueOf(i.get("variantId"))));
+        return sorted;
+    }
+
     /** Approval-engine gate; throws while a request is pending. */
     private void gateApproval(String entityType, String entityId, Map<String, Object> snapshot, String label) {
         Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval(entityType, entityId, snapshot));
@@ -177,7 +189,7 @@ public class StockDocService {
                 "expiry_write_off");
         BigDecimal total = Money.ZERO;
         String user = TenantContext.userId();
-        for (Map<String, Object> item : items) {
+        for (Map<String, Object> item : lockOrder(items)) {
             StockMove m = StockMove.of(str(item, "productId"), str(doc, "locationId"), dec(item, "qty"))
                     .variant(str(item, "variantId")).moveType(catToMove.getOrDefault(str(doc, "category"), "issue"))
                     .strategy(item.get("distStrategy") != null ? str(item, "distStrategy") : "FEFO")
@@ -273,7 +285,7 @@ public class StockDocService {
         }
         BigDecimal total = Money.ZERO;
         String user = TenantContext.userId();
-        for (Map<String, Object> item : items) {
+        for (Map<String, Object> item : lockOrder(items)) {
             String batch = str(item, "batchNumber");
             StockMove m = StockMove.of(str(item, "productId"), str(doc, "locationId"), dec(item, "qty"))
                     .variant(str(item, "variantId"))
@@ -586,7 +598,7 @@ public class StockDocService {
             }
         }
         String user = TenantContext.userId();
-        for (Map<String, Object> item : items) {
+        for (Map<String, Object> item : lockOrder(items)) {
             StockMove m = StockMove.of(str(item, "productId"), str(doc, "locationId"), null)
                     .variant(str(item, "variantId")).notes(doc.get("adjCode") + " · " + doc.get("reason"))
                     .batch(str(item, "batchNumber")).source("stock_adjustment", str(doc, "adjCode"))
@@ -694,7 +706,7 @@ public class StockDocService {
         if (claimed == 0) {
             throw ApiException.badRequest("Transfer was posted or cancelled concurrently");
         }
-        for (Map<String, Object> item : items) {
+        for (Map<String, Object> item : lockOrder(items)) {
             StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), str(doc, "toLocId"),
                             dec(item, "qtyRequested")).variant(str(item, "variantId"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
@@ -784,15 +796,13 @@ public class StockDocService {
                         + doc.get("transferCode") + " is " + doc.get("status") + ")");
             }
             @SuppressWarnings("unchecked")
-            List<Map<String, Object>> items = new ArrayList<>((List<Map<String, Object>>) doc.get("items"));
-            items.sort(Comparator.comparing(i -> i.get("productId") + ":" + (i.get("variantId") == null ? ""
-                    : i.get("variantId"))));
+            List<Map<String, Object>> items = lockOrder((List<Map<String, Object>>) doc.get("items"));
             for (Map<String, Object> item : items) {
                 StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), transit,
                                 dec(item, "qtyRequested")).variant(str(item, "variantId"))
                         .source("stock_transfer_dispatch", str(doc, "transferCode")).notes(str(doc, "notes"))
                         .people(str(doc, "responsibleById"), str(doc, "approvedById"));
-                stock.transfer(m);
+                recordTransitLayers(id, str(item, "id"), dec(item, "qtyRequested"), stock.transfer(m));
                 jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyDispatched\" = ? WHERE id = ?")
                         .params(dec(item, "qtyRequested"), item.get("id")).update();
             }
@@ -853,7 +863,12 @@ public class StockDocService {
         String reference = code + " " + receiptCode;
         String user = TenantContext.userId();
         List<Map<String, Object>> receiptLines = new ArrayList<>();
-        for (Object[] p : plan) {
+        Map<Object, Map<String, Object>> receiptLineByItem = new HashMap<>();
+        List<Object[]> ordered = new ArrayList<>(plan);
+        ordered.sort(Comparator.comparing((Object[] p) -> String.valueOf(((Map<?, ?>) p[0]).get("productId")))
+                .thenComparing(p -> ((Map<?, ?>) p[0]).get("variantId") == null ? ""
+                        : String.valueOf(((Map<?, ?>) p[0]).get("variantId"))));
+        for (Object[] p : ordered) {
             @SuppressWarnings("unchecked")
             Map<String, Object> item = (Map<String, Object>) p[0];
             BigDecimal received = (BigDecimal) p[1];
@@ -864,19 +879,21 @@ public class StockDocService {
                 if (notes != null && !notes.isEmpty()) {
                     n.add(notes);
                 }
-                stock.transfer(StockMove.transfer(str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
-                        .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
-                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user));
+                stock.transfer(pinTransit(StockMove.transfer(str(item, "productId"), transitLocId, str(doc, "toLocId"),
+                                received).variant(str(item, "variantId")).source("stock_transfer_receipt", code)
+                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id")));
             }
             if (damaged.signum() > 0) {
-                stock.issue(StockMove.of(str(item, "productId"), transitLocId, damaged).variant(str(item, "variantId"))
-                        .moveType("waste").source("stock_transfer_loss", code)
-                        .reference(reference + " damaged in transit").requireAvailable(true).people(null, user));
+                stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)
+                        .variant(str(item, "variantId")).moveType("waste").source("stock_transfer_loss", code)
+                        .reference(reference + " damaged in transit").requireAvailable(true).people(null, user),
+                        str(item, "id")));
             }
             if (shortQty.signum() > 0) {
-                Issued res = stock.issue(StockMove.of(str(item, "productId"), transitLocId, shortQty)
+                Issued res = stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, shortQty)
                         .variant(str(item, "variantId")).moveType("adjustment_out").source("stock_transfer_loss", code)
-                        .reference(reference + " short on arrival").requireAvailable(true).skipGl().people(null, user));
+                        .reference(reference + " short on arrival").requireAvailable(true).skipGl().people(null, user),
+                        str(item, "id")));
                 stockPosting.postAdjustment(str(item, "productId"), BigDecimal.ONE.negate(), res.totalValue(),
                         Instant.now(), "stock_transfer_loss", code, "Transit shortage · " + item.get("productName")
                                 + " · " + JsNumbers.dec(shortQty) + " · " + reference);
@@ -885,8 +902,12 @@ public class StockDocService {
                             + " \"qtyDamaged\" + ?, \"qtyShort\" = \"qtyShort\" + ?, \"qtyTransferred\" ="
                             + " \"qtyTransferred\" + ? WHERE id = ?")
                     .params(received, damaged, shortQty, received, item.get("id")).update();
-            receiptLines.add(Obj.of("itemId", item.get("id"), "productId", item.get("productId"), "received",
-                    JsNumbers.dec(received), "damaged", JsNumbers.dec(damaged), "short", JsNumbers.dec(shortQty)));
+            receiptLineByItem.put(item.get("id"), Obj.of("itemId", item.get("id"), "productId", item.get("productId"),
+                    "received", JsNumbers.dec(received), "damaged", JsNumbers.dec(damaged), "short",
+                    JsNumbers.dec(shortQty)));
+        }
+        for (Object[] p : plan) {
+            receiptLines.add(receiptLineByItem.get(((Map<?, ?>) p[0]).get("id")));
         }
         jdbc.sql("INSERT INTO \"StockTransferReceipt\" (id, \"organizationId\", \"transferId\", \"receiptCode\", kind,"
                         + " \"receivedById\", notes, lines, \"createdAt\") VALUES (?, ?, ?, ?, 'receipt', ?, ?, ?::jsonb, "
@@ -916,18 +937,24 @@ public class StockDocService {
         List<Map<String, Object>> lines = new ArrayList<>();
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> docItems = (List<Map<String, Object>>) doc.get("items");
-        for (Map<String, Object> item : docItems) {
+        for (Map<String, Object> item : lockOrder(docItems)) {
             BigDecimal open = outstanding(item);
             if (open.compareTo(QTY_EPSILON) <= 0) {
                 continue;
             }
-            stock.transfer(StockMove.transfer(str(item, "productId"), str(doc, "transitLocId"), str(doc, "fromLocId"),
-                            open).variant(str(item, "variantId")).source("stock_transfer_recall", code)
-                    .notes(receiptCode + " recall: " + reason.trim()).people(null, TenantContext.userId()));
+            stock.transfer(pinTransit(StockMove.transfer(str(item, "productId"), str(doc, "transitLocId"),
+                            str(doc, "fromLocId"), open).variant(str(item, "variantId")).source("stock_transfer_recall", code)
+                    .notes(receiptCode + " recall: " + reason.trim()).people(null, TenantContext.userId()),
+                    str(item, "id")));
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyRecalled\" = \"qtyRecalled\" + ? WHERE id = ?")
                     .params(open, item.get("id")).update();
-            lines.add(Obj.of("itemId", item.get("id"), "productId", item.get("productId"), "recalled",
-                    JsNumbers.dec(open)));
+        }
+        for (Map<String, Object> item : docItems) {
+            BigDecimal open = outstanding(item);
+            if (open.compareTo(QTY_EPSILON) > 0) {
+                lines.add(Obj.of("itemId", item.get("id"), "productId", item.get("productId"), "recalled",
+                        JsNumbers.dec(open)));
+            }
         }
         if (lines.isEmpty()) {
             throw ApiException.badRequest(code + " has nothing left in transit");
@@ -956,6 +983,45 @@ public class StockDocService {
             throw ApiException.badRequest(doc.get("transferCode") + " has already moved stock; recall or reverse it instead");
         }
         return getTransfer(id);
+    }
+
+    /**
+     * Remember what one transit line put into the transit location: the lots created there, the serial units moved
+     * and the unit cost of the dispatch, so receipt / loss / recall move exactly this transfer's units at their cost
+     * (the transit location is shared by every transfer of the organisation).
+     */
+    private void recordTransitLayers(String transferId, String itemId, BigDecimal qty, StockMove.Transferred moved) {
+        String sql = "INSERT INTO \"StockTransferLayer\" (id, \"organizationId\", \"transferId\", \"transferItemId\","
+                + " \"batchId\", \"serialId\", quantity, \"unitCost\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, null, null, qty,
+                moved.carriedUnitCost()).update();
+        for (StockMove.MovedLayer layer : moved.layers()) {
+            jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, layer.batchId(),
+                    layer.serialId(), layer.quantity(), layer.unitCost()).update();
+        }
+    }
+
+    /** Pin a move out of transit to the lots / serials / cost its line dispatched (unpinned for older dispatches). */
+    private StockMove pinTransit(StockMove move, String itemId) {
+        List<Map<String, Object>> rows = jdbc.sql("SELECT \"batchId\", \"serialId\", \"unitCost\" FROM"
+                        + " \"StockTransferLayer\" WHERE \"organizationId\" = ? AND \"transferItemId\" = ?")
+                .params(org(), itemId).query().listOfRows();
+        if (rows.isEmpty()) {
+            return move;
+        }
+        List<String> batchIds = new ArrayList<>();
+        List<String> serialIds = new ArrayList<>();
+        BigDecimal unitCost = null;
+        for (Map<String, Object> r : rows) {
+            if (r.get("batchId") != null) {
+                batchIds.add((String) r.get("batchId"));
+            } else if (r.get("serialId") != null) {
+                serialIds.add((String) r.get("serialId"));
+            } else if (r.get("unitCost") != null) {
+                unitCost = (BigDecimal) r.get("unitCost");
+            }
+        }
+        return move.pin(batchIds, serialIds, unitCost);
     }
 
     private Map<String, Object> finaliseTransit(String id, boolean recalled) {

@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -202,6 +203,38 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Lock contention that escapes a service: Postgres deadlock (40P01), serialization failure (40001) or lock timeout
+     * (55P03), however Spring translated it. The transaction was rolled back, so the caller may simply retry: 409, not
+     * 500 (deliberate deviation: Nest answers these with a 500).
+     */
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    ResponseEntity<Object> lockConflict(PessimisticLockingFailureException ex, HttpServletRequest req) {
+        return lockConflictBody(ex, req);
+    }
+
+    private ResponseEntity<Object> lockConflictBody(Exception ex, HttpServletRequest req) {
+        log.warn("Lock conflict on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.toString());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", "This operation collided with a concurrent update and was not applied. Please retry.");
+        body.put("statusCode", 409);
+        body.put("requestId", req.getAttribute(RequestIdFilter.ATTRIBUTE));
+        return respond(req, ex, HttpStatus.CONFLICT, body);
+    }
+
+    /** SQLSTATEs of a lock conflict the transaction lost (deadlock, serialization failure, lock not available). */
+    static boolean isLockConflict(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof java.sql.SQLException sql) {
+                String state = sql.getSQLState();
+                if ("40P01".equals(state) || "40001".equals(state) || "55P03".equals(state)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * The client went away (closed tab, SSE stream dropped) or an async stream timed out. There is nobody to answer
      * and the response may already be {@code text/event-stream}, so write nothing instead of a JSON error body.
      */
@@ -212,6 +245,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<Object> unhandled(Exception ex, HttpServletRequest req) {
+        if (isLockConflict(ex)) {
+            return lockConflictBody(ex, req);
+        }
         log.error("Unhandled exception on {} {} [req: {}]", req.getMethod(), req.getRequestURI(),
                 req.getAttribute(RequestIdFilter.ATTRIBUTE), ex);
         Map<String, Object> body = new LinkedHashMap<>();

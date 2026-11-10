@@ -70,12 +70,42 @@ Pending owner approval:
    which Prisma rejects at runtime (500). Java applies the intended filter
    (`quantity > 0 AND minQuantity > 0 AND quantity <= minQuantity`).
 
+Approved by the owner — stock engine hardening (`phase/inv-hardening`, migration `V460`); Nest has the same defects:
+
+2. **One quant lock order.** Every engine path (receipt, issue, count, transfer) takes the per-quant advisory lock
+   and then the `StockItem` row `FOR UPDATE` before reading quantity / average; transfers lock both quants in
+   locationId order. Nest computes the receipt average without the row lock (a concurrent issue could change the
+   quantity it averages over).
+3. **Lines posted in lock order.** Stock-out, waste, adjustment, immediate transfer, transit receive / recall, direct
+   stock-in and reversals feed the engine sorted by (productId, variantKey[, locationId]); document rows and
+   responses keep the entered order. Ledger rows of one document are written in that sorted order.
+4. **Lock conflicts → 409.** Postgres deadlock / serialization failure / lock timeout (40P01 / 40001 / 55P03) answer
+   409 `"This operation collided with a concurrent update and was not applied. Please retry."` instead of 500.
+5. **Negative-stock cost correction on every receipt** (production output, returns, reversals, quality moves,
+   adjustments-in, transfer destinations), not only document receipts with a GL context. Posting key
+   `inventory:cost_correction:<org>:<ledgerCode>`; reversals do not mirror these entries (the inverse move posts its
+   own).
+6. **Lot-tracked shortfall netting.** A receipt / transfer into a lot-tracked quant that is negative covers the
+   shortfall first: the lot is created for the remainder only (fully covered: quantity 0, inactive) and the covered
+   units are trued up from their issue cost (kept as the quant's average while negative) to the receipt cost. Open
+   lots always sum to max(0, on-hand). A named (MANUAL) lot that is short draws the other lots before going short.
+7. **`inventory.allowNegativeStock=false` blocks every issue** (`Insufficient stock for …`) except POS / offline sale
+   draining (`pos*`, `menu_recipe` sources), which keeps following the item stock policy. Nest only blocks when the
+   item policy is `block`. The setting still defaults to `true`.
+8. **Transit lines move their own units.** Dispatch records the transit lots, serials and unit cost per line
+   (`StockTransferLayer`); receipt, in-transit loss and recall move exactly those (FIFO within the line), at their
+   cost. Lines dispatched before V460 keep the oldest-in-transit behaviour.
+9. **Guards.** Transfers check whole serial quantities; a `variantId` must belong to the product and organisation
+   (404 `Variant not found`); one active reservation per source line + cell (partial unique index, concurrent
+   re-reserve updates it); `GET /inventory/reservations/atp` requires `productId` (400 `productId is required`) and
+   sums all locations when `locationId` is absent.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation
   includes are not filtered (Prisma's extension does not filter includes either).
-- Period-lock, negative-stock and posting-rule resolution follow `stock.service.ts` / `stock-posting.service.ts`
-  line by line; all money/qty math is `BigDecimal` with decimal.js semantics (`Money.div`, `JsNumbers.dec`).
+- Period-lock and posting-rule resolution (negative stock: see 2–8 above) follow `stock.service.ts` /
+  `stock-posting.service.ts` line by line; all money/qty math is `BigDecimal` with decimal.js semantics (`Money.div`, `JsNumbers.dec`).
 
 Kernel fix found while porting: `SequenceService` now creates per-org sequences outside the caller's transaction
 (Nest uses the raw client). A business rollback used to drop a freshly created sequence while the in-memory

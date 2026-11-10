@@ -222,6 +222,12 @@ public class StockPostingService {
     /** Negative-stock cost correction (AVCO): amount &gt; 0 → Dr COGS / Cr Stock Valuation, else the reverse. */
     public void postNegativeStockCostCorrection(String productId, BigDecimal amount, Instant date, String sourceType,
             String sourceId, String description) {
+        postNegativeStockCostCorrection(productId, amount, date, sourceType, sourceId, description, null);
+    }
+
+    /** As above; {@code postingKey} makes the entry idempotent (one correction per stock move). */
+    public void postNegativeStockCostCorrection(String productId, BigDecimal amount, Instant date, String sourceType,
+            String sourceId, String description, String postingKey) {
         if (amount.signum() == 0) {
             return;
         }
@@ -238,7 +244,7 @@ public class StockPostingService {
                     : List.of(Line.debit(sv, v, label), Line.credit(cogs, v, label));
         }
         post("INV", date, description != null ? description : "Negative-stock cost correction · " + name, sourceType,
-                sourceId, null, lines);
+                sourceId, postingKey, lines);
         log.warn("[stock] negative-stock cost correction {} posted for {} ({}:{})", JsNumbers.dec(amount), name,
                 sourceType, sourceId);
     }

@@ -129,8 +129,12 @@ public class StockReversalService {
 
     private record Cell(String productId, String variantId, String locationId) {}
 
+    private static final java.util.Comparator<Cell> CELL_ORDER = java.util.Comparator.comparing(Cell::productId)
+            .thenComparing(c -> c.variantId() == null ? "" : c.variantId()).thenComparing(Cell::locationId);
+
+    /** Quantity per cell, cells in the stock engine's lock order (product, variant, location) to avoid deadlocks. */
     private Map<Cell, BigDecimal> sum(List<Map<String, Object>> rows, boolean abs) {
-        Map<Cell, BigDecimal> m = new LinkedHashMap<>();
+        Map<Cell, BigDecimal> m = new java.util.TreeMap<>(CELL_ORDER);
         for (Map<String, Object> r : rows) {
             Cell c = new Cell(str(r, "productId"), str(r, "variantId"), str(r, "locationId"));
             BigDecimal q = dec(r, "quantityChange");
@@ -206,13 +210,22 @@ public class StockReversalService {
         List<Map<String, Object>> journals = SqlRows.list(jdbc.sql("SELECT e.*, j.code AS \"_journalCode\" FROM"
                         + " \"JournalEntry\" e JOIN \"Journal\" j ON j.id = e.\"journalId\" WHERE e.\"organizationId\" = :org"
                         + " AND e.status = 'posted' AND e.\"sourceType\" IN (:types) AND e.\"sourceId\" IN (:ids)"
-                        + " AND e.\"reversalOfId\" IS NULL")
-                .param("org", org).param("types", p.journalSourceTypes()).param("ids", List.copyOf(sourceIds)));
+                        + " AND e.\"reversalOfId\" IS NULL"
+                        // Negative-stock cost corrections square stock against GL at the time; the inverse moves post
+                        // their own, so mirroring them would put the two apart again.
+                        + " AND (e.\"postingKey\" IS NULL OR e.\"postingKey\" NOT LIKE :corr)")
+                .param("org", org).param("types", p.journalSourceTypes()).param("ids", List.copyOf(sourceIds))
+                .param("corr", StockService.COST_CORRECTION_KEY + "%"));
 
         Map<String, BigDecimal> glValue = new LinkedHashMap<>();
         Map<String, BigDecimal> moved = new LinkedHashMap<>();
         String user = TenantContext.userId();
-        for (Map<String, Object> r : rows) {
+        // Inverse moves in the engine's lock order (product, variant, location; then the original order).
+        List<Map<String, Object>> inLockOrder = new ArrayList<>(rows);
+        inLockOrder.sort(java.util.Comparator.comparing((Map<String, Object> r) -> str(r, "productId"))
+                .thenComparing(r -> r.get("variantId") == null ? "" : str(r, "variantId"))
+                .thenComparing(r -> str(r, "locationId")));
+        for (Map<String, Object> r : inLockOrder) {
             BigDecimal change = dec(r, "quantityChange");
             BigDecimal qty = change.abs();
             if (qty.signum() == 0) {

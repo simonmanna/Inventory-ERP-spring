@@ -60,6 +60,12 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 **Cost accounting to production:** roadmap [PC-0 … PC-9](roadmap/costing-production-ready-plan.md) (proposed 2026-11-03; LC-0 is part of PC-0).
 
+**Stock engine hardening (`phase/inv-hardening`, V460; owner-approved deviations 2–9 in [inventory](spec/inventory.md#deviations)):**
+one quant lock order + lines posted in lock order (no deadlocks), lock conflicts → 409, negative-stock cost correction
+on every receipt, lot shortfall netting (open lots = max(0, on-hand)), strict `allowNegativeStock=false`, transit lines
+move their own lots/serials (`StockTransferLayer`), variant / serial / reservation / ATP guards — `StockConcurrencyIT`,
+`LockConflictMappingTest`.
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |
