@@ -71,7 +71,7 @@ public class ReportExportService {
     @Transactional(readOnly = true)
     public Export trialBalanceCsv(String asOf) {
         String org = TenantContext.organizationId();
-        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf) : Instant.now();
+        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf, AccountingDay.zone(jdbc)) : Instant.now();
         // Verbatim Nest SQL: the entry filter sits in the LEFT JOIN condition.
         List<List<Object>> rows = SqlRows.list(jdbc.sql("SELECT a.code, a.name, ac.key AS \"categoryKey\", ac.name AS \"categoryName\","
                         + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\"), 0)::text AS debit,"

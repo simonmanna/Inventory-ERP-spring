@@ -49,21 +49,24 @@ public class FxRevaluationController {
     @PostMapping("/preview")
     @RequirePermissions(Permissions.CURRENCY__READ)
     public List<RevaluationService.Line> preview(@Valid @RequestBody RevaluationRequest dto) {
-        return revaluation.preview(endOfDay(dto.asOf()));
+        return revaluation.preview(revaluation.endOfDay(dto.asOf()));
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.CURRENCY__UPDATE)
     public Map<String, Object> run(@Valid @RequestBody RevaluationRequest dto) {
-        RevaluationService.Result r = revaluation.run(endOfDay(dto.asOf()));
+        RevaluationService.Result r = revaluation.run(revaluation.endOfDay(dto.asOf()));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("revalued", r.revalued());
         out.put("totalGain", r.totalGain());
         return out;
     }
 
-    /** A bare date means the end of that day (balances of the whole day are revalued). */
+    /**
+     * A bare date means the end of that day, as an org-local wall-clock value (compared with date-like columns such as
+     * bank statement lines; ledger comparisons convert it, ADR-S070).
+     */
     static Instant endOfDay(String asOf) {
         if (asOf.length() == 10) {
             return LocalDate.parse(asOf).atTime(23, 59, 59).toInstant(ZoneOffset.UTC);

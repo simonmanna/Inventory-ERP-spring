@@ -81,7 +81,8 @@ public class TaxSettlementService {
         BigDecimal output = new BigDecimal((String) p.get("outputTax"));
         String entryId = null;
         if (input.signum() > 0) {
-            Map<String, Object> entry = posting.post(PostingRequest.of("GEN", to, "VAT settlement "
+            Map<String, Object> entry = posting.post(PostingRequest.of("GEN",
+                    AccountingDay.fromWallClock(to, AccountingDay.zone(jdbc)), "VAT settlement "
                     + FiscalPeriodControl.day(from) + " – " + FiscalPeriodControl.day(to), "tax_settlement",
                     FiscalPeriodControl.day(to), "tax_settlement:" + FiscalPeriodControl.day(from) + ":"
                     + FiscalPeriodControl.day(to), List.of(
@@ -111,13 +112,18 @@ public class TaxSettlementService {
                 + " \"periodTo\" DESC").param(org()));
     }
 
-    /** Net base (debit − credit) on {@code accountId} posted in the range, settlement entries excluded. */
+    /**
+     * Net base (debit − credit) on {@code accountId} posted in the range, settlement entries excluded. {@code from} and
+     * {@code to} are org-local wall-clock day bounds (ADR-S070).
+     */
     private BigDecimal movement(String accountId, Instant from, Instant to) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
         return jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
                         + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ?"
                         + " AND e.\"postingDate\" <= ? AND coalesce(e.\"sourceType\", '') <> 'tax_settlement'")
-                .params(org(), accountId, FiscalPeriodControl.ts(from), FiscalPeriodControl.ts(to))
+                .params(org(), accountId, FiscalPeriodControl.ts(AccountingDay.fromWallClock(from, zone)),
+                        FiscalPeriodControl.ts(AccountingDay.fromWallClock(to, zone)))
                 .query(BigDecimal.class).single();
     }
 

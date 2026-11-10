@@ -196,8 +196,7 @@ public class CostingSettingsService {
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
         }
-        List<Map<String, Object>> rows = dimensions.compliance(
-                java.sql.Timestamp.valueOf(f.atStartOfDay()), java.sql.Timestamp.valueOf(t.plusDays(1).atStartOfDay()));
+        List<Map<String, Object>> rows = dimensions.compliance(f, t);
         return Obj.of("from", f.toString(), "to", t.toString(), "enforcement", resolver.resolveString(
                 "costing.dimensionEnforcement", SettingContext.EMPTY), "missingBranch", rows);
     }

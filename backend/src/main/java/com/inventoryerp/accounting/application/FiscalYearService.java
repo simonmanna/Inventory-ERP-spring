@@ -77,6 +77,23 @@ public class FiscalYearService {
         return Timestamp.valueOf(d.atTime(23, 59, 59, 999_000_000));
     }
 
+    /** First instant of the org-local day {@code d}, for {@code postingDate} bounds (ADR-S070; {@link #ts} in UTC). */
+    private Timestamp from(LocalDate d) {
+        return FiscalPeriodControl.ts(AccountingDay.start(d, AccountingDay.zone(jdbc)));
+    }
+
+    /** Last instant of the org-local day {@code d}, for {@code postingDate} bounds ({@link #endTs} in UTC). */
+    private Timestamp through(LocalDate d) {
+        return FiscalPeriodControl.ts(AccountingDay.endInclusive(d, AccountingDay.zone(jdbc)));
+    }
+
+    /** {@code e."postingDate"} inside period {@code p} (its stored bounds are org-local wall clock). */
+    private String inPeriod() {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        return " AND e.\"postingDate\" >= " + AccountingDay.sqlFromWallClock("p.\"startDate\"", zone)
+                + " AND e.\"postingDate\" <= " + AccountingDay.sqlFromWallClock("p.\"endDate\"", zone) + ")";
+    }
+
     private Year year(String id, boolean forUpdate) {
         return jdbc.sql("SELECT id, name, \"startDate\", \"endDate\", periodicity, status, \"lockedPeriods\""
                         + " FROM \"FiscalYear\" WHERE id = ? AND \"organizationId\" = ?" + (forUpdate ? " FOR UPDATE" : ""))
@@ -232,7 +249,7 @@ public class FiscalYearService {
                         + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ?"
                         + (withClosing ? "" : " AND COALESCE(e.\"postingKey\", '') NOT LIKE 'period_close:%'")
                         + " GROUP BY l.\"accountId\"")
-                .params(org(), ts(y.start()), endTs(y.end()))
+                .params(org(), from(y.start()), through(y.end()))
                 .query((rs, n) -> net.put(rs.getString(1), rs.getBigDecimal(2)))
                 .list();
         Map<String, AccountMeta> meta = accounts.meta(net.keySet());
@@ -245,7 +262,7 @@ public class FiscalYearService {
         return count("SELECT count(*) FROM \"FiscalPeriod\" p WHERE p.\"organizationId\" = ? AND p.\"fiscalYearId\" = ?"
                 + " AND p.\"deletedAt\" IS NULL AND p.status::text = 'open' AND EXISTS (SELECT 1 FROM \"JournalEntry\" e"
                 + " WHERE e.\"organizationId\" = p.\"organizationId\" AND e.status::text IN ('posted', 'reversed')"
-                + " AND e.\"postingDate\" >= p.\"startDate\" AND e.\"postingDate\" <= p.\"endDate\")", org(), y.id());
+                + inPeriod(), org(), y.id());
     }
 
     private static Map<String, Object> check(String key, String label, boolean blocking, long found) {
@@ -270,13 +287,13 @@ public class FiscalYearService {
         BigDecimal[] totals = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\"), 0), COALESCE(SUM(l.\"baseCredit\"), 0) FROM \"JournalLine\""
                         + " l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ?")
-                .params(org, ts(y.start()), endTs(y.end()))
+                .params(org, from(y.start()), through(y.end()))
                 .query((rs, n) -> new BigDecimal[] {rs.getBigDecimal(1), rs.getBigDecimal(2)})
                 .single();
         checks.add(check("trial_balance", "Trial balance balances", true, totals[0].compareTo(totals[1]) == 0 ? 0 : 1));
         checks.add(check("draft_journals", "No draft journal entries in the year", true,
                 count("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
-                        + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, ts(y.start()), endTs(y.end()))));
+                        + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, from(y.start()), through(y.end()))));
         checks.add(check("retained_earnings", "Retained earnings account mapped", true,
                 accounts.byMappingOptional("retained_earnings") == null ? 1 : 0));
         checks.add(check("unmatched_bank_lines", "No unmatched bank statement lines", false,
@@ -344,8 +361,8 @@ public class FiscalYearService {
         int emptyClosed = jdbc.sql("UPDATE \"FiscalPeriod\" p SET status = 'closed', \"closedAt\" = now(), \"closedBy\" = ?,"
                         + " \"updatedAt\" = now() WHERE p.\"organizationId\" = ? AND p.\"fiscalYearId\" = ? AND p.\"deletedAt\""
                         + " IS NULL AND p.status::text = 'open' AND NOT EXISTS (SELECT 1 FROM \"JournalEntry\" e WHERE"
-                        + " e.\"organizationId\" = p.\"organizationId\" AND e.status::text IN ('posted', 'reversed') AND"
-                        + " e.\"postingDate\" >= p.\"startDate\" AND e.\"postingDate\" <= p.\"endDate\")")
+                        + " e.\"organizationId\" = p.\"organizationId\" AND e.status::text IN ('posted', 'reversed')"
+                        + inPeriod())
                 .params(TenantContext.userId(), org(), y.id()).update();
         Map<String, Object> list = checklist(y);
         List<String> failed = new ArrayList<>();
@@ -400,7 +417,7 @@ public class FiscalYearService {
         jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.\"baseDebit\"), 0), COALESCE(SUM(l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                         + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ? GROUP BY l.\"accountId\"")
-                .params(org(), endTs(y.end()))
+                .params(org(), through(y.end()))
                 .query((rs, n) -> sums.put(rs.getString(1), new BigDecimal[] {rs.getBigDecimal(2), rs.getBigDecimal(3)}))
                 .list();
         Map<String, AccountMeta> meta = accounts.meta(sums.keySet());

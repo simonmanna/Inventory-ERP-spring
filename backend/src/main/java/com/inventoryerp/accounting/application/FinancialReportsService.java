@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -54,6 +55,11 @@ public class FinancialReportsService {
         return TenantContext.organizationId();
     }
 
+    /** The organisation's zone: request dates are org-local days (ADR-S070). */
+    private ZoneId zone() {
+        return AccountingDay.zone(jdbc);
+    }
+
     /** Latest snapshot ≤ asOf in {@code table}, served only when no balance-affecting line posted since. */
     private Instant findSnapshot(String table, boolean versioned, Instant asOf) {
         Instant snap = jdbc.sql("SELECT \"asOf\" FROM \"" + table + "\" WHERE \"organizationId\" = ? AND \"asOf\" <= ?"
@@ -83,7 +89,7 @@ public class FinancialReportsService {
     public Map<String, Object> trialBalance(String from, String to, String view) {
         boolean preClosing = "pre_closing".equals(view);
         boolean ranged = from != null && !from.isEmpty();
-        Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.date(to) : Instant.now();
+        Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.date(to, zone()) : Instant.now();
         Instant snap = preClosing || ranged ? null : findSnapshot("ReportTrialBalanceSnapshot", true, asOf);
         if (snap != null) {
             BigDecimal td = BigDecimal.ZERO;
@@ -102,7 +108,7 @@ public class FinancialReportsService {
             return body("rows", rows, "totals", body("debit", plain(td), "credit", plain(tc)),
                     "balanced", td.subtract(tc).abs().compareTo(TB_EPSILON) <= 0, "source", "snapshot", "asOf", snap);
         }
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null,
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.date(to, zone()), null,
                 preClosing);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal td = BigDecimal.ZERO;
@@ -131,8 +137,9 @@ public class FinancialReportsService {
 
     private String rangeSql(Map<String, Object> params, String from, String to) {
         StringBuilder sql = new StringBuilder();
-        Instant f = LedgerQueries.date(from);
-        Instant t = LedgerQueries.date(to);
+        ZoneId zone = zone();
+        Instant f = LedgerQueries.date(from, zone);
+        Instant t = LedgerQueries.date(to, zone);
         if (f != null) {
             sql.append(" AND e.\"postingDate\" >= :from");
             params.put("from", FiscalPeriodControl.ts(f));
@@ -203,7 +210,7 @@ public class FinancialReportsService {
     public Map<String, Object> pnl(String from, String to) {
         // ACC-1 (B1, B10): always from the ledger. The cumulative snapshot cannot answer a date range and carries no
         // other income / expense; closing entries are left out so a closed period still reports its result.
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from), LedgerQueries.date(to), null,
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.date(to, zone()), null,
                 true);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
@@ -278,7 +285,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheet(String asOf) {
-        Instant requested = LedgerQueries.date(asOf);
+        Instant requested = LedgerQueries.date(asOf, zone());
         if (requested == null) {
             throw new IllegalArgumentException("Invalid Date: " + asOf);
         }
@@ -301,7 +308,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheetDetailed(String asOf) {
-        Instant requested = LedgerQueries.date(asOf);
+        Instant requested = LedgerQueries.date(asOf, zone());
         if (requested == null) {
             throw new IllegalArgumentException("Invalid Date: " + asOf);
         }
@@ -353,8 +360,9 @@ public class FinancialReportsService {
     /** Direct-method cash flow: cash moved attributed by the counter account's section. */
     @Transactional(readOnly = true)
     public Map<String, Object> cashFlow(String fromRaw, String toRaw) {
-        Instant from = parseDate(fromRaw, "from", false);
-        Instant to = parseDate(toRaw, "to", true);
+        ZoneId zone = zone();
+        Instant from = parseDate(fromRaw, "from", false, zone);
+        Instant to = parseDate(toRaw, "to", true, zone);
         if (from != null && to != null && from.isAfter(to)) {
             throw ApiException.badRequest("`from` must be on or before `to`");
         }
@@ -430,16 +438,17 @@ public class FinancialReportsService {
         return spec(sql.toString(), params).query(BigDecimal.class).single();
     }
 
-    private static Instant parseDate(String value, String label, boolean endOfDay) {
+    /** A bare date is an org-local day (its first instant, or its last with {@code endOfDay}); ISO taken as-is. */
+    private static Instant parseDate(String value, String label, boolean endOfDay, ZoneId zone) {
         if (value == null || value.isEmpty()) {
             return null;
         }
-        Instant d = OrgDates.parse(value.trim());
+        Instant d = AccountingDay.parse(value, zone);
         if (d == null) {
             throw ApiException.badRequest("Invalid `" + label + "` date: " + value);
         }
-        if (endOfDay && value.trim().matches("^\\d{4}-\\d{2}-\\d{2}$")) {
-            d = d.plusMillis(86_400_000L - 1);
+        if (endOfDay && AccountingDay.isDateOnly(value)) {
+            d = AccountingDay.endInclusive(java.time.LocalDate.parse(value.trim()), zone);
         }
         return d;
     }

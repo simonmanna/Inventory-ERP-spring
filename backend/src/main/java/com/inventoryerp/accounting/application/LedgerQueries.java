@@ -3,6 +3,7 @@ package com.inventoryerp.accounting.application;
 import com.inventoryerp.kernel.crud.SqlRows;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -27,6 +28,21 @@ public class LedgerQueries {
             return null;
         }
         Instant d = OrgDates.parse(value.trim());
+        if (d == null) {
+            throw new IllegalArgumentException("Invalid Date: " + value);
+        }
+        return d;
+    }
+
+    /**
+     * As {@link #date(String)}, a bare {@code YYYY-MM-DD} being the first instant of that day in the organisation's
+     * zone (ADR-S070: the accounting day is the org-local day; identical to {@link #date(String)} for UTC).
+     */
+    public static Instant date(String value, ZoneId zone) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        Instant d = AccountingDay.parse(value, zone);
         if (d == null) {
             throw new IllegalArgumentException("Invalid Date: " + value);
         }

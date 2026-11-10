@@ -1,6 +1,7 @@
 package com.inventoryerp.invoicing.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.LedgerQueries;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -48,8 +49,8 @@ public class TaxReportService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> summary(String fromRaw, String toRaw, String branchId) {
-        Instant from = LedgerQueries.date(fromRaw);
-        Instant to = LedgerQueries.date(toRaw);
+        Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
         Map<String, Bucket> output = new LinkedHashMap<>();
         Map<String, Bucket> input = new LinkedHashMap<>();
 

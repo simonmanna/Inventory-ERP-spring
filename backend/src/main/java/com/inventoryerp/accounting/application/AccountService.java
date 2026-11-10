@@ -314,7 +314,10 @@ public class AccountService extends BaseCrudService<Account> {
 
         Map<String, BigDecimal[]> balances = new HashMap<>();
         if (includeBalances) {
-            Instant at = asOf == null || asOf.isEmpty() ? Instant.now() : EntityPatch.toInstant(asOf);
+            // A bare date is the start of that org-local day (ADR-S070).
+            Instant at = asOf == null || asOf.isEmpty() ? Instant.now()
+                    : asOf.length() <= 10 ? AccountingDay.start(java.time.LocalDate.parse(asOf), AccountingDay.zone(jdbc))
+                    : EntityPatch.toInstant(asOf);
             jdbc.sql("SELECT l.\"accountId\", sum(l.\"baseDebit\"), sum(l.\"baseCredit\") FROM \"JournalLine\" l"
                             + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
                             + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ? GROUP BY l.\"accountId\"")

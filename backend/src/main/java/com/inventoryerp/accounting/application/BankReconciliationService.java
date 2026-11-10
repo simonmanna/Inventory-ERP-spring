@@ -381,7 +381,8 @@ public class BankReconciliationService {
         BigDecimal ledger = jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                         + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                         + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ?")
-                .params(org, bankAccountId, FiscalPeriodControl.ts(asOf)).query(BigDecimal.class).single();
+                .params(org, bankAccountId, FiscalPeriodControl.ts(AccountingDay.fromWallClock(asOf, AccountingDay.zone(jdbc))))
+                .query(BigDecimal.class).single();
         BigDecimal outstanding = jdbc.sql("SELECT coalesce(sum(CASE WHEN p.direction::text = 'outbound' THEN -p.amount"
                         + " ELSE p.amount END), 0) FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
                         + " AND p.status = 'posted' AND p.\"paymentDate\" <= ? AND NOT EXISTS (SELECT 1 FROM"

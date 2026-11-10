@@ -3,6 +3,7 @@ package com.inventoryerp.intercompany.application;
 import com.inventoryerp.accounting.application.AccountClassification;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.AccountResolverService.AccountMeta;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.accounting.application.LedgerQueries;
 import com.inventoryerp.intercompany.application.CompanyGroupService.Group;
@@ -105,8 +106,8 @@ public class IntercompanyConsolidationService {
             throw ApiException.badRequest("statement must be one of the following values: pl, tb");
         }
         Group g = groups.requireParent();
-        Instant from = LedgerQueries.date(fromRaw);
-        Instant to = LedgerQueries.date(toRaw);
+        Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
         Instant asOf = to == null ? Instant.now() : to;
 
         Map<String, BigDecimal> rates = new LinkedHashMap<>();
@@ -234,7 +235,7 @@ public class IntercompanyConsolidationService {
     /** {@code GET /intercompany/reconciliation}: each pair's positions with each other in the group currency. */
     public Map<String, Object> reconciliation(String asOfRaw) {
         Group g = groups.requireParent();
-        Instant asOfDate = LedgerQueries.date(asOfRaw);
+        Instant asOfDate = LedgerQueries.date(asOfRaw, AccountingDay.zone(jdbc));
         Instant asOf = asOfDate == null ? Instant.now() : asOfDate;
         Map<String, BigDecimal> rates = new HashMap<>();
         g.members().forEach(m -> rates.put(m.organizationId(), currencies.getRate(m.currencyCode(), g.currencyCode(),

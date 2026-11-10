@@ -56,12 +56,18 @@ public class PeriodCloseService {
         return period(periodId, organizationId);
     }
 
+    /**
+     * The period with its bounds as real instants: stored bounds are org-local wall clock (ADR-S070), so every window
+     * below (ledger, shifts, stock jobs, closing date) follows the organisation's calendar. Identity for UTC.
+     */
     private Period period(String periodId, String organizationId) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc, organizationId);
         Period p = jdbc.sql("SELECT id, name, status::text AS status, \"startDate\", \"endDate\", \"closedAt\""
                         + " FROM \"FiscalPeriod\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                 .params(periodId, organizationId)
                 .query((rs, n) -> new Period(rs.getString("id"), rs.getString("name"), rs.getString("status"),
-                        rs.getTimestamp("startDate"), rs.getTimestamp("endDate"), rs.getTimestamp("closedAt")))
+                        AccountingDay.fromWallClock(rs.getTimestamp("startDate"), zone),
+                        AccountingDay.fromWallClock(rs.getTimestamp("endDate"), zone), rs.getTimestamp("closedAt")))
                 .optional().orElse(null);
         if (p == null) {
             throw ApiException.notFound("Fiscal period not found");

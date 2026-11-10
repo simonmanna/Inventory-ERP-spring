@@ -14,8 +14,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,6 +69,17 @@ public class RevaluationService {
             BigDecimal carryingBase, BigDecimal rate, BigDecimal revaluedBase, BigDecimal adjustment,
             BigDecimal alreadyBooked, BigDecimal toPost) {}
 
+    /**
+     * The revaluation instant for a request {@code asOf}: a bare date is the end of that org-local day (ADR-S070),
+     * a full ISO timestamp is taken as-is.
+     */
+    public Instant endOfDay(String asOf) {
+        if (asOf.length() == 10) {
+            return LocalDate.parse(asOf).atTime(23, 59, 59).atZone(AccountingDay.zone(jdbc)).toInstant();
+        }
+        return com.inventoryerp.kernel.crud.EntityPatch.toInstant(asOf);
+    }
+
     /** The revaluation as of {@code asOf}, without posting anything. */
     @Transactional(readOnly = true)
     public List<Line> preview(Instant asOf) {
@@ -81,9 +92,10 @@ public class RevaluationService {
         String organizationId = TenantContext.organizationId();
         String fxGainAcct = determination.mapped("fx_gain");
         String fxLossAcct = determination.mapped("fx_loss");
-        String periodId = periodId(organizationId, asOf);
-        Instant reversalDate = LocalDate.ofInstant(asOf, ZoneOffset.UTC).plusDays(1).atStartOfDay(ZoneOffset.UTC)
-                .toInstant();
+        ZoneId zone = AccountingDay.zone(jdbc, organizationId);
+        String periodId = periodId(organizationId, AccountingDay.toWallClock(asOf, zone));
+        // Date-only reversal on the next accounting day (PostingService places it on that org-local day).
+        Instant reversalDate = AccountingDay.of(asOf, zone).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
         int revalued = 0;
         BigDecimal totalGain = BigDecimal.ZERO;
         for (Line l : compute(organizationId, asOf)) {
@@ -190,12 +202,13 @@ public class RevaluationService {
                 .params(org, SOURCE, sourceId, accountId).query(BigDecimal.class).single();
     }
 
-    private static String sourceId(String accountId, String ccy, Instant asOf) {
+    private String sourceId(String accountId, String ccy, Instant asOf) {
         return accountId + ":" + ccy + ":" + day(asOf);
     }
 
-    private static String day(Instant asOf) {
-        return asOf.truncatedTo(ChronoUnit.DAYS).toString().substring(0, 10);
+    /** The accounting (org-local) day of {@code asOf}; the UTC day for a UTC organisation. */
+    private String day(Instant asOf) {
+        return AccountingDay.of(asOf, AccountingDay.zone(jdbc)).toString();
     }
 
     private String periodId(String org, Instant asOf) {

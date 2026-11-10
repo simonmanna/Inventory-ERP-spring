@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.fleet.application.FuelCommands.DipInput;
 import com.inventoryerp.fleet.application.FuelCommands.ReconcileInput;
 import com.inventoryerp.fleet.application.FuelCommands.TankInput;
@@ -459,7 +460,8 @@ public class FleetFuelTankService {
                     + FuelEfficiencyPolicy.plain(level(t)) + " L, variance " + FuelEfficiencyPolicy.plain(variance)
                     + " L)";
         }
-        Instant now = Instant.now();
+        // Lock date and period bounds are org-local wall clock (ADR-S070).
+        Instant now = AccountingDay.toWallClock(Instant.now(), AccountingDay.zone(db.jdbc()));
         Instant lock = db.jdbc().sql("SELECT \"booksLockDate\" FROM \"Organization\" WHERE id = ?").param(FleetDb.org())
                 .query(java.sql.Timestamp.class).optional().map(ts -> ts.toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .orElse(null);

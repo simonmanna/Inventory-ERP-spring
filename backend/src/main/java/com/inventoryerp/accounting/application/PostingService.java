@@ -18,6 +18,7 @@ import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -97,7 +98,8 @@ public class PostingService {
             }
         }
         Journal journal = journal(request.journalCode());
-        Instant date = request.date();
+        ZoneId zone = AccountingDay.zone(jdbc, organizationId);
+        Instant date = AccountingDay.normalize(request.date(), zone);
         fiscalPeriod.assertOpen(date);
         CurrencyService.Resolution fx = resolution(request, date);
         BigDecimal rate = fx.rate();
@@ -117,7 +119,7 @@ public class PostingService {
             costingDimensions.check(lines, request.branchId(), request.sourceType(), date);
         }
 
-        int year = date.atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(date, zone);
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
         Map<String, String> entryDims = normalizeDimensions(request.dimensions());
@@ -170,10 +172,11 @@ public class PostingService {
         if (original.getStatus() != JournalEntryStatus.POSTED) {
             throw ApiException.badRequest("Only posted entries can be reversed");
         }
-        Instant when = date != null ? date : reversalDate(original.getPostingDate());
+        ZoneId zone = AccountingDay.zone(jdbc, organizationId);
+        Instant when = date != null ? AccountingDay.normalize(date, zone) : reversalDate(original.getPostingDate());
         fiscalPeriod.assertOpen(when);
         Journal journal = em.find(Journal.class, original.getJournalId());
-        int year = when.atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(when, zone);
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
 
@@ -259,7 +262,8 @@ public class PostingService {
                 .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);
-        if (settled == null || date.isAfter(settled)) {
+        ZoneId zone = AccountingDay.zone(jdbc, org);
+        if (settled == null || date.isAfter(AccountingDay.fromWallClock(settled, zone))) {
             return;
         }
         java.util.Set<String> taxAccounts = new java.util.HashSet<>(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\""
@@ -269,7 +273,7 @@ public class PostingService {
         for (NormalizedLine l : lines) {
             if (taxAccounts.contains(l.accountId())) {
                 throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
-                        + "; tax cannot be posted on " + FiscalPeriodControl.day(date));
+                        + "; tax cannot be posted on " + FiscalPeriodControl.day(date, zone));
             }
         }
     }
@@ -282,7 +286,7 @@ public class PostingService {
         }
         String organizationId = TenantContext.organizationId();
         Journal journal = journal(request.journalCode());
-        Instant date = request.date();
+        Instant date = AccountingDay.normalize(request.date(), AccountingDay.zone(jdbc, organizationId));
         fiscalPeriod.assertOpen(date);
         BigDecimal rate = resolution(request, date).rate();
         List<NormalizedLine> lines = new ArrayList<>(PostingMath.normalizeLines(request.lines(), rate));
@@ -338,7 +342,7 @@ public class PostingService {
         }
         fiscalPeriod.assertOpen(draft.getPostingDate());
         Journal journal = em.find(Journal.class, draft.getJournalId());
-        int year = draft.getPostingDate().atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(draft.getPostingDate(), AccountingDay.zone(jdbc, organizationId));
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
         draft.setEntryNumber(entryNumber);

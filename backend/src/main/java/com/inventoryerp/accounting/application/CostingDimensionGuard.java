@@ -66,13 +66,19 @@ public class CostingDimensionGuard {
         if (org == null || date == null) {
             return;
         }
-        java.sql.Date day = java.sql.Date.valueOf(date.atZone(java.time.ZoneOffset.UTC).toLocalDate());
+        java.sql.Date day = java.sql.Date.valueOf(AccountingDay.of(date, AccountingDay.zone(jdbc, org)));
         jdbc.sql("SELECT \"periodFrom\", \"periodTo\" FROM \"CostingPeriodLock\" WHERE \"organizationId\" = ? AND"
                 + " status = 'locked' AND \"periodFrom\" <= ? AND \"periodTo\" >= ? LIMIT 1").params(org, day, day)
                 .query((rs, n) -> rs.getString(1) + " – " + rs.getString(2)).optional().ifPresent(p -> {
                     throw ApiException.badRequest("The costing period " + p + " is locked; reopen it before posting"
                             + " costing entries into it");
                 });
+    }
+
+    /** As {@link #compliance(Timestamp, Timestamp)} for the org-local days {@code from} … {@code to} (ADR-S070). */
+    public List<Map<String, Object>> compliance(java.time.LocalDate from, java.time.LocalDate to) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        return compliance(AccountingDay.startTs(from, zone), AccountingDay.endExclusiveTs(to, zone));
     }
 
     /** Costing journal lines without a branch in a period, grouped by source type. */

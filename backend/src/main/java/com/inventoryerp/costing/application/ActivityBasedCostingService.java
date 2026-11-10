@@ -1,5 +1,6 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.costing.application.AbcCalculator.Activity;
 import com.inventoryerp.costing.application.AbcCalculator.Assignment;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -183,8 +184,8 @@ public class ActivityBasedCostingService {
         if (acts.isEmpty()) {
             throw ApiException.badRequest("Define at least one active " + object + " activity first");
         }
-        Timestamp start = Timestamp.valueOf(from.atStartOfDay());
-        Timestamp end = Timestamp.valueOf(to.plusDays(1).atStartOfDay());
+        Timestamp start = AccountingDay.startTs(from, AccountingDay.zone(jdbc));
+        Timestamp end = AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc));
         List<Assignment> assignments = new ArrayList<>();
         Map<String, Map<String, Object>> activityRows = new LinkedHashMap<>();
         BigDecimal poolTotal = BigDecimal.ZERO;
