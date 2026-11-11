@@ -5,6 +5,8 @@ import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.ProductVariantService;
+import com.inventoryerp.core.application.ProductSizingService;
+import com.inventoryerp.core.application.ProductSizingService.Sizing;
 import static com.inventoryerp.kernel.common.Money.ZERO;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
@@ -40,6 +42,14 @@ public class DocumentBuilderService {
 
     private com.inventoryerp.core.application.SaleableProducts saleable;
 
+    private ProductSizingService sizing;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
+
     /** Sell at any stage (ADR-S060): only the product's own switch stops a sale. */
     @org.springframework.beans.factory.annotation.Autowired
     void setSaleable(com.inventoryerp.core.application.SaleableProducts saleable) {
@@ -50,12 +60,30 @@ public class DocumentBuilderService {
     public record LineInput(String productId, String menuItemId, String variantId, String variantName,
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
-            String lineType, Boolean taxInclusive, String uomId) {
+            String lineType, Boolean taxInclusive, String uomId, Sizing sizing) {
+
+        /** Line without a size (ADR-S066: {@code sizing} null = plain quantity). */
+        public LineInput(String productId, String menuItemId, String variantId, String variantName, String accountId,
+                String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+                String discountType, BigDecimal discountAmount, String discountReason, String discountSource,
+                String taxId, String lineType, Boolean taxInclusive, String uomId) {
+            this(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice,
+                    discountPercent, discountType, discountAmount, discountReason, discountSource, taxId, lineType,
+                    taxInclusive, uomId, null);
+        }
 
         /** The same line with another discount. */
         public LineInput withDiscountPercent(BigDecimal percent) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice, percent,
-                    discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive, uomId);
+                    discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive, uomId,
+                    sizing);
+        }
+
+        /** The same line sold by size (ADR-S066): the size decides the quantity. */
+        public LineInput withSizing(Sizing size) {
+            return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
+                    unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
+                    lineType, taxInclusive, uomId, size);
         }
 
         /** Line in the role's default unit (ADR-S003: {@code uomId} picks another unit of the product). */
@@ -93,7 +121,7 @@ public class DocumentBuilderService {
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
             String lineType, BigDecimal subtotal, BigDecimal taxAmount, BigDecimal total, int lineNumber,
-            boolean taxInclusive, String uomId, BigDecimal uomFactor) {
+            boolean taxInclusive, String uomId, BigDecimal uomFactor, Sizing sizing) {
 
         /** Shape consumed by {@link #groupForPosting}. */
         public Map<String, Object> asRow() {
@@ -284,7 +312,10 @@ public class DocumentBuilderService {
             }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
                     : defaultPrice != null ? defaultPrice : ZERO;
-            BigDecimal quantity = meta ? ZERO : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]].
+            Sizing size = meta || product == null || sizing == null ? null : sizing.resolve(l.productId(), l.sizing());
+            BigDecimal quantity = meta ? ZERO : size != null ? size.quantity()
+                    : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
             BigDecimal gross = quantity.multiply(unitPrice);
             String discType = l.discountType() != null ? l.discountType() : "percentage";
             BigDecimal effectiveDiscount = "fixed_amount".equals(discType) && l.discountAmount() != null
@@ -318,7 +349,7 @@ public class DocumentBuilderService {
                     variantId == null ? l.variantName() : variantName, l.accountId(),
                     description, quantity, unitPrice, effectivePct, discType, effectiveDiscount, l.discountReason(),
                     l.discountSource() != null ? l.discountSource() : "manual", taxId, lineType, result.net(),
-                    result.taxTotal(), result.gross(), i, taxInclusive, unit.uomId(), unit.factor()));
+                    result.taxTotal(), result.gross(), i, taxInclusive, unit.uomId(), unit.factor(), size));
         }
         BigDecimal subtotal = Money.sum(prepared.stream().map(PreparedLine::subtotal).toList());
         BigDecimal taxAmount = Money.sum(prepared.stream().map(PreparedLine::taxAmount).toList());
@@ -392,13 +423,15 @@ public class DocumentBuilderService {
             jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", \"productId\", \"menuItemId\","
                             + " \"accountId\", description, quantity, \"unitPrice\", \"discountPercent\", \"taxId\", subtotal,"
                             + " \"taxAmount\", total, \"lineNumber\", \"lineType\", \"taxInclusive\", \"uomId\", \"uomFactor\","
-                            + " \"variantId\", \"variantName\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
-                            + " ?, ?)")
+                            + " \"variantId\", \"variantName\", pieces, length, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .params(UUID.randomUUID().toString(), org(), documentId, p.productId(),
                             withExtras ? p.menuItemId() : null, p.accountId(), p.description(), p.quantity(),
                             p.unitPrice(), p.discountPercent(), p.taxId(), p.subtotal(), p.taxAmount(), p.total(),
                             p.lineNumber(), withExtras ? p.lineType() : "product", withExtras && p.taxInclusive(),
-                            p.uomId(), p.uomFactor(), variant, variant == null ? null : p.variantName())
+                            p.uomId(), p.uomFactor(), variant, variant == null ? null : p.variantName(),
+                            p.sizing() == null ? null : p.sizing().pieces(), p.sizing() == null ? null : p.sizing().length(),
+                            p.sizing() == null ? null : p.sizing().width(), p.sizing() == null ? null : p.sizing().height())
                     .update();
         }
     }
@@ -523,6 +556,12 @@ public class DocumentBuilderService {
             if (row.get("variantId") != null) {
                 line.put("variantId", row.get("variantId"));
                 line.put("variantName", row.get("variantName"));
+            }
+            // ADR-S066: size keys only on lines sold by size.
+            if (row.get("pieces") != null) {
+                for (String k : List.of("pieces", "length", "width", "height")) {
+                    line.put(k, row.get(k) == null ? null : com.inventoryerp.kernel.common.JsNumbers.js((BigDecimal) row.get(k)));
+                }
             }
             out.add(line);
         }

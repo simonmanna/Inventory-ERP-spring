@@ -7,6 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useProductVariantOptions, type VariantOption } from './variants-api';
 
@@ -43,6 +44,7 @@ export function VariantSelect({ productId, value, onChange, disabled, className,
           <SelectItem key={o.id} value={o.id}>
             {o.name}
             {o.sku ? <span className="ml-1 text-muted-foreground">· {o.sku}</span> : null}
+            <span className="ml-1 text-muted-foreground tabular-nums">· {money(o.salesPrice)}</span>
           </SelectItem>
         ))}
       </SelectContent>

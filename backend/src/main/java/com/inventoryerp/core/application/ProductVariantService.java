@@ -535,6 +535,7 @@ public class ProductVariantService {
         return SqlRows.list(jdbc.sql("SELECT v.id, v.\"productId\", v.name, v.sku, v.barcode, v.attributes,"
                 + " v.\"combinationKey\", v.\"priceExtra\", v.\"salesPrice\" AS \"fixedPrice\", v.\"costPrice\" AS"
                 + " \"fixedCost\", " + PRICE_SQL + " AS \"salesPrice\", " + COST_SQL + " AS \"costPrice\", v.\"isActive\","
+                + " v.length, v.width, v.height, v.description,"
                 + " COALESCE((SELECT sum(s.quantity) FROM \"StockItem\" s WHERE s.\"variantId\" = v.id AND"
                 + " s.\"organizationId\" = v.\"organizationId\"), 0) AS \"onHand\", COALESCE((SELECT sum(s.quantity *"
                 + " s.\"runningAverageCost\") FROM \"StockItem\" s WHERE s.\"variantId\" = v.id AND s.\"organizationId\" ="
@@ -567,11 +568,14 @@ public class ProductVariantService {
         int limit = Math.min(500, Math.max(1, intOf(q.get("limit"), 200)));
         return SqlRows.list(jdbc.sql("SELECT v.id, v.\"productId\", p.code AS \"productCode\", p.name AS \"productName\","
                 + " v.name, p.name || ' (' || v.name || ')' AS \"displayName\", v.sku, v.barcode, " + PRICE_SQL
-                + " AS \"salesPrice\", " + COST_SQL + " AS \"costPrice\" FROM \"ProductVariant\" v JOIN \"Product\" p ON"
+                + " AS \"salesPrice\", " + COST_SQL + " AS \"costPrice\", v.length, v.width, v.height, v.description FROM \"ProductVariant\" v JOIN \"Product\" p ON"
                 + " p.id = v.\"productId\" WHERE " + where + " ORDER BY p.name, v.name LIMIT " + limit).params(params));
     }
 
-    /** Edit a variant: SKU, barcode, fixed sales price / cost (null clears = computed), active. */
+    /**
+     * Edit a variant: SKU, barcode, fixed sales price / cost (null clears = computed), active, and its details
+     * (ADR-S066): standard length / width / height (sizing unit of the product) and sales description.
+     */
     @Transactional
     public Map<String, Object> updateVariant(String productId, String variantId, Map<String, Object> dto) {
         product(productId);
@@ -600,14 +604,31 @@ public class ProductVariantService {
         }
         boolean active = dto.containsKey("isActive") ? Boolean.TRUE.equals(dto.get("isActive"))
                 : Boolean.TRUE.equals(v.get("isActive"));
+        BigDecimal length = size(dto, v, "length");
+        BigDecimal width = size(dto, v, "width");
+        BigDecimal height = size(dto, v, "height");
+        String description = dto.containsKey("description") ? (blank(dto.get("description")) ? null
+                : str(dto.get("description")).trim()) : str(v.get("description"));
         jdbc.sql("UPDATE \"ProductVariant\" SET sku = ?, barcode = ?, \"salesPrice\" = ?, \"costPrice\" = ?,"
-                + " \"isActive\" = ?, \"autoArchived\" = false, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(sku, barcode,
-                        price, cost, active, TenantContext.userId(), variantId).update();
+                + " \"isActive\" = ?, length = ?, width = ?, height = ?, description = ?, \"autoArchived\" = false,"
+                + " \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(sku, barcode, price, cost, active, length, width, height, description, TenantContext.userId(),
+                        variantId).update();
         Map<String, Object> out = variants(productId, true).stream().filter(r -> variantId.equals(r.get("id")))
                 .findFirst().orElseThrow();
         audit.recordInTx(AuditInput.of("ProductVariant", variantId, "update", v, out));
         return out;
+    }
+
+    private static BigDecimal size(Map<String, Object> dto, Map<String, Object> v, String key) {
+        if (!dto.containsKey(key)) {
+            return (BigDecimal) v.get(key);
+        }
+        BigDecimal d = decOrNull(dto.get(key));
+        if (d != null && d.signum() <= 0) {
+            throw ApiException.badRequest(key + " must be greater than 0");
+        }
+        return d;
     }
 
     // ─────────────────────────────────────────────────────────── cross-module

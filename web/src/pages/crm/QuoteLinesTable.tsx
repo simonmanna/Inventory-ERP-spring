@@ -8,8 +8,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { UnitSelect } from '@/components/unit-select';
 import { VariantSelect } from '@/features/products/variant-select';
+import { LineSizeFields, hasSize, useProductSizing, type LineSize } from '@/features/products/sizing';
+import type { VariantOption } from '@/features/products/variants-api';
 import { unitFactor } from '@/features/products/units';
-import type { ProductOption, QuoteLine } from '@/features/crm/suite-api';
+import type { ProductOption, QuoteLine as ApiQuoteLine } from '@/features/crm/suite-api';
+
+/** A quotation line with its typed size (ADR-S066: sold by length / area / volume). */
+export type QuoteLine = ApiQuoteLine & { size?: LineSize };
 import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
@@ -49,6 +54,27 @@ interface Props {
   onMove: (from: number, to: number) => void;
   onAdd: (kind: 'line' | 'section' | 'note' | 'charge') => void;
   onCatalogAdd: (productId: string, delta: number) => void;
+}
+
+/** Picking a variant: its price (the server reprices on save) and its sales description when the line has none of its own. */
+function variantPatch(l: QuoteLine, variantId: string | null, opt: VariantOption | null): Partial<QuoteLine> {
+  if (!opt) return { variantId };
+  const own = l.description && l.description !== l.productName && !l.description.startsWith(`${opt.productName} (`)
+    && l.description !== opt.productName;
+  return {
+    variantId, ...(l.priceSource !== 'manual' ? { unitPrice: Number(opt.salesPrice) } : {}),
+    ...(!own ? { description: opt.description || opt.displayName } : {}),
+  };
+}
+
+/** Quantity input; derived (read-only) while the product is sold by size and the size is typed. */
+function QuoteQtyInput({ line, className, onChange, onBlur }: {
+  line: QuoteLine; className?: string; onChange: (q: number) => void; onBlur: () => void;
+}) {
+  const { data: sizing } = useProductSizing(line.productId);
+  const derived = !!sizing?.sizingMode && hasSize(line.size);
+  return <Input type="number" min={0} step="any" readOnly={derived} title={derived ? tx('Computed from the size') : undefined}
+    className={cn(className, derived && 'bg-muted/50')} value={line.quantity} onChange={(e) => onChange(Number(e.target.value))} onBlur={onBlur} />;
 }
 
 /**
@@ -97,7 +123,9 @@ export function QuoteLinesTable(p: Props) {
       {editable
         ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => p.onProduct(i, v || null)} options={productOpts} placeholder={tx('Select a product…')} className="w-full min-w-[12rem]" />
         : <span className="font-medium">{l.productName ?? (l.productId ? '' : tx('(no product)'))}</span>}
-      {withVariant && <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-full" onChange={(v) => p.onPatch(i, { variantId: v }, true)} />}
+      {withVariant && <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt), true)} />}
+      {l.productId && l.size && <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
+        onChange={(size, q) => p.onPatch(i, { size, ...(q !== null ? { quantity: q } : {}) }, true)} />}
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
         {l.priceSource && l.productId && <span className="rounded bg-muted px-1.5 py-0.5">{SOURCE_LABEL[l.priceSource] ?? l.priceSource}</span>}
         {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span>{tx('List')} {m(Number(l.listPrice))}</span>}
@@ -199,13 +227,13 @@ export function QuoteLinesTable(p: Props) {
                 </td>
                 {show('variant') && (
                   <td className="py-1.5 pr-3">
-                    <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? '—'} className="mt-0 w-full" onChange={(v) => p.onPatch(i, { variantId: v }, true)} />
+                    <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? '—'} className="mt-0 w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt), true)} />
                     {editable && !l.productId && <span className="text-muted-foreground">—</span>}
                   </td>
                 )}
                 <td className="py-1.5 pr-3">
                   {editable
-                    ? <Input type="number" min={0} step="any" className={cn('h-8', num)} value={l.quantity} onChange={(e) => p.onPatch(i, { quantity: Number(e.target.value) }, true)} onBlur={() => l.productId && l.priceSource !== 'manual' && p.onReprice(i)} />
+                    ? <QuoteQtyInput line={l} className={cn('h-8', num)} onChange={(q) => p.onPatch(i, { quantity: q }, true)} onBlur={() => l.productId && l.priceSource !== 'manual' && p.onReprice(i)} />
                     : <p className={cn('pt-1.5', num)}>{Number(l.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}</p>}
                 </td>
                 {show('uom') && (

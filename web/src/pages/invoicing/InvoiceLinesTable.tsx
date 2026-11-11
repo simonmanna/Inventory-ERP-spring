@@ -5,6 +5,7 @@ import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import type { Handover } from '@/pages/sales/HandoverTab';
+import { sizeLabel, useProductSizing } from '@/features/products/sizing';
 
 /** Optional columns of the invoice lines table (Odoo-style column picker). */
 type Col = 'account' | 'uom' | 'delivered' | 'invoiced' | 'discount' | 'taxes' | 'taxIncl';
@@ -28,6 +29,20 @@ export interface InvoiceLineRow {
   account?: { code: string; name: string } | null; quantity: string; uomId?: string | null; unitPrice: string;
   tax?: { id: string; name: string; rate: string | number } | null; taxAmount: string; subtotal: string; total: string;
   discountType?: string | null; discountAmount?: string | null; discountPercent?: string | null;
+  /** ADR-S058 / ADR-S066: present only on variant / sized lines. */
+  productId?: string | null; variantName?: string | null;
+  pieces?: string | number | null; length?: string | number | null; width?: string | number | null;
+  height?: string | number | null;
+}
+
+/** Variant name (when the description does not already say it) and printable size of a line. */
+function LineDetails({ line }: { line: InvoiceLineRow }) {
+  const sized = line.pieces !== null && line.pieces !== undefined;
+  const { data: cfg } = useProductSizing(sized ? line.productId : null);
+  const size = sized ? sizeLabel(line, cfg?.sizingUnit) : null;
+  const variant = line.variantName && !line.description?.includes(line.variantName) ? line.variantName : null;
+  if (!variant && !size) return null;
+  return <span className="block text-xs text-muted-foreground">{[variant, size].filter(Boolean).join(' · ')}</span>;
 }
 
 /**
@@ -95,6 +110,7 @@ export function InvoiceLinesTable({ invoiceId, status, lines, withDelivery, uomC
               <tr key={l.id} className="border-b align-top">
                 <td className="py-2.5 pr-2">
                   {l.description}
+                  <LineDetails line={l} />
                   {l.discountReason ? <span className="block text-xs italic text-muted-foreground">({l.discountReason})</span> : null}
                 </td>
                 {show('account') && (

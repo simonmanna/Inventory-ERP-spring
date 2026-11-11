@@ -11,6 +11,7 @@ import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PosPaymentMethodService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
@@ -105,6 +106,13 @@ public class CashSaleService {
     private final PosPaymentMethodService paymentModes;
     private final AccountDeterminationService determination;
     private final ProductVariantService variants;
+    private ProductSizingService sizing;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
 
     public CashSaleService(SalesDb db, BranchSalesProfileService profiles, BranchScopeService scopes,
             SalesLinePricing pricing, DocumentBuilderService builder, StockService stock,
@@ -192,7 +200,10 @@ public class CashSaleService {
         s.put("lines", lines);
         s.put("payments", db.rows("SELECT y.*, a.code AS \"accountCode\", a.name AS \"accountName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
-                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\""
+                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\","
+                + " (SELECT COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, 'contentType', d.\"contentType\")"
+                + " ORDER BY d.name), '[]'::json) FROM \"DmsDocument\" d WHERE d.\"organizationId\" = y.\"organizationId\""
+                + " AND d.id = ANY(y.\"attachmentIds\")) AS attachments"
                 + " FROM \"SalesSubmissionPayment\" y LEFT JOIN \"Account\" a ON a.id = y.\"accountId\" LEFT JOIN \"User\" c"
                 + " ON c.id = y.\"collectedById\" LEFT JOIN \"User\" v ON v.id = y.\"verifiedById\" WHERE y.\"submissionId\" = ?"
                 + " ORDER BY y.\"createdAt\"", id));
@@ -210,6 +221,7 @@ public class CashSaleService {
 
     private List<Map<String, Object>> lines(String id) {
         return db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", pr.\"trackInventory\","
+                + " pr.\"sizingMode\", pr.\"sizingUnit\","
                 + " (SELECT v.name FROM \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " t.name AS \"taxName\", t.rate AS \"taxRate\", u.code AS \"uomCode\" FROM \"SalesSubmissionLine\" l LEFT"
                 + " JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" LEFT JOIN"
@@ -461,7 +473,7 @@ public class CashSaleService {
         List<Map<String, Object>> meta = new ArrayList<>();
         for (Map<String, Object> l : lines) {
             unknownFields(l, Set.of("productId", "variantId", "description", "quantity", "uomId", "unitPrice",
-                    "discountPercent", "taxId", "taxInclusive"));
+                    "discountPercent", "taxId", "taxInclusive", "pieces", "length", "width", "height"));
             String productId = str(l.get("productId"));
             if (blank(productId)) {
                 throw ApiException.badRequest("productId should not be empty");
@@ -471,7 +483,9 @@ public class CashSaleService {
             if (product == null) {
                 throw ApiException.notFound("Product not found");
             }
-            BigDecimal qty = dec(l.get("quantity"));
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]]
+            ProductSizingService.Sizing size = sizing.fromLine(productId, l);
+            BigDecimal qty = size != null ? size.quantity() : dec(l.get("quantity"));
             if (qty.signum() <= 0) {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
@@ -493,7 +507,7 @@ public class CashSaleService {
             String description = !blank(str(l.get("description"))) ? str(l.get("description"))
                     : price.description() != null ? price.description() : str(product.get("name"));
             inputs.add(new LineInput(productId, null, null, null, null, description, qty, unit, disc, null, null, null,
-                    "manual", taxId, null, incl, uomId));
+                    "manual", taxId, null, incl, uomId, size));
             meta.add(Obj.of("listPrice", price.listPrice(), "priceSource", same ? price.source() : "manual", "cost",
                     variant != null && variant.costPrice() != null ? variant.costPrice() : product.get("costPrice"),
                     "variantId", variant == null ? null : variant.id()));
@@ -522,6 +536,7 @@ public class CashSaleService {
                 ins.put("lineTax", pl.taxAmount());
                 ins.put("lineTotal", pl.total());
                 ins.put("costSnapshot", m.get("cost") == null ? null : dec(m.get("cost")));
+                ins.putAll(ProductSizingService.Sizing.columns(pl.sizing()));
                 db.insert("SalesSubmissionLine", ins);
                 i++;
             }
@@ -546,11 +561,14 @@ public class CashSaleService {
     /**
      * Capture a payment line on a draft. With {@code paymentModeId} the organization's payment mode decides the
      * method, provider and receiving account; otherwise the tender account comes from the branch profile. A
-     * client-sent account is never trusted.
+     * client-sent account is never trusted. The line carries its evidence (payment date, payer, payer phone / account,
+     * notes, attached DMS documents) and is verified at capture by the collector, unless the branch requires
+     * segregation of duties: then it stays pending until someone else verifies it.
      */
     @Transactional
     public Map<String, Object> addPayment(String id, Map<String, Object> in) {
-        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId", "paymentModeId"));
+        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId", "paymentModeId",
+                "paymentDate", "payerName", "payerAccount", "notes", "attachmentIds"));
         Map<String, Object> s = lock(id);
         requireDraft(s);
         String method;
@@ -599,12 +617,31 @@ public class CashSaleService {
         if (!"cash".equals(method) && reference == null) {
             throw ApiException.badRequest("reference should not be empty for " + method.replace('_', ' ') + " payments");
         }
+        List<String> attachmentIds = SalesDb.strings(in.get("attachmentIds")).stream().filter(a -> !blank(a))
+                .distinct().toList();
+        if (!attachmentIds.isEmpty() && db.rows("SELECT id FROM \"DmsDocument\" WHERE \"organizationId\" = ? AND"
+                + " id = ANY(?)", org(), attachmentIds).size() != attachmentIds.size()) {
+            throw ApiException.badRequest("Attachment not found");
+        }
+        Map<String, Object> row = Obj.of("submissionId", id, "method", method, "provider", provider, "amount", amount,
+                "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId", modeId,
+                "paymentModeLabel", modeLabel, "paymentDate", SalesDb.date(str(in.get("paymentDate"))), "payerName", trimmed(in.get("payerName")),
+                "payerAccount", trimmed(in.get("payerAccount")), "notes", trimmed(in.get("notes")), "attachmentIds",
+                attachmentIds);
+        // the collector's capture is the verification, unless the branch requires segregation of duties
+        boolean autoVerify = !segregated(s);
+        if (autoVerify) {
+            row.putAll(Obj.of("verificationStatus", "verified", "verifiedById", user(), "verifiedAt", Instant.now(),
+                    "verificationSource", "collector"));
+        }
         try {
-            db.insert("SalesSubmissionPayment", Obj.of("submissionId", id, "method", method, "provider", provider, "amount",
-                    amount, "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId",
-                    modeId, "paymentModeLabel", modeLabel));
+            db.insert("SalesSubmissionPayment", row);
         } catch (DuplicateKeyException e) {
             throw ApiException.conflict("Payment reference " + reference + " is already recorded");
+        }
+        if (autoVerify) {
+            event(id, "payment_verified", null, null, null, null, method + " " + JsNumbers.js(amount)
+                    + (reference == null ? "" : " ref " + reference));
         }
         return get(id);
     }
@@ -1028,7 +1065,7 @@ public class CashSaleService {
             lines.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), str(l.get("variantName")), null,
                     str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
                     dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
-                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId"))));
+                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), ProductSizingService.Sizing.stored(l)));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
@@ -1232,6 +1269,10 @@ public class CashSaleService {
         p.put("lines", EntityJson.toJson(db.rows("SELECT description, quantity, \"unitPrice\", \"lineTax\", \"lineTotal\""
                 + " FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? ORDER BY \"sortOrder\"", id)));
         return p;
+    }
+
+    private static String trimmed(Object v) {
+        return blank(str(v)) ? null : str(v).trim();
     }
 
     private boolean segregated(Map<String, Object> s) {

@@ -322,6 +322,11 @@ public class SalesOrderChangeService {
                         + " ?, \"discountPercent\" = ?, \"priceSource\" = ?, \"lineSubtotal\" = ?, \"lineTax\" = ?,"
                         + " \"lineTotal\" = ? WHERE id = ?", p.productId(), p.description(), qty, p.unitPrice(),
                         p.discountPercent(), m.get("priceSource"), p.subtotal(), p.taxAmount(), p.total(), l.get("id"));
+                if (qty.compareTo(dec(l.get("quantity"))) != 0) {
+                    // ADR-S066: a changed quantity no longer matches the typed size
+                    db.update("UPDATE \"SalesOrderLine\" SET pieces = NULL, length = NULL, width = NULL, height = NULL"
+                            + " WHERE id = ?", l.get("id"));
+                }
             }
             if (c.containsKey("promisedDate")) {
                 db.update("UPDATE \"SalesOrderLine\" SET \"promisedDate\" = ? WHERE id = ?",

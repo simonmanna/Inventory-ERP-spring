@@ -232,8 +232,10 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(d.get("grandTotal").asDouble()).isEqualTo(413_000);
         assertThat(d.get("customerTin").asString()).isEqualTo("1000123456");
         String p = pay(id, "cash", null, 413_000, null);
-        // unverified money never posts
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
+        // the collector's capture is the verification (no segregation on this branch); nothing posts before confirm
+        JsonNode captured = ok(200, "GET", "/sales/cash-sales/" + id, null).get("payments").get(0);
+        assertThat(captured.get("verificationStatus").asString()).isEqualTo("verified");
+        assertThat(captured.get("verificationSource").asString()).isEqualTo("collector");
         assertThat(glRows(id)).isZero();
         verify(id, p);
         JsonNode conf = money("/sales/cash-sales/" + id + "/confirm", null, 200);
@@ -286,9 +288,7 @@ class CashSaleIT extends ApiTestSupport {
         String momo = pay(id, "mobile_money", "mtn", 56_500, "MTN-" + sfx + "-1");
         String bank = pay(id, "bank", null, 50_000, "BNK-" + sfx + "-1");
         verify(id, cash);
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
         verify(id, momo);
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
         assertThat(glRows(id)).isZero();
         verify(id, bank);
         money("/sales/cash-sales/" + id + "/confirm", null, 200);
@@ -318,8 +318,18 @@ class CashSaleIT extends ApiTestSupport {
             assertThat(modes.findValuesAsString("id")).contains(modeId);
             assertThat(modes.findValuesAsString("kind")).doesNotContain("card", "store_credit");
             JsonNode m = ok(201, "POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", modeId,
-                    "amount", 500, "reference", "BT-" + sfx));
+                    "amount", 500, "reference", "BT-" + sfx, "paymentDate", "2026-11-10", "payerName", "Jane Payer",
+                    "payerAccount", "0123456789", "notes", "Deposit slip at the counter"));
             JsonNode last = m.get("payments").get(m.get("payments").size() - 1);
+            assertThat(last.get("paymentDate").asString()).isEqualTo("2026-11-10");
+            assertThat(last.get("payerName").asString()).isEqualTo("Jane Payer");
+            assertThat(last.get("payerAccount").asString()).isEqualTo("0123456789");
+            assertThat(last.get("notes").asString()).isEqualTo("Deposit slip at the counter");
+            assertThat(last.get("attachments").size()).isZero();
+            assertThat(last.get("verificationStatus").asString()).isEqualTo("verified");
+            assertThat(as("POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", modeId,
+                    "amount", 500, "reference", "BT2-" + sfx, "attachmentIds", List.of("nope"))).status())
+                    .isEqualTo(400);
             assertThat(last.get("method").asString()).isEqualTo("bank");
             assertThat(last.get("accountId").asString()).isEqualTo(bankAccount);
             assertThat(last.get("paymentModeLabel").asString()).isEqualTo("Bank transfer " + sfx);
@@ -673,6 +683,8 @@ class CashSaleIT extends ApiTestSupport {
             String own = ok(201, "POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", body.get("lines")))
                     .get("id").asString();
             String cash = pay(own, "cash", null, 41_300, null);
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + own, null).get("payments").get(0).get("verificationStatus")
+                    .asString()).isEqualTo("pending");
             Res seg = as("POST", "/sales/cash-sales/" + own + "/payments/" + cash + "/verify", Map.of());
             assertThat(seg.status()).as(seg.raw().body() + " profile=" + jdbc.sql("SELECT \"requireSegregation\"::text"
                     + " FROM \"BranchSalesProfile\" WHERE id = ?").param(profile).query(String.class).single() + " sub="
@@ -682,6 +694,40 @@ class CashSaleIT extends ApiTestSupport {
             jdbc.sql("UPDATE \"BranchSalesProfile\" SET \"requireSegregation\" = false WHERE id = ?").param(profile)
                     .update();
         }
+    }
+
+    @Test
+    @DisplayName("ADR-S066: granite sold by the metre — size decides quantity, stock, Excel form and the invoice")
+    void soldBySize() {
+        String granite = product("Granite kerb " + sfx, 20_000, 12_000);
+        stock(granite, location, 100, 12_000);
+        ok(200, "PUT", "/products/" + granite + "/sizing", Map.of("sizingMode", "length"));
+        BigDecimal before = onHand(granite, location);
+        JsonNode d = ok(201, "POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", List.of(Map.of(
+                "productId", granite, "pieces", 4, "length", 3, "unitPrice", 20_000, "taxId", vat))));
+        String id = d.get("id").asString();
+        JsonNode l = d.get("lines").get(0);
+        assertThat(l.get("quantity").asDouble()).isEqualTo(12);
+        assertThat(l.get("pieces").asDouble()).isEqualTo(4);
+        assertThat(l.get("length").asDouble()).isEqualTo(3);
+        assertThat(l.get("sizingUnit").asString()).isEqualTo("m");
+        // 12 m × 20,000 × 1.18
+        assertThat(d.get("grandTotal").asDouble()).isEqualTo(283_200);
+        assertThat(as("POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", List.of(Map.of("productId",
+                granite, "pieces", 4, "length", 0)))).status()).isEqualTo(400);
+        pay(id, "cash", null, 283_200, null);
+        money("/sales/cash-sales/" + id + "/confirm", null, 200);
+        assertThat(onHand(granite, location)).isEqualByComparingTo(before.subtract(BigDecimal.valueOf(12)));
+        ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/start-review", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/approve", null);
+        String invoiceId = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId")
+                .asString();
+        JsonNode il = ok(200, "GET", "/invoices/" + invoiceId, null).get("lines").get(0);
+        assertThat(il.get("quantity").asDouble()).isEqualTo(12);
+        assertThat(il.get("pieces").asDouble()).isEqualTo(4);
+        assertThat(il.get("length").asDouble()).isEqualTo(3);
+        ledger.trialBalanceZero();
     }
 
     @Test

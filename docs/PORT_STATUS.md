@@ -1655,3 +1655,12 @@ channels per event. The actor is never told.
   `manufacturing.order.cancelled`, `task.assigned`, `crm.deal.assigned`, `quality.capa.created`
 - [x] `NotificationRoutingIT` (catalog queries against the schema, routing, settings, tenancy, authorization)
 - [x] Web: Settings → Customization → Notification Routing
+
+## Sell by size and variant details (ADR-S066, extension: no Nest counterpart)
+
+- [x] V446: `Product.sizingMode/sizingUnit/defaultLength/defaultWidth/defaultHeight`; `ProductVariant.length/width/height/description`; `pieces/length/width/height` on quotation, sales-order, cash-sale and invoice (`DocumentLine`) lines
+- [x] `GET/PUT /products/{id}/sizing`; variant PATCH / list / picker carry size + description (`ProductSizingService`)
+- [x] Quantity computed from the size on quotation, sales order, cash sale and invoice lines; size carried quotation → order → invoice and cash sale → invoice; printed on quotation PDF and cash-sale Excel
+- [x] Web: "Sold by size" card + variant "Size & description" on the product's Attributes & Variants tab; size inputs and variant prefill (price, size, description) on cash sale, quotation, sales order and invoice lines; invoice create gains the variant picker
+- [x] Fix: quotation approval authorizes variant lines at the variant price
+- [x] Tests: `ProductSizingServiceTest`, `ProductSizingIT`, `CashSaleIT#soldBySize`

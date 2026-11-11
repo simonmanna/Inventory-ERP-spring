@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import static com.inventoryerp.sales.application.SalesDb.org;
 
 import com.inventoryerp.kernel.files.FilesService;
@@ -137,6 +138,12 @@ public class CashSaleFormExporter {
                 String product = text(l.get("productName"));
                 String spec = first(l.get("variantName"), product.equals(text(l.get("description"))) ? null
                         : l.get("description"));
+                // ADR-S066: pieces and dimensions of a line sold by size
+                String size = ProductSizingService.label(ProductSizingService.Sizing.stored(l),
+                        l.get("sizingUnit") == null ? null : String.valueOf(l.get("sizingUnit")));
+                if (size != null) {
+                    spec = spec == null || spec.isBlank() ? size : spec + " — " + size;
+                }
                 put(x, 0, product, st.product);
                 put(x, 1, spec, st.grid);
                 put(x, 2, text(l.get("uomCode")), st.grid);

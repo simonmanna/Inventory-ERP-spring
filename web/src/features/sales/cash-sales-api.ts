@@ -15,6 +15,9 @@ export interface CashSaleLine {
   quantity: number; uomId?: string | null; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
   deliveredQty?: number; invoicedQty?: number;
+  /** ADR-S066: sold by size — pieces × length [× width [× height]] in the product's sizing unit. */
+  pieces?: number | null; length?: number | null; width?: number | null; height?: number | null;
+  sizingMode?: 'length' | 'area' | 'volume' | null; sizingUnit?: 'm' | 'cm' | 'mm' | null;
 }
 export interface CashSalePayment {
   id: string; method: 'cash' | 'mobile_money' | 'bank'; provider: string | null; amount: number; reference: string | null;
@@ -22,6 +25,8 @@ export interface CashSalePayment {
   accountCode: string | null; accountName: string | null; collectedByName: string | null; collectedAt: string;
   verificationStatus: 'pending' | 'verified' | 'failed'; verifiedByName: string | null; verifiedAt: string | null;
   verificationSource: string | null; settlementStatus: string;
+  paymentDate?: string | null; payerName?: string | null; payerAccount?: string | null; notes?: string | null;
+  attachments?: Array<{ id: string; name: string; contentType: string | null }>;
 }
 export interface CashSale {
   id: string; number: string; branchId: string; branchName: string | null; locationName: string | null; partnerId: string; partnerName: string | null;

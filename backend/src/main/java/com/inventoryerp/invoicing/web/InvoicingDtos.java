@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.core.application.ProductSizingService.Sizing;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.shared.validation.OneOf;
@@ -31,15 +32,22 @@ public final class InvoicingDtos {
             @OneOf({"product", "section", "note"}) String lineType,
             String uomId,
             /* ADR-S058: the product variant of the line (null = product without variants). */
-            String variantId) {
+            String variantId,
+            /* ADR-S066: sold by size — pieces × length [× width [× height]] decide the quantity. */
+            BigDecimal pieces,
+            BigDecimal length,
+            BigDecimal width,
+            BigDecimal height) {
 
         LineInput toInput() {
-            if (variantId == null || variantId.isBlank()) {
+            Sizing size = Sizing.raw(pieces, length, width, height);
+            if ((variantId == null || variantId.isBlank()) && size == null) {
                 return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
                         lineType, uomId);
             }
-            return new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
-                    discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            return new LineInput(productId, null, variantId == null || variantId.isBlank() ? null : variantId, null,
+                    accountId, description, quantity, unitPrice, discountPercent, null, null, null, null, taxId,
+                    lineType, null, uomId, size);
         }
     }
 

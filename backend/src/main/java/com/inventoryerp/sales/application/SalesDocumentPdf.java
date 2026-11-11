@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import org.openpdf.text.Document;
 import org.openpdf.text.DocumentException;
 import org.openpdf.text.Element;
@@ -56,7 +57,11 @@ public final class SalesDocumentPdf {
                     t.addCell(new PdfPCell(new Phrase(h, bold)));
                 }
                 for (Map<String, Object> l : lines) {
-                    t.addCell(new PdfPCell(new Phrase(String.valueOf(l.get("description")), body)));
+                    // ADR-S066: a line sold by size prints its pieces and dimensions under the description
+                    String size = ProductSizingService.label(ProductSizingService.Sizing.stored(l),
+                            l.get("sizingUnit") == null ? null : String.valueOf(l.get("sizingUnit")));
+                    t.addCell(new PdfPCell(new Phrase(String.valueOf(l.get("description")) + (size == null ? ""
+                            : "\n" + size), body)));
                     t.addCell(right(num(l.get("quantity"), 3), body));
                     t.addCell(right(num(l.get("unitPrice"), 2), body));
                     t.addCell(right(num(l.get("discountPercent"), 2), body));

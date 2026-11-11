@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
@@ -22,15 +23,16 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
   crmApi, useCrmLookups, useCrmMutation, useOpportunity, useProductOptions, useQuotation, useTaxOptions,
-  type QuoteLine, type Quotation,
+  type Quotation,
 } from '@/features/crm/suite-api';
 import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
-import { QuoteLinesTable } from './QuoteLinesTable';
+import { QuoteLinesTable, type QuoteLine } from './QuoteLinesTable';
+import { EMPTY_SIZE, sizeLabel, sizeOf, sizePayload } from '@/features/products/sizing';
 import { isLayout, lineAmounts } from './quote-lines';
 
-const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
+const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
 const layoutLine = (displayType: 'line_section' | 'line_note'): QuoteLine => ({ displayType, productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 
 /** Create / edit / process a quotation (ADR-S010). Editable while draft or rejected. */
@@ -80,7 +82,7 @@ export function QuotationEditorPage() {
       setPartnerId(q.partnerId); setPartnerName(q.partnerName); setIssueDate(q.issueDate?.slice(0, 10) ?? '');
       setValidUntil(q.validUntil?.slice(0, 10) ?? ''); setOwnerId(q.ownerId ?? ''); setNotes(q.notes ?? ''); setTerms(q.terms ?? '');
       setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '', commitmentDate: q.commitmentDate?.slice(0, 10) ?? '' });
-      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null })) : []); setDirty(false); setTaxMode(null);
+      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null, size: sizeOf(l as Parameters<typeof sizeOf>[0]) })) : []); setDirty(false); setTaxMode(null);
     }
   }, [q]);
   useEffect(() => {
@@ -127,7 +129,7 @@ export function QuotationEditorPage() {
   const productById = (pid: string | null) => (pid ? products.data?.find((x) => x.id === pid) : undefined);
   const setProduct = (i: number, pid: string | null) => {
     const prod = productById(pid);
-    const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
+    const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
       description: canPrice ? '' : prod?.name ?? '', unitPrice: prod ? Number(prod.salesPrice ?? 0) : x.unitPrice, taxId: prod?.taxId ?? x.taxId,
       ...(taxMode ? { taxInclusive: taxMode === 'incl' } : {}) } : x));
     setLines(next); setDirty(true); void priceLines(i, next);
@@ -194,6 +196,8 @@ export function QuotationEditorPage() {
         ? { displayType: l.displayType, description: l.description.trim() }
         : {
           productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
+          // ADR-S066: the typed size (only offered for products sold by size) decides the quantity server-side
+          ...(l.productId ? sizePayload(l.size ?? EMPTY_SIZE, 'volume') : {}),
           unitPrice: l.priceSource === 'manual' || !l.productId ? Number(l.unitPrice) : undefined,
           discountPercent: l.priceSource === 'manual' || !l.productId ? Number(l.discountPercent) : undefined,
           taxId: l.taxId || null,
@@ -412,6 +416,8 @@ export function QuotationEditorPage() {
         </Tabs>
       </section>
 
+      {q && <RecordChatter contextType="SalesQuotation" contextId={q.id} />}
+
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
           {dialog === 'decline' && <Field label={tx('Lost reason')}><HeaderSelect value={lostReasonId} options={(lostReasons.data ?? []).filter((r) => r.isActive)} none={tx('Choose…')} onChange={setLostReasonId} /></Field>}
@@ -496,7 +502,7 @@ function printQuote(q: Quotation, owner?: string) {
   const m = (v: number) => money(v, q.currencyCode);
   const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="5">${esc(l.description)}</td></tr>`
     : l.displayType === 'line_note' ? `<tr><td colspan="5" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
-    : `<tr><td>${esc(l.description)}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
+    : `<tr><td>${esc(l.description)}${sizeLabel(l as Parameters<typeof sizeLabel>[0]) ? `<br><small>${esc(sizeLabel(l as Parameters<typeof sizeLabel>[0]))}</small>` : ''}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(q.number)}</title><style>
     body{font-family:system-ui,sans-serif;color:#111;margin:40px}h1{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:24px}
     th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}.r{text-align:right}.tot td{border:0}.muted{color:#666;font-size:13px}

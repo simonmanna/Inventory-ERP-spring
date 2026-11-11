@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
@@ -74,6 +75,13 @@ public class SalesQuotationService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private ProductSizingService sizing;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
     private SalesAccess access;
     private SalesAlerts alerts;
     private com.inventoryerp.kernel.notifications.NotificationsService mail;
@@ -177,7 +185,8 @@ public class SalesQuotationService {
         Map<String, Object> q = require(id);
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
                 + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
-                + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", t.name AS \"taxName\","
+                + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", pr.\"sizingMode\","
+                + " pr.\"sizingUnit\", t.name AS \"taxName\","
                 + " t.rate AS \"taxRate\" FROM \"SalesQuotationLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\""
                 + " LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? ORDER BY l.\"sortOrder\"", id);
         Map<String, Map<String, Object>> stock = stock(lines.stream().map(l -> str(l.get("productId")))
@@ -395,7 +404,9 @@ public class SalesQuotationService {
                 throw ApiException.badRequest("leadTimeDays must not be less than 0");
             }
             String productId = str(l.get("productId"));
-            BigDecimal qty = dec(l.get("quantity"));
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]]
+            ProductSizingService.Sizing size = sizing.fromLine(blank(productId) ? null : productId, l);
+            BigDecimal qty = size != null ? size.quantity() : dec(l.get("quantity"));
             if (qty.signum() <= 0) {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
@@ -435,7 +446,7 @@ public class SalesQuotationService {
             String taxId = l.containsKey("taxId") ? str(l.get("taxId")) : price == null ? null : price.taxId();
             Boolean incl = l.get("taxInclusive") instanceof Boolean b ? b : price != null && price.taxInclusive();
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
-                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl));
+                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
                     "leadTimeDays", leadTime));
@@ -480,6 +491,7 @@ public class SalesQuotationService {
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
                     "lineTotal", pl.total()));
+            priced.getLast().putAll(ProductSizingService.Sizing.columns(pl.sizing()));
             i++;
         }
         insertLayoutRows(id, layout, priced);
@@ -575,11 +587,16 @@ public class SalesQuotationService {
 
     private BigDecimal extraDiscount(String id, String partnerId, LocalDate on) {
         BigDecimal max = BigDecimal.ZERO;
-        for (Map<String, Object> l : db.rows("SELECT \"productId\", quantity, \"unitPrice\", \"discountPercent\","
-                + " \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL", id)) {
+        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", quantity, \"unitPrice\","
+                + " \"discountPercent\", \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
+                + " \"displayType\" IS NULL", id)) {
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
+            // ADR-S058: a variant line is authorized at the variant's price, not the product's
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
+                    : l.get("variantId") != null ? engine.resolve(new SalesPricingEngine.Context(partnerId,
+                            str(l.get("productId")), dec(l.get("quantity")), null, null, null, null, on, null,
+                            str(l.get("variantId")))).price().net()
                     : price(partnerId, str(l.get("productId")), dec(l.get("quantity")), on).net();
             if (authorized.signum() > 0 && net.compareTo(authorized) < 0) {
                 max = max.max(BigDecimal.ONE.subtract(net.divide(authorized, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
@@ -786,7 +803,8 @@ public class SalesQuotationService {
             for (Map<String, Object> l : lines) {
                 inputs.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
                         dec(l.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
-                        "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive"))));
+                        "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), null,
+                        ProductSizingService.Sizing.stored(l)));
             }
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), LocalDate.now().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
@@ -858,9 +876,11 @@ public class SalesQuotationService {
     @Transactional(readOnly = true)
     public byte[] pdf(String id) {
         Map<String, Object> q = require(id);
-        List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\","
-                + " \"lineTotal\" AS total FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ? AND NOT"
-                + " COALESCE(\"isOptional\", false) AND \"displayType\" IS NULL ORDER BY \"sortOrder\"", id, org());
+        List<Map<String, Object>> lines = db.rows("SELECT l.description, l.quantity, l.\"unitPrice\", l.\"discountPercent\","
+                + " l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height, p.\"sizingUnit\" FROM"
+                + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND"
+                + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) AND l.\"displayType\" IS NULL ORDER BY"
+                + " l.\"sortOrder\"", id, org());
         String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
                 + " \"Organization\" WHERE id = ?", org()).get("n"));
         return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),

@@ -25,6 +25,8 @@ import {
   useDeleteVariantAttribute, useSaveAttributeLines, useSaveLinePriceExtras, useSaveVariantAttribute,
   useUpdateVariant, useVariantAttributes, useVariantConfig,
 } from './variants-api';
+import { SizingCard, VariantDetailsDialog } from './sizing-card';
+import { sizeLabel, useProductSizing, type ProductSizing } from './sizing';
 
 interface DraftLine {
   key: string;
@@ -85,6 +87,7 @@ function VariantsEditor({ productId }: { productId: string }) {
   const [configureLine, setConfigureLine] = useState<AttributeLine | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const { data: sizing } = useProductSizing(productId);
 
   useEffect(() => {
     if (config) setDraft(toDraft(config.lines));
@@ -124,6 +127,7 @@ function VariantsEditor({ productId }: { productId: string }) {
 
   return (
     <div className="space-y-6">
+      <SizingCard productId={productId} />
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base flex items-center gap-2">
@@ -265,11 +269,12 @@ function VariantsEditor({ productId }: { productId: string }) {
                     <th className="px-3 py-2 font-semibold w-24 text-right">{tx('On hand')}</th>
                     <th className="px-3 py-2 font-semibold w-28 text-right">{tx('Stock value')}</th>
                     <th className="px-3 py-2 font-semibold w-20 text-center">{tx('Active')}</th>
+                    <th className="w-12" />
                   </tr>
                 </thead>
                 <tbody>
                   {variants.map((v) => (
-                    <VariantRow key={v.id} productId={productId} variant={v} lines={config.lines} />
+                    <VariantRow key={v.id} productId={productId} variant={v} lines={config.lines} sizing={sizing} />
                   ))}
                 </tbody>
               </table>
@@ -406,10 +411,14 @@ function ConfigureDialog({ productId, line, basePrice, onClose }: {
 }
 
 /** One variant row: SKU / barcode / fixed price / cost edited inline (saved on blur), active toggle. */
-function VariantRow({ productId, variant, lines }: {
-  productId: string; variant: ProductVariantRow; lines: AttributeLine[];
+function VariantRow({ productId, variant, lines, sizing }: {
+  productId: string; variant: ProductVariantRow; lines: AttributeLine[]; sizing: ProductSizing | undefined;
 }) {
   const update = useUpdateVariant(productId);
+  const [details, setDetails] = useState(false);
+  const size = variant.length == null ? null
+    : sizeLabel({ pieces: 1, length: variant.length, width: variant.width, height: variant.height }, sizing?.sizingUnit)
+      ?.replace(/^1 \S+ × /, '');
   const [form, setForm] = useState({
     sku: variant.sku ?? '',
     barcode: variant.barcode ?? '',
@@ -454,6 +463,11 @@ function VariantRow({ productId, variant, lines }: {
             ? attrs.map(([a, v]) => <ValueChip key={a} name={String(v)} color={colorOf(a, String(v))} />)
             : <span className="font-medium">{variant.name}</span>}
         </div>
+        {(size || variant.description) && (
+          <p className="mt-1 max-w-xs truncate text-xs text-muted-foreground" title={variant.description ?? undefined}>
+            {[size, variant.description].filter(Boolean).join(' · ')}
+          </p>
+        )}
       </td>
       <td className="px-3 py-1.5">
         <Input className="h-8" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })}
@@ -480,6 +494,11 @@ function VariantRow({ productId, variant, lines }: {
         <input type="checkbox" checked={variant.isActive} aria-label={tx('Active')}
           onChange={(e) => update.mutate({ id: variant.id, data: { isActive: e.target.checked } },
             { onError: (err) => notify.error(apiMessage(err, tx('Save failed'))) })} />
+      </td>
+      <td className="px-2 py-2 text-center">
+        <Button type="button" size="icon" variant="ghost" className="h-7 w-7" title={tx('Size & description')}
+          onClick={() => setDetails(true)}><Settings2 className="h-4 w-4" /></Button>
+        {details && <VariantDetailsDialog productId={productId} variant={variant} sizing={sizing} onClose={() => setDetails(false)} />}
       </td>
     </tr>
   );

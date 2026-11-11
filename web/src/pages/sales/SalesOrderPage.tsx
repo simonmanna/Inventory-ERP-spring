@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, XCircle } from 'lucide-react';
@@ -10,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { VariantSelect } from '@/features/products/variant-select';
+import { EMPTY_SIZE, LineSizeFields, hasSize, sizeOf, sizePayload, useProductSizing, type LineSize } from '@/features/products/sizing';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -43,7 +45,19 @@ import { FromSalesOrderDialog } from '@/features/projects/from-sales-order-dialo
 import { MilestonesPanel, NewDeliveryDialog } from './DeliveriesPages';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
-const blankLine = (): SalesOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
+/** A draft line with its typed size (ADR-S066: sold by length / area / volume). */
+type DraftOrderLine = SalesOrderLine & { size: LineSize };
+const blankLine = (): DraftOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE });
+
+/** Quantity input; derived (read-only) while the product is sold by size and the size is typed. */
+function OrderQtyInput({ productId, size, disabled, value, onChange }: {
+  productId: string | null; size: LineSize; disabled: boolean; value: number; onChange: (q: number) => void;
+}) {
+  const { data: sizing } = useProductSizing(productId);
+  const derived = !!sizing?.sizingMode && hasSize(size);
+  return <Input disabled={disabled} readOnly={derived} title={derived ? tx('Computed from the size') : undefined} type="number" min={0}
+    className={cn('text-right', derived && 'bg-muted/50')} value={value} onChange={(e) => onChange(Number(e.target.value))} />;
+}
 const n = (v: unknown) => Number(v ?? 0);
 
 /** Optional columns of the order lines table (Odoo-style column picker). */
@@ -72,7 +86,7 @@ export function SalesOrderPage() {
   const [header, setHeader] = useState<OrderHeader>(blankHeader);
   const [orderDiscount, setOrderDiscount] = useState(0);
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover('delivery'));
-  const [lines, setLines] = useState<SalesOrderLine[]>([blankLine()]);
+  const [lines, setLines] = useState<DraftOrderLine[]>([blankLine()]);
   const [dirty, setDirty] = useState(false);
   const [dialog, setDialog] = useState<'hold' | 'cancel' | 'change' | 'close' | 'revisions' | 'return' | 'delivery' | 'project' | null>(null);
   const [reason, setReason] = useState('');
@@ -86,7 +100,7 @@ export function SalesOrderPage() {
       setRequestedDate(o.requestedDate?.slice(0, 10) ?? '');
       setOrderDiscount(Number(o.orderDiscountPercent ?? 0));
       setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0), paymentMode: o.paymentMode ?? 'credit' });
-      setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l })) : [blankLine()]); setDirty(false);
+      setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l, size: sizeOf(l as Parameters<typeof sizeOf>[0]) })) : [blankLine()]); setDirty(false);
     }
   }, [o]);
 
@@ -97,7 +111,7 @@ export function SalesOrderPage() {
     enabled: !!partnerId && editable && has(P.agreementRead), retry: false,
   });
   const productOpts = useMemo(() => (products.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined })), [products.data]);
-  const patchLine = (i: number, p: Partial<SalesOrderLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true); };
+  const patchLine = (i: number, p: Partial<DraftOrderLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true); };
 
   const save = useSalesMutation(async () => {
     const body = {
@@ -109,6 +123,8 @@ export function SalesOrderPage() {
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
         productId: l.productId || undefined, variantId: l.variantId || undefined, description: l.description || undefined, quantity: n(l.quantity),
+        // the size (when typed) decides the quantity server-side; the size fields only render for sized products
+        ...(l.productId ? sizePayload(l.size, 'volume') : {}),
         uomId: l.productId ? l.uomId || undefined : undefined,
         unitPrice: (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
         discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
@@ -285,14 +301,16 @@ export function SalesOrderPage() {
                   <tr key={l.id ?? i} className={cn('border-b align-top', l.closedShort && 'text-muted-foreground')}>
                     <td className="py-1.5 pr-2">
                       {editable
-                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                         : <span className="font-medium">{l.productName ?? '—'}</span>}
                       <VariantSelect productId={l.productId} value={l.variantId} disabled={!editable} label={l.variantName} className="w-52"
-                        onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} />
+                        onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt ? { unitPrice: Number(opt.salesPrice) } : {}), ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
+                      <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
+                        onChange={(size, q) => patchLine(i, { size, ...(q !== null ? { quantity: q } : {}) })} />
                       {l.closedShort && <span className="mt-1 block text-[11px]">{tx('Closed short')}: {l.closeShortReason}</span>}
                     </td>
                     {show('description') && <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
-                    <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => patchLine(i, { quantity: Number(e.target.value) })} /></td>
+                    <td className="py-1.5 pr-2"><OrderQtyInput productId={l.productId} size={l.size} disabled={!editable} value={l.quantity} onChange={(q) => patchLine(i, { quantity: q })} /></td>
                     {show('uom') && (
                       <td className="py-1.5 pr-2 pt-2.5">
                         {editable && l.productId
@@ -383,6 +401,8 @@ export function SalesOrderPage() {
           </TabsContent>
         </Tabs>
       </section>
+
+      {o && <RecordChatter contextType="SalesOrder" contextId={o.id} />}
 
       <Dialog open={dialog === 'hold' || dialog === 'cancel' || dialog === 'close'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">

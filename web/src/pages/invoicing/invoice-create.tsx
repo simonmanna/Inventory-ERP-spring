@@ -36,6 +36,11 @@ import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
+import { VariantSelect } from '@/features/products/variant-select';
+import type { VariantOption } from '@/features/products/variants-api';
+import {
+  EMPTY_SIZE, LineSizeFields, hasSize, sizePayload, useProductSizing, type LineSize, type SizingMode,
+} from '@/features/products/sizing';
 
 /** Odoo-style flat field: no box, a hairline underline that turns blue on focus. */
 const fieldClass =
@@ -129,7 +134,42 @@ interface LineForm {
   discountPercent?: number;
   /** Product unit (ADR-S003): Pack, Box, … defaults to the product's sales unit. */
   uomId?: string;
+  /** ADR-S058: product variant (required for a product with variants). */
+  variantId?: string | null;
+  /** ADR-S066: pieces × length [× width [× height]] of a product sold by size; decides the quantity. */
+  size?: LineSize;
+  /** Sizing mode of the line's product (null = sold by quantity). */
+  sizingMode?: SizingMode | null;
 }
+
+/** Variant and size fields of a line (ADR-S058 / ADR-S066); empty for a plain line. */
+function lineExtras(l: LineForm): Record<string, unknown> {
+  if (!l.productId) return {};
+  return {
+    ...(l.variantId ? { variantId: l.variantId } : {}),
+    ...(l.size && hasSize(l.size) ? sizePayload(l.size, l.sizingMode) : {}),
+  };
+}
+
+/** Variant picker and size inputs under a line's product; reports the product's sizing mode. */
+function LineVariantAndSize({ productId, variantId, size, onVariant, onSize, onMode }: {
+  productId?: string; variantId?: string | null; size: LineSize;
+  onVariant: (variantId: string | null, variant: VariantOption | null) => void;
+  onSize: (size: LineSize, quantity: number | null) => void;
+  onMode: (mode: SizingMode | null) => void;
+}) {
+  const { data: cfg } = useProductSizing(productId);
+  const mode = cfg?.sizingMode ?? null;
+  useEffect(() => { onMode(mode); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!productId) return null;
+  return (
+    <>
+      <VariantSelect productId={productId} value={variantId} onChange={onVariant} />
+      <LineSizeFields productId={productId} variantId={variantId} value={size} onChange={onSize} />
+    </>
+  );
+}
+
 interface FormValues {
   partnerId: string;
   issueDate: string;
@@ -253,6 +293,7 @@ export function InvoiceCreatePage() {
           unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
           discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
           uomId: l.uomId || undefined,
+          ...lineExtras(l),
         })),
     };
     const t = setTimeout(async () => {
@@ -292,6 +333,8 @@ export function InvoiceCreatePage() {
 
   const onProductChange = (index: number, productId: string) => {
     setValue(`lines.${index}.productId`, productId);
+    setValue(`lines.${index}.variantId`, null);
+    setValue(`lines.${index}.size`, EMPTY_SIZE);
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
@@ -306,6 +349,20 @@ export function InvoiceCreatePage() {
         if (listed && listed.discountPercent > 0) setValue(`lines.${index}.discountPercent`, listed.discountPercent);
       });
     }
+  };
+
+  /** ADR-S058: the variant's price and sales description replace the product's. */
+  const onVariantChange = (index: number, variantId: string | null, v: VariantOption | null) => {
+    setValue(`lines.${index}.variantId`, variantId);
+    if (!v) return;
+    if (v.salesPrice != null && v.salesPrice !== '') setValue(`lines.${index}.unitPrice`, Number(v.salesPrice));
+    setValue(`lines.${index}.description`, v.description?.trim() || v.displayName || v.name);
+  };
+
+  /** ADR-S066: the size decides the quantity. */
+  const onSizeChange = (index: number, size: LineSize, quantity: number | null) => {
+    setValue(`lines.${index}.size`, size);
+    if (quantity !== null) setValue(`lines.${index}.quantity`, quantity);
   };
 
   const onUnitChange = (index: number, uomId: string) => {
@@ -344,6 +401,7 @@ export function InvoiceCreatePage() {
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
         uomId: l.productId ? l.uomId || undefined : undefined,
+        ...lineExtras(l),
       })),
     };
 
@@ -564,6 +622,14 @@ export function InvoiceCreatePage() {
                               </option>
                             ))}
                           </select>
+                          <LineVariantAndSize
+                            productId={watch(`lines.${index}.productId`)}
+                            variantId={watch(`lines.${index}.variantId`)}
+                            size={watch(`lines.${index}.size`) ?? EMPTY_SIZE}
+                            onVariant={(id, v) => onVariantChange(index, id, v)}
+                            onSize={(size, q) => onSizeChange(index, size, q)}
+                            onMode={(m) => setValue(`lines.${index}.sizingMode`, m)}
+                          />
                         </td>
                         {show('description') && (
                           <td className="px-2 py-1.5">
@@ -571,7 +637,11 @@ export function InvoiceCreatePage() {
                           </td>
                         )}
                         <td className="px-2 py-1.5">
-                          <input aria-label={tx('Quantity')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+                          <input aria-label={tx('Quantity')} type="number" step="any"
+                            readOnly={!!watch(`lines.${index}.sizingMode`) && hasSize(watch(`lines.${index}.size`))}
+                            title={watch(`lines.${index}.sizingMode`) && hasSize(watch(`lines.${index}.size`)) ? tx('Computed from the size') : undefined}
+                            className={`${cellClass} text-right tabular-nums read-only:bg-slate-50 read-only:text-slate-500`}
+                            {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
                         </td>
                         {show('uom') && (
                           <td className="px-2 py-1.5">

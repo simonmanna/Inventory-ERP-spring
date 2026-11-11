@@ -5,6 +5,7 @@ import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.fleet.application.FleetDeliveryInvoiceService;
 import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
@@ -172,7 +173,8 @@ public class SalesBillingService {
                         null, str(l.get("description")),
                         dec(it.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
-                        str(l.get("uomId"))));
+                        str(l.get("uomId")), dec(it.get("quantity")).compareTo(dec(l.get("quantity"))) == 0
+                                ? ProductSizingService.Sizing.stored(l) : null));
             }
             doc = create(o, issue, lines, "Sales order " + number);
             String docId = str(doc.get("id"));
