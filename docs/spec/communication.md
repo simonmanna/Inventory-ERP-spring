@@ -1,4 +1,3 @@
-<!-- spec: generated from tools/specs/module-specs.mjs; delete this line to edit by hand -->
 # Communication — `communication`
 
 | | |
@@ -85,3 +84,27 @@ make no network calls. Tests:
 
 Parity scenario `contract-tests/scenarios/communication-inbox.json` is written but has not yet been run against
 Nest. Web screens have not yet been smoke-tested against Spring.
+
+## Discuss — staff and department communication (ADR-S064, extension: no Nest counterpart)
+
+[ADR-S064](../adr/ADR-S064-discuss-staff-communication.md) adds an Odoo-style staff messenger on top of the ported
+module. Every new route is under `/communication/discuss`; the 22 Nest routes keep their contract. The one change
+they see is that a send to an archived conversation is refused with "This conversation is archived.", and archived
+state can only be set through Discuss.
+
+- Channels: public or private, `#general` (auto-join), one channel per HR department (members synced hourly after
+  the first `POST /discuss/departments/sync`). Plus 1:1 direct messages (one per pair) and group chats.
+- Members and roles (owner, admin, member). Moderators are the owner, admins, and holders of
+  `communication:channel:manage`. Join, leave, invite, remove, rename, visibility, archive.
+- Messages: @mentions (inbox item plus in-app notification), replies, emoji reactions, pins, personal stars, edit,
+  soft delete, attachments (draft upload, then attach; signed URLs), paging by `seq`, search.
+- Per-member notify level (all, mentions, none), mute, and pin. Unread and badge counts. A personal inbox
+  (mentions, followed records). DM notifications for offline members.
+- Record chatter for `SalesOrder`, `SalesQuotation`, `PurchaseOrder`, `Invoice`, `Expense`: followers, messages vs
+  log notes, gated by the record's read permission.
+- Realtime on `/communication/stream`: `message.updated`, `message.deleted`, `conversation.updated`, `typing`,
+  `read`, `presence`, `inbox.new`. `message.created` also carries `discuss`.
+- V443 grants `communication:conversation:read|write` and `communication:message:send` to every existing role.
+
+Code: `DiscussController`, `DiscussService`, `DiscussMessageService`, `DiscussRecordService`, `DiscussViews`,
+`DiscussEvents`, `DepartmentChannelSync`, `DiscussDepartmentSyncJob`. Tests: `DiscussIT`.

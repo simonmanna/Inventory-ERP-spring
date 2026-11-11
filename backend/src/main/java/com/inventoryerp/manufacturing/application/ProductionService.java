@@ -26,6 +26,7 @@ import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.manufacturing.application.BomService.ExplodedBom;
@@ -97,13 +98,15 @@ public class ProductionService {
     private final CostingService costing;
     private final StandardCostService standards;
     private final TransactionTemplate newTx;
+    private final EventBus events;
 
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
             StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
-            PlatformTransactionManager txm, PlmGate plmGate) {
+            PlatformTransactionManager txm, PlmGate plmGate, EventBus events) {
+        this.events = events;
         this.plmGate = plmGate;
         this.standards = standards;
         this.quality = quality;
@@ -470,6 +473,7 @@ public class ProductionService {
             reservations.release(SOURCE, id);
             audit.recordInTx(AuditInput.of("ProductionOrder", id, "post", null,
                     Obj.of("orderCode", code, "scrapped", JsNumbers.dec(materialCost))));
+            orderEvent("manufacturing.order.completed", scrapped, null);
             return scrapped;
         }
 
@@ -565,6 +569,7 @@ public class ProductionService {
         }
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "receive", null, Obj.of("orderCode", code,
                 "producedQty", JsNumbers.dec(dto.qtyProduced()), "outputUnitCost", JsNumbers.dec(outputUnitCost))));
+        orderEvent("manufacturing.order.completed", updated, null);
         return updated;
     }
 
@@ -649,6 +654,9 @@ public class ProductionService {
         Map<String, Object> updated = withLines(db.update(ProductionOrder.class, id, data), true, true);
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "reconcile", null, Obj.of("orderCode", code,
                 "passed", JsNumbers.dec(passed), "failed", JsNumbers.dec(failed))));
+        if (done) {
+            orderEvent("manufacturing.order.completed", updated, null);
+        }
         return updated;
     }
 
@@ -677,7 +685,9 @@ public class ProductionService {
             data.put("cancelledAt", Instant.now());
             data.put("cancelReason", reason);
             data.put("updatedBy", TenantContext.userId());
-            return withLines(db.update(ProductionOrder.class, id, data), true, true);
+            Map<String, Object> flipped = withLines(db.update(ProductionOrder.class, id, data), true, true);
+            orderEvent("manufacturing.order.cancelled", flipped, reason);
+            return flipped;
         }
 
         Instant date = Instant.now();
@@ -700,7 +710,18 @@ public class ProductionService {
         Map<String, Object> updated = withLines(db.update(ProductionOrder.class, id, data), true, true);
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "cancel", null, Obj.of("orderCode", code, "reason",
                 reason)));
+        orderEvent("manufacturing.order.cancelled", updated, reason);
         return updated;
+    }
+
+    /**
+     * Notification routing (ADR-S065). {@code EventBus} writes after the transaction ends, even on rollback; the router
+     * re-reads the order's status before telling anyone.
+     */
+    private void orderEvent(String event, Map<String, Object> order, String reason) {
+        events.publish(event, Obj.of("organizationId", order.get("organizationId"), "orderId", order.get("id"),
+                "orderCode", order.get("orderCode"), "status", order.get("status"), "producedQty",
+                order.get("producedQty") == null ? null : String.valueOf(order.get("producedQty")), "reason", reason));
     }
 
     // ================================================================== reverse

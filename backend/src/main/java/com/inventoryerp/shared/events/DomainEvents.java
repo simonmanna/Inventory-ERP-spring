@@ -247,4 +247,11 @@ public final class DomainEvents {
     public static final String PLM_CHANGE_APPLIED = "plm.change.applied";
     public static final String PLM_CHANGE_REQUEST_CREATED = "plm.request.created";
     public static final String PLM_LIFECYCLE_CHANGED = "plm.lifecycle.changed";
+    public static final String HR_LEAVE_REQUESTED = "hr.leave.requested";
+    public static final String HR_LEAVE_DECIDED = "hr.leave.decided";
+    public static final String MANUFACTURING_ORDER_COMPLETED = "manufacturing.order.completed";
+    public static final String MANUFACTURING_ORDER_CANCELLED = "manufacturing.order.cancelled";
+    public static final String TASK_ASSIGNED = "task.assigned";
+    public static final String CRM_DEAL_ASSIGNED = "crm.deal.assigned";
+    public static final String QUALITY_CAPA_CREATED = "quality.capa.created";
 }

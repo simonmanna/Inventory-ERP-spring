@@ -1,5 +1,6 @@
 // src/pages/expenses/ExpensesPage.tsx
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { useState, useEffect, useCallback } from "react";
 import {
   Dialog,
@@ -1157,6 +1158,9 @@ function ExpenseDetailDialog({
 
             {/* SECTION: Audit Trail */}
             <ExpenseAuditSection expenseId={expense.id} />
+
+            {/* SECTION: Discussion (ADR-S064 chatter) */}
+            <RecordChatter contextType="Expense" contextId={expense.id} className="bg-white" />
           </div>
 
           {/* Footer Bar */}

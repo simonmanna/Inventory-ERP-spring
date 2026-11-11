@@ -1420,6 +1420,48 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
 - [x] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
 
+## Discuss — staff and department communication (ADR-S064, extension: no Nest counterpart)
+
+[Spec](spec/communication.md#discuss--staff-and-department-communication-adr-s064-extension-no-nest-counterpart). 37 routes in `DiscussController`. Migration V443 (participant settings, reactions, stars, inbox, department / DM keys, staff permissions for every role). Hourly `DiscussDepartmentSyncJob`. Tests: `DiscussIT`. Web: `/communication` (Discuss), header badge, `RecordChatter` on record detail pages.
+
+- [x] GET /api/v1/communication/discuss/sidebar — DiscussController.sidebar
+- [x] GET /api/v1/communication/discuss/counters — DiscussController.counters
+- [x] GET /api/v1/communication/discuss/directory — DiscussController.directory
+- [x] GET /api/v1/communication/discuss/presence — DiscussController.presence
+- [x] GET /api/v1/communication/discuss/channels — DiscussController.channels
+- [x] POST /api/v1/communication/discuss/channels — DiscussController.createChannel
+- [x] POST /api/v1/communication/discuss/chats — DiscussController.chat
+- [x] POST /api/v1/communication/discuss/departments/sync — DiscussController.syncDepartments
+- [x] GET /api/v1/communication/discuss/conversations/:id — DiscussController.detail
+- [x] PATCH /api/v1/communication/discuss/conversations/:id — DiscussController.update
+- [x] POST /api/v1/communication/discuss/conversations/:id/join — DiscussController.join
+- [x] POST /api/v1/communication/discuss/conversations/:id/leave — DiscussController.leave
+- [x] POST /api/v1/communication/discuss/conversations/:id/members — DiscussController.addMembers
+- [x] DELETE /api/v1/communication/discuss/conversations/:id/members/:userId — DiscussController.removeMember
+- [x] PATCH /api/v1/communication/discuss/conversations/:id/settings — DiscussController.settings
+- [x] POST /api/v1/communication/discuss/conversations/:id/archive — DiscussController.archive
+- [x] POST /api/v1/communication/discuss/conversations/:id/unarchive — DiscussController.unarchive
+- [x] POST /api/v1/communication/discuss/conversations/:id/typing — DiscussController.typing
+- [x] POST /api/v1/communication/discuss/conversations/:id/read — DiscussController.read
+- [x] GET /api/v1/communication/discuss/conversations/:id/messages — DiscussController.messages
+- [x] POST /api/v1/communication/discuss/conversations/:id/messages — DiscussController.post
+- [x] GET /api/v1/communication/discuss/conversations/:id/pinned — DiscussController.pinned
+- [x] GET /api/v1/communication/discuss/conversations/:id/attachments — DiscussController.attachments
+- [x] PATCH /api/v1/communication/discuss/messages/:id — DiscussController.edit
+- [x] DELETE /api/v1/communication/discuss/messages/:id — DiscussController.delete
+- [x] POST /api/v1/communication/discuss/messages/:id/reactions — DiscussController.react
+- [x] POST /api/v1/communication/discuss/messages/:id/pin — DiscussController.pin
+- [x] POST /api/v1/communication/discuss/messages/:id/star — DiscussController.star
+- [x] POST /api/v1/communication/discuss/attachments — DiscussController.upload
+- [x] GET /api/v1/communication/discuss/inbox — DiscussController.inbox
+- [x] POST /api/v1/communication/discuss/inbox/read — DiscussController.inboxRead
+- [x] GET /api/v1/communication/discuss/starred — DiscussController.starred
+- [x] GET /api/v1/communication/discuss/search — DiscussController.search
+- [x] GET /api/v1/communication/discuss/records/:type/:recordId — DiscussController.record
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/messages — DiscussController.recordPost
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/follow — DiscussController.follow
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/unfollow — DiscussController.unfollow
+
 ## Configurable approval rules and hub (ADR-S061, extension: no Nest counterpart)
 
 - [x] GET /api/v1/approvals/inbox — ApprovalsController.inbox
@@ -1596,3 +1638,20 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+
+## Notification routing (ADR-S065, extension: no Nest counterpart)
+
+Module `notificationrouting`. Spec: [docs/spec/notification-routing.md](spec/notification-routing.md). This feature
+tells the people responsible for a record when one of 57 catalogued events happens, across sales, purchasing,
+inventory, projects, helpdesk, HR, fleet, maintenance, production and quality. Organizations can add roles, users and
+channels per event. The actor is never told.
+
+- [x] GET /api/v1/notification-routing/events — NotificationRoutingController.events
+- [x] PUT /api/v1/notification-routing/events/:event — NotificationRoutingController.save
+- [x] DELETE /api/v1/notification-routing/events/:event — NotificationRoutingController.reset
+- [x] GET /api/v1/notification-routing/activity — NotificationRoutingController.activity
+- [x] `EventOutbox."actorId"` + `OutboxHandlers.subscribeDelivery` (row id and actor for subscribers)
+- [x] New events: `hr.leave.requested`, `hr.leave.decided`, `manufacturing.order.completed`,
+  `manufacturing.order.cancelled`, `task.assigned`, `crm.deal.assigned`, `quality.capa.created`
+- [x] `NotificationRoutingIT` (catalog queries against the schema, routing, settings, tenancy, authorization)
+- [x] Web: Settings → Customization → Notification Routing

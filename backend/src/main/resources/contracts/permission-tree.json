@@ -266,6 +266,10 @@
     "read": "alerts:read",
     "manage": "alerts:manage"
   },
+  "notificationRouting": {
+    "read": "notification_routing:read",
+    "manage": "notification_routing:manage"
+  },
   "bi": {
     "export": "bi:export"
   },

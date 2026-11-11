@@ -289,6 +289,12 @@ export const PERMISSIONS = {
     read: 'alerts:read',
     manage: 'alerts:manage',
   },
+  /// Who is told when something happens (ADR-S065): per event, the record's responsible people, extra roles/users and
+  /// channels. `read` lists the routing; `manage` changes it.
+  notificationRouting: {
+    read: 'notification_routing:read',
+    manage: 'notification_routing:manage',
+  },
   /// Read-only reporting datasets as CSV (Phase 5 integrations).
   bi: {
     export: 'bi:export',

@@ -5,6 +5,7 @@ import com.inventoryerp.communication.application.ConversationAccessService.Acce
 import com.inventoryerp.communication.application.MessageDispatchService.DeliveryTarget;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.AfterCommit;
+import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventOutboxService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.events.DomainEvents;
@@ -125,10 +126,24 @@ public class MessageService {
             throw ApiException.badRequest("Message body is required.");
         }
         access.assertCanRead(input.conversationId());
+        String messageId = postUserMessage(orgId, userId, input, "comment");
+        Map<String, Object> view = view(messageId);
+        emitCreatedAfterCommit(orgId, input.conversationId(), view);
+        return view;
+    }
 
+    /**
+     * Persist a user message, enqueue its deliveries, advance the sender's read cursor and publish
+     * {@code communication.message.created}; the caller checked access and emits the stream event. Refuses archived
+     * conversations (ADR-S064).
+     */
+    String postUserMessage(String orgId, String userId, SendInput input, String subtype) {
         Map<String, Object> conv = conversation(input.conversationId());
         if (conv == null) {
             throw ApiException.badRequest("Conversation not found.");
+        }
+        if (Boolean.TRUE.equals(conv.get("archived"))) {
+            throw ApiException.badRequest("This conversation is archived.");
         }
         @SuppressWarnings("unchecked")
         List<Binding> channels = (List<Binding>) conv.get("channels");
@@ -140,7 +155,7 @@ public class MessageService {
         List<DeliveryTarget> targets = targets(targetChannels);
 
         String messageId = insertMessage(orgId, input.conversationId(), "user", userId, input.body().trim(),
-                input.replyToMessageId());
+                input.replyToMessageId(), subtype);
         touch(input.conversationId());
         dispatch.enqueue(orgId, messageId, targets);
         // The sender has read their own message.
@@ -150,10 +165,7 @@ public class MessageService {
         outbox.publish(DomainEvents.COMMUNICATION_MESSAGE_CREATED, Obj.of("organizationId", orgId,
                 "messageId", messageId, "conversationId", input.conversationId(), "providerId", "internal",
                 "direction", "outbound"));
-
-        Map<String, Object> view = view(messageId);
-        emitCreatedAfterCommit(orgId, input.conversationId(), view);
-        return view;
+        return messageId;
     }
 
     /**
@@ -182,7 +194,7 @@ public class MessageService {
             return null;
         }
         List<DeliveryTarget> targets = targets(channels);
-        String messageId = insertMessage(orgId, conversationId, "system", null, body.trim(), null);
+        String messageId = insertMessage(orgId, conversationId, "system", null, body.trim(), null, "comment");
         touch(conversationId);
         dispatch.enqueue(orgId, messageId, targets);
         outbox.publish(DomainEvents.COMMUNICATION_MESSAGE_CREATED, Obj.of("organizationId", orgId,
@@ -194,13 +206,13 @@ public class MessageService {
     }
 
     private String insertMessage(String orgId, String conversationId, String senderType, String senderUserId,
-            String body, String replyTo) {
+            String body, String replyTo, String subtype) {
         String id = UUID.randomUUID().toString();
         jdbc.sql("""
                         INSERT INTO "Message" (id, "organizationId", "conversationId", "senderType", "senderUserId",
-                          "contentType", body, "replyToMessageId", "occurredAt")
-                        VALUES (?, ?, ?, ?, ?, 'text', ?, ?, ?)""")
-                .params(id, orgId, conversationId, senderType, senderUserId, body, replyTo, CommTime.nowTs())
+                          "contentType", body, "replyToMessageId", "occurredAt", subtype)
+                        VALUES (?, ?, ?, ?, ?, 'text', ?, ?, ?, ?)""")
+                .params(id, orgId, conversationId, senderType, senderUserId, body, replyTo, CommTime.nowTs(), subtype)
                 .update();
         return id;
     }
@@ -213,12 +225,14 @@ public class MessageService {
     /** The conversation (not deleted) with its active channel bindings, or {@code null}. */
     private Map<String, Object> conversation(String conversationId) {
         String orgId = TenantContext.organizationId();
-        String defaultCc = jdbc.sql("SELECT coalesce(\"defaultConversationChannelId\", '') FROM \"Conversation\""
+        Map<String, Object> head = SqlRows.one(jdbc.sql("SELECT coalesce(\"defaultConversationChannelId\", '') AS cc,"
+                        + " \"archivedAt\" IS NOT NULL AS archived FROM \"Conversation\""
                         + " WHERE id = ? AND \"deletedAt\" IS NULL AND \"organizationId\" = ?")
-                .params(conversationId, orgId).query(String.class).optional().orElse(null);
-        if (defaultCc == null) {
+                .params(conversationId, orgId));
+        if (head == null) {
             return null;
         }
+        String defaultCc = (String) head.get("cc");
         List<Binding> channels = jdbc.sql("SELECT id, \"channelId\", \"externalConversationId\" FROM \"ConversationChannel\""
                         + " WHERE \"conversationId\" = ? AND active = true AND \"organizationId\" = ?")
                 .params(conversationId, orgId)
@@ -226,6 +240,7 @@ public class MessageService {
                 .list();
         Map<String, Object> out = new HashMap<>();
         out.put("defaultConversationChannelId", defaultCc.isEmpty() ? null : defaultCc);
+        out.put("archived", head.get("archived"));
         out.put("channels", channels);
         return out;
     }
