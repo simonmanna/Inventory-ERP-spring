@@ -11,7 +11,8 @@ import { money } from '@/lib/format';
 import { apiMessage, notify } from '@/lib/notify';
 import { usePartners } from '@/features/partners/api';
 import { useProducts } from '@/features/products/api';
-import { useAccounts } from '@/features/accounting/api';
+import { useAccounts, useTaxes } from '@/features/accounting/api';
+import { TaxPicker, WithholdingSelect } from '@/components/tax-picker';
 import {
   useCreateExpense,
   useExpense,
@@ -36,9 +37,13 @@ interface LineForm {
   discountPercent?: number;
   /** Product unit (ADR-S003). */
   uomId?: string;
+  /** ADR-S071: taxes of the line (empty = the product's tax). */
+  taxIds?: string[];
 }
 interface FormValues {
   partnerId: string;
+  /** ADR-S071: withholding tax deducted on the bill. */
+  withholdingTaxId?: string;
   issueDate: string;
   dueDate?: string;
   reference?: string;
@@ -55,6 +60,8 @@ export function VendorBillEditPage() {
   const partners = usePartners({ page: 1, pageSize: 200 });
   const products = useProducts({ page: 1, pageSize: 200 });
   const accounts = useAccounts();
+  const taxQuery = useTaxes({ page: 1, pageSize: 200 });
+  const taxList = taxQuery.data?.data ?? [];
   const existing = useExpense(id);
   const createBill = useCreateExpense();
   const updateBill = useUpdateExpense();
@@ -81,6 +88,7 @@ export function VendorBillEditPage() {
       dueDate: bill.dueDate ? bill.dueDate.slice(0, 10) : '',
       reference: bill.reference ?? '',
       notes: bill.notes ?? '',
+      withholdingTaxId: '',
       lines: bill.lines.map((l) => ({
         productId: l.productId ?? undefined,
         accountId: l.accountId ?? undefined,
@@ -89,9 +97,16 @@ export function VendorBillEditPage() {
         unitPrice: Number(l.unitPrice),
         discountPercent: Number(l.discountPercent),
         uomId: l.uomId ?? undefined,
+        taxIds: (l as { taxIds?: string[] }).taxIds?.filter(
+          (t) => taxList.find((x) => x.id === t)?.type !== 'withholding',
+        ),
       })),
     });
-  }, [existing.data, reset]);
+    // ADR-S071: the header withholding is carried on each line's tax list.
+    const lineTaxes = bill.lines.flatMap((l) => (l as { taxIds?: string[] }).taxIds ?? []);
+    const whtId = lineTaxes.find((t) => taxList.find((x) => x.id === t)?.type === 'withholding');
+    if (whtId) setValue('withholdingTaxId', whtId);
+  }, [existing.data, reset, taxList, setValue]);
 
   const lineTotal = (l?: LineForm): number => {
     if (!l) return 0;
@@ -141,7 +156,9 @@ export function VendorBillEditPage() {
         unitPrice: finite(l.unitPrice),
         discountPercent: finite(l.discountPercent),
         uomId: l.productId ? l.uomId || undefined : undefined,
+        taxIds: l.taxIds && l.taxIds.length > 0 ? l.taxIds : undefined,
       })),
+      withholdingTaxId: values.withholdingTaxId || undefined,
     };
 
     try {
@@ -219,6 +236,18 @@ export function VendorBillEditPage() {
           <div className="space-y-2">
             <Label htmlFor="dueDate">{tx('Due date')}</Label>
             <Input id="dueDate" type="date" {...register('dueDate')} />
+          </div>
+          <div className="space-y-2">
+            <Label>{tx('Withholding tax')}</Label>
+            <WithholdingSelect
+              className={selectClass}
+              taxes={taxList}
+              value={watch('withholdingTaxId') ?? ''}
+              onChange={(v) => setValue('withholdingTaxId', v)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {tx('Deducted from the amount payable; a withholding certificate is issued when the bill is posted.')}
+            </p>
           </div>
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="notes">{tx('Notes')}</Label>
@@ -330,6 +359,14 @@ export function VendorBillEditPage() {
                     <Input placeholder={tx('Description')} {...register(`lines.${index}.description`, { required: true })} />
                   </div>
                 )}
+                <div className="col-span-2 md:col-span-12">
+                  <TaxPicker
+                    kind="purchase"
+                    taxes={taxList}
+                    value={watch(`lines.${index}.taxIds`) ?? []}
+                    onChange={(ids) => setValue(`lines.${index}.taxIds`, ids)}
+                  />
+                </div>
               </div>
             );
           })}
@@ -341,7 +378,7 @@ export function VendorBillEditPage() {
                 <span>{money(subtotal)}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                {tx('Tax is applied from each product when the bill is posted.')}
+                {tx('Tax is computed from each line\'s taxes (or its product\'s tax) when the bill is saved.')}
               </p>
             </div>
           </div>

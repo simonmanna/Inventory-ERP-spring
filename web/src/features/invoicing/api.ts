@@ -107,6 +107,8 @@ export interface InvoiceLineInput {
   discountPercent?: number;
   /** Product unit for this line; the server defaults to the product's sales (bills: purchase) unit. */
   uomId?: string;
+  /** ADR-S071: several taxes (groups, reverse charge on bills); omitted = the product's tax. */
+  taxIds?: string[];
 }
 
 export interface CreateInvoiceInput {
@@ -409,6 +411,8 @@ export interface CreateExpenseInput {
   reference?: string;
   notes?: string;
   lines: InvoiceLineInput[];
+  /** ADR-S071: withholding tax applied to every product line; the bill's residual is net of it. */
+  withholdingTaxId?: string;
 }
 
 export function useExpenses(params: {

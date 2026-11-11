@@ -37,17 +37,29 @@ public final class InvoicingDtos {
             BigDecimal pieces,
             BigDecimal length,
             BigDecimal width,
-            BigDecimal height) {
+            BigDecimal height,
+            /* ADR-S071: several taxes / groups / withholding / reverse charge (null = the single taxId applies). */
+            List<String> taxIds) {
+
+        /** A line without a size or a tax list. */
+        public InvoiceLine(String productId, String accountId, String description, BigDecimal quantity,
+                BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType, String uomId,
+                String variantId) {
+            this(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType, uomId,
+                    variantId, null, null, null, null, null);
+        }
 
         LineInput toInput() {
             Sizing size = Sizing.raw(pieces, length, width, height);
-            if ((variantId == null || variantId.isBlank()) && size == null) {
-                return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
-                        lineType, uomId);
+            LineInput in = variantId == null || variantId.isBlank()
+                    ? LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
+                            lineType, uomId)
+                    : new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
+                            discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            if (size != null) {
+                in = in.withSizing(size);
             }
-            return new LineInput(productId, null, variantId == null || variantId.isBlank() ? null : variantId, null,
-                    accountId, description, quantity, unitPrice, discountPercent, null, null, null, null, taxId,
-                    lineType, null, uomId, size);
+            return taxIds == null ? in : in.withTaxIds(taxIds);
         }
     }
 

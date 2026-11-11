@@ -173,7 +173,7 @@ public class SalesBillingService {
                         null, str(l.get("description")),
                         dec(it.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
-                        str(l.get("uomId")), dec(it.get("quantity")).compareTo(dec(l.get("quantity"))) == 0
+                        str(l.get("uomId")), null, dec(it.get("quantity")).compareTo(dec(l.get("quantity"))) == 0
                                 ? ProductSizingService.Sizing.stored(l) : null));
             }
             doc = create(o, issue, lines, "Sales order " + number);

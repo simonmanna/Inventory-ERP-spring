@@ -47,11 +47,13 @@ public class VendorBillController {
             String branchId,
             List<String> purchaseOrderIds,
             @NotNull(message = "must be an array") @ArrayMinSize(1)
-            List<@Valid InvoiceLine> lines) {
+            List<@Valid InvoiceLine> lines,
+            /* ADR-S071: a withholding tax applied to every product line of the bill. */
+            String withholdingTaxId) {
 
         BillInput toInput() {
             return new BillInput(partnerId, issueDate, dueDate, currencyId, reference, notes, branchId, purchaseOrderIds,
-                    InvoicingDtos.lines(lines));
+                    InvoicingDtos.lines(lines), withholdingTaxId);
         }
     }
 

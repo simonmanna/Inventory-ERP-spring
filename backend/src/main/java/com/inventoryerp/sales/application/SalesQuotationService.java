@@ -446,7 +446,7 @@ public class SalesQuotationService {
             String taxId = l.containsKey("taxId") ? str(l.get("taxId")) : price == null ? null : price.taxId();
             Boolean incl = l.get("taxInclusive") instanceof Boolean b ? b : price != null && price.taxInclusive();
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
-                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, null, size));
+                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, null, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
                     "leadTimeDays", leadTime));
@@ -804,7 +804,7 @@ public class SalesQuotationService {
                 inputs.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
                         dec(l.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), null,
-                        ProductSizingService.Sizing.stored(l)));
+                        null, ProductSizingService.Sizing.stored(l)));
             }
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), LocalDate.now().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),

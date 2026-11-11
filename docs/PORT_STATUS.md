@@ -1664,3 +1664,7 @@ channels per event. The actor is never told.
 - [x] Web: "Sold by size" card + variant "Size & description" on the product's Attributes & Variants tab; size inputs and variant prefill (price, size, description) on cash sale, quotation, sales order and invoice lines; invoice create gains the variant picker
 - [x] Fix: quotation approval authorizes variant lines at the variant price
 - [x] Tests: `ProductSizingServiceTest`, `ProductSizingIT`, `CashSaleIT#soldBySize`
+
+## Tax groups, withholding and reverse charge (ADR-S071)
+
+- [x] ADR-S071 tax groups, multi-tax lines, withholding (bills, receipts, certificates: GET/PATCH /api/v1/withholding-certificates, GET /api/v1/withholding-certificates/report) and reverse-charge VAT — WithholdingCertificateController, TaxController

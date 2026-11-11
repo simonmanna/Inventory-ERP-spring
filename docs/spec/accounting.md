@@ -220,11 +220,17 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - `GET /tax-settlements` lists the settled periods.
 - **Tax-period lock:** `PostingService` refuses any line on a tax account dated on or before the latest settled period
   end. Tax accounts are the output, input and withholding mappings plus each tax's own account.
-- **Not built:**
+- **Built since (ADR-S071, V482):**
   - tax groups;
-  - more than one tax per line;
-  - the compound-inclusive fix;
-  - withholding tax on bills;
+  - several taxes per line (`taxIds`) through `TaxCalculationService`, compound and inclusive included;
+  - withholding tax on vendor bills, with a residual net of withholding, `withholding_payable` and issued
+    certificates;
+  - withholding suffered on customer receipts (`withholding_receivable`, received certificates);
+  - reverse-charge VAT on vendor bills;
+  - `/withholding-certificates` routes and the filing report.
+  - See [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+- **Not built:**
+  - remitting withholding to the authority as a dedicated flow (today it is a journal or a supplier payment);
   - recording the partner-default position name on the document;
   - an invoice cancelled after settlement still reverses on its original date when that accounting period is open (the
     tax lock then refuses it, so the user cancels after re-dating via a credit note).

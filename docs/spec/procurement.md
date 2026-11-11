@@ -654,3 +654,11 @@ Tests: `PlanningIT`. Web:
 - A replenishment page with a rule dialog.
 - A public `/supplier-portal/:token` page, outside the login.
 - "Supplier link" buttons on RFQ suppliers and on the PO progress card.
+
+## Tax groups on debit notes and withholding on subcontract bills (ADR-S071, built)
+
+- A debit-note line whose `taxId` is a tax group posts each child tax (exclusive, compound on the running total) to
+  its account. Withholding and reverse-charge children are ignored on notes.
+- Vendor bills, including subcontract valuation bills (`withholdingTaxId` on the valuation request), can withhold tax
+  at posting. See [invoicing.md](invoicing.md) and
+  [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).

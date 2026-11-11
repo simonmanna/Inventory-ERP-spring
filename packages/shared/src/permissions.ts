@@ -64,6 +64,13 @@ export const PERMISSIONS = {
     update: 'tax:update',
     delete: 'tax:delete',
   },
+  // ---- Withholding tax certificates (ADR-S071; Spring-native) ----
+  withholding: {
+    /// Withholding tax certificates (issued to suppliers, received from customers) and the filing report.
+    read: 'withholding:read',
+    /// Correct certificate notes and the number of a certificate received from a customer.
+    update: 'withholding:update',
+  },
   currency: {
     create: 'currency:create',
     read: 'currency:read',

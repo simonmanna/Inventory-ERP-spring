@@ -148,6 +148,8 @@ public class TaxCashReports implements ReportProvider {
             df += " AND d.\"partnerId\" = ANY(?::text[])";
             p.add(ctx.request().partnerIds().toArray(String[]::new));
         }
+        // ADR-S071: the breakdown branch repeats the document filters.
+        p.addAll(new ArrayList<>(p));
         p.addAll(List.of(ctx.organizationId(), from(ctx), to(ctx)));
         if (!ctx.request().branchIds().isEmpty()) {
             inf += " AND i.\"branchId\" = ANY(?::text[])";
@@ -170,6 +172,18 @@ public class TaxCashReports implements ReportProvider {
                 + " d.id = dl.\"documentId\" LEFT JOIN \"Partner\" pt ON pt.id = d.\"partnerId\" LEFT JOIN \"Product\" pr"
                 + " ON pr.id = dl.\"productId\" WHERE d.\"organizationId\" = ? AND d.\"issueDate\" >= ? AND"
                 + " d.\"issueDate\" < ? AND d.status::text IN ('posted', 'paid') AND d.\"documentType\"::text IN"
+                + " ('sales_invoice', 'debit_note', 'credit_note', 'vendor_bill')" + df
+                + " AND NOT EXISTS (SELECT 1 FROM \"DocumentLineTax\" bx WHERE bx.\"documentLineId\" = dl.id)"
+                // ADR-S071: multi-tax lines, one row per tax; reverse charge counts on the sales and purchase side.
+                + " UNION ALL SELECT s.side, CASE WHEN d.\"documentType\"::text = 'credit_note' THEN -1 ELSE 1 END,"
+                + " d.id, d.\"documentType\"::text, d.\"documentNumber\", d.\"issueDate\", pt.name, pt.\"taxNumber\","
+                + " bx.\"taxId\", bx.base, bx.amount, dl.id, dl.description, pr.name FROM \"DocumentLineTax\" bx JOIN"
+                + " \"DocumentLine\" dl ON dl.id = bx.\"documentLineId\" JOIN \"Document\" d ON d.id = bx.\"documentId\""
+                + " JOIN (VALUES ('S'), ('P')) s(side) ON (bx.kind = 'reverse_charge' OR s.side = CASE WHEN"
+                + " d.\"documentType\"::text = 'vendor_bill' THEN 'P' ELSE 'S' END) LEFT JOIN \"Partner\" pt ON"
+                + " pt.id = d.\"partnerId\" LEFT JOIN \"Product\" pr ON pr.id = dl.\"productId\" WHERE"
+                + " d.\"organizationId\" = ? AND d.\"issueDate\" >= ? AND d.\"issueDate\" < ? AND d.status::text IN"
+                + " ('posted', 'paid') AND bx.kind IN ('tax', 'reverse_charge') AND d.\"documentType\"::text IN"
                 + " ('sales_invoice', 'debit_note', 'credit_note', 'vendor_bill')" + df
                 + " UNION ALL SELECT 'S', 1, i.id, 'pos_invoice', i.\"invoiceNumber\", i.\"issueDate\", pt.name,"
                 + " pt.\"taxNumber\", ii.\"taxId\", ii.subtotal, coalesce(ii.\"taxAmount\", 0), ii.id, ii.description,"
@@ -306,7 +320,8 @@ public class TaxCashReports implements ReportProvider {
                     ctx.current().to(), new ArrayList<>(vatAccounts))), false);
             t.tie("TIES_TO_GL", "Net VAT equals the movement on the VAT accounts", net, gl);
         }
-        t.meta("format", "URA VAT return (domestic supplies); imports and reverse charge are filed separately");
+        t.meta("format", "URA VAT return (domestic supplies); reverse-charge VAT on imported services is included on"
+                + " both the output and the input side (ADR-S071)");
         return t.build(false);
     }
 

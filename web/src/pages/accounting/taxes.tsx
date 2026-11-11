@@ -64,6 +64,9 @@ interface TaxFormState {
   isInclusive: boolean;
   isCompound: boolean;
   accountId: string;
+  isGroup: boolean;
+  reverseCharge: boolean;
+  children: string[];
 }
 
 const defaultForm: TaxFormState = {
@@ -75,6 +78,9 @@ const defaultForm: TaxFormState = {
   isInclusive: false,
   isCompound: false,
   accountId: '',
+  isGroup: false,
+  reverseCharge: false,
+  children: [],
 };
 
 /* ── Page component ──────────────────────────────────────── */
@@ -125,6 +131,9 @@ export default function TaxesPage() {
         isInclusive: editingTax.isInclusive,
         isCompound: editingTax.isCompound,
         accountId: editingTax.accountId ?? '',
+        isGroup: !!editingTax.isGroup,
+        reverseCharge: !!editingTax.reverseCharge,
+        children: (editingTax.children ?? []).map((c) => c.id),
       });
     } else {
       setForm(defaultForm);
@@ -151,20 +160,27 @@ export default function TaxesPage() {
       setFormError(tx('Tax name is required.'));
       return;
     }
-    if (!form.rate || isNaN(Number(form.rate)) || Number(form.rate) < 0) {
+    if (!form.isGroup && (!form.rate || isNaN(Number(form.rate)) || Number(form.rate) < 0)) {
       setFormError('A valid rate is required.');
+      return;
+    }
+    if (form.isGroup && form.children.length === 0) {
+      setFormError(tx('A group tax needs at least one child tax.'));
       return;
     }
 
     const payload = {
       name: form.name.trim(),
       code: form.code.trim() || undefined,
-      rate: Number(form.rate),
+      rate: form.isGroup ? 0 : Number(form.rate),
       type: form.type,
       vatCategory: form.vatCategory,
-      isInclusive: form.isInclusive,
-      isCompound: form.isCompound,
+      isInclusive: form.isGroup ? false : form.isInclusive,
+      isCompound: form.isGroup ? false : form.isCompound,
       accountId: form.accountId || undefined,
+      isGroup: form.isGroup,
+      reverseCharge: form.isGroup ? false : form.reverseCharge,
+      children: form.isGroup ? form.children : undefined,
     };
 
     try {
@@ -208,13 +224,24 @@ export default function TaxesPage() {
     {
       key: 'rate',
       header: tx('Rate'),
-      render: (t) => <span className="font-mono">{Number(t.rate).toFixed(2)}%</span>,
+      render: (t) =>
+        t.isGroup ? (
+          <span className="text-sm text-muted-foreground">
+            {(t.children ?? []).map((c) => c.name).join(' + ') || tx('Group')}
+          </span>
+        ) : (
+          <span className="font-mono">{Number(t.rate).toFixed(2)}%</span>
+        ),
     },
     {
       key: 'type',
       header: tx('Type'),
       render: (t) => (
-        <Badge variant="secondary">{TAX_TYPE_LABELS[t.type] ?? t.type.replace(/_/g, ' ')}</Badge>
+        <div className="flex flex-wrap gap-1">
+          <Badge variant="secondary">{TAX_TYPE_LABELS[t.type] ?? t.type.replace(/_/g, ' ')}</Badge>
+          {t.isGroup && <Badge variant="outline">{tx('Group')}</Badge>}
+          {t.reverseCharge && <Badge variant="outline">{tx('Reverse charge')}</Badge>}
+        </div>
       ),
     },
     {
@@ -493,6 +520,95 @@ export default function TaxesPage() {
                   </span>
                 </span>
               </label>
+            </div>
+
+            {/* Tax group (ADR-S071) */}
+            <div className="flex flex-col gap-3 border-t pt-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.reverseCharge}
+                  disabled={form.isGroup || form.type === 'withholding'}
+                  onChange={(e) => setForm({ ...form, reverseCharge: e.target.checked })}
+                  className="h-4 w-4 rounded border-input"
+                />
+                <span>
+                  <span className="font-medium">{tx('Reverse charge')}</span>
+                  <span className="text-muted-foreground ml-1">
+                    {tx('— Self-assessed VAT on imported services: input and output VAT, nothing added to the bill')}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.isGroup}
+                  onChange={(e) => setForm({ ...form, isGroup: e.target.checked })}
+                  className="h-4 w-4 rounded border-input"
+                />
+                <span>
+                  <span className="font-medium">{tx('Tax group')}</span>
+                  <span className="text-muted-foreground ml-1">
+                    {tx('— Applies the child taxes below, in order, instead of a rate of its own')}
+                  </span>
+                </span>
+              </label>
+              {form.isGroup && (
+                <div className="space-y-2 rounded-md border p-3">
+                  {form.children.map((id, idx) => {
+                    const child = taxes.find((t) => t.id === id);
+                    return (
+                      <div key={id} className="flex items-center justify-between gap-2 text-sm">
+                        <span>
+                          {idx + 1}. {child?.name ?? id}{' '}
+                          <span className="text-muted-foreground">
+                            {child ? `${Number(child.rate).toFixed(2)}%` : ''}
+                            {child?.isCompound ? ` · ${tx('compound')}` : ''}
+                          </span>
+                        </span>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={idx === 0}
+                            onClick={() => {
+                              const next = [...form.children];
+                              [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                              setForm({ ...form, children: next });
+                            }}
+                          >
+                            ↑
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setForm({ ...form, children: form.children.filter((c) => c !== id) })}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <Select
+                    value=""
+                    onValueChange={(v) => v && setForm({ ...form, children: [...form.children, v] })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={tx('Add a child tax')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {taxes
+                        .filter((t) => !t.isGroup && t.id !== editingTax?.id && !form.children.includes(t.id))
+                        .map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name} ({Number(t.rate).toFixed(2)}%)
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             {/* Error */}

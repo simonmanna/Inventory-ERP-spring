@@ -450,11 +450,8 @@ public class InvoiceService {
             ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
                     : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
                             null, on));
-            out.add(p == null ? l : new LineInput(l.productId(), l.menuItemId(), l.variantId(), l.variantName(),
-                    l.accountId(), l.description(), l.quantity(), p.unitPrice(),
-                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent(), l.discountType(),
-                    l.discountAmount(), l.discountReason(), l.discountSource(), l.taxId(), l.lineType(),
-                    l.taxInclusive(), l.uomId(), l.sizing()));
+            out.add(p == null ? l : l.withPrice(p.unitPrice(),
+                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent()));
         }
         return out;
     }

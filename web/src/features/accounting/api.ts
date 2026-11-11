@@ -800,7 +800,14 @@ export interface Tax {
   vatCategory: string;
   accountId: string | null;
   isActive: boolean;
+  /** ADR-S071: a group applies its ordered children; reverse charge self-assesses VAT on vendor bills. */
+  isGroup?: boolean;
+  reverseCharge?: boolean;
+  children?: Array<{ id: string; name: string; code: string | null; type: string; rate: number | string }>;
 }
+
+/** Tax create / update body (children: ordered child tax ids of a group). */
+export type TaxInput = Partial<Omit<Tax, 'children'>> & { children?: string[] };
 
 export function useTaxes(params?: { page?: number; pageSize?: number }) {
   return useQuery({
@@ -813,7 +820,7 @@ export function useTaxes(params?: { page?: number; pageSize?: number }) {
 export function useCreateTax() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Partial<Tax>) =>
+    mutationFn: async (input: TaxInput) =>
       (await api.post<Tax>('/taxes', input)).data,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax created')); },
     onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
@@ -823,7 +830,7 @@ export function useCreateTax() {
 export function useUpdateTax() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...input }: { id: string } & Partial<Tax>) =>
+    mutationFn: async ({ id, ...input }: { id: string } & TaxInput) =>
       (await api.patch(`/taxes/${id}`, input)).data,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax updated')); },
     onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
@@ -835,6 +842,71 @@ export function useDeleteTax() {
   return useMutation({
     mutationFn: async (id: string) => api.delete(`/taxes/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['taxes'] }); notify.success(tx('Tax deleted')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+  });
+}
+
+/* ── Withholding tax certificates (ADR-S071) ──────────────────── */
+
+export interface WithholdingCertificate {
+  id: string;
+  number: string;
+  direction: 'issued' | 'received';
+  partnerId: string;
+  partnerName: string;
+  partnerTaxNumber: string | null;
+  documentId: string | null;
+  documentNumber: string | null;
+  paymentId: string | null;
+  paymentNumber: string | null;
+  taxId: string | null;
+  taxName: string | null;
+  certificateDate: string;
+  baseAmount: string;
+  rate: string | null;
+  amount: string;
+  status: 'issued' | 'cancelled';
+  notes: string | null;
+}
+
+export interface WithholdingReport {
+  direction: 'issued' | 'received';
+  from: string;
+  to: string;
+  lines: Array<{ partnerId: string; partnerName: string; partnerTaxNumber: string | null; taxId: string | null;
+    taxName: string | null; rate: string | null; baseAmount: string; amount: string; certificates: number }>;
+  baseTotal: string;
+  amountTotal: string;
+  certificates: number;
+  glMovement: string;
+  glDifference: string;
+}
+
+export function useWithholdingCertificates(params: { direction?: string; from?: string; to?: string;
+  page?: number; pageSize?: number }) {
+  return useQuery({
+    queryKey: ['withholding-certificates', params],
+    queryFn: async () =>
+      (await api.get<PaginatedResult<WithholdingCertificate>>('/withholding-certificates', { params })).data,
+  });
+}
+
+export function useWithholdingReport(params: { direction: string; from: string; to: string }) {
+  return useQuery({
+    queryKey: ['withholding-certificates', 'report', params],
+    enabled: !!params.from && !!params.to,
+    queryFn: async () =>
+      (await api.get<WithholdingReport>('/withholding-certificates/report', { params })).data,
+  });
+}
+
+export function useUpdateWithholdingCertificate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...input }: { id: string; number?: string; notes?: string }) =>
+      (await api.patch(`/withholding-certificates/${id}`, input)).data,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['withholding-certificates'] });
+      notify.success(tx('Certificate updated')); },
     onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
   });
 }

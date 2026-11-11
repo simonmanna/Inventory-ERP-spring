@@ -528,6 +528,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/trial-balance', label: tx('Trial Balance'), icon: Scale, permission: PERMISSIONS.report.accounting, reportId: 'accounting.trial-balance', group: 'Statements' },
       { to: '/general-ledger', label: tx('General Ledger'), icon: ArrowUpDown, permission: PERMISSIONS.report.accounting, reportId: 'accounting.general-ledger', group: 'Statements' },
       { to: '/tax-report', label: tx('Tax Report'), icon: ReceiptText, permission: PERMISSIONS.report.accounting, group: 'Statements' },
+      { to: '/withholding-certificates', label: tx('Withholding Certificates'), icon: ReceiptText, permission: PERMISSIONS.withholding.read, group: 'Statements' },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging', group: 'Aging' },
       { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar, group: 'Aging' },
       { to: '/tieout', label: tx('Tie-Out'), icon: ShieldCheck, permission: PERMISSIONS.report.accounting, reportId: 'accounting.tieout', group: 'Reconciliation' },

@@ -58,7 +58,46 @@ public class VendorBillService {
 
     /** {@code CreateVendorBillDto}. */
     public record BillInput(String partnerId, String issueDate, String dueDate, String currencyId, String reference,
-            String notes, String branchId, List<String> purchaseOrderIds, List<LineInput> lines) {}
+            String notes, String branchId, List<String> purchaseOrderIds, List<LineInput> lines,
+            String withholdingTaxId) {
+
+        /** A bill without header withholding. */
+        public BillInput(String partnerId, String issueDate, String dueDate, String currencyId, String reference,
+                String notes, String branchId, List<String> purchaseOrderIds, List<LineInput> lines) {
+            this(partnerId, issueDate, dueDate, currencyId, reference, notes, branchId, purchaseOrderIds, lines, null);
+        }
+
+        /**
+         * Lines with the header withholding tax (ADR-S071) added to each product line's tax list; a line without a
+         * list keeps its single tax (stated or the product's) next to the withholding.
+         */
+        public List<LineInput> effectiveLines(java.util.function.Function<LineInput, String> productTax) {
+            if (withholdingTaxId == null || withholdingTaxId.isBlank() || lines == null) {
+                return lines;
+            }
+            List<LineInput> out = new ArrayList<>();
+            for (LineInput l : lines) {
+                if (l.lineType() != null && !"product".equals(l.lineType())) {
+                    out.add(l);
+                    continue;
+                }
+                List<String> ids = new ArrayList<>();
+                if (l.taxIds() != null && !l.taxIds().isEmpty()) {
+                    ids.addAll(l.taxIds());
+                } else {
+                    String single = l.taxId() != null ? l.taxId() : productTax.apply(l);
+                    if (single != null) {
+                        ids.add(single);
+                    }
+                }
+                if (!ids.contains(withholdingTaxId)) {
+                    ids.add(withholdingTaxId);
+                }
+                out.add(l.withTaxIds(ids));
+            }
+            return out;
+        }
+    }
 
     private static final Set<String> SORT_FIELDS = Set.of("createdAt", "updatedAt", "issueDate", "dueDate",
             "documentNumber", "totalAmount", "amountResidual", "status", "reference");
@@ -182,7 +221,8 @@ public class VendorBillService {
         validateDates(dto.issueDate(), dto.dueDate());
         Map<String, Object> doc = builder.createDocument("vendor_bill", new HeaderInput(dto.partnerId(), dto.issueDate(),
                 dto.dueDate(), null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-                dto.currencyId(), null, dto.reference(), dto.notes(), null, null, dto.branchId()), dto.lines());
+                dto.currencyId(), null, dto.reference(), dto.notes(), null, null, dto.branchId()),
+                dto.effectiveLines(this::productTax));
         String id = (String) doc.get("id");
         // Who entered the bill: the supplier-bill separation-of-duties pair needs it at posting.
         jdbc.sql("UPDATE \"Document\" SET \"createdBy\" = ? WHERE id = ? AND \"organizationId\" = ?")
@@ -240,14 +280,14 @@ public class VendorBillService {
             throw ApiException.badRequest("Only draft bills can be edited");
         }
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
-        Totals totals = builder.prepareLines(dto.lines(), UnitRole.PURCHASE);
+        Totals totals = builder.prepareLines(dto.effectiveLines(this::productTax), UnitRole.PURCHASE);
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"currencyId\" = ?,"
                         + " reference = ?, notes = ?, subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?,"
-                        + " \"totalAmount\" = ?, \"amountResidual\" = ?, \"updatedAt\" = " + NOW
-                        + " WHERE id = ? AND \"organizationId\" = ?")
+                        + " \"totalAmount\" = ?, \"amountResidual\" = ?, \"withholdingAmount\" = ?, \"updatedAt\" = "
+                        + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(dto.partnerId(), ts(dto.issueDate()), ts(dto.dueDate()), dto.currencyId(), dto.reference(),
                         dto.notes(), totals.subtotal(), totals.discountTotal(), totals.taxAmount(), totals.total(),
-                        totals.total(), id, org())
+                        totals.residual(), totals.withholdingAmount(), id, org())
                 .update();
         builder.insertLines(id, totals.prepared(), false);
         syncPoLinks(id, dto.purchaseOrderIds(), totals.total().doubleValue());
@@ -255,6 +295,15 @@ public class VendorBillService {
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
         return out;
+    }
+
+    /** The product's default tax (a line without a stated tax falls back to it). */
+    private String productTax(LineInput l) {
+        if (l.productId() == null) {
+            return null;
+        }
+        return jdbc.sql("SELECT \"taxId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(l.productId(), org()).query(String.class).optional().orElse(null);
     }
 
     private void syncPoLinks(String vendorBillId, List<String> purchaseOrderIds, double total) {

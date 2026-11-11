@@ -507,7 +507,7 @@ public class CashSaleService {
             String description = !blank(str(l.get("description"))) ? str(l.get("description"))
                     : price.description() != null ? price.description() : str(product.get("name"));
             inputs.add(new LineInput(productId, null, null, null, null, description, qty, unit, disc, null, null, null,
-                    "manual", taxId, null, incl, uomId, size));
+                    "manual", taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", price.listPrice(), "priceSource", same ? price.source() : "manual", "cost",
                     variant != null && variant.costPrice() != null ? variant.costPrice() : product.get("costPrice"),
                     "variantId", variant == null ? null : variant.id()));
@@ -1065,7 +1065,8 @@ public class CashSaleService {
             lines.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), str(l.get("variantName")), null,
                     str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
                     dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
-                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), ProductSizingService.Sizing.stored(l)));
+                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
+                    ProductSizingService.Sizing.stored(l)));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,

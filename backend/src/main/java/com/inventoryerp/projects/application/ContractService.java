@@ -580,6 +580,16 @@ public class ContractService {
     /** A subcontractor valuation: gross to project cost, retention payable held, the net billed through clearing. */
     @Transactional
     public Map<String, Object> valuation(String subcontractId, BigDecimal cumulativeValue, String date) {
+        return valuation(subcontractId, cumulativeValue, date, null);
+    }
+
+    /**
+     * As {@link #valuation(String, BigDecimal, String)}; {@code withholdingTaxId} (ADR-S071) withholds that tax on the
+     * valuation bill: the bill credits withholding tax payable and its residual is net of it.
+     */
+    @Transactional
+    public Map<String, Object> valuation(String subcontractId, BigDecimal cumulativeValue, String date,
+            String withholdingTaxId) {
         Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ? AND"
                 + " \"organizationId\" = ? FOR UPDATE").params(subcontractId, org()));
         if (s == null) {
@@ -626,7 +636,8 @@ public class ContractService {
                 "project_subcontract", id, null, "projects:subcontract:" + org() + ":" + id, (String) p.get("branchId"),
                 null, null, lines));
         String je = entry == null ? null : (String) entry.get("id");
-        String bill = c.net().signum() > 0 ? bill(supplier, d, label, clearing, c.net()) : null;
+        String bill = c.net().signum() > 0 ? bill(supplier, d, label, clearing, c.net(), blank(withholdingTaxId))
+                : null;
         String costLine = UUID.randomUUID().toString();
         costLine(costLine, projectId, (String) s.get("wbsId"), "project_subcontract", id, subcontractId, d,
                 c.thisClaim(), clearing, je, label);
@@ -1114,8 +1125,14 @@ public class ContractService {
     }
 
     private String bill(String partner, String date, String label, String account, BigDecimal amount) {
+        return bill(partner, date, label, account, amount, null);
+    }
+
+    private String bill(String partner, String date, String label, String account, BigDecimal amount,
+            String withholdingTaxId) {
         Map<String, Object> doc = bills.create(new BillInput(partner, date, null, null, label, label, null, List.of(),
-                List.of(LineInput.of(null, account, label, BigDecimal.ONE, amount, BigDecimal.ZERO, null, null))));
+                List.of(LineInput.of(null, account, label, BigDecimal.ONE, amount, BigDecimal.ZERO, null, null)),
+                withholdingTaxId));
         String id = (String) doc.get("id");
         bills.post(id, false, false);
         return id;
