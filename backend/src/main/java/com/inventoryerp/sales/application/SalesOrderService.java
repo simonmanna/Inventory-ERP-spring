@@ -8,6 +8,7 @@ import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
 import com.inventoryerp.core.application.PriceSnapshotService;
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
@@ -72,6 +73,13 @@ public class SalesOrderService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private ProductSizingService sizing;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
     private SalesAgreementService agreements;
     private SalesAccess access;
     private SalesAlerts alerts;
@@ -168,8 +176,8 @@ public class SalesOrderService {
     List<Map<String, Object>> lines(String orderId) {
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
                 + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
-                + " pr.\"trackInventory\", t.name AS \"taxName\", t.rate AS \"taxRate\", u.code AS \"uomCode\" FROM"
-                + " \"SalesOrderLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id ="
+                + " pr.\"trackInventory\", pr.\"sizingMode\", pr.\"sizingUnit\", t.name AS \"taxName\", t.rate AS"
+                + " \"taxRate\", u.code AS \"uomCode\" FROM \"SalesOrderLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id ="
                 + " l.\"taxId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"orderId\" = ? ORDER BY"
                 + " l.\"sortOrder\"", orderId);
         for (Map<String, Object> l : lines) {
@@ -309,7 +317,7 @@ public class SalesOrderService {
             }
             Map<String, Object> m = new LinkedHashMap<>();
             for (String k : List.of("productId", "variantId", "description", "quantity", "uomId", "unitPrice",
-                    "discountPercent", "taxId", "taxInclusive", "listPrice")) {
+                    "discountPercent", "taxId", "taxInclusive", "listPrice", "pieces", "length", "width", "height")) {
                 m.put(k, l.get(k));
             }
             m.put("priceSource", "quotation");
@@ -540,7 +548,9 @@ public class SalesOrderService {
     Map<String, Object> line(String partnerId, String agreementId, LocalDate on, Map<String, Object> l,
             String defaultLocation, PriceScope scope) {
         String productId = blank(str(l.get("productId"))) ? null : str(l.get("productId"));
-        BigDecimal qty = dec(l.get("quantity"));
+        // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]]
+        ProductSizingService.Sizing size = sizing.fromLine(productId, l);
+        BigDecimal qty = size != null ? size.quantity() : dec(l.get("quantity"));
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("quantity must be greater than 0");
         }
@@ -600,6 +610,7 @@ public class SalesOrderService {
         m.put("sourceLocationId", location);
         m.put("tolerancePct", l.get("tolerancePct") == null ? BigDecimal.ZERO : dec(l.get("tolerancePct")));
         m.put("quotationLineId", str(l.get("quotationLineId")));
+        m.putAll(ProductSizingService.Sizing.columns(size));
         return m;
     }
 
@@ -646,6 +657,7 @@ public class SalesOrderService {
             ins.put("costSnapshot", cost);
             ins.put("tolerancePct", m.get("tolerancePct"));
             ins.put("quotationLineId", m.get("quotationLineId"));
+            ins.putAll(ProductSizingService.Sizing.columns(ProductSizingService.Sizing.stored(m)));
             ids.add(str(db.insert("SalesOrderLine", ins).get("id")));
             i++;
         }

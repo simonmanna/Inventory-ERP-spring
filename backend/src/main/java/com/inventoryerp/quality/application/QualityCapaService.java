@@ -158,6 +158,9 @@ public class QualityCapaService {
         }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "create", null, Obj.of("capaNumber", number, "ncrId",
                 in.ncrId())));
+        // Notification routing (ADR-S065): the owner has a corrective action to do.
+        events.publish("quality.capa.created", Obj.of("organizationId", QualityDb.org(), "capaId", id, "capaNumber",
+                number, "ownerUserId", Q.trim(in.ownerUserId())));
         return get(id);
     }
 

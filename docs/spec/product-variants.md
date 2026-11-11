@@ -96,7 +96,8 @@ debit-note lines). Responses add `variantId` and `variantName`.
 
 - Manufacturing (BOM output / consumption) has no variant selection; producing a variant product is refused by the
   stock guard until it does.
-- Invoice, vendor-bill, quotation and PO detail screens show the variant only through the line description.
+- Vendor-bill and PO detail screens show the variant only through the line description (invoice create/detail,
+  quotation, sales order and cash sale screens have the variant picker / variant name since ADR-S066).
 - A product that already has variant-less stock keeps it under no variant after attribute lines are added (sell or
   count it out before switching to variants).
 
@@ -105,6 +106,14 @@ debit-note lines). Responses add `variantId` and `variantName`.
 - Goods-receipt create and requisition pages have no variant picker yet (API accepts `variantId`; a PO line's
   variant is carried to its receipt automatically).
 - POS menu variants (`MenuItemVariant`) are unrelated and unchanged.
+
+### Variant details and sell by size (ADR-S066, 2026-11-11)
+
+- Variants carry a standard `length/width/height` and a sales `description` (variants grid → ⚙ "Size & description");
+  the line pickers show each variant's price and prefill its size, price and description.
+- Products can be sold by length / area / volume (`GET/PUT /products/{id}/sizing`); lines take pieces × size and the
+  quantity is computed server side. See [ADR-S066](../adr/ADR-S066-sell-by-size.md).
+- Quotation approval authorizes a variant line at the variant's price.
 
 ## Deviations
 

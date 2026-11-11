@@ -116,7 +116,12 @@ location must be an active `InventoryLocation` with the profile's `branchId`.
   and `verificationSource`:
   - cash: `confirmer_cash`;
   - MoMo: `momo_gateway` (`MobileMoneyService` success);
-  - MoMo or bank: `verifier`, which needs `sales:cash_sale:verify_payment`.
+  - MoMo or bank: `verifier`, which needs `sales:cash_sale:verify_payment`;
+  - any method, branch without `requireSegregation`: `collector` — the line is verified at capture (V445; the UI has
+    no Verify step). With segregation on, the line stays `pending` and the rules above apply.
+- **Payment details** (V445, all optional): `paymentDate`, `payerName`, `payerAccount` (phone for MoMo, account no.
+  for bank), `notes`, `attachmentIds` (DMS documents uploaded to the sale's `sales_submission` record; unknown ids →
+  400 `Attachment not found`). `GET /{id}` returns `attachments` (`id`, `name`, `contentType`) per payment.
 - **Segregation.** With `requireSegregation` on:
   - cash verifier ≠ collector, and verifier ≠ confirmer;
   - confirmer ≠ approver ≠ invoicer.
@@ -145,7 +150,7 @@ location must be an active `InventoryLocation` with the profile's `branchId`.
   `lineSubtotal`, `lineTax`, `lineTotal`, `costSnapshot`, `stockMoveId`.
 - `SalesSubmissionPayment`: `method`, `provider`, `amount`, `reference`, `accountId`, `customerDepositId`,
   `collectedById`, `collectedAt`, `verificationStatus`, `verifiedById`, `verifiedAt`, `verificationSource`,
-  `settlementStatus`.
+  `settlementStatus`, `paymentDate`, `payerName`, `payerAccount`, `notes`, `attachmentIds` (V445).
 - `SalesSubmissionInvoice`: `attempt`, `invoiceId`, `status` (`active` | `cancelled`), `cancelledAt`,
   `cancelledById`, `cancelReason`, `fiscalDocumentId`. Partial unique index on (`submissionId`) WHERE
   `status = 'active'`.
@@ -230,7 +235,7 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 | T5 | Several tax categories | VAT per tax account |
 | T6 | Foreign currency; rate changes before invoice | invoice inherits rate; unbilled 0; no FX difference |
 | T7 | Insufficient stock at profile location | 400, no rows posted |
-| T8 | Unverified MoMo / unverified bank | confirm 400, no GL rows |
+| T8 | Unverified MoMo / unverified bank (segregation on) | confirm 400, no GL rows |
 | T9 | Card method | 400 |
 | T10 | Client sends tender accountId | ignored; profile account used |
 | T11 | Profile: income account as tender; deposit mapping to an asset; location in another branch; missing mapping | profile save 400 |

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, UserPlus, Wallet, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Paperclip, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, UserPlus, Wallet, X, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,12 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { VariantSelect } from '@/features/products/variant-select';
+import { EMPTY_SIZE, LineSizeFields, hasSize, sizeLabel, sizeOf, type LineSize } from '@/features/products/sizing';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { FilePreviewDialog } from '@/components/dms/FilePreviewDialog';
+import { useUploadRecordAttachments } from '@/features/dms/api';
 import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
@@ -44,11 +47,15 @@ import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/h
  * {@code priceAuto}: the unit price and discount were filled from the price lookup, so the server prices the line on
  * save (same engine, same result). Typing a price or a discount makes the line manual.
  */
-interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; uomId?: string | null; unitPrice: number | ''; discountPercent: number; taxId: string | null; priceAuto?: boolean }
+interface DraftLine { productId: string; variantId?: string | null; description: string; quantity: number; uomId?: string | null; unitPrice: number | ''; discountPercent: number; taxId: string | null; priceAuto?: boolean; size: LineSize }
 
 /** The fields the price of a line depends on: a lookup answer only applies while they are unchanged. */
 const samePricingInput = (a: DraftLine, b: DraftLine) => a.productId === b.productId && (a.variantId ?? null) === (b.variantId ?? null)
   && (a.uomId ?? null) === (b.uomId ?? null) && Number(a.quantity) === Number(b.quantity);
+
+/** Request fields of a line sold by size (ADR-S066); {} for a plain line. */
+const sizeFields = (z: LineSize) => (hasSize(z)
+  ? Object.fromEntries(Object.entries(z).filter(([, v]) => v !== '')) as Record<string, number> : {});
 
 /** Optional columns of the sale lines table (Odoo-style column picker). */
 type LineCol = 'description' | 'uom' | 'delivered' | 'invoiced' | 'discount' | 'taxes';
@@ -99,7 +106,7 @@ export function CashSalePage() {
   const users = useCrmUsers();
   const [saleDate, setSaleDate] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [salespersonId, setSalespersonId] = useState(me?.id ?? '');
-  const [lines, setLines] = useState<DraftLine[]>(() => (isNew ? [{ productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null }] : []));
+  const [lines, setLines] = useState<DraftLine[]>(() => (isNew ? [{ productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null, size: EMPTY_SIZE }] : []));
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<null | 'return' | 'reject' | 'reopen' | 'void' | 'cancel_invoice' | 'amend' | 'payment'>(null);
   const [tab, setTab] = useState('lines');
@@ -114,7 +121,7 @@ export function CashSalePage() {
     setCustomer({ customerPhone: s.customerPhone ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
     setSaleDate(String(s.saleDate).slice(0, 10));
     setSalespersonId(s.salespersonId ?? '');
-    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), uomId: l.uomId ?? null, unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId })));
+    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), uomId: l.uomId ?? null, unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId, size: sizeOf(l) })));
   }, [s]);
   const activeProfiles = useMemo(() => (profiles.data ?? []).filter((p) => p.isActive), [profiles.data]);
   const profile = activeProfiles.find((p) => p.branchId === (isNew ? branchId : s?.branchId));
@@ -183,7 +190,7 @@ export function CashSalePage() {
   };
   const body = () => {
     const b: Record<string, unknown> = {
-      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), uomId: l.uomId || undefined, unitPrice: l.priceAuto || l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId })),
+      lines: lines.filter((l) => l.productId).map((l) => ({ productId: l.productId, variantId: l.variantId || undefined, description: l.description || undefined, quantity: Number(l.quantity), uomId: l.uomId || undefined, unitPrice: l.priceAuto || l.unitPrice === '' ? undefined : Number(l.unitPrice), discountPercent: Number(l.discountPercent) || 0, taxId: l.taxId, ...sizeFields(l.size) })),
     };
     if (partnerId) b.partnerId = partnerId;
     Object.entries(customer).forEach(([k, v]) => { b[k] = v || null; });
@@ -378,11 +385,16 @@ export function CashSalePage() {
                       const sub = lineEst(l, i);
                       return (
                         <tr key={i} className="border-b align-top">
-                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchPricedLine(i, { productId: v, variantId: null, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchPricedLine(i, { productId: v, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
                             <VariantSelect productId={l.productId} value={l.variantId} className="w-52"
-                              onChange={(v, opt) => patchPricedLine(i, { variantId: v, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '')) ? { description: opt.displayName } : {}) })} /></td>
+                              onChange={(v, opt) => patchPricedLine(i, { variantId: v, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
+                            <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size}
+                              onChange={(size, q) => {
+                                patchLine(i, { size, ...(q !== null ? { quantity: q } : {}) });
+                                if (l.priceAuto && q !== null && q !== Number(l.quantity)) void reprice(i, { ...l, size, quantity: q });
+                              }} /></td>
                           {show('description') && <td className="py-1.5 pr-2"><Input value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
-                          <td className="py-1.5 pr-2"><Input type="number" min={0} className="text-right" value={l.quantity} onChange={(e) => {
+                          <td className="py-1.5 pr-2"><Input type="number" min={0} className={cn('text-right', hasSize(l.size) && 'bg-muted/50')} readOnly={hasSize(l.size)} title={hasSize(l.size) ? tx('Computed from the size') : undefined} value={l.quantity} onChange={(e) => {
                             const quantity = Number(e.target.value);
                             patchLine(i, { quantity });
                             if (l.priceAuto) void reprice(i, { ...l, quantity });
@@ -407,7 +419,7 @@ export function CashSalePage() {
                       );
                     }) : (s?.lines ?? []).map((l) => (
                       <tr key={l.id} className="border-b align-top">
-                        <td className="py-2 pr-2 font-medium">{l.productName}{l.variantName && <span className="block text-xs font-normal text-muted-foreground">{l.variantName}</span>}</td>
+                        <td className="py-2 pr-2 font-medium">{l.productName}{l.variantName && <span className="block text-xs font-normal text-muted-foreground">{l.variantName}</span>}{sizeLabel(l) && <span className="block text-xs font-normal text-muted-foreground">{sizeLabel(l)}</span>}</td>
                         {show('description') && <td className="py-2 pr-2 text-muted-foreground">{l.description}</td>}
                         <td className="py-2 pr-2 text-right tabular-nums">{qty(l.quantity)}</td>
                         {show('uom') && <td className="py-2 pr-2 text-muted-foreground">{l.uomCode ?? '—'}</td>}
@@ -423,7 +435,7 @@ export function CashSalePage() {
                   </tbody>
                 </table>
               </div>
-              {editable && <Button variant="outline" size="sm" onClick={() => setLines([...lines, { productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null }])}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
+              {editable && <Button variant="outline" size="sm" onClick={() => setLines([...lines, { productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null, size: EMPTY_SIZE }])}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
               <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
                 <Field label={tx('Remarks')}>
                   {editable ? <Textarea rows={3} value={customer.remarks} onChange={(e) => setCustomer({ ...customer, remarks: e.target.value })} /> : <p className="py-2 text-sm">{s?.remarks ?? '—'}</p>}
@@ -487,46 +499,62 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
   const draft = sale.executionStatus === 'draft';
   const canVerifyAll = useAuthStore((st) => st.hasPermission(PERMISSIONS.sales.cashSaleVerifyPayment));
   const canConfirm = useAuthStore((st) => st.hasPermission(PERMISSIONS.sales.cashSaleConfirm));
-  const paid = (sale.payments ?? []).reduce((a, p) => a + Number(p.amount), 0);
-  const verified = (sale.payments ?? []).filter((p) => p.verificationStatus === 'verified').reduce((a, p) => a + Number(p.amount), 0);
+  const [preview, setPreview] = useState<{ id: string; name: string; contentType: string | null } | null>(null);
+  const payments = sale.payments ?? [];
+  const paid = payments.reduce((a, p) => a + Number(p.amount), 0);
+  const pending = payments.filter((p) => p.verificationStatus !== 'verified');
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">{tx('Payments')}</h3>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span>{tx('Collected')} {money(paid)} · {tx('Verified')} {money(verified)} / {money(sale.grandTotal)}</span>
+          <span>{tx('Collected')} {money(paid)} / {money(sale.grandTotal)}</span>
           {draft && <Button size="sm" variant="outline" disabled={busy} onClick={onAdd}><Plus className="mr-1 h-4 w-4" />{tx('Add payment')}</Button>}
         </div>
       </div>
       <table className="w-full text-sm">
-        <thead className="text-left text-xs uppercase text-muted-foreground"><tr><th className="py-1">{tx('Payment mode')}</th><th className="py-1">{tx('Reference')}</th><th className="py-1">{tx('Account')}</th><th className="py-1 text-right">{tx('Amount')}</th><th className="py-1">{tx('Collected by')}</th><th className="py-1">{tx('Verification')}</th><th /></tr></thead>
+        <thead className="text-left text-xs uppercase text-muted-foreground"><tr><th className="py-1">{tx('Date')}</th><th className="py-1">{tx('Payment mode')}</th><th className="py-1">{tx('Reference')}</th><th className="py-1">{tx('Payer')}</th><th className="py-1">{tx('Account')}</th><th className="py-1 text-right">{tx('Amount')}</th><th className="py-1">{tx('Collected by')}</th><th className="py-1">{tx('Attachments')}</th><th /></tr></thead>
         <tbody>
-          {(sale.payments ?? []).map((p) => {
+          {payments.map((p) => {
             const canVerify = p.method === 'cash' ? canVerifyAll || canConfirm : canVerifyAll;
             return (
-              <tr key={p.id} className="border-t">
-                <td className="py-1.5">{p.paymentModeLabel ?? `${METHOD_LABEL[p.method]}${p.provider ? ` · ${p.provider.toUpperCase()}` : ''}`}</td>
+              <tr key={p.id} className="border-t align-top">
+                <td className="py-1.5 text-xs whitespace-nowrap">{date(p.paymentDate ?? p.collectedAt)}</td>
+                <td className="py-1.5">
+                  {p.paymentModeLabel ?? `${METHOD_LABEL[p.method]}${p.provider ? ` · ${p.provider.toUpperCase()}` : ''}`}
+                  {p.notes && <div className="text-xs text-muted-foreground">{p.notes}</div>}
+                </td>
                 <td className="py-1.5 text-xs">{p.reference ?? '—'}</td>
+                <td className="py-1.5 text-xs">{p.payerName ?? '—'}{p.payerAccount && <div className="text-muted-foreground">{p.payerAccount}</div>}</td>
                 <td className="py-1.5 text-xs">{p.accountCode} {p.accountName}</td>
                 <td className="py-1.5 text-right tabular-nums">{money(p.amount)}</td>
-                <td className="py-1.5 text-xs">{p.collectedByName}</td>
                 <td className="py-1.5 text-xs">
-                  <span className={cn('rounded px-1.5 py-0.5', p.verificationStatus === 'verified' ? 'bg-emerald-100 text-emerald-800' : p.verificationStatus === 'failed' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}>
-                    {p.verificationStatus === 'verified' ? tx('Verified') : p.verificationStatus === 'failed' ? tx('Failed') : tx('Not verified')}
-                  </span>
-                  {p.verifiedByName && <span className="ml-1 text-muted-foreground">{p.verifiedByName}</span>}
+                  {p.collectedByName}
+                  {p.verificationStatus !== 'verified' && (
+                    <span className={cn('ml-1 rounded px-1.5 py-0.5', p.verificationStatus === 'failed' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800')}>
+                      {p.verificationStatus === 'failed' ? tx('Failed') : tx('Awaiting verification')}
+                    </span>
+                  )}
                 </td>
-                <td className="py-1.5 text-right">
+                <td className="py-1.5 text-xs">
+                  {(p.attachments ?? []).length === 0 ? '—' : (p.attachments ?? []).map((a) => (
+                    <button key={a.id} type="button" className="flex max-w-[12rem] items-center gap-1 truncate text-primary hover:underline" onClick={() => setPreview(a)}>
+                      <Paperclip className="h-3 w-3 shrink-0" /><span className="truncate">{a.name}</span>
+                    </button>
+                  ))}
+                </td>
+                <td className="py-1.5 text-right whitespace-nowrap">
                   {draft && p.verificationStatus !== 'verified' && canVerify && <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => api.post(`/sales/cash-sales/${sale.id}/payments/${p.id}/verify`, { status: 'verified' }), tx('Payment verified'))}>{tx('Verify')}</Button>}
                   {draft && <Button size="icon" variant="ghost" disabled={busy} onClick={() => run(() => api.delete(`/sales/cash-sales/${sale.id}/payments/${p.id}`), tx('Payment removed'))}><Trash2 className="h-4 w-4" /></Button>}
                 </td>
               </tr>
             );
           })}
-          {(sale.payments ?? []).length === 0 && <tr><td colSpan={7} className="py-3 text-center text-muted-foreground">{tx('No payment captured yet.')}</td></tr>}
+          {payments.length === 0 && <tr><td colSpan={9} className="py-3 text-center text-muted-foreground">{tx('No payment captured yet.')}</td></tr>}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-muted-foreground">{tx('Only verified payments post. A mobile-money or bank reference typed at the counter is not a verification.')}</p>
+      {pending.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('This branch requires segregation of duties: someone other than the collector verifies each payment before the sale is confirmed.')}</p>}
+      <FilePreviewDialog documentId={preview?.id ?? null} name={preview?.name} contentType={preview?.contentType} open={!!preview} onOpenChange={(o) => !o && setPreview(null)} />
     </section>
   );
 }
@@ -659,14 +687,38 @@ function AmendDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () 
 function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () => void; onSubmit: (p: Record<string, unknown>) => void }) {
   const remaining = Math.max(0, Number(sale.grandTotal) - (sale.payments ?? []).reduce((a, p) => a + Number(p.amount), 0));
   const modes = usePaymentModes();
+  const upload = useUploadRecordAttachments();
+  const canAttach = useAuthStore((st) => st.hasPermission(PERMISSIONS.dms.documentWrite) && st.hasPermission(PERMISSIONS.sales.cashSaleCreate));
   const [modeId, setModeId] = useState('');
   const mode = (modes.data ?? []).find((m) => m.id === modeId) ?? modes.data?.[0];
   const [amount, setAmount] = useState<number>(remaining);
   const [reference, setReference] = useState('');
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [payerName, setPayerName] = useState(sale.customerName ?? sale.partnerName ?? '');
+  const [payerAccount, setPayerAccount] = useState(sale.customerPhone ?? '');
+  const [notes, setNotes] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
   const needsRef = !!mode && (mode.kind !== 'cash' || mode.requiresReference);
+  const accountLabel = mode?.kind === 'bank' ? tx('Payer account no.') : mode?.kind === 'mobile_money' ? tx('Payer phone') : tx('Payer phone / account no.');
+  const submit = async () => {
+    if (!mode) return;
+    setSaving(true);
+    try {
+      const docs = files.length ? await upload.mutateAsync({ resType: 'sales_submission', resId: sale.id, files }) : [];
+      onSubmit({
+        paymentModeId: mode.id, amount, reference: reference.trim() || undefined, paymentDate: paymentDate || undefined,
+        payerName: payerName.trim() || undefined, payerAccount: payerAccount.trim() || undefined, notes: notes.trim() || undefined,
+        attachmentIds: docs.length ? docs.map((d) => d.id) : undefined,
+      });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, tx('Could not upload the file')));
+      setSaving(false);
+    }
+  };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+    <Dialog open onOpenChange={(o) => !o && !saving && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader><DialogTitle>{tx('Add payment')}</DialogTitle></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={tx('Payment mode')}>
@@ -676,14 +728,43 @@ function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: (
             </select>
           </Field>
           <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
-          {needsRef && <Field label={tx('Transaction reference')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>}
+          <Field label={tx('Payment date')}><Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} /></Field>
+          <Field label={needsRef ? `${tx('Transaction reference')} *` : tx('Reference / receipt no.')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
+          <Field label={tx('Payer name')}><Input value={payerName} onChange={(e) => setPayerName(e.target.value)} /></Field>
+          <Field label={accountLabel}><Input value={payerAccount} onChange={(e) => setPayerAccount(e.target.value)} /></Field>
+          <div className="sm:col-span-2">
+            <Field label={tx('Notes')}><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={tx('Bank / branch, cheque details, anything the reviewer should know')} /></Field>
+          </div>
+          {canAttach && (
+            <div className="sm:col-span-2">
+              <Field label={tx('Attachments')}>
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground hover:bg-muted/40">
+                    <Paperclip className="h-4 w-4" />{tx('Attach payment slip, receipt or screenshot')}
+                    <input type="file" multiple className="hidden" onChange={(e) => { const f = Array.from(e.target.files ?? []); setFiles((cur) => [...cur, ...f]); e.target.value = ''; }} />
+                  </label>
+                  {files.length > 0 && (
+                    <ul className="divide-y rounded-md border text-sm">
+                      {files.map((f, i) => (
+                        <li key={`${f.name}-${i}`} className="flex items-center gap-2 px-2 py-1">
+                          <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}><X className="h-3.5 w-3.5" /></Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </Field>
+            </div>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           {mode?.accountName ? `${tx('Received into')} ${mode.accountCode ?? ''} ${mode.accountName}` : tx('The receiving account comes from the payment mode.')}
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{tx('Close')}</Button>
-          <Button disabled={!mode || amount <= 0 || (needsRef && !reference.trim())} onClick={() => mode && onSubmit({ paymentModeId: mode.id, amount, reference: reference || undefined })}>{tx('Add payment')}</Button>
+          <Button variant="outline" disabled={saving} onClick={onClose}>{tx('Close')}</Button>
+          <Button disabled={saving || !mode || amount <= 0 || (needsRef && !reference.trim())} onClick={() => void submit()}>{saving ? tx('Saving…') : tx('Add payment')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

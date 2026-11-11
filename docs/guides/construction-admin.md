@@ -193,9 +193,10 @@ Details and keys are in `docs/integrations.md`.
 | Flag | Fills | Use |
 |---|---|---|
 | `SEED_CONSTRUCTION_DEMO` | New organization `CMDEMO`, three months | Client demonstrations |
+| `SEED_COSTING_DEMO` | New organization `GQDEMO`, one month that ties to a costing worksheet ([guide](granite-quarry-costing-demo.md)); also on a database in use | Accountants, costing and profitability demonstrations |
 | `SEED_FLEET_DEMO` | `DEMO` organization, one week | Fleet only |
 | `SEED_MANUFACTURING_DEMO` | `DEMO` organization, one month | Plant only |
 
-All three are off by default, need the `seed` profile and run only on an empty database. They add several minutes to the
+All are off by default and need the `seed` profile. All but `SEED_COSTING_DEMO` run only on an empty database. They add several minutes to the
 first start, and a failure part way needs a fresh database. Never set them in production. With two organizations, a paid
 licence must allow both.

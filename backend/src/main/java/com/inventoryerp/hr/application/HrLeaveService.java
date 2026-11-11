@@ -13,6 +13,7 @@ import com.inventoryerp.hr.domain.HrLeaveType;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosSql;
@@ -37,11 +38,13 @@ public class HrLeaveService {
     private final HrDb hr;
     private final SequenceService seq;
     private final HrAttendanceService attendance;
+    private final EventBus events;
 
-    public HrLeaveService(HrDb hr, SequenceService seq, HrAttendanceService attendance) {
+    public HrLeaveService(HrDb hr, SequenceService seq, HrAttendanceService attendance, EventBus events) {
         this.hr = hr;
         this.seq = seq;
         this.attendance = attendance;
+        this.events = events;
     }
 
     /** JS {@code new Date(y, m, d)} of the (UTC) calendar day of {@code d}. */
@@ -192,7 +195,7 @@ public class HrLeaveService {
         }
         long days = Math.round((endDate.toEpochMilli() - startDate.toEpochMilli()) / 86400000.0) + 1;
         String requestCode = seq.next("hr_leave_request", "LV-", 6);
-        return hr.inTx(() -> {
+        Map<String, Object> created = hr.inTx(() -> {
             Map<String, Object> clash = hr.where(HrLeaveRequest.class).eq("employeeId", dto.get("employeeId"))
                     .and("status::text IN ('PENDING', 'APPROVED')").and("\"startDate\" <= ?", SqlRows.ts(endDate))
                     .and("\"endDate\" >= ?", SqlRows.ts(startDate)).first();
@@ -211,7 +214,7 @@ public class HrLeaveService {
                 throw ApiException.badRequest("Insufficient leave balance: " + PosSql.jsString(available)
                         + " day(s) available, " + days + " requested");
             }
-            Map<String, Object> created = hr.insert(HrLeaveRequest.class, Obj.of("organizationId", orgId,
+            Map<String, Object> inserted = hr.insert(HrLeaveRequest.class, Obj.of("organizationId", orgId,
                     "requestCode", requestCode, "employeeId", dto.get("employeeId"), "leaveTypeId", dto.get("leaveTypeId"),
                     "startDate", startDate, "endDate", endDate, "days", days, "reason", dto.get("reason"),
                     "notes", dto.get("notes"), "createdBy", userId));
@@ -220,9 +223,13 @@ public class HrLeaveService {
             if (override) {
                 nv.put("overrideReason", dto.get("reason"));
             }
-            hr.auditInTx(AuditInput.of("HrLeaveRequest", (String) created.get("id"), "create", null, nv));
-            return created;
+            hr.auditInTx(AuditInput.of("HrLeaveRequest", (String) inserted.get("id"), "create", null, nv));
+            return inserted;
         });
+        // Notification routing (ADR-S065): the employee's manager has a request to decide.
+        events.publish("hr.leave.requested", Obj.of("organizationId", orgId, "leaveRequestId", created.get("id"),
+                "requestCode", requestCode, "employeeId", dto.get("employeeId"), "days", days));
+        return created;
     }
 
     public Map<String, Object> approveRequest(String id, Map<String, Object> dto) {
@@ -240,7 +247,7 @@ public class HrLeaveService {
                 throw ApiException.forbidden("You cannot approve your own leave request");
             }
         }
-        return hr.inTx(() -> {
+        Map<String, Object> result = hr.inTx(() -> {
             Map<String, Object> balance = ensureBalance(row.get("employeeId"), row.get("leaveTypeId"),
                     year(row.get("startDate")));
             double available = available(balance);
@@ -265,6 +272,15 @@ public class HrLeaveService {
             }
             return updated;
         });
+        decided(row, "APPROVED", null);
+        return result;
+    }
+
+    /** Notification routing (ADR-S065): the employee learns the decision. */
+    private void decided(Map<String, Object> row, String status, Object reason) {
+        events.publish("hr.leave.decided", Obj.of("organizationId", row.get("organizationId"), "leaveRequestId",
+                row.get("id"), "requestCode", row.get("requestCode"), "employeeId", row.get("employeeId"), "status",
+                status, "reason", reason));
     }
 
     public Map<String, Object> rejectRequest(String id, Map<String, Object> dto) {
@@ -276,7 +292,7 @@ public class HrLeaveService {
         if (!"PENDING".equals(row.get("status"))) {
             throw ApiException.badRequest("Only PENDING requests can be rejected");
         }
-        return hr.inTx(() -> {
+        Map<String, Object> result = hr.inTx(() -> {
             Object notes = truthy(dto.get("reason"))
                     ? ((row.get("notes") == null ? "" : row.get("notes")) + "\nRejected: " + PosSql.jsString(dto.get("reason")))
                             .trim()
@@ -287,6 +303,8 @@ public class HrLeaveService {
                     Obj.of("status", "REJECTED", "rejectedBy", userId, "reason", dto.get("reason"))));
             return updated;
         });
+        decided(row, "REJECTED", dto.get("reason"));
+        return result;
     }
 
     public Map<String, Object> cancelRequest(String id) {

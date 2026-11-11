@@ -316,6 +316,14 @@ export const EVENTS = {
   PlmChangeApplied: 'plm.change.applied',
   PlmChangeRequestCreated: 'plm.request.created',
   PlmLifecycleChanged: 'plm.lifecycle.changed',
+  // Notification routing (ADR-S065): state changes that tell the responsible person.
+  HrLeaveRequested: 'hr.leave.requested',
+  HrLeaveDecided: 'hr.leave.decided',
+  ManufacturingOrderCompleted: 'manufacturing.order.completed',
+  ManufacturingOrderCancelled: 'manufacturing.order.cancelled',
+  TaskAssigned: 'task.assigned',
+  CrmDealAssigned: 'crm.deal.assigned',
+  QualityCapaCreated: 'quality.capa.created',
 } as const;
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
@@ -458,6 +466,13 @@ export interface DomainEventMap {
   'plm.change.applied': PlmEventPayload;
   'plm.request.created': PlmEventPayload;
   'plm.lifecycle.changed': PlmEventPayload;
+  'hr.leave.requested': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; days: number };
+  'hr.leave.decided': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; status: 'APPROVED' | 'REJECTED'; reason: string | null };
+  'manufacturing.order.completed': { organizationId: string; orderId: string; orderCode: string; status: 'completed' | 'qc_hold'; producedQty: string | null; reason: null };
+  'manufacturing.order.cancelled': { organizationId: string; orderId: string; orderCode: string; status: 'cancelled'; producedQty: string | null; reason: string | null };
+  'task.assigned': { organizationId: string; taskId: string; title: string; assignedToId: string };
+  'crm.deal.assigned': { organizationId: string; dealId: string; ownerId: string };
+  'quality.capa.created': { organizationId: string; capaId: string; capaNumber: string; ownerUserId: string | null };
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;

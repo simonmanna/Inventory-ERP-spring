@@ -160,6 +160,7 @@ import { GlobalSearch } from '@/components/global-search';
 import { PushBootstrap } from '@/components/push-bootstrap';
 import { ThemePicker } from '@/components/theme-picker';
 import { LanguageSwitcher } from '@/components/language-switcher';
+import { DiscussHeaderButton } from '@/features/communication/discuss-header-button';
 import { useTranslation } from 'react-i18next';
 import { useSidebarTheme } from '@/lib/sidebar-theme';
 import {
@@ -869,7 +870,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Communication',
     icon: MessagesSquare,
     items: [
-      { to: '/communication', label: tx('Inbox'), icon: MessagesSquare, permission: PERMISSIONS.communication.conversationRead },
+      { to: '/communication', label: tx('Discuss'), icon: MessagesSquare, permission: PERMISSIONS.communication.conversationRead },
       { to: '/communication/channels', label: tx('Channels'), icon: Radio, permission: PERMISSIONS.communication.channelRead, group: 'Configuration' },
       { to: '/communication/rules', label: tx('Automation'), icon: Zap, permission: PERMISSIONS.communication.channelManage, group: 'Configuration' },
     ],
@@ -917,6 +918,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/settings/custom-fields', label: tx('Custom Fields & Objects'), icon: SettingsIcon, permission: PERMISSIONS.customization.read, group: 'Customization' },
       { to: '/settings/print-templates', label: tx('Print Templates'), icon: FileText, permission: PERMISSIONS.printTemplate.read, group: 'Customization' },
       { to: '/settings/automation', label: tx('Automation Rules'), icon: Zap, permission: PERMISSIONS.automation.read, group: 'Customization' },
+      { to: '/settings/notification-routing', label: tx('Notification Routing'), icon: BellRing, permission: PERMISSIONS.notificationRouting.read, group: 'Customization' },
       { to: '/settings/api-clients', label: tx('API Clients'), icon: KeyRound, permission: PERMISSIONS.apiClient.read, group: 'Customization' },
       { to: '/settings/developer', label: tx('Developer Settings'), icon: SettingsIcon, permission: PERMISSIONS.setting.read, group: 'Advanced' },
     ],
@@ -1390,6 +1392,7 @@ export function AppShell() {
               </div>
             </div>
             <div className="flex items-center gap-1 sm:gap-2">
+              <DiscussHeaderButton />
               <LanguageSwitcher />
               <ThemePicker />
               <DropdownMenu>

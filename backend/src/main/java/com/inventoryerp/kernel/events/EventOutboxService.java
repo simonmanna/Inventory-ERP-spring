@@ -41,9 +41,10 @@ public class EventOutboxService {
         String org = organizationId == null ? "" : organizationId;
         String json = mapper.writeValueAsString(payload);
         jdbc.sql("""
-                        INSERT INTO "EventOutbox" (id, "organizationId", "eventName", payload, status, attempts, "createdAt")
-                        VALUES (?, ?, ?, ?::jsonb, 'pending', 0, now())""")
-                .params(UUID.randomUUID().toString(), org, eventName, json)
+                        INSERT INTO "EventOutbox" (id, "organizationId", "eventName", payload, status, attempts, "createdAt",
+                          "actorId")
+                        VALUES (?, ?, ?, ?::jsonb, 'pending', 0, now(), ?)""")
+                .params(UUID.randomUUID().toString(), org, eventName, json, TenantContext.userId())
                 .update();
         recordFact(org, eventName, payload, json);
         publisher.publishEvent(new DomainEvent(eventName, organizationId, payload));

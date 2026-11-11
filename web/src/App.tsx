@@ -106,6 +106,7 @@ const CustomFieldsPage = lazy(() => import('@/pages/settings/custom-fields'));
 const CustomObjectRecordsPage = lazy(() => import('@/pages/settings/custom-object-records'));
 const PrintTemplatesPage = lazy(() => import('@/pages/settings/print-templates'));
 const AutomationRulesPage = lazy(() => import('@/pages/settings/automation-rules'));
+const NotificationRoutingPage = lazy(() => import('@/pages/settings/NotificationRoutingPage').then((m) => ({ default: m.NotificationRoutingPage })));
 const ApiClientsPage = lazy(() => import('@/pages/settings/api-clients'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
@@ -455,6 +456,7 @@ export function App() {
             <Route path="/custom-objects/:key" element={<RequirePermission permission={PERMISSIONS.customRecord.read}><CustomObjectRecordsPage /></RequirePermission>} />
             <Route path="/settings/print-templates" element={<RequirePermission permission={PERMISSIONS.printTemplate.read}><PrintTemplatesPage /></RequirePermission>} />
             <Route path="/settings/automation" element={<RequirePermission permission={PERMISSIONS.automation.read}><AutomationRulesPage /></RequirePermission>} />
+            <Route path="/settings/notification-routing" element={<RequirePermission permission={PERMISSIONS.notificationRouting.read}><NotificationRoutingPage /></RequirePermission>} />
             <Route path="/settings/api-clients" element={<RequirePermission permission={PERMISSIONS.apiClient.read}><ApiClientsPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<RequirePermission permission={PERMISSIONS.tax.read}><TaxesPage /></RequirePermission>} />

@@ -56,6 +56,11 @@ export interface ProductVariantRow {
   isActive: boolean;
   onHand: string | number;
   stockValue: string | number;
+  /** ADR-S066: standard size (product sizing unit) and sales description of the variant. */
+  length?: string | number | null;
+  width?: string | number | null;
+  height?: string | number | null;
+  description?: string | null;
 }
 
 export interface VariantConfig {
@@ -79,6 +84,10 @@ export interface VariantOption {
   barcode: string | null;
   salesPrice: string | number;
   costPrice: string | number | null;
+  length?: string | number | null;
+  width?: string | number | null;
+  height?: string | number | null;
+  description?: string | null;
 }
 
 const KEY = ['product-variants'];
@@ -165,6 +174,10 @@ export interface VariantPatch {
   salesPrice?: number | null;
   costPrice?: number | null;
   isActive?: boolean;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  description?: string | null;
 }
 
 export function useUpdateVariant(productId: string) {

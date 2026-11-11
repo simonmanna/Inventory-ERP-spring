@@ -454,7 +454,7 @@ public class InvoiceService {
                     l.accountId(), l.description(), l.quantity(), p.unitPrice(),
                     l.discountPercent() != null ? l.discountPercent() : p.discountPercent(), l.discountType(),
                     l.discountAmount(), l.discountReason(), l.discountSource(), l.taxId(), l.lineType(),
-                    l.taxInclusive(), l.uomId()));
+                    l.taxInclusive(), l.uomId(), l.sizing()));
         }
         return out;
     }

@@ -5,6 +5,7 @@ import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
+import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -59,10 +60,20 @@ public class TaskService {
 
     private final JdbcClient jdbc;
     private final JsonMapper mapper;
+    private final EventBus events;
 
-    public TaskService(JdbcClient jdbc, JsonMapper mapper) {
+    public TaskService(JdbcClient jdbc, JsonMapper mapper, EventBus events) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.events = events;
+    }
+
+    /** Notification routing (ADR-S065): the assignee learns about the task. */
+    private void assigned(String taskId, Object assignedToId, Object title) {
+        if (assignedToId instanceof String a && !a.isBlank()) {
+            events.publish("task.assigned", Obj.of("organizationId", org(), "taskId", taskId, "title", title,
+                    "assignedToId", a));
+        }
     }
 
     private static String org() {
@@ -89,6 +100,7 @@ public class TaskService {
         insert("Task", data);
         Map<String, Object> task = withIncludes(row(id));
         logActivity(id, "created", null, null, "Task created");
+        assigned(id, task.get("assignedToId"), task.get("title"));
         return task;
     }
 
@@ -177,6 +189,9 @@ public class TaskService {
         Map<String, Object> task = withIncludes(row(id));
         for (Change c : changes) {
             logActivity(id, "updated", c.field(), c.oldValue(), c.description());
+        }
+        if (changes.stream().anyMatch(c -> "assignedToId".equals(c.field()))) {
+            assigned(id, task.get("assignedToId"), task.get("title"));
         }
         return task;
     }

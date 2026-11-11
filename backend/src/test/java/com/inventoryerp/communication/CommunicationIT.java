@@ -458,6 +458,7 @@ class CommunicationIT extends ApiTestSupport {
                 .isEqualTo(404);
         assertThat(call("GET", "/communication/channels", null, otherToken).body().toString())
                 .doesNotContain(channelId);
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.communication")).isEqualTo(22);
+        assertThat(assertAuthorizationMatrix(com.inventoryerp.communication.web.CommunicationController.class,
+                com.inventoryerp.communication.web.TelegramWebhookController.class)).isEqualTo(22);
     }
 }

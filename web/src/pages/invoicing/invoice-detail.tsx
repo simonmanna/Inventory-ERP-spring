@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { ArrowLeft, BookOpen, ChevronDown, FileDown, Mail, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -526,6 +527,8 @@ export function InvoiceDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <RecordChatter contextType="Invoice" contextId={inv.id} />
     </div>
   );
 }
