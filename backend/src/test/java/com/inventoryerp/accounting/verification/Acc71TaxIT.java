@@ -252,7 +252,8 @@ class Acc71TaxIT extends AccountingFixtures {
         assertThat(dec(report.get("glDifference"))).isEqualByComparingTo("0");
 
         // A void cancels the certificate.
-        okAs(b, 200, "POST", "/payments/" + paymentId + "/void", Map.of("reason", "bounced"));
+        Res voided = moneyAs(b, "POST", "/payments/" + paymentId + "/void", Map.of("reason", "bounced"));
+        assertThat(voided.status()).as("void " + voided.raw().body()).isEqualTo(200);
         assertThat(okAs(b, 200, "GET", "/withholding-certificates/" + certId, null).get("status").asString())
                 .isEqualTo("cancelled");
 
