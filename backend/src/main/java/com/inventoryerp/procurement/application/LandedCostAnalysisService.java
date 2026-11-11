@@ -3,6 +3,7 @@ package com.inventoryerp.procurement.application;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.inventory.application.LineageFollower;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
@@ -58,8 +59,10 @@ public class LandedCostAnalysisService {
         return JsNumbers.dec(v.setScale(2, RoundingMode.HALF_UP));
     }
 
-    private static Object[] period(LocalDate from, LocalDate to) {
-        return new Object[] {org(), java.sql.Date.valueOf(from), java.sql.Date.valueOf(to.plusDays(1))};
+    /** [from, to] as org-local day bounds (ADR-S070). */
+    private Object[] period(LocalDate from, LocalDate to) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        return new Object[] {org(), AccountingDay.startTs(from, zone), AccountingDay.endExclusiveTs(to, zone)};
     }
 
     /** Estimate vs actual per accrual clearing; realised FX of the vouchers' bill payments apart. */

@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.bool;
 import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.inventory.application.CostResolver.ProductCost;
 import com.inventoryerp.inventory.application.CostResolver.Quant;
@@ -110,8 +111,10 @@ public class StockService {
 
     /** Movements dated in a locked period (books lock date or closed/locked fiscal period) are refused. */
     @Transactional(readOnly = true)
-    public void assertStockPeriodOpen(Instant date) {
+    public void assertStockPeriodOpen(Instant at) {
         String org = TenantContext.organizationId();
+        // Lock date and period bounds are org-local wall clock (ADR-S070): compare the movement's local wall clock.
+        Instant date = AccountingDay.toWallClock(at, AccountingDay.zone(jdbc, org));
         Instant lock = jdbc.sql("SELECT \"booksLockDate\" FROM \"Organization\" WHERE id = ?").param(org)
                 .query((rs, n) -> {
                     var t = rs.getTimestamp(1);

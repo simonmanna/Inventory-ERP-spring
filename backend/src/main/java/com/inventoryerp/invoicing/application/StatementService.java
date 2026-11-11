@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.LedgerQueries;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.kernel.common.Obj;
@@ -68,8 +69,8 @@ public class StatementService {
         if (partner == null) {
             throw ApiException.notFound("Partner not found");
         }
-        Instant from = LedgerQueries.date(fromRaw);
-        Instant to = LedgerQueries.date(toRaw);
+        Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
         Object own = partner.get(ar ? "receivableAccountId" : "payableAccountId");
         List<String> accounts = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND"
                         + " (\"controlAccountType\"::text = ? OR id = ?)")

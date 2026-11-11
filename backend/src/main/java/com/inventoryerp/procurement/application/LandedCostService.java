@@ -4,6 +4,7 @@ import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockPostingService.LandedLine;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -333,7 +334,8 @@ public class LandedCostService {
                     var t = rs.getTimestamp(1);
                     return t == null ? null : t.toLocalDateTime().toInstant(ZoneOffset.UTC);
                 }).optional().orElse(null);
-        if (lock != null && date.toEpochMilli() <= lock.toEpochMilli()) {
+        if (lock != null && AccountingDay.toWallClock(date, AccountingDay.zone(jdbc)).toEpochMilli()
+                <= lock.toEpochMilli()) {
             throw ApiException.badRequest("Books are locked through "
                     + lock.truncatedTo(ChronoUnit.MILLIS).toString().substring(0, 10));
         }

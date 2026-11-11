@@ -46,8 +46,8 @@ public class ConsolidatedReportService {
             throw ApiException.badRequest("statement must be one of the following values: pl, tb");
         }
         String org = TenantContext.organizationId();
-        Instant from = LedgerQueries.date(fromRaw);
-        Instant to = LedgerQueries.date(toRaw);
+        Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
         StringBuilder sql = new StringBuilder("SELECT l.\"accountId\", COALESCE(l.\"branchId\", '" + UNASSIGNED
                 + "') AS branch, sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c FROM \"JournalLine\" l JOIN"
                 + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND e.status::text IN"

@@ -4,6 +4,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,11 @@ public class FiscalPeriodControl {
         return i.atOffset(ZoneOffset.UTC).toLocalDate().toString();
     }
 
+    /** The accounting (org-local) {@code YYYY-MM-DD} of {@code i}; {@link #day(Instant)} for a UTC organisation. */
+    static String day(Instant i, ZoneId zone) {
+        return AccountingDay.of(i, zone).toString();
+    }
+
     static Timestamp ts(Instant i) {
         return Timestamp.valueOf(i.atOffset(ZoneOffset.UTC).toLocalDateTime());
     }
@@ -45,8 +51,15 @@ public class FiscalPeriodControl {
         }
     }
 
+    /**
+     * Refuse {@code date} when it is closed for posting. Decided on the accounting (org-local) day, ADR-S070: the
+     * period bounds and the books lock are org-local wall-clock values, so the posting instant is compared as the
+     * org-local wall clock (for a UTC organisation, exactly the instant).
+     */
     public void assertOpen(Instant date) {
         String orgId = TenantContext.organizationId();
+        ZoneId zone = AccountingDay.zone(jdbc, orgId);
+        Instant local = AccountingDay.toWallClock(date, zone);
         record Org(Timestamp booksLockDate, boolean requireFiscalPeriod) {}
         Org org = jdbc.sql("SELECT \"booksLockDate\", \"requireFiscalPeriod\" FROM \"Organization\" WHERE id = ?")
                 .param(orgId)
@@ -54,28 +67,28 @@ public class FiscalPeriodControl {
                 .optional().orElse(null);
         if (org != null && org.booksLockDate() != null) {
             Instant lock = org.booksLockDate().toLocalDateTime().toInstant(ZoneOffset.UTC);
-            if (!date.isAfter(lock)) {
-                throw ApiException.badRequest("Books are locked through " + day(lock) + "; cannot post on " + day(date));
+            if (!local.isAfter(lock)) {
+                throw ApiException.badRequest("Books are locked through " + day(lock) + "; cannot post on " + day(local));
             }
         }
         jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"startDate\" <= ? AND \"endDate\" >= ?"
                         + " FOR SHARE")
-                .params(orgId, ts(date), ts(date)).query(String.class).list();
+                .params(orgId, ts(local), ts(local)).query(String.class).list();
         record Period(String name, String status) {}
         Period period = jdbc.sql("SELECT name, status::text AS status FROM \"FiscalPeriod\" WHERE \"organizationId\" = ?"
                         + " AND \"startDate\" <= ? AND \"endDate\" >= ? AND \"deletedAt\" IS NULL LIMIT 1")
-                .params(orgId, ts(date), ts(date))
+                .params(orgId, ts(local), ts(local))
                 .query((rs, n) -> new Period(rs.getString("name"), rs.getString("status")))
                 .optional().orElse(null);
         if (period == null) {
             if (org != null && org.requireFiscalPeriod()) {
-                throw ApiException.badRequest("No fiscal period is defined for " + day(date)
+                throw ApiException.badRequest("No fiscal period is defined for " + day(local)
                         + "; posting requires an open period");
             }
             return;
         }
         if ("locked".equals(period.status())) {
-            throw ApiException.badRequest("Fiscal period '" + period.name() + "' is locked; cannot post on " + day(date));
+            throw ApiException.badRequest("Fiscal period '" + period.name() + "' is locked; cannot post on " + day(local));
         }
         if ("closed".equals(period.status())) {
             throw ApiException.badRequest("Fiscal period '" + period.name()

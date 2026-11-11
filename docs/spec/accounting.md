@@ -78,6 +78,12 @@ error, per-branch close lock and open-order check, handover carries open orders.
 
 Pending owner approval:
 
+0. **Accounting day = organisation-local calendar day** (ADR-S070). Nest buckets the ledger by UTC day: period
+   control, entry-number year and every ledger report compare `postingDate` against UTC day bounds. Here
+   `Organization.timezone` decides: a bare report date is a local day, fiscal-period / year / VAT-settlement /
+   books-lock bounds are local wall clock, and a date-only posting (UTC midnight) is stored at local noon of its date.
+   A Kampala sale at 22:30 UTC on 31 January is a 1 February entry. UTC organisations are unchanged (every
+   conversion is the identity).
 1. **`GET /reports/accounting/pos-gl-reconciliation`**: `inventory.jobCounts` values are numbers and
    `unpostedJobs` is their sum. Nest groups with `_count: { _all: true }`, so in production each value is
    a `{ "_all": n }` object and `unpostedJobs` becomes the string `"[object Object]00"` (the note then

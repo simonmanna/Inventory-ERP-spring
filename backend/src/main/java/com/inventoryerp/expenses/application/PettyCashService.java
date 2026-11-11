@@ -1,6 +1,7 @@
 package com.inventoryerp.expenses.application;
 
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -137,8 +138,8 @@ public class PettyCashService {
         Map<String, Object> f = require(id);
         LocalDate start = from == null || from.isBlank() ? LocalDate.now().withDayOfMonth(1) : LocalDate.parse(from);
         LocalDate end = to == null || to.isBlank() ? LocalDate.now() : LocalDate.parse(to);
-        Timestamp s = Timestamp.valueOf(start.atStartOfDay());
-        Timestamp e = Timestamp.valueOf(end.plusDays(1).atStartOfDay());
+        Timestamp s = AccountingDay.startTs(start, AccountingDay.zone(jdbc));
+        Timestamp e = AccountingDay.endExclusiveTs(end, AccountingDay.zone(jdbc));
         String acc = (String) f.get("accountId");
         BigDecimal opening = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                 + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"

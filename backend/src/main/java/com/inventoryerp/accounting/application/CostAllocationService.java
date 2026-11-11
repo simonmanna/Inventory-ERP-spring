@@ -209,7 +209,9 @@ public class CostAllocationService {
             weightSum = weightSum.add(SqlRows.dec(t, "weight"));
         }
         List<String> accountIds = strings(r.get("accountIds"));
-        List<Object> params = new ArrayList<>(List.of(org(), r.get("sourceCostCenterId"), from, to.plusDays(1)));
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        List<Object> params = new ArrayList<>(List.of(org(), r.get("sourceCostCenterId"), AccountingDay.startTs(from, zone),
+                AccountingDay.endExclusiveTs(to, zone)));
         String accountFilter;
         if (accountIds != null && !accountIds.isEmpty()) {
             accountFilter = " AND l.\"accountId\" = ANY(?::text[])";

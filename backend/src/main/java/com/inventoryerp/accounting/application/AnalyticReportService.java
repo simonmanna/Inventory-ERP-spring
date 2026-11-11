@@ -97,11 +97,11 @@ public class AnalyticReportService {
         params.add(org());
         if (from != null) {
             sql.append(" AND e.\"postingDate\" >= ?");
-            params.add(from);
+            params.add(AccountingDay.startTs(from, AccountingDay.zone(jdbc)));
         }
         if (to != null) {
             sql.append(" AND e.\"postingDate\" < ?");
-            params.add(to.plusDays(1));
+            params.add(AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc)));
         }
         if (accountId != null) {
             sql.append(" AND l.\"accountId\" = ?");
