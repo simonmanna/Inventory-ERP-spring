@@ -6,7 +6,9 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from '@/pages/sales/handover-draft';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Trash2, Loader2 } from 'lucide-react';
+import { Trash2, Loader2, UserPlus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -207,6 +209,9 @@ export function InvoiceCreatePage() {
   const createInvoice = useCreateInvoice();
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
   const canUpdateInvoice = useAuthStore((s) => s.hasPermission(PERMISSIONS.invoice.update));
+  const canCreatePartner = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const queryClient = useQueryClient();
     const postInvoice = usePostInvoice();
     const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
     const companySettingsQ = useCompanySettings();
@@ -491,15 +496,31 @@ export function InvoiceCreatePage() {
             <div>
               <MetaRow label={tx('Customer')}>
                 <input type="hidden" {...register('partnerId', { required: true })} />
-                <SearchableSelect
-                  value={watch('partnerId') ?? ''}
-                  onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
-                  options={partnerOptions}
-                  placeholder={tx('Search a customer…')}
-                  searchPlaceholder={tx('Search customers…')}
-                  className={fieldClass}
-                />
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <SearchableSelect
+                      value={watch('partnerId') ?? ''}
+                      onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+                      options={partnerOptions}
+                      placeholder={tx('Search a customer…')}
+                      searchPlaceholder={tx('Search customers…')}
+                      className={fieldClass}
+                    />
+                  </div>
+                  {canCreatePartner && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')}
+                      aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </MetaRow>
+              <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+                // Use the new customer at once: refresh the customer list and select it.
+                void queryClient.invalidateQueries({ queryKey: ['partners'] });
+                setValue('partnerId', c.id, { shouldValidate: true, shouldDirty: true });
+                if (!getValues('deliveryAddress') && c.address) setValue('deliveryAddress', c.address);
+              }} />
               <MetaRow label={tx('Reference')}>
                 <Input id="reference" className={fieldClass} {...register('reference')} />
               </MetaRow>

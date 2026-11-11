@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { toast } from 'sonner';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, XCircle } from 'lucide-react';
+import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, UserPlus, XCircle } from 'lucide-react';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -79,6 +80,7 @@ export function SalesOrderPage() {
 
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [customerRef, setCustomerRef] = useState('');
   const [agreementId, setAgreementId] = useState('');
   const [requestedDate, setRequestedDate] = useState('');
@@ -244,8 +246,23 @@ export function SalesOrderPage() {
         <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
           <div>
             <InlineField label={tx('Customer')}>
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <span className="font-medium">{o?.partnerName}</span>}
+              {editable ? (
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
+                  </div>
+                  {has(PERMISSIONS.partners.create) && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ) : <span className="font-medium">{o?.partnerName}</span>}
             </InlineField>
+            <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+              // Use the new customer at once (credit / billing panel and agreements follow the selection).
+              setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
+            }} />
             <OrderHeaderFields only={['customerRef', 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {o && (
               <>
