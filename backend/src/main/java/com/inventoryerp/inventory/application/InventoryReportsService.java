@@ -6,8 +6,10 @@ import static com.inventoryerp.inventory.application.InventoryQueryService.notBl
 import static com.inventoryerp.kernel.common.JsNumbers.js;
 import static com.inventoryerp.kernel.common.JsNumbers.round;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
+import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
@@ -15,6 +17,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.text.Collator;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -61,11 +64,14 @@ public class InventoryReportsService {
     private final JdbcClient jdbc;
     private final InventoryQueryService queries;
     private final LocationScope scope;
+    private final InventoryValuationService accountingValuation;
 
-    public InventoryReportsService(JdbcClient jdbc, InventoryQueryService queries, LocationScope scope) {
+    public InventoryReportsService(JdbcClient jdbc, InventoryQueryService queries, LocationScope scope,
+            InventoryValuationService accountingValuation) {
         this.jdbc = jdbc;
         this.queries = queries;
         this.scope = scope;
+        this.accountingValuation = accountingValuation;
     }
 
     private static String org() {
@@ -212,6 +218,18 @@ public class InventoryReportsService {
         return v == null ? 0 : v instanceof BigDecimal b ? b.doubleValue() : ((Number) v).doubleValue();
     }
 
+    /** A column / rendered number as BigDecimal (null = 0). */
+    private static BigDecimal d(Object v) {
+        return Money.dec(v);
+    }
+
+    /** Quantity rounded to 6 places (HALF_UP). */
+    private static BigDecimal r6(BigDecimal v) {
+        return v.setScale(6, RoundingMode.HALF_UP);
+    }
+
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+
     // ------------------------------------------------------------------ 1. item movements
 
     /** Stock card summary per item over local days [start, end]. */
@@ -232,7 +250,7 @@ public class InventoryReportsService {
         }
         if (productIds != null) {
             baseSql.append(" AND \"productId\" IN (:pids)");
-            base.put("pids", productIds.isEmpty() ? List.of("\u0000") : productIds);
+            base.put("pids", productIds.isEmpty() ? List.of("") : productIds);
         }
         Map<String, Object> wp = new HashMap<>(base);
         StringBuilder window = new StringBuilder(baseSql);
@@ -254,14 +272,14 @@ public class InventoryReportsService {
         List<Map<String, Object>> typed = jdbc.sql("SELECT \"productId\", type::text AS type, SUM(\"quantityChange\") AS q,"
                 + " SUM(\"totalValue\") AS v, count(*) AS n FROM \"InventoryLedger\" WHERE " + window
                 + " GROUP BY \"productId\", type").params(wp).query().listOfRows();
-        Map<String, Double> opening = new HashMap<>();
+        Map<String, BigDecimal> opening = new HashMap<>();
         if (r.start() != null) {
             Map<String, Object> op = new HashMap<>(base);
             op.put("start", SqlRows.ts(r.start()));
             for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q FROM \"InventoryLedger\""
                     + " WHERE " + baseSql + " AND \"createdAt\" < :start GROUP BY \"productId\"").params(op).query()
                     .listOfRows()) {
-                opening.put((String) g.get("productId"), n(g.get("q")));
+                opening.put((String) g.get("productId"), d(g.get("q")));
             }
         }
         Map<String, Object> cp = new HashMap<>(base);
@@ -270,20 +288,20 @@ public class InventoryReportsService {
             closingSql += " AND \"createdAt\" <= :end";
             cp.put("end", SqlRows.ts(r.end()));
         }
-        Map<String, Double> closing = new HashMap<>();
+        Map<String, BigDecimal> closing = new HashMap<>();
         for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q FROM \"InventoryLedger\""
                 + " WHERE " + closingSql + " GROUP BY \"productId\"").params(cp).query().listOfRows()) {
-            closing.put((String) g.get("productId"), n(g.get("q")));
+            closing.put((String) g.get("productId"), d(g.get("q")));
         }
         Set<String> universe = new LinkedHashSet<>();
         typed.forEach(g -> universe.add((String) g.get("productId")));
         opening.forEach((k, v) -> {
-            if (v != 0) {
+            if (v.signum() != 0) {
                 universe.add(k);
             }
         });
         closing.forEach((k, v) -> {
-            if (v != 0) {
+            if (v.signum() != 0) {
                 universe.add(k);
             }
         });
@@ -298,8 +316,8 @@ public class InventoryReportsService {
             typed.forEach(g -> universe.add((String) g.get("productId")));
         }
         Map<String, Map<String, Object>> products = productMeta(universe);
-        Map<String, double[]> costAgg = new HashMap<>();
-        Map<String, Double> onHand = new HashMap<>();
+        Map<String, BigDecimal[]> costAgg = new HashMap<>();
+        Map<String, BigDecimal> onHand = new HashMap<>();
         if (!universe.isEmpty()) {
             var spec = jdbc.sql("SELECT \"productId\", quantity, \"runningAverageCost\" FROM \"StockItem\" WHERE"
                             + " \"organizationId\" = :org AND \"productId\" IN (:ids)"
@@ -310,98 +328,114 @@ public class InventoryReportsService {
             }
             for (Map<String, Object> si : spec.query().listOfRows()) {
                 String pid = (String) si.get("productId");
-                double qty = n(si.get("quantity"));
-                onHand.merge(pid, qty, Double::sum);
-                if (qty <= 0) {
+                BigDecimal qty = d(si.get("quantity"));
+                onHand.merge(pid, qty, BigDecimal::add);
+                if (qty.signum() <= 0) {
                     continue;
                 }
-                double[] a = costAgg.computeIfAbsent(pid, k -> new double[2]);
-                a[0] += qty;
-                a[1] += qty * n(si.get("runningAverageCost"));
+                BigDecimal[] a = costAgg.computeIfAbsent(pid, k -> new BigDecimal[] {Money.ZERO, Money.ZERO});
+                a[0] = a[0].add(qty);
+                a[1] = a[1].add(qty.multiply(d(si.get("runningAverageCost"))));
             }
         }
         Map<String, Agg> aggs = new HashMap<>();
         for (Map<String, Object> g : typed) {
             Agg a = aggs.computeIfAbsent((String) g.get("productId"), k -> new Agg());
-            double qty = n(g.get("q"));
-            double val = n(g.get("v"));
-            if (qty >= 0) {
-                a.qtyIn += qty;
-                a.valueIn += val;
+            BigDecimal qty = d(g.get("q"));
+            BigDecimal val = d(g.get("v"));
+            if (qty.signum() >= 0) {
+                a.qtyIn = a.qtyIn.add(qty);
+                a.valueIn = a.valueIn.add(val);
             } else {
-                a.qtyOut += -qty;
-                a.valueOut += val;
+                a.qtyOut = a.qtyOut.add(qty.negate());
+                a.valueOut = a.valueOut.add(val);
             }
             a.count += ((Number) g.get("n")).longValue();
             String type = (String) g.get("type");
-            a.byType.put(type, round(a.byType.getOrDefault(type, 0.0) + qty, 6));
+            a.byType.put(type, r6(a.byType.getOrDefault(type, Money.ZERO).add(qty)));
         }
         List<Map<String, Object>> rows = new ArrayList<>();
+        // Totals add the rounded row figures (what the screen shows): opening, in, out, net, closing, valueIn,
+        // valueOut, closingValue.
+        BigDecimal[] t = new BigDecimal[8];
+        java.util.Arrays.fill(t, Money.ZERO);
+        long movements = 0;
+        long drift = 0;
         for (Map<String, Object> p : products.values()) {
             String id = str(p, "id");
             Agg a = aggs.getOrDefault(id, new Agg());
-            double[] c = costAgg.get(id);
-            double avgCost = c != null && c[0] > 0 ? c[1] / c[0] : n(p.get("costPrice"));
-            double openingQty = round(opening.getOrDefault(id, 0.0), 6);
-            double closingQty = round(closing.getOrDefault(id, 0.0), 6);
+            BigDecimal[] c = costAgg.get(id);
+            BigDecimal avgCost = c != null && c[0].signum() > 0 ? Money.div(c[1], c[0]) : d(p.get("costPrice"));
+            BigDecimal openingQty = r6(opening.getOrDefault(id, Money.ZERO));
+            BigDecimal closingQty = r6(closing.getOrDefault(id, Money.ZERO));
             Map<String, Object> groups = new LinkedHashMap<>();
+            Map<String, BigDecimal> groupSums = new LinkedHashMap<>();
             Map<String, Object> byType = new LinkedHashMap<>();
-            for (Map.Entry<String, Double> e : a.byType.entrySet()) {
+            for (Map.Entry<String, BigDecimal> e : a.byType.entrySet()) {
                 byType.put(e.getKey(), js(e.getValue()));
                 String grp = MOVE_TYPE_GROUPS.getOrDefault(e.getKey(), "other");
-                double prev = groups.containsKey(grp) ? n(groups.get(grp)) : 0;
-                groups.put(grp, js(round(prev + e.getValue(), 6)));
+                BigDecimal sum = r6(groupSums.getOrDefault(grp, Money.ZERO).add(e.getValue()));
+                groupSums.put(grp, sum);
+                groups.put(grp, js(sum));
             }
-            double current = onHand.getOrDefault(id, 0.0);
+            BigDecimal current = onHand.getOrDefault(id, Money.ZERO);
+            BigDecimal qtyIn = r6(a.qtyIn);
+            BigDecimal qtyOut = r6(a.qtyOut);
+            BigDecimal netQty = r6(a.qtyIn.subtract(a.qtyOut));
+            BigDecimal valueIn = Money.round(a.valueIn, 2);
+            BigDecimal valueOut = Money.round(a.valueOut, 2);
+            BigDecimal closingValue = Money.round(closingQty.multiply(avgCost), 2);
+            BigDecimal ledgerDrift = endsToday ? r6(current.subtract(closingQty)) : null;
             Map<String, Object> row = Obj.of("productId", id, "code", p.get("code"), "name", p.get("name"), "sku",
                     p.get("sku"), "categoryId", p.get("cid"), "category", p.get("cname"), "uom", p.get("uom"),
-                    "openingQty", js(openingQty), "qtyIn", js(round(a.qtyIn, 6)), "qtyOut", js(round(a.qtyOut, 6)),
-                    "netQty", js(round(a.qtyIn - a.qtyOut, 6)), "closingQty", js(closingQty), "balance", js(closingQty),
-                    "valueIn", js(round(a.valueIn, 2)), "valueOut", js(round(a.valueOut, 2)), "avgCost",
-                    js(round(avgCost, 4)), "closingValue", js(round(closingQty * avgCost, 2)), "movements", a.count,
+                    "openingQty", js(openingQty), "qtyIn", js(qtyIn), "qtyOut", js(qtyOut),
+                    "netQty", js(netQty), "closingQty", js(closingQty), "balance", js(closingQty),
+                    "valueIn", js(valueIn), "valueOut", js(valueOut), "avgCost",
+                    js(avgCost, 4), "closingValue", js(closingValue), "movements", a.count,
                     "byType", byType, "byGroup", groups, "minQuantity",
-                    p.get("minQuantity") != null ? js(n(p.get("minQuantity"))) : null, "currentOnHand",
-                    js(round(current, 6)), "ledgerDrift", endsToday ? js(round(current - closingQty, 6)) : null);
+                    p.get("minQuantity") != null ? js(d(p.get("minQuantity"))) : null, "currentOnHand",
+                    js(current, 6), "ledgerDrift", ledgerDrift == null ? null : js(ledgerDrift));
             rows.add(row);
-        }
-        rows.sort((x, y) -> COLLATOR.compare(String.valueOf(x.get("name")), String.valueOf(y.get("name"))));
-        double[] t = new double[8];
-        long movements = 0;
-        long drift = 0;
-        for (Map<String, Object> row : rows) {
-            t[0] += n(row.get("openingQty"));
-            t[1] += n(row.get("qtyIn"));
-            t[2] += n(row.get("qtyOut"));
-            t[3] += n(row.get("netQty"));
-            t[4] += n(row.get("closingQty"));
-            t[5] += n(row.get("valueIn"));
-            t[6] += n(row.get("valueOut"));
-            t[7] += n(row.get("closingValue"));
-            movements += ((Number) row.get("movements")).longValue();
-            if (row.get("ledgerDrift") != null && Math.abs(n(row.get("ledgerDrift"))) > 0.000001) {
+            BigDecimal[] figures = {openingQty, qtyIn, qtyOut, netQty, closingQty, valueIn, valueOut, closingValue};
+            for (int i = 0; i < t.length; i++) {
+                t[i] = t[i].add(figures[i]);
+            }
+            movements += a.count;
+            if (ledgerDrift != null && ledgerDrift.abs().compareTo(new BigDecimal("0.000001")) > 0) {
                 drift++;
             }
         }
-        Map<String, Object> totals = Obj.of("items", rows.size(), "openingQty", js(round(t[0], 6)), "qtyIn",
-                js(round(t[1], 6)), "qtyOut", js(round(t[2], 6)), "netQty", js(round(t[3], 6)), "closingQty",
-                js(round(t[4], 6)), "valueIn", js(round(t[5], 2)), "valueOut", js(round(t[6], 2)), "closingValue",
-                js(round(t[7], 2)), "movements", movements, "driftItems", drift);
+        rows.sort((x, y) -> COLLATOR.compare(String.valueOf(x.get("name")), String.valueOf(y.get("name"))));
+        Map<String, Object> totals = Obj.of("items", rows.size(), "openingQty", js(t[0], 6), "qtyIn",
+                js(t[1], 6), "qtyOut", js(t[2], 6), "netQty", js(t[3], 6), "closingQty",
+                js(t[4], 6), "valueIn", js(t[5], 2), "valueOut", js(t[6], 2), "closingValue",
+                js(t[7], 2), "movements", movements, "driftItems", drift);
         return Obj.of("data", rows, "totals", totals, "meta", Obj.of("start", r.start() != null ? localIso(r.start()) : null,
                 "end", r.end() != null ? localIso(r.end()) : null, "total", rows.size()));
     }
 
     private static final class Agg {
-        double qtyIn;
-        double qtyOut;
-        double valueIn;
-        double valueOut;
+        BigDecimal qtyIn = Money.ZERO;
+        BigDecimal qtyOut = Money.ZERO;
+        BigDecimal valueIn = Money.ZERO;
+        BigDecimal valueOut = Money.ZERO;
         long count;
-        final Map<String, Double> byType = new LinkedHashMap<>();
+        final Map<String, BigDecimal> byType = new LinkedHashMap<>();
     }
 
     // ------------------------------------------------------------------ 2. valuation
 
-    /** Current on-hand valuation per item with stock-status filter and category breakdown. */
+    /** One valuation row: the rendered JSON plus the figures the filters and totals work on. */
+    private record ValuationRow(Map<String, Object> json, BigDecimal quantity, BigDecimal value, BigDecimal retailValue,
+            BigDecimal minQuantity, String stockStatus) {}
+
+    /**
+     * Current on-hand valuation per item with stock-status filter and category breakdown. Each quant is valued by its
+     * product's costing method exactly as the accounting valuation does ({@link
+     * InventoryValuationService#currentValueByQuant}: lots / serials / standard / average, plus the CM-1 adjunct
+     * components), so a product's value here equals {@code GET /reports/inventory/valuation}. Set-based: one query for
+     * the products, one for the quants, one for the values.
+     */
     public Map<String, Object> valuation(Map<String, String> query) {
         Map<String, String> q = scope.apply(query);
         String status = q.get("status") == null || q.get("status").isEmpty() ? "all" : q.get("status");
@@ -419,105 +453,143 @@ public class InventoryReportsService {
                 + " c.name AS cname FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\""
                 + " LEFT JOIN \"ProductCategory\" c ON c.id = p.\"categoryId\" WHERE " + where
                 + " AND (p.\"trackInventory\" = true OR EXISTS (SELECT 1 FROM \"StockItem\" si WHERE si.\"productId\" = p.id"
-                + (loc != null ? " AND si.\"locationId\" = :loc" : "") + ")) ORDER BY p.name ASC").params(params));
-        List<Map<String, Object>> rows = new ArrayList<>();
+                + " AND si.\"organizationId\" = :org" + (loc != null ? " AND si.\"locationId\" = :loc" : "")
+                + ")) ORDER BY p.name ASC").params(params));
+
+        // Method-correct value per quant (product | variant | location), adjunct components merged in.
+        Map<String, Map<String, BigDecimal>> values = new HashMap<>();
+        for (Map<String, Object> v : accountingValuation.currentValueByQuant(loc)) {
+            values.computeIfAbsent(str(v, "product_id"), k -> new LinkedHashMap<>())
+                    .merge(str(v, "variant_key") + "|" + str(v, "location_id"), SqlRows.dec(v, "value"),
+                            BigDecimal::add);
+        }
+        Map<String, List<Map<String, Object>>> quants = new HashMap<>();
+        var spec = jdbc.sql("SELECT si.\"productId\", si.\"variantKey\", si.\"locationId\", si.quantity,"
+                + " si.\"updatedAt\", l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l ON l.id = si.\"locationId\""
+                + " WHERE si.\"organizationId\" = :org" + (loc != null ? " AND si.\"locationId\" = :loc" : "")
+                + " ORDER BY l.name ASC, l.id ASC").param("org", org());
+        if (loc != null) {
+            spec = spec.param("loc", loc);
+        }
+        for (Map<String, Object> si : SqlRows.list(spec)) {
+            quants.computeIfAbsent(str(si, "productId"), k -> new ArrayList<>()).add(si);
+        }
+
+        List<ValuationRow> rows = new ArrayList<>();
         for (Map<String, Object> p : products) {
-            var spec = jdbc.sql("SELECT si.quantity, si.\"runningAverageCost\", si.\"updatedAt\", l.id AS lid, l.code,"
-                    + " l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l ON l.id = si.\"locationId\""
-                    + " WHERE si.\"productId\" = :pid" + (loc != null ? " AND si.\"locationId\" = :loc" : ""))
-                    .param("pid", p.get("id"));
-            if (loc != null) {
-                spec = spec.param("loc", loc);
-            }
-            double qty = 0;
-            double value = 0;
-            double posQty = 0;
-            double posValue = 0;
+            String productId = str(p, "id");
+            Map<String, BigDecimal> productValues = values.getOrDefault(productId, new HashMap<>());
+            BigDecimal qty = Money.ZERO;
+            BigDecimal value = Money.ZERO;
+            BigDecimal posQty = Money.ZERO;
+            BigDecimal posValue = Money.ZERO;
             Instant lastMovedAt = null;
-            Map<String, Map<String, Object>> byLoc = new LinkedHashMap<>();
-            for (Map<String, Object> si : SqlRows.list(spec)) {
-                double sq = n(si.get("quantity"));
-                double avg = n(si.get("runningAverageCost"));
-                double cost = avg != 0 ? avg : n(p.get("costPrice"));
-                qty += sq;
-                value += sq * cost;
-                if (sq > 0) {
-                    posQty += sq;
-                    posValue += sq * cost;
+            Map<String, BigDecimal[]> byLoc = new LinkedHashMap<>();
+            Map<String, Map<String, Object>> locMeta = new LinkedHashMap<>();
+            for (Map<String, Object> si : quants.getOrDefault(productId, List.of())) {
+                BigDecimal sq = d(si.get("quantity"));
+                BigDecimal sv = productValues.remove(str(si, "variantKey") + "|" + str(si, "locationId"));
+                sv = sv == null ? Money.ZERO : sv;
+                qty = qty.add(sq);
+                value = value.add(sv);
+                if (sq.signum() > 0) {
+                    posQty = posQty.add(sq);
+                    posValue = posValue.add(sv);
                 }
                 Instant upd = (Instant) si.get("updatedAt");
-                if (lastMovedAt == null || upd.isAfter(lastMovedAt)) {
+                if (upd != null && (lastMovedAt == null || upd.isAfter(lastMovedAt))) {
                     lastMovedAt = upd;
                 }
-                Map<String, Object> l = byLoc.computeIfAbsent(str(si, "lid"), k -> Obj.of("locationId", k, "code",
-                        si.get("code"), "name", si.get("name"), "quantity", 0.0, "value", 0.0));
-                l.put("quantity", round(n(l.get("quantity")) + sq, 6));
-                l.put("value", round(n(l.get("value")) + sq * cost, 2));
+                String lid = str(si, "locationId");
+                locMeta.computeIfAbsent(lid, k -> Obj.of("locationId", k, "code", si.get("code"), "name",
+                        si.get("name")));
+                BigDecimal[] l = byLoc.computeIfAbsent(lid, k -> new BigDecimal[] {Money.ZERO, Money.ZERO});
+                l[0] = l[0].add(sq);
+                l[1] = l[1].add(sv);
             }
-            double avgCost = posQty > 0 ? posValue / posQty : n(p.get("costPrice"));
-            double min = n(p.get("minQuantity"));
-            String stockStatus = qty < 0 ? "negative" : qty == 0 ? "out" : min > 0 && qty <= min ? "low" : "in_stock";
-            double salesPrice = n(p.get("salesPrice"));
+            // Adjunct components (price difference / NRV allowance) at a location without a quant row.
+            for (BigDecimal rest : productValues.values()) {
+                value = value.add(rest);
+            }
+            BigDecimal avgCost = posQty.signum() > 0 ? Money.div(posValue, posQty) : d(p.get("costPrice"));
+            BigDecimal min = d(p.get("minQuantity"));
+            String stockStatus = qty.signum() < 0 ? "negative" : qty.signum() == 0 ? "out"
+                    : min.signum() > 0 && qty.compareTo(min) <= 0 ? "low" : "in_stock";
+            BigDecimal salesPrice = d(p.get("salesPrice"));
             List<Map<String, Object>> locations = new ArrayList<>();
-            for (Map<String, Object> l : byLoc.values()) {
-                if (n(l.get("quantity")) != 0) {
-                    l.put("quantity", js(n(l.get("quantity"))));
-                    l.put("value", js(n(l.get("value"))));
+            for (Map.Entry<String, BigDecimal[]> e : byLoc.entrySet()) {
+                BigDecimal lq = r6(e.getValue()[0]);
+                if (lq.signum() != 0) {
+                    Map<String, Object> l = locMeta.get(e.getKey());
+                    l.put("quantity", js(lq));
+                    l.put("value", js(e.getValue()[1], 2));
                     locations.add(l);
                 }
             }
-            rows.add(Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"), "sku", p.get("sku"),
-                    "isActive", p.get("isActive"), "categoryId", p.get("cid"), "category", p.get("cname"), "uom",
-                    p.get("uom"), "quantity", js(round(qty, 6)), "avgCost", js(round(avgCost, 4)), "value",
-                    js(round(value, 2)), "salesPrice", js(salesPrice), "retailValue", js(round(qty * salesPrice, 2)),
-                    "minQuantity", min != 0 ? js(min) : null, "reorderQty",
-                    p.get("reorderQty") != null ? js(n(p.get("reorderQty"))) : null, "stockStatus", stockStatus,
-                    "lastMovedAt", lastMovedAt, "locations", locations));
+            BigDecimal qty6 = r6(qty);
+            BigDecimal value2 = Money.round(value, 2);
+            BigDecimal retail2 = Money.round(qty.multiply(salesPrice), 2);
+            rows.add(new ValuationRow(Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"),
+                    "sku", p.get("sku"), "isActive", p.get("isActive"), "categoryId", p.get("cid"), "category",
+                    p.get("cname"), "uom", p.get("uom"), "quantity", js(qty6), "avgCost", js(avgCost, 4), "value",
+                    js(value2), "salesPrice", js(salesPrice), "retailValue", js(retail2),
+                    "minQuantity", min.signum() != 0 ? js(min) : null, "reorderQty",
+                    p.get("reorderQty") != null ? js(d(p.get("reorderQty"))) : null, "stockStatus", stockStatus,
+                    "lastMovedAt", lastMovedAt, "locations", locations),
+                    qty6, value2, retail2, min.signum() != 0 ? min : null, stockStatus));
         }
         boolean includeZero = "true".equals(q.get("includeZero"));
-        List<Map<String, Object>> filtered = rows.stream().filter(r -> {
+        List<ValuationRow> filtered = rows.stream().filter(r -> {
             if ("all".equals(status)) {
-                return includeZero || n(r.get("quantity")) != 0;
+                return includeZero || r.quantity().signum() != 0;
             }
             if ("below_par".equals(status)) {
-                return r.get("minQuantity") != null && n(r.get("quantity")) <= n(r.get("minQuantity"));
+                return r.minQuantity() != null && r.quantity().compareTo(r.minQuantity()) <= 0;
             }
-            return status.equals(r.get("stockStatus"));
+            return status.equals(r.stockStatus());
         }).toList();
-        double totalValue = filtered.stream().mapToDouble(r -> n(r.get("value"))).sum();
-        Map<String, double[]> byCategory = new LinkedHashMap<>();
-        for (Map<String, Object> r : filtered) {
-            String key = r.get("category") != null ? (String) r.get("category") : "Uncategorised";
-            double[] c = byCategory.computeIfAbsent(key, k -> new double[3]);
-            c[0] += 1;
-            c[1] = round(c[1] + n(r.get("quantity")), 6);
-            c[2] = round(c[2] + n(r.get("value")), 2);
+        BigDecimal totalValue = Money.ZERO;
+        BigDecimal totalQty = Money.ZERO;
+        BigDecimal totalRetail = Money.ZERO;
+        Map<String, BigDecimal[]> byCategory = new LinkedHashMap<>();
+        Map<String, Long> categoryItems = new LinkedHashMap<>();
+        for (ValuationRow r : filtered) {
+            totalValue = totalValue.add(r.value());
+            totalQty = totalQty.add(r.quantity());
+            totalRetail = totalRetail.add(r.retailValue());
+            Object cat = r.json().get("category");
+            String key = cat != null ? (String) cat : "Uncategorised";
+            BigDecimal[] c = byCategory.computeIfAbsent(key, k -> new BigDecimal[] {Money.ZERO, Money.ZERO});
+            categoryItems.merge(key, 1L, Long::sum);
+            c[0] = c[0].add(r.quantity());
+            c[1] = c[1].add(r.value());
         }
         List<Map<String, Object>> cats = new ArrayList<>();
-        for (Map.Entry<String, double[]> e : byCategory.entrySet()) {
-            double[] c = e.getValue();
-            cats.add(Obj.of("category", e.getKey(), "items", (long) c[0], "quantity", js(c[1]), "value", js(c[2]),
-                    "share", js(totalValue != 0 ? round(c[2] / totalValue * 100, 1) : 0)));
+        List<BigDecimal> catValues = new ArrayList<>();
+        for (Map.Entry<String, BigDecimal[]> e : byCategory.entrySet()) {
+            BigDecimal[] c = e.getValue();
+            BigDecimal share = totalValue.signum() != 0
+                    ? c[1].multiply(HUNDRED).divide(totalValue, 10, RoundingMode.HALF_UP) : Money.ZERO;
+            cats.add(Obj.of("category", e.getKey(), "items", categoryItems.get(e.getKey()), "quantity", js(c[0], 6),
+                    "value", js(c[1], 2), "share", js(share, 1)));
+            catValues.add(c[1]);
         }
-        cats.sort((a, b) -> Double.compare(n(b.get("value")), n(a.get("value"))));
-        return Obj.of("data", filtered, "totals", Obj.of("items", filtered.size(),
-                        "quantity", js(round(sum(filtered, "quantity"), 6)), "value", js(round(totalValue, 2)),
-                        "retailValue", js(round(sum(filtered, "retailValue"), 2)),
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < cats.size(); i++) {
+            order.add(i);
+        }
+        order.sort((a, b) -> catValues.get(b).compareTo(catValues.get(a)));
+        List<Map<String, Object>> data = filtered.stream().map(ValuationRow::json).toList();
+        return Obj.of("data", data, "totals", Obj.of("items", filtered.size(),
+                        "quantity", js(totalQty, 6), "value", js(totalValue, 2),
+                        "retailValue", js(totalRetail, 2),
                         "inStock", count(rows, "in_stock"), "low", count(rows, "low"), "out", count(rows, "out"),
                         "negative", count(rows, "negative")),
-                "byCategory", cats);
+                "byCategory", order.stream().map(cats::get).toList());
     }
 
-    private static double sum(List<Map<String, Object>> rows, String key) {
-        double s = 0;
-        for (Map<String, Object> r : rows) {
-            s += n(r.get(key));
-        }
-        return s;
-    }
-
-    private static long count(List<Map<String, Object>> rows, String status) {
-        return rows.stream().filter(r -> status.equals(r.get("stockStatus"))).count();
+    private static long count(List<ValuationRow> rows, String status) {
+        return rows.stream().filter(r -> status.equals(r.stockStatus())).count();
     }
 
     // ------------------------------------------------------------------ 3. movement analysis
@@ -545,7 +617,7 @@ public class InventoryReportsService {
         }
         if (productIds != null) {
             where.append(" AND \"productId\" IN (:pids)");
-            params.put("pids", productIds.isEmpty() ? List.of("\u0000") : productIds);
+            params.put("pids", productIds.isEmpty() ? List.of("") : productIds);
         }
         if (types != null) {
             where.append(" AND type::text IN (:types)");
@@ -555,85 +627,112 @@ public class InventoryReportsService {
         for (Map<String, Object> g : jdbc.sql("SELECT type::text AS type, SUM(\"quantityChange\") AS q, SUM(\"totalValue\") AS v,"
                 + " count(*) AS n FROM \"InventoryLedger\" WHERE " + where + " GROUP BY type").params(params).query()
                 .listOfRows()) {
-            double qty = n(g.get("q"));
+            BigDecimal qty = d(g.get("q"));
             byType.add(Obj.of("type", g.get("type"), "group", MOVE_TYPE_GROUPS.getOrDefault((String) g.get("type"), "other"),
-                    "movements", ((Number) g.get("n")).longValue(), "quantity", js(round(qty, 6)), "value",
-                    js(round(n(g.get("v")), 2)), "direction", qty >= 0 ? "in" : "out"));
+                    "movements", ((Number) g.get("n")).longValue(), "quantity", js(qty, 6), "value",
+                    js(d(g.get("v")), 2), "direction", qty.signum() >= 0 ? "in" : "out"));
         }
-        byType.sort((a, b) -> Double.compare(n(b.get("value")), n(a.get("value"))));
-        Map<String, double[]> days = new LinkedHashMap<>();
+        byType.sort((a, b) -> d(b.get("value")).compareTo(d(a.get("value"))));
+        Map<String, BigDecimal[]> days = new LinkedHashMap<>();
         ZoneId zone = BusinessZone.get();
         for (LocalDate d = effStart.atZone(zone).toLocalDate(); !d.atStartOfDay(zone).toInstant().isAfter(effEnd);
                 d = d.plusDays(1)) {
-            days.put(d.toString(), new double[5]);
+            days.put(d.toString(), new BigDecimal[] {Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO});
         }
-        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT \"createdAt\", \"quantityChange\", \"totalValue\" FROM"
-                + " \"InventoryLedger\" WHERE " + where).params(params))) {
-            double[] b = days.get(localIso((Instant) l.get("createdAt")));
+        // Daily buckets are summed in SQL on the business-zone calendar day (no ledger rows loaded into memory).
+        Map<String, Object> dayParams = new HashMap<>(params);
+        String localDay = localDaySql(zone, dayParams);
+        for (Map<String, Object> g : jdbc.sql("SELECT to_char(" + localDay + ", 'YYYY-MM-DD') AS day,"
+                + " COALESCE(SUM(\"totalValue\") FILTER (WHERE \"quantityChange\" >= 0), 0) AS vin,"
+                + " COALESCE(SUM(\"totalValue\") FILTER (WHERE \"quantityChange\" < 0), 0) AS vout,"
+                + " COALESCE(SUM(\"quantityChange\") FILTER (WHERE \"quantityChange\" >= 0), 0) AS qin,"
+                + " COALESCE(SUM(-\"quantityChange\") FILTER (WHERE \"quantityChange\" < 0), 0) AS qout,"
+                + " count(*) AS n FROM \"InventoryLedger\" WHERE " + where + " GROUP BY 1").params(dayParams).query()
+                .listOfRows()) {
+            BigDecimal[] b = days.get((String) g.get("day"));
             if (b == null) {
                 continue;
             }
-            double qty = n(l.get("quantityChange"));
-            double val = n(l.get("totalValue"));
-            if (qty >= 0) {
-                b[2] += qty;
-                b[0] += val;
-            } else {
-                b[3] += -qty;
-                b[1] += val;
-            }
-            b[4] += 1;
+            b[0] = b[0].add(d(g.get("vin")));
+            b[1] = b[1].add(d(g.get("vout")));
+            b[2] = b[2].add(d(g.get("qin")));
+            b[3] = b[3].add(d(g.get("qout")));
+            b[4] = b[4].add(d(g.get("n")));
         }
         List<Map<String, Object>> trend = new ArrayList<>();
-        days.forEach((k, b) -> trend.add(Obj.of("date", k, "valueIn", js(round(b[0], 2)), "valueOut", js(round(b[1], 2)),
-                "qtyIn", js(round(b[2], 6)), "qtyOut", js(round(b[3], 6)), "movements", (long) b[4])));
-        Map<String, double[]> perProduct = new LinkedHashMap<>();
+        days.forEach((k, b) -> trend.add(Obj.of("date", k, "valueIn", js(b[0], 2), "valueOut", js(b[1], 2),
+                "qtyIn", js(b[2], 6), "qtyOut", js(b[3], 6), "movements", b[4].longValue())));
+        Map<String, BigDecimal[]> perProduct = new LinkedHashMap<>();
         for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", type::text AS type, SUM(\"quantityChange\") AS q,"
                 + " SUM(\"totalValue\") AS v FROM \"InventoryLedger\" WHERE " + where + " GROUP BY \"productId\", type")
                 .params(params).query().listOfRows()) {
             String grp = MOVE_TYPE_GROUPS.get((String) g.get("type"));
-            double[] p = perProduct.computeIfAbsent((String) g.get("productId"), k -> new double[5]);
-            double val = n(g.get("v"));
-            double qty = Math.abs(n(g.get("q")));
+            BigDecimal[] p = perProduct.computeIfAbsent((String) g.get("productId"),
+                    k -> new BigDecimal[] {Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO, Money.ZERO});
+            BigDecimal val = d(g.get("v"));
+            BigDecimal qty = d(g.get("q")).abs();
             if ("consumed".equals(grp)) {
-                p[0] += val;
-                p[3] += qty;
+                p[0] = p[0].add(val);
+                p[3] = p[3].add(qty);
             }
             if ("lost".equals(grp)) {
-                p[1] += val;
-                p[4] += qty;
+                p[1] = p[1].add(val);
+                p[4] = p[4].add(qty);
             }
             if ("received".equals(grp)) {
-                p[2] += val;
+                p[2] = p[2].add(val);
             }
         }
         Map<String, Map<String, Object>> meta = productMeta(perProduct.keySet());
-        double consumed = byType.stream().filter(t -> "consumed".equals(t.get("group"))).mapToDouble(t -> n(t.get("value")))
-                .sum();
-        double lost = byType.stream().filter(t -> "lost".equals(t.get("group"))).mapToDouble(t -> n(t.get("value"))).sum();
+        BigDecimal consumed = sumValues(byType, "group", "consumed");
+        BigDecimal lost = sumValues(byType, "group", "lost");
         Map<String, Object> summary = Obj.of(
                 "movements", byType.stream().mapToLong(t -> ((Number) t.get("movements")).longValue()).sum(),
-                "valueIn", js(round(byType.stream().filter(t -> "in".equals(t.get("direction")))
-                        .mapToDouble(t -> n(t.get("value"))).sum(), 2)),
-                "valueOut", js(round(byType.stream().filter(t -> "out".equals(t.get("direction")))
-                        .mapToDouble(t -> n(t.get("value"))).sum(), 2)),
-                "consumedValue", js(round(consumed, 2)), "lostValue", js(round(lost, 2)),
-                "lossRatePct", consumed > 0 ? js(round(lost / (consumed + lost) * 100, 1)) : null);
+                "valueIn", js(sumValues(byType, "direction", "in"), 2),
+                "valueOut", js(sumValues(byType, "direction", "out"), 2),
+                "consumedValue", js(consumed, 2), "lostValue", js(lost, 2),
+                "lossRatePct", consumed.signum() > 0
+                        ? js(lost.multiply(HUNDRED).divide(consumed.add(lost), 10, RoundingMode.HALF_UP), 1) : null);
         return Obj.of("range", Obj.of("start", localIso(effStart), "end", localIso(effEnd)), "summary", summary,
                 "byType", byType, "trend", trend, "topConsumed", top(perProduct, meta, 0, 3),
                 "topLost", top(perProduct, meta, 1, 4), "topReceived", top(perProduct, meta, 2, -1));
     }
 
-    private static List<Map<String, Object>> top(Map<String, double[]> perProduct, Map<String, Map<String, Object>> meta,
-            int key, int qtyKey) {
-        return perProduct.entrySet().stream().filter(e -> e.getValue()[key] > 0)
-                .sorted((a, b) -> Double.compare(b.getValue()[key], a.getValue()[key])).limit(10)
+    /** Σ of the rendered (2 dp) {@code value} of the rows whose {@code key} equals {@code match}. */
+    private static BigDecimal sumValues(List<Map<String, Object>> rows, String key, String match) {
+        BigDecimal s = Money.ZERO;
+        for (Map<String, Object> r : rows) {
+            if (match.equals(r.get(key))) {
+                s = s.add(d(r.get("value")));
+            }
+        }
+        return s;
+    }
+
+    /**
+     * SQL for the business-zone calendar day of {@code "createdAt"} (UTC wall time). A fixed offset is added as an
+     * interval (Postgres reads a bare "+03:00" zone name with the POSIX sign); region ids use the tz database.
+     */
+    private static String localDaySql(ZoneId zone, Map<String, Object> params) {
+        ZoneId z = zone.normalized();
+        if (z instanceof java.time.ZoneOffset offset) {
+            params.put("zoneOffsetSecs", offset.getTotalSeconds());
+            return "(\"createdAt\" + make_interval(secs => :zoneOffsetSecs))::date";
+        }
+        params.put("zoneName", z.getId());
+        return "((\"createdAt\" AT TIME ZONE 'UTC') AT TIME ZONE :zoneName)::date";
+    }
+
+    private static List<Map<String, Object>> top(Map<String, BigDecimal[]> perProduct,
+            Map<String, Map<String, Object>> meta, int key, int qtyKey) {
+        return perProduct.entrySet().stream().filter(e -> e.getValue()[key].signum() > 0)
+                .sorted((a, b) -> b.getValue()[key].compareTo(a.getValue()[key])).limit(10)
                 .map(e -> {
                     Map<String, Object> m = meta.get(e.getKey());
                     return Obj.of("productId", e.getKey(), "code", m == null ? null : m.get("code"), "name",
                             m == null ? e.getKey() : m.get("name"), "uom", m == null ? null : m.get("uom"), "value",
-                            js(round(e.getValue()[key], 2)), "quantity",
-                            qtyKey >= 0 ? js(round(e.getValue()[qtyKey], 6)) : null);
+                            js(e.getValue()[key], 2), "quantity",
+                            qtyKey >= 0 ? js(e.getValue()[qtyKey], 6) : null);
                 }).toList();
     }
 
@@ -642,30 +741,32 @@ public class InventoryReportsService {
     /** Reorder suggestions within the product scope, largest shortfall first. */
     public List<Map<String, Object>> reorder(Map<String, String> q) {
         List<Map<String, Object>> rows = queries.getReorderSuggestions(q.get("locationId"));
-        List<String> ids = scopedProductIds(q);
+        List<String> scopedIds = scopedProductIds(q);
+        Set<String> ids = scopedIds == null ? null : new java.util.HashSet<>(scopedIds);
         List<Map<String, Object>> scoped = ids == null ? rows : rows.stream().filter(r -> ids.contains(r.get("productId")))
                 .toList();
         Map<String, Map<String, Object>> meta = productMeta(scoped.stream().map(r -> (String) r.get("productId")).toList());
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : scoped) {
             Map<String, Object> p = meta.get((String) r.get("productId"));
-            double unitCost = p == null ? 0 : n(p.get("costPrice"));
+            BigDecimal unitCost = p == null ? Money.ZERO : d(p.get("costPrice"));
             Map<String, Object> row = new LinkedHashMap<>(r);
-            row.put("shortfall", js(round(Math.max(0, n(r.get("par")) - n(r.get("onHand"))), 6)));
+            row.put("shortfall", js(Money.max(Money.ZERO, d(r.get("par")).subtract(d(r.get("onHand")))), 6));
             row.put("category", p == null ? null : p.get("cname"));
             row.put("uom", p == null ? null : p.get("uom"));
             row.put("unitCost", js(unitCost));
-            row.put("estimatedCost", js(round(n(r.get("suggestedOrderQty")) * unitCost, 2)));
+            row.put("estimatedCost", js(d(r.get("suggestedOrderQty")).multiply(unitCost), 2));
             out.add(row);
         }
-        out.sort((a, b) -> Double.compare(n(b.get("shortfall")), n(a.get("shortfall"))));
+        out.sort((a, b) -> d(b.get("shortfall")).compareTo(d(a.get("shortfall"))));
         return out;
     }
 
     /** Expiring batches within the product scope. */
     public List<Map<String, Object>> expiring(Map<String, String> q) {
         List<Map<String, Object>> rows = queries.getExpiringBatches(q.get("days"), q.get("locationId"));
-        List<String> ids = scopedProductIds(q);
+        List<String> scopedIds = scopedProductIds(q);
+        Set<String> ids = scopedIds == null ? null : new java.util.HashSet<>(scopedIds);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> b : rows) {
             if (ids != null && !ids.contains(b.get("productId"))) {
@@ -677,12 +778,12 @@ public class InventoryReportsService {
             Map<String, Object> location = (Map<String, Object>) b.get("location");
             @SuppressWarnings("unchecked")
             Map<String, Object> uom = product == null ? null : (Map<String, Object>) product.get("uom");
-            double qty = n(b.get("quantity"));
-            double unit = n(b.get("unitCost"));
+            BigDecimal qty = d(b.get("quantity"));
+            BigDecimal unit = d(b.get("unitCost"));
             out.add(Obj.of("id", b.get("id"), "batchNumber", b.get("batchNumber"), "productId", b.get("productId"),
                     "code", product == null ? null : product.get("code"), "name", product == null ? null : product.get("name"),
                     "uom", uom == null ? null : uom.get("code"), "location", location == null ? null : location.get("name"),
-                    "quantity", js(qty), "unitCost", js(unit), "value", js(round(qty * unit, 2)), "expiryDate",
+                    "quantity", js(qty), "unitCost", js(unit), "value", js(qty.multiply(unit), 2), "expiryDate",
                     b.get("expiryDate"), "daysToExpiry", b.get("daysToExpiry"), "expired", b.get("expired")));
         }
         return out;
@@ -691,7 +792,8 @@ public class InventoryReportsService {
     /** Negative-stock cells within the product scope. */
     public Map<String, Object> negativeStock(Map<String, String> q) {
         Map<String, Object> res = queries.getNegativeStock(q.get("locationId"));
-        List<String> ids = scopedProductIds(q);
+        List<String> scopedIds = scopedProductIds(q);
+        Set<String> ids = scopedIds == null ? null : new java.util.HashSet<>(scopedIds);
         if (ids == null) {
             return res;
         }
@@ -814,11 +916,13 @@ public class InventoryReportsService {
         long dayMs = 86_400_000L;
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
-            double onHand = n(r.get("on_hand"));
+            BigDecimal onHandDec = d(r.get("on_hand"));
+            double onHand = onHandDec.doubleValue();
             boolean layered = Boolean.TRUE.equals(r.get("batchTracking")) || "FIFO".equals(r.get("costingMethod"));
-            double unit = layered ? (onHand > 0 ? n(r.get("lot_value")) / onHand : 0)
-                    : "STANDARD".equals(r.get("costingMethod")) ? n(r.get("costPrice")) : n(r.get("avg_cost"));
-            double value = round(onHand * unit, 2);
+            BigDecimal unitDec = layered
+                    ? (onHandDec.signum() > 0 ? Money.div(d(r.get("lot_value")), onHandDec) : Money.ZERO)
+                    : "STANDARD".equals(r.get("costingMethod")) ? d(r.get("costPrice")) : d(r.get("avg_cost"));
+            BigDecimal value = Money.round(onHandDec.multiply(unitDec), 2);
             double consumedQty = n(r.get("consumed_qty"));
             double closingQty = onHand - n(r.get("net_since_end"));
             double openingQty = onHand - n(r.get("net_since_start"));
@@ -834,15 +938,15 @@ public class InventoryReportsService {
             out.add(Obj.of("productId", r.get("productId"), "variantId", r.get("variantId"), "variantName",
                     r.get("variant_name"), "locationId",
                     r.get("locationId"), "location", r.get("location_name"), "code", r.get("code"), "name", r.get("name"),
-                    "category", r.get("category"), "uom", r.get("uom"), "onHand", js(round(onHand, 6)), "unitCost",
-                    js(round(unit, 6)), "value", js(value), "aging", Obj.of("d0_30", js(round(n(r.get("b0_30")), 6)),
+                    "category", r.get("category"), "uom", r.get("uom"), "onHand", js(onHandDec, 6), "unitCost",
+                    js(unitDec, 6), "value", js(value), "aging", Obj.of("d0_30", js(round(n(r.get("b0_30")), 6)),
                             "d31_60", js(round(n(r.get("b31_60")), 6)), "d61_90", js(round(n(r.get("b61_90")), 6)),
                             "d91_180", js(round(n(r.get("b91_180")), 6)),
                             "d180_plus", js(round(n(r.get("b180_plus")) + unattributed, 6))),
                     "weightedAgeDays", r.get("weighted_age") == null ? null : Math.round(n(r.get("weighted_age"))),
                     "lastConsumedAt", lastConsumed, "lastInboundAt", r.get("last_inbound_at"), "daysSinceConsumed",
                     daysSince, "consumedQty", js(round(consumedQty, 6)), "consumedValue",
-                    js(round(n(r.get("consumed_value")), 2)), "turnover",
+                    js(d(r.get("consumed_value")), 2), "turnover",
                     avgQty > 0 ? js(round(consumedQty / avgQty, 2)) : null, "daysOfCover",
                     dailyUse > 0 ? Math.round(onHand / dailyUse) : null, "status", status));
         }
@@ -861,14 +965,14 @@ public class InventoryReportsService {
         return Obj.of("summary", summary, "rows", filtered);
     }
 
-    private static double sumValue(List<Map<String, Object>> rows, String status) {
-        double s = 0;
+    private static BigDecimal sumValue(List<Map<String, Object>> rows, String status) {
+        BigDecimal s = Money.ZERO;
         for (Map<String, Object> r : rows) {
             if (status == null || status.equals(r.get("status"))) {
-                s += n(r.get("value"));
+                s = s.add(d(r.get("value")));
             }
         }
-        return round(s, 2);
+        return Money.round(s, 2);
     }
 
     private static Map<String, Object> emptyHealthSummary(int slowDays, int deadDays, Instant start, Instant end) {

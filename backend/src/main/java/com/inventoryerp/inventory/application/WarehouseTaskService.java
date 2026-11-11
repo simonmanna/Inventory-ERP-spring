@@ -143,7 +143,7 @@ public class WarehouseTaskService {
      */
     @Transactional
     public Map<String, Object> generatePutaway(String locationId, String productId) {
-        store.location(locationId);
+        store.operable(locationId);
         List<Map<String, Object>> keys = SqlRows.list(jdbc.sql("SELECT DISTINCT \"productId\", \"variantKey\""
                         + " FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"locationId\" = ? AND quantity > 0"
                         + (productId == null ? "" : " AND \"productId\" = ?") + " ORDER BY \"productId\"")
@@ -182,6 +182,20 @@ public class WarehouseTaskService {
     }
 
     // ---------------------------------------------------------------- tasks
+
+    /**
+     * The task row locked for update. A pick task's order row is locked first, so task completion / cancellation
+     * (which refreshes the order) and order cancel / ship (which update the order's tasks) take the locks in the same
+     * order: order, then task.
+     */
+    private Map<String, Object> lockTask(String id) {
+        Map<String, Object> peek = taskRow(id, false);
+        String orderId = SqlRows.str(peek, "pickOrderId");
+        if (orderId != null) {
+            outbound.order(orderId, true);
+        }
+        return taskRow(id, true);
+    }
 
     private Map<String, Object> taskRow(String id, boolean forUpdate) {
         Map<String, Object> t = SqlRows.one(jdbc.sql("SELECT * FROM \"WarehouseTask\" WHERE id = ? AND \"organizationId\""
@@ -233,7 +247,7 @@ public class WarehouseTaskService {
     @Transactional
     public Map<String, Object> create(String locationId, String type, String productId, String variantId,
             String batchKey, BigDecimal quantity, String fromBinId, String toBinId) {
-        store.location(locationId);
+        store.operable(locationId);
         store.product(productId);
         String variant = key(variantId);
         String batch = key(batchKey);
@@ -290,9 +304,9 @@ public class WarehouseTaskService {
      */
     @Transactional
     public Map<String, Object> complete(String id, BigDecimal quantity, String toBinId) {
-        Map<String, Object> t = taskRow(id, true);
+        Map<String, Object> t = lockTask(id);
         String locationId = SqlRows.str(t, "locationId");
-        store.location(locationId);
+        store.operable(locationId);
         if (!"open".equals(t.get("status"))) {
             throw ApiException.badRequest("Task is already " + t.get("status"));
         }
@@ -344,8 +358,8 @@ public class WarehouseTaskService {
 
     @Transactional
     public Map<String, Object> cancel(String id) {
-        Map<String, Object> t = taskRow(id, true);
-        store.location(SqlRows.str(t, "locationId"));
+        Map<String, Object> t = lockTask(id);
+        store.operable(SqlRows.str(t, "locationId"));
         if (!"open".equals(t.get("status"))) {
             throw ApiException.badRequest("Task is already " + t.get("status"));
         }

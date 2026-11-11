@@ -14,6 +14,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/idempotency';
 import { notify } from '@/lib/notify';
 import { dateTime } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
@@ -43,6 +44,13 @@ interface CountLine {
   countedQty: string | null;
   variance: string | null;
   reason?: string | null;
+  /** Lot counted by this line (batch-tracked products are counted per lot). */
+  batchNumber?: string | null;
+  /** Line of a per-lot product: a lot, or the "no lot" line when batchNumber is null. */
+  lotLine?: boolean;
+  /** Draft review only: what submit would post (count + movements after counting − on-hand now). */
+  postingDelta?: string | null;
+  movementsSinceCount?: string | null;
 }
 interface CountSession {
   id: string;
@@ -251,14 +259,17 @@ export function InventoryCountPage() {
     onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Save failed')),
   });
 
+  // Submitting posts the variance adjustment: one Idempotency-Key per submit action (required by the server).
+  const submitKey = useIdempotencyKey();
   const submit = useMutation({
     mutationFn: async () => {
       if (!session) throw new Error(tx('No session'));
       // Persist the latest edits, then finalise.
       await api.patch(`/inventory/counts/${session.id}/draft`, buildPayload());
-      return (await api.post<CountSession>(`/inventory/counts/${session.id}/submit`)).data;
+      return (await api.post<CountSession>(`/inventory/counts/${session.id}/submit`, {}, submitKey.config())).data;
     },
     onSuccess: (s) => {
+      submitKey.settle();
       notify.success(s.adjustmentId ? tx('Count submitted — stock adjusted') : tx('Count submitted — no variances'));
       setSession(null);
       setEdits({});
@@ -268,7 +279,7 @@ export function InventoryCountPage() {
       qc.invalidateQueries({ queryKey: ['inventory-items'] });
       qc.invalidateQueries({ queryKey: ['inventory-ledger'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Submit failed')),
+    onError: (e: any) => { submitKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Submit failed')); },
   });
 
   /** Blind count: a submitter saves the counts, then loads the unmasked sheet to reconcile. */
@@ -608,6 +619,7 @@ export function InventoryCountPage() {
                         <td className="px-3 py-1.5">
                           {ln.productName}
                           {ln.unit && <span className="ml-1 text-xs text-muted-foreground">({ln.unit})</span>}
+                          {ln.lotLine && <span className="ml-1 text-xs text-muted-foreground">· {ln.batchNumber ? tx('Lot {{lot}}', { lot: ln.batchNumber }) : tx('No lot / new lot')}</span>}
                         </td>
                         <td className="px-3 py-1.5 text-right font-mono tabular-nums">{blindView ? <span className="text-xs text-muted-foreground">{tx('Hidden')}</span> : num(ln.systemQty)}</td>
                         <td className="px-3 py-1.5">
@@ -615,6 +627,9 @@ export function InventoryCountPage() {
                         </td>
                         <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${variance === null ? 'text-muted-foreground' : variance === 0 ? 'text-muted-foreground' : variance > 0 ? 'text-emerald-600' : 'text-destructive'}`}>
                           {variance === null ? '—' : `${variance > 0 ? '+' : ''}${variance}`}
+                          {ln.postingDelta != null && !blindView && variance !== null && Number(ln.postingDelta) !== variance && (
+                            <div className="text-[10px] font-sans text-muted-foreground" title={tx('Stock moved after this line was counted; submit keeps those movements')}>{tx('posts {{delta}}', { delta: `${Number(ln.postingDelta) > 0 ? '+' : ''}${Number(ln.postingDelta)}` })}</div>
+                          )}
                         </td>
                         <td className="px-3 py-1.5">
                           {hasVar || blindView ? (
@@ -650,6 +665,7 @@ export function InventoryCountPage() {
                             <td className="px-3 py-1.5 pl-10">
                               {ln.productName}
                               {ln.unit && <span className="ml-1 text-xs text-muted-foreground">({ln.unit})</span>}
+                              {ln.lotLine && <span className="ml-1 text-xs text-muted-foreground">· {ln.batchNumber ? tx('Lot {{lot}}', { lot: ln.batchNumber }) : tx('No lot / new lot')}</span>}
                             </td>
                             <td className="px-3 py-1.5 text-right font-mono tabular-nums">{blindView ? <span className="text-xs text-muted-foreground">{tx('Hidden')}</span> : num(ln.systemQty)}</td>
                             <td className="px-3 py-1.5">
@@ -657,6 +673,9 @@ export function InventoryCountPage() {
                             </td>
                             <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${variance === null ? 'text-muted-foreground' : variance === 0 ? 'text-muted-foreground' : variance > 0 ? 'text-emerald-600' : 'text-destructive'}`}>
                               {variance === null ? '—' : `${variance > 0 ? '+' : ''}${variance}`}
+                              {ln.postingDelta != null && !blindView && variance !== null && Number(ln.postingDelta) !== variance && (
+                            <div className="text-[10px] font-sans text-muted-foreground" title={tx('Stock moved after this line was counted; submit keeps those movements')}>{tx('posts {{delta}}', { delta: `${Number(ln.postingDelta) > 0 ? '+' : ''}${Number(ln.postingDelta)}` })}</div>
+                          )}
                             </td>
                             <td className="px-3 py-1.5">
                               {hasVar || blindView ? (

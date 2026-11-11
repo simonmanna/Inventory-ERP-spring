@@ -87,7 +87,15 @@ public class PosInvoiceService {
             "mobile_money", "mobile_money", "store_credit", "mixed");
 
     /** Context threaded through stock posting. */
-    record Ctx(String invoiceId, String invoiceNumber, String orderId) {}
+    /**
+     * Drain context. {@code stockDate}: the sale's date for the stock moves and their COGS (null = now);
+     * {@code stockDateNote}: ledger note when that date had to move out of a closed period.
+     */
+    record Ctx(String invoiceId, String invoiceNumber, String orderId, Instant stockDate, String stockDateNote) {
+        Ctx(String invoiceId, String invoiceNumber, String orderId) {
+            this(invoiceId, invoiceNumber, orderId, null, null);
+        }
+    }
 
     private final PosDb db;
     private final JdbcClient jdbc;
@@ -1357,8 +1365,8 @@ public class PosInvoiceService {
                 Object snapshotRaw = PosSql.java(current.get("recipeSnapshot") != null ? current.get("recipeSnapshot")
                         : job.get("recipeSnapshot"));
                 Map<String, Object> snapshots = snapshotRaw instanceof Map<?, ?> ? PosSql.map(snapshotRaw) : Map.of();
-                Object[] result = issueStockForItems(items, ctx, new LinkedHashSet<>(PosSql.strings(current.get("postedLineKeys"))),
-                        snapshots);
+                Object[] result = issueStockForItems(items, datedForStock(ctx),
+                        new LinkedHashSet<>(PosSql.strings(current.get("postedLineKeys"))), snapshots);
                 completeJob(jobId, (int) result[0], PosSql.strings(result[1]), PosSql.intOf(current.get("attempts")),
                         PosSql.intOf(current.get("maxAttempts")), (String) result[2]);
                 return (int) result[0];
@@ -1398,6 +1406,50 @@ public class PosInvoiceService {
                 db.update(StockPostingJob.class, Obj.of("status", "pending", "attempts", attempts, "lastError", msg,
                         "claimToken", null, "claimedAt", null, "nextRetryAt", Instant.now().plusMillis(backoff)), "id = ?", jobId);
             }
+        }
+    }
+
+    /**
+     * The stock moves of a sale (and their COGS) are dated at the sale — the invoice issue date its revenue is posted
+     * on, else the order's creation — not when the queue drains, so COGS lands in the revenue's period. When that date
+     * can no longer be posted to (books lock, closed / locked period), they post today, the first permissible open
+     * date (as a journal reversal does), and the ledger note says so.
+     */
+    private Ctx datedForStock(Ctx ctx) {
+        Instant sale = null;
+        if (ctx.invoiceId() != null) {
+            sale = jdbc.sql("SELECT \"issueDate\" FROM \"Invoice\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(ctx.invoiceId(), org()).query((rs, n) -> utc(rs.getTimestamp(1))).optional().orElse(null);
+        }
+        if (sale == null && ctx.orderId() != null) {
+            sale = jdbc.sql("SELECT \"createdAt\" FROM \"Order\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(ctx.orderId(), org()).query((rs, n) -> utc(rs.getTimestamp(1))).optional().orElse(null);
+        }
+        if (sale == null) {
+            return ctx;
+        }
+        Instant date = posting.openDateOrToday(sale);
+        String note = date.equals(sale) ? null : "Stock and COGS dated " + utcDay(date) + ": the sale date "
+                + utcDay(sale) + " is in a closed or locked period";
+        if (note != null) {
+            log.warn("[stock] {} on {}", note, ctx.invoiceNumber());
+        }
+        return new Ctx(ctx.invoiceId(), ctx.invoiceNumber(), ctx.orderId(), date, note);
+    }
+
+    private static Instant utc(java.sql.Timestamp t) {
+        return t == null ? null : t.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC);
+    }
+
+    private static String utcDay(Instant i) {
+        return i.atOffset(java.time.ZoneOffset.UTC).toLocalDate().toString();
+    }
+
+    /** Date a drain move at the sale (see {@link #datedForStock}). */
+    private static void dated(StockMove mv, Ctx ctx) {
+        mv.date = ctx.stockDate();
+        if (ctx.stockDateNote() != null) {
+            mv.notes = mv.notes == null ? ctx.stockDateNote() : mv.notes + " · " + ctx.stockDateNote();
         }
     }
 
@@ -1554,6 +1606,7 @@ public class PosInvoiceService {
                 mv.reference = ref;
                 mv.sourceType = "pos_invoice_combo";
                 mv.sourceId = it.get("id") + ":" + c.get("id");
+                dated(mv, ctx);
                 StockMove.Issued r = stock.issue(mv);
                 if (invoiceItemId != null) {
                     snapshotRow(invoiceItemId, ctx, (String) c.get("productId"), r, quantity, BigDecimal.ONE, "combo",
@@ -1575,6 +1628,7 @@ public class PosInvoiceService {
                 mv.reference = ref;
                 mv.sourceType = "pos_invoice";
                 mv.sourceId = ctx.invoiceId();
+                dated(mv, ctx);
                 StockMove.Issued r = stock.issue(mv);
                 if (invoiceItemId != null) {
                     snapshotRow(invoiceItemId, ctx, (String) it.get("productId"), r, dec(it.get("quantity")), BigDecimal.ONE,
@@ -1644,6 +1698,7 @@ public class PosInvoiceService {
             mv.sourceType = "menu_recipe";
             mv.sourceId = ctx.invoiceId();
             mv.notes = name + " → " + ref;
+            dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);
             if (invoiceItemId != null) {
                 snapshotRow(invoiceItemId, ctx, (String) ing.get("productId"), r, qty, PosSql.decOf(multiplier), "recipe",
@@ -1721,6 +1776,7 @@ public class PosInvoiceService {
             mv.uomId = uomId;
             mv.sourceType = "pos_invoice_extra";
             mv.sourceId = componentKey;
+            dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);
             if (invoiceItemId != null) {
                 snapshotRow(invoiceItemId, ctx, productId, r, PosSql.decOf(qty), BigDecimal.ONE, componentType, componentId);

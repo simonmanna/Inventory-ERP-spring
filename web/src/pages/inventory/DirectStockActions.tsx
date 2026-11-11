@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/idempotency';
 import { formatMoney } from '@/lib/format';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
@@ -84,6 +85,10 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
     { productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' },
   ]);
 
+  // Direct stock moves stock without a document: the server requires an Idempotency-Key (one per action).
+  const inKey = useIdempotencyKey();
+  const outKey = useIdempotencyKey();
+
   const directIn = useMutation({
     mutationFn: async () => {
       const items = inLines
@@ -102,10 +107,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         ...(inApprovedId && inApprovedId !== myId && inApproverPin ? { approverPin: inApproverPin } : {}),
         items,
         notes: inNotes || undefined,
-      });
+      }, inKey.config());
       return res.data;
     },
     onSuccess: (data: any) => {
+      inKey.settle();
       notify.success(tx('Stock in {{code}} completed', { code: data.code }));
       setInOpen(false);
       setInLocId('');
@@ -116,7 +122,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setInLines([{ productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock in failed')),
+    onError: (e: any) => { inKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock in failed')); },
   });
 
   // — Direct Stock Out state
@@ -147,10 +153,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         ...(outApprovedId && outApprovedId !== myId && outApproverPin ? { approverPin: outApproverPin } : {}),
         items,
         notes: outNotes || undefined,
-      });
+      }, outKey.config());
       return res.data;
     },
     onSuccess: (data: any) => {
+      outKey.settle();
       notify.success(tx('Stock out {{code}} completed', { code: data.code }));
       setOutOpen(false);
       setOutLocId('');
@@ -161,7 +168,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setOutLines([{ productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock out failed')),
+    onError: (e: any) => { outKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock out failed')); },
   });
 
   const pickInProduct = (idx: number, productId: string) => {

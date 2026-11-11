@@ -147,10 +147,29 @@ public abstract class ApiTestSupport {
         return id;
     }
 
+    /**
+     * Routes that refuse a request without an {@code Idempotency-Key} (inventory direct stock, count submit). Test
+     * calls get a fresh key automatically unless they pass one, or pass {@link #NO_IDEMPOTENCY_KEY} to send none.
+     */
+    private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
+            "^/inventory/(direct-stock/(in|out)|counts/[^/]+/submit)(\\?.*)?$");
+
+    /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
+    protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";
+
     protected Res call(String method, String path, Object body, Map<String, String> headers) {
         try {
             var b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1" + path));
-            headers.forEach(b::header);
+            boolean suppress = headers.containsKey(NO_IDEMPOTENCY_KEY);
+            headers.forEach((k, v) -> {
+                if (!NO_IDEMPOTENCY_KEY.equals(k)) {
+                    b.header(k, v);
+                }
+            });
+            if (!suppress && "POST".equals(method) && KEY_REQUIRED.matcher(path).matches()
+                    && headers.keySet().stream().noneMatch("Idempotency-Key"::equalsIgnoreCase)) {
+                b.header("Idempotency-Key", UUID.randomUUID().toString());
+            }
             if (body != null) {
                 b.header("Content-Type", "application/json");
                 b.method(method, HttpRequest.BodyPublishers.ofString(

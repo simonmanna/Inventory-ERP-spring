@@ -4,7 +4,6 @@ import static com.inventoryerp.inventory.application.StockService.NOW;
 
 import com.inventoryerp.inventory.domain.StockReservation;
 import com.inventoryerp.kernel.common.JsNumbers;
-import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -55,20 +54,15 @@ public class StockReservationService {
         jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
                         + " AND \"locationId\" = ? FOR UPDATE")
                 .params(org, dto.productId(), variantKey, dto.locationId()).query().listOfRows();
-        Map<String, Object> existing = SqlRows.one(jdbc.sql("SELECT * FROM \"StockReservation\" WHERE \"organizationId\" = ?"
-                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND \"sourceType\" = ?"
-                        + " AND \"sourceId\" = ? AND status = 'active' LIMIT 1")
-                .params(org, dto.productId(), variantKey, dto.locationId(), dto.sourceType(), dto.sourceId()));
-        if (existing != null) {
-            return SqlRows.one(StockReservation.class, jdbc.sql("UPDATE \"StockReservation\" SET quantity = ?,"
-                            + " reason = ?, \"updatedAt\" = " + NOW + " WHERE id = ? RETURNING *")
-                    .params(dto.quantity(), dto.reason() != null ? dto.reason() : existing.get("reason"),
-                            existing.get("id")));
-        }
+        // One active reservation per source line and cell (partial unique index, V460): concurrent re-reserves of a
+        // line converge on that row (its quantity is set) instead of inserting a duplicate.
         return SqlRows.one(StockReservation.class, jdbc.sql("INSERT INTO \"StockReservation\" (id, \"organizationId\","
                         + " \"productId\", \"variantId\", \"variantKey\", \"locationId\", quantity, \"sourceType\", \"sourceId\","
                         + " reason, \"createdById\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        + NOW + ", " + NOW + ") RETURNING *")
+                        + NOW + ", " + NOW + ") ON CONFLICT (\"organizationId\", \"productId\", \"variantKey\", \"locationId\","
+                        + " \"sourceType\", \"sourceId\") WHERE status = 'active' DO UPDATE SET quantity = EXCLUDED.quantity,"
+                        + " reason = COALESCE(EXCLUDED.reason, \"StockReservation\".reason), \"updatedAt\" = " + NOW
+                        + " RETURNING *")
                 .params(UUID.randomUUID().toString(), org, dto.productId(), dto.variantId(), variantKey,
                         dto.locationId(), dto.quantity(), dto.sourceType(), dto.sourceId(), dto.reason(),
                         TenantContext.userId()));
@@ -116,14 +110,19 @@ public class StockReservationService {
                 + " AND status = 'active'").params(params).query(BigDecimal.class).single();
     }
 
-    /** on-hand − active reservations. */
+    /**
+     * on-hand − active reservations of one product (and variant): at one location, or summed over all locations when
+     * none is given — the same cells on both sides.
+     */
     @Transactional(readOnly = true)
     public Map<String, Object> availableToPromise(String productId, String locationId, String variantId) {
+        if (productId == null || productId.isBlank()) {
+            throw com.inventoryerp.shared.web.ApiException.badRequest("productId is required");
+        }
         List<Object> params = new ArrayList<>();
         String where = cell(productId, locationId, variantId, params);
-        List<BigDecimal> rows = jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE" + where + " LIMIT 1").params(params)
-                .query(BigDecimal.class).list();
-        BigDecimal onHand = rows.isEmpty() ? Money.ZERO : rows.getFirst();
+        BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE" + where).params(params)
+                .query(BigDecimal.class).single();
         BigDecimal reserved = reservedQty(productId, locationId, variantId);
         return Obj.of("onHand", JsNumbers.dec(onHand), "reserved", JsNumbers.dec(reserved), "available",
                 JsNumbers.dec(onHand.subtract(reserved)));

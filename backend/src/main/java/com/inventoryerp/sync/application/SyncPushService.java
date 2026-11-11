@@ -950,7 +950,8 @@ public class SyncPushService {
         Map<String, Map<String, Object>> lineByProduct = new HashMap<>();
         for (Object o : PosSql.list(session.get("lines"))) {
             Map<String, Object> l = PosSql.map(o);
-            if (l.get("variantId") == null) {
+            // A device counts a product's total: a resumed screen count split per lot (lotLine) cannot take it.
+            if (l.get("variantId") == null && !Boolean.TRUE.equals(l.get("lotLine"))) {
                 lineByProduct.put(String.valueOf(l.get("productId")), l);
             }
         }

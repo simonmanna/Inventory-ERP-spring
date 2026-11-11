@@ -29,8 +29,10 @@ import org.springframework.transaction.annotation.Transactional;
  * pick → pack → ship), packages, and waves that release several pick orders as one sequenced pick list.
  *
  * <p>Releasing allocates bin stock FEFO (batch expiry) then by bin pick sequence and creates one pick task per bin.
- * Completing a pick moves the quantity out of the bin into staging; shipping records the shipment. The ledger issue
- * stays with the source document (sale, stock-out, transfer, fleet dispatch), so nothing here posts stock or GL.
+ * Completing a pick moves the quantity out of the bin into staging; shipping records the shipment. For an order with a
+ * source document (sale, delivery, stock-out, transfer) the ledger issue stays with that document. A {@code manual}
+ * order has no document behind it, so shipping it issues the shipped quantities itself ({@link StockService#issue},
+ * stock-out GL) in the same transaction.
  */
 @Service
 public class WarehouseOutboundService {
@@ -43,13 +45,18 @@ public class WarehouseOutboundService {
 
     public record PackItem(String lineId, BigDecimal quantity) {}
 
+    /** Source type of a pick order without a source document: shipping it posts the stock issue. */
+    static final String MANUAL = "manual";
+
     private final JdbcClient jdbc;
     private final WarehouseStore store;
+    private final StockService stock;
     private final AuditService audit;
 
-    public WarehouseOutboundService(WarehouseStore store, AuditService audit) {
+    public WarehouseOutboundService(WarehouseStore store, StockService stock, AuditService audit) {
         this.jdbc = store.jdbc();
         this.store = store;
+        this.stock = stock;
         this.audit = audit;
     }
 
@@ -133,7 +140,7 @@ public class WarehouseOutboundService {
     /** A draft pick order; {@code steps} defaults to the location's setting. */
     @Transactional
     public Map<String, Object> create(PickOrderInput in) {
-        store.location(in.locationId());
+        store.operable(in.locationId());
         if (in.lines() == null || in.lines().isEmpty()) {
             throw ApiException.badRequest("A pick order needs at least one line");
         }
@@ -144,7 +151,7 @@ public class WarehouseOutboundService {
                         + " \"sourceId\", \"sourceRef\", steps, status, priority, \"scheduledDate\", notes, \"createdBy\","
                         + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, " + NOW + ", "
                         + NOW + ")")
-                .params(id, org(), in.locationId(), code, in.sourceType() == null ? "manual" : in.sourceType(),
+                .params(id, org(), in.locationId(), code, in.sourceType() == null ? MANUAL : in.sourceType(),
                         in.sourceId(), in.sourceRef(), steps, in.priority() == null ? 0 : in.priority(),
                         in.scheduledDate() == null ? null : Date.valueOf(in.scheduledDate()), in.notes(), user())
                 .update();
@@ -162,7 +169,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> release(String id) {
         Map<String, Object> o = order(id, true);
-        store.location(SqlRows.str(o, "locationId"));
+        store.operable(SqlRows.str(o, "locationId"));
         releaseLocked(o);
         audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "update", Obj.of("status", "draft"), Obj.of("status",
                 "released")));
@@ -179,7 +186,7 @@ public class WarehouseOutboundService {
             String variantKey = SqlRows.str(line, "variantKey");
             store.lock(locationId, productId);
             BigDecimal need = SqlRows.dec(line, "quantity");
-            List<Map<String, Object>> stock = SqlRows.list(jdbc.sql("SELECT s.\"binId\", s.\"batchKey\", b.\"pickSequence\","
+            List<Map<String, Object>> binRows = SqlRows.list(jdbc.sql("SELECT s.\"binId\", s.\"batchKey\", b.\"pickSequence\","
                     + " s.quantity - coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
                     + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
                     + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0)"
@@ -190,14 +197,25 @@ public class WarehouseOutboundService {
                     + " AND b.usage IN ('storage', 'receiving')"
                     + " ORDER BY ib.\"expiryDate\" ASC NULLS LAST, b.\"pickSequence\", b.code")
                     .params(org(), locationId, productId, variantKey));
-            BigDecimal available = stock.stream().map(r -> SqlRows.dec(r, "free").max(BigDecimal.ZERO))
+            BigDecimal available = binRows.stream().map(r -> SqlRows.dec(r, "free").max(BigDecimal.ZERO))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
             if (available.compareTo(need) < 0) {
                 throw ApiException.badRequest("Not enough binned stock to pick " + line.get("productName") + ": need "
                         + need.stripTrailingZeros().toPlainString() + ", available "
                         + available.stripTrailingZeros().toPlainString());
             }
-            for (Map<String, Object> r : stock) {
+            // Bins are a sub-ledger and can hold more than the ledger (stock issued without a pick order): never
+            // allocate more than the location really has, net of what is staged and already allocated to open picks.
+            BigDecimal onHand = store.locationQty(locationId, productId, variantKey)
+                    .subtract(store.stagedQty(locationId, productId, variantKey))
+                    .subtract(store.openPickQty(locationId, productId, variantKey)).max(BigDecimal.ZERO);
+            if (onHand.compareTo(need) < 0) {
+                throw ApiException.badRequest("Not enough stock on hand to pick " + line.get("productName") + ": need "
+                        + need.stripTrailingZeros().toPlainString() + ", on hand "
+                        + onHand.stripTrailingZeros().toPlainString() + " (the bins hold more than the stock ledger;"
+                        + " reconcile the bins)");
+            }
+            for (Map<String, Object> r : binRows) {
                 if (need.signum() <= 0) {
                     break;
                 }
@@ -220,7 +238,9 @@ public class WarehouseOutboundService {
 
     /**
      * Called by the task service after a pick task is done or cancelled: moves the order to {@code picking} or
-     * {@code picked}; a one-step order ships itself once nothing is left to pick.
+     * {@code picked}; a one-step order ships itself once nothing is left to pick. When every task ended without
+     * anything picked (all cancelled or done with 0), the order goes back to {@code draft}: it can be released again
+     * or cancelled, and is never shipped empty.
      */
     void refreshAfterPick(String orderId) {
         Map<String, Object> o = order(orderId, true);
@@ -232,7 +252,8 @@ public class WarehouseOutboundService {
                 .param(orderId).query(Long.class).single();
         BigDecimal picked = jdbc.sql("SELECT coalesce(sum(\"pickedQty\"), 0) FROM \"WarehousePickLine\""
                 + " WHERE \"pickOrderId\" = ?").param(orderId).query(BigDecimal.class).single();
-        String next = open > 0 ? (picked.signum() > 0 ? "picking" : "released") : "picked";
+        String next = open > 0 ? (picked.signum() > 0 ? "picking" : "released") : picked.signum() > 0 ? "picked"
+                : "draft";
         if ("picked".equals(next) && ((Number) o.get("steps")).intValue() == 3 && picked.signum() > 0
                 && jdbc.sql("SELECT count(*) FROM \"WarehousePickLine\" WHERE \"pickOrderId\" = ?"
                         + " AND \"packedQty\" < \"pickedQty\"").param(orderId).query(Long.class).single() == 0) {
@@ -251,7 +272,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> pack(String id, String packageType, BigDecimal weightKg, List<PackItem> items) {
         Map<String, Object> o = order(id, true);
-        store.location(SqlRows.str(o, "locationId"));
+        store.operable(SqlRows.str(o, "locationId"));
         if (((Number) o.get("steps")).intValue() != 3) {
             throw ApiException.badRequest("Only a three-step pick order is packed");
         }
@@ -314,7 +335,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> ship(String id, String carrier, String trackingRef) {
         Map<String, Object> o = order(id, true);
-        store.location(SqlRows.str(o, "locationId"));
+        store.operable(SqlRows.str(o, "locationId"));
         int steps = ((Number) o.get("steps")).intValue();
         String status = SqlRows.str(o, "status");
         if ("shipped".equals(status)) {
@@ -326,14 +347,26 @@ public class WarehouseOutboundService {
         if (steps < 3 && !"picked".equals(status)) {
             throw ApiException.badRequest("Finish picking before shipping");
         }
+        if (pickedTotal(id).signum() <= 0) {
+            throw ApiException.badRequest("Nothing was picked on this pick order; release it again or cancel it");
+        }
         shipLocked(o, carrier, trackingRef);
         audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "update", Obj.of("status", status), Obj.of("status",
                 "shipped", "carrier", carrier, "trackingRef", trackingRef)));
         return view(id);
     }
 
+    private BigDecimal pickedTotal(String orderId) {
+        return jdbc.sql("SELECT coalesce(sum(\"pickedQty\"), 0) FROM \"WarehousePickLine\" WHERE \"pickOrderId\" = ?")
+                .param(orderId).query(BigDecimal.class).single();
+    }
+
+    /** Caller holds the order row lock and has checked the status: this runs once per order. */
     private void shipLocked(Map<String, Object> o, String carrier, String trackingRef) {
         String id = SqlRows.str(o, "id");
+        if (MANUAL.equals(o.get("sourceType"))) {
+            issueShipped(o);
+        }
         jdbc.sql("UPDATE \"WarehousePickLine\" SET \"shippedQty\" = \"pickedQty\" WHERE \"pickOrderId\" = ?").param(id)
                 .update();
         jdbc.sql("UPDATE \"WarehousePackage\" SET status = 'shipped', \"updatedAt\" = " + NOW
@@ -346,6 +379,38 @@ public class WarehouseOutboundService {
     }
 
     /**
+     * A manual order has no source document to post the issue: issue every picked quantity (per product, variant and
+     * lot, in the engine's lock order) at the order's location, refusing a shortfall. GL follows the stock-out path
+     * ({@code STOCK_OUT}: Dr stock-out expense / Cr stock valuation). Sales / delivery / stock-out / transfer orders
+     * never get here: their document posts the issue.
+     */
+    private void issueShipped(Map<String, Object> o) {
+        String id = SqlRows.str(o, "id");
+        String code = SqlRows.str(o, "code");
+        String locationId = SqlRows.str(o, "locationId");
+        List<Map<String, Object>> picked = SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantKey\", \"batchKey\","
+                + " sum(\"doneQty\") AS qty FROM \"WarehouseTask\" WHERE \"pickOrderId\" = ? AND \"organizationId\" = ?"
+                + " AND type = 'pick' AND status = 'done' AND \"doneQty\" > 0 GROUP BY 1, 2, 3"
+                + " ORDER BY \"productId\", \"variantKey\", \"batchKey\"").params(id, org()));
+        List<Map<String, Object>> issued = new ArrayList<>();
+        for (Map<String, Object> p : picked) {
+            String variantKey = SqlRows.str(p, "variantKey");
+            String batchKey = SqlRows.str(p, "batchKey");
+            StockMove m = StockMove.of(SqlRows.str(p, "productId"), locationId, SqlRows.dec(p, "qty"))
+                    .variant(variantKey == null || variantKey.isEmpty() ? null : variantKey).moveType("issue")
+                    .source("WarehousePickOrder", code).notes("Pick order " + code + " shipped")
+                    .people(user(), user()).requireAvailable(true);
+            if (batchKey != null && !batchKey.isEmpty()) {
+                m.pin(List.of(batchKey), null, null);
+            }
+            StockMove.Issued res = stock.issue(m);
+            issued.add(Obj.of("productId", p.get("productId"), "variantKey", variantKey, "batchKey", batchKey,
+                    "quantity", p.get("qty"), "ledgerCode", res.ledgerCode(), "totalValue", res.totalValue()));
+        }
+        audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "update", null, Obj.of("stockIssued", issued)));
+    }
+
+    /**
      * Cancel an order that is not shipped. Open pick tasks are cancelled; stock already picked goes back into
      * {@code returnBinId} (required when anything was picked).
      */
@@ -353,7 +418,7 @@ public class WarehouseOutboundService {
     public Map<String, Object> cancel(String id, String returnBinId) {
         Map<String, Object> o = order(id, true);
         String locationId = SqlRows.str(o, "locationId");
-        store.location(locationId);
+        store.operable(locationId);
         String status = SqlRows.str(o, "status");
         if ("shipped".equals(status) || "cancelled".equals(status)) {
             throw ApiException.badRequest("A " + status + " pick order cannot be cancelled");
@@ -440,7 +505,7 @@ public class WarehouseOutboundService {
     /** Group draft pick orders of one location into a wave. */
     @Transactional
     public Map<String, Object> createWave(String locationId, List<String> pickOrderIds, String notes) {
-        store.location(locationId);
+        store.operable(locationId);
         if (pickOrderIds == null || pickOrderIds.isEmpty()) {
             throw ApiException.badRequest("A wave needs at least one pick order");
         }
@@ -472,7 +537,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> releaseWave(String id) {
         Map<String, Object> w = wave(id, true);
-        store.location(SqlRows.str(w, "locationId"));
+        store.operable(SqlRows.str(w, "locationId"));
         if (!"open".equals(w.get("status"))) {
             throw ApiException.badRequest("Only an open wave can be released");
         }

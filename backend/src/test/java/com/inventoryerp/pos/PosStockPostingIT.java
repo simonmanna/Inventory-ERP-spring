@@ -116,6 +116,55 @@ class PosStockPostingIT extends ApiTestSupport {
                 java.sql.Timestamp.from(java.time.Instant.now().minusSeconds(120))));
     }
 
+    /** The drained sale's COGS entry date and ledger notes for a job whose order was created at {@code saleAt}. */
+    Map<String, Object> drainSaleAt(java.time.Instant saleAt) {
+        String productId = stockProduct("DATED-" + UUID.randomUUID().toString().substring(0, 8));
+        String jobId = job(productId, null, 2);
+        String orderId = jdbc.sql("SELECT \"orderId\" FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                .query(String.class).single();
+        jdbc.sql("UPDATE \"Order\" SET \"createdAt\" = ? WHERE id = ?")
+                .params(java.sql.Timestamp.valueOf(saleAt.atOffset(java.time.ZoneOffset.UTC).toLocalDateTime()), orderId)
+                .update();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(jobId).query(String.class)
+                .single()).isEqualTo("done");
+        Map<String, Object> out = new LinkedHashMap<>(jdbc.sql("SELECT \"postingDate\" FROM \"JournalEntry\" WHERE"
+                + " \"organizationId\" = ? AND \"sourceId\" = ? AND status <> 'draft' ORDER BY \"createdAt\" LIMIT 1")
+                .params(demoOrg, orderId).query().singleRow());
+        out.put("notes", jdbc.sql("SELECT notes FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"productId\" = ? AND \"referenceId\" = ?").params(demoOrg, productId, orderId)
+                .query(String.class).single());
+        return out;
+    }
+
+    static java.time.Instant utc(Object ts) {
+        return ((java.sql.Timestamp) ts).toLocalDateTime().toInstant(java.time.ZoneOffset.UTC);
+    }
+
+    @Test
+    @DisplayName("a drained sale's stock and COGS are dated at the sale, not at drain time")
+    void cogsDatedAtSale() {
+        java.time.Instant saleAt = java.time.Instant.now().minus(java.time.Duration.ofHours(30))
+                .truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        Map<String, Object> posted = drainSaleAt(saleAt);
+        assertThat(utc(posted.get("postingDate"))).isEqualTo(saleAt);
+        assertThat(posted.get("notes") == null ? "" : posted.get("notes").toString()).doesNotContain("closed");
+    }
+
+    @Test
+    @DisplayName("a sale dated in a closed period drains at today's date, noted on the ledger row")
+    void cogsOfClosedPeriodSalePostsToday() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6);
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
+                        + " \"updatedAt\") VALUES (?, ?, ?, '1999-03-01', '1999-03-31 23:59:59.999', 'closed', now())")
+                .params(UUID.randomUUID().toString(), demoOrg, "Closed 1999-03 " + suffix).update();
+        java.time.Instant saleAt = java.time.Instant.parse("1999-03-15T10:00:00Z");
+        java.time.Instant before = java.time.Instant.now().minusSeconds(5);
+        Map<String, Object> posted = drainSaleAt(saleAt);
+        assertThat(utc(posted.get("postingDate"))).isAfter(before);
+        assertThat(posted.get("notes").toString()).contains("the sale date 1999-03-15 is in a closed or locked period");
+    }
+
     @Test
     @DisplayName("F-COGS: a tracked menu item without a recipe raises one InventoryException and leaves the job pending")
     void recipeLessMenuItem() {

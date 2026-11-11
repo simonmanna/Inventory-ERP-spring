@@ -26,6 +26,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>Writes must open their transaction with {@code PROPAGATION_REQUIRED}: they never run inside a caller's
  * transaction, but inside {@link #batch} they join the single flush transaction.
+ *
+ * <p>{@link #submitOnCommit} is the variant for writes that announce a fact of the caller's transaction (a stock
+ * movement event): it runs only when that transaction commits, and {@link Savepoints} discards it when the savepoint
+ * it was submitted under rolls back. {@link #submit} keeps the Nest semantics (runs on commit and on rollback), which
+ * audit / failure notifications rely on.
  */
 @Component
 public class DetachedWrites {
@@ -41,12 +46,30 @@ public class DetachedWrites {
     /** A deferred write and the tenant it was submitted under. */
     private record Write(TenantStore tenant, Runnable body) {}
 
+    /** A write buffered in a transaction; {@code commitOnly} = dropped unless that transaction commits. */
+    private record Pending(Runnable body, boolean commitOnly) {}
+
+    /** Transaction resource key of the buffer (static so {@link Savepoints} can rewind it). */
+    private static final Object BUFFER_KEY = new Object();
+
     public DetachedWrites(PlatformTransactionManager txm) {
         this.flushTx = new TransactionTemplate(txm);
     }
 
-    /** Run {@code write} now (no transaction) or after the current transaction completes. */
+    /** Run {@code write} now (no transaction) or after the current transaction completes (commit or rollback). */
     public void submit(Runnable write) {
+        submit(write, false);
+    }
+
+    /**
+     * Run {@code write} now (no transaction) or after the current transaction commits; it is dropped when that
+     * transaction rolls back, or when the {@link Savepoints} block it was submitted in rolls back.
+     */
+    public void submitOnCommit(Runnable write) {
+        submit(write, true);
+    }
+
+    private void submit(Runnable write, boolean commitOnly) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             List<Write> collecting = batch.get();
             if (collecting != null) {
@@ -56,7 +79,30 @@ public class DetachedWrites {
             write.run();
             return;
         }
-        buffer().add(write);
+        buffer().add(new Pending(write, commitOnly));
+    }
+
+    /** Size of the current transaction's buffer (a {@link Savepoints} mark); 0 outside a transaction. */
+    static int mark() {
+        List<?> pending = TransactionSynchronizationManager.isSynchronizationActive()
+                ? (List<?>) TransactionSynchronizationManager.getResource(BUFFER_KEY) : null;
+        return pending == null ? 0 : pending.size();
+    }
+
+    /** A savepoint rolled back: drop the commit-only writes buffered since {@code mark}. */
+    static void rewind(int mark) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        List<Pending> pending = (List<Pending>) TransactionSynchronizationManager.getResource(BUFFER_KEY);
+        if (pending == null || pending.size() <= mark) {
+            return;
+        }
+        List<Pending> tail = pending.subList(mark, pending.size());
+        List<Pending> kept = tail.stream().filter(p -> !p.commitOnly()).toList();
+        tail.clear();
+        pending.addAll(kept);
     }
 
     /**
@@ -105,26 +151,29 @@ public class DetachedWrites {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Runnable> buffer() {
-        List<Runnable> pending = (List<Runnable>) TransactionSynchronizationManager.getResource(this);
+    private List<Pending> buffer() {
+        List<Pending> pending = (List<Pending>) TransactionSynchronizationManager.getResource(BUFFER_KEY);
         if (pending != null) {
             return pending;
         }
-        List<Runnable> created = new ArrayList<>();
-        TransactionSynchronizationManager.bindResource(this, created);
+        List<Pending> created = new ArrayList<>();
+        TransactionSynchronizationManager.bindResource(BUFFER_KEY, created);
         TenantStore tenant = TenantContext.current().orElse(null);
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
-                TransactionSynchronizationManager.unbindResourceIfPossible(DetachedWrites.this);
-                if (created.isEmpty()) {
+                TransactionSynchronizationManager.unbindResourceIfPossible(BUFFER_KEY);
+                boolean committed = status == STATUS_COMMITTED;
+                List<Runnable> due = created.stream().filter(p -> committed || !p.commitOnly()).map(Pending::body)
+                        .toList();
+                if (due.isEmpty()) {
                     return;
                 }
                 List<Write> collecting = batch.get();
                 if (collecting != null) {
-                    created.forEach(w -> collecting.add(new Write(tenant, w)));
+                    due.forEach(w -> collecting.add(new Write(tenant, w)));
                 } else {
-                    runDetached(tenant, List.copyOf(created));
+                    runDetached(tenant, due);
                 }
             }
         });

@@ -60,6 +60,31 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 **Cost accounting to production:** roadmap [PC-0 … PC-9](roadmap/costing-production-ready-plan.md) (proposed 2026-11-03; LC-0 is part of PC-0).
 
+**Stock engine hardening (`phase/inv-hardening`, V460; owner-approved deviations 2–9 in [inventory](spec/inventory.md#deviations)):**
+one quant lock order + lines posted in lock order (no deadlocks), lock conflicts → 409, negative-stock cost correction
+on every receipt, lot shortfall netting (open lots = max(0, on-hand)), strict `allowNegativeStock=false`, transit lines
+move their own lots/serials (`StockTransferLayer`), variant / serial / reservation / ATP guards — `StockConcurrencyIT`,
+`LockConflictMappingTest`.
+
+**Counts / warehouse / idempotency hardening (`phase/inv-hardening`, V465; owner-approved deviations 10–16 in
+[inventory](spec/inventory.md#deviations), ADR-S026 amendment):** count variance posted against the count time (delta
+under the quant lock), value-based `inventory_count_submit` approval + `stock_adjustment` maker-checker, validation
+before the approval gate, per-lot count lines and serial units on count lines, branch scope on preview / draft / submit
+/ cancel, required `Idempotency-Key` on direct stock in / out and count submit (web sends one per action); manual pick
+orders issue stock + GL on ship, no empty shipments, bin adjust (`POST /warehouse/bins/:id/adjust`) and reconcile
+(`POST /warehouse/locations/:id/reconcile`), release capped by ledger on-hand, `WarehouseSettings.enabled` enforced,
+bin row lock in putaway, order-then-task lock order — `InventoryIT`, `WarehouseIT`.
+
+**Valuation / reports / infrastructure hardening (`phase/inv-hardening`, V470; owner-approved deviations 17–27 in
+[inventory](spec/inventory.md#deviations)):** costing method locked while stock is on hand, STANDARD cost-price change
+revalues stock, POS COGS dated at the sale, GL tie-out on one date basis + daily `inventory-gl-tieout-check`
+(`inventory.glTieOut.*`), register reports in SQL with the cap in SQL, method-correct set-based valuation report,
+BigDecimal report sums, batched item / expiring / reorder lookups, validated posting-rule / replenishment bodies
+(literal account checked on save), duplicate ledger indexes dropped, evidence-guard bypass limited to the schema owner,
+stock events only after commit, cost policy / standard activation hourly on the organisation calendar —
+`InventoryHardeningIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`, `DetachedWritesTest`, `PosStockPostingIT`,
+`InventoryIT`, `ReplenishmentIT`.
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |
