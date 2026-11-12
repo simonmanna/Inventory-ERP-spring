@@ -92,16 +92,26 @@ export const METHOD_LABEL: Record<string, string> = { cash: tx('Cash'), mobile_m
 
 export const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
-/** Download the sale as the printable "CASH SALES FORM" Excel workbook (server-rendered). */
-export async function downloadCashSaleExcel(id: string, number?: string) {
-  const res = await api.get<Blob>(`/sales/cash-sales/${id}/excel`, { responseType: 'blob' });
+/** Download the sale's printable "CASH SALES FORM" (server-rendered) in the given format. */
+async function downloadCashSaleForm(id: string, format: 'excel' | 'pdf', fallbackName: string) {
+  const res = await api.get<Blob>(`/sales/cash-sales/${id}/${format}`, { responseType: 'blob' });
   const match = /filename="([^"]+)"/.exec(String(res.headers?.['content-disposition'] ?? ''));
   const url = URL.createObjectURL(res.data);
   const a = document.createElement('a');
   a.href = url;
-  a.download = match?.[1] ?? `cash-sale-${number ?? id}.xlsx`;
+  a.download = match?.[1] ?? fallbackName;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Download the sale as the printable "CASH SALES FORM" Excel workbook. */
+export function downloadCashSaleExcel(id: string, number?: string) {
+  return downloadCashSaleForm(id, 'excel', `cash-sale-${number ?? id}.xlsx`);
+}
+
+/** Download the same form as a PDF. */
+export function downloadCashSalePdf(id: string, number?: string) {
+  return downloadCashSaleForm(id, 'pdf', `cash-sale-${number ?? id}.pdf`);
 }
 
 export function useCashSale(id: string | undefined) {

@@ -209,6 +209,7 @@ A rejected sale stays fully posted: revenue, VAT, COGS and deposit stand.
 | POST | `/{id}/void` | `void` | Idempotency-Key; reason + attestation |
 | POST | `/{id}/discard` | `create` | draft only |
 | GET | `/{id}/timeline` | `read` | |
+| GET | `/{id}/excel`, `/{id}/pdf` | `read` | printable "CASH SALES FORM" as XLSX (live total formulas) or A4 PDF (same sections, columns and totals); detail page ⋯ menu → Download Excel / Download PDF |
 | GET | `/sales/cash-sales/dashboard?scope=branch\|head_office` | `read` / `read_all` | tiles + exception queue |
 | CRUD | `/sales/branch-profiles` | `sales:branch_profile:manage` | validation § 4 |
 

@@ -78,6 +78,17 @@ public final class CashSaleController {
                     .body(e.content());
         }
 
+        /** The same form as an A4 PDF. */
+        @GetMapping("/{id}/pdf")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public ResponseEntity<byte[]> formPdf(@PathVariable String id) {
+            CashSaleFormExporter.Export e = form.exportPdf(id);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, CashSaleFormExporter.PDF_CONTENT_TYPE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + e.filename() + "\"")
+                    .body(e.content());
+        }
+
         @GetMapping("/{id}/timeline")
         @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
         public List<Map<String, Object>> timeline(@PathVariable String id) {

@@ -698,7 +698,7 @@ class CashSaleIT extends ApiTestSupport {
 
     @Test
     @DisplayName("ADR-S066: granite sold by the metre — size decides quantity, stock, Excel form and the invoice")
-    void soldBySize() {
+    void soldBySize() throws Exception {
         String granite = product("Granite kerb " + sfx, 20_000, 12_000);
         stock(granite, location, 100, 12_000);
         ok(200, "PUT", "/products/" + granite + "/sizing", Map.of("sizingMode", "length"));
@@ -713,6 +713,15 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(l.get("sizingUnit").asString()).isEqualTo("m");
         // 12 m × 20,000 × 1.18
         assertThat(d.get("grandTotal").asDouble()).isEqualTo(283_200);
+        // The printable form also downloads as a PDF.
+        java.net.http.HttpResponse<byte[]> pdf = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                "http://localhost:" + port + "/api/v1/sales/cash-sales/" + id + "/pdf"))
+                .header("Authorization", "Bearer " + adminToken).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(pdf.headers().firstValue("Content-Type").orElse("")).startsWith("application/pdf");
+        assertThat(pdf.headers().firstValue("Content-Disposition").orElse("")).contains(".pdf");
+        assertThat(new String(pdf.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
         assertThat(as("POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", List.of(Map.of("productId",
                 granite, "pieces", 4, "length", 0)))).status()).isEqualTo(400);
         pay(id, "cash", null, 283_200, null);

@@ -6,7 +6,9 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from '@/pages/sales/handover-draft';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Trash2, Loader2 } from 'lucide-react';
+import { Trash2, Loader2, UserPlus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +37,8 @@ import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { TaxPicker } from '@/components/tax-picker';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
+import { cn } from '@/lib/utils';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
 import { VariantSelect } from '@/features/products/variant-select';
@@ -207,6 +210,9 @@ export function InvoiceCreatePage() {
   const createInvoice = useCreateInvoice();
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
   const canUpdateInvoice = useAuthStore((s) => s.hasPermission(PERMISSIONS.invoice.update));
+  const canCreatePartner = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const queryClient = useQueryClient();
     const postInvoice = usePostInvoice();
     const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
     const companySettingsQ = useCompanySettings();
@@ -425,6 +431,7 @@ export function InvoiceCreatePage() {
   const busy = createInvoice.isPending || postInvoice.isPending;
 
   const partnerOptions = (partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
+  const productOptions = productList.map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
   const linkBtn = 'text-sm text-blue-600 hover:text-blue-800 hover:underline';
   const thBase = 'py-2.5 px-2 text-sm font-semibold text-slate-800';
 
@@ -491,15 +498,31 @@ export function InvoiceCreatePage() {
             <div>
               <MetaRow label={tx('Customer')}>
                 <input type="hidden" {...register('partnerId', { required: true })} />
-                <SearchableSelect
-                  value={watch('partnerId') ?? ''}
-                  onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
-                  options={partnerOptions}
-                  placeholder={tx('Search a customer…')}
-                  searchPlaceholder={tx('Search customers…')}
-                  className={fieldClass}
-                />
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <SearchableSelect
+                      value={watch('partnerId') ?? ''}
+                      onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+                      options={partnerOptions}
+                      placeholder={tx('Search a customer…')}
+                      searchPlaceholder={tx('Search customers…')}
+                      className={fieldClass}
+                    />
+                  </div>
+                  {canCreatePartner && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')}
+                      aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </MetaRow>
+              <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+                // Use the new customer at once: refresh the customer list and select it.
+                void queryClient.invalidateQueries({ queryKey: ['partners'] });
+                setValue('partnerId', c.id, { shouldValidate: true, shouldDirty: true });
+                if (!getValues('deliveryAddress') && c.address) setValue('deliveryAddress', c.address);
+              }} />
               <MetaRow label={tx('Reference')}>
                 <Input id="reference" className={fieldClass} {...register('reference')} />
               </MetaRow>
@@ -617,19 +640,16 @@ export function InvoiceCreatePage() {
                       <tr key={field.id} className="group border-b border-slate-100 align-middle hover:bg-slate-50/60">
                         <td className="pl-3 text-slate-300">⠿</td>
                         <td className="px-2 py-1.5">
-                          <select
-                            aria-label={tx('Product')}
-                            className={cellClass}
+                          <SearchableSelect
                             value={watch(`lines.${index}.productId`) ?? ''}
-                            onChange={(e) => onProductChange(index, e.target.value)}
-                          >
-                            <option value="">{tx('Select a product')}</option>
-                            {productList.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
+                            onValueChange={(v) => onProductChange(index, v)}
+                            options={productOptions}
+                            placeholder={tx('Select a product')}
+                            searchPlaceholder={tx('Search products…')}
+                            className={cn(cellClass, 'min-w-[16rem] px-1')}
+                            contentClassName={PRODUCT_PICKER_PANEL}
+                            wrap
+                          />
                           <LineVariantAndSize
                             productId={watch(`lines.${index}.productId`)}
                             variantId={watch(`lines.${index}.variantId`)}

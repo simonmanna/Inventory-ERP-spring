@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { VariantSelect } from '@/features/products/variant-select';
 import { EMPTY_SIZE, LineSizeFields, hasSize, sizeLabel, sizeOf, type LineSize } from '@/features/products/sizing';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -35,7 +35,7 @@ import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import {
-  DELIVERY_STATUS_LABEL, METHOD_LABEL, downloadCashSaleExcel, idem, useBranchProfiles, useCashSale, usePaymentModes,
+  DELIVERY_STATUS_LABEL, METHOD_LABEL, downloadCashSaleExcel, downloadCashSalePdf, idem, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
@@ -225,6 +225,9 @@ export function CashSalePage() {
   if (s) menu.push({ key: 'excel', label: tx('Download Excel'), icon: <FileSpreadsheet className={ico} />, onSelect: () => {
     downloadCashSaleExcel(s.id, s.number).catch((e) => toast.error(apiErrorMessage(e, tx('Could not download the Excel file'))));
   } });
+  if (s) menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <FileText className={ico} />, onSelect: () => {
+    downloadCashSalePdf(s.id, s.number).catch((e) => toast.error(apiErrorMessage(e, tx('Could not download the PDF file'))));
+  } });
   if (has('amend')) menu.push({ key: 'amend', label: tx('Correct details'), icon: <Pencil className={ico} />, onSelect: () => setDialog('amend') });
   if (has('reopen')) menu.push({ key: 'reopen', label: tx('Reopen'), icon: <RotateCcw className={ico} />, onSelect: () => setDialog('reopen') });
   if (has('cancel_invoice')) menu.push({ key: 'cancel_invoice', label: tx('Cancel invoice'), icon: <FileX className={ico} />, danger: true, onSelect: () => setDialog('cancel_invoice') });
@@ -385,8 +388,8 @@ export function CashSalePage() {
                       const sub = lineEst(l, i);
                       return (
                         <tr key={i} className="border-b align-top">
-                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchPricedLine(i, { productId: v, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
-                            <VariantSelect productId={l.productId} value={l.variantId} className="w-52"
+                          <td className="py-1.5 pr-2"><SearchableSelect value={l.productId} onValueChange={(v) => patchPricedLine(i, { productId: v, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', taxId: products.data?.find((p) => p.id === v)?.taxId ?? l.taxId })} options={productOpts} placeholder={tx('Product…')} className="w-72" contentClassName={PRODUCT_PICKER_PANEL} wrap />
+                            <VariantSelect productId={l.productId} value={l.variantId} className="w-72"
                               onChange={(v, opt) => patchPricedLine(i, { variantId: v, ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
                             <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size}
                               onChange={(size, q) => {
