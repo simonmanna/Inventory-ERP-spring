@@ -11,6 +11,8 @@ import java.util.Map;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
+import org.openpdf.text.pdf.PdfReader;
+import org.openpdf.text.pdf.parser.PdfTextExtractor;
 
 /** The cash sale Excel form follows the sample "CASH SALES FORM" layout and its totals calculate. */
 class CashSaleFormExporterTest {
@@ -52,5 +54,32 @@ class CashSaleFormExporterTest {
             assertThat(sh.getRow(21).getCell(4).getStringCellValue()).isEqualTo("FINAL CASH RECEIVED");
             assertThat(sh.getRow(21).getCell(6).getNumericCellValue()).isEqualTo(266700.0);
         }
+    }
+
+    @Test
+    void rendersTheSameFormAsPdf() throws Exception {
+        Map<String, Object> sale = Map.of("number", "CS-KAB-0001", "saleDate", "2026-10-29", "customerName", "Franc",
+                "branchName", "Kabalagala", "customerPhone", "0772000000", "taxTotal", new BigDecimal("1000"));
+        List<Map<String, Object>> lines = List.of(
+                Map.of("productName", "Granite", "variantName", "Royal red", "uomCode", "Piece", "quantity",
+                        new BigDecimal("2.8"), "unitPrice", new BigDecimal("75000"), "discountPercent", BigDecimal.ZERO),
+                Map.of("productName", "Granite", "description", "skirting", "uomCode", "m", "quantity",
+                        new BigDecimal("0.504"), "unitPrice", new BigDecimal("125000"), "discountPercent",
+                        new BigDecimal("10")));
+
+        byte[] bytes = CashSaleFormPdf.render(sale, lines, "Mena Granite Limited", new byte[] {1, 2, 3});
+        String out = System.getenv("CASH_SALE_PDF_OUT");
+        if (out != null) {
+            Files.write(Path.of(out), bytes);
+        }
+
+        assertThat(new String(bytes, 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        PdfReader reader = new PdfReader(bytes);
+        assertThat(reader.getNumberOfPages()).isEqualTo(1);
+        String text = new PdfTextExtractor(reader).getTextFromPage(1);
+        assertThat(text).contains("MENA GRANITE LIMITED", "CASH SALES FORM", "29/10/2026", "Franc", "0772000000",
+                "KABALAGALA", "CS-KAB-0001", "Royal red", "skirting", "210,000.00", "56,700.00", "ORDER TOTAL",
+                "266,700.00", "FINAL CASH RECEIVED", "267,700.00");
+        reader.close();
     }
 }

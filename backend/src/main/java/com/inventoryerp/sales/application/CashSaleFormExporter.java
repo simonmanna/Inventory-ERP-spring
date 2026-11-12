@@ -47,6 +47,8 @@ public class CashSaleFormExporter {
 
     public static final String CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+    public static final String PDF_CONTENT_TYPE = "application/pdf";
+
     private static final Pattern FILE_ID = Pattern.compile("/files/([0-9a-fA-F-]{36})/");
     private static final long MAX_LOGO_BYTES = 5L * 1024 * 1024;
 
@@ -85,6 +87,21 @@ public class CashSaleFormExporter {
         String number = text(s.get("number"));
         return new Export("cash-sale-" + (number.isEmpty() ? id : number).replaceAll("[^A-Za-z0-9._-]", "_") + ".xlsx",
                 render(s, lines, company, logo));
+    }
+
+    /** The same cash sale form as an A4 PDF ({@link CashSaleFormPdf}). */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public Export exportPdf(String id) {
+        Map<String, Object> s = sales.get(id);
+        Map<String, Object> o = db.row("SELECT name, settings->>'logoUrl' AS \"logoUrl\" FROM \"Organization\""
+                + " WHERE id = ?", org());
+        String company = o == null ? "" : text(o.get("name"));
+        byte[] logo = o == null ? null : logo(text(o.get("logoUrl")));
+        List<Map<String, Object>> lines = (List<Map<String, Object>>) s.getOrDefault("lines", List.of());
+        String number = text(s.get("number"));
+        return new Export("cash-sale-" + (number.isEmpty() ? id : number).replaceAll("[^A-Za-z0-9._-]", "_") + ".pdf",
+                CashSaleFormPdf.render(s, lines, company, logo));
     }
 
     // ------------------------------------------------------------------ workbook

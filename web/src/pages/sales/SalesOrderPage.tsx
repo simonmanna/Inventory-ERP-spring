@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { VariantSelect } from '@/features/products/variant-select';
 import { EMPTY_SIZE, LineSizeFields, hasSize, sizeOf, sizePayload, useProductSizing, type LineSize } from '@/features/products/sizing';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -318,9 +318,9 @@ export function SalesOrderPage() {
                   <tr key={l.id ?? i} className={cn('border-b align-top', l.closedShort && 'text-muted-foreground')}>
                     <td className="py-1.5 pr-2">
                       {editable
-                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-52" />
+                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-72" contentClassName={PRODUCT_PICKER_PANEL} wrap />
                         : <span className="font-medium">{l.productName ?? '—'}</span>}
-                      <VariantSelect productId={l.productId} value={l.variantId} disabled={!editable} label={l.variantName} className="w-52"
+                      <VariantSelect productId={l.productId} value={l.variantId} disabled={!editable} label={l.variantName} className="w-72"
                         onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt ? { unitPrice: Number(opt.salesPrice) } : {}), ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
                       <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
                         onChange={(size, q) => patchLine(i, { size, ...(q !== null ? { quantity: q } : {}) })} />

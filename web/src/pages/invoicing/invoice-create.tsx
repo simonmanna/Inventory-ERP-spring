@@ -37,7 +37,8 @@ import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { TaxPicker } from '@/components/tax-picker';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
+import { cn } from '@/lib/utils';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
 import { VariantSelect } from '@/features/products/variant-select';
@@ -430,6 +431,7 @@ export function InvoiceCreatePage() {
   const busy = createInvoice.isPending || postInvoice.isPending;
 
   const partnerOptions = (partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
+  const productOptions = productList.map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
   const linkBtn = 'text-sm text-blue-600 hover:text-blue-800 hover:underline';
   const thBase = 'py-2.5 px-2 text-sm font-semibold text-slate-800';
 
@@ -638,19 +640,16 @@ export function InvoiceCreatePage() {
                       <tr key={field.id} className="group border-b border-slate-100 align-middle hover:bg-slate-50/60">
                         <td className="pl-3 text-slate-300">⠿</td>
                         <td className="px-2 py-1.5">
-                          <select
-                            aria-label={tx('Product')}
-                            className={cellClass}
+                          <SearchableSelect
                             value={watch(`lines.${index}.productId`) ?? ''}
-                            onChange={(e) => onProductChange(index, e.target.value)}
-                          >
-                            <option value="">{tx('Select a product')}</option>
-                            {productList.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
+                            onValueChange={(v) => onProductChange(index, v)}
+                            options={productOptions}
+                            placeholder={tx('Select a product')}
+                            searchPlaceholder={tx('Search products…')}
+                            className={cn(cellClass, 'min-w-[16rem] px-1')}
+                            contentClassName={PRODUCT_PICKER_PANEL}
+                            wrap
+                          />
                           <LineVariantAndSize
                             productId={watch(`lines.${index}.productId`)}
                             variantId={watch(`lines.${index}.variantId`)}
