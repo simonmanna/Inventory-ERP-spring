@@ -6,7 +6,8 @@ import { api, resolveAssetUrl } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,6 +51,8 @@ export function QuotationEditorPage() {
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
   const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
+  const canCreateCustomer = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
   const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const [internalNotes, setInternalNotes] = useState('');
@@ -320,14 +323,29 @@ export function QuotationEditorPage() {
         <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
           <div>
             <InlineField label={tx('Customer')}>
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
+              {editable ? (
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
+                  </div>
+                  {canCreateCustomer && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ) : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
             </InlineField>
+            <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+              // Use the new customer at once.
+              setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
+            }} />
             <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} placeholder={tx('Same as customer')} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
           </div>
           <div>
             <InlineField label={tx('Expiration')}><Input type="date" disabled={!editable} value={validUntil} title={tx('After this date the quotation expires')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></InlineField>
-            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Delivery date')}><Input type="date" disabled={!editable} value={header.commitmentDate} title={tx('The delivery date promised to the customer; it becomes the order commitment date')} onChange={(e) => { const commitmentDate = e.target.value; setHeader((h) => ({ ...h, commitmentDate })); setDirty(true); }} /></InlineField>
           </div>
         </div>

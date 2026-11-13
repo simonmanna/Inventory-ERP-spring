@@ -29,6 +29,9 @@ const COLS: ReadonlyArray<LineColumn<QuoteCol>> = [
   ['marginPct', tx('Margin (%)')], ['taxExcl', tx('Tax Excl.')], ['taxIncl', tx('Tax Incl.')],
 ];
 const DEFAULT_COLS: QuoteCol[] = ['uom', 'discount', 'taxes'];
+/** The Description column, remembered apart from the other columns so it starts shown for everyone. */
+type DescCol = 'description';
+const DESC_COL: ReadonlyArray<LineColumn<DescCol>> = [['description', tx('Description')]];
 
 /** Product thumbnail in a quotation line; a muted placeholder when the product has no picture. */
 function LineImage({ src, alt }: { src?: string | null; alt: string }) {
@@ -97,6 +100,10 @@ function QuoteQtyInput({ line, className, onChange, onBlur }: {
 export function QuoteLinesTable(p: Props) {
   const { lines, editable, currency } = p;
   const { cols, show, toggle } = useLineColumns<QuoteCol>('quotation-lines.columns.v1', COLS, DEFAULT_COLS);
+  const desc = useLineColumns<DescCol>('quotation-lines.description.v1', DESC_COL, ['description']);
+  const descShown = desc.show('description');
+  // Without the Description column the product picker needs a column of its own.
+  const productShown = show('product') || !descShown;
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const [catalog, setCatalog] = useState(false);
@@ -119,14 +126,14 @@ export function QuoteLinesTable(p: Props) {
   }, [lines, p.taxes, p.useServer, p.taxIncluded]);
 
   const optional: QuoteCol[] = ['product', 'variant', 'uom', 'leadTime', 'discount', 'taxes', 'unitCost', 'margin', 'marginPct', 'taxExcl', 'taxIncl'];
-  // handle + description + quantity + unit price + amount + trailing column
+  // handle + quantity + unit price + amount + trailing column
   const imageShown = !!p.imageColumn?.show;
-  const colCount = 6 + optional.filter(show).length + (imageShown ? 1 : 0);
-  // The picker lists Image first while images are on; it has its own remembered switch.
-  type PickerCol = QuoteCol | ImageCol;
-  const pickerCols: ReadonlyArray<LineColumn<PickerCol>> = p.imageColumn ? [...IMAGE_COL, ...COLS] : COLS;
-  const pickerSet = new Set<PickerCol>(imageShown ? ['image', ...cols] : cols);
-  const pickerToggle = (c: PickerCol) => (c === 'image' ? p.imageColumn?.toggle() : toggle(c));
+  const colCount = 5 + optional.filter((c) => (c === 'product' ? productShown : show(c))).length + (descShown ? 1 : 0) + (imageShown ? 1 : 0);
+  // The picker lists Image first while images are on; Image and Description have their own remembered switches.
+  type PickerCol = QuoteCol | ImageCol | DescCol;
+  const pickerCols: ReadonlyArray<LineColumn<PickerCol>> = [...(p.imageColumn ? IMAGE_COL : []), COLS[0], ...DESC_COL, ...COLS.slice(1)];
+  const pickerSet = new Set<PickerCol>([...cols, ...(imageShown ? ['image' as const] : []), ...(descShown ? ['description' as const] : []), ...(productShown ? ['product' as const] : [])]);
+  const pickerToggle = (c: PickerCol) => (c === 'image' ? p.imageColumn?.toggle() : c === 'description' ? desc.toggle('description') : toggle(c));
   const th = 'py-2 pr-3 text-sm font-semibold whitespace-nowrap';
   const num = 'text-right tabular-nums';
 
@@ -181,8 +188,8 @@ export function QuoteLinesTable(p: Props) {
           <tr>
             <th className="w-6" />
             {imageShown && <th className={cn(th, 'w-16')}>{tx('Image')}</th>}
-            {show('product') && <th className={th}>{tx('Product')}</th>}
-            <th className={cn(th, 'min-w-[14rem]')}>{tx('Description')}</th>
+            {productShown && <th className={th}>{tx('Product')}</th>}
+            {descShown && <th className={cn(th, 'min-w-[14rem]')}>{tx('Description')}</th>}
             {show('variant') && <th className={th}>{tx('Product Variant')}</th>}
             <th className={cn(th, 'w-24 text-right')}>{tx('Quantity')}</th>
             {show('uom') && <th className={cn(th, 'w-24')}>{tx('UoM')}</th>}
@@ -238,13 +245,15 @@ export function QuoteLinesTable(p: Props) {
               <tr key={i} className={rowCls} {...dragProps(i)}>
                 {handle(i)}
                 {imageShown && <td className="py-1.5 pr-3">{l.productId ? <LineImage key={(prod ? prod.image : l.productImage) ?? ''} src={prod ? prod.image : l.productImage} alt={l.productName ?? l.description} /> : null}</td>}
-                {show('product') && <td className="py-1.5 pr-3">{productCell(l, i, !show('variant'))}</td>}
-                <td className="py-1.5 pr-3">
-                  {!show('product') && <div className="mb-1">{productCell(l, i, !show('variant'))}</div>}
-                  {editable
-                    ? <Input value={l.description} placeholder={l.productId ? tx('Description') : tx('Description (e.g. a charge)')} className="h-8" onChange={(e) => p.onPatch(i, { description: e.target.value }, true)} />
-                    : (show('product') || l.description !== l.productName) && <span className={cn(!show('product') && 'text-muted-foreground')}>{l.description}</span>}
-                </td>
+                {productShown && <td className="py-1.5 pr-3">{productCell(l, i, !show('variant'))}</td>}
+                {descShown && (
+                  <td className="py-1.5 pr-3">
+                    {!productShown && <div className="mb-1">{productCell(l, i, !show('variant'))}</div>}
+                    {editable
+                      ? <Input value={l.description} placeholder={l.productId ? tx('Description') : tx('Description (e.g. a charge)')} className="h-8" onChange={(e) => p.onPatch(i, { description: e.target.value }, true)} />
+                      : (productShown || l.description !== l.productName) && <span className={cn(!productShown && 'text-muted-foreground')}>{l.description}</span>}
+                  </td>
+                )}
                 {show('variant') && (
                   <td className="py-1.5 pr-3">
                     <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? '—'} className="mt-0 w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt), true)} />
