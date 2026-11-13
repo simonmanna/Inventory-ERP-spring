@@ -401,7 +401,7 @@ export function InvoiceCreatePage() {
       invoicingJournalId: values.invoicingJournalId || undefined,
       salespersonId: values.salespersonId || undefined,
       deliveryDate: handover.scheduledDate || values.deliveryDate || undefined,
-      deliveryAddress: (handover.method === 'delivery' ? handover.address : '') || values.deliveryAddress || undefined,
+      deliveryAddress: (handover.method !== 'pickup' ? handover.address : '') || values.deliveryAddress || undefined,
       incoterm: values.incoterm || undefined,
       incotermLocation: values.incotermLocation || undefined,
       sourceDocument: values.sourceDocument || undefined,

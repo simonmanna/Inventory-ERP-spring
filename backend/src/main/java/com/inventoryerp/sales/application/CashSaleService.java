@@ -43,6 +43,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -191,13 +192,22 @@ public class CashSaleService {
         // Handover delivers every line at confirm; a void puts the goods back. Invoiced once HO generates the invoice.
         boolean delivered = "confirmed".equals(str(s.get("executionStatus")));
         boolean invoiced = s.get("currentInvoiceId") != null;
+        boolean voidedAfterIssue = "voided".equals(str(s.get("executionStatus"))) && s.get("confirmedAt") != null;
         List<Map<String, Object>> lines = lines(id);
         for (Map<String, Object> l : lines) {
             Object qty = l.get("quantity");
             l.put("deliveredQty", delivered ? qty : 0);
             l.put("invoicedQty", invoiced ? qty : 0);
         }
+        List<Map<String, Object>> returns = deliveryReturns(s, lines);
+        if (voidedAfterIssue) {
+            lines.forEach(l -> l.put("returnedQty", l.get("quantity")));
+        } else {
+            SalesDeliveryReturns.allocate(lines, returns, "quantity");
+        }
         s.put("lines", lines);
+        s.put("returns", returns);
+        s.put("deliveryNoteNumber", "DN/" + s.get("number"));
         s.put("payments", db.rows("SELECT y.*, a.code AS \"accountCode\", a.name AS \"accountName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\","
@@ -217,6 +227,80 @@ public class CashSaleService {
                 + " \"submissionId\" = ? ORDER BY \"createdAt\"", id));
         s.put("actions", actions(s));
         return s;
+    }
+
+    /**
+     * Returns against the sale, for its delivery tab: a void after confirm (every issued line came back to stock), and
+     * the credit notes raised against any of its head-office invoices.
+     */
+    private List<Map<String, Object>> deliveryReturns(Map<String, Object> s, List<Map<String, Object>> lines) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if ("voided".equals(str(s.get("executionStatus"))) && s.get("confirmedAt") != null) {
+            Map<String, Object> v = new LinkedHashMap<>();
+            v.put("kind", "void");
+            v.put("id", s.get("id"));
+            v.put("number", s.get("number"));
+            v.put("date", s.get("voidedAt"));
+            v.put("status", "returned");
+            v.put("total", s.get("grandTotal"));
+            v.put("reason", s.get("voidReason"));
+            v.put("counted", true);
+            List<Map<String, Object>> vl = new ArrayList<>();
+            for (Map<String, Object> l : lines) {
+                vl.add(Obj.of("productId", l.get("productId"), "productName", l.get("productName") == null
+                        ? l.get("description") : l.get("productName"), "quantity", l.get("quantity"), "uomCode",
+                        l.get("uomCode")));
+            }
+            v.put("lines", vl);
+            out.add(v);
+        }
+        for (Map<String, Object> i : db.rows("SELECT DISTINCT \"invoiceId\" FROM \"SalesSubmissionInvoice\" WHERE"
+                + " \"submissionId\" = ? AND \"invoiceId\" IS NOT NULL", s.get("id"))) {
+            out.addAll(SalesDeliveryReturns.creditNotes(db, str(i.get("invoiceId"))));
+        }
+        return out;
+    }
+
+    /** Printable delivery note (PDF) of the sale: what leaves the showroom and, once handed over, who received it. */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public SalesDeliveryNotePdf.Pdf deliveryNote(String id) {
+        Map<String, Object> s = get(id);
+        boolean done = "delivered".equals(str(s.get("deliveryStatus")));
+        List<SalesDeliveryNotePdf.Line> lines = new ArrayList<>();
+        for (Map<String, Object> l : (List<Map<String, Object>>) s.get("lines")) {
+            lines.add(new SalesDeliveryNotePdf.Line(l.get("productName") == null ? str(l.get("description"))
+                    : str(l.get("productName")), str(l.get("uomCode")), dec(l.get("quantity")),
+                    done ? dec(l.get("quantity")) : BigDecimal.ZERO, dec(l.get("returnedQty"))));
+        }
+        String company = str(db.row("SELECT name FROM \"Organization\" WHERE id = ?", org()).get("name"));
+        String method = Objects.requireNonNullElse(str(s.get("deliveryMethod")), "pickup");
+        String contact = String.join(" · ", java.util.stream.Stream.of(
+                first(s, "deliveryContactName", "customerName"), first(s, "deliveryContactPhone", "customerPhone"))
+                .filter(x -> !blank(x)).toList());
+        String customer = first(s, "customerName", "partnerName");
+        String shipped = done && s.get("deliveredAt") != null ? dateOnly(s.get("deliveredAt")) : null;
+        String address = first(s, "deliveryAddress", "customerAddress");
+        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(company, "DN/" + s.get("number"),
+                "Cash sale", str(s.get("number")), customer, "pickup".equals(method) ? null : address,
+                blank(contact) ? null : contact, SalesHandoverService.METHOD_LABELS.get(method), shipped,
+                dateOnly(s.get("deliveryScheduledDate")), dateOnly(s.get("deliveryDeadline")), str(s.get("deliveryDriver")),
+                str(s.get("deliveryVehicle")), done ? str(s.get("deliveryReceivedBy")) : null, shipped,
+                str(s.get("deliveryNotes")), lines));
+    }
+
+    /** The first non-blank of {@code keys} on {@code s}, or null. */
+    private static String first(Map<String, Object> s, String... keys) {
+        for (String k : keys) {
+            if (!blank(str(s.get(k)))) {
+                return str(s.get(k));
+            }
+        }
+        return null;
+    }
+
+    private static String dateOnly(Object v) {
+        return v == null ? null : v.toString().substring(0, Math.min(10, v.toString().length()));
     }
 
     private List<Map<String, Object>> lines(String id) {
@@ -834,7 +918,9 @@ public class CashSaleService {
     static final List<String> DELIVERY_FIELDS = List.of("deliveryMethod", "deliveryStatus", "deliveryAddress",
             "deliveryContactName", "deliveryContactPhone", "deliveryScheduledDate", "deliveryDriver", "deliveryVehicle",
             "deliveryReceivedBy", "deliveryNotes", "deliveryLandmark", "deliveryLoadingSite", "deliveryScope",
-            "deliveryOffloadingEquipment");
+            "deliveryOffloadingEquipment", "deliveryDeadline");
+    /** Date-only delivery fields: stored as DATE, compared and sent as {@code yyyy-MM-dd}. */
+    private static final Set<String> DELIVERY_DATES = Set.of("deliveryScheduledDate", "deliveryDeadline");
     private static final List<String> DELIVERY_STATUSES = List.of("pending", "scheduled", "dispatched", "delivered",
             "failed");
 
@@ -854,7 +940,7 @@ public class CashSaleService {
         Map<String, Object> next = new LinkedHashMap<>();
         for (String k : DELIVERY_FIELDS) {
             Object current = s.get(k);
-            next.put(k, current == null ? null : "deliveryScheduledDate".equals(k) ? current.toString() : str(current));
+            next.put(k, current == null ? null : DELIVERY_DATES.contains(k) ? current.toString() : str(current));
         }
         for (String k : in.keySet()) {
             next.put(k, blank(str(in.get(k))) ? null : str(in.get(k)).trim());
@@ -874,21 +960,24 @@ public class CashSaleService {
                 && !List.of("yes", "no").contains(next.get("deliveryOffloadingEquipment"))) {
             throw ApiException.badRequest("deliveryOffloadingEquipment must be one of: yes, no");
         }
-        LocalDate scheduled = null;
-        if (next.get("deliveryScheduledDate") != null) {
-            try {
-                scheduled = LocalDate.parse(str(next.get("deliveryScheduledDate")).substring(0,
-                        Math.min(10, str(next.get("deliveryScheduledDate")).length())));
-            } catch (RuntimeException e) {
-                throw ApiException.badRequest("deliveryScheduledDate must be a valid ISO 8601 date string");
+        Map<String, LocalDate> dates = new HashMap<>();
+        for (String k : DELIVERY_DATES) {
+            if (next.get(k) != null) {
+                String d = str(next.get(k));
+                try {
+                    dates.put(k, LocalDate.parse(d.substring(0, Math.min(10, d.length()))));
+                } catch (RuntimeException e) {
+                    throw ApiException.badRequest(k + " must be a valid ISO 8601 date string");
+                }
+                next.put(k, dates.get(k).toString());
             }
-            next.put("deliveryScheduledDate", scheduled.toString());
         }
+        LocalDate scheduled = dates.get("deliveryScheduledDate");
         String before = str(s.get("deliveryStatus"));
         if ("delivered".equals(before)) {
             for (String k : DELIVERY_FIELDS) {
                 if (!Set.of("deliveryReceivedBy", "deliveryNotes").contains(k)
-                        && !Objects.equals(next.get(k), k.equals("deliveryScheduledDate") && s.get(k) != null
+                        && !Objects.equals(next.get(k), DELIVERY_DATES.contains(k) && s.get(k) != null
                                 ? s.get(k).toString() : str(s.get(k)))) {
                     throw ApiException.badRequest("Delivery is already completed; only the receiver and notes can change");
                 }
@@ -905,9 +994,9 @@ public class CashSaleService {
         }
         Map<String, Object> patch = new LinkedHashMap<>();
         for (String k : DELIVERY_FIELDS) {
-            Object old = s.get(k) == null ? null : "deliveryScheduledDate".equals(k) ? s.get(k).toString() : str(s.get(k));
+            Object old = s.get(k) == null ? null : DELIVERY_DATES.contains(k) ? s.get(k).toString() : str(s.get(k));
             if (!Objects.equals(old, next.get(k))) {
-                patch.put(k, "deliveryScheduledDate".equals(k) && scheduled != null ? scheduled : next.get(k));
+                patch.put(k, dates.containsKey(k) ? dates.get(k) : next.get(k));
                 if (!"deliveryStatus".equals(k)) {
                     db.update("INSERT INTO \"SalesSubmissionEvent\" (id, \"organizationId\", \"submissionId\", action,"
                             + " field, \"oldValue\", \"newValue\", \"userId\") VALUES (?, ?, ?, 'delivery_update', ?, ?, ?, ?)",

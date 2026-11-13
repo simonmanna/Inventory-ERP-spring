@@ -326,7 +326,8 @@ export function InvoiceDetailPage() {
 
           {!isPosInvoice && (
             <TabsContent value="delivery" className="mt-0 p-5">
-              <HandoverTab path={`/sales/invoices/${inv.id}/handover`} canEdit={has(PERMISSIONS.invoice.update)} sourceLabel={tx('invoice')} readyHint={tx('Post the invoice first')} />
+              <HandoverTab path={`/sales/invoices/${inv.id}/handover`} canEdit={has(PERMISSIONS.invoice.update)} sourceLabel={tx('invoice')} readyHint={tx('Post the invoice first')}
+                currency={currency} customerName={inv.partner?.name} />
             </TabsContent>
           )}
 

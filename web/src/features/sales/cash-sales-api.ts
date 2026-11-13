@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { tx } from '@/lib/i18n/tx';
+import type { ReturnView } from './delivery-api';
 
 /** Branch cash sales → head-office invoicing (ADR-S056, docs/spec/cash-sales.md). */
 export type ExecutionStatus = 'draft' | 'confirmed' | 'voided' | 'cancelled';
@@ -14,7 +15,7 @@ export interface CashSaleLine {
   variantId?: string | null; variantName?: string | null;
   quantity: number; uomId?: string | null; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
-  deliveredQty?: number; invoicedQty?: number;
+  deliveredQty?: number; invoicedQty?: number; returnedQty?: number;
   /** ADR-S066: sold by size — pieces × length [× width [× height]] in the product's sizing unit. */
   pieces?: number | null; length?: number | null; width?: number | null; height?: number | null;
   sizingMode?: 'length' | 'area' | 'volume' | null; sizingUnit?: 'm' | 'cm' | 'mm' | null;
@@ -41,8 +42,10 @@ export interface CashSale {
   deliveryContactName?: string | null; deliveryContactPhone?: string | null; deliveryScheduledDate?: string | null;
   deliveryDriver?: string | null; deliveryVehicle?: string | null; deliveryReceivedBy?: string | null; deliveryNotes?: string | null;
   deliveryLandmark?: string | null; deliveryLoadingSite?: string | null; deliveryScope?: 'full' | 'partial' | null;
-  deliveryOffloadingEquipment?: 'yes' | 'no' | null;
+  deliveryOffloadingEquipment?: 'yes' | 'no' | null; deliveryDeadline?: string | null;
   deliveredAt?: string | null; deliveredByName?: string | null;
+  /** Delivery note number (DN/<sale number>) and returns against the sale (void with goods back, credit notes). */
+  deliveryNoteNumber?: string | null; returns?: ReturnView[];
   lines?: CashSaleLine[]; payments?: CashSalePayment[]; actions?: string[];
   invoices?: Array<{ id: string; attempt: number; invoiceId: string; documentNumber: string; status: 'active' | 'cancelled'; cancelReason: string | null; createdAt: string }>;
   deposits?: Array<{ id: string; number: string; amount: number; appliedAmount: number; refundedAmount: number; status: string; source: string }>;

@@ -32,18 +32,19 @@ import {
 } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
-import { DELIVERY_LABEL, INVOICE_LABEL, InlineField, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
+import { INVOICE_LABEL, InlineField, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
-import { HandoverTab } from './HandoverTab';
-import { HandoverDraftPanel } from './HandoverDetails';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-draft';
 import { BillingPanel } from './BillingPanel';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { FromSalesOrderDialog } from '@/features/projects/from-sales-order-dialog';
 import { MilestonesPanel, NewDeliveryDialog } from './DeliveriesPages';
+import { OrderDeliveryTab } from './delivery/OrderDeliveryTab';
+import { DeliveryPlanPanel } from './delivery/DeliveryPlanPanel';
+import { OrderStageStepper } from './delivery/delivery-ui';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
 /** A draft line with its typed size (ADR-S066: sold by length / area / volume). */
@@ -121,7 +122,7 @@ export function SalesOrderPage() {
       branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
       orderDiscountPercent: orderDiscount || null, paymentMode: header.paymentMode,
       ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
-      ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' ? handover.address : undefined } : {}),
+      ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' || handover.method === 'courier' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
       lines: lines.filter((l) => l.productId || l.description).map((l) => ({
         productId: l.productId || undefined, variantId: l.variantId || undefined, description: l.description || undefined, quantity: n(l.quantity),
@@ -372,24 +373,23 @@ export function SalesOrderPage() {
 
           <TabsContent value="delivery" className="mt-0 space-y-4 p-5">
             {isNew || !o ? (
-              <>
-                <Field label={tx('Requested date')}><Input type="date" className="max-w-xs" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
-                <HandoverDraftPanel value={handover} onChange={(v) => { setHandover(v); setDirty(true); }} hint={tx('Plan how the goods reach the customer. Saved with the order; dispatch and delivery follow once it is confirmed.')} />
-              </>
-            ) : (
-              <>
-                <div className="flex flex-wrap items-end gap-x-6 gap-y-2 text-sm">
-                  <Field label={tx('Requested date')}>{editable ? <Input type="date" value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /> : <p className="py-2">{o.requestedDate ? date(o.requestedDate) : '—'}</p>}</Field>
-                  <Field label={tx('Stock delivery status')}><p className="py-2">{DELIVERY_LABEL[o.deliveryStatus]}</p></Field>
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center gap-4">
+                  <Field label={tx('Requested date')}><Input type="date" className="w-44" disabled={!editable} value={requestedDate} onChange={(e) => { setRequestedDate(e.target.value); setDirty(true); }} /></Field>
+                  <OrderStageStepper stage="pending" />
                 </div>
-                <HandoverTab path={`/sales/orders/${o.id}/handover`} canEdit={has(P.orderWrite)} sourceLabel={tx('sales order')} readyHint={tx('Confirm the sales order first')} issuedLabel={tx('Delivered from stock')} />
-              </>
-            )}
-            {o && (
-              <div className="grid items-start gap-4 lg:grid-cols-2">
-                {fulfilling && <FulfilmentPanel order={o} />}
-                <AvailabilityPanel order={o} />
+                <p className="text-xs text-muted-foreground">{tx('Plan how the goods reach the customer. Saved with the order; deliveries are scheduled once it is confirmed.')}</p>
+                <div className="rounded-xl border bg-card p-4 shadow-sm">
+                  <DeliveryPlanPanel value={handover} locked={!editable} onChange={(v) => { setHandover(v); setDirty(true); }} />
+                </div>
+                <Field label={tx('Delivery notes / instructions')}>
+                  <Textarea rows={3} maxLength={500} disabled={!editable} value={handover.notes} onChange={(e) => { setHandover({ ...handover, notes: e.target.value }); setDirty(true); }} />
+                </Field>
               </div>
+            ) : (
+              <OrderDeliveryTab order={o} requestedDate={requestedDate} dateEditable={editable}
+                onRequestedDate={(v) => { setRequestedDate(v); setDirty(true); }}
+                footer={<AvailabilityPanel order={o} />} />
             )}
           </TabsContent>
 
@@ -401,6 +401,7 @@ export function SalesOrderPage() {
             {(o?.partnerId || partnerId) ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {o && fulfilling && <BillingPanel order={o} />}
+                {o && fulfilling && <FulfilmentPanel order={o} />}
                 {o && fulfilling && <MilestonesPanel orderId={o.id} total={Number(o.total)} />}
                 <CreditPanel partnerId={o?.partnerId ?? partnerId} />
               </div>

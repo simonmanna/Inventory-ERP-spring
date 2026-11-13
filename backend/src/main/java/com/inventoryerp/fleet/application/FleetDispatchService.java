@@ -325,6 +325,105 @@ public class FleetDispatchService {
 
     private record PlannedQty(Map<String, Object> line, BigDecimal qty, String batch) {}
 
+    /**
+     * Re-plan the quantities of a trip that has not started loading: {@code in} is the full new set (a delivery-order
+     * line left out leaves the trip). Each line's increase must fit what remains to be planned, under the same delivery
+     * order lock as {@link #addLoad}, so two edits can never plan more than was ordered.
+     */
+    @Transactional
+    public Map<String, Object> replan(String id, List<LoadLineInput> in) {
+        Locked k = lockTrip(id);
+        Map<String, Object> t = k.trip();
+        String code = (String) t.get("code");
+        if (!"planned".equals(t.get("status"))) {
+            throw ApiException.badRequest("Trip " + code + " is " + TripStatusPolicy.label((String) t.get("status"))
+                    + "; its quantities can no longer change");
+        }
+        String deliveryOrderId = (String) k.order().get("id");
+        FleetDeliveryOrderService.assertEditable(k.order());
+        Map<String, Map<String, Object>> doLines = new HashMap<>();
+        for (Map<String, Object> l : orders.lines(deliveryOrderId)) {
+            doLines.put((String) l.get("id"), l);
+        }
+        Map<String, BigDecimal> wanted = new LinkedHashMap<>();
+        Map<String, String> batches = new HashMap<>();
+        for (LoadLineInput li : in) {
+            if (!doLines.containsKey(li.deliveryOrderLineId())) {
+                throw ApiException.badRequest("Delivery order line not found");
+            }
+            if (li.quantity() == null || li.quantity().signum() < 0) {
+                throw ApiException.badRequest("Quantities must not be less than 0");
+            }
+            wanted.merge(li.deliveryOrderLineId(), li.quantity(), BigDecimal::add);
+            if (li.batchNumber() != null) {
+                batches.put(li.deliveryOrderLineId(), li.batchNumber());
+            }
+        }
+        wanted.values().removeIf(q -> q.signum() == 0);
+        if (wanted.isEmpty()) {
+            throw ApiException.badRequest("Trip " + code + " needs at least one product; cancel it instead");
+        }
+        Map<String, Map<String, Object>> current = new HashMap<>();
+        for (Map<String, Object> l : lines(id)) {
+            current.put((String) l.get("deliveryOrderLineId"), l);
+        }
+        for (Map.Entry<String, BigDecimal> e : wanted.entrySet()) {
+            Map<String, Object> dl = doLines.get(e.getKey());
+            Map<String, Object> cur = current.get(e.getKey());
+            BigDecimal mine = cur == null ? BigDecimal.ZERO : SqlRows.dec(cur, "plannedQty");
+            BigDecimal remaining = SqlRows.dec(dl, "remainingQty");
+            if (e.getValue().subtract(mine).compareTo(remaining) > 0) {
+                throw ApiException.badRequest("Only " + JsNumbers.dec(remaining.add(mine)) + " " + unit(dl) + " of "
+                        + dl.get("productName") + " remain to be planned");
+            }
+        }
+        Map<String, Object> before = Obj.of("lines", current.values().stream().map(l -> Obj.of("deliveryOrderLineId",
+                l.get("deliveryOrderLineId"), "plannedQty", l.get("plannedQty"))).toList());
+        BigDecimal tonnes = BigDecimal.ZERO;
+        BigDecimal m3 = BigDecimal.ZERO;
+        boolean knownT = false;
+        boolean knownM = false;
+        for (Map<String, Object> cur : current.values()) {
+            String doLine = (String) cur.get("deliveryOrderLineId");
+            if (!wanted.containsKey(doLine)) {
+                db.jdbc().sql("DELETE FROM \"FleetLoadLine\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(cur.get("id"), FleetDb.org()).update();
+                adjustOrderLine(doLine, SqlRows.dec(cur, "plannedQty").negate(), null, null, null);
+            }
+        }
+        for (Map.Entry<String, BigDecimal> e : wanted.entrySet()) {
+            Map<String, Object> dl = doLines.get(e.getKey());
+            Map<String, Object> cur = current.get(e.getKey());
+            String batch = FleetVehicleService.trim(batches.getOrDefault(e.getKey(), cur == null
+                    ? (String) dl.get("batchNumber") : (String) cur.get("batchNumber")));
+            if (cur == null) {
+                db.insert(FleetLoadLine.class, Obj.of("loadId", id, "deliveryOrderLineId", e.getKey(), "productId",
+                        dl.get("productId"), "uomId", dl.get("uomId"), "uomFactor", dl.get("uomFactor"), "plannedQty",
+                        e.getValue(), "tonnesPerUnit", dl.get("tonnesPerUnit"), "m3PerUnit", dl.get("m3PerUnit"),
+                        "batchNumber", batch));
+                adjustOrderLine(e.getKey(), e.getValue(), null, null, null);
+            } else {
+                db.update(FleetLoadLine.class, (String) cur.get("id"), Obj.of("plannedQty", e.getValue(), "batchNumber",
+                        batch));
+                adjustOrderLine(e.getKey(), e.getValue().subtract(SqlRows.dec(cur, "plannedQty")), null, null, null);
+            }
+            if (dl.get("tonnesPerUnit") != null) {
+                tonnes = tonnes.add(e.getValue().multiply((BigDecimal) dl.get("tonnesPerUnit")));
+                knownT = true;
+            }
+            if (dl.get("m3PerUnit") != null) {
+                m3 = m3.add(e.getValue().multiply((BigDecimal) dl.get("m3PerUnit")));
+                knownM = true;
+            }
+        }
+        db.update(FleetLoad.class, id, Obj.of("plannedTonnes", knownT ? tonnes.setScale(3, RoundingMode.HALF_UP) : null,
+                "plannedM3", knownM ? m3.setScale(3, RoundingMode.HALF_UP) : null, "updatedBy", TenantContext.userId()));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", before, Obj.of("lines", wanted.entrySet().stream()
+                .map(e -> Obj.of("deliveryOrderLineId", e.getKey(), "plannedQty", e.getValue())).toList())));
+        orders.refreshStatus(deliveryOrderId);
+        return get(id);
+    }
+
     private record Planning(LoadPlanner.Plan plan, LoadPlanner.Capacity capacity, Map<String, Map<String, Object>> lines) {}
 
     private Planning planning(String deliveryOrderId, PlanInput in) {
@@ -1241,7 +1340,12 @@ public class FleetDispatchService {
             }
         } else if ("manual".equals(t.get("carrier"))) {
             // Sales delivery without the Fleet module (SG-9): vehicle and driver are typed in, no fleet record exists.
-            if (t.get("transporterPlate") == null) {
+            // A customer collection or a courier hand-off may leave without a plate of ours.
+            String method = db.jdbc().sql("SELECT \"deliveryMethod\" FROM \"FleetLoad\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(t.get("id"), FleetDb.org()).query(String.class).optional()
+                    .orElse(null);
+            boolean plateOptional = "customer_collect".equals(method) || "courier".equals(method);
+            if (t.get("transporterPlate") == null && !plateOptional) {
                 throw ApiException.badRequest("Enter the vehicle of trip " + t.get("code") + " first");
             }
         } else if (t.get("transporterPartnerId") == null) {

@@ -771,6 +771,12 @@ export const PERMISSIONS = {
     deliveryRead: 'sales:delivery:read',
     deliveryWrite: 'sales:delivery:write',
     deliveryApprove: 'sales:delivery:approve',
+    /// Issue the stock of a delivery and set it in transit.
+    deliveryDispatch: 'sales:delivery:dispatch',
+    /// Record proof of delivery, a failed attempt or a returned load.
+    deliveryConfirm: 'sales:delivery:confirm',
+    /// Cancel a delivery that has not left.
+    deliveryCancel: 'sales:delivery:cancel',
     /// Customer profile, duplicates, export (SG-5).
     customerRead: 'sales:customer:read',
     /// Edit profile, suspend, import (SG-5).
