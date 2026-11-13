@@ -13484,5 +13484,8 @@
   "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} zimerekodiwa, {{billable}} zinatozwa ({{pct}}%)",
   "New supplier": "Msambazaji mpya",
   "Saved customers are selected on this document straight away.": "Mteja aliyehifadhiwa anachaguliwa kwenye hati hii mara moja.",
-  "Saved suppliers are selected on this document straight away.": "Msambazaji aliyehifadhiwa anachaguliwa kwenye hati hii mara moja."
+  "Saved suppliers are selected on this document straight away.": "Msambazaji aliyehifadhiwa anachaguliwa kwenye hati hii mara moja.",
+  "No image": "Hakuna picha",
+  "Show product images on quotations (an optional Image column each user can hide; also printed and in the PDF)": "Onyesha picha za bidhaa kwenye nukuu (safu ya Picha ya hiari ambayo kila mtumiaji anaweza kuficha; pia huchapishwa na huwa kwenye PDF)",
+  "Product images on quotations (optional Image column, print and PDF)": "Picha za bidhaa kwenye nukuu (safu ya Picha ya hiari, uchapishaji na PDF)"
 }

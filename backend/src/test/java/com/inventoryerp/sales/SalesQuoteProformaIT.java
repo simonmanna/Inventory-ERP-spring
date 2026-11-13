@@ -5,6 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.sales.application.SalesQuotationService;
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +18,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.openpdf.text.pdf.PdfReader;
+import org.openpdf.text.pdf.parser.PdfTextExtractor;
 import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
@@ -146,6 +153,86 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         assertThat(ok(200, "POST", "/sales/quotations/" + id + "/email", Map.of()).get("sentTo").asString())
                 .isEqualTo("g3@example.test");
         assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("status").asString()).isEqualTo("sent");
+    }
+
+    static byte[] png() throws Exception {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(40, 30, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(img, "png", out);
+        return out.toByteArray();
+    }
+
+    /** Upload a PNG through {@code POST /files/upload}; returns the file id. */
+    String uploadPng(byte[] png) throws Exception {
+        String boundary = "----img" + UUID.randomUUID();
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        body.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"item.png\"\r\n"
+                + "Content-Type: image/png\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+        body.write(png);
+        body.write(("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+        HttpResponse<String> r = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/files/upload"))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .header("Authorization", "Bearer " + adminToken)
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).as(r.body()).isBetween(200, 201);
+        return mapper.readTree(r.body()).get("id").asString();
+    }
+
+    byte[] quotationPdf(String id, String query) throws Exception {
+        HttpResponse<byte[]> r = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
+                + "/api/v1/sales/quotations/" + id + "/pdf" + query)).header("Authorization", "Bearer " + adminToken).GET()
+                .build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(r.statusCode()).isEqualTo(200);
+        return r.body();
+    }
+
+    static String pdfText(byte[] pdf) throws Exception {
+        PdfReader r = new PdfReader(pdf);
+        try {
+            return new PdfTextExtractor(r).getTextFromPage(1);
+        } finally {
+            r.close();
+        }
+    }
+
+    @Test
+    @DisplayName("product images on quotations: off by default; when on, lines carry a signed image and the PDF an"
+            + " Image column the printing user can leave out")
+    void productImages() throws Exception {
+        String imageProduct = ok(201, "POST", "/products", Map.of("code", "G3I-" + sfx, "name", "SG3 pictured " + sfx,
+                "productType", "service", "salesPrice", 80)).get("id").asString();
+        String fileId = uploadPng(png());
+        jdbc.sql("UPDATE \"Product\" SET image = ? WHERE id = ?").params(fileId, imageProduct).update();
+        String id = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines", List.of(Map.of("productId",
+                imageProduct, "quantity", 1, "unitPrice", 80), Map.of("description", "Transport charge", "quantity", 1,
+                "unitPrice", 50)))).get("id").asString();
+
+        // Off (default): no images anywhere.
+        JsonNode off = ok(200, "GET", "/sales/quotations/" + id, null);
+        assertThat(off.get("lineImages").asBoolean()).isFalse();
+        assertThat(off.get("lines").get(0).get("productImage").isNull()).isTrue();
+        assertThat(pdfText(quotationPdf(id, "?images=true"))).doesNotContain("Image");
+
+        try {
+            ok(200, "PUT", "/sales/settings", Map.of("quoteLineImages", true));
+            assertThat(ok(200, "GET", "/crm/config/lookups", null).get("settings").get("quoteLineImages").asBoolean())
+                    .isTrue();
+            JsonNode on = ok(200, "GET", "/sales/quotations/" + id, null);
+            assertThat(on.get("lineImages").asBoolean()).isTrue();
+            assertThat(on.get("lines").get(0).get("productImage").asString()).contains("/files/" + fileId + "/download?token=");
+            assertThat(on.get("lines").get(1).get("productImage").isNull()).isTrue();
+
+            byte[] withImages = quotationPdf(id, "");
+            byte[] chosenOff = quotationPdf(id, "?images=false");
+            assertThat(pdfText(withImages)).contains("Image", "SG3 pictured " + sfx);
+            assertThat(pdfText(chosenOff)).doesNotContain("Image").contains("SG3 pictured " + sfx);
+            assertThat(withImages.length).isGreaterThan(chosenOff.length);
+        } finally {
+            // The CRM settings screen edits the same switch.
+            assertThat(ok(200, "PUT", "/crm/config/settings", Map.of("quoteLineImages", false)).get("quoteLineImages")
+                    .asBoolean()).isFalse();
+        }
+        assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("lines").get(0).get("productImage").isNull()).isTrue();
     }
 
     @Test

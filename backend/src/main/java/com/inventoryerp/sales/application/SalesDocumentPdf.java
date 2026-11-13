@@ -6,6 +6,7 @@ import org.openpdf.text.DocumentException;
 import org.openpdf.text.Element;
 import org.openpdf.text.Font;
 import org.openpdf.text.FontFactory;
+import org.openpdf.text.Image;
 import org.openpdf.text.PageSize;
 import org.openpdf.text.Paragraph;
 import org.openpdf.text.Phrase;
@@ -27,6 +28,9 @@ public final class SalesDocumentPdf {
     /** A titled text block after the totals: terms, bank details and so on. */
     public record Block(String title, String text) {}
 
+    /** Image column thumbnail size, in points. */
+    private static final float THUMB = 48;
+
     private SalesDocumentPdf() {}
 
     /**
@@ -35,6 +39,16 @@ public final class SalesDocumentPdf {
      */
     public static byte[] render(String company, String title, String number, List<String> facts,
             List<Map<String, Object>> lines, String currency, List<Total> totals, List<Block> blocks) {
+        return render(company, title, number, facts, lines, currency, totals, blocks, false);
+    }
+
+    /**
+     * As {@link #render(String, String, String, List, List, String, List, List)}, with an Image column first when
+     * {@code images} is set: each line's {@code imageBytes} (PNG, JPEG, GIF…) as a thumbnail, blank when missing or
+     * unreadable.
+     */
+    public static byte[] render(String company, String title, String number, List<String> facts,
+            List<Map<String, Object>> lines, String currency, List<Total> totals, List<Block> blocks, boolean images) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Document pdf = new Document(PageSize.A4, 50, 50, 50, 50);
         try {
@@ -51,12 +65,17 @@ public final class SalesDocumentPdf {
             }
             pdf.add(new Paragraph(" "));
             if (!lines.isEmpty()) {
-                PdfPTable t = new PdfPTable(new float[] {5, 1.2f, 1.6f, 1, 1.8f});
+                PdfPTable t = new PdfPTable(images ? new float[] {1.4f, 5, 1.2f, 1.6f, 1, 1.8f}
+                        : new float[] {5, 1.2f, 1.6f, 1, 1.8f});
                 t.setWidthPercentage(100);
-                for (String h : List.of("Description", "Qty", "Unit price", "Disc %", "Amount")) {
+                for (String h : images ? List.of("Image", "Description", "Qty", "Unit price", "Disc %", "Amount")
+                        : List.of("Description", "Qty", "Unit price", "Disc %", "Amount")) {
                     t.addCell(new PdfPCell(new Phrase(h, bold)));
                 }
                 for (Map<String, Object> l : lines) {
+                    if (images) {
+                        t.addCell(imageCell(l.get("imageBytes") instanceof byte[] b ? b : null));
+                    }
                     // ADR-S066: a line sold by size prints its pieces and dimensions under the description
                     String size = ProductSizingService.label(ProductSizingService.Sizing.stored(l),
                             l.get("sizingUnit") == null ? null : String.valueOf(l.get("sizingUnit")));
@@ -90,6 +109,24 @@ public final class SalesDocumentPdf {
             throw new IllegalStateException(e);
         }
         return out.toByteArray();
+    }
+
+    /** A thumbnail of at most {@link #THUMB} points square; an empty cell when there is no readable picture. */
+    private static PdfPCell imageCell(byte[] bytes) {
+        if (bytes != null && bytes.length > 0) {
+            try {
+                Image img = Image.getInstance(bytes);
+                img.scaleToFit(THUMB, THUMB);
+                PdfPCell c = new PdfPCell(img, false);
+                c.setPadding(3);
+                c.setHorizontalAlignment(Element.ALIGN_CENTER);
+                c.setVerticalAlignment(Element.ALIGN_MIDDLE);
+                return c;
+            } catch (Exception e) {
+                // unsupported format (e.g. WebP) or a damaged file: leave the cell blank
+            }
+        }
+        return new PdfPCell(new Phrase(""));
     }
 
     private static PdfPCell right(String text, Font f) {

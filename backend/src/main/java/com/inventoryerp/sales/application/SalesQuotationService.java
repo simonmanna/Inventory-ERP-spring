@@ -88,6 +88,14 @@ public class SalesQuotationService {
     private SalesLostReasonService lostReasons;
     private SalesProformaService proformas;
 
+    private SalesProductImages images;
+
+    /** Product images on quotation lines (sales setting {@code quoteLineImages}). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setImages(SalesProductImages images) {
+        this.images = images;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     void setAccess(SalesAccess access) {
         this.access = access;
@@ -186,9 +194,14 @@ public class SalesQuotationService {
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
                 + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", pr.\"sizingMode\","
-                + " pr.\"sizingUnit\", t.name AS \"taxName\","
+                + " pr.\"sizingUnit\", pr.image AS \"productImage\", t.name AS \"taxName\","
                 + " t.rate AS \"taxRate\" FROM \"SalesQuotationLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\""
                 + " LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? ORDER BY l.\"sortOrder\"", id);
+        // Product images only when the organization turned them on; a fresh signed URL per line.
+        boolean withImages = config.quoteLineImages();
+        for (Map<String, Object> l : lines) {
+            l.put("productImage", withImages ? images.url(str(l.get("productImage"))) : null);
+        }
         Map<String, Map<String, Object>> stock = stock(lines.stream().map(l -> str(l.get("productId")))
                 .filter(s -> s != null).distinct().toList());
         for (Map<String, Object> l : lines) {
@@ -203,6 +216,7 @@ public class SalesQuotationService {
             }
         }
         q.put("lines", lines);
+        q.put("lineImages", withImages);
         q.put("credit", credit(str(q.get("partnerId")), BigDecimal.ZERO));
         q.put("canApprove", canApprove());
         return q;
@@ -872,15 +886,34 @@ public class SalesQuotationService {
         return expired.size();
     }
 
-    /** Customer-facing PDF; internal notes never appear. */
+    /** Customer-facing PDF; internal notes never appear. Product images follow the sales setting. */
     @Transactional(readOnly = true)
     public byte[] pdf(String id) {
+        return pdf(id, null);
+    }
+
+    /**
+     * Customer-facing PDF. {@code withImages} = the printing user's Image column choice; {@code null} follows the sales
+     * setting. Images never print while the setting is off.
+     */
+    @Transactional(readOnly = true)
+    public byte[] pdf(String id, Boolean withImages) {
         Map<String, Object> q = require(id);
+        boolean showImages = config.quoteLineImages() && !Boolean.FALSE.equals(withImages);
         List<Map<String, Object>> lines = db.rows("SELECT l.description, l.quantity, l.\"unitPrice\", l.\"discountPercent\","
-                + " l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height, p.\"sizingUnit\" FROM"
+                + " l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height, p.\"sizingUnit\", p.image FROM"
                 + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND"
                 + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) AND l.\"displayType\" IS NULL ORDER BY"
                 + " l.\"sortOrder\"", id, org());
+        if (showImages) {
+            Map<String, byte[]> loaded = new HashMap<>();
+            for (Map<String, Object> l : lines) {
+                String stored = str(l.get("image"));
+                if (stored != null) {
+                    l.put("imageBytes", loaded.computeIfAbsent(stored, images::bytes));
+                }
+            }
+        }
         String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
                 + " \"Organization\" WHERE id = ?", org()).get("n"));
         return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),
@@ -888,7 +921,7 @@ public class SalesQuotationService {
                         new SalesDocumentPdf.Total("Untaxed", dec(q.get("subtotal"))), new SalesDocumentPdf.Total("Tax",
                                 dec(q.get("taxAmount"))), new SalesDocumentPdf.Total("Total", dec(q.get("total")))), List.of(
                                         new SalesDocumentPdf.Block("Notes", str(q.get("notes"))),
-                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))));
+                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))), showImages);
     }
 
     /** Email the PDF to the customer; an approved quotation becomes sent. */

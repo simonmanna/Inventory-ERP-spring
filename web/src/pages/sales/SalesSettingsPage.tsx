@@ -29,6 +29,7 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['quoteMaxDiscountPercent', 'Approval above this discount %', 'num'],
     ['quoteApprovalAmount', 'Approval above this amount (0 = off)', 'num'],
     ['defaultQuoteTerms', 'Default terms', 'text'],
+    ['quoteLineImages', 'Product images on quotations (optional Image column, print and PDF)', 'bool'],
   ]],
   ['Proforma invoices', [
     ['proformaAdvancePercent', 'Default advance %', 'num'],

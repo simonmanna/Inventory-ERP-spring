@@ -326,3 +326,21 @@ Odoo-style quotation form (`/sales/quotations/new`, `/sales/quotations/:id`; ref
   row per tax) and *Other Info* (salesperson, branch, currency, dates, customer credit, notes). The
   **Tax Excl. / Tax Incl.** toggle sets whether the unit prices on an editable quotation include tax (sent as
   `taxInclusive` on every line) and switches the Amount column; on a locked quotation it only switches the display.
+
+## Product images on quotations (2026-11-12, V483)
+
+Some customers want product pictures on their quotations, others do not, so the feature is a setting.
+
+- **Setting.** `SalesSettings.quoteLineImages` (boolean, default `false`), edited in Sales settings → Quotations and in
+  CRM settings → Quotation approval (`PUT /sales/settings` or `PUT /crm/config/settings`; also returned in
+  `GET /crm/config/lookups` → `settings`).
+- **Detail.** `GET /sales/quotations/{id}` returns `lineImages` (the setting) and, per line, `productImage`: a fresh
+  signed URL of the product's image, or `null` (setting off, no product, no image).
+- **Web.** While the setting is on, the lines table offers an optional **Image** column (thumbnail, opens full size).
+  Each user shows or hides it; the choice is remembered per browser apart from the other optional columns, so it
+  starts shown when the setting is turned on.
+- **Print and PDF.** *Print* and *Download PDF* add an Image column exactly when the user sees it
+  (`GET /sales/quotations/{id}/pdf?images=true|false`). Without `images` (e.g. the emailed PDF) the PDF follows the
+  setting. While the setting is off no image prints, whatever `images` says. A picture that is missing, too large
+  (> 5 MB) or in a format the PDF library cannot read (e.g. WebP) leaves its cell blank.
+- Tests: `SalesQuoteProformaIT.productImages`, `SalesDocumentPdfTest`.

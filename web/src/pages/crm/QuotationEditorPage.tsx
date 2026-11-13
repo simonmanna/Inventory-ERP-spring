@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, resolveAssetUrl } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { toast } from 'sonner';
@@ -30,7 +30,7 @@ import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { QuoteLinesTable, type QuoteLine } from './QuoteLinesTable';
 import { EMPTY_SIZE, sizeLabel, sizeOf, sizePayload } from '@/features/products/sizing';
-import { isLayout, lineAmounts } from './quote-lines';
+import { isLayout, lineAmounts, useQuoteImageColumn } from './quote-lines';
 
 const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
 const layoutLine = (displayType: 'line_section' | 'line_note'): QuoteLine => ({ displayType, productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
@@ -76,6 +76,11 @@ export function QuotationEditorPage() {
   const [backorder, setBackorder] = useState(false);
   const [shortages, setShortages] = useState<string[] | null>(null);
   const [tab, setTab] = useState('lines');
+  const imageColumn = useQuoteImageColumn();
+  /** The organization shows product images on quotations; each user still shows or hides the column. */
+  const imagesOn = Boolean(lk?.settings.quoteLineImages ?? q?.lineImages);
+  /** Print and PDF carry images exactly when this user sees the Image column. */
+  const printImages = imagesOn && imageColumn.show;
 
   useEffect(() => {
     if (q) {
@@ -238,8 +243,8 @@ export function QuotationEditorPage() {
   const menu: MenuItem[] = [];
   if (q) {
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`/sales/quotations/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
-    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf`, `${q.number}.pdf`) });
-    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name) });
+    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
+    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name, printImages) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
@@ -352,7 +357,7 @@ export function QuotationEditorPage() {
               products={products.data ?? []} taxes={taxes.data ?? []} uoms={uoms.data ?? []} canPrice={canPrice}
               onPatch={patchLine} onProduct={setProduct} onUnit={setUnit} onReprice={(i) => void priceLines(i)}
               onRemove={(i) => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}
-              onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} />
+              onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} imageColumn={imagesOn ? imageColumn : undefined} />
             <div className="grid gap-6 pt-2 md:grid-cols-[minmax(0,1fr)_340px]">
               <Textarea disabled={!editable} rows={4} value={terms} placeholder={tx('Terms and conditions…')} aria-label={tx('Terms and conditions')}
                 className="resize-y border-transparent bg-transparent px-0 shadow-none focus-visible:border-input focus-visible:px-3 disabled:cursor-default disabled:opacity-100"
@@ -495,23 +500,29 @@ async function downloadBlob(path: string, name: string) {
   } catch (err) { toast.error(apiErrorMessage(err, tx('Could not download'))); }
 }
 
-/** Printable quotation in a new window. */
-function printQuote(q: Quotation, owner?: string) {
+/** Printable quotation in a new window; with {@code images}, a product picture column first. */
+function printQuote(q: Quotation, owner?: string, images = false) {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return;
   const m = (v: number) => money(v, q.currencyCode);
-  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="5">${esc(l.description)}</td></tr>`
-    : l.displayType === 'line_note' ? `<tr><td colspan="5" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
-    : `<tr><td>${esc(l.description)}${sizeLabel(l as Parameters<typeof sizeLabel>[0]) ? `<br><small>${esc(sizeLabel(l as Parameters<typeof sizeLabel>[0]))}</small>` : ''}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
+  const cols = images ? 6 : 5;
+  const picture = (src?: string | null) => {
+    const url = src ? resolveAssetUrl(src) : undefined;
+    return images ? `<td class="img">${url ? `<img src="${esc(new URL(url, window.location.href).href)}" alt="">` : ''}</td>` : '';
+  };
+  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="${cols}">${esc(l.description)}</td></tr>`
+    : l.displayType === 'line_note' ? `<tr><td colspan="${cols}" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
+    : `<tr>${picture(l.productImage)}<td>${esc(l.description)}${sizeLabel(l as Parameters<typeof sizeLabel>[0]) ? `<br><small>${esc(sizeLabel(l as Parameters<typeof sizeLabel>[0]))}</small>` : ''}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(q.number)}</title><style>
     body{font-family:system-ui,sans-serif;color:#111;margin:40px}h1{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:24px}
     th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}.r{text-align:right}.tot td{border:0}.muted{color:#666;font-size:13px}
-    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}</style></head><body>
+    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}
+    td.img{width:64px;padding:4px 8px}td.img img{display:block;max-width:56px;max-height:56px;object-fit:contain}</style></head><body>
     <h1>${esc(tx('Quotation'))} ${esc(q.number)}</h1><div class="muted">${esc(tx('Date'))}: ${esc(date(q.issueDate))} · ${esc(tx('Valid until'))}: ${esc(q.validUntil ? date(q.validUntil) : '—')}</div>
     <div class="grid"><div><strong>${esc(q.partnerName)}</strong></div><div class="muted">${esc(tx('Salesperson'))}: ${esc(owner ?? q.ownerName ?? '')}</div></div>
-    <table><thead><tr><th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>
-    <tbody>${rows}</tbody><tbody class="tot"><tr><td colspan="4" class="r">${esc(tx('Untaxed amount'))}</td><td class="r">${m(q.subtotal)}</td></tr>
-    <tr><td colspan="4" class="r">${esc(tx('Taxes'))}</td><td class="r">${m(q.taxAmount)}</td></tr><tr><td colspan="4" class="r"><strong>${esc(tx('Total'))}</strong></td><td class="r"><strong>${m(q.total)}</strong></td></tr></tbody></table>
+    <table><thead><tr>${images ? `<th>${esc(tx('Image'))}</th>` : ''}<th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>
+    <tbody>${rows}</tbody><tbody class="tot"><tr><td colspan="${cols - 1}" class="r">${esc(tx('Untaxed amount'))}</td><td class="r">${m(q.subtotal)}</td></tr>
+    <tr><td colspan="${cols - 1}" class="r">${esc(tx('Taxes'))}</td><td class="r">${m(q.taxAmount)}</td></tr><tr><td colspan="${cols - 1}" class="r"><strong>${esc(tx('Total'))}</strong></td><td class="r"><strong>${m(q.total)}</strong></td></tr></tbody></table>
     ${q.notes ? `<p class="muted">${esc(q.notes)}</p>` : ''}${q.terms ? `<h4>${esc(tx('Terms & conditions'))}</h4><p class="muted" style="white-space:pre-wrap">${esc(q.terms)}</p>` : ''}
     <script>window.onload=()=>window.print()</script></body></html>`);
   w.document.close();

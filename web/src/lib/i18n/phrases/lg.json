@@ -13484,5 +13484,8 @@
   "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} biwandiikiddwa, {{billable}} bibanjibwa ({{pct}}%)",
   "New supplier": "Omugabi omupya",
   "Saved customers are selected on this document straight away.": "Omuguzi aterekeddwa alondebwa ku kiwandiiko kino amangu ddala.",
-  "Saved suppliers are selected on this document straight away.": "Omugabi aterekeddwa alondebwa ku kiwandiiko kino amangu ddala."
+  "Saved suppliers are selected on this document straight away.": "Omugabi aterekeddwa alondebwa ku kiwandiiko kino amangu ddala.",
+  "No image": "Tewali kifaananyi",
+  "Show product images on quotations (an optional Image column each user can hide; also printed and in the PDF)": "Laga ebifaananyi by'ebintu ku quotation (empagi y'Ekifaananyi buli mukozesa gy'asobola okukweka; era bikubibwa ne mu PDF)",
+  "Product images on quotations (optional Image column, print and PDF)": "Ebifaananyi by'ebintu ku quotation (empagi y'Ekifaananyi ey'okwesalirawo, okukuba ne PDF)"
 }
