@@ -13484,5 +13484,8 @@
   "{{total}} logged, {{billable}} billable ({{pct}}%)": "{{total}} ተመዝጊቡ፡ {{billable}} ዝኽፈል ({{pct}}%)",
   "New supplier": "ሓድሽ ኣቕራቢ",
   "Saved customers are selected on this document straight away.": "ዝተዓቀበ ዓሚል ብቕጽበት ኣብዚ ሰነድ ይምረጽ።",
-  "Saved suppliers are selected on this document straight away.": "ዝተዓቀበ ኣቕራቢ ብቕጽበት ኣብዚ ሰነድ ይምረጽ።"
+  "Saved suppliers are selected on this document straight away.": "ዝተዓቀበ ኣቕራቢ ብቕጽበት ኣብዚ ሰነድ ይምረጽ።",
+  "No image": "ስእሊ የለን",
+  "Show product images on quotations (an optional Image column each user can hide; also printed and in the PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ ኣርኢ (ነፍሲ ወከፍ ተጠቃሚ ክሕብኦ ዝኽእል ኣማራጺ ዓምዲ ስእሊ፤ ኣብ ሕትመትን PDFን እውን)",
+  "Product images on quotations (optional Image column, print and PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ (ኣማራጺ ዓምዲ ስእሊ፣ ሕትመትን PDFን)"
 }

@@ -268,6 +268,7 @@ function PolicyTab({ settings, users }: { settings: CrmSettings; users: Array<{ 
         </div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.creditCheck} onChange={(e) => set({ creditCheck: e.target.checked })} />{tx('Credit check: route quotes for customers on hold or over their credit limit to approval')}</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.autoWinOnConversion} onChange={(e) => set({ autoWinOnConversion: e.target.checked })} />{tx('Mark the opportunity won when its quotation is converted')}</label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.quoteLineImages} onChange={(e) => set({ quoteLineImages: e.target.checked })} />{tx('Show product images on quotations (an optional Image column each user can hide; also printed and in the PDF)')}</label>
         <Field label={tx('Default terms & conditions')}><Textarea rows={3} value={s.defaultQuoteTerms ?? ''} onChange={(e) => set({ defaultQuoteTerms: e.target.value })} /></Field>
       </section>
       <section className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
@@ -294,7 +295,7 @@ function PolicyTab({ settings, users }: { settings: CrmSettings; users: Array<{ 
       </section>
       <Button disabled={save.isPending} onClick={() => save.mutate({
         quoteMaxDiscountPercent: s.quoteMaxDiscountPercent, quoteApprovalAmount: s.quoteApprovalAmount, quoteValidityDays: s.quoteValidityDays,
-        creditCheck: s.creditCheck, autoWinOnConversion: s.autoWinOnConversion, defaultQuoteTerms: s.defaultQuoteTerms, rottingDays: s.rottingDays,
+        creditCheck: s.creditCheck, autoWinOnConversion: s.autoWinOnConversion, quoteLineImages: !!s.quoteLineImages, defaultQuoteTerms: s.defaultQuoteTerms, rottingDays: s.rottingDays,
         assignmentMode: s.assignmentMode, assignmentPool: s.assignmentPool, useLeads: s.useLeads,
       }, { onSuccess: () => toast.success(tx('Settings saved')), onError: onErr(tx('Could not save')) })}>{tx('Save settings')}</Button>
     </div>

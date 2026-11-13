@@ -55,6 +55,14 @@ public class SalesSettingsService {
         return db.row("SELECT * FROM \"SalesSettings\" WHERE \"organizationId\" = ?", org());
     }
 
+    /** Whether quotations offer product images (Image column, printed / PDF thumbnails); read-only, default off. */
+    @Transactional(readOnly = true)
+    public boolean quoteLineImages() {
+        Map<String, Object> r = db.row("SELECT \"quoteLineImages\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        return r != null && Boolean.TRUE.equals(r.get("quoteLineImages"));
+    }
+
     /** Partial update; unknown keys are ignored, invalid values and policy combinations rejected. */
     @Transactional
     public Map<String, Object> update(Map<String, Object> in) {
@@ -103,7 +111,8 @@ public class SalesSettingsService {
         }
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
                 "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
-                "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax", "cashBypassesCredit")) {
+                "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax", "cashBypassesCredit",
+                "quoteLineImages")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

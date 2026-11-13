@@ -75,8 +75,9 @@ public class SalesProformaController {
 
     @GetMapping("/quotations/{id}/pdf")
     @RequirePermissions(Permissions.SALES__QUOTATION_READ)
-    public ResponseEntity<byte[]> quotationPdf(@PathVariable String id) {
-        return pdf(quotations.pdf(id), "quotation-" + id);
+    public ResponseEntity<byte[]> quotationPdf(@PathVariable String id,
+            @RequestParam(required = false) Boolean images) {
+        return pdf(quotations.pdf(id, images), "quotation-" + id);
     }
 
     @PostMapping("/quotations/{id}/email")

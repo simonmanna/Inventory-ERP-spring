@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { GripVertical, Minus, PackageCheck, PackageX, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
+import { GripVertical, ImageOff, Minus, PackageCheck, PackageX, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,9 +16,10 @@ import type { ProductOption, QuoteLine as ApiQuoteLine } from '@/features/crm/su
 /** A quotation line with its typed size (ADR-S066: sold by length / area / volume). */
 export type QuoteLine = ApiQuoteLine & { size?: LineSize };
 import { money } from '@/lib/format';
+import { resolveAssetUrl } from '@/lib/api';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import { isLayout, lineAmounts, type TaxOption } from './quote-lines';
+import { IMAGE_COL, isLayout, lineAmounts, type ImageCol, type TaxOption } from './quote-lines';
 
 export type QuoteCol = 'product' | 'variant' | 'uom' | 'leadTime' | 'discount' | 'taxes' | 'unitCost' | 'margin' | 'marginPct'
   | 'taxExcl' | 'taxIncl';
@@ -28,6 +29,15 @@ const COLS: ReadonlyArray<LineColumn<QuoteCol>> = [
   ['marginPct', tx('Margin (%)')], ['taxExcl', tx('Tax Excl.')], ['taxIncl', tx('Tax Incl.')],
 ];
 const DEFAULT_COLS: QuoteCol[] = ['uom', 'discount', 'taxes'];
+
+/** Product thumbnail in a quotation line; a muted placeholder when the product has no picture. */
+function LineImage({ src, alt }: { src?: string | null; alt: string }) {
+  const [broken, setBroken] = useState(false);
+  const url = src && !broken ? resolveAssetUrl(src) : undefined;
+  return url
+    ? <a href={url} target="_blank" rel="noreferrer" title={alt}><img src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} className="h-12 w-12 rounded border bg-white object-contain" /></a>
+    : <span className="flex h-12 w-12 items-center justify-center rounded border border-dashed text-muted-foreground/50" title={tx('No image')}><ImageOff className="h-4 w-4" /></span>;
+}
 
 const SOURCE_LABEL: Record<string, string> = {
   list: tx('List price'), rule: tx('Price rule'), customer: tx('Customer discount'), manual: tx('Manual'),
@@ -54,6 +64,8 @@ interface Props {
   onMove: (from: number, to: number) => void;
   onAdd: (kind: 'line' | 'section' | 'note' | 'charge') => void;
   onCatalogAdd: (productId: string, delta: number) => void;
+  /** The Image column switch from {@link useQuoteImageColumn}; omitted while the organization has images off. */
+  imageColumn?: { show: boolean; toggle: () => void };
 }
 
 /** Picking a variant: its price (the server reprices on save) and its sales description when the line has none of its own. */
@@ -108,7 +120,13 @@ export function QuoteLinesTable(p: Props) {
 
   const optional: QuoteCol[] = ['product', 'variant', 'uom', 'leadTime', 'discount', 'taxes', 'unitCost', 'margin', 'marginPct', 'taxExcl', 'taxIncl'];
   // handle + description + quantity + unit price + amount + trailing column
-  const colCount = 6 + optional.filter(show).length;
+  const imageShown = !!p.imageColumn?.show;
+  const colCount = 6 + optional.filter(show).length + (imageShown ? 1 : 0);
+  // The picker lists Image first while images are on; it has its own remembered switch.
+  type PickerCol = QuoteCol | ImageCol;
+  const pickerCols: ReadonlyArray<LineColumn<PickerCol>> = p.imageColumn ? [...IMAGE_COL, ...COLS] : COLS;
+  const pickerSet = new Set<PickerCol>(imageShown ? ['image', ...cols] : cols);
+  const pickerToggle = (c: PickerCol) => (c === 'image' ? p.imageColumn?.toggle() : toggle(c));
   const th = 'py-2 pr-3 text-sm font-semibold whitespace-nowrap';
   const num = 'text-right tabular-nums';
 
@@ -162,6 +180,7 @@ export function QuoteLinesTable(p: Props) {
         <thead className="border-b text-left">
           <tr>
             <th className="w-6" />
+            {imageShown && <th className={cn(th, 'w-16')}>{tx('Image')}</th>}
             {show('product') && <th className={th}>{tx('Product')}</th>}
             <th className={cn(th, 'min-w-[14rem]')}>{tx('Description')}</th>
             {show('variant') && <th className={th}>{tx('Product Variant')}</th>}
@@ -177,7 +196,7 @@ export function QuoteLinesTable(p: Props) {
             {show('taxExcl') && <th className={cn(th, 'w-28 text-right')}>{tx('Tax Excl.')}</th>}
             {show('taxIncl') && <th className={cn(th, 'w-28 text-right')}>{tx('Tax Incl.')}</th>}
             <th className={cn(th, 'w-28 text-right')}>{tx('Amount')}</th>
-            <th className="w-10 py-2 text-right"><LineColumnsPicker columns={COLS} cols={cols} toggle={toggle} /></th>
+            <th className="w-10 py-2 text-right"><LineColumnsPicker columns={pickerCols} cols={pickerSet} toggle={pickerToggle} /></th>
           </tr>
         </thead>
         <tbody>
@@ -218,6 +237,7 @@ export function QuoteLinesTable(p: Props) {
             return (
               <tr key={i} className={rowCls} {...dragProps(i)}>
                 {handle(i)}
+                {imageShown && <td className="py-1.5 pr-3">{l.productId ? <LineImage key={(prod ? prod.image : l.productImage) ?? ''} src={prod ? prod.image : l.productImage} alt={l.productName ?? l.description} /> : null}</td>}
                 {show('product') && <td className="py-1.5 pr-3">{productCell(l, i, !show('variant'))}</td>}
                 <td className="py-1.5 pr-3">
                   {!show('product') && <div className="mb-1">{productCell(l, i, !show('variant'))}</div>}

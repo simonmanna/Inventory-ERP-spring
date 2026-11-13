@@ -55,6 +55,8 @@ export interface CrmSettings {
   quoteValidityDays: number;
   defaultQuoteTerms: string | null;
   autoWinOnConversion: boolean;
+  /** Quotations offer product images: an Image column each user can show or hide, also on print and PDF. */
+  quoteLineImages?: boolean;
   assignmentMode: 'manual' | 'round_robin' | 'least_loaded';
   assignmentPool: string[];
   rottingDays: number;
@@ -205,6 +207,8 @@ export interface QuoteLine {
   variantName?: string | null;
   uomId?: string | null;
   productName?: string | null;
+  /** Signed URL of the product image; only while the organization shows images on quotations. */
+  productImage?: string | null;
   productCode?: string | null;
   description: string;
   quantity: number;
@@ -232,6 +236,8 @@ export interface CreditInfo {
 
 export interface Quotation {
   id: string;
+  /** The organization shows product images on quotations (sales setting). */
+  lineImages?: boolean;
   internalNotes?: string | null;
   branchId?: string | null;
   paymentTermId?: string | null;
@@ -592,7 +598,7 @@ export function useCrmDashboard(scope: string) {
 }
 
 /** A product as `/products` lists it; also carries its units (ADR-S003) for line unit pickers. */
-export interface ProductOption extends UnitAwareProduct { id: string; name: string; code: string | null; salesPrice: number | string | null; taxId: string | null }
+export interface ProductOption extends UnitAwareProduct { id: string; name: string; code: string | null; salesPrice: number | string | null; taxId: string | null; image?: string | null }
 
 export function useProductOptions() {
   return useQuery({
