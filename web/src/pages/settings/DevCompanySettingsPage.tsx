@@ -20,6 +20,7 @@ interface DeveloperSettings {
   logoUrl: string | null;
   name: string;
   features: Record<string, boolean>;
+  sidebarTagline?: string | null;
 }
 
 /**
@@ -46,6 +47,7 @@ export function DevCompanySettingsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState('');
+  const [sidebarTagline, setSidebarTagline] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [features, setFeatures] = useState<Record<string, boolean>>({});
   const [uploading, setUploading] = useState(false);
@@ -68,6 +70,7 @@ export function DevCompanySettingsPage() {
   useEffect(() => {
     if (q.data) {
       setName(q.data.name);
+      setSidebarTagline(q.data.sidebarTagline ?? '');
       setLogoUrl(q.data.logoUrl);
       setFeatures(q.data.features);
     }
@@ -80,7 +83,7 @@ export function DevCompanySettingsPage() {
 
   const save = useMutation({
     mutationFn: async () => {
-      const payload: Record<string, unknown> = { name, features };
+      const payload: Record<string, unknown> = { name, features, sidebarTagline: sidebarTagline.trim() || null };
       if (logoUrl !== undefined) payload.logoUrl = logoUrl;
       return (await api.put('/settings/developer', payload)).data;
     },
@@ -241,6 +244,17 @@ export function DevCompanySettingsPage() {
                   className="mt-1"
                   placeholder={tx('Your company name')}
                 />
+                <label className="mt-4 block text-sm font-medium">{tx('Sidebar Tagline')}</label>
+                <Input
+                  value={sidebarTagline}
+                  onChange={(e) => setSidebarTagline(e.target.value)}
+                  className="mt-1"
+                  maxLength={60}
+                  placeholder={tx('Point of Sale')}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {tx('Shown under the company name in the sidebar. Leave empty to show "Point of Sale".')}
+                </p>
               </div>
 
               {/* POS Mode */}

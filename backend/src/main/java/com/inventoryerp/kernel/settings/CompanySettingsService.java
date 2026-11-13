@@ -115,7 +115,10 @@ public class CompanySettingsService {
     public Map<String, Object> getFeatures() {
         Map<String, Object> s = orgSettings(TenantContext.organizationId());
         Object features = s.get("features");
-        return Map.of("features", truthy(features) ? features : Map.of());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("features", truthy(features) ? features : Map.of());
+        out.put("sidebarTagline", sidebarTagline(s));
+        return out;
     }
 
     @Transactional(readOnly = true)
@@ -129,18 +132,40 @@ public class CompanySettingsService {
         out.put("logoUrl", truthy(logo) ? logo : null);
         out.put("name", name);
         out.put("features", truthy(features) ? features : Map.of());
+        out.put("sidebarTagline", sidebarTagline(s));
         return out;
     }
 
+    /**
+     * The line shown under the organization name in the sidebar header (owner-requested addition, not in Nest).
+     * {@code null} when never set or blank, so the web client falls back to its default label.
+     */
+    private static String sidebarTagline(Map<String, Object> settings) {
+        return settings.get("sidebarTagline") instanceof String t && !t.isBlank() ? t : null;
+    }
+
+    /**
+     * Saves the developer settings. {@code sidebarTagline} is only written when {@code taglineGiven}; a blank value
+     * clears it.
+     */
     @Transactional
-    public Map<String, Object> putDeveloperSettings(String name, String logoUrl, boolean logoGiven, Map<String, Object> features) {
+    public Map<String, Object> putDeveloperSettings(String name, String logoUrl, boolean logoGiven, Map<String, Object> features,
+            String sidebarTagline, boolean taglineGiven) {
         String orgId = TenantContext.organizationId();
         Map<String, Object> current = orgSettings(orgId);
         if (name != null) {
             jdbc.sql("UPDATE \"Organization\" SET name = ?, \"updatedAt\" = now() WHERE id = ?").params(name, orgId).update();
         }
-        if (logoGiven || features != null) {
+        if (logoGiven || features != null || taglineGiven) {
             Map<String, Object> next = new LinkedHashMap<>(current);
+            if (taglineGiven) {
+                String t = sidebarTagline == null ? "" : sidebarTagline.strip();
+                if (t.isEmpty()) {
+                    next.remove("sidebarTagline");
+                } else {
+                    next.put("sidebarTagline", t);
+                }
+            }
             if (logoGiven) {
                 next.put("logoUrl", logoUrl);
             }
