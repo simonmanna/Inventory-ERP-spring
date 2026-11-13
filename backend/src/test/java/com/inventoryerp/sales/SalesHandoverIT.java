@@ -106,4 +106,60 @@ class SalesHandoverIT extends ApiTestSupport {
         assertThat(call("GET", path, null, otherToken).status()).isEqualTo(404);
         assertThat(as("GET", "/sales/invoices/" + UUID.randomUUID() + "/handover", null).status()).isEqualTo(404);
     }
+
+    @Test
+    @DisplayName("invoice handover: deadline, picked / invoiced / returned per line, credit-note returns, delivery note PDF")
+    void invoiceColumnsReturnsAndNote() {
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", java.time.LocalDate.now()
+                .toString(), "lines", List.of(Map.of("productId", product, "quantity", 4, "unitPrice", 100))))
+                .get("id").asString();
+        String path = "/sales/invoices/" + inv + "/handover";
+        JsonNode h = ok(200, "GET", path, null);
+        assertThat(h.get("deadline").isNull()).isTrue();
+        assertThat(h.get("deliveryNoteNumber").asString()).startsWith("DN/");
+        assertThat(h.get("returns").size()).isZero();
+        assertThat(h.get("lines").get(0).get("invoicedQty").asDouble()).isEqualTo(4);
+        assertThat(h.get("lines").get(0).get("pickedQty").asDouble()).isZero();
+        assertThat(as("PATCH", path, Map.of("deadline", "not-a-date")).body().get("message").asString())
+                .isEqualTo("deadline must be a valid ISO 8601 date string");
+        assertThat(ok(200, "PATCH", path, Map.of("deadline", "2026-12-01T00:00:00Z")).get("deadline").asString())
+                .isEqualTo("2026-12-01");
+
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        ok(200, "PATCH", path, Map.of("method", "delivery", "address", "Plot 7", "status", "dispatched"));
+        assertThat(ok(200, "GET", path, null).get("lines").get(0).get("pickedQty").asDouble()).isEqualTo(4);
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", java.time.LocalDate.now()
+                .toString(), "reversedDocumentId", inv, "lines", List.of(Map.of("productId", product, "quantity", 1,
+                "unitPrice", 100)))).get("id").asString();
+        JsonNode draft = ok(200, "GET", path, null);
+        assertThat(draft.get("returns").size()).isEqualTo(1);
+        assertThat(draft.get("returns").get(0).get("counted").asBoolean()).isFalse();
+        assertThat(draft.get("lines").get(0).get("returnedQty").asDouble()).isZero();
+        ok(200, "POST", "/credit-notes/" + cn + "/post", null);
+        JsonNode after = ok(200, "GET", path, null);
+        assertThat(after.get("returns").get(0).get("status").asString()).isEqualTo("posted");
+        assertThat(after.get("returns").get(0).get("lines").get(0).get("quantity").asDouble()).isEqualTo(1);
+        assertThat(after.get("lines").get(0).get("returnedQty").asDouble()).isEqualTo(1);
+
+        java.net.http.HttpResponse<byte[]> pdf = downloadBytes(path + "/note");
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(pdf.headers().firstValue("Content-Type").orElse("")).startsWith("application/pdf");
+        assertThat(new String(pdf.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(call("GET", path + "/note", null, otherToken).status()).isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("order handover deadline defaults to the commitment date")
+    void orderDeadlineDefault() {
+        String id = order("collect");
+        jdbc.sql("UPDATE \"SalesOrder\" SET \"commitmentDate\" = DATE '2026-11-25' WHERE id = ?").param(id).update();
+        JsonNode h = ok(200, "GET", "/sales/orders/" + id + "/handover", null);
+        assertThat(h.get("deadline").asString()).isEqualTo("2026-11-25");
+        assertThat(h.get("lines").get(0).get("invoicedQty").asDouble()).isZero();
+        assertThat(ok(200, "GET", "/sales/orders/" + id + "/delivery-summary", null).get("deadline").asString())
+                .isEqualTo("2026-11-25");
+        ok(200, "PATCH", "/sales/orders/" + id + "/handover", Map.of("deadline", "2026-11-28"));
+        assertThat(ok(200, "GET", "/sales/orders/" + id + "/delivery-summary", null).get("deadline").asString())
+                .isEqualTo("2026-11-28");
+    }
 }

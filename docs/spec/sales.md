@@ -344,3 +344,91 @@ Some customers want product pictures on their quotations, others do not, so the 
   setting. While the setting is off no image prints, whatever `images` says. A picture that is missing, too large
   (> 5 MB) or in a format the PDF library cannot read (e.g. WebP) leaves its cell blank.
 - Tests: `SalesQuoteProformaIT.productImages`, `SalesDocumentPdfTest`.
+
+## Delivery & fulfilment management (2026-11-13, V484, owner request)
+
+Post-parity enhancement (not in the Nest reference). One sales order → many deliveries; a delivery is the existing
+manual-carrier `FleetLoad` (SG-9), so stock, costing, billing and discrepancies keep their single path. The order's
+Delivery & fulfilment tab (`web/src/pages/sales/delivery/`) manages everything inline.
+
+| Route | Permission |
+|---|---|
+| `GET /sales/orders/:id/delivery-summary` | `sales:delivery:read` |
+| `POST /sales/orders/:id/deliveries` (extended) | `sales:delivery:write` |
+| `PATCH /sales/deliveries/:id` | `sales:delivery:write` |
+| `GET /sales/deliveries/:id/history` | `sales:delivery:read` |
+| `POST /sales/deliveries/:id/issue` (was `write`) · `/depart` | `sales:delivery:dispatch` |
+| `POST /sales/deliveries/:id/confirm` (was `write`) · `/fail` · `/return` | `sales:delivery:confirm` |
+| `POST /sales/deliveries/:id/cancel` | `sales:delivery:cancel` |
+
+V484 grants the three new permissions to every role holding `sales:delivery:write` (no access lost).
+
+- **Per delivery** (FleetLoad columns): `deliveryMethod` (`customer_collect|site_delivery|warehouse_transfer|courier`),
+  `scheduledTime` (HH:mm), dispatch warehouse (`locationId`), `destinationLocationId` (required for a transfer),
+  `deliveryAddress`, site contact, driver + phone, vehicle + type, `transportCompany` (required for courier),
+  `trackingNumber`, `route`, `offloadingEquipment`, `expectedArrivalAt`, `arrivedAt`, `transportCost`, `tripExpenses`,
+  `attemptFailed`, `rescheduledFromId`. A plate is optional for customer collect and courier only.
+- **Stage** (derived): planned/loading/weighed → `scheduled`; `dispatched`; `in_transit`; delivered/closed →
+  `delivered`, or `partially_delivered` when any line delivered less than dispatched; returned → `failed`
+  (`attemptFailed`) or `returned`; `cancelled`.
+- **Order stage** (summary, independent of each delivery): `delivered` when every line's delivered ≥ ordered (ordered =
+  quantity − closed short), else `partially_delivered` if anything delivered, else `dispatched` if anything on the
+  road, else `scheduled` if anything planned, else `pending`. `SalesOrder.deliveryStatus` is unchanged.
+- **Quantities per line, one bucket each**: scheduled (planned on open trips), dispatched (on the road), delivered
+  (accepted at POD), rejected, damaged, shortage (= dispatched − accepted − rejected − damaged), returned (whole-load
+  returns / failed attempts). Outstanding = ordered − delivered. To schedule = ordered − scheduled − dispatched −
+  delivered − damaged − shortage (rejected and returned goods can go again). Percent delivered is weighted by line
+  value (falls back to the line average with no prices).
+- **Rules**: over-planning is refused under the delivery-order lock (no override); concurrent first deliveries on one
+  order are serialised by a transaction advisory lock; quantities change only while `planned` (`FleetDispatchService
+  .replan`); after dispatch only tracking, contact and costs change, after delivery only costs. Stock is issued once
+  at dispatch; confirmation only returns rejected goods; fail / return bring the whole load back at issue cost. POD
+  quantities cannot exceed what was dispatched.
+- **Documents**: per-delivery note PDF (existing), POD photos and signature, and DMS attachments on record type
+  `sales_delivery`. History = `AuditLog` rows of the `FleetLoad`.
+- **Order plan** (`SalesHandover`): methods `transfer` and `courier` added; new fields `gpsCoordinates`,
+  `offloadingSite`, `destinationLocationId`, `courierName`. The sales order tab no longer offers the manual handover
+  status buttons (Mark dispatched / delivered without stock movement); the status comes from the deliveries. The
+  invoice handover tab is unchanged.
+- Tests: `SalesDeliveryManagementIT` (multi-product partials, edit / re-plan / cancel / history, fail and reschedule,
+  shortage / damage / rejection, whole-load return, methods, concurrency, permissions).
+
+Invoices and branch cash sales (new and saved) use the same delivery tab layout (`HandoverDeliveryView`): status
+stepper with actions, overview tiles, the delivery plan panel, transport & schedule, receipt & notes and line
+fulfilment. They keep their single-handover model (`/sales/invoices/:id/handover`, `/sales/cash-sales/:id/delivery`):
+no trips and no stock movement from the tab. Cash sales offer customer collect / delivery only (their column CHECK);
+invoices offer all four methods. Invoice handover lines now return `uomCode`.
+
+### Delivery columns, delivery note and returns (2026-11-13, V485, owner request)
+
+Post-parity enhancement on the delivery tabs of sales orders, invoices and branch cash sales.
+
+| Route | Permission |
+|---|---|
+| `GET /sales/invoices/:id/handover/note` (PDF) | `invoice:read` |
+| `GET /sales/cash-sales/:id/delivery-note` (PDF) | `sales:cash_sale:read` |
+
+- **Deadline** (V485): `SalesHandover.deadline` and `SalesSubmission.deliveryDeadline` (DATE), the date the goods must
+  reach the customer by (the scheduled date is when they are planned to leave). Editable like the other plan fields
+  (`deadline` / `deliveryDeadline` on the existing PATCH routes, `<field> must be a valid ISO 8601 date string`); locked
+  once delivered. A sales order without one falls back to its commitment date, then its requested date
+  (`delivery-summary.deadline`).
+- **Line columns** (optional, chosen per user with the sliders button; remembered in browser storage):
+  date scheduled, deadline (red when past with quantity outstanding), demand, picked (tick when the whole line is
+  picked), issued / dispatched, delivered, invoiced, returned, outstanding, progress. Sources: sales order —
+  `delivery-summary.lines[].picked` (loaded, else dispatched, on loading → closed trips), `invoiced` (`qtyInvoiced −
+  qtyCredited`), `customerReturned` (`qtyReturned`, received RMAs) + `returned` (whole-load returns),
+  `scheduledDate` (earliest planned date of a trip not yet dispatched); invoice handover lines — `pickedQty` (full once
+  dispatched / delivered), `invoicedQty` (= quantity), `returnedQty`; cash sale lines — `returnedQty`. The deliveries
+  table gains optional Delivery note, Deadline, Returned / rejected and Delivered-on columns.
+- **Returns**: sales order — `delivery-summary.returns` (its `SalesReturn`s with lines); invoice — `handover.returns`,
+  the credit notes whose `reversedDocumentId` is the invoice; cash sale — `returns`, a void after confirm (all lines
+  back) plus credit notes against any of its head-office invoices. Only posted / paid credit notes count towards a
+  line's returned quantity (spread by product in line order, capped at the line quantity); drafts are listed with
+  `counted: false`.
+- **Delivery note**: invoice and cash sale notes are numbered `DN/<document number>` (derived, no sequence) and print
+  from `SalesDeliveryNotePdf` (company, delivery address, source document, shipping / scheduled / deadline dates,
+  ordered / delivered / returned per product, receipt or signature lines). Sales order deliveries keep the trip note
+  (numbered at dispatch); the delivery dialog and the order tab show an on-screen preview and list the notes.
+- Tests: `SalesHandoverIT.invoiceColumnsReturnsAndNote`, `SalesHandoverIT.orderDeadlineDefault`,
+  `CashSaleIT.deliveryAndFulfilment`, `CashSaleIT.voidSale`.

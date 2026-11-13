@@ -39,7 +39,7 @@ import {
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
-import { CashSaleDelivery } from './CashSaleDelivery';
+import { CASH_SALE_HIDE, CASH_SALE_METHODS, CashSaleDelivery } from './CashSaleDelivery';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { DELIVERY_ONLY, emptyHandover, type HandoverForm } from '@/pages/sales/handover-draft';
 
@@ -458,7 +458,7 @@ export function CashSalePage() {
             </TabsContent>
             <TabsContent value="delivery" className="mt-0 p-5">
               {s ? <CashSaleDelivery sale={s} busy={busy} run={run} />
-                : <HandoverDraftPanel value={handover} onChange={setHandover} hideLocation hint={tx('Plan how the goods reach the customer. Saved with the draft; dispatch and delivery follow once the sale is confirmed.')} />}
+                : <HandoverDraftPanel value={handover} onChange={setHandover} hideLocation methods={CASH_SALE_METHODS} hide={CASH_SALE_HIDE} hint={tx('Plan how the goods reach the customer. Saved with the draft; dispatch and delivery follow once the sale is confirmed.')} />}
             </TabsContent>
             <TabsContent value="documents" className="mt-0 p-5">
               {s ? <AttachmentPanel resType="sales_submission" resId={s.id} title={tx('Supporting documents')} writePermission={PERMISSIONS.sales.cashSaleCreate} bare />
@@ -778,7 +778,7 @@ const CASH_DELIVERY_KEYS: Partial<Record<keyof HandoverForm, string>> = {
   address: 'deliveryAddress', contactName: 'deliveryContactName', contactPhone: 'deliveryContactPhone',
   scheduledDate: 'deliveryScheduledDate', driver: 'deliveryDriver', vehicle: 'deliveryVehicle', notes: 'deliveryNotes',
   landmark: 'deliveryLandmark', loadingSite: 'deliveryLoadingSite', deliveryScope: 'deliveryScope',
-  offloadingEquipment: 'deliveryOffloadingEquipment',
+  offloadingEquipment: 'deliveryOffloadingEquipment', deadline: 'deliveryDeadline',
 };
 
 /** Save the delivery details planned on a new cash sale once the draft exists (only filled fields; status pending). */

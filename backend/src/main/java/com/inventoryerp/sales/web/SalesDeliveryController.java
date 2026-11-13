@@ -13,6 +13,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -56,6 +57,18 @@ public class SalesDeliveryController {
         return deliveries.get(id);
     }
 
+    @GetMapping("/deliveries/{id}/history")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public List<Map<String, Object>> history(@PathVariable String id) {
+        return deliveries.history(id);
+    }
+
+    @GetMapping("/orders/{id}/delivery-summary")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public Map<String, Object> summary(@PathVariable String id) {
+        return deliveries.summary(id);
+    }
+
     @GetMapping("/deliveries/{id}/note")
     @RequirePermissions(Permissions.SALES__DELIVERY_READ)
     public ResponseEntity<byte[]> note(@PathVariable String id) {
@@ -71,6 +84,38 @@ public class SalesDeliveryController {
         return deliveries.create(id, SalesController.body(b));
     }
 
+    @PatchMapping("/deliveries/{id}")
+    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.update(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/depart")
+    @RequirePermissions(Permissions.SALES__DELIVERY_DISPATCH)
+    public Map<String, Object> depart(@PathVariable String id) {
+        return deliveries.depart(id);
+    }
+
+    @PostMapping("/deliveries/{id}/cancel")
+    @RequirePermissions(Permissions.SALES__DELIVERY_CANCEL)
+    public Map<String, Object> cancel(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.cancel(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/fail")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> fail(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.fail(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/return")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> returnLoad(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.returnLoad(id, SalesController.body(b));
+    }
+
     @PostMapping("/deliveries/{id}/approve")
     @RequirePermissions(Permissions.SALES__DELIVERY_APPROVE)
     public Map<String, Object> approve(@PathVariable String id) {
@@ -79,14 +124,14 @@ public class SalesDeliveryController {
 
     @PostMapping("/deliveries/{id}/issue")
     @Idempotent
-    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    @RequirePermissions(Permissions.SALES__DELIVERY_DISPATCH)
     public Map<String, Object> issue(@PathVariable String id) {
         return deliveries.issue(id);
     }
 
     @PostMapping("/deliveries/{id}/confirm")
     @Idempotent
-    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> confirm(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.confirm(id, SalesController.body(b));
     }

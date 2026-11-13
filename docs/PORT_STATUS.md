@@ -102,6 +102,8 @@ stock events only after commit, cost policy / standard activation hourly on the 
 
 **Sales gap closure SG-1..12** (Spring-native, [ADR-S059](adr/ADR-S059-sales-gap-closure.md), [spec](spec/sales.md)): access, orders, quotes, proforma, customers, deliveries, pricing tools, returns and credit, credit policy, statements, commissions, targets. Migrations V401-V409. Release gate not run.
 
+**Sales delivery & fulfilment management** (Spring-native, [spec](spec/sales.md#delivery--fulfilment-management-2026-11-13-v484-owner-request)): many deliveries per order with own method / schedule / transport / outcome, order delivery summary, edit / re-plan / cancel / fail / return / reschedule, history, `sales_delivery` documents; 5 new routes, V484, `SalesDeliveryManagementIT`. Done 2026-11-13; full build not run. Delivery columns (date scheduled, deadline, picked, invoiced, returned…), delivery note PDF for invoices / cash sales and a Returns tab on all three: 2 new routes, V485, `SalesHandoverIT`, `CashSaleIT`.
+
 **Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.
 
 **Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**

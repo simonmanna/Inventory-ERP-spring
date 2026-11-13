@@ -201,6 +201,16 @@ public abstract class ApiTestSupport {
         return call(method, path, body, adminToken);
     }
 
+    /** Admin GET of a binary response (PDF, XLSX…). */
+    protected HttpResponse<byte[]> downloadBytes(String path) {
+        try {
+            return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1" + path))
+                    .header("Authorization", "Bearer " + adminToken).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** Admin call that must answer {@code status}. */
     protected JsonNode ok(int status, String method, String path, Object body) {
         Res r = as(method, path, body);

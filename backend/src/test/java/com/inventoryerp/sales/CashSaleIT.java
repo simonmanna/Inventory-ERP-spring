@@ -390,6 +390,10 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(as("PATCH", path, Map.of("deliveryMethod", "drone")).status()).isEqualTo(400);
         assertThat(as("PATCH", path, Map.of("grandTotal", 1)).status()).isEqualTo(400);
         ok(200, "PATCH", path, Map.of("deliveryStatus", "scheduled", "deliveryScheduledDate", "2026-11-10"));
+        assertThat(ok(200, "PATCH", path, Map.of("deliveryDeadline", "2026-11-12")).get("deliveryDeadline").asString())
+                .startsWith("2026-11-12");
+        assertThat(as("PATCH", path, Map.of("deliveryDeadline", "soon")).body().get("message").asString())
+                .isEqualTo("deliveryDeadline must be a valid ISO 8601 date string");
         JsonNode site = ok(200, "PATCH", path, Map.of("deliveryLandmark", "Behind Ntinda market",
                 "deliveryLoadingSite", "Showroom yard", "deliveryScope", "partial", "deliveryOffloadingEquipment", "yes"));
         assertThat(site.get("deliveryLandmark").asString()).isEqualTo("Behind Ntinda market");
@@ -409,6 +413,14 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(done.get("deliveredAt").isNull()).isFalse();
         assertThat(as("PATCH", p2, Map.of("deliveryStatus", "failed")).status()).isEqualTo(400);
         ok(200, "PATCH", p2, Map.of("deliveryNotes", "Signed delivery note filed"));
+        assertThat(as("PATCH", p2, Map.of("deliveryDeadline", "2026-12-01")).status()).isEqualTo(400);
+        JsonNode sale = ok(200, "GET", "/sales/cash-sales/" + id, null);
+        assertThat(sale.get("deliveryNoteNumber").asString()).isEqualTo("DN/" + sale.get("number").asString());
+        assertThat(sale.get("returns").size()).isZero();
+        assertThat(sale.get("lines").get(0).get("returnedQty").asDouble()).isZero();
+        java.net.http.HttpResponse<byte[]> note = downloadBytes("/sales/cash-sales/" + id + "/delivery-note");
+        assertThat(note.statusCode()).isEqualTo(200);
+        assertThat(new String(note.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
         JsonNode timeline = ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null);
         assertThat(timeline.findValuesAsString("action")).contains("delivery_dispatched", "delivery_delivered",
                 "delivery_update");
@@ -523,6 +535,10 @@ class CashSaleIT extends ApiTestSupport {
                 .isEqualTo(400);
         money("/sales/cash-sales/" + id + "/void", Map.of("reason", "Keyed twice", "goodsReturned", true), 200);
         assertThat(onHand(goods, location)).isEqualByComparingTo(stockBefore);
+        JsonNode voided = ok(200, "GET", "/sales/cash-sales/" + id, null);
+        assertThat(voided.get("returns").get(0).get("kind").asString()).isEqualTo("void");
+        assertThat(voided.get("returns").get(0).get("reason").asString()).isEqualTo("Keyed twice");
+        assertThat(voided.get("lines").get(0).get("returnedQty").asDouble()).isEqualTo(4);
         assertThat(unbilled(c)).isEqualByComparingTo("0");
         assertThat(revenueOf(id)).isEqualByComparingTo("0");
         assertThat(partnerBalance("customer_deposit", c)).isEqualByComparingTo("0");

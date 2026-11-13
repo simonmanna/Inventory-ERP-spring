@@ -79,6 +79,9 @@ public class DmsResourceRegistry {
                 new TableResource(jdbc, "sales_order", "Sales order", Permissions.SALES__ORDER_READ,
                         Permissions.SALES__ORDER_WRITE, "sales", "SELECT number FROM \"SalesOrder\" WHERE id = ? AND"
                         + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", "/sales/orders/"),
+                new TableResource(jdbc, "sales_delivery", "Sales delivery", Permissions.SALES__DELIVERY_READ,
+                        Permissions.SALES__DELIVERY_WRITE, "sales", "SELECT code FROM \"FleetLoad\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?", "/sales/deliveries/"),
                 new TableResource(jdbc, "purchase_order", "Purchase order",
                         Permissions.PROCUREMENT__PURCHASE_ORDER__READ, Permissions.PROCUREMENT__PURCHASE_ORDER__UPDATE,
                         "purchase", "SELECT \"orderNumber\" FROM \"PurchaseOrder\" WHERE id = ? AND"
