@@ -148,7 +148,7 @@ import {
 } from '@/components/ui/select';
 import { useAuthStore } from '@/stores/auth.store';
 import { useSidebarStore } from '@/lib/sidebar.store';
-import { useOrgFeatures } from '@/lib/use-org-features';
+import { useOrgFeatures, useSidebarTagline } from '@/lib/use-org-features';
 import { featureAvailable, posModeAllows, sectionEnabled } from '@/lib/features';
 import { usePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
@@ -1015,6 +1015,7 @@ export function AppShell() {
   // for a request — the server still refuses an unlicensed route with a clear
   // message if someone reaches it by URL.
   const { data: orgFeatures } = useOrgFeatures();
+  const { data: sidebarTagline } = useSidebarTagline();
   const { data: license } = useLicense();
   // Menus and Tables only apply to the cafe/restaurant POS mode.
   const { data: posSettings } = usePosSettings();
@@ -1323,7 +1324,7 @@ export function AppShell() {
                   marginTop: 2,
                 }}
               >
-                {tx('Point of Sale')}
+                {sidebarTagline || tx('Point of Sale')}
               </span>
             </div>
           )}
