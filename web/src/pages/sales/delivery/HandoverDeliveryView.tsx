@@ -15,7 +15,7 @@ import type { PlanMethod } from '@/features/sales/delivery-api';
 import type { HandoverForm } from '../handover-draft';
 import { Labeled } from './DeliveryEditorDialog';
 import { DeliveryPlanPanel } from './DeliveryPlanPanel';
-import { DeliveryNotePreview, ReturnsList, type ReturnView } from './delivery-docs';
+import { DeliveryDocuments, DeliveryNotePreview, ReturnsList, type DeliveryAttachments, type ReturnView } from './delivery-docs';
 import { Kpi, LineBar, Progress, Section, n, qty, qtyUnit } from './delivery-ui';
 
 /** Handover status of an invoice / branch cash sale (one handover per document). */
@@ -97,13 +97,13 @@ export function HandoverStepper({ status, collect }: { status: HandoverStatus; c
  */
 export function HandoverDeliveryView({
   form, onChange, status, lines, stockLocationName, issuedLabel = tx('Issued from stock'), methods, hide = [], planLocked, receiptLocked,
-  actions, notice, draft, dirty, saving, onSave, onDiscard, completed, tip, docs,
+  actions, notice, draft, dirty, saving, onSave, onDiscard, completed, tip, docs, attachments,
 }: {
   form: HandoverForm; onChange: (f: HandoverForm) => void; status: HandoverStatus; lines?: HandoverLineView[];
   stockLocationName?: string | null; issuedLabel?: string; methods?: PlanMethod[]; hide?: Array<keyof HandoverForm>;
   planLocked: boolean; receiptLocked: boolean; actions?: ReactNode; notice?: ReactNode; draft?: boolean;
   dirty?: boolean; saving?: boolean; onSave?: () => void; onDiscard?: () => void; completed?: ReactNode; tip?: string;
-  docs?: HandoverDocs;
+  docs?: HandoverDocs; attachments?: DeliveryAttachments;
 }) {
   const set = <K extends keyof HandoverForm>(k: K, v: HandoverForm[K]) => onChange({ ...form, [k]: v });
   const collect = form.method === 'pickup';
@@ -189,6 +189,19 @@ export function HandoverDeliveryView({
           </div>
         </Section>
       </div>
+
+      {/* delivery documents: printable delivery note and uploaded delivery documents */}
+      {!draft && (docs || attachments) && (
+        <DeliveryDocuments attachments={attachments}
+          emptyNote={tx('The delivery note is numbered once the document is saved.')}
+          notes={docs?.noteNumber ? [{
+            key: 'note', number: docs.noteNumber,
+            caption: [docs.sourceNumber ? `${docs.sourceLabel} ${docs.sourceNumber}` : null,
+              status === 'delivered' ? (collect ? tx('Collected') : tx('Delivered')) : null].filter(Boolean).join(' · ') || null,
+            preview: <HandoverNotePreview docs={docs} form={form} rows={rows} done={status === 'delivered'} collect={collect} />,
+            onPrint: docs.onNote && (() => docs.onNote!('print')), onDownload: docs.onNote && (() => docs.onNote!('download')),
+          }] : []} />
+      )}
 
       {/* fulfilment: operations, delivery note, returns */}
       {!draft && (
@@ -302,13 +315,7 @@ function Fulfilment({ rows, status, collect, tracksIssue, issuedLabel, stockLoca
         </TabsContent>
         {docs && (
           <TabsContent value="note" className="px-4 pb-4">
-            <DeliveryNotePreview number={docs.noteNumber} sourceLabel={docs.sourceLabel} sourceNumber={docs.sourceNumber}
-              customer={docs.customerName ?? form.contactName} address={collect ? null : form.address}
-              contact={[form.contactName, form.contactPhone].filter(Boolean).join(' · ') || null}
-              shippingDate={done ? docs.deliveredAt : null} scheduledDate={form.scheduledDate || null} deadline={form.deadline || null}
-              receivedBy={done ? form.receivedBy || null : null}
-              lines={rows.map((l) => ({ id: l.id, name: l.name, uom: l.uom, ordered: l.ordered, delivered: l.handedOver, returned: n(l.returned) }))}
-              onPrint={docs.onNote && (() => docs.onNote!('print'))} onDownload={docs.onNote && (() => docs.onNote!('download'))} />
+            <HandoverNotePreview docs={docs} form={form} rows={rows} done={done} collect={collect} />
           </TabsContent>
         )}
         {docs && (
@@ -318,6 +325,21 @@ function Fulfilment({ rows, status, collect, tracksIssue, issuedLabel, stockLoca
         )}
       </Tabs>
     </Section>
+  );
+}
+
+/** On-screen delivery note of a single-handover document (the same content as the printed PDF). */
+function HandoverNotePreview({ docs, form, rows, done, collect }: {
+  docs: HandoverDocs; form: HandoverForm; rows: HandoverLineView[]; done: boolean; collect: boolean;
+}) {
+  return (
+    <DeliveryNotePreview number={docs.noteNumber} sourceLabel={docs.sourceLabel} sourceNumber={docs.sourceNumber}
+      customer={docs.customerName ?? form.contactName} address={collect ? null : form.address}
+      contact={[form.contactName, form.contactPhone].filter(Boolean).join(' · ') || null}
+      shippingDate={done ? docs.deliveredAt : null} scheduledDate={form.scheduledDate || null} deadline={form.deadline || null}
+      receivedBy={done ? form.receivedBy || null : null}
+      lines={rows.map((l) => ({ id: l.id, name: l.name, uom: l.uom, ordered: l.ordered, delivered: l.handedOver, returned: n(l.returned) }))}
+      onPrint={docs.onNote && (() => docs.onNote!('print'))} onDownload={docs.onNote && (() => docs.onNote!('download'))} />
   );
 }
 

@@ -25,7 +25,7 @@ import {
   openDeliveryNote, useDeliveryAction, useDeliveryPlan, useDeliverySummary, useOrderDeliveries,
   type DeliveryMethod, type DeliveryPlan, type DeliveryStage, type OrderReturn, type SalesDelivery, type SummaryLine,
 } from '@/features/sales/delivery-api';
-import { ReturnsList, orderReturnView } from './delivery-docs';
+import { DeliveryDocuments, ReturnsList, orderReturnView } from './delivery-docs';
 import { PickedCell } from './HandoverDeliveryView';
 import type { HandoverForm } from '../handover-draft';
 import { DeliveryActionDialogs } from './DeliveryActionsHost';
@@ -208,6 +208,16 @@ export function OrderDeliveryTab({ order, requestedDate, onRequestedDate, dateEd
           </div>
         </div>
       </div>
+
+      {/* delivery documents: one delivery note per dispatched delivery, uploaded delivery documents */}
+      <DeliveryDocuments
+        notes={list.filter((d) => d.deliveryNoteNumber).map((d) => ({
+          key: d.id, number: d.deliveryNoteNumber!,
+          caption: `${d.code} · ${d.dispatchedAt ? fmtDate(d.dispatchedAt) : scheduleLabel(d.plannedDate, d.scheduledTime)} · ${STAGE_META[d.stage]?.label ?? d.stage}`,
+          onPrint: () => void openDeliveryNote(d, 'print'), onDownload: () => void openDeliveryNote(d, 'download'),
+        }))}
+        emptyNote={tx('Each delivery gets a numbered delivery note when it is dispatched.')}
+        attachments={{ resType: 'sales_order_delivery', resId: order.id, writePermission: P.deliveryWrite }} />
 
       {footer}
 

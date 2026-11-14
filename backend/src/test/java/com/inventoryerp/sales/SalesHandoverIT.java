@@ -162,4 +162,20 @@ class SalesHandoverIT extends ApiTestSupport {
         assertThat(ok(200, "GET", "/sales/orders/" + id + "/delivery-summary", null).get("deadline").asString())
                 .isEqualTo("2026-11-28");
     }
+
+    @Test
+    @DisplayName("delivery documents: own DMS record types for order and invoice deliveries, tenant scoped")
+    void deliveryDocumentRecordTypes() {
+        String id = order("collect");
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", java.time.LocalDate.now()
+                .toString(), "lines", List.of(Map.of("productId", product, "quantity", 1, "unitPrice", 100))))
+                .get("id").asString();
+        assertThat(ok(200, "GET", "/dms/records/sales_order_delivery/" + id + "/count", null).get("count").asLong())
+                .isZero();
+        assertThat(ok(200, "GET", "/dms/records/invoice_delivery/" + inv + "/attachments", null).size()).isZero();
+        assertThat(as("GET", "/dms/records/sales_order_delivery/" + UUID.randomUUID() + "/attachments", null).status())
+                .isEqualTo(404);
+        assertThat(call("GET", "/dms/records/invoice_delivery/" + inv + "/attachments", null, otherToken).status())
+                .isEqualTo(404);
+    }
 }

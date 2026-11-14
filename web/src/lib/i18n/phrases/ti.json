@@ -13490,5 +13490,10 @@
   "Product images on quotations (optional Image column, print and PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ (ኣማራጺ ዓምዲ ስእሊ፣ ሕትመትን PDFን)",
   "Send WhatsApp": "ብWhatsApp ስደድ",
   "Thank you for your business!": "ስለ ንግድኹም የቐንየልና!",
-  "Thank you for your business! — {{org}}": "ስለ ንግድኹም የቐንየልና! — {{org}}"
+  "Thank you for your business! — {{org}}": "ስለ ንግድኹም የቐንየልና! — {{org}}",
+  "Delivery documents": "ሰነዳት ምብጻሕ",
+  "Delivery attachments": "ተተሓሒዞም ምብጻሕ",
+  "No delivery note yet.": "ገና ናይ ምብጻሕ ሰነድ የለን።",
+  "The delivery note is numbered once the document is saved.": "ናይ ምብጻሕ ሰነድ እቲ ሰነድ ምስ ተዓቀበ ቁጽሪ ይወሃቦ።",
+  "Each delivery gets a numbered delivery note when it is dispatched.": "ነፍሲ ወከፍ ምብጻሕ ምስ ተላእከ ቁጽሪ ዘለዎ ናይ ምብጻሕ ሰነድ ይረክብ።"
 }

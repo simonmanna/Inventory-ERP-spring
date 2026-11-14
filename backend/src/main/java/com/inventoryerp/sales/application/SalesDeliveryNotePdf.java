@@ -9,6 +9,7 @@ import org.openpdf.text.DocumentException;
 import org.openpdf.text.Element;
 import org.openpdf.text.Font;
 import org.openpdf.text.FontFactory;
+import org.openpdf.text.Image;
 import org.openpdf.text.PageSize;
 import org.openpdf.text.Paragraph;
 import org.openpdf.text.Phrase;
@@ -18,9 +19,10 @@ import org.openpdf.text.pdf.PdfPTable;
 import org.openpdf.text.pdf.PdfWriter;
 
 /**
- * Printable A4 delivery note of a document with a single handover (sales invoice, branch cash sale): company, delivery
- * address, note number, source document, shipping / scheduled / deadline dates, transport, and per product the ordered
- * and delivered quantities (returned too, once anything came back), then the receipt or blank signature lines.
+ * Printable A4 delivery note of a document with a single handover (sales invoice, branch cash sale): letterhead (logo,
+ * business name and address), delivery address, note number, source document, shipping / scheduled / deadline dates,
+ * transport, and per product the ordered and delivered quantities (returned too, once anything came back), then the
+ * receipt or blank signature lines.
  * Sales order deliveries print the trip delivery note instead ({@code FleetDeliveryNoteService}).
  */
 public final class SalesDeliveryNotePdf {
@@ -29,7 +31,7 @@ public final class SalesDeliveryNotePdf {
     public record Line(String product, String uom, BigDecimal ordered, BigDecimal delivered, BigDecimal returned) {}
 
     /** Everything printed on the note; null values are left out. */
-    public record Note(String company, String number, String sourceLabel, String sourceNumber, String customer,
+    public record Note(SalesLetterhead.Head head, String number, String sourceLabel, String sourceNumber, String customer,
             String address, String contact, String method, String shippingDate, String scheduledDate, String deadline,
             String driver, String vehicle, String receivedBy, String deliveredAt, String notes, List<Line> lines) {}
 
@@ -46,7 +48,7 @@ public final class SalesDeliveryNotePdf {
             Font body = FontFactory.getFont(FontFactory.HELVETICA, 10);
             Font bold = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10);
             Font gray = FontFactory.getFont(FontFactory.HELVETICA, 9, java.awt.Color.GRAY);
-            pdf.add(new Paragraph(s(n.company()), FontFactory.getFont(FontFactory.HELVETICA, 18)));
+            pdf.add(letterhead(n.head(), body));
             pdf.add(new Paragraph(" "));
 
             PdfPTable to = new PdfPTable(new float[] {1f, 1f});
@@ -130,6 +132,41 @@ public final class SalesDeliveryNotePdf {
             throw new IllegalStateException(e);
         }
         return new Pdf(s(n.number()).replace('/', '-') + ".pdf", out.toByteArray());
+    }
+
+    /** Logo (when uploaded) on the left, business name and address lines beside it. */
+    private static PdfPTable letterhead(SalesLetterhead.Head head, Font body) {
+        Image logo = image(head == null ? null : head.logo());
+        PdfPTable t = logo == null ? new PdfPTable(1) : new PdfPTable(new float[] {1.3f, 2.7f});
+        t.setWidthPercentage(100);
+        if (logo != null) {
+            logo.scaleToFit(150, 60);
+            PdfPCell c = new PdfPCell(logo, false);
+            c.setBorder(Rectangle.NO_BORDER);
+            c.setVerticalAlignment(Element.ALIGN_TOP);
+            t.addCell(c);
+        }
+        PdfPCell who = plain("", body);
+        who.addElement(new Phrase(head == null ? "" : s(head.name()), FontFactory.getFont(FontFactory.HELVETICA, 16)));
+        if (head != null) {
+            for (String line : head.lines()) {
+                who.addElement(new Phrase(line, body));
+            }
+        }
+        t.addCell(who);
+        return t;
+    }
+
+    /** PNG / JPEG logo, or {@code null} when absent or unreadable (the note renders without it). */
+    private static Image image(byte[] logo) {
+        if (logo == null || logo.length == 0) {
+            return null;
+        }
+        try {
+            return Image.getInstance(logo);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static void append(StringBuilder b, String v) {

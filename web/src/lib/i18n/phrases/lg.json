@@ -13490,5 +13490,10 @@
   "Product images on quotations (optional Image column, print and PDF)": "Ebifaananyi by'ebintu ku quotation (empagi y'Ekifaananyi ey'okwesalirawo, okukuba ne PDF)",
   "Send WhatsApp": "Weereza ku WhatsApp",
   "Thank you for your business!": "Webale kugula naffe!",
-  "Thank you for your business! — {{org}}": "Webale kugula naffe! — {{org}}"
+  "Thank you for your business! — {{org}}": "Webale kugula naffe! — {{org}}",
+  "Delivery documents": "Ebiwandiiko by'okutuusa",
+  "Delivery attachments": "Ebigattiddwako ku kutuusa",
+  "No delivery note yet.": "Tewannabaawo kiwandiiko kya kutuusa.",
+  "The delivery note is numbered once the document is saved.": "Ekiwandiiko ky'okutuusa kifuna ennamba ng'ekiwandiiko kiterekeddwa.",
+  "Each delivery gets a numbered delivery note when it is dispatched.": "Buli kutuusa kufuna ekiwandiiko ky'okutuusa ekirina ennamba nga kusindikiddwa."
 }

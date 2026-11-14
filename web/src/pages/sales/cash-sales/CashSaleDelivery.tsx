@@ -95,6 +95,7 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
       tip={tx('Stock leaves the showroom when the sale is confirmed; here you track how the goods reach the customer.')}
       completed={done ? `${collect ? tx('Collected') : tx('Delivered')} ${sale.deliveredAt ? date(sale.deliveredAt) : ''}${sale.deliveredByName ? ` · ${sale.deliveredByName}` : ''}` : undefined}
       dirty={editable && dirty} saving={busy} onSave={() => void save()} onDiscard={() => setF(base)}
+      attachments={{ resType: 'cash_sale_delivery', resId: sale.id, writePermission: PERMISSIONS.sales.cashSaleCreate }}
       docs={{
         noteNumber: sale.deliveryNoteNumber ?? `DN/${sale.number}`, sourceLabel: tx('Cash sale'), sourceNumber: sale.number,
         customerName: sale.customerName ?? sale.partnerName, deliveredAt: sale.deliveredAt, returns: sale.returns ?? [], currency: sale.currencyCode,

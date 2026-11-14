@@ -421,6 +421,10 @@ class CashSaleIT extends ApiTestSupport {
         java.net.http.HttpResponse<byte[]> note = downloadBytes("/sales/cash-sales/" + id + "/delivery-note");
         assertThat(note.statusCode()).isEqualTo(200);
         assertThat(new String(note.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(ok(200, "GET", "/dms/records/cash_sale_delivery/" + id + "/count", null).get("count").asLong())
+                .isZero();
+        assertThat(as("GET", "/dms/records/cash_sale_delivery/" + UUID.randomUUID() + "/attachments", null).status())
+                .isEqualTo(404);
         JsonNode timeline = ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null);
         assertThat(timeline.findValuesAsString("action")).contains("delivery_dispatched", "delivery_delivered",
                 "delivery_update");
