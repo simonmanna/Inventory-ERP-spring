@@ -13495,5 +13495,6 @@
   "Delivery attachments": "ተተሓሒዞም ምብጻሕ",
   "No delivery note yet.": "ገና ናይ ምብጻሕ ሰነድ የለን።",
   "The delivery note is numbered once the document is saved.": "ናይ ምብጻሕ ሰነድ እቲ ሰነድ ምስ ተዓቀበ ቁጽሪ ይወሃቦ።",
-  "Each delivery gets a numbered delivery note when it is dispatched.": "ነፍሲ ወከፍ ምብጻሕ ምስ ተላእከ ቁጽሪ ዘለዎ ናይ ምብጻሕ ሰነድ ይረክብ።"
+  "Each delivery gets a numbered delivery note when it is dispatched.": "ነፍሲ ወከፍ ምብጻሕ ምስ ተላእከ ቁጽሪ ዘለዎ ናይ ምብጻሕ ሰነድ ይረክብ።",
+  "Theme": "ቅዲ"
 }
