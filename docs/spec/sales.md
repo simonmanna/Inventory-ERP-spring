@@ -432,3 +432,16 @@ Post-parity enhancement on the delivery tabs of sales orders, invoices and branc
   (numbered at dispatch); the delivery dialog and the order tab show an on-screen preview and list the notes.
 - Tests: `SalesHandoverIT.invoiceColumnsReturnsAndNote`, `SalesHandoverIT.orderDeadlineDefault`,
   `CashSaleIT.deliveryAndFulfilment`, `CashSaleIT.voidSale`.
+
+### Delivery documents (2026-11-14, owner request)
+
+- The delivery details of branch cash sales, sales orders and invoices gain a **Delivery documents** section: the
+  printable delivery note(s) — preview, print, PDF (orders list one note per dispatched delivery) — and an upload area
+  for delivery documents (signed delivery note, proof of delivery, waybill, photos).
+- Uploads use their own DMS record types (built-ins, "sales" workspace), kept apart from the record's other files:
+  `cash_sale_delivery` (SalesSubmission; read `sales:cash_sale:read`, write `sales:cash_sale:create`),
+  `invoice_delivery` (Document; `invoice:read` / `invoice:update`), `sales_order_delivery` (SalesOrder;
+  `sales:order:read` / `sales:delivery:write`). Per-trip files stay on `sales_delivery`.
+- `SalesDeliveryNotePdf` prints a letterhead (`SalesLetterhead`): the company logo (Developer settings) and the
+  receipt-header business name, address lines, phone and TIN, falling back to the organization name.
+- Tests: `SalesHandoverIT.deliveryDocumentRecordTypes`, `CashSaleIT.deliveryAndFulfilment`.

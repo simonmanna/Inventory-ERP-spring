@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CalendarClock, CheckCircle2, Truck, XCircle } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
@@ -114,6 +115,9 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
       planLocked={!editable || done} receiptLocked={!editable} actions={actions || undefined} notice={notice}
       completed={done ? `${collect ? tx('Collected') : tx('Delivered')} ${h.deliveredAt ? date(h.deliveredAt) : ''}${h.deliveredByName ? ` · ${h.deliveredByName}` : ''}` : undefined}
       dirty={editable && dirty} saving={busy} onSave={() => send()} onDiscard={() => setF(base)}
+      attachments={h.sourceType === 'invoice'
+        ? { resType: 'invoice_delivery', resId: h.sourceId, writePermission: PERMISSIONS.invoice.update }
+        : { resType: 'sales_order_delivery', resId: h.sourceId, writePermission: PERMISSIONS.sales.deliveryWrite }}
       docs={h.sourceType === 'invoice' ? {
         noteNumber: h.deliveryNoteNumber ?? null, sourceLabel: tx('Invoice'), sourceNumber: h.sourceNumber, customerName,
         deliveredAt: h.deliveredAt, returns: h.returns ?? [], currency,

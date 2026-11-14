@@ -3,17 +3,12 @@ package com.inventoryerp.sales.application;
 import com.inventoryerp.core.application.ProductSizingService;
 import static com.inventoryerp.sales.application.SalesDb.org;
 
-import com.inventoryerp.kernel.files.FilesService;
-import com.inventoryerp.kernel.files.FilesService.FileMeta;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.ClientAnchor;
@@ -49,9 +44,6 @@ public class CashSaleFormExporter {
 
     public static final String PDF_CONTENT_TYPE = "application/pdf";
 
-    private static final Pattern FILE_ID = Pattern.compile("/files/([0-9a-fA-F-]{36})/");
-    private static final long MAX_LOGO_BYTES = 5L * 1024 * 1024;
-
     private static final String ORANGE = "F79646";
     private static final String ORANGE_DARK = "E26B0A";
     private static final String ORANGE_LIGHT = "FCD5B4";
@@ -66,12 +58,12 @@ public class CashSaleFormExporter {
 
     private final CashSaleService sales;
     private final SalesDb db;
-    private final FilesService files;
+    private final SalesLetterhead letterhead;
 
-    public CashSaleFormExporter(CashSaleService sales, SalesDb db, FilesService files) {
+    public CashSaleFormExporter(CashSaleService sales, SalesDb db, SalesLetterhead letterhead) {
         this.sales = sales;
         this.db = db;
-        this.files = files;
+        this.letterhead = letterhead;
     }
 
     /** The cash sale form of submission {@code id} as an XLSX workbook. */
@@ -82,7 +74,7 @@ public class CashSaleFormExporter {
         Map<String, Object> o = db.row("SELECT name, settings->>'logoUrl' AS \"logoUrl\" FROM \"Organization\""
                 + " WHERE id = ?", org());
         String company = o == null ? "" : text(o.get("name"));
-        byte[] logo = o == null ? null : logo(text(o.get("logoUrl")));
+        byte[] logo = o == null ? null : letterhead.logo(text(o.get("logoUrl")));
         List<Map<String, Object>> lines = (List<Map<String, Object>>) s.getOrDefault("lines", List.of());
         String number = text(s.get("number"));
         return new Export("cash-sale-" + (number.isEmpty() ? id : number).replaceAll("[^A-Za-z0-9._-]", "_") + ".xlsx",
@@ -97,7 +89,7 @@ public class CashSaleFormExporter {
         Map<String, Object> o = db.row("SELECT name, settings->>'logoUrl' AS \"logoUrl\" FROM \"Organization\""
                 + " WHERE id = ?", org());
         String company = o == null ? "" : text(o.get("name"));
-        byte[] logo = o == null ? null : logo(text(o.get("logoUrl")));
+        byte[] logo = o == null ? null : letterhead.logo(text(o.get("logoUrl")));
         List<Map<String, Object>> lines = (List<Map<String, Object>>) s.getOrDefault("lines", List.of());
         String number = text(s.get("number"));
         return new Export("cash-sale-" + (number.isEmpty() ? id : number).replaceAll("[^A-Za-z0-9._-]", "_") + ".pdf",
@@ -240,27 +232,6 @@ public class CashSaleFormExporter {
         XSSFClientAnchor a = new XSSFClientAnchor(0, 76200, 1036320, 19882, 0, 1, 0, 6);
         a.setAnchorType(ClientAnchor.AnchorType.MOVE_DONT_RESIZE);
         drawing.createPicture(a, pic);
-    }
-
-    // ------------------------------------------------------------------ logo
-
-    /** Bytes of the organization logo (a file of this org referenced by its signed URL), or {@code null}. */
-    private byte[] logo(String logoUrl) {
-        Matcher m = FILE_ID.matcher(logoUrl == null ? "" : logoUrl);
-        if (!m.find()) {
-            return null;
-        }
-        try {
-            FileMeta meta = files.meta(m.group(1));
-            if (meta == null || meta.byteSize() > MAX_LOGO_BYTES) {
-                return null;
-            }
-            try (InputStream in = files.open(meta)) {
-                return in.readNBytes((int) MAX_LOGO_BYTES);
-            }
-        } catch (IOException | RuntimeException e) {
-            return null; // the form still renders without a logo
-        }
     }
 
     // ------------------------------------------------------------------ cells

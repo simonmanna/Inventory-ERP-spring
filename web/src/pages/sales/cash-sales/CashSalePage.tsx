@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, Paperclip, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, UserPlus, Wallet, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, FileSpreadsheet, FileText, FileX, History, MessageCircle, Paperclip, Pencil, Plus, Receipt, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2, Truck, Undo2, UserPlus, Wallet, X, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,7 @@ import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
+import { openWhatsapp, whatsappNumber } from '@/lib/whatsapp';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
 import { UnitSelect } from '@/components/unit-select';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
@@ -35,7 +36,7 @@ import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import {
-  DELIVERY_STATUS_LABEL, METHOD_LABEL, downloadCashSaleExcel, downloadCashSalePdf, idem, useBranchProfiles, useCashSale, usePaymentModes,
+  DELIVERY_STATUS_LABEL, METHOD_LABEL, cashSaleWhatsappText, downloadCashSaleExcel, downloadCashSalePdf, idem, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
@@ -103,6 +104,7 @@ export function CashSalePage() {
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const me = useAuthStore((st) => st.user);
   const currentBranchId = useAuthStore((st) => st.currentBranchId);
+  const org = useAuthStore((st) => st.organization);
   const users = useCrmUsers();
   const [saleDate, setSaleDate] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [salespersonId, setSalespersonId] = useState(me?.id ?? '');
@@ -227,6 +229,10 @@ export function CashSalePage() {
   } });
   if (s) menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <FileText className={ico} />, onSelect: () => {
     downloadCashSalePdf(s.id, s.number).catch((e) => toast.error(apiErrorMessage(e, tx('Could not download the PDF file'))));
+  } });
+  if (s) menu.push({ key: 'whatsapp', label: tx('Send WhatsApp'), icon: <MessageCircle className={ico} />, onSelect: () => {
+    const phone = whatsappNumber(s.customerPhone || s.deliveryContactPhone, org?.timezone);
+    openWhatsapp(cashSaleWhatsappText(s, org?.name), phone);
   } });
   if (has('amend')) menu.push({ key: 'amend', label: tx('Correct details'), icon: <Pencil className={ico} />, onSelect: () => setDialog('amend') });
   if (has('reopen')) menu.push({ key: 'reopen', label: tx('Reopen'), icon: <RotateCcw className={ico} />, onSelect: () => setDialog('reopen') });

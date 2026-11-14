@@ -1,6 +1,9 @@
-import { Download, FileText, Printer, Undo2 } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { Download, Eye, FileText, FolderOpen, Printer, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date as fmtDate, money } from '@/lib/format';
@@ -8,7 +11,7 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import type { OrderReturn, ReturnView } from '@/features/sales/delivery-api';
-import { n, qty, qtyUnit } from './delivery-ui';
+import { Section, n, qty, qtyUnit } from './delivery-ui';
 
 export type { ReturnView };
 
@@ -108,6 +111,62 @@ export function DeliveryNotePreview({
   );
 }
 
+
+/** One printable delivery note in the documents section. {@code preview} is the on-screen note shown in a dialog. */
+export interface NoteDoc {
+  key: string; number: string; caption?: string | null; preview?: ReactNode; onPrint?: () => void; onDownload?: () => void;
+}
+
+/** Where the delivery's uploaded documents are stored (a DMS record type of its own, apart from the record's files). */
+export interface DeliveryAttachments { resType: string; resId: string; writePermission?: string }
+
+/**
+ * Delivery documents of a document's delivery details: the printable delivery note(s) — preview, print, PDF — and
+ * the uploaded delivery documents (signed delivery note, proof of delivery, waybill, photos).
+ */
+export function DeliveryDocuments({ notes, emptyNote, attachments }: {
+  notes: NoteDoc[]; emptyNote?: string; attachments?: DeliveryAttachments;
+}) {
+  const [open, setOpen] = useState<NoteDoc | null>(null);
+  return (
+    <Section icon={FolderOpen} title={tx('Delivery documents')}>
+      <div className={cn('grid gap-5', attachments && 'lg:grid-cols-2')}>
+        <div className="space-y-2">
+          <span className="flex items-center gap-1.5 text-sm font-medium"><FileText className="h-4 w-4" />{tx('Delivery note')}</span>
+          {notes.length ? (
+            <ul className="divide-y rounded-md border">
+              {notes.map((d) => (
+                <li key={d.key} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                  <FileText className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{d.number}</span>
+                    {d.caption && <span className="ml-2 text-xs text-muted-foreground">{d.caption}</span>}
+                  </span>
+                  {d.preview && <Button size="sm" variant="ghost" className="h-8" onClick={() => setOpen(d)}><Eye className="mr-1 h-4 w-4" />{tx('Preview')}</Button>}
+                  {d.onPrint && <Button size="sm" variant="outline" className="h-8" onClick={d.onPrint}><Printer className="mr-1 h-4 w-4" />{tx('Print')}</Button>}
+                  {d.onDownload && <Button size="sm" variant="outline" className="h-8" onClick={d.onDownload}><Download className="mr-1 h-4 w-4" />{tx('PDF')}</Button>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">{emptyNote ?? tx('No delivery note yet.')}</p>
+          )}
+          <p className="text-xs text-muted-foreground">{tx('Print it to travel with the goods; the customer signs on receipt.')}</p>
+        </div>
+        {attachments && (
+          <AttachmentPanel resType={attachments.resType} resId={attachments.resId} writePermission={attachments.writePermission}
+            title={tx('Delivery attachments')} tags={['Delivery']} bare />
+        )}
+      </div>
+      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>{tx('Delivery note')} {open?.number}</DialogTitle></DialogHeader>
+          {open?.preview}
+        </DialogContent>
+      </Dialog>
+    </Section>
+  );
+}
 
 const KIND_LABEL: Record<ReturnView['kind'], string> = {
   sales_return: tx('Sales return'), credit_note: tx('Credit note'), void: tx('Sale voided — goods back'),

@@ -13487,5 +13487,14 @@
   "Saved suppliers are selected on this document straight away.": "ዝተዓቀበ ኣቕራቢ ብቕጽበት ኣብዚ ሰነድ ይምረጽ።",
   "No image": "ስእሊ የለን",
   "Show product images on quotations (an optional Image column each user can hide; also printed and in the PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ ኣርኢ (ነፍሲ ወከፍ ተጠቃሚ ክሕብኦ ዝኽእል ኣማራጺ ዓምዲ ስእሊ፤ ኣብ ሕትመትን PDFን እውን)",
-  "Product images on quotations (optional Image column, print and PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ (ኣማራጺ ዓምዲ ስእሊ፣ ሕትመትን PDFን)"
+  "Product images on quotations (optional Image column, print and PDF)": "ስእልታት ፍርያት ኣብ ዋጋ ምሃብ (ኣማራጺ ዓምዲ ስእሊ፣ ሕትመትን PDFን)",
+  "Send WhatsApp": "ብWhatsApp ስደድ",
+  "Thank you for your business!": "ስለ ንግድኹም የቐንየልና!",
+  "Thank you for your business! — {{org}}": "ስለ ንግድኹም የቐንየልና! — {{org}}",
+  "Delivery documents": "ሰነዳት ምብጻሕ",
+  "Delivery attachments": "ተተሓሒዞም ምብጻሕ",
+  "No delivery note yet.": "ገና ናይ ምብጻሕ ሰነድ የለን።",
+  "The delivery note is numbered once the document is saved.": "ናይ ምብጻሕ ሰነድ እቲ ሰነድ ምስ ተዓቀበ ቁጽሪ ይወሃቦ።",
+  "Each delivery gets a numbered delivery note when it is dispatched.": "ነፍሲ ወከፍ ምብጻሕ ምስ ተላእከ ቁጽሪ ዘለዎ ናይ ምብጻሕ ሰነድ ይረክብ።",
+  "Theme": "ቅዲ"
 }

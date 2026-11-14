@@ -48,10 +48,12 @@ public class SalesHandoverService {
 
     private final SalesDb db;
     private final AuditService audit;
+    private final SalesLetterhead letterhead;
 
-    public SalesHandoverService(SalesDb db, AuditService audit) {
+    public SalesHandoverService(SalesDb db, AuditService audit, SalesLetterhead letterhead) {
         this.db = db;
         this.audit = audit;
+        this.letterhead = letterhead;
     }
 
     /** The source document header the handover hangs off (org-scoped), with its stage. */
@@ -233,12 +235,11 @@ public class SalesHandoverService {
                     str(l.get("description"))), str(l.get("uomCode")), dec(l.get("quantity")), dec(l.get("handedOverQty")),
                     dec(l.get("returnedQty"))));
         }
-        String company = str(db.row("SELECT name FROM \"Organization\" WHERE id = ?", org()).get("name"));
         String method = str(v.get("method"));
         String contact = String.join(" · ", java.util.stream.Stream.of(str(v.get("contactName")),
                 str(v.get("contactPhone"))).filter(x -> !blank(x)).toList());
         Object shipped = done ? v.get("deliveredAt") : null;
-        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(company, str(v.get("deliveryNoteNumber")),
+        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(letterhead.current(), str(v.get("deliveryNoteNumber")),
                 "Invoice", str(s.row().get("number")), str(s.row().get("partnerName")),
                 "pickup".equals(method) ? null : str(v.get("address")), blank(contact) ? null : contact,
                 METHOD_LABELS.get(method), shipped == null ? null : shipped.toString().substring(0, 10),

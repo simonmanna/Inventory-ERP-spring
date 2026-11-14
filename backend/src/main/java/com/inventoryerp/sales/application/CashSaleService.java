@@ -108,11 +108,18 @@ public class CashSaleService {
     private final AccountDeterminationService determination;
     private final ProductVariantService variants;
     private ProductSizingService sizing;
+    private SalesLetterhead letterhead;
 
     /** Sell by size (ADR-S066). */
     @org.springframework.beans.factory.annotation.Autowired
     void setSizing(ProductSizingService sizing) {
         this.sizing = sizing;
+    }
+
+    /** Logo and address printed on the delivery note. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLetterhead(SalesLetterhead letterhead) {
+        this.letterhead = letterhead;
     }
 
     public CashSaleService(SalesDb db, BranchSalesProfileService profiles, BranchScopeService scopes,
@@ -273,7 +280,6 @@ public class CashSaleService {
                     : str(l.get("productName")), str(l.get("uomCode")), dec(l.get("quantity")),
                     done ? dec(l.get("quantity")) : BigDecimal.ZERO, dec(l.get("returnedQty"))));
         }
-        String company = str(db.row("SELECT name FROM \"Organization\" WHERE id = ?", org()).get("name"));
         String method = Objects.requireNonNullElse(str(s.get("deliveryMethod")), "pickup");
         String contact = String.join(" · ", java.util.stream.Stream.of(
                 first(s, "deliveryContactName", "customerName"), first(s, "deliveryContactPhone", "customerPhone"))
@@ -281,7 +287,7 @@ public class CashSaleService {
         String customer = first(s, "customerName", "partnerName");
         String shipped = done && s.get("deliveredAt") != null ? dateOnly(s.get("deliveredAt")) : null;
         String address = first(s, "deliveryAddress", "customerAddress");
-        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(company, "DN/" + s.get("number"),
+        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(letterhead.current(), "DN/" + s.get("number"),
                 "Cash sale", str(s.get("number")), customer, "pickup".equals(method) ? null : address,
                 blank(contact) ? null : contact, SalesHandoverService.METHOD_LABELS.get(method), shipped,
                 dateOnly(s.get("deliveryScheduledDate")), dateOnly(s.get("deliveryDeadline")), str(s.get("deliveryDriver")),
