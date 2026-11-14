@@ -117,6 +117,36 @@ export function downloadCashSalePdf(id: string, number?: string) {
   return downloadCashSaleForm(id, 'pdf', `cash-sale-${number ?? id}.pdf`);
 }
 
+/**
+ * Plain-text summary of a cash sale for WhatsApp (WhatsApp renders *bold*): number, date, customer, lines and
+ * totals. The amounts are the server's figures, never recomputed here.
+ */
+export function cashSaleWhatsappText(s: CashSale, orgName?: string | null): string {
+  const amt = (v: number) => `${s.currencyCode} ${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const qty = (v: number) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const out: string[] = [`*${tx('Cash Sale')} ${s.number}*`];
+  out.push(`${tx('Date')}: ${new Date(s.saleDate).toLocaleDateString()}`);
+  const customer = s.customerName || s.partnerName;
+  if (customer) out.push(`${tx('Customer')}: ${customer}`);
+  if (s.branchName) out.push(`${tx('Branch')}: ${s.branchName}`);
+  if (s.lines?.length) {
+    out.push('', `*${tx('Items')}*`);
+    s.lines.forEach((l) => {
+      const name = [l.productName || l.description, l.variantName].filter(Boolean).join(' - ');
+      out.push(`• ${name} — ${qty(l.quantity)}${l.uomCode ? ` ${l.uomCode}` : ''} × ${amt(l.unitPrice)} = ${amt(l.lineTotal)}`);
+    });
+  }
+  out.push('', `${tx('Subtotal')}: ${amt(s.subtotal)}`);
+  if (Number(s.discountTotal)) out.push(`${tx('Discount')}: ${amt(s.discountTotal)}`);
+  if (Number(s.taxTotal)) out.push(`${tx('Tax')}: ${amt(s.taxTotal)}`);
+  out.push(`*${tx('Total')}: ${amt(s.grandTotal)}*`);
+  if (Number(s.paidTotal)) out.push(`${tx('Paid')}: ${amt(s.paidTotal)}`);
+  const balance = Number(s.grandTotal) - Number(s.paidTotal);
+  if (balance > 0.005) out.push(`${tx('Balance due')}: ${amt(balance)}`);
+  out.push('', orgName ? tx('Thank you for your business! — {{org}}', { org: orgName }) : tx('Thank you for your business!'));
+  return out.join('\n');
+}
+
 export function useCashSale(id: string | undefined) {
   return useQuery({
     queryKey: ['cash-sales', id],
