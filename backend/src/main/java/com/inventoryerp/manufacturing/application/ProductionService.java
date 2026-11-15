@@ -770,6 +770,28 @@ public class ProductionService {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
         }
+        // Review N8: by-products received with the output go back out too, at the value they took out of WIP.
+        List<Map<String, Object>> byproducts = new ArrayList<>();
+        for (Map<String, Object> bp : db.children(ProductionOutput.class, "orderId", id, null)) {
+            if (!"byproduct".equals(bp.get("kind")) || bp.get("ledgerCode") == null) {
+                continue;
+            }
+            BigDecimal bpBase = ledgerQty(str(bp, "ledgerCode"), true);
+            if (bpBase == null) {
+                continue;
+            }
+            BigDecimal onHand = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                            + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
+                    .params(MfgDb.org(), bp.get("productId"), bp.get("variantId") != null ? bp.get("variantId") : "",
+                            fgLocationId)
+                    .query(BigDecimal.class).optional().orElse(null);
+            if (onHand == null || onHand.compareTo(bpBase) < 0) {
+                throw ApiException.badRequest(
+                        "Cannot reverse: by-products are no longer fully in stock (sold or moved).");
+            }
+            bp.put("qtyBase", bpBase);
+            byproducts.add(bp);
+        }
         Instant date = Instant.now();
         // The value the receipt credited out of WIP (outputUnitCost × qty can drift by rounding when it is a quotient).
         BigDecimal fgValue = mainOut != null && mainOut.get("totalCost") != null && dec(mainOut, "totalCost").signum() > 0
@@ -786,6 +808,16 @@ public class ProductionService {
                 .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code));
         stockPosting.postProductionConsume(str(order, "outputProductId"), fgValue, date, "production_reversal", code,
                 "Production reversal · " + code);
+        // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
+        for (Map<String, Object> bp : byproducts) {
+            stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
+                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code));
+            BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
+            if (bpValue.signum() > 0) {
+                stockPosting.postProductionConsume(str(bp, "productId"), bpValue, date, "production_reversal", code,
+                        "Production reversal (by-product) · " + code);
+            }
+        }
         // 2) Materials back to their source location, clearing WIP (Dr Stock Valuation / Cr WIP).
         returnMaterials(order, "production_reversal", date, "Production reversal · " + code);
         // 3) ADR-S008: standard-cost variances of the order are reversed with it.

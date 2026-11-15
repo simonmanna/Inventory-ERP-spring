@@ -82,4 +82,38 @@ class ProductionUnitsIT extends MfgTestSupport {
         ok(201, "POST", "/manufacturing/production-orders/" + o[0] + "/cancel", Map.of("reason", "review N3"));
         assertThat(onHand(o[1], bakery)).as("2000 g back, not 2 g").isEqualByComparingTo("5000");
     }
+
+    @Test
+    @DisplayName("N8: reversing an order issues its by-products too and clears their value from WIP")
+    void reversalIssuesByproducts() {
+        String gram = unit("G");
+        String kg = unit("KG");
+        String flour = inGrams("FLOUR", gram, kg);
+        String bread = inGrams("BREAD", gram, kg);
+        String bran = inGrams("BRAN", gram, kg);
+        jdbc.sql("UPDATE \"Product\" SET \"manufacturingRole\" = 'raw' WHERE id = ?").param(flour).update();
+        ok(200, "POST", "/inventory/direct-stock/in", Map.of("locationId", bakery, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(Map.of("productId", flour, "quantity", 5000, "unitCost",
+                        "0.5"))));
+        String bomId = ok(201, "POST", "/manufacturing/boms", Map.of("name", "Bread + bran " + suffix(),
+                "outputProductId", bread, "outputQuantity", 9, "outputUomId", kg, "lines", List.of(Map.of(
+                        "componentProductId", flour, "quantity", 2, "uomId", kg)))).get("id").asString();
+        ok(201, "POST", "/manufacturing/boms/" + bomId + "/activate", null);
+        String id = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "runs", 1,
+                "locationId", bakery, "outputLocationId", warehouse, "outputs", List.of(Map.of("productId", bran,
+                        "kind", "byproduct", "qtyExpected", 1, "uomId", kg, "costAllocationPct", 10)))).get("id")
+                .asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/confirm", null);
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/start", Map.of());
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/complete", Map.of("qtyProduced", 9, "uomId", kg));
+        assertThat(onHand(bran, warehouse)).as("1 kg of bran received").isEqualByComparingTo("1000");
+        BigDecimal wipBefore = balance(wipAccount);
+
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/reverse", Map.of());
+        assertThat(onHand(bran, warehouse)).as("the bran leaves with the bread").isEqualByComparingTo("0");
+        assertThat(onHand(bread, warehouse)).isEqualByComparingTo("0");
+        assertThat(onHand(flour, bakery)).isEqualByComparingTo("5000");
+        assertThat(balance(wipAccount)).as("WIP is not short by the by-product credit")
+                .isEqualByComparingTo(wipBefore);
+    }
 }
