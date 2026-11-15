@@ -464,7 +464,7 @@ public class InvoiceService {
             boolean product = l.lineType() == null || "product".equals(l.lineType());
             ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
                     : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
-                            null, on));
+                            null, on, l.variantId()));
             out.add(p == null ? l : l.withPrice(p.unitPrice(),
                     l.discountPercent() != null ? l.discountPercent() : p.discountPercent()));
         }

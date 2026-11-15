@@ -376,6 +376,16 @@ public class UomConversionService {
      */
     @Transactional(readOnly = true)
     public BigDecimal defaultUnitPrice(String productId, LineUnit unit, UnitRole role, BigDecimal defaultUnitPrice) {
+        return defaultUnitPrice(productId, unit, role, defaultUnitPrice, false);
+    }
+
+    /**
+     * As {@link #defaultUnitPrice(String, LineUnit, UnitRole, BigDecimal)}; {@code variantPrice} (audit P-3, D1): the
+     * default price is a product variant's, which beats the product's own per-unit price — it is scaled to the unit.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal defaultUnitPrice(String productId, LineUnit unit, UnitRole role, BigDecimal defaultUnitPrice,
+            boolean variantPrice) {
         Product product = productId == null || productId.isEmpty() ? null : product(productId);
         if (product == null || unit == null || unit.uomId() == null || unit.factor() == null) {
             return defaultUnitPrice;
@@ -385,7 +395,8 @@ public class UomConversionService {
         if (unit.uomId().equals(defaultUom)) {
             return defaultUnitPrice;
         }
-        ProductUom own = unit.uomId().equals(product.getUomId()) ? null : productUnit(product.getId(), unit.uomId());
+        ProductUom own = variantPrice || unit.uomId().equals(product.getUomId()) ? null
+                : productUnit(product.getId(), unit.uomId());
         BigDecimal ownPrice = own == null ? null : role == UnitRole.PURCHASE ? own.getPurchasePrice() : own.getSalePrice();
         if (ownPrice != null) {
             return ownPrice;

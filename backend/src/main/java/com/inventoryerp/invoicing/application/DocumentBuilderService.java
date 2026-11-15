@@ -395,7 +395,7 @@ public class DocumentBuilderService {
             BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
                     ? (BigDecimal) product.get("salesPrice") : null;
             if (!meta && l.unitPrice() == null && product != null && unit.factor() != null) {
-                defaultPrice = units.defaultUnitPrice(l.productId(), unit, role, defaultPrice);
+                defaultPrice = units.defaultUnitPrice(l.productId(), unit, role, defaultPrice, variantId != null);
             }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
                     : defaultPrice != null ? defaultPrice : ZERO;

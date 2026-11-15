@@ -578,7 +578,7 @@ public class SalesQuotationService {
         BigDecimal maxDisc = dec(q.get("maxDiscountPercent"));
         BigDecimal limit = dec(s.get("quoteMaxDiscountPercent"));
         // Discounts granted by price rules are pre-approved: only the part beyond the resolved price counts.
-        BigDecimal extra = extraDiscount(str(q.get("id")), str(q.get("partnerId")), (LocalDate) q.get("issueDate"));
+        BigDecimal extra = extraDiscount(q);
         if (extra.compareTo(limit) > 0) {
             reasons.add("Discount " + extra.setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
                     + "% exceeds the " + limit.stripTrailingZeros().toPlainString() + "% limit");
@@ -604,19 +604,23 @@ public class SalesQuotationService {
         return reasons;
     }
 
-    private BigDecimal extraDiscount(String id, String partnerId, LocalDate on) {
+    private BigDecimal extraDiscount(Map<String, Object> q) {
+        String partnerId = str(q.get("partnerId"));
+        LocalDate on = (LocalDate) q.get("issueDate");
         BigDecimal max = BigDecimal.ZERO;
-        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", quantity, \"unitPrice\","
+        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", \"uomId\", quantity, \"unitPrice\","
                 + " \"discountPercent\", \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
-                + " \"displayType\" IS NULL", id)) {
+                + " \"displayType\" IS NULL", str(q.get("id")))) {
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
-            // ADR-S058: a variant line is authorized at the variant's price, not the product's
+            // ADR-S058: a variant line is authorized at the variant's price, not the product's. Audit S-7: the line is
+            // re-priced as it was priced (its unit, the quotation's site, branch, currency and agreement), so a rule
+            // or agreement price is not mistaken for a discount, nor a unit's price for one.
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
-                    : l.get("variantId") != null ? engine.resolve(new SalesPricingEngine.Context(partnerId,
-                            str(l.get("productId")), dec(l.get("quantity")), null, null, null, null, on, null,
-                            str(l.get("variantId")))).price().net()
-                    : price(partnerId, str(l.get("productId")), dec(l.get("quantity")), on).net();
+                    : engine.resolve(new SalesPricingEngine.Context(partnerId, str(l.get("productId")),
+                            dec(l.get("quantity")), str(l.get("uomId")), str(q.get("siteId")), str(q.get("branchId")),
+                            str(q.get("currencyCode")), on, str(q.get("agreementId")), str(l.get("variantId")))).price()
+                            .net();
             if (authorized.signum() > 0 && net.compareTo(authorized) < 0) {
                 max = max.max(BigDecimal.ONE.subtract(net.divide(authorized, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
@@ -995,21 +999,6 @@ public class SalesQuotationService {
             throw ApiException.notFound("Opportunity not found");
         }
         return port.visibleOpportunity(dealId);
-    }
-
-    private QuotationPricingPort.Price price(String partnerId, String productId, BigDecimal qty, LocalDate on) {
-        QuotationPricingPort port = pricing.getIfAvailable();
-        if (port != null) {
-            return port.price(partnerId, productId, qty, on);
-        }
-        Map<String, Object> p = db.row("SELECT name, \"salesPrice\", \"taxId\", \"taxInclusive\" FROM \"Product\""
-                + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL", productId, org());
-        if (p == null) {
-            throw ApiException.notFound("Product not found");
-        }
-        BigDecimal list = dec(p.get("salesPrice"));
-        return new QuotationPricingPort.Price(list, list, BigDecimal.ZERO, "list", null, str(p.get("taxId")),
-                Boolean.TRUE.equals(p.get("taxInclusive")), str(p.get("name")));
     }
 
     String orgCurrency() {

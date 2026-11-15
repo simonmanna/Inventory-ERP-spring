@@ -265,9 +265,15 @@ public class FleetDeliveryOrderService {
             BigDecimal factor = uoms.factorToBase(l.productId(), uomId);
             // SALES-3: a line with no price takes the customer's list, by site and zone, else the catalogue price.
             ListPrice listed = l.unitPrice() != null ? null : priceLists.resolve(new PriceQuery(in.partnerId(),
-                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate()));
+                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate(),
+                    variant == null ? null : variant.id()));
+            // Audit P-5 (D1): the catalogue price is per default sales unit; a line in another unit takes that unit's
+            // own price or the scaled one (a variant's price is scaled, audit P-3).
+            BigDecimal catalogue = variant != null ? variant.salesPrice() : (BigDecimal) product.get("salesPrice");
             BigDecimal price = l.unitPrice() != null ? l.unitPrice() : listed != null && listed.unitPrice() != null
-                    ? listed.unitPrice() : variant != null ? variant.salesPrice() : (BigDecimal) product.get("salesPrice");
+                    ? listed.unitPrice() : uoms.defaultUnitPrice(l.productId(),
+                            new UomConversionService.LineUnit(uomId, factor), UomConversionService.UnitRole.SALES,
+                            catalogue, variant != null);
             lines.add(new Line(l.productId(), variant == null ? null : variant.id(),
                     FleetVehicleService.trim(l.description()), uomId, factor,
                     l.quantity(), null, price, listed == null || listed.discountPercent().signum() == 0 ? null

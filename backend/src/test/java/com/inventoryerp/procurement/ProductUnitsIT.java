@@ -400,9 +400,12 @@ class ProductUnitsIT extends ApiTestSupport {
                     .param(order).query().singleRow();
             assertThat((BigDecimal) item.get("quantity")).as("2 packs of 6 = 12 pieces (the sales unit)")
                     .isEqualByComparingTo("12");
-            assertThat(((BigDecimal) item.get("quantity")).multiply((BigDecimal) item.get("unitPrice")))
-                    .as("the line value is unchanged").isEqualByComparingTo(new BigDecimal(q.get("lines").get(0)
-                            .get("unitPrice").asString()).multiply(BigDecimal.valueOf(2)));
+            // D1 (ADR-S003 addendum): the pack is priced at its own 8500, so the per-piece price is 8500 / 6, which
+            // the 6-decimal OrderItem price cannot hold exactly; the line value is unchanged to the cent.
+            assertThat(((BigDecimal) item.get("quantity")).multiply((BigDecimal) item.get("unitPrice"))
+                    .setScale(2, java.math.RoundingMode.HALF_UP)).as("the line value is unchanged")
+                    .isEqualByComparingTo(new BigDecimal(q.get("lines").get(0).get("unitPrice").asString())
+                            .multiply(BigDecimal.valueOf(2)));
             String entryUnit = jdbc.sql("SELECT \"uomId\" FROM \"OrderLineEntryUnit\" WHERE \"orderId\" = ?")
                     .param(order).query(String.class).single();
             assertThat(entryUnit).isEqualTo(pack);

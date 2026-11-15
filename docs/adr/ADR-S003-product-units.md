@@ -112,3 +112,22 @@ without the requested unit, so the product's default sales unit replaced the one
 saved as 2 pieces, and the sales order made from it delivered 2 pieces). The quotation now passes the requested unit
 to the builder and stores it with its factor; a unit the product does not sell in is refused. Test:
 `ProductUnitsIT.quotationKeepsRequestedUnit`.
+
+## Addendum: owner decision D1 in the sales pricing engine (Phase I4, audit P-2, 2026-11-15)
+
+`Product.salesPrice` is the price per **default sales unit** (this ADR's original rule). The invoice builder and the web
+already priced that way; the sales pricing engine (`SalesPricingEngine.price`, used by quotations, sales orders, cash
+sales and every `quote()` caller) treated it as a base-unit price and multiplied it by the line unit's factor: a box of
+24 at 240 was quoted 5,760. The engine now uses the same rule (ADR-S058 "Variant pricing and precedence"):
+
+- a line in the default sales unit, or with no unit, is priced at `salesPrice` (a line without a unit is in the
+  default sales unit for every tier, as on documents);
+- another unit takes its `ProductUom.salePrice` when set (not for a variant line), else `salesPrice × factor(unit) /
+  factor(default sales unit)`.
+
+Pricelist, promotion, agreement and CRM tier values are unchanged (they state their own unit or the base unit). Saved
+document prices are not recomputed: historical invoice values do not change. Products whose sales unit is their base
+unit (the usual case) price exactly as before.
+
+Test: `VariantPricingIT.salesPriceIsPerSalesUnit` ("sales order line in BOX where salesUomId = BOX is priced at
+salesPrice").

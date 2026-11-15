@@ -66,3 +66,41 @@ rules, reorder rules and device count lines; `variantId` / `variantName` / `unit
 - The item list (`/inventory/product-stock-levels`), item detail (`/inventory/items/{id}`) and movement report value
   stock by costing method through `InventoryValuationService.currentValueByQuant` (lots, serials, standard), not
   `qty × runningAverageCost`, which FIFO and STANDARD receipts never set.
+
+### Variant pricing and precedence (Phases I3 / I4: audit P-1, P-3, P-5, S-7; owner decision D1)
+
+**List price of a line** (one rule in the sales engine, the invoice builder, the Orders module and Fleet delivery
+orders):
+
+1. The default price is the variant's price when the line names a variant (fixed `salesPrice`, else product price +
+   attribute extras), else `Product.salesPrice`. It is the price **per default sales unit** (D1, ADR-S003 addendum).
+2. A line in the default sales unit (or with no unit) takes that price as is; it is never multiplied by the unit's
+   factor.
+3. A line in another unit takes that unit's own `ProductUom.salePrice` when set — **for a line without a variant**.
+   A variant's price wins over the product's unit price (P-3).
+4. Otherwise the default price is scaled: `price × factor(line unit) / factor(default sales unit)`.
+
+**Rules that name a variant (P-1).** `PricelistItem`, `SalesPromotion` and `SalesAgreementLine` take an optional
+`variantId` (`V488__variant_price_rules.sql`; must be a live variant of the rule's product, else 400 "Variant not
+found"; pricelist rules only with scope `product`). Within a tier:
+
+- a rule naming the line's variant beats the same tier's rule for the whole product (pricelist: after `priority`;
+  promotion: first);
+- a rule naming another variant never applies;
+- a rule without a variant applies to every variant, as before. A product-level **fixed** price therefore still prices
+  every variant alike; give the variants their own rules to price them apart.
+- An agreement still lists a product once (release balances are per product); its line may be restricted to one
+  variant. The tier order (ADR-S022 §4) is unchanged.
+
+`PriceQuery` carries `variantId`, so the invoice, Orders module, Fleet manual delivery order, price snapshots and
+`POST /price-lists/resolve` (optional `variantId`, additive) price the variant. CRM price rules and named price lists
+(`PriceListItem`) have no variant column: they keep applying to every variant.
+
+**P-5.** A manual Fleet delivery order line without a list price takes the catalogue price by the rule above (it was
+the bag price whatever the line's unit).
+
+**S-7.** Quotation approval re-prices each line as it was priced: its unit, variant and the quotation's site, branch,
+currency and agreement (it used no unit, branch, site or agreement and could hide or invent a discount).
+
+Tests: `VariantPricingIT` (D1 box line, P-3, P-1 pricelist and promotion, S-7),
+`FleetDispatchIT.manualOrderPriceScaledToTheUnit`.

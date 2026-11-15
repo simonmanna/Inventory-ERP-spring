@@ -831,4 +831,26 @@ class FleetDispatchIT extends ApiTestSupport {
         assertThat(call("POST", "/fleet/delivery-discrepancies/x/approve", null, key(clerkToken)).status())
                 .isEqualTo(403);
     }
+
+    @Test
+    @DisplayName("P-5 (D1): a manual delivery order line in another unit is priced in that unit, not at the bag price")
+    void manualOrderPriceScaledToTheUnit() {
+        String kg = UUID.randomUUID().toString();
+        String bag = UUID.randomUUID().toString();
+        for (String[] u : List.of(new String[] {kg, "KG"}, new String[] {bag, "BAG"})) {
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                    + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 0.001, now())")
+                    .params(u[0], demoOrg, u[1] + "-" + sfx + "-" + (++seq), u[1]).update();
+        }
+        String cement = product("Bagged cement", false);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(kg, bag, cement).update();
+        ok(200, "PATCH", "/products/" + cement, Map.of("units", List.of(Map.of("uomId", bag, "factor", 50,
+                "isPurchase", true, "isSales", true))));
+        // salesPrice 45000 is per bag (the sales unit): a line in kg is 900 a kg, a line in bags 45000 a bag.
+        JsonNode lines = ok(201, "POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site,
+                "locationId", yard, "requestedDate", today, "lines", List.of(Map.of("productId", cement, "quantity", 100),
+                        Map.of("productId", cement, "quantity", 2, "uomId", bag)))).get("lines");
+        assertThat(dec(lines.get(0).get("unitPrice"))).isEqualByComparingTo("900");
+        assertThat(dec(lines.get(1).get("unitPrice"))).isEqualByComparingTo("45000");
+    }
 }

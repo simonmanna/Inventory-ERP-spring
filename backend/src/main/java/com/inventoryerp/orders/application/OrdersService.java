@@ -615,7 +615,7 @@ public class OrdersService {
                 continue;
             }
             ListPrice p = priceLists.resolve(new PriceQuery((String) order.get("partnerId"), l.productId,
-                    l.quantity, l.uomId, (String) order.get("branchId"), null, null));
+                    l.quantity, l.uomId, (String) order.get("branchId"), null, null, l.variantId));
             if (p != null) {
                 l.unitPrice = p.unitPrice();
                 if (l.discountPercent.signum() == 0) {
@@ -644,9 +644,16 @@ public class OrdersService {
             BigDecimal ratio = entered.factor().divide(sold.factor(), UomConversionService.DECIMAL_JS);
             BigDecimal price = l.unitPrice;
             if (price == null) {
-                BigDecimal list = jdbc.sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
-                        .params(l.productId, org()).query(BigDecimal.class).optional().orElse(null);
-                price = units.defaultUnitPrice(l.productId, entered, UnitRole.SALES, list);
+                // Audit P-1/P-3: a variant line's catalogue price is the variant's, scaled to the entered unit.
+                boolean variant = PosSql.truthy(l.variantId);
+                BigDecimal list = variant
+                        ? jdbc.sql("SELECT " + com.inventoryerp.core.application.ProductVariantService.PRICE_SQL
+                                + " FROM \"ProductVariant\" v JOIN \"Product\" p ON p.id = v.\"productId\" WHERE v.id = ? AND"
+                                + " v.\"productId\" = ? AND v.\"organizationId\" = ?").params(l.variantId, l.productId, org())
+                                .query(BigDecimal.class).optional().orElse(null)
+                        : jdbc.sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                                .params(l.productId, org()).query(BigDecimal.class).optional().orElse(null);
+                price = units.defaultUnitPrice(l.productId, entered, UnitRole.SALES, list, variant && list != null);
             }
             l.entryQuantity = l.quantity;
             l.entryUnitPrice = price == null ? BigDecimal.ZERO : price;

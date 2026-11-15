@@ -36,8 +36,9 @@ public class SalesPricingToolsService {
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> promotions() {
-        return db.rows("SELECT s.*, p.name AS \"productName\", c.name AS \"categoryName\" FROM \"SalesPromotion\" s LEFT JOIN \"Product\" p ON p.id ="
-                + " s.\"productId\" LEFT JOIN \"ProductCategory\" c ON c.id = s.\"productCategoryId\" WHERE s.\"organizationId\" = ? ORDER BY"
+        return db.rows("SELECT s.*, p.name AS \"productName\", pv.name AS \"variantName\", c.name AS \"categoryName\" FROM"
+                + " \"SalesPromotion\" s LEFT JOIN \"Product\" p ON p.id = s.\"productId\" LEFT JOIN \"ProductVariant\" pv ON pv.id ="
+                + " s.\"variantId\" LEFT JOIN \"ProductCategory\" c ON c.id = s.\"productCategoryId\" WHERE s.\"organizationId\" = ? ORDER BY"
                 + " s.\"endDate\" DESC, s.name", org());
     }
 
@@ -66,6 +67,8 @@ public class SalesPricingToolsService {
         for (String k : List.of("productId", "productCategoryId", "partnerCategoryId", "branchId")) {
             d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)));
         }
+        // P-1: a product promotion may name one variant of its product.
+        d.put("variantId", d.get("productId") == null ? null : db.variantOf(in.get("variantId"), d.get("productId")));
         Map<String, Object> row;
         if (id == null) {
             d.put("createdById", user());
