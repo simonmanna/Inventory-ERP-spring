@@ -36,6 +36,8 @@ Documented in ADR-S072 items 7–9, `docs/spec/pos.md` deviations 7–10, ADR-S0
 | N5 | high | Orders-module order → Fleet delivery order: base unit with factor 1 although `OrderItem.quantity` is in the sales unit | `J/fleet/application/FleetDeliveryOrderService` legacy order branch | I2 |
 | N6 | high | Quotation → Orders-module order drops the unit and the variant | `J/sales/application/SalesQuotationService` convert to `orders` | I2 |
 | N7 ✔ | medium | Cancelling the order left open by a refused POS checkout records kitchen waste for every line ("cancelled after kitchen"), although nothing was made (found while writing the R2 test: 3 boxes wasted) | `KitchenWaste` on order cancel | I2 (tracked) |
+| N8 ✔ | medium | Production reversal returns the main output and the materials but never issues the by-products it received (their value stays in stock, WIP is short by the by-product credit) | `J/manufacturing/application/ProductionService.reverseOrder` (found while fixing N3) | I2 (tracked) |
+| N9 ✔ | medium | Fleet delivery order from a sales invoice drops the invoice line's variant (`variantId` null), so dispatch issues the product-level quant | `J/fleet/application/FleetDeliveryOrderService.fromInvoice` (found while fixing N5) | I2 with V-4…V-10 |
 
 Medium/low findings tracked for I2 (each needs a failing test first):
 
@@ -144,3 +146,30 @@ Dependency notes:
 - **Phase A:** A3 needs R-1, U-5, N2 and M-6 (load quantities are summed raw in `SalesFulfilmentService`); A4 needs
   A-1 and the N1 guard. If Phase A resumes after I2 rather than I5, A-1 moves into I2.
 - **D5:** if any onboarding happens before I5, add the `OpeningBalanceService` inventory-account guard first.
+
+## 7. Revised I2 progress (branch `phase/I2-integrity`, stacked on `phase/I1d-stabilization`, not merged)
+
+Each fix landed with a regression test that failed before it.
+
+| Finding | Commit | Regression test(s) |
+|---|---|---|
+| N1, A-1 | `7700dd7b` | `IntegrityI2IT` (4 tests: cancel refused after a posted credit note; concurrent cancel/credit-note post) |
+| N2 | `7e91c365` | `IntegrityI2IT.splitKeepsVariant`, `productChangeResolvesNewUnit` |
+| N3 | `2d412c7f` | `ProductionUnitsIT.reversalInBaseUnits`, `cancelReturnsBaseUnits` |
+| N4 | `3ac23f6d` | `ProductVariantIT.billMatchesOnlyItsVariant` |
+| N5 | `3fb2bb5f` | `FleetDispatchIT.salesOrderKeepsSalesUnit` |
+| N6 | `31f0302e` | `ProductUnitsIT.quotationToOrderKeepsUnit`, `ProductVariantIT.quotationToOrderKeepsVariant` |
+
+Notes:
+
+- N3: the reversal re-debits WIP with the value the output receipt credited (`ProductionOutput.totalCost`), not
+  `outputUnitCost × qty`, because a quotient unit cost drifts by rounding (9000 g at 1000 / 9000 left WIP 0.001 short).
+- N6: the public `/orders` request is unchanged; only the quotation conversion (internal) passes `variantId` and `uomId`.
+- Test-suite issues found on the way (not product defects, not changed): `ShopFloorExecutionIT` leaves an active scrap
+  reason (`SF_*`) per run. On a reused or shared database, it makes `ManufacturingIT.qcReverseOverhead` fail with "Unknown scrap
+  reason qc_rejection." whenever it runs first. `SalesAgreementIT.commissionsAndTargets` (expected 400, was −100) also fails
+  on `main` on a clean container, so it predates Phase I.
+
+Still open in I2: D2 and V-4…V-10 (with N9), U-4…U-10, U-5, R-1 (`V486`), C-1/C-2, M-3, N7, N8, the D1 offline POS
+posting hold (ADR-S072), and the tracked M-1…M-12.
+
