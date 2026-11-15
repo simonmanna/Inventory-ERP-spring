@@ -361,6 +361,27 @@ class ProductVariantIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Phase I2 N6: a quotation converted to an Orders-module order keeps the variant")
+    void quotationToOrderKeepsVariant() {
+        String p = product(100, 40);
+        String bl = byName(configure(p).get("variants"), "Black, Large").get("id").asString();
+        JsonNode q = ok(201, "POST", "/sales/quotations", Map.of("partnerId", partner(true), "lines",
+                List.of(Map.of("productId", p, "variantId", bl, "quantity", 1))));
+        String id = q.get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String order = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "order",
+                "allowBackorder", true)).get("convertedId").asString();
+        try {
+            Map<String, Object> item = jdbc.sql("SELECT \"variantId\", \"variantName\" FROM \"OrderItem\" WHERE"
+                    + " \"orderId\" = ?").param(order).query().singleRow();
+            assertThat(item.get("variantId")).isEqualTo(bl);
+            assertThat(item.get("variantName")).isEqualTo("Black, Large");
+        } finally {
+            ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N6 test"));
+        }
+    }
+
+    @Test
     @DisplayName("tenant isolation and authorization of every variant route")
     void isolationAndAuthorization() {
         String p = product(10, 5);

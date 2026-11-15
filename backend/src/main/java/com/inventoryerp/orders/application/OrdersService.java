@@ -489,6 +489,8 @@ public class OrdersService {
         boolean carried;
         String punchedById;
         String punchedByName;
+        /** Phase I2 review N6: the variant a converted quotation line named (stored on the item, not priced here). */
+        String variantId;
         /** UOM-1: the unit typed on the line, the quantity and price as typed, and sales units per typed unit. */
         String uomId;
         BigDecimal entryQuantity;
@@ -510,6 +512,7 @@ public class OrdersService {
             r.note = (String) l.get("note");
             r.taxInclusive = (Boolean) l.get("taxInclusive");
             r.uomId = (String) l.get("uomId");
+            r.variantId = (String) l.get("variantId");
             return r;
         }
 
@@ -530,6 +533,7 @@ public class OrdersService {
             r.carried = true;
             r.punchedById = (String) it.get("punchedById");
             r.punchedByName = (String) it.get("punchedByName");
+            r.variantId = (String) it.get("variantId");
             return r;
         }
 
@@ -654,6 +658,11 @@ public class OrdersService {
         }
     }
 
+    private String variantName(String variantId) {
+        return jdbc.sql("SELECT name FROM \"ProductVariant\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(variantId, org()).query(String.class).optional().orElse(null);
+    }
+
     /** Who writes these lines (denormalized name, like {@code PosOrdersService.actorStamp}). */
     private String[] actorStamp() {
         String userId = user();
@@ -730,6 +739,10 @@ public class OrdersService {
             data.put("taxId", p.taxId());
             data.put("taxInclusive", p.taxInclusive());
             data.put("note", src == null ? null : src.note);
+            if (src != null && src.variantId != null) {
+                data.put("variantId", src.variantId);
+                data.put("variantName", variantName(src.variantId));
+            }
             data.put("lineNumber", p.lineNumber());
             boolean carried = src != null && src.carried;
             data.put("punchedById", carried && src.punchedById != null ? src.punchedById : stamp[0]);

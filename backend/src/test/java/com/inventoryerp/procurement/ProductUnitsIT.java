@@ -383,4 +383,31 @@ class ProductUnitsIT extends ApiTestSupport {
         assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
         assertThat(refused.body().get("message").asString()).contains("is not enabled for sales on product Soda");
     }
+
+    @Test
+    @DisplayName("Phase I2 N6: a quotation converted to an Orders-module order keeps the quoted unit")
+    void quotationToOrderKeepsUnit() {
+        String drink = product("Juice", 1500);
+        setUnits(drink, List.of(unitRow(pack, 6, false, true, 8500)));
+        JsonNode q = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines",
+                List.of(Map.of("productId", drink, "quantity", 2, "uomId", pack))));
+        String id = q.get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String order = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "order",
+                "allowBackorder", true)).get("convertedId").asString();
+        try {
+            Map<String, Object> item = jdbc.sql("SELECT quantity, \"unitPrice\" FROM \"OrderItem\" WHERE \"orderId\" = ?")
+                    .param(order).query().singleRow();
+            assertThat((BigDecimal) item.get("quantity")).as("2 packs of 6 = 12 pieces (the sales unit)")
+                    .isEqualByComparingTo("12");
+            assertThat(((BigDecimal) item.get("quantity")).multiply((BigDecimal) item.get("unitPrice")))
+                    .as("the line value is unchanged").isEqualByComparingTo(new BigDecimal(q.get("lines").get(0)
+                            .get("unitPrice").asString()).multiply(BigDecimal.valueOf(2)));
+            String entryUnit = jdbc.sql("SELECT \"uomId\" FROM \"OrderLineEntryUnit\" WHERE \"orderId\" = ?")
+                    .param(order).query(String.class).single();
+            assertThat(entryUnit).isEqualTo(pack);
+        } finally {
+            ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N6 test"));
+        }
+    }
 }

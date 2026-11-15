@@ -800,6 +800,9 @@ public class SalesQuotationService {
             for (Map<String, Object> l : lines) {
                 Map<String, Object> ol = new LinkedHashMap<>();
                 ol.put("productId", l.get("productId"));
+                // Phase I2 review N6: the quoted variant and unit carry over (Orders converts the unit to the sales unit).
+                ol.put("variantId", l.get("variantId"));
+                ol.put("uomId", l.get("uomId"));
                 ol.put("description", l.get("description"));
                 ol.put("quantity", l.get("quantity"));
                 ol.put("unitPrice", l.get("unitPrice"));
