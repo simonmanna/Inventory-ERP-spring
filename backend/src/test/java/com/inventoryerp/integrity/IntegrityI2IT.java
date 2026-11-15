@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Phase I2 (revised) regression tests for the 2026-11-15 review
@@ -30,6 +31,7 @@ class IntegrityI2IT extends ApiTestSupport {
 
     String warehouse;
     String customer;
+    String repToken;
     String today = LocalDate.now().toString();
 
     @BeforeAll
@@ -44,9 +46,78 @@ class IntegrityI2IT extends ApiTestSupport {
         jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"updatedAt\")"
                 + " VALUES (?, ?, ?, ?, true, now())").params(customer, demoOrg, "I2C-" + sfx(), "I2 customer " + sfx())
                 .update();
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, "I2 rep " + sfx(), new String[] {
+                    "sales:order:read", "sales:order:write", "sales:order:confirm", "sales:order:amend"}).update();
+        String email = "i2-rep-" + sfx() + "@demo.test";
+        createUser(demoOrg, email, "Sales@12345", role);
+        repToken = login("DEMO", email, "Sales@12345");
     }
 
     // ------------------------------------------------------------------ helpers
+
+    String unit(String code) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 1, now())")
+                .params(id, demoOrg, code + "-" + sfx(), code).update();
+        return id;
+    }
+
+    /** Counted in {@code base}, sold by {@code salesUnit} holding {@code factor} base units; 100 on hand. */
+    String packed(String name, String base, String salesUnit, int factor) {
+        String p = stocked(name, 0);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(base, salesUnit, p)
+                .update();
+        ok(200, "PATCH", "/products/" + p, Map.of("units", List.of(map("uomId", salesUnit, "factor", factor,
+                "isPurchase", true, "isSales", true))));
+        TenantContext.run(TenantStore.organization(demoOrg), () -> stock.receive(StockMove.of(p, warehouse,
+                BigDecimal.valueOf(100)).unitCost(BigDecimal.TEN)));
+        return p;
+    }
+
+    /** A product with variants Red and Blue, 50 of each on hand. Returns product, Red, Blue. */
+    Map<String, String> coloured(String name) {
+        String p = stocked(name, 0);
+        JsonNode attr = ok(201, "POST", "/variant-attributes", Map.of("name", "Colour " + sfx(), "values",
+                List.of(Map.of("name", "Red"), Map.of("name", "Blue"))));
+        JsonNode cfg = ok(200, "PUT", "/products/" + p + "/attribute-lines", Map.of("lines", List.of(Map.of(
+                "attributeId", attr.get("id").asString(), "valueIds", List.of(attr.get("values").get(0).get("id")
+                        .asString(), attr.get("values").get(1).get("id").asString())))));
+        Map<String, String> out = new LinkedHashMap<>();
+        out.put("product", p);
+        for (JsonNode v : cfg.get("variants")) {
+            out.put(v.get("name").asString(), v.get("id").asString());
+            String vid = v.get("id").asString();
+            TenantContext.run(TenantStore.organization(demoOrg), () -> stock.receive(StockMove.of(p, warehouse,
+                    BigDecimal.valueOf(50)).variant(vid).unitCost(BigDecimal.TEN)));
+        }
+        return out;
+    }
+
+    /** A confirmed sales order with one line; returns {order, line}. */
+    String[] confirmedOrder(Map<String, Object> line) {
+        Res created = call("POST", "/sales/orders", Map.of("partnerId", customer, "locationId", warehouse, "lines",
+                List.of(line)), repToken);
+        assertThat(created.status()).as(created.raw().body()).isEqualTo(201);
+        String id = created.body().get("id").asString();
+        Res confirmed = call("POST", "/sales/orders/" + id + "/confirm", null, repToken);
+        assertThat(confirmed.status()).as(confirmed.raw().body()).isEqualTo(200);
+        String lineId = jdbc.sql("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ?").param(id).query(String.class)
+                .single();
+        return new String[] {id, lineId};
+    }
+
+    /** A change request raised by the rep and approved by the admin. */
+    void amend(String orderId, Map<String, Object> lineChange) {
+        Res cr = call("POST", "/sales/orders/" + orderId + "/change-requests", Map.of("reason", "review N2", "changes",
+                Map.of("lines", List.of(lineChange))), Map.of("Authorization", "Bearer " + repToken));
+        assertThat(cr.status()).as(cr.raw().body()).isIn(200, 201);
+        if (!"applied".equals(cr.body().get("status").asString())) {
+            ok(200, "POST", "/sales/change-requests/" + cr.body().get("id").asString() + "/approve", Map.of());
+        }
+    }
 
     static String sfx() {
         return UUID.randomUUID().toString().substring(0, 8);
@@ -156,6 +227,56 @@ class IntegrityI2IT extends ApiTestSupport {
         assertThat(onHand(p)).as("restocked once").isEqualByComparingTo("2");
         assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'credit_note' AND"
                 + " \"referenceId\" = ?").param(cn).query(Long.class).single()).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ N2
+
+    @Test
+    @DisplayName("N2: a price change on a part-delivered variant line splits it; the remainder keeps the variant and unit")
+    void splitKeepsVariant() {
+        Map<String, String> v = coloured("Paint");
+        String[] so = confirmedOrder(map("productId", v.get("product"), "variantId", v.get("Red"), "quantity", 10,
+                "unitPrice", 100));
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDelivered\" = 4 WHERE id = ?").param(so[1]).update();
+        amend(so[0], map("lineId", so[1], "unitPrice", 90));
+        Map<String, Object> rest = jdbc.sql("SELECT id, \"variantId\", quantity, \"uomId\", \"uomFactor\" FROM"
+                + " \"SalesOrderLine\" WHERE \"orderId\" = ? AND id <> ?").params(so[0], so[1]).query().singleRow();
+        assertThat(rest.get("variantId")).as("remainder keeps Red").isEqualTo(v.get("Red"));
+        assertThat((BigDecimal) rest.get("quantity")).isEqualByComparingTo("6");
+        assertThat(jdbc.sql("SELECT \"variantKey\" FROM \"StockReservation\" WHERE \"sourceId\" = ? AND status = 'active'")
+                .param(rest.get("id")).query(String.class).list()).as("reserved on Red's cell").containsOnly(v.get("Red"));
+    }
+
+    @Test
+    @DisplayName("N2: a product change resolves the new product's unit factor and moves the reservation")
+    void productChangeResolvesNewUnit() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String big = packed("Tiles 24", pcs, box, 24);
+        String small = packed("Tiles 12", pcs, box, 12);
+        Object trigger = ok(200, "GET", "/sales/settings", null).get("reservationTrigger");
+        ok(200, "PUT", "/sales/settings", Map.of("reservationTrigger", "confirm"));
+        String[] so;
+        try {
+            so = confirmedOrder(map("productId", big, "quantity", 2, "uomId", box, "unitPrice", 3000));
+        } finally {
+            ok(200, "PUT", "/sales/settings", Map.of("reservationTrigger", trigger == null ? "none"
+                    : ((JsonNode) trigger).asString()));
+        }
+        assertThat(jdbc.sql("SELECT quantity FROM \"StockReservation\" WHERE \"sourceId\" = ? AND status = 'active'")
+                .param(so[1]).query(BigDecimal.class).single()).as("2 boxes of 24 reserved").isEqualByComparingTo("48");
+
+        amend(so[0], map("lineId", so[1], "productId", small, "unitPrice", 2000));
+        Map<String, Object> line = jdbc.sql("SELECT \"productId\", \"uomId\", \"uomFactor\" FROM \"SalesOrderLine\""
+                + " WHERE id = ?").param(so[1]).query().singleRow();
+        assertThat(line.get("productId")).isEqualTo(small);
+        assertThat(line.get("uomId")).isEqualTo(box);
+        assertThat((BigDecimal) line.get("uomFactor")).as("the new product's box holds 12").isEqualByComparingTo("12");
+        List<Map<String, Object>> active = jdbc.sql("SELECT \"productId\", quantity FROM \"StockReservation\" WHERE"
+                + " \"sourceId\" = ? AND status = 'active'").param(so[1]).query().listOfRows();
+        assertThat(active).hasSize(1);
+        assertThat(active.getFirst().get("productId")).as("old product no longer reserved").isEqualTo(small);
+        assertThat((BigDecimal) active.getFirst().get("quantity")).isEqualByComparingTo("24");
     }
 
     Map<String, Object> map(Object... kv) {

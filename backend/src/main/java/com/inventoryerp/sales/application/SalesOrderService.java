@@ -326,6 +326,14 @@ public class SalesOrderService {
         }
         writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")),
                 PriceScope.of(header));
+        // Review U-5: the order keeps each quote line's saved factor (same unit), not today's re-resolved one.
+        for (Map<String, Object> l : quoteLines) {
+            if (!Boolean.TRUE.equals(l.get("isOptional")) && l.get("uomFactor") != null) {
+                String lineId = db.rows("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"quotationLineId\" = ?",
+                        id, l.get("id")).stream().map(r -> str(r.get("id"))).findFirst().orElse(null);
+                keepSavedFactor(lineId, l.get("uomId"), l.get("uomFactor"));
+            }
+        }
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"), "quotationId",
                 q.get("id"))));
         return get(id);
@@ -668,7 +676,25 @@ public class SalesOrderService {
         return ids;
     }
 
-    private BigDecimal costOf(String productId, String variantId) {
+    /** Validated variant id of a line for {@code productId} (ADR-S058; a product with variants needs one). */
+    String variantFor(String productId, String variantId) {
+        ProductVariantService.VariantRef v = variants.resolve(productId, variantId);
+        return v == null ? null : v.id();
+    }
+
+    /**
+     * Review U-5: a line copied from another document keeps that document's saved unit factor (the line's unit is
+     * unchanged), instead of the factor re-resolved from today's product setup.
+     */
+    void keepSavedFactor(String lineId, Object uomId, Object uomFactor) {
+        if (lineId == null || uomFactor == null || dec(uomFactor).signum() <= 0) {
+            return;
+        }
+        db.update("UPDATE \"SalesOrderLine\" SET \"uomFactor\" = ? WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"uomId\" IS NOT DISTINCT FROM ?", dec(uomFactor), lineId, org(), uomId);
+    }
+
+    BigDecimal costOf(String productId, String variantId) {
         if (variantId != null) {
             ProductVariantService.VariantRef v = variants.find(variantId);
             if (v != null && v.costPrice() != null) {

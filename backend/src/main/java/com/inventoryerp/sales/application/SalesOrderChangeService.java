@@ -313,14 +313,21 @@ public class SalesOrderChangeService {
             }
             if (commercial || c.get("quantity") != null) {
                 Map<String, Object> m = replacement(l, c, qty);
+                BigDecimal saved = productChange ? null : SalesDb.decOrNull(l.get("uomFactor"));
                 List<LineInput> in = List.of(new LineInput(str(m.get("productId")), null, null, null, null,
                         str(m.get("description")), qty, dec(m.get("unitPrice")), dec(m.get("discountPercent")), null, null,
                         null, "manual", str(m.get("taxId")), null, Boolean.TRUE.equals(m.get("taxInclusive")),
                         str(m.get("uomId"))));
                 var p = builder.prepareLines(in).prepared().getFirst();
-                db.update("UPDATE \"SalesOrderLine\" SET \"productId\" = ?, description = ?, quantity = ?, \"unitPrice\" ="
-                        + " ?, \"discountPercent\" = ?, \"priceSource\" = ?, \"lineSubtotal\" = ?, \"lineTax\" = ?,"
-                        + " \"lineTotal\" = ? WHERE id = ?", p.productId(), p.description(), qty, p.unitPrice(),
+                // Review N2: the line keeps its variant (or takes the new product's validated one), its unit and saved
+                // factor; a product change resolves the new product's unit and factor and its cost.
+                BigDecimal factor = saved != null && java.util.Objects.equals(p.uomId(), l.get("uomId")) ? saved
+                        : p.uomFactor() == null ? BigDecimal.ONE : p.uomFactor();
+                Object cost = productChange ? orders.costOf(p.productId(), str(m.get("variantId"))) : l.get("costSnapshot");
+                db.update("UPDATE \"SalesOrderLine\" SET \"productId\" = ?, \"variantId\" = ?, description = ?, quantity = ?,"
+                        + " \"uomId\" = ?, \"uomFactor\" = ?, \"costSnapshot\" = ?, \"unitPrice\" = ?, \"discountPercent\" = ?,"
+                        + " \"priceSource\" = ?, \"lineSubtotal\" = ?, \"lineTax\" = ?, \"lineTotal\" = ? WHERE id = ?",
+                        p.productId(), m.get("variantId"), p.description(), qty, p.uomId(), factor, cost, p.unitPrice(),
                         p.discountPercent(), m.get("priceSource"), p.subtotal(), p.taxAmount(), p.total(), l.get("id"));
                 if (qty.compareTo(dec(l.get("quantity"))) != 0) {
                     // ADR-S066: a changed quantity no longer matches the typed size
@@ -339,16 +346,33 @@ public class SalesOrderChangeService {
             newLines.add(orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")),
                     SalesOrderService.PriceScope.of(o)));
         }
-        orders.insertLines(orderId, newLines, sort);
+        List<String> ids = orders.insertLines(orderId, newLines, sort);
+        for (int k = 0; k < newLines.size() && k < ids.size(); k++) {
+            orders.keepSavedFactor(ids.get(k), newLines.get(k).get("uomId"), newLines.get(k).get("savedUomFactor"));
+        }
     }
 
-    private static Map<String, Object> replacement(Map<String, Object> l, Map<String, Object> c, BigDecimal qty) {
+    /**
+     * The line that replaces (or continues) {@code l} under change {@code c}. Review N2: the same product keeps its
+     * variant, unit and saved factor ({@code savedUomFactor}, applied after insert); a product change takes the
+     * change's validated variant and unit (none = the new product's default sales unit), never the old product's.
+     */
+    private Map<String, Object> replacement(Map<String, Object> l, Map<String, Object> c, BigDecimal qty) {
         Map<String, Object> m = new LinkedHashMap<>();
         boolean commercial = c.get("unitPrice") != null || c.get("discountPercent") != null;
-        m.put("productId", c.get("productId") != null ? str(c.get("productId")) : str(l.get("productId")));
+        boolean productChange = c.get("productId") != null && !str(c.get("productId")).equals(str(l.get("productId")));
+        String productId = productChange ? str(c.get("productId")) : str(l.get("productId"));
+        m.put("productId", productId);
         m.put("description", c.get("description") != null ? str(c.get("description")) : str(l.get("description")));
         m.put("quantity", qty);
-        m.put("uomId", l.get("uomId"));
+        if (productChange) {
+            m.put("variantId", orders.variantFor(productId, str(c.get("variantId"))));
+            m.put("uomId", blank(str(c.get("uomId"))) ? null : str(c.get("uomId")));
+        } else {
+            m.put("variantId", l.get("variantId"));
+            m.put("uomId", l.get("uomId"));
+            m.put("savedUomFactor", l.get("uomFactor"));
+        }
         m.put("listPrice", dec(l.get("listPrice")));
         m.put("unitPrice", c.get("unitPrice") == null ? dec(l.get("unitPrice")) : dec(c.get("unitPrice")));
         m.put("discountPercent", c.get("discountPercent") == null ? dec(l.get("discountPercent"))
