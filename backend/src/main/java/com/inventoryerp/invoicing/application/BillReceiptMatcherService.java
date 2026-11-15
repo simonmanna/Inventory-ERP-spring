@@ -37,7 +37,7 @@ public class BillReceiptMatcherService {
 
     /** Read-only split of a bill line against posted receipts of the same supplier + product. */
     public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity) {
-        return matchLine(organizationId, partnerId, productId, quantity, null);
+        return matchLine(organizationId, partnerId, productId, null, quantity, null);
     }
 
     /**
@@ -46,10 +46,12 @@ public class BillReceiptMatcherService {
      * stamped in each receipt line's own unit; the returned vouchered/accrued/unmatched quantities are in bill-line
      * units. Phase I1b (audit U-2): a side without a snapshot (a pre-V5 bill or receipt line) is converted with the
      * live factor of its unit — the receipt line's unit, else the product's purchase unit, which is how pre-V5 lines
-     * were received and billed — instead of being compared 1:1.
+     * were received and billed — instead of being compared 1:1. Phase I2 review N4: only receipt lines of the bill
+     * line's variant are consumed (a line without a variant matches receipt lines without one), so a bill for one
+     * variant never vouchers another variant's receipt; the unmatched remainder is auto-received as that variant.
      */
-    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity,
-            BigDecimal billUomFactor) {
+    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, String variantId,
+            BigDecimal quantity, BigDecimal billUomFactor) {
         BigDecimal wanted = Money.dec(quantity);
         if (wanted.signum() <= 0 || partnerId == null) {
             return new BillLineMatch(Money.ZERO, Money.ZERO, wanted, List.of(), Money.ZERO, null);
@@ -57,9 +59,10 @@ public class BillReceiptMatcherService {
         List<Map<String, Object>> lines = SqlRows.list(jdbc.sql("SELECT l.id, l.\"purchaseOrderLineId\", l.quantity,"
                         + " l.\"billedQuantity\", l.\"unitCost\", l.\"uomFactor\", l.\"uomId\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
                         + " JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE l.\"organizationId\" = ?"
-                        + " AND l.\"productId\" = ? AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
+                        + " AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
                         + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC, l.id ASC FOR UPDATE OF l")
-                .params(organizationId, productId, organizationId, partnerId));
+                .params(organizationId, productId, variantId, organizationId, partnerId));
         // P1-7: the open receipt lines are locked, so two bills posting at once cannot both consume the same quantity.
         BigDecimal billFactor = billUomFactor != null && billUomFactor.signum() > 0 ? billUomFactor
                 : legacyFactor(organizationId, productId);

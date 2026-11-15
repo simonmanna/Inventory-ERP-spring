@@ -324,8 +324,8 @@ public class InvoicingWorkflowsInitializer {
                 postableTotal = postableTotal.add(d(line.get("total")));
                 continue;
             }
-            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"), qty,
-                    line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
+            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"),
+                    (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
             matchByLine.put((String) line.get("id"), match);
             if (match.accruedQuantity().signum() > 0) {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
