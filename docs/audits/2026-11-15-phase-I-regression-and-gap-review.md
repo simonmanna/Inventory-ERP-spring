@@ -164,6 +164,8 @@ Each fix landed with a regression test that failed before it.
 | N8 | (see git log) | `ProductionUnitsIT.reversalIssuesByproducts` |
 | C-1, C-2 | (see git log) | `VariantIntegrityIT.variantCostFallbacks`, `itemValueByCostingMethod` |
 | M-3 | (see git log) | `ProductionUnitsIT.reservationsInBaseUnitsUntilConsumed` |
+| U-4 | (see git log) | `PosStockPostingIT.snapshotFreezesUnitFactors` (ADR-S072 addendum) |
+| U-10 | (see git log) | `ProductSizingIT.sizedLinesAreNotScaledTwice` (ADR-S066 addendum) |
 | U-5, U-6, M-2, A-4 (return query) | (see git log) | `IntegrityI2IT.copiedLinesKeepTheFrozenFactor`, `creditNoteRestocksTheInvoicedUnit`, `creditNoteRestocksAtTheIssueLocationAndCost` |
 
 Notes:
@@ -192,6 +194,8 @@ Notes:
 - Test-suite issue: `SalesReturnFlowIT.writeOff` looks up a postable `6%` account, which only
   `GraniteQuarryDemoSeed` creates; it fails when that seed has not run on the database first (order dependency).
 
-Still open in I2: U-4, U-7, U-10, R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
+- U-7: the audit has no U-7 row (the U-series skips it); kitchen-waste units were fixed under V-3 in I1a.
+
+Still open in I2: R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
 posting hold (ADR-S072), and the tracked M-1…M-12.
 

@@ -233,13 +233,64 @@ public class PosInvoiceService {
         return settings.resolveString("inventory.stockPostingTiming", SettingContext.EMPTY);
     }
 
+    /**
+     * Phase I2 (audit U-4): base units per 1 {@code uomId} of the product, frozen at checkout so a retried posting
+     * issues what was sold even after a unit change; null (resolve at posting, as before) when no unit or no conversion.
+     */
+    private String frozenFactor(Object productId, Object uomId) {
+        if (productId == null || uomId == null) {
+            return null;
+        }
+        BigDecimal f = uom.tryFactorToBase((String) productId, (String) uomId);
+        return f == null ? null : f.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * Phase I2 (audit U-4): the paid modifiers' and accompaniments' stock components of an order item, with their
+     * quantity, unit and frozen factor, so posting does not re-read a configuration edited after the sale.
+     */
+    private List<Map<String, Object>> extrasSnapshot(Map<String, Object> item, String orgId) {
+        List<Map<String, Object>> extras = new ArrayList<>();
+        for (Object o : PosSql.list(item.get("modifiers"))) {
+            String modifierId = (String) PosSql.map(o).get("modifierId");
+            if (modifierId == null) {
+                continue;
+            }
+            Map<String, Object> mod = SqlRows.one(jdbc.sql("SELECT \"inventoryItemId\", \"consumptionQty\","
+                    + " \"consumptionUomId\" FROM \"Modifier\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                    .params(modifierId, orgId));
+            if (mod != null && mod.get("inventoryItemId") != null) {
+                extras.add(extra(modifierId, "modifier", mod));
+            }
+        }
+        List<String> accIds = PosSql.strings(item.get("accompanimentOptionIds"));
+        if (!accIds.isEmpty()) {
+            List<Object> params = new ArrayList<>(accIds);
+            params.add(orgId);
+            for (Map<String, Object> opt : SqlRows.list(jdbc.sql("SELECT id, \"inventoryItemId\", \"consumptionQty\","
+                    + " \"consumptionUomId\" FROM \"AccompanimentOption\" WHERE id IN (" + PosSql.marks(accIds.size())
+                    + ") AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(params))) {
+                if (opt.get("inventoryItemId") != null) {
+                    extras.add(extra((String) opt.get("id"), "accompaniment", opt));
+                }
+            }
+        }
+        return extras;
+    }
+
+    private Map<String, Object> extra(String componentId, String componentType, Map<String, Object> row) {
+        return Obj.of("componentId", componentId, "componentType", componentType, "productId", row.get("inventoryItemId"),
+                "quantity", row.get("consumptionQty") == null ? null : PosSql.js(row.get("consumptionQty")),
+                "uomId", row.get("consumptionUomId"),
+                "uomFactor", frozenFactor(row.get("inventoryItemId"), row.get("consumptionUomId")));
+    }
+
     /** Enqueue a durable stock-posting job with its recipe snapshot; idempotent per (trigger, invoice|order). */
     public void enqueueStockPosting(String orderId, String invoiceId, String invoiceNumber, String trigger) {
         String orgId = org();
         String idempotencyKey = trigger + ":" + (invoiceId != null ? invoiceId : orderId);
         Map<String, Object> recipeSnapshot = new LinkedHashMap<>();
-        for (Map<String, Object> item : SqlRows.list(jdbc.sql("SELECT id, \"menuItemId\", \"comboId\", \"variantId\" FROM"
-                + " \"OrderItem\" WHERE \"orderId\" = ? AND \"organizationId\" = ? AND cancelled = false").params(orderId, orgId))) {
+        for (Map<String, Object> item : itemsWithModifiers(orderId)) {
             if (item.get("menuItemId") != null) {
                 Boolean tracked = jdbc.sql("SELECT \"isInventoryTracked\" FROM \"MenuItem\" WHERE id = ? AND \"organizationId\" = ?"
                         + " AND \"deletedAt\" IS NULL").params(item.get("menuItemId"), orgId).query(Boolean.class)
@@ -248,7 +299,7 @@ public class PosInvoiceService {
                 for (Map<String, Object> ing : SqlRows.list(jdbc.sql("SELECT \"productId\", quantity, \"uomId\" FROM \"MenuProduct\""
                         + " WHERE \"menuItemId\" = ? AND \"organizationId\" = ?").params(item.get("menuItemId"), orgId))) {
                     ingredients.add(Obj.of("productId", ing.get("productId"), "quantity", PosSql.js(ing.get("quantity")),
-                            "uomId", ing.get("uomId")));
+                            "uomId", ing.get("uomId"), "uomFactor", frozenFactor(ing.get("productId"), ing.get("uomId"))));
                 }
                 Object multiplier = item.get("variantId") == null ? null : jdbc.sql("SELECT \"qtyMultiplier\" FROM"
                                 + " \"MenuItemVariant\" WHERE id = ? AND \"menuItemId\" = ? AND \"organizationId\" = ?"
@@ -267,10 +318,20 @@ public class PosInvoiceService {
                             .param(item.get("comboId")))) {
                         components.add(Obj.of("id", c.get("id"), "productId", c.get("productId"),
                                 "quantity", PosSql.js(c.get("quantity")), "trackInventory", Boolean.TRUE.equals(c.get("trackInventory")),
-                                "productType", c.get("productType"), "uomId", c.get("salesUomId")));
+                                "productType", c.get("productType"), "uomId", c.get("salesUomId"),
+                                "uomFactor", frozenFactor(c.get("productId"), c.get("salesUomId"))));
                     }
                 }
                 recipeSnapshot.put((String) item.get("id"), Obj.of("kind", "combo", "components", components));
+            }
+            List<Map<String, Object>> extras = extrasSnapshot(item, orgId);
+            if (!extras.isEmpty()) {
+                Map<String, Object> entry = new LinkedHashMap<>(PosSql.map(recipeSnapshot.get((String) item.get("id"))));
+                if (entry.isEmpty()) {
+                    entry.put("kind", "extras");
+                }
+                entry.put("extras", extras);
+                recipeSnapshot.put((String) item.get("id"), entry);
             }
         }
         try {
@@ -1646,8 +1707,8 @@ public class PosInvoiceService {
                             lineKey);
                 }
             }
-            for (Object[] f : moveLineExtras(jobId, it, num(it.get("quantity")), warehouse, ref, ctx, invoiceItemId,
-                    posted)) {
+            for (Object[] f : moveLineExtras(jobId, it, dec(it.get("quantity")), warehouse, ref, ctx, invoiceItemId,
+                    posted, PosSql.map(snapshots.get((String) it.get("id"))))) {
                 RuntimeException err = (RuntimeException) f[3];
                 recordFailure(ctx, failures, lastError, "line_extras", (String) f[2], (String) it.get("menuItemId"),
                         f[1] + " on " + (it.get("description") != null ? it.get("description")
@@ -1728,6 +1789,7 @@ public class PosInvoiceService {
                 }
                 StockMove mv = StockMove.of((String) c.get("productId"), warehouse, quantity);
                 mv.uomId = (String) c.get("uomId");
+                mv.uomFactor = factorOf(c); // U-4: the factor frozen at checkout
                 mv.reference = ref;
                 mv.sourceType = "pos_invoice_combo";
                 mv.sourceId = it.get("id") + ":" + c.get("id");
@@ -1764,6 +1826,12 @@ public class PosInvoiceService {
                 }
             }
         }
+    }
+
+    /** The snapshot's frozen factor of a unit-bearing component (null for its unit, or for older snapshots). */
+    private static BigDecimal factorOf(Map<String, Object> component) {
+        return component.get("uomId") == null || component.get("uomFactor") == null ? null
+                : Money.dec(component.get("uomFactor"));
     }
 
     private void snapshotRow(String invoiceItemId, Ctx ctx, String productId, StockMove.Issued r, BigDecimal fallbackQty,
@@ -1822,6 +1890,7 @@ public class PosInvoiceService {
             }
             StockMove mv = StockMove.of((String) ing.get("productId"), warehouse, qty);
             mv.uomId = (String) ing.get("uomId");
+            mv.uomFactor = factorOf(ing); // U-4: the factor frozen at checkout
             mv.reference = ref;
             mv.sourceType = "menu_recipe";
             mv.sourceId = ctx.invoiceId();
@@ -1836,10 +1905,28 @@ public class PosInvoiceService {
     }
 
     /** Paid modifiers + accompaniments; returns {componentId, componentType, productId, error} per failure. */
-    private List<Object[]> moveLineExtras(String jobId, Map<String, Object> item, double lineQty, String warehouse,
-            String reference, Ctx ctx, String invoiceItemId, Set<String> posted) {
+    private List<Object[]> moveLineExtras(String jobId, Map<String, Object> item, BigDecimal lineQty, String warehouse,
+            String reference, Ctx ctx, String invoiceItemId, Set<String> posted, Map<String, Object> snapshot) {
         List<Object[]> failures = new ArrayList<>();
-        if (!(lineQty > 0)) {
+        if (lineQty == null || lineQty.signum() <= 0) {
+            return failures;
+        }
+        if (snapshot != null && snapshot.containsKey("extras")) {
+            // U-4: components frozen at checkout (jobs enqueued before Phase I2 read the configuration below).
+            for (Object o : PosSql.list(snapshot.get("extras"))) {
+                Map<String, Object> e = PosSql.map(o);
+                try {
+                    moveExtra(jobId, item, (String) e.get("productId"), (String) e.get("componentId"),
+                            e.get("quantity") == null ? null : Money.dec(e.get("quantity")), (String) e.get("uomId"),
+                            factorOf(e), (String) e.get("componentType"), lineQty, warehouse, reference, ctx,
+                            invoiceItemId, posted);
+                } catch (RuntimeException ex) {
+                    log.error("[stock] {} extra issue failed ({}) on {} (kept): {}", e.get("componentType"),
+                            e.get("componentId"), reference, ex.getMessage());
+                    failures.add(new Object[] {e.get("componentId"), "accompaniment".equals(e.get("componentType"))
+                            ? "accompaniment_option" : "modifier", e.get("productId"), ex});
+                }
+            }
             return failures;
         }
         for (Object o : PosSql.list(item.get("modifiers"))) {
@@ -1853,8 +1940,9 @@ public class PosInvoiceService {
                         + " FROM \"Modifier\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                         .params(modifierId, org()));
                 if (mod != null && mod.get("inventoryItemId") != null) {
-                    moveExtra(jobId, item, (String) mod.get("inventoryItemId"), modifierId, num(mod.get("consumptionQty")),
-                            (String) mod.get("consumptionUomId"), "modifier", lineQty, warehouse, reference, ctx,
+                    moveExtra(jobId, item, (String) mod.get("inventoryItemId"), modifierId,
+                            mod.get("consumptionQty") == null ? null : Money.dec(mod.get("consumptionQty")),
+                            (String) mod.get("consumptionUomId"), null, "modifier", lineQty, warehouse, reference, ctx,
                             invoiceItemId, posted);
                 }
             } catch (RuntimeException e) {
@@ -1875,8 +1963,9 @@ public class PosInvoiceService {
                     }
                     try {
                         moveExtra(jobId, item, (String) opt.get("inventoryItemId"), (String) opt.get("id"),
-                                num(opt.get("consumptionQty")), (String) opt.get("consumptionUomId"), "accompaniment", lineQty,
-                                warehouse, reference, ctx, invoiceItemId, posted);
+                                opt.get("consumptionQty") == null ? null : Money.dec(opt.get("consumptionQty")),
+                                (String) opt.get("consumptionUomId"), null, "accompaniment", lineQty, warehouse, reference,
+                                ctx, invoiceItemId, posted);
                     } catch (RuntimeException e) {
                         log.error("[stock] accompaniment extra issue failed on {} (kept): {}", reference, e.getMessage());
                         failures.add(new Object[] {opt.get("id"), "accompaniment_option", opt.get("inventoryItemId"), e});
@@ -1890,24 +1979,27 @@ public class PosInvoiceService {
         return failures;
     }
 
-    private void moveExtra(String jobId, Map<String, Object> item, String productId, String componentId, double consumptionQty,
-            String uomId, String componentType, double lineQty, String warehouse, String reference, Ctx ctx,
-            String invoiceItemId, Set<String> posted) {
+    private void moveExtra(String jobId, Map<String, Object> item, String productId, String componentId,
+            BigDecimal consumptionQty, String uomId, BigDecimal uomFactor, String componentType, BigDecimal lineQty,
+            String warehouse, String reference, Ctx ctx, String invoiceItemId, Set<String> posted) {
         String componentKey = item.get("id") + ":" + componentId;
         if (posted.contains(componentKey)) {
             return;
         }
         postOnce(jobId, componentKey, () -> {
-            double qty = lineQty * (Double.isFinite(consumptionQty) && consumptionQty > 0 ? consumptionQty : 1);
-            StockMove mv = StockMove.of(productId, warehouse, PosSql.decOf(qty));
+            // Decimal maths (audit U-4: was double); a missing or non-positive consumption counts as 1.
+            BigDecimal qty = Money.qtyMul(lineQty, consumptionQty != null && consumptionQty.signum() > 0 ? consumptionQty
+                    : BigDecimal.ONE);
+            StockMove mv = StockMove.of(productId, warehouse, qty);
             mv.reference = reference;
             mv.uomId = uomId;
+            mv.uomFactor = uomId == null ? null : uomFactor;
             mv.sourceType = "pos_invoice_extra";
             mv.sourceId = componentKey;
             dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);
             if (invoiceItemId != null) {
-                snapshotRow(invoiceItemId, ctx, productId, r, PosSql.decOf(qty), BigDecimal.ONE, componentType, componentId);
+                snapshotRow(invoiceItemId, ctx, productId, r, qty, BigDecimal.ONE, componentType, componentId);
             }
         });
         posted.add(componentKey);

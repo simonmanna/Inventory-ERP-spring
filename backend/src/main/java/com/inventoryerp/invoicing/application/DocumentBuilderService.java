@@ -379,10 +379,16 @@ public class DocumentBuilderService {
                     product.put("salesPrice", v.get("price"));
                 }
             }
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]].
+            Sizing size = meta || product == null || sizing == null ? null : sizing.resolve(l.productId(), l.sizing());
+            // U-10: that quantity is in m / m² / m³, so the line is in that unit, not in the product's sales pack.
+            LineUnit metric = size == null ? null : sizing.lineUnit(l.productId());
+            boolean frozen = l.uomFactor() != null && l.uomId() != null && !l.uomId().isBlank()
+                    && (metric == null || l.uomId().equals(metric.uomId()));
             // U-5: a line copied from another document keeps the unit factor frozen there.
             LineUnit unit = meta || product == null ? new LineUnit(null, null)
-                    : l.uomFactor() != null && l.uomId() != null && !l.uomId().isBlank()
-                            ? new LineUnit(l.uomId(), l.uomFactor()) : lineUnit(l.productId(), l.uomId(), role);
+                    : frozen ? new LineUnit(l.uomId(), l.uomFactor())
+                            : metric != null ? metric : lineUnit(l.productId(), l.uomId(), role);
             BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
                     ? (BigDecimal) product.get("salesPrice") : null;
             if (!meta && l.unitPrice() == null && product != null && unit.factor() != null) {
@@ -390,8 +396,6 @@ public class DocumentBuilderService {
             }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
                     : defaultPrice != null ? defaultPrice : ZERO;
-            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]].
-            Sizing size = meta || product == null || sizing == null ? null : sizing.resolve(l.productId(), l.sizing());
             BigDecimal quantity = meta ? ZERO : size != null ? size.quantity()
                     : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
             BigDecimal gross = quantity.multiply(unitPrice);

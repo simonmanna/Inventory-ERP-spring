@@ -633,7 +633,8 @@ public class SalesOrderService {
             inputs.add(new LineInput(str(m.get("productId")), null, null, null, null, str(m.get("description")),
                     dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent")), null, null, null,
                     "manual", str(m.get("taxId")), null, Boolean.TRUE.equals(m.get("taxInclusive")),
-                    str(m.get("uomId"))).withUnitSnapshot(str(m.get("uomId")), frozenFactor(m)));
+                    str(m.get("uomId"))).withUnitSnapshot(str(m.get("uomId")), frozenFactor(m))
+                    .withSizing(ProductSizingService.Sizing.stored(m))); // U-10: the builder gives a sized line its unit
         }
         Totals totals = builder.prepareLines(inputs);
         int i = 0;

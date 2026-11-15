@@ -139,3 +139,19 @@ Retry of a pending job: `PosStockPostingIT.retryPendingJob` (no second issue).
 Review R2–R4: `PosVariantIntegrityIT.strictAvailabilityIsVariantAware`, `availabilityAndReservationsInBaseUnits`,
 `retryResolvesTheLinesException`; `PosStockPostingIT.drainSkipsAJobHeldByAnotherRunner`,
 `retryRacingADrainNeverReopens`.
+
+## Addendum (Phase I2, audit U-4, 2026-11-15)
+
+The stock-posting job's `recipeSnapshot` (written at checkout) now freezes units as well as recipes:
+
+- each recipe ingredient and combo component carries `uomFactor`, its unit's base factor at checkout;
+- an item with paid modifiers or accompaniments carries `extras`: `componentId`, `componentType`, `productId`,
+  `quantity`, `uomId`, `uomFactor` (an item with only extras gets `kind: "extras"`).
+
+The drain issues with those factors and components, so a pack-size or modifier change between the sale and a retried
+posting no longer changes what the sale issues. Modifier and accompaniment quantities are computed in `BigDecimal`
+(were `double`). Jobs enqueued before this change have no factors or `extras` and keep the old live lookup. Nest read
+modifiers and units at drain time; this is a post-parity change of this ADR.
+
+Test: `PosStockPostingIT.snapshotFreezesUnitFactors`.
+

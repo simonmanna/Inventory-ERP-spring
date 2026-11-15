@@ -275,6 +275,18 @@ public class UomConversionService {
     }
 
     /**
+     * {@link #factorToBase(String, String)}, or null when the unit does not convert. Not transactional on purpose (see
+     * {@link #tryFromBase}): a POS checkout freezes factors (Phase I2, audit U-4) without risking its transaction.
+     */
+    public BigDecimal tryFactorToBase(String productId, String uomId) {
+        try {
+            return factorToBase(productId, uomId);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            return null;
+        }
+    }
+
+    /**
      * Base units of {@code productId} per 1 {@code uomId}, unrounded: 1 for the base unit (or no unit), the
      * product's own {@code ProductUom} factor when declared, else the category factor / density bridge.
      */

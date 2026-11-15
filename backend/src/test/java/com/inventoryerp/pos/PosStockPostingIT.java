@@ -319,4 +319,61 @@ class PosStockPostingIT extends ApiTestSupport {
                 .params(invoiceId, ingredient).query(Long.class).single()).isPositive();
         ok(200, "GET", "/pos/posting-monitor/jobs?status=done", null);
     }
+
+    String unit(String code) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 1, now())")
+                .params(id, demoOrg, code + "-" + UUID.randomUUID().toString().substring(0, 8), code).update();
+        return id;
+    }
+
+    /** 100 on hand, counted in {@code base}, also sold in {@code pack} holding {@code factor} base units. */
+    String packedProduct(String code, String base, String pack, int factor) {
+        String id = stockProduct(code + "-" + UUID.randomUUID().toString().substring(0, 6));
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ? WHERE id = ?").params(base, id).update();
+        ok(200, "PATCH", "/products/" + id, Map.of("units", List.of(Map.of("uomId", pack, "factor", factor,
+                "isPurchase", true, "isSales", true))));
+        return id;
+    }
+
+    @Test
+    @DisplayName("U-4: the posting snapshot freezes recipe and modifier unit factors; a later pack-size change does not"
+            + " alter what the sale issues")
+    void snapshotFreezesUnitFactors() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String bun = packedProduct("U4-BUN", pcs, box, 24);
+        String sauce = packedProduct("U4-SAUCE", pcs, box, 10);
+        String menuItemId = ok(201, "POST", "/pos/menu/items", Map.of("name", "U4 Burger " + UUID.randomUUID(),
+                "basePrice", 5000, "ingredients", List.of(Map.of("productId", bun, "quantity", 1)))).get("id").asString();
+        jdbc.sql("UPDATE \"MenuProduct\" SET \"uomId\" = ? WHERE \"menuItemId\" = ?").params(box, menuItemId).update();
+        String groupId = ok(201, "POST", "/pos/modifiers/groups", Map.of("name", "U4 " + UUID.randomUUID(),
+                "maxSelect", 1)).get("id").asString();
+        String modifierId = ok(201, "POST", "/pos/modifiers/modifiers", Map.of("groupId", groupId, "name", "Sauce",
+                "priceDelta", 0)).get("id").asString();
+        jdbc.sql("UPDATE \"Modifier\" SET \"inventoryItemId\" = ?, \"consumptionQty\" = 1, \"consumptionUomId\" = ?"
+                + " WHERE id = ?").params(sauce, box, modifierId).update();
+
+        java.sql.Timestamp now = java.sql.Timestamp.from(java.time.Instant.now());
+        String orderId = insert("Order", Map.of("organizationId", demoOrg, "orderNumber", "ORD-U4-" + UUID.randomUUID(),
+                "status", "closed", "updatedAt", now));
+        String itemId = insert("OrderItem", Map.of("organizationId", demoOrg, "orderId", orderId, "menuItemId", menuItemId,
+                "description", "Burger", "quantity", 2, "lineNumber", 1, "updatedAt", now));
+        insert("OrderItemModifier", Map.of("organizationId", demoOrg, "orderItemId", itemId, "modifierId", modifierId,
+                "name", "Sauce", "priceDelta", 0, "createdAt", now));
+        asOrgRun(() -> billing.enqueueStockPosting(orderId, orderId, "INV-" + orderId, "at_invoice"));
+        String jobId = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"orderId\" = ?").param(orderId)
+                .query(String.class).single();
+
+        // The pack sizes change between the sale and its posting.
+        jdbc.sql("UPDATE \"ProductUom\" SET factor = 12 WHERE \"productId\" = ?").param(bun).update();
+        jdbc.sql("UPDATE \"ProductUom\" SET factor = 5 WHERE \"productId\" = ?").param(sauce).update();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+
+        assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(jobId).query(String.class)
+                .single()).isEqualTo("done");
+        assertThat(onHand(bun)).as("2 burgers x 1 box of 24, as sold").isEqualByComparingTo("52");
+        assertThat(onHand(sauce)).as("2 sauces x 1 box of 10, as sold").isEqualByComparingTo("80");
+    }
 }
