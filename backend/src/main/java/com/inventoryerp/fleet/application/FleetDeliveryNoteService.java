@@ -116,7 +116,12 @@ public class FleetDeliveryNoteService {
         if (t.get("loadedTonnes") != null) {
             carrier.append("\nLoaded: ").append(plain(t.get("loadedTonnes"))).append(" t");
         }
-        if (t.get("weighSourceType") != null && !"manual".equals(t.get("weighSourceType"))) {
+        if ("weighbridge_ticket".equals(t.get("weighSourceType"))) {
+            Map<String, Object> ticket = ((List<Map<String, Object>>) t.getOrDefault("weighbridgeTickets", List.of()))
+                    .stream().filter(w -> String.valueOf(t.get("weighSourceId")).equals(w.get("id"))).findFirst()
+                    .orElse(null);
+            carrier.append("\n").append(weighLine(ticket, t.get("weighSourceId")));
+        } else if (t.get("weighSourceType") != null && !"manual".equals(t.get("weighSourceType"))) {
             carrier.append("\nWeighed: ").append(t.get("weighSourceType")).append(" ")
                     .append(s(t.get("weighSourceId")));
         }
@@ -177,6 +182,17 @@ public class FleetDeliveryNoteService {
 
     private static String s(Object o) {
         return o == null ? "" : o.toString();
+    }
+
+    /** "Weighbridge ticket WBT-… · gross / tare / net kg" for the ticket that fed the trip (flagged when manual). */
+    static String weighLine(Map<String, Object> ticket, Object fallbackId) {
+        if (ticket == null) {
+            return "Weighbridge ticket: " + s(fallbackId);
+        }
+        return "Weighbridge ticket: " + s(ticket.get("ticketNumber"))
+                + "\nGross " + plain(ticket.get("grossKg")) + " kg · Tare " + plain(ticket.get("tareKg"))
+                + " kg · Net " + plain(ticket.get("netKg")) + " kg"
+                + (Boolean.TRUE.equals(ticket.get("isManual")) ? " (manual weight)" : "");
     }
 
     private static String plain(Object o) {

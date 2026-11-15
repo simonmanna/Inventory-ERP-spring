@@ -21,6 +21,7 @@ import {
 import { DeliveryNotePreview, ReturnsList, orderReturnView } from './delivery-docs';
 import { Detail, METHOD_META, StageBadge, n, qty, scheduleLabel } from './delivery-ui';
 import { PickedCell } from './HandoverDeliveryView';
+import { DeliveryWeighbridgeTab, WeighSummary } from './DeliveryWeighbridge';
 
 type LineCol = 'product' | 'scheduled' | 'deadline' | 'planned' | 'picked' | 'dispatched' | 'delivered' | 'returned' | 'rejected'
   | 'damaged' | 'shortage' | 'batch';
@@ -124,6 +125,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
                 <TabsTrigger value="details">{tx('Details')}</TabsTrigger>
+                <TabsTrigger value="weighbridge">{tx('Weighbridge')}{d.weighbridgeTickets?.length ? ` (${d.weighbridgeTickets.length})` : ''}</TabsTrigger>
                 <TabsTrigger value="note">{tx('Delivery note')}</TabsTrigger>
                 <TabsTrigger value="returns">{tx('Returns')}</TabsTrigger>
                 <TabsTrigger value="pod">{tx('Proof of delivery')}</TabsTrigger>
@@ -154,6 +156,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                   <Detail label={tx('Fuel / trip expenses')}>{d.tripExpenses != null ? money(d.tripExpenses, currency) : null}</Detail>
                   <Detail label={tx('Instructions')} className="sm:col-span-2">{d.notes}</Detail>
                 </dl>
+                <WeighSummary d={d} />
                 <div className="overflow-x-auto rounded-xl border">
                   <div className="flex items-center justify-between border-b px-3 py-1.5">
                     <span className="text-xs font-medium text-muted-foreground">{tx('Operations')}</span><ColumnPicker columns={cols} />
@@ -200,6 +203,8 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                   </table>
                 </div>
               </TabsContent>
+
+              <TabsContent value="weighbridge"><DeliveryWeighbridgeTab d={d} /></TabsContent>
 
               <TabsContent value="note">
                 <DeliveryNotePreview number={d.deliveryNoteNumber ?? tx('(numbered at dispatch)')} sourceLabel={tx('Order')} sourceNumber={d.orderNumber}

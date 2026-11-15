@@ -30,8 +30,13 @@ final class WeighbridgeTicketPdf {
 
     private WeighbridgeTicketPdf() {}
 
-    @SuppressWarnings("unchecked")
     static byte[] render(Map<String, Object> t, String company, int copy) {
+        return render(t, company, copy <= 1 ? "Original" : "Copy " + copy);
+    }
+
+    /** Renders the ticket with the given copy label (e.g. "Original", "Copy 3", or a non-counting view copy). */
+    @SuppressWarnings("unchecked")
+    static byte[] render(Map<String, Object> t, String company, String copyLabel) {
         ZoneId zone = com.inventoryerp.kernel.common.BusinessZone.get();
         Font title = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 14);
         Font big = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 16);
@@ -46,7 +51,7 @@ final class WeighbridgeTicketPdf {
         Paragraph heading = new Paragraph("WEIGHBRIDGE TICKET " + t.get("ticketNumber"), bold);
         heading.setAlignment(Element.ALIGN_RIGHT);
         pdf.add(heading);
-        Paragraph copyLine = new Paragraph(copy <= 1 ? "Original" : "Copy " + copy, small);
+        Paragraph copyLine = new Paragraph(copyLabel, small);
         copyLine.setAlignment(Element.ALIGN_RIGHT);
         pdf.add(copyLine);
         if ("void".equals(t.get("status"))) {

@@ -1134,6 +1134,14 @@ Consumed: `approval.decided` (entity type `weighbridge_exception`, `WeighbridgeA
 - `WeighbridgeAdapter` SPI (+ `WeighbridgeAdapters` registry), `AsciiFrameParser`, `WeighbridgeCalculator`,
   `WeighbridgeUnits.kgPerUnit(productId, uomId)`.
 - Additive in procurement: `GoodsReceiptsService.cancelDraft(id, reason)`.
+- Sales Phase A1 (2026-11-14):
+  - `WeighbridgeTicketService.ticketsForTrips(tripIds)` returns the linked-ticket rows. It shares its query with
+    `FleetWeighbridgeRuleService.linkedTickets`, which now also returns trailer, driver, both weighings with operator,
+    exception status, reissue chain, `feedsTrip` and the derived `verification`.
+  - `renderCopy(id, tripId)` renders a "COPY (view)" PDF, leaves `printCount` unchanged and is audited as `reprint`
+    with `copy: "view"`.
+  - Both are unconditional services, so Sales never calls a Fleet controller.
+  - Ticket validation now accepts a `SalesOrder` id in `salesOrderId`, as well as a POS `Order` id.
 
 ### GL
 

@@ -1,6 +1,7 @@
 package com.inventoryerp.sales.web;
 
 import com.inventoryerp.fleet.application.FleetDeliveryNoteService;
+import com.inventoryerp.fleet.application.WeighbridgeTicketService;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -75,6 +76,16 @@ public class SalesDeliveryController {
         FleetDeliveryNoteService.Pdf pdf = deliveries.note(id);
         return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + pdf.filename() + "\"").body(pdf.content());
+    }
+
+    /** A weighbridge ticket of this delivery as a PDF view copy (not counted as a print). */
+    @GetMapping("/deliveries/{id}/weigh-tickets/{ticketId}/pdf")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public ResponseEntity<byte[]> weighTicketPdf(@PathVariable String id, @PathVariable String ticketId) {
+        WeighbridgeTicketService.PrintedTicket pdf = deliveries.weighTicketPdf(id, ticketId);
+        return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + pdf.filename() + "\"")
+                .body(pdf.content());
     }
 
     @PostMapping("/orders/{id}/deliveries")

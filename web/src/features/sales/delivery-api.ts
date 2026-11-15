@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
+import type { LinkedWeighTicket, WeighVerification } from '@/features/fleet/dispatch-api';
 
 /** How one delivery reaches the customer. */
 export type DeliveryMethod = 'customer_collect' | 'site_delivery' | 'warehouse_transfer' | 'courier';
@@ -36,6 +37,12 @@ export interface SalesDelivery {
   plannedQty: number; dispatchedQty: number; deliveredQty: number; damagedQty: number; rejectedQty: number;
   lineCount: number; uomCodes: string | null;
   lines?: DeliveryLine[];
+  /** Feeding weighbridge ticket of the truck (Fleet is the source; read-only here). */
+  weighTicketId?: string | null; weighTicketNumber?: string | null; weighNetKg?: string | number | null;
+  weighTicketStatus?: string | null; weighWithinTolerance?: boolean | null; weighVerification?: WeighVerification | null;
+  /** Detail only: every ticket of the truck (void / reissue chain included) and whether the weighbridge is required. */
+  weighbridgeTickets?: LinkedWeighTicket[];
+  weighbridge?: { required: boolean; feedingTicketId: string | null };
   pod?: { receiverName: string; receiverPhone: string | null; receivedAt: string; notes: string | null; signatureUrl: string | null } | null;
   photos?: Array<{ id: string; fileId: string; caption: string | null; createdAt: string; url: string | null }>;
 }
@@ -171,4 +178,17 @@ export async function openDeliveryNote(d: Pick<SalesDelivery, 'id' | 'code' | 'd
 /** Read a picked image as a data URL. */
 export function readDataUrl(f: File) {
   return new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); });
+}
+
+/** Opens a weighbridge ticket of the delivery as a PDF view copy (not counted as a print; audited on the server). */
+export async function openWeighTicketCopy(deliveryId: string, ticketId: string) {
+  try {
+    const r = await api.get(`/sales/deliveries/${deliveryId}/weigh-tickets/${ticketId}/pdf`, { responseType: 'blob' });
+    const url = URL.createObjectURL(r.data as Blob);
+    const w = window.open(url, '_blank');
+    if (!w) toast.error(tx('Allow pop-ups to open the weighbridge ticket'));
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (e) {
+    toast.error(apiErrorMessage(e, tx('Could not open the weighbridge ticket')));
+  }
 }
