@@ -262,14 +262,14 @@ export function ChartOfAccountsPage() {
                     ) : (
                       <span className="w-5 flex-shrink-0" />
                     )}
-                    <span className={`text-sm font-mono ${a.isGroup ? 'font-bold' : ''}`}>
+                    <span className={`text-sm font-mono ${!a.isPostable ? 'font-bold' : ''}`}>
                       {a.code}
                     </span>
                   </div>
 
                   {/* Name */}
                   <div className="col-span-4 px-3 py-2 flex items-center gap-2">
-                    <span className={`text-sm ${a.isGroup ? 'font-semibold' : ''}`}>{a.name}</span>
+                    <span className={`text-sm ${!a.isPostable ? 'font-semibold' : ''}`}>{a.name}</span>
                     {!a.isActive && (
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{tx('Inactive')}</Badge>
                     )}
@@ -278,14 +278,14 @@ export function ChartOfAccountsPage() {
                         {tx('Deprecated')}
                       </Badge>
                     )}
-                    {a.isGroup && (
+                    {!a.isPostable && (
                       <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal text-muted-foreground">
                         {tx('Group')}
                       </Badge>
                     )}
-                    {a.isControlAccount && (
+                    {a.controlAccountType && (
                       <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-sky-300 text-sky-700">
-                        {tx('Control')}
+                        {tx('Control')} · {a.controlAccountType.toUpperCase().replace(/_/g, ' ')}
                       </Badge>
                     )}
                   </div>

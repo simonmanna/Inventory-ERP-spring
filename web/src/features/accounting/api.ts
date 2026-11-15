@@ -2,8 +2,23 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { api } from '@/lib/api';
-import { notify } from '@/lib/notify';
+import { PERMISSIONS } from '@erp/shared';
+import { currencyDecimals, money } from '@/lib/format';
+import { useAuthStore } from '@/stores/auth.store';
+import { apiMessage, notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+
+/**
+ * Toast a mutation failure once. The HTTP client already toasts 403 (with the
+ * server's message, e.g. the maker-checker refusal), 402 and 5xx, so those are
+ * skipped here to avoid a second toast for the same error. Pages that use a hook
+ * with this `onError` must not toast again in their own catch.
+ */
+export function toastMutationError(title: string, e: unknown): void {
+  const status = (e as { response?: { status?: number } })?.response?.status;
+  if (status === 402 || status === 403 || (status !== undefined && status >= 500)) return;
+  notify.error(title, apiMessage(e, (e as Error)?.message ?? tx('Request failed')));
+}
 
 /** Accounting behavior of an account. Modules resolve accounts by `key`. */
 export interface AccountCategory {
@@ -26,6 +41,10 @@ export interface AccountCategory {
   /** Only present on the /account-categories/usage response. */
   accountCount?: number;
 }
+
+/** `ControlAccountType` values accepted by POST/PATCH /accounts. */
+export const CONTROL_ACCOUNT_TYPES = ['ar', 'ap', 'inventory', 'fixed_assets', 'payroll', 'tax'] as const;
+export type ControlAccountType = (typeof CONTROL_ACCOUNT_TYPES)[number];
 
 export interface Account {
   id: string;
@@ -51,7 +70,8 @@ export interface Account {
   normalBalance?: 'debit' | 'credit';
   /** @deprecated legacy mirror of the category — read `category.key` instead. */
   accountType: string;
-  isGroup: boolean;
+  /** false = group (summary) account: a structural node that cannot be posted to and has no category. */
+  isPostable: boolean;
   isActive: boolean;
   description?: string;
   parentAccountId?: string;
@@ -63,7 +83,8 @@ export interface Account {
   isDefault?: boolean;
   isSystem?: boolean;
   isProtected?: boolean;
-  isControlAccount?: boolean;
+  /** Set when the account is backed by a subledger (AR / AP / stock / ...). */
+  controlAccountType?: ControlAccountType | null;
   deprecatedAt?: string | null;
   /** `null` = inherit the category default. */
   allowReconciliation?: boolean | null;
@@ -77,11 +98,11 @@ export interface AccountTreeNode {
   id: string;
   code: string;
   name: string;
-  isGroup: boolean;
+  isPostable: boolean;
   isActive: boolean;
   deprecatedAt?: string | null;
   sortOrder: number;
-  isControlAccount: boolean;
+  controlAccountType: ControlAccountType | null;
   categoryKey: string | null;
   categoryName: string | null;
   classification: string | null;
@@ -160,11 +181,37 @@ export function useDeleteAccountCategory() {
   });
 }
 
+/** Active, postable, non-deprecated — the accounts the posting engine accepts at all. */
+export function isPostingAccount(a: Account): boolean {
+  return a.isPostable !== false && a.isActive && !a.deprecatedAt;
+}
+
+/** Effective manual-posting flag: the account override, else the category default (server default true). */
+export function allowsManualPosting(a: Account): boolean {
+  return a.allowManualPosting ?? a.category?.allowManualPosting ?? true;
+}
+
+/** The server caps `pageSize` at 1000; page through until `total` so pickers see every account. */
+const ACCOUNT_PAGE_SIZE = 1000;
+
 export function useAccounts() {
   return useQuery({
     queryKey: ['accounts'],
-    queryFn: async () =>
-      (await api.get<PaginatedResult<Account>>('/accounts', { params: { pageSize: 200 } })).data,
+    queryFn: async (): Promise<PaginatedResult<Account>> => {
+      const first = (await api.get<PaginatedResult<Account>>('/accounts', {
+        params: { page: 1, pageSize: ACCOUNT_PAGE_SIZE },
+      })).data;
+      const all = [...first.data];
+      const totalPages = first.meta?.totalPages ?? 1;
+      for (let page = 2; page <= totalPages; page++) {
+        const next = (await api.get<PaginatedResult<Account>>('/accounts', {
+          params: { page, pageSize: ACCOUNT_PAGE_SIZE },
+        })).data;
+        all.push(...next.data);
+        if (next.data.length === 0) break;
+      }
+      return { data: all, meta: { ...first.meta, page: 1, pageSize: all.length, totalPages: 1 } };
+    },
   });
 }
 
@@ -182,13 +229,15 @@ export function useCreateAccount() {
     mutationFn: async (input: {
       code: string;
       name: string;
-      categoryId: string;
-      isGroup?: boolean;
+      categoryId?: string | null;
+      isPostable?: boolean;
       parentAccountId?: string | null;
       description?: string;
       cashFlowCategory?: string;
       sortOrder?: number;
-      isControlAccount?: boolean;
+      controlAccountType?: ControlAccountType | null;
+      bankName?: string;
+      accountNumber?: string;
       allowReconciliation?: boolean | null;
       allowManualPosting?: boolean | null;
       allowBudgeting?: boolean | null;
@@ -209,8 +258,8 @@ export function useUpdateAccount() {
       id: string;
       code?: string;
       name?: string;
-      categoryId?: string;
-      isGroup?: boolean;
+      categoryId?: string | null;
+      isPostable?: boolean;
       isActive?: boolean;
       parentAccountId?: string | null;
       description?: string | null;
@@ -218,7 +267,7 @@ export function useUpdateAccount() {
       bankName?: string | null;
       accountNumber?: string | null;
       sortOrder?: number;
-      isControlAccount?: boolean;
+      controlAccountType?: ControlAccountType | null;
       allowReconciliation?: boolean | null;
       allowManualPosting?: boolean | null;
       allowBudgeting?: boolean | null;
@@ -293,6 +342,8 @@ export interface BalanceSheetDetailedResult {
   balanced: boolean;
   source: 'snapshot' | 'live';
   sections: BalanceSheetSection[];
+  /** Unclosed profit / loss for the year to date (part of equity, not in the equity rows). */
+  currentYearEarnings?: string;
   totals: {
     assets: string;
     liabilities: string;
@@ -382,6 +433,7 @@ export function useTrialBalance(params: { from?: string; to?: string; view?: 'pr
 
 export interface GeneralLedgerRow {
   id: string;
+  journalEntryId: string;
   date: string;
   entryNumber: string;
   accountCode: string;
@@ -400,7 +452,9 @@ export function useGeneralLedger(params: {
   from?: string;
   to?: string;
   page?: number;
+  /** Server default 100, max 500. */
   pageSize?: number;
+  accountId?: string;
 }) {
   return useQuery({
     queryKey: ['general-ledger', params],
@@ -461,6 +515,7 @@ export function useCashFlow(params: { from?: string; to?: string }) {
 
 export interface AccountLedgerLine {
   id: string;
+  journalEntryId: string;
   date: string;
   entryNumber: string;
   description: string | null;
@@ -470,7 +525,11 @@ export interface AccountLedgerLine {
 }
 
 export interface AccountLedgerResult {
-  account: { id: string; code: string; name: string };
+  account: { id: string; code: string; name: string } | null;
+  /** The account's normal side; balances are always debit-minus-credit. */
+  normalBalance?: 'debit' | 'credit';
+  /** Debit-minus-credit before `from` (the running balance starts here). */
+  openingBalance?: string;
   lines: AccountLedgerLine[];
   closingBalance: string;
 }
@@ -650,34 +709,37 @@ export function useCreateFiscalPeriod() {
     mutationFn: async (input: { name: string; startDate: string; endDate: string }) =>
       (await api.post<FiscalPeriod>('/fiscal-periods', input)).data,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period created')); },
-    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+    onError: (e) => toastMutationError(tx('Failed'), e),
   });
 }
 
 export function useClosePeriod() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/close`)).data,
+    // Stable Idempotency-Key per operation: a retry after a timeout replays instead of acting twice.
+    mutationFn: (id: string) => idempotentPost(`/fiscal-periods/${id}/close`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period closed')); },
-    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+    onError: (e) => toastMutationError(tx('Failed'), e),
   });
 }
 
 export function useReopenPeriod() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/reopen`)).data,
+    // Stable Idempotency-Key per operation: a retry after a timeout replays instead of acting twice.
+    mutationFn: (id: string) => idempotentPost(`/fiscal-periods/${id}/reopen`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period reopened')); },
-    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+    onError: (e) => toastMutationError(tx('Failed'), e),
   });
 }
 
 export function useLockPeriod() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post(`/fiscal-periods/${id}/lock`)).data,
+    // Stable Idempotency-Key per operation: a retry after a timeout replays instead of acting twice.
+    mutationFn: (id: string) => idempotentPost(`/fiscal-periods/${id}/lock`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fiscal-periods'] }); notify.success(tx('Period locked')); },
-    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+    onError: (e) => toastMutationError(tx('Failed'), e),
   });
 }
 
@@ -769,13 +831,13 @@ function useYearAction(path: 'close' | 'reopen', done: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, lockPeriods }: { id: string; lockPeriods?: boolean }) =>
-      (await api.post<FiscalYear>(`/fiscal-years/${id}/${path}`, path === 'close' ? { lockPeriods } : undefined)).data,
+      idempotentPost<FiscalYear>(`/fiscal-years/${id}/${path}`, path === 'close' ? { lockPeriods } : undefined),
     onSuccess: () => {
       ['fiscal-years', 'year-close-checklist', 'year-closing-balances', 'fiscal-periods'].forEach((k) =>
         qc.invalidateQueries({ queryKey: [k] }));
       notify.success(done);
     },
-    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+    onError: (e) => toastMutationError(tx('Failed'), e),
   });
 }
 
@@ -990,6 +1052,29 @@ export function useCurrencies() {
   });
 }
 
+/**
+ * Minor-unit count of the org base currency: the configured `Currency.decimalPlaces`
+ * when the user may read currencies, else the ISO 4217 default for the code, else 2.
+ */
+export function useBaseCurrencyDecimals(): number {
+  const code = useAuthStore((s) => s.organization?.currencyCode ?? '');
+  const canRead = useAuthStore((s) => s.hasPermission(PERMISSIONS.currency.read));
+  const currencies = useQuery({
+    queryKey: ['currencies'],
+    queryFn: async () => (await api.get<Currency[]>('/currencies')).data,
+    enabled: canRead && !!code,
+    staleTime: 10 * 60 * 1000,
+  });
+  const configured = currencies.data?.find((c) => c.code === code)?.decimalPlaces;
+  return typeof configured === 'number' ? configured : currencyDecimals(code);
+}
+
+/** `money()` bound to the base currency's decimals, for accounting reports. */
+export function useAccountingMoney(): (value?: string | number | null) => string {
+  const decimals = useBaseCurrencyDecimals();
+  return (value) => money(value, undefined, decimals);
+}
+
 export function useCurrencyRates(params?: { fromCode?: string; toCode?: string }) {
   return useQuery({
     queryKey: ['currency-rates', params],
@@ -1091,7 +1176,18 @@ export interface JournalEntryDetail extends JournalEntryRow {
   lines: JournalLine[];
 }
 
-export function useJournalEntries(params: { page?: number; pageSize?: number; search?: string }) {
+export type JournalEntryStatus = 'draft' | 'posted' | 'reversed';
+
+export function useJournalEntries(params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  journalId?: string;
+  status?: JournalEntryStatus;
+  /** YYYY-MM-DD, inclusive. */
+  from?: string;
+  to?: string;
+}) {
   return useQuery({
     queryKey: ['journal-entries', params],
     queryFn: async () =>
@@ -1221,28 +1317,66 @@ export interface CreateJournalEntryInput {
   lines: ManualJournalLineInput[];
 }
 
+function invalidateJournalEntry(qc: ReturnType<typeof useQueryClient>, id?: string) {
+  qc.invalidateQueries({ queryKey: ['journal-entries'] });
+  if (id) qc.invalidateQueries({ queryKey: ['journal-entry', id] });
+  qc.invalidateQueries({ queryKey: ['trial-balance'] });
+  qc.invalidateQueries({ queryKey: ['general-ledger'] });
+  qc.invalidateQueries({ queryKey: ['account-ledger'] });
+}
+
+/**
+ * Maker step: stages a DRAFT (not in the books until posted). Sent with a stable
+ * Idempotency-Key keyed on the payload, so a retry of the same submission replays
+ * the first result instead of creating a duplicate; the key is released once the
+ * server answers, so the next entry gets a fresh one. The page shows errors inline.
+ */
 export function useCreateJournalEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: CreateJournalEntryInput) =>
-      (await api.post<JournalEntryDetail>('/journal-entries', input)).data,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['journal-entries'] });
-      qc.invalidateQueries({ queryKey: ['trial-balance'] });
+    mutationFn: (input: CreateJournalEntryInput) => idempotentPost<JournalEntryDetail>('/journal-entries', input),
+    onSuccess: () => invalidateJournalEntry(qc),
+  });
+}
+
+/** Checker step: posts a draft. The server refuses (403) when the creator posts their own entry. */
+export function usePostJournalEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => idempotentPost<JournalEntryDetail>(`/journal-entries/${id}/post`),
+    onSuccess: (_data, id) => {
+      invalidateJournalEntry(qc, id);
+      notify.success(tx('Journal entry posted'));
     },
+    onError: (e) => toastMutationError(tx('Could not post the entry'), e),
+  });
+}
+
+/** Discards a draft (never in the books). */
+export function useDiscardJournalEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await api.delete(`/journal-entries/${id}`);
+    },
+    onSuccess: (_data, id) => {
+      qc.removeQueries({ queryKey: ['journal-entry', id] });
+      invalidateJournalEntry(qc);
+      notify.success(tx('Draft discarded'));
+    },
+    onError: (e) => toastMutationError(tx('Could not discard the draft'), e),
   });
 }
 
 export function useReverseJournalEntry() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post<JournalEntryDetail>(`/journal-entries/${id}/reverse`, {})).data,
+    mutationFn: (id: string) => idempotentPost<JournalEntryDetail>(`/journal-entries/${id}/reverse`, {}),
     onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: ['journal-entries'] });
-      qc.invalidateQueries({ queryKey: ['journal-entry', id] });
-      qc.invalidateQueries({ queryKey: ['trial-balance'] });
+      invalidateJournalEntry(qc, id);
+      notify.success(tx('Journal entry reversed'));
     },
+    onError: (e) => toastMutationError(tx('Could not reverse the entry'), e),
   });
 }
 

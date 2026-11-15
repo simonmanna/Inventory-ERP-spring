@@ -14,14 +14,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { money } from '@/lib/format';
 import { exportCSV } from '@/lib/export-csv';
-import { useTrialBalance } from '@/features/accounting/api';
+import { useTrialBalance, useAccountingMoney } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
+import { localDay } from '@/lib/dates';
 
 type View = 'post_closing' | 'pre_closing';
 
 export function TrialBalancePage() {
+  const money = useAccountingMoney();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [view, setView] = useState<View>('post_closing');
@@ -34,7 +35,7 @@ export function TrialBalancePage() {
   const onExport = () => {
     if (!data) return;
     exportCSV(
-      `trial-balance-${to || new Date().toISOString().slice(0, 10)}-${view}.csv`,
+      `trial-balance-${to || localDay()}-${view}.csv`,
       [tx('Code'), tx('Account'), tx('Debit'), tx('Credit'), tx('Balance')],
       [
         ...data.rows.map((r) => [r.code, r.name, r.debit, r.credit, r.balance]),

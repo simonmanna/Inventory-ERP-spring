@@ -66,7 +66,7 @@ export function BudgetDetailPage() {
   const accountOptions = useMemo(
     () =>
       (accounts?.data ?? [])
-        .filter((a) => !a.isGroup && (a.allowBudgeting ?? a.category?.allowBudgeting ?? false))
+        .filter((a) => a.isPostable !== false && (a.allowBudgeting ?? a.category?.allowBudgeting ?? false))
         .map((a) => ({ value: a.id, label: `${a.code} · ${a.name}`, code: a.code })),
     [accounts],
   );

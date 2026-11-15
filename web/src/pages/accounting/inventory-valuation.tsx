@@ -13,9 +13,10 @@ import { useInventoryValuation, type InventoryValuationItem } from '@/features/a
 import { money } from '@/lib/format';
 import { format } from 'date-fns';
 import { tx } from '@/lib/i18n/tx';
+import { localDay } from '@/lib/dates';
 
 export function InventoryValuationPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   const [asOf, setAsOf] = useState(today);
   const { data, isLoading, refetch, isRefetching } = useInventoryValuation(asOf);
 
