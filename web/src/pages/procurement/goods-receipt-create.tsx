@@ -19,6 +19,7 @@ interface Product extends UnitAwareProduct { id: string; name: string; code: str
 interface POLine {
   id: string; productId: string | null; description: string; quantity: number; receivedQuantity: number;
   unitPrice: number; unitOfMeasureId?: string | null; variantId?: string | null;
+  variant?: { id: string; name: string; sku?: string | null } | null;
 }
 interface PO { id: string; orderNumber: string; lines: POLine[] }
 
@@ -34,6 +35,8 @@ interface Line {
   uomId?: string;
   /** ADR-S058: product variant (required for a product with variants). PO-backed lines keep the PO line's. */
   variantId?: string | null;
+  /** Name of a PO-backed line's variant (from the PO), shown read-only. */
+  variantName?: string;
 }
 
 export function GoodsReceiptCreatePage() {
@@ -72,6 +75,7 @@ export function GoodsReceiptCreatePage() {
           description: ln.description,
           uomId: ln.unitOfMeasureId ?? undefined,
           variantId: ln.variantId ?? undefined,
+          variantName: ln.variant?.name ?? undefined,
           quantity: Math.max(0, Number(ln.quantity) - Number(ln.receivedQuantity)),
           unitCost: Number(ln.unitPrice) || 0,
         })).filter((l) => l.quantity > 0),
@@ -191,6 +195,9 @@ export function GoodsReceiptCreatePage() {
                     <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
                   ))}
                 </select>
+                {ln.purchaseOrderLineId && ln.variantName && (
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{ln.variantName}</span>
+                )}
                 {!ln.purchaseOrderLineId && (
                   <VariantSelect
                     productId={ln.productId}

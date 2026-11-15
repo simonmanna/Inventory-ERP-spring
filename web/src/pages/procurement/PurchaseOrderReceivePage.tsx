@@ -21,6 +21,7 @@ interface PO {
     productId?: string;
     unitOfMeasureId?: string | null;
     variantId?: string | null;
+    variant?: { id: string; name: string; sku?: string | null } | null;
   }>;
 }
 
@@ -174,6 +175,7 @@ export function PurchaseOrderReceivePage() {
                       {uomCode(l.unitOfMeasureId) && (
                         <span className="ml-1 text-xs text-muted-foreground">({uomCode(l.unitOfMeasureId)})</span>
                       )}
+                      {l.variant?.name && <span className="block text-xs text-muted-foreground">{l.variant.name}</span>}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{ordered}</td>
                     <td className="px-3 py-2 text-right font-mono">{received}</td>

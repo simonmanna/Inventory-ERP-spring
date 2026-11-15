@@ -184,6 +184,11 @@ class ProductVariantIT extends ApiTestSupport {
                 "warehouseId", warehouse, "lines", List.of(Map.of("purchaseOrderLineId", po.get("lines").get(0).get("id")
                         .asString(), "productId", p, "description", "Screen", "quantity", 5))), h);
         assertThat(rec.status()).as(rec.raw().body()).isIn(200, 201);
+        // The order names each line's variant, on its own lines and on its receipts' lines.
+        JsonNode poView = ok(200, "GET", "/procurement/purchase-orders/" + po.get("id").asString(), null);
+        assertThat(poView.get("lines").get(0).get("variant").get("name").asString()).isEqualTo("White, Small");
+        assertThat(poView.get("receipts").get(0).get("lines").get(0).get("variant").get("name").asString())
+                .isEqualTo("White, Small");
         BigDecimal onHand = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"variantId\" = ?")
                 .param(whiteSmall).query(BigDecimal.class).single();
         assertThat(onHand).isEqualByComparingTo("5");

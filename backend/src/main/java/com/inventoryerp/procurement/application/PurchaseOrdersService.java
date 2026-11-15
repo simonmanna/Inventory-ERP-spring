@@ -45,6 +45,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -397,12 +399,12 @@ public class PurchaseOrdersService {
         if (po == null) {
             return null;
         }
-        po.put("lines", poLines(id));
+        po.put("lines", withVariants(poLines(id)));
         List<Map<String, Object>> receipts = SqlRows.list(GoodsReceiptNote.class, jdbc.sql("SELECT * FROM"
                 + " \"GoodsReceiptNote\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?").params(id, org()));
         for (Map<String, Object> r : receipts) {
-            r.put("lines", SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
-                    + " \"goodsReceiptId\" = ?").param(r.get("id"))));
+            r.put("lines", withVariants(SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM"
+                    + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ?").param(r.get("id")))));
         }
         po.put("receipts", receipts);
         po.put("payments", SqlRows.list(PurchasePayment.class, jdbc.sql("SELECT * FROM \"PurchasePayment\" WHERE"
@@ -411,6 +413,30 @@ public class PurchaseOrdersService {
                 jdbc.sql("SELECT * FROM \"PurchaseRequest\" WHERE id = ? AND \"organizationId\" = ?")
                         .params(po.get("requestId"), org())));
         return po;
+    }
+
+    /**
+     * Adds {@code variant: {id, name, sku}} (null without a variant) to each line, so a screen can name the variant a
+     * line was ordered or received in (ADR-S058). Additive: the line's own fields are unchanged.
+     */
+    private List<Map<String, Object>> withVariants(List<Map<String, Object>> lines) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> l : lines) {
+            if (l.get("variantId") != null) {
+                ids.add((String) l.get("variantId"));
+            }
+        }
+        Map<String, Map<String, Object>> byId = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, name, sku FROM \"ProductVariant\" WHERE"
+                    + " id = ANY(?::text[]) AND \"organizationId\" = ?").params(ids.toArray(String[]::new), org()))) {
+                byId.put((String) v.get("id"), v);
+            }
+        }
+        for (Map<String, Object> l : lines) {
+            l.put("variant", l.get("variantId") == null ? null : byId.get(l.get("variantId")));
+        }
+        return lines;
     }
 
     private List<Map<String, Object>> poLines(Object purchaseOrderId) {
