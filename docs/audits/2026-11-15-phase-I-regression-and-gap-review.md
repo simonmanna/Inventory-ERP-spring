@@ -162,6 +162,8 @@ Each fix landed with a regression test that failed before it.
 | D2, V-5…V-10, V-4, N9, U-9 | `32db4a31` | `VariantIntegrityIT` (6 tests), `SyncIT.stockCountPerVariant`, `FleetDispatchIT.deliveryOrdersKeepTheVariant` |
 | N7 | (see git log) | `PosVariantIntegrityIT.refusedCheckoutLeavesNoKitchenWaste` |
 | N8 | (see git log) | `ProductionUnitsIT.reversalIssuesByproducts` |
+| C-1, C-2 | (see git log) | `VariantIntegrityIT.variantCostFallbacks`, `itemValueByCostingMethod` |
+| M-3 | (see git log) | `ProductionUnitsIT.reservationsInBaseUnitsUntilConsumed` |
 
 Notes:
 
@@ -179,6 +181,6 @@ Notes:
   substitute units replace one unit of the component line, and the substitute carries no unit of its own, so its
   quantity is in its base unit. Not a defect under that definition; recorded instead of changed.
 
-Still open in I2: U-4…U-7, U-10, U-5, R-1 (`V487`; V486 went to replenishment variants), C-1/C-2, M-3, the D1 offline POS
+Still open in I2: U-4…U-7, U-10, U-5, R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
 posting hold (ADR-S072), and the tracked M-1…M-12.
 

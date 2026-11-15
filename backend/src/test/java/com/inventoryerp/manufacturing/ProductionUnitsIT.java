@@ -116,4 +116,29 @@ class ProductionUnitsIT extends MfgTestSupport {
         assertThat(balance(wipAccount)).as("WIP is not short by the by-product credit")
                 .isEqualByComparingTo(wipBefore);
     }
+
+    @Test
+    @DisplayName("M-3: a confirmed order reserves its materials in base units and releases them once consumed")
+    void reservationsInBaseUnitsUntilConsumed() {
+        String gram = unit("G");
+        String kg = unit("KG");
+        String flour = inGrams("FLOUR", gram, kg);
+        String bread = inGrams("BREAD", gram, kg);
+        jdbc.sql("UPDATE \"Product\" SET \"manufacturingRole\" = 'raw' WHERE id = ?").param(flour).update();
+        ok(200, "POST", "/inventory/direct-stock/in", Map.of("locationId", bakery, "responsibleById", adminId,
+                "approvedById", adminId, "items", List.of(Map.of("productId", flour, "quantity", 5000, "unitCost",
+                        "0.5"))));
+        String bomId = ok(201, "POST", "/manufacturing/boms", Map.of("name", "Bread res " + suffix(),
+                "outputProductId", bread, "outputQuantity", 9, "outputUomId", kg, "lines", List.of(Map.of(
+                        "componentProductId", flour, "quantity", 2, "uomId", kg)))).get("id").asString();
+        ok(201, "POST", "/manufacturing/boms/" + bomId + "/activate", null);
+        String id = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "runs", 1,
+                "locationId", bakery, "outputLocationId", warehouse)).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/confirm", null);
+        assertThat(jdbc.sql("SELECT quantity FROM \"StockReservation\" WHERE \"sourceId\" = ? AND status = 'active'")
+                .param(id).query(BigDecimal.class).single()).as("2 kg = 2000 g held back").isEqualByComparingTo("2000");
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/start", Map.of());
+        assertThat(jdbc.sql("SELECT count(*) FROM \"StockReservation\" WHERE \"sourceId\" = ? AND status = 'active'")
+                .param(id).query(Long.class).single()).as("consumed flour is no longer reserved").isZero();
+    }
 }

@@ -328,8 +328,13 @@ public class ProductionService {
         }
         for (Map<String, Object> m : materials(order)) {
             try {
-                newTx.executeWithoutResult(s -> reservations.reserve(new Reserve(str(m, "productId"),
-                        str(m, "variantId"), str(order, "locationId"), dec(m, "qtyPlanned"), SOURCE, id,
+                // Review M-3: reservations count base units (the stock they hold back); the material line is in its
+                // BOM unit.
+                // The conversion runs in the reservation's own transaction: a failure stays soft.
+                String productId = str(m, "productId");
+                newTx.executeWithoutResult(s -> reservations.reserve(new Reserve(productId,
+                        str(m, "variantId"), str(order, "locationId"), uom.toBase(dec(m, "qtyPlanned"),
+                                str(m, "uomId"), productId, productUnit(productId), true), SOURCE, id,
                         str(order, "orderCode"))));
             } catch (RuntimeException e) {
                 log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), m.get("productId"), e.getMessage());
@@ -415,6 +420,9 @@ public class ProductionService {
             }
             db.update(ProductionMaterial.class, str(line, "id"), upd);
         }
+        // Review M-3: the materials are consumed now, so their reservations end here (not at completion, which kept
+        // holding back stock that had already left).
+        reservations.consume(SOURCE, id);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "in_progress");
         data.put("startedAt", date);
