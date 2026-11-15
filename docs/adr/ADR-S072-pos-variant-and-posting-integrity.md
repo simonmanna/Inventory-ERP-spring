@@ -105,6 +105,12 @@ stock-keeping unit (own quant, own price), the POS was not changed to match:
      line", in the same transaction as the issue. The row, its reason and stack trace are kept.
    - Without this the monitor kept asking an operator to correct stock that had in fact been deducted (risk of a
      manual double deduction). Nest kept exceptions open until resolved by hand.
+10. **A counter checkout fires the kitchen after its invoice (review N7, 2026-11-15).**
+    - Nest's `checkout` ran Order → kitchen → Invoice. When the invoice was refused (strict availability, pricing,
+      period), the order stayed open with every line marked as sent, and cancelling it recorded kitchen waste
+      ("cancelled after kitchen") for food that was never made — and issued that stock as waste.
+    - `PosService.checkout` now fires the kitchen once the invoice exists (before the payment). A recovered checkout
+      (same operation key) fires after its invoice too. Table orders settled later are unchanged.
 
 ## Consequences
 

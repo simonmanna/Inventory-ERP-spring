@@ -460,6 +460,28 @@ class PosVariantIntegrityIT extends ApiTestSupport {
     }
 
     /** A refused checkout leaves its order open (created before invoicing); it would block the shift close. */
+    @Test
+    @DisplayName("N7: cancelling the order of a refused checkout records no kitchen waste (the kitchen was never fired)")
+    void refusedCheckoutLeavesNoKitchenWaste() {
+        String p = boxedProduct("Cups", 30);
+        ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "strict"));
+        try {
+            Res over = keyed("POST", "/pos/checkout", Map.of("cashSessionId", sessionId, "lines",
+                    List.of(priced(line(p, null, 3), 1200)), "tenders", List.of(Map.of("method", "cash", "amount", 3600))));
+            assertThat(over.status()).as(over.raw().body()).isEqualTo(400);
+            String orderId = jdbc.sql("SELECT o.id FROM \"Order\" o JOIN \"OrderItem\" i ON i.\"orderId\" = o.id WHERE"
+                    + " i.\"productId\" = ? AND o.\"cashSessionId\" = ?").params(p, sessionId).query(String.class).single();
+            assertThat(jdbc.sql("SELECT count(*) FROM \"KitchenTicket\" WHERE \"orderId\" = ?").param(orderId)
+                    .query(Long.class).single()).as("nothing was sent to the kitchen").isZero();
+            cancelOpenOrders();
+            assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"productId\" = ? AND \"referenceType\""
+                    + " = 'pos_kitchen_waste'").param(p).query(Long.class).single()).isZero();
+        } finally {
+            ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "post_commit"));
+            cancelOpenOrders();
+        }
+    }
+
     void cancelOpenOrders() {
         for (String id : jdbc.sql("SELECT id FROM \"Order\" WHERE \"cashSessionId\" = ? AND status::text NOT IN"
                 + " ('closed', 'cancelled', 'completed')").param(sessionId).query(String.class).list()) {

@@ -106,7 +106,8 @@ public class PosService {
             previous = db.first(Order.class, "\"organizationId\" = ? AND \"clientOperationKey\" = ?", org(), op.key());
         }
         if (previous != null) {
-            return settleResolvedOrder(previous, input);
+            // The checkout that created this order may have stopped before its invoice: fire the kitchen once billed.
+            return settleResolvedOrder(previous, input, true);
         }
         List<Map<String, Object>> lines = PosOrdersService.maps(input.get("lines"));
         if (lines.isEmpty()) {
@@ -138,11 +139,6 @@ public class PosService {
         createDto.put("lines", toOrderLines(lines));
         Map<String, Object> order = orders.createOrder(createDto);
         String orderId = (String) order.get("id");
-        try {
-            orders.fireKitchen(orderId);
-        } catch (RuntimeException e) {
-            log.warn("fireKitchen failed: {}", e.getMessage());
-        }
         Map<String, Object> genDto = invoiceDto(input);
         genDto.put("branchId", input.get("branchId"));
         if (!isCredit) {
@@ -152,6 +148,10 @@ public class PosService {
                     : input.get("paymentMethod") != null ? input.get("paymentMethod") : "cash");
         }
         Map<String, Object> invoice = billing.generateInvoice(orderId, genDto);
+        // Phase I2 N7 (deviation from Nest, ADR-S072): the kitchen is fired once the sale is invoiced, not before. A
+        // checkout refused at invoicing (e.g. strict availability) leaves an unfired order, so cancelling it records no
+        // kitchen waste for food that was never made.
+        fireKitchenQuietly(orderId);
         Map<String, Object> pay = isCredit ? billing.settleCredit((String) invoice.get("id"), Obj.of("partnerId",
                 input.get("partnerId"))) : billing.receivePayment((String) invoice.get("id"), paymentDto(input));
         Map<String, Object> result = afterSettle(orgId, invoice, input, pay, isCredit);
@@ -573,7 +573,20 @@ public class PosService {
     }
 
     /** Shared settle tail for an already-resolved open order. */
+    private void fireKitchenQuietly(String orderId) {
+        try {
+            orders.fireKitchen(orderId);
+        } catch (RuntimeException e) {
+            log.warn("fireKitchen failed: {}", e.getMessage());
+        }
+    }
+
     private Map<String, Object> settleResolvedOrder(Map<String, Object> orderIn, Map<String, Object> input) {
+        return settleResolvedOrder(orderIn, input, false);
+    }
+
+    private Map<String, Object> settleResolvedOrder(Map<String, Object> orderIn, Map<String, Object> input,
+            boolean fireAfterInvoice) {
         String orgId = org();
         Map<String, Object> order = new LinkedHashMap<>(orderIn);
         String orderId = (String) order.get("id");
@@ -628,6 +641,9 @@ public class PosService {
         } catch (RuntimeException e) {
             log.error("[settle] invoice generation failed for order {}: {}", orderId, e.getMessage());
             throw e;
+        }
+        if (fireAfterInvoice) {
+            fireKitchenQuietly(orderId);
         }
         Map<String, Object> pay;
         try {

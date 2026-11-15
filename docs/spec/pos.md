@@ -126,6 +126,8 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
    running it, like the worker; a job held by another runner is skipped.
 10. **A retried line closes its exception (review R4).** The line's open `InventoryException` is resolved
     automatically (note "Posted automatically when the stock posting job retried this line") when the retry posts it.
+11. **A counter checkout fires the kitchen after its invoice (review N7).** A checkout refused at invoicing leaves an
+    unfired order; cancelling it records no kitchen waste. ADR-S072 item 10.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
