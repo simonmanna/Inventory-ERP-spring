@@ -50,6 +50,25 @@ public class LedgerQueries {
     }
 
     /**
+     * An inclusive range END ({@code to} / {@code asOf}): a bare {@code YYYY-MM-DD} is the LAST instant of that local
+     * day, so {@code postingDate <= end} keeps the whole day; a full ISO timestamp is taken as-is. A bare date used to
+     * become the first instant of the day, which dropped every posting made on the end date (review 2026-11-15, R-1).
+     */
+    public static Instant dateEnd(String value, ZoneId zone) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        if (AccountingDay.isDateOnly(value)) {
+            try {
+                return AccountingDay.endInclusive(java.time.LocalDate.parse(value.trim()), zone);
+            } catch (java.time.format.DateTimeParseException e) {
+                throw new IllegalArgumentException("Invalid Date: " + value);
+            }
+        }
+        return date(value, zone);
+    }
+
+    /**
      * Source types of the period / fiscal-year closing entries (and their reversals on reopen). Excluded from profit
      * and loss and from the pre-closing trial balance (ACC-1, B1); kept in the balance sheet and post-closing views.
      */
@@ -95,11 +114,17 @@ public class LedgerQueries {
         return out;
     }
 
-    /** Count of balance-affecting lines with {@code after < postingDate <= upTo} (snapshot staleness). */
+    /**
+     * Count of balance-affecting lines up to {@code upTo} that a snapshot taken at {@code after} cannot contain: dated
+     * after it, or posted after it with an earlier date (snapshot staleness).
+     */
     public long linesBetween(String organizationId, Instant after, Instant upTo) {
         return jdbc.sql("SELECT count(*) FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
-                        + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" > ?"
-                        + " AND e.\"postingDate\" <= ?")
-                .params(organizationId, FiscalPeriodControl.ts(after), FiscalPeriodControl.ts(upTo)).query(Long.class).single();
+                        + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
+                        + " AND e.\"postingDate\" <= ? AND (e.\"postingDate\" > ?"
+                        // a back-dated posting (or a reversal kept on the original's date) made after the snapshot
+                        + " OR coalesce(e.\"postedAt\", e.\"createdAt\") > ?)")
+                .params(organizationId, FiscalPeriodControl.ts(upTo), FiscalPeriodControl.ts(after),
+                        FiscalPeriodControl.ts(after)).query(Long.class).single();
     }
 }

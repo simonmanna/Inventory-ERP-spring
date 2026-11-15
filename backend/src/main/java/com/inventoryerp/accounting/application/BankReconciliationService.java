@@ -105,6 +105,8 @@ public class BankReconciliationService {
         String organizationId = TenantContext.organizationId();
         double tolerance = dateToleranceDays == null ? 3 : dateToleranceDays;
         String runId = UUID.randomUUID().toString();
+        // one matcher per account at a time: concurrent runs (or a manual match) could take the same payment twice
+        lockAccount(organizationId, bankAccountId);
         jdbc.sql("INSERT INTO \"BankReconciliationRun\" (id, \"organizationId\", \"bankAccountId\", \"startedAt\", \"totalAmount\","
                         + " notes, \"createdById\") VALUES (?, ?, ?, now(), 0, ?, ?)")
                 .params(runId, organizationId, bankAccountId, notes, TenantContext.userId()).update();
@@ -120,10 +122,13 @@ public class BankReconciliationService {
             Instant at = (Instant) line.get("postedAt");
             String candidate = signedCandidate(organizationId, bankAccountId, SqlRows.dec(line, "amount"), at, tolMs);
             if (candidate != null && !used.contains(candidate)) {
-                jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRunId\" = ? WHERE id = ?")
+                int updated = jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?,"
+                                + " \"matchedRunId\" = ? WHERE id = ? AND status = 'unmatched'")
                         .params(candidate, runId, line.get("id")).update();
-                used.add(candidate);
-                matched++;
+                if (updated == 1) {
+                    used.add(candidate);
+                    matched++;
+                }
             }
         }
         BigDecimal totalAmount = BigDecimal.ZERO;
@@ -139,6 +144,12 @@ public class BankReconciliationService {
         AfterCommit.run(() -> events.publish("bank_reconciliation.ran", body("organizationId", organizationId,
                 "bankAccountId", bankAccountId, "runId", runId, "matched", m, "unmatched", unmatched)));
         return body("runId", runId, "matched", matched, "unmatched", unmatched);
+    }
+
+    /** Serialises matching and statement locking on one bank account until the transaction ends. */
+    private void lockAccount(String org, String bankAccountId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|bankrec|' || ?, 0))").params(org, bankAccountId)
+                .query().listOfRows();
     }
 
     /** Closest unmatched payment of the line's size and direction within the tolerance. */
@@ -208,7 +219,7 @@ public class BankReconciliationService {
         String org = TenantContext.organizationId();
         BigDecimal book = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                 + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
-                + " AND l.\"accountId\" = ? AND e.status = 'posted'").params(org, bankAccountId)
+                + " AND l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed')").params(org, bankAccountId)
                 .query(BigDecimal.class).single();
         Map<String, Object> lines = SqlRows.one(jdbc.sql("SELECT COALESCE(SUM(amount), 0) AS total,"
                 + " COALESCE(SUM(amount) FILTER (WHERE status = 'matched'), 0) AS matched,"
@@ -262,6 +273,7 @@ public class BankReconciliationService {
         String org = TenantContext.organizationId();
         Map<String, Object> line = requireLine(lineId, org, true);
         assertUnlocked(org, line);
+        lockAccount(org, (String) line.get("bankAccountId"));
         if (!"unmatched".equals(line.get("status"))) {
             throw ApiException.badRequest("Only an unmatched line can be matched");
         }

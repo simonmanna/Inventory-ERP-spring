@@ -54,7 +54,7 @@ public class PosGlReconciliationService {
     public Map<String, Object> reconcile(String fromRaw, String toRaw) {
         String org = TenantContext.organizationId();
         Instant from = fromRaw != null && !fromRaw.isEmpty() ? LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc)) : Instant.now().minus(Duration.ofDays(30));
-        Instant to = toRaw != null && !toRaw.isEmpty() ? LedgerQueries.date(toRaw, AccountingDay.zone(jdbc)) : Instant.now();
+        Instant to = toRaw != null && !toRaw.isEmpty() ? LedgerQueries.dateEnd(toRaw, AccountingDay.zone(jdbc)) : Instant.now();
         if (to.isBefore(from)) {
             throw new IllegalStateException("`to` must be after `from`");
         }

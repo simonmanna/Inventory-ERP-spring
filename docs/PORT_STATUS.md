@@ -134,6 +134,7 @@ stock events only after commit, cost policy / standard activation hourly on the 
 | ACC-6 | Direction-aware bank auto-match only (B5), reconciliation statement proof + lock (V322, `/bank-reconciliation/statement`) | done — `Acc0BankReconciliationIT`, `BankReconciliationIT` |
 | ACC-7 | Fiscal-position tax mapping + partner default (V323, `/fiscal-positions/:id/taxes|partners`), VAT settlement + tax-period lock (`/tax-settlements`) | done — `Acc7TaxIT` |
 | ACC-8 | Web: TB (range, pre/post closing, export, drill-down), P&L (other income/expense, net, export), AR aging (as-of, filter, export), Period-end page, 32 route guards | done — typecheck + lint + browser walk-through |
+| REV-1 | 2026-11-15 accounting review fixes: report end-day inclusive, closing filter in budget / commitment / consolidated / dashboard / cost-centre / analytic, snapshot staleness, VAT settlement measure + lock on drafts / reversals, FX settlement lines in document currency, period / year reopen rules, foreign-currency balance + V495 line checks, bill-cancel stock return, RTV VAT + bill residual, POS tax-group split, credit-note currency, asset clearing, ageing in base; web: account form, draft post / discard, drill-down, server filters, local dates, bank-rec sign-off ([review](audits/2026-11-15-accounting-review.md)) | done — see review; full build not run |
 | later | Integrity dashboard, accounting-policy engine, posting-rule versioning, recurring / deferred entries, tax groups, impairment / CIP, bank matching rules | open |
 
 ## kernel

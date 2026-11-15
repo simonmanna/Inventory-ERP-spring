@@ -146,7 +146,8 @@ class AnalyticDimensionIT extends ApiTestSupport {
         assertThat(new BigDecimal(byValue.get("P1A").get("expense").asString())).isEqualByComparingTo("100");
         assertThat(new BigDecimal(byValue.get("P2").get("expense").asString())).isEqualByComparingTo("25");
         assertThat(new BigDecimal(sum.get("unassigned").get("income").asString())).isEqualByComparingTo("300");
-        assertThat(new BigDecimal(sum.get("totals").get("expense").asString())).isEqualByComparingTo("173");
+        // the 1.00 "period_close" line is a closing entry: left out like P&L does (review 2026-11-15, R-2)
+        assertThat(new BigDecimal(sum.get("totals").get("expense").asString())).isEqualByComparingTo("172");
 
         // filtered trial balance: project P1 includes its child P1A
         JsonNode tb = okAs(b, 200, "GET", "/analytic-dimensions/reports/trial-balance?filter=project:P1", null);

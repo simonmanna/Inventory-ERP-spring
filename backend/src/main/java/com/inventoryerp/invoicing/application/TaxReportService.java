@@ -50,7 +50,7 @@ public class TaxReportService {
     @Transactional(readOnly = true)
     public Map<String, Object> summary(String fromRaw, String toRaw, String branchId) {
         Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
-        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.dateEnd(toRaw, AccountingDay.zone(jdbc));
         Map<String, Bucket> output = new LinkedHashMap<>();
         Map<String, Bucket> input = new LinkedHashMap<>();
 
@@ -122,8 +122,8 @@ public class TaxReportService {
         }
 
         // Procurement debit notes (returns to suppliers) reduce input tax.
-        StringBuilder dnSql = new StringBuilder("SELECT l.\"taxId\", sum(l.subtotal) AS taxable, sum(l.\"taxAmount\") AS"
-                + " tax, count(DISTINCT n.id) AS docs FROM \"DebitNoteLine\" l JOIN \"DebitNote\" n ON n.id = l.\"debitNoteId\""
+        StringBuilder dnSql = new StringBuilder("SELECT l.\"taxId\", sum(l.subtotal * n.\"exchangeRate\") AS taxable,"
+                + " sum(l.\"taxAmount\" * n.\"exchangeRate\") AS tax, count(DISTINCT n.id) AS docs FROM \"DebitNoteLine\" l JOIN \"DebitNote\" n ON n.id = l.\"debitNoteId\""
                 + " WHERE n.\"organizationId\" = ? AND n.status = 'posted' AND n.\"deletedAt\" IS NULL");
         List<Object> dnParams = new ArrayList<>(List.of(org()));
         range(dnSql, dnParams, "n.\"issueDate\"", from, to);

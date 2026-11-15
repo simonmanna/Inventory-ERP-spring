@@ -64,6 +64,6 @@ public class TaxSettlementController {
 
     private static Instant end(String day) {
         return day == null || day.isEmpty() ? null
-                : LocalDate.parse(day.substring(0, 10)).atTime(23, 59, 59).toInstant(ZoneOffset.UTC);
+                : LocalDate.parse(day.substring(0, 10)).atTime(23, 59, 59, 999_000_000).toInstant(ZoneOffset.UTC);
     }
 }

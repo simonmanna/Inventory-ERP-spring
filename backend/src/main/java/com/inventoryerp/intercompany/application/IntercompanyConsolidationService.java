@@ -107,7 +107,7 @@ public class IntercompanyConsolidationService {
         }
         Group g = groups.requireParent();
         Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
-        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.dateEnd(toRaw, AccountingDay.zone(jdbc));
         Instant asOf = to == null ? Instant.now() : to;
 
         Map<String, BigDecimal> rates = new LinkedHashMap<>();
@@ -235,7 +235,7 @@ public class IntercompanyConsolidationService {
     /** {@code GET /intercompany/reconciliation}: each pair's positions with each other in the group currency. */
     public Map<String, Object> reconciliation(String asOfRaw) {
         Group g = groups.requireParent();
-        Instant asOfDate = LedgerQueries.date(asOfRaw, AccountingDay.zone(jdbc));
+        Instant asOfDate = LedgerQueries.dateEnd(asOfRaw, AccountingDay.zone(jdbc));
         Instant asOf = asOfDate == null ? Instant.now() : asOfDate;
         Map<String, BigDecimal> rates = new HashMap<>();
         g.members().forEach(m -> rates.put(m.organizationId(), currencies.getRate(m.currencyCode(), g.currencyCode(),

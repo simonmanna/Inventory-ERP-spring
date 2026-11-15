@@ -70,7 +70,7 @@ public class StatementService {
             throw ApiException.notFound("Partner not found");
         }
         Instant from = LedgerQueries.date(fromRaw, AccountingDay.zone(jdbc));
-        Instant to = LedgerQueries.date(toRaw, AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.dateEnd(toRaw, AccountingDay.zone(jdbc));
         Object own = partner.get(ar ? "receivableAccountId" : "payableAccountId");
         List<String> accounts = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND"
                         + " (\"controlAccountType\"::text = ? OR id = ?)")

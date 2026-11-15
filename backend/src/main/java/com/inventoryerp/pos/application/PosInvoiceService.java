@@ -662,13 +662,68 @@ public class PosInvoiceService {
                 "Invoice " + invoice.get("invoiceNumber"), null, null, null));
         g.itemByAccount().forEach((acc, amount) -> lines.add(new PostingRequest.Line(acc, null, JsNumbers.dec(amount),
                 partnerId, "Revenue", null, null, null)));
-        g.taxByAccount().forEach((acc, amount) -> lines.add(new PostingRequest.Line(acc, null, JsNumbers.dec(amount), null,
+        // per tax account of each line's tax (a group's children each to their own account), the same split refunds
+        // reverse (review 2026-11-15, P-6: stored items carry no breakdown, so a group posted wholly to one account)
+        Map<String, BigDecimal> taxByAccount = new LinkedHashMap<>();
+        for (Map<String, Object> it : items) {
+            taxSplit((String) it.get("taxId"), SqlRows.dec(it, "taxAmount"))
+                    .forEach((acc, amt) -> taxByAccount.merge(acc, amt, BigDecimal::add));
+        }
+        taxByAccount.forEach((acc, amount) -> lines.add(new PostingRequest.Line(acc, null, JsNumbers.dec(amount), null,
                 "Output tax", null, null, null)));
         Map<String, Object> entry = posting.post(new PostingRequest("SALES", (Instant) invoice.get("issueDate"),
                 "Invoice " + invoice.get("invoiceNumber"), (String) invoice.get("currencyId"),
                 PosSql.js(invoice.get("exchangeRate")), "pos_invoice", (String) invoice.get("id"), "primary",
                 "pos_invoice:" + invoice.get("id") + ":primary", (String) invoice.get("branchId"), null, dims, lines));
         return (String) entry.get("id");
+    }
+
+    /**
+     * A line's output tax by GL account: a plain tax to its account (or {@code tax_payable}); a group tax over its
+     * ordered children in proportion to what each charges (compound children on the running total), the rounding
+     * remainder on the last. Withholding and reverse-charge taxes post nothing here, as on back-office invoices.
+     */
+    Map<String, BigDecimal> taxSplit(String taxId, BigDecimal tax) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        if (taxId == null || tax == null || tax.signum() == 0) {
+            return out;
+        }
+        Map<String, Object> t = SqlRows.one(jdbc.sql("SELECT \"accountId\", type::text AS type, \"isGroup\" FROM \"Tax\""
+                + " WHERE id = ? AND \"organizationId\" = ?").params(taxId, org()));
+        if (t == null || "withholding".equals(t.get("type"))) {
+            return out;
+        }
+        if (!Boolean.TRUE.equals(t.get("isGroup"))) {
+            out.put(determination.taxAccount((String) t.get("accountId"), "tax_payable"), tax);
+            return out;
+        }
+        List<String> accounts = new ArrayList<>();
+        List<BigDecimal> weights = new ArrayList<>();
+        BigDecimal running = BigDecimal.ZERO;
+        for (Map<String, Object> c : SqlRows.list(jdbc.sql("SELECT t.rate, t.\"accountId\", t.\"isCompound\" FROM"
+                + " \"TaxGroupMember\" m JOIN \"Tax\" t ON t.id = m.\"childTaxId\" WHERE m.\"groupTaxId\" = ? AND"
+                + " m.\"organizationId\" = ? AND t.\"deletedAt\" IS NULL AND t.type::text <> 'withholding' AND NOT"
+                + " t.\"reverseCharge\" ORDER BY m.sequence").params(taxId, org()))) {
+            BigDecimal base = Boolean.TRUE.equals(c.get("isCompound")) ? BigDecimal.ONE.add(running) : BigDecimal.ONE;
+            BigDecimal w = base.multiply(SqlRows.dec(c, "rate")).divide(BigDecimal.valueOf(100), 10, RoundingMode.HALF_UP);
+            running = running.add(w);
+            accounts.add(determination.taxAccount((String) c.get("accountId"), "tax_payable"));
+            weights.add(w);
+        }
+        if (running.signum() == 0) {
+            out.put(determination.taxAccount((String) t.get("accountId"), "tax_payable"), tax);
+            return out;
+        }
+        BigDecimal left = tax;
+        for (int i = 0; i < accounts.size(); i++) {
+            BigDecimal part = i == accounts.size() - 1 ? left
+                    : tax.multiply(weights.get(i)).divide(running, 6, RoundingMode.HALF_UP);
+            left = left.subtract(part);
+            if (part.signum() != 0) {
+                out.merge(accounts.get(i), part, BigDecimal::add);
+            }
+        }
+        return out;
     }
 
     // ─── payments ───
@@ -1083,11 +1138,13 @@ public class PosInvoiceService {
                 journal.add(new PostingRequest.Line((String) src.get("accountId"), JsNumbers.dec(subtotal), null, partnerId,
                         null, null, null, null));
                 if (tax.signum() > 0) {
-                    if (src.get("taxAccountId") == null) {
+                    if (src.get("taxAccountId") == null && src.get("taxId") == null) {
                         throw ApiException.badRequest("Original tax posting account is missing");
                     }
-                    journal.add(new PostingRequest.Line((String) src.get("taxAccountId"), JsNumbers.dec(tax), null, null, null,
-                            null, null, null));
+                    Map<String, BigDecimal> split = src.get("taxId") == null
+                            ? Map.of((String) src.get("taxAccountId"), tax) : taxSplit((String) src.get("taxId"), tax);
+                    split.forEach((acc, amt) -> journal.add(new PostingRequest.Line(acc, JsNumbers.dec(amt), null, null,
+                            null, null, null, null)));
                 }
                 refundItems.add(Obj.of("lineId", src.get("id"), "quantity", JsNumbers.dec(quantity),
                         "subtotal", JsNumbers.dec(subtotal), "taxAmount", JsNumbers.dec(tax)));

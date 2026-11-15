@@ -103,21 +103,21 @@ class AccountingDayIT extends AccountingFixtures {
         String boundaryId = (String) postAt(b, boundary, List.of(dr(cash, 50), cr(revenue, 50))).get("id");
         assertThat(postingDate(boundaryId)).as("real timestamps are stored unchanged").isEqualTo(boundary);
 
-        // Reports: in February, not in January (bare dates are Kampala days).
+        // Reports: in February, not in January (bare dates are whole Kampala days; `to` is inclusive, review R-1).
         String febFrom = y + "-02-01";
         String febTo = y + "-02-28";
         assertThat(tbBalance(trialBalance(b, febFrom, febTo), revenue)).as("February trial balance")
                 .isEqualByComparingTo("-50");
-        assertThat(tbBalance(trialBalance(b, y + "-01-01", febFrom), revenue)).as("January trial balance")
+        assertThat(tbBalance(trialBalance(b, y + "-01-01", y + "-01-31"), revenue)).as("January trial balance")
                 .isEqualByComparingTo("-100");
         assertThat(new BigDecimal(pnl(b, febFrom, febTo).get("revenue").asString())).as("February P&L")
                 .isEqualByComparingTo("50");
-        assertThat(new BigDecimal(pnl(b, y + "-01-01", febFrom).get("revenue").asString())).as("January P&L")
+        assertThat(new BigDecimal(pnl(b, y + "-01-01", y + "-01-31").get("revenue").asString())).as("January P&L")
                 .isEqualByComparingTo("100");
         JsonNode glFeb = okAs(b, 200, "GET", "/reports/accounting/general-ledger?from=" + febFrom + "&to=" + febTo,
                 null);
         assertThat(glFeb.get("meta").get("total").asLong()).as("February general ledger lines").isEqualTo(2);
-        JsonNode glJan = okAs(b, 200, "GET", "/reports/accounting/general-ledger?from=" + y + "-01-01&to=" + febFrom,
+        JsonNode glJan = okAs(b, 200, "GET", "/reports/accounting/general-ledger?from=" + y + "-01-01&to=" + y + "-01-31",
                 null);
         assertThat(glJan.get("meta").get("total").asLong()).as("January general ledger lines").isEqualTo(2);
 
@@ -177,9 +177,9 @@ class AccountingDayIT extends AccountingFixtures {
             Instant stored = postingDate(id);
             assertThat(AccountingDay.of(stored, zone)).as(zone + " accounting day").isEqualTo(d);
             assertThat(stored).as(zone + " local noon").isEqualTo(d.atTime(12, 0).atZone(zone).toInstant());
-            assertThat(new BigDecimal(pnl(b, d.toString(), d.plusDays(1).toString()).get("revenue").asString()))
+            assertThat(new BigDecimal(pnl(b, d.toString(), d.toString()).get("revenue").asString()))
                     .as(zone + " P&L of day D").isEqualByComparingTo("70");
-            assertThat(new BigDecimal(pnl(b, d.minusDays(1).toString(), d.toString()).get("revenue").asString()))
+            assertThat(new BigDecimal(pnl(b, d.minusDays(1).toString(), d.minusDays(1).toString()).get("revenue").asString()))
                     .as(zone + " P&L of day D-1").isEqualByComparingTo("0");
         }
     }

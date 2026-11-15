@@ -90,8 +90,13 @@ public class PaymentService {
     }
 
     /** Foreign-currency settlement of a payment (PC-0, ADR-S054): rate used and per-document carrying rates. */
+    /**
+     * {@code counterCurrency} is the currency the relieved open items were posted in (the documents' own
+     * {@code currencyId}), so the AR / AP line carries it and FX revaluation sees the item settled (review 2026-11-15,
+     * G-1).
+     */
     private record FxSettlement(CurrencyService.Resolution rate, Map<String, BigDecimal> carrying,
-            BigDecimal counterBase, BigDecimal cashBase, BigDecimal fx) {}
+            BigDecimal counterBase, BigDecimal cashBase, BigDecimal fx, String counterCurrency, BigDecimal amount) {}
 
     /** Payment method of a customer-deposit application (only through {@link #createDepositApplication}). */
     public static final String DEPOSIT_METHOD = "customer_deposit";
@@ -577,6 +582,7 @@ public class PaymentService {
         Map<String, BigDecimal> carrying = new HashMap<>();
         BigDecimal relieved = Money.ZERO;
         BigDecimal allocatedSum = Money.ZERO;
+        String counterCurrency = null;
         for (AllocationInput a : allocations) {
             BigDecimal alloc = r6(Money.dec(a.amount()));
             if (alloc.signum() <= 0) {
@@ -594,6 +600,9 @@ public class PaymentService {
                         + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
             }
             BigDecimal docRate = fxRates.documentRate(doc);
+            if (counterCurrency == null && doc.get("currencyId") != null) {
+                counterCurrency = doc.get("currencyId").toString();
+            }
             carrying.put((String) doc.get("id"), docRate);
             relieved = relieved.add(alloc.multiply(docRate));
             allocatedSum = allocatedSum.add(alloc);
@@ -602,7 +611,8 @@ public class PaymentService {
         BigDecimal counterBase = r6(relieved.add(advance));
         BigDecimal cashBase = r6(amount.multiply(rate.rate()));
         BigDecimal fx = "inbound".equals(direction) ? cashBase.subtract(counterBase) : counterBase.subtract(cashBase);
-        return new FxSettlement(rate, carrying, counterBase, cashBase, fx);
+        return new FxSettlement(rate, carrying, counterBase, cashBase, fx,
+                counterCurrency != null ? counterCurrency : payCurrency, r6(amount));
     }
 
     /** Realised FX of one allocation in base currency (positive = gain). */
@@ -617,13 +627,15 @@ public class PaymentService {
             String partnerId, String payCurrency) {
         List<Line> lines = new ArrayList<>();
         String label = "Realised FX · " + payCurrency + " @ " + JsNumbers.dec(fxs.rate().rate());
+        // the AR / AP line relieves the open items in their own currency (the payment amount), at their carrying base
+        String foreign = JsNumbers.dec(fxs.amount());
         if ("inbound".equals(direction)) {
             lines.add(new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null));
             lines.add(new Line(counterAccount, null, JsNumbers.dec(fxs.counterBase()), partnerId, null, null, null,
-                    null));
+                    null).inCurrency(fxs.counterCurrency(), foreign));
         } else {
             lines.add(new Line(counterAccount, JsNumbers.dec(fxs.counterBase()), null, partnerId, null, null, null,
-                    null));
+                    null).inCurrency(fxs.counterCurrency(), foreign));
             lines.add(new Line(cashAccount, null, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null));
         }
         BigDecimal fx = fxs.fx();

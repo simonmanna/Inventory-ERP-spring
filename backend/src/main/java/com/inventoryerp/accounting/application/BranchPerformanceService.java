@@ -50,8 +50,8 @@ public class BranchPerformanceService {
     @SuppressWarnings("unchecked")
     public Map<String, Object> comparison(String from, String to) {
         String org = TenantContext.organizationId();
-        Instant start = LedgerQueries.date(from);
-        Instant end = LedgerQueries.date(to);
+        Instant start = LedgerQueries.date(from, AccountingDay.zone(jdbc));
+        Instant end = LedgerQueries.dateEnd(to, AccountingDay.zone(jdbc));
         Map<String, Object> pl = consolidated.consolidated(from, to, "pl");
         Map<String, Object> totals = (Map<String, Object>) pl.get("totals");
         Map<String, Map<String, BigDecimal>> m = new HashMap<>();

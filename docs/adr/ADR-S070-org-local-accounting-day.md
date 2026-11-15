@@ -29,6 +29,9 @@ The accounting day of an instant is its calendar date in the organisation's zone
    project reads) turns dates into instant bounds in the org zone in Java, so SQL keeps index-friendly
    `"postingDate" >= ? AND "postingDate" < ?`; when SQL joins `postingDate` to a stored period, the zone conversion is
    applied to the period column (`AT TIME ZONE`), never to `postingDate`.
+   **Amendment (2026-11-15, accounting review R-1):** a bare `to` / `asOf` date in a report request is the whole
+   org-local day — its last instant (`LedgerQueries.dateEnd`), compared with `<=`. It used to be the first instant of
+   the day, which dropped every posting made on the end date and made P&L disagree with Cash Flow.
 5. **UTC organisations are unchanged.** Every conversion is the identity for a UTC zone, so results, stored values
    and SQL text are the same as before for every UTC organisation.
 

@@ -864,13 +864,13 @@ class ProcurementIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("return to vendor: stock leaves at cost, Dr AP / Cr Stock Valuation + Cr return variance")
+    @DisplayName("return to vendor: stock leaves at cost, Dr AP / Cr Stock Valuation + Cr price variance")
     void returnToVendor() {
         String product = product();
         adhoc(supplier, product, 10, 4);
         BigDecimal sv0 = balance(mapped("stock_valuation"));
         BigDecimal ap0 = balance(mapped("accounts_payable"));
-        BigDecimal income0 = balance(mapped("stock_adjustment_income"));
+        BigDecimal ppv0 = balance(mapped("purchase_price_variance"));
         JsonNode note = ok(201, "POST", "/procurement/debit-notes", Map.of("direction", "inbound", "partnerId", supplier,
                 "reason", "returned_goods", "locationId", warehouse, "lines", List.of(Map.of("productId", product,
                         "description", "Damaged beans", "quantity", 3, "unitPrice", 5))));
@@ -880,7 +880,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(onHand(product, warehouse)).isEqualByComparingTo("7");
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("15");
         assertThat(balance(mapped("stock_valuation")).subtract(sv0)).isEqualByComparingTo("-12");
-        assertThat(balance(mapped("stock_adjustment_income")).subtract(income0)).isEqualByComparingTo("-3");
+        // review 2026-11-15 (P-5): the return variance goes to purchase price variance, not stock adjustment income
+        assertThat(balance(mapped("purchase_price_variance")).subtract(ppv0)).isEqualByComparingTo("-3");
         String ledgerType = jdbc.sql("SELECT type::text FROM \"InventoryLedger\" WHERE \"productId\" = ? AND"
                 + " \"quantityChange\" < 0").param(product).query(String.class).single();
         assertThat(ledgerType).isEqualTo("return_to_supplier");

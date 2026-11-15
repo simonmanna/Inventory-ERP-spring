@@ -247,7 +247,8 @@ public class FiscalYearService {
         jdbc.sql("SELECT l.\"accountId\", COALESCE(SUM(l.\"baseCredit\"), 0) - COALESCE(SUM(l.\"baseDebit\"), 0) FROM \"JournalLine\" l"
                         + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
                         + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ?"
-                        + (withClosing ? "" : " AND COALESCE(e.\"postingKey\", '') NOT LIKE 'period_close:%'")
+                        // closing entries AND their reopen reversals (a reversal has no postingKey) (G-4)
+                        + (withClosing ? "" : LedgerQueries.CLOSING_FILTER)
                         + " GROUP BY l.\"accountId\"")
                 .params(org(), from(y.start()), through(y.end()))
                 .query((rs, n) -> net.put(rs.getString(1), rs.getBigDecimal(2)))

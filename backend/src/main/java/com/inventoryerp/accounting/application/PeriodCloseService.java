@@ -237,6 +237,15 @@ public class PeriodCloseService {
         if ("open".equals(period.status())) {
             return Map.of("reopened", true);
         }
+        // a closed year's net income and carried-forward balances would go stale (review 2026-11-15, G-3)
+        String closedYear = jdbc.sql("SELECT y.name FROM \"FiscalYear\" y JOIN \"FiscalPeriod\" p ON p.id = ?"
+                        + " WHERE y.\"organizationId\" = ? AND y.status = 'closed' AND (p.\"fiscalYearId\" = y.id"
+                        + " OR (p.\"startDate\"::date >= y.\"startDate\" AND p.\"endDate\"::date <= y.\"endDate\")) LIMIT 1")
+                .params(period.id(), organizationId).query(String.class).optional().orElse(null);
+        if (closedYear != null) {
+            throw ApiException.badRequest("Fiscal period '" + period.name() + "' belongs to the closed fiscal year '"
+                    + closedYear + "'; reopen the fiscal year first.");
+        }
         record Closing(String id, String status) {}
         Closing closing = jdbc.sql("SELECT id, status::text AS status FROM \"JournalEntry\" WHERE \"organizationId\" = ?"
                         + " AND \"sourceType\" = 'period_close'"
@@ -248,12 +257,15 @@ public class PeriodCloseService {
                         : new Object[] {organizationId, period.endDate()})
                 .query((rs, n) -> new Closing(rs.getString("id"), rs.getString("status")))
                 .optional().orElse(null);
-        if (closing != null && "posted".equals(closing.status())) {
-            posting.reverse(closing.id(), null, "Reopen " + period.name());
-        }
         jdbc.sql("UPDATE \"FiscalPeriod\" SET status = 'open', \"closedAt\" = NULL, \"closedBy\" = NULL, \"lockedAt\" = NULL,"
                         + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?")
                 .params(period.id(), organizationId).update();
+        if (closing != null && "posted".equals(closing.status())) {
+            // reversed after the period is open, so the reversal keeps the closing entry's own date: the period nets
+            // back to its activity and can be closed again, and no closing amounts leak into the current period (G-5;
+            // Nest reversed first, dating it today)
+            posting.reverse(closing.id(), null, "Reopen " + period.name());
+        }
         Map<String, Object> newValues = new LinkedHashMap<>();
         newValues.put("status", "open");
         newValues.put("reversedClosingEntryId", closing == null ? null : closing.id());
