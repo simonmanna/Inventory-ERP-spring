@@ -94,7 +94,9 @@ stock events only after commit, cost policy / standard activation hourly on the 
 | I1b | Unit validation (no silent factor 1), bill↔receipt matcher in real units, unit-aware transfer / adjustment, return quarantine in base units ([ADR-S003 addendum](adr/ADR-S003-product-units.md)) | done — `ProductUnitsIT` |
 | I1c | Web: retail POS variant picker and variant barcode scan (`/products/resolve-barcode` now answers variant barcodes and is filtered by organisation); posting monitor in the POS menu behind `pos:reports`, with status/kind filters, assign and invoice links | done — `PosVariantIntegrityIT.variantBarcodeResolves`; web typecheck/lint |
 | I-web | Web fixes for I1b–I5 that need no new backend: unknown-unit warnings instead of a stale price or factor 1, variant prices kept on unit change, variant on goods receipt / purchase request / stock screens, archived variants kept read-only, stock value from the server, pack price per D1, invoice / credit-note / goods-receipt errors shown with no duplicate on retry, return dispositions sent as shown | done — web typecheck/lint |
-| I2–I5 | Costing & ledger traceability, variant pricing, `salesPrice` meaning (D1), integration & concurrency | planned |
+| I1d | Review stabilization ([review](audits/2026-11-15-phase-I-regression-and-gap-review.md)): R1 quotation keeps the picked unit, R2 POS availability/reservations per variant in base units, R3 posting-job claims and CAS retry (pending jobs retryable), R4 retried line closes its exception; PO lines name their variant | done — `ProductUnitsIT`, `PosVariantIntegrityIT`, `PosStockPostingIT`, `ProductVariantIT` |
+| I2 (revised) | N1–N6, D2 + V-4…V-10, U-4…U-10, U-5, R-1 ledger traceability, C-1/C-2, production reservation units, purchasing gaps, offline POS posting hold (Decision 1); M-1…M-12, N7 tracked | in progress |
+| I3–I5 | Variant pricing, `salesPrice` meaning (D1 — **not implemented**: `SalesPricingEngine` still multiplies by the unit factor), POS timings, posting CAS, opening stock, reconciliation | planned |
 
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
