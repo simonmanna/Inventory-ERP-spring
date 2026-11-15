@@ -350,7 +350,8 @@ public class SyncPushService {
                 checkout.remove("clientId");
                 Object provisional = checkout.remove("provisionalNumber");
                 checkout.put("occurredAt", occurredAt);
-                Map<String, Object> res = pos.checkout(checkout);
+                // Decision 1 (ADR-S072): the sale happened offline — keep it; an unconvertible unit holds its posting.
+                Map<String, Object> res = com.inventoryerp.kernel.common.OfflineReplay.run(() -> pos.checkout(checkout));
                 stampSale(res, device.id(), str(provisional));
                 m.put("id", res.get("invoiceId"));
                 m.put("mapping", mapOf("invoiceId", res.get("invoiceId"), "orderId", res.get("orderId"),

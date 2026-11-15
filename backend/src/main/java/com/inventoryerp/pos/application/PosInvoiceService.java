@@ -399,6 +399,10 @@ public class PosInvoiceService {
         if (atpMode != null && !"post_commit".equals(atpMode)) {
             atpCheck(items, atpMode);
         }
+        if (!com.inventoryerp.kernel.common.OfflineReplay.active()) {
+            assertVariantsChosen(items, order.get("cashSessionId") != null ? (String) order.get("cashSessionId")
+                    : (String) dto.get("cashSessionId"));
+        }
         String txDiscType = dto.get("transactionDiscountType") != null ? dto.get("transactionDiscountType").toString()
                 : order.get("transactionDiscountType") != null ? order.get("transactionDiscountType").toString() : "percentage";
         double txDiscValue = "fixed_amount".equals(txDiscType)
@@ -605,6 +609,9 @@ public class PosInvoiceService {
                         throw new IllegalStateException("Combo component quantities must be greater than zero");
                     }
                     BigDecimal base = baseQty((String) c.get("productId"), (String) c.get("salesUomId"), q);
+                    if (base == null) {
+                        continue;
+                    }
                     atp((String) c.get("productId"), null, warehouse, base, "Low stock for \"" + it.get("description")
                             + "\": need " + JsNumbers.dec(base) + " of component, %s available", atpMode);
                 }
@@ -614,12 +621,18 @@ public class PosInvoiceService {
                                 orgId))) {
                     BigDecimal q = Money.qtyMul(ing.get("quantity"), it.get("quantity"));
                     BigDecimal base = baseQty((String) ing.get("productId"), (String) ing.get("uomId"), q);
+                    if (base == null) {
+                        continue;
+                    }
                     atp((String) ing.get("productId"), null, warehouse, base, "Low stock for \"" + it.get("description")
                             + "\": need " + JsNumbers.dec(base) + " of ingredient, %s available", atpMode);
                 }
             } else if (it.get("productId") != null) {
                 String productId = (String) it.get("productId");
                 BigDecimal base = baseQty(productId, salesUnit(productId), dec(it.get("quantity")));
+                if (base == null) {
+                    continue;
+                }
                 atp(productId, (String) it.get("variantId"), warehouse, base, "Low stock for \"" + it.get("description")
                         + "\": need " + JsFormat.str(base.doubleValue()) + ", %s available", atpMode);
             }
@@ -1223,7 +1236,7 @@ public class PosInvoiceService {
                 // A plain product line's snapshot row is the product itself: restock the variant it was sold from.
                 if (src.get("menuItemId") == null && ing.get("componentType") == null
                         && java.util.Objects.equals(ing.get("productId"), src.get("productId"))) {
-                    mv.variantId = (String) src.get("variantId");
+                    mv.variantId = issuedVariant(inv.get("id"), src.get("productId"), (String) src.get("variantId"));
                 }
                 mv.unitCost = PosSql.decOf((SqlRows.dec(ing, "totalValue").signum() > 0
                         ? Money.div(returnValue, returnQty) : SqlRows.dec(ing, "unitCost")).doubleValue());
@@ -1234,10 +1247,11 @@ public class PosInvoiceService {
             }
             return;
         }
+        String issuedVariant = issuedVariant(inv.get("id"), src.get("productId"), (String) src.get("variantId"));
         List<Map<String, Object>> issues = SqlRows.list(jdbc.sql("SELECT \"locationId\", \"quantityChange\", \"unitCost\""
                 + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
                 + " AND \"referenceId\" = ? AND \"referenceType\" = 'pos_invoice' AND \"quantityChange\" < 0")
-                .params(orgId, src.get("productId"), src.get("variantId"), inv.get("id")));
+                .params(orgId, src.get("productId"), issuedVariant, inv.get("id")));
         Set<Object> locs = new LinkedHashSet<>();
         issues.forEach(i -> locs.add(i.get("locationId")));
         if (locs.size() != 1) {
@@ -1268,7 +1282,7 @@ public class PosInvoiceService {
         BigDecimal returned = Money.div(issuedQty.multiply(quantity), soldQty).setScale(6, RoundingMode.HALF_UP);
         StockMove mv = StockMove.of((String) src.get("productId"), (String) locs.iterator().next(),
                 PosSql.decOf(returned.doubleValue()));
-        mv.variantId = (String) src.get("variantId");
+        mv.variantId = issuedVariant;
         mv.unitCost = PosSql.decOf(unitCost.doubleValue());
         mv.reference = "Refund " + refundId;
         mv.sourceType = "pos_refund";
@@ -1390,7 +1404,7 @@ public class PosInvoiceService {
                                 orgId))) {
                     BigDecimal q = baseQty((String) ing.get("productId"), (String) ing.get("uomId"),
                             Money.qtyMul(ing.get("quantity"), lineQty));
-                    if (q.signum() > 0) {
+                    if (q != null && q.signum() > 0) {
                         byCell.merge(java.util.Arrays.asList((String) ing.get("productId"), null), q, BigDecimal::add);
                     }
                 }
@@ -1400,8 +1414,11 @@ public class PosInvoiceService {
                 if (p != null && Boolean.TRUE.equals(p.get("trackInventory"))
                         && ("stockable".equals(p.get("t")) || "consumable".equals(p.get("t"))) && lineQty.signum() > 0) {
                     String productId = (String) it.get("productId");
-                    byCell.merge(java.util.Arrays.asList(productId, (String) it.get("variantId")),
-                            baseQty(productId, salesUnit(productId), lineQty), BigDecimal::add);
+                    BigDecimal base = baseQty(productId, salesUnit(productId), lineQty);
+                    if (base != null) {
+                        byCell.merge(java.util.Arrays.asList(productId, (String) it.get("variantId")), base,
+                                BigDecimal::add);
+                    }
                 }
             }
         }
@@ -1412,12 +1429,82 @@ public class PosInvoiceService {
     }
 
     /**
+     * Review M-9 (ADR-S072): an online sale of a stocked product with variants must name the variant, unless the till's
+     * stock location still holds stock without one (from before the product got variants) — the same rule the stock
+     * issue applies. An offline sale is never refused here (owner decision 1): its stock line is held at posting.
+     */
+    private void assertVariantsChosen(List<Map<String, Object>> items, String cashSessionId) {
+        String orgId = org();
+        String location = null;
+        for (Map<String, Object> it : items) {
+            if (it.get("productId") == null || it.get("variantId") != null || it.get("rentalAgreementLineId") != null
+                    || it.get("repairOrderLineId") != null) {
+                continue;
+            }
+            Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\", \"trackInventory\","
+                    + " \"productType\"::text AS t FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(it.get("productId"), orgId));
+            if (p == null || !Boolean.TRUE.equals(p.get("hasVariants")) || !Boolean.TRUE.equals(p.get("trackInventory"))
+                    || !("stockable".equals(p.get("t")) || "consumable".equals(p.get("t")))) {
+                continue;
+            }
+            if (location == null) {
+                location = locations.resolve(orgId, sessionLocation(cashSessionId));
+            }
+            long legacy = location == null ? 0 : jdbc.sql("SELECT count(*) FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                    + " AND \"productId\" = ? AND \"variantId\" IS NULL AND \"locationId\" = ? AND quantity > 0")
+                    .params(orgId, it.get("productId"), location).query(Long.class).single();
+            if (legacy == 0) {
+                throw ApiException.badRequest("Choose a variant for " + p.get("name"));
+            }
+        }
+    }
+
+    /** The register location of a cash session (its own, else its register's), or null. */
+    private String sessionLocation(String cashSessionId) {
+        if (cashSessionId == null) {
+            return null;
+        }
+        Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT cs.\"registerLocationId\", cr.\"locationId\" FROM"
+                + " \"CashSession\" cs LEFT JOIN \"CashRegister\" cr ON cr.id = cs.\"cashRegisterId\" WHERE cs.id = ?"
+                + " AND cs.\"organizationId\" = ?").params(cashSessionId, org()));
+        return s == null ? null : s.get("registerLocationId") != null ? (String) s.get("registerLocationId")
+                : (String) s.get("locationId");
+    }
+
+    /**
+     * Review M-10: the variant a POS invoice actually issued for a product line. A sale made before ADR-S072 (I1a)
+     * issued the product without a variant even when the line names one; its refund restocks that stock.
+     */
+    private String issuedVariant(Object invoiceId, Object productId, String variantId) {
+        if (variantId == null) {
+            return null;
+        }
+        String base = "SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" ="
+                + " 'pos_invoice' AND \"referenceId\" = ? AND \"productId\" = ? AND \"quantityChange\" < 0 AND ";
+        long own = jdbc.sql(base + "\"variantId\" = ?").params(org(), invoiceId, productId, variantId).query(Long.class)
+                .single();
+        if (own > 0) {
+            return variantId;
+        }
+        long legacy = jdbc.sql(base + "\"variantId\" IS NULL").params(org(), invoiceId, productId).query(Long.class)
+                .single();
+        return legacy > 0 ? null : variantId;
+    }
+
+    /**
      * Quantity in the product's base (stock) unit: {@code qty × factor(uomId → base)}, unrounded. A unit that does not
      * convert is refused with the conversion's own 400 (never 1:1, review Decision 1).
      */
     private BigDecimal baseQty(String productId, String uomId, BigDecimal qty) {
         if (productId == null || uomId == null) {
             return qty;
+        }
+        if (com.inventoryerp.kernel.common.OfflineReplay.active()) {
+            // Owner decision 1: an offline sale is kept; a unit that does not convert skips the check / reservation
+            // (null) and its stock line is held at posting.
+            BigDecimal f = uom.tryFactorToBase(productId, uomId);
+            return f == null ? null : qty.multiply(f);
         }
         return qty.multiply(uom.factorToBase(productId, uomId));
     }
@@ -1669,7 +1756,7 @@ public class PosInvoiceService {
             for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, \"lineNumber\", \"uomId\", \"uomFactor\" FROM"
                     + " \"InvoiceItem\" WHERE \"invoiceId\" = ? AND \"organizationId\" = ?").params(ctx.invoiceId(), orgId))) {
                 invoiceItemByLine.put(PosSql.intOf(r.get("lineNumber")), (String) r.get("id"));
-                if (r.get("uomFactor") != null) {
+                if (r.get("uomFactor") != null || r.get("uomId") != null) {
                     unitByLine.put(PosSql.intOf(r.get("lineNumber")), r);
                 }
             }
@@ -1810,7 +1897,10 @@ public class PosInvoiceService {
                     && List.of("stockable", "consumable").contains(String.valueOf(product.get("productType")))) {
                 StockMove mv = StockMove.of((String) it.get("productId"), warehouse, dec(it.get("quantity")));
                 // Sell-in-sales-unit, frozen on the invoice item (ADR-S003); pre-V5 items use the live sales unit.
-                mv.uomId = it.get("uomFactor") != null ? (String) it.get("uomId") : (String) product.get("salesUomId");
+                // Decision 1: a held line (unit without factor, offline sale) is issued in its own unit, converted now —
+                // it fails (and is retried, then quarantined) until that unit converts.
+                mv.uomId = it.get("uomFactor") != null || it.get("uomId") != null ? (String) it.get("uomId")
+                        : (String) product.get("salesUomId");
                 mv.uomFactor = it.get("uomFactor") != null ? dec(it.get("uomFactor")) : null;
                 // Post-parity (ADR-S072): a product line's variantId is a ProductVariant (ADR-S058); Nest issued the
                 // parent product. Menu items never reach this branch, so a MenuItemVariant id is never passed here.

@@ -155,3 +155,32 @@ modifiers and units at drain time; this is a post-parity change of this ADR.
 
 Test: `PosStockPostingIT.snapshotFreezesUnitFactors`.
 
+
+## Addendum (Phase I2, owner decision 1, review M-9 / M-10, 2026-11-15)
+
+**Offline sales are kept; their stock posting is held (owner decision 1).** An offline Android sale replayed by
+`/sync/push` (`sale.checkout`) runs inside `OfflineReplay.run` (`kernel/common`). While it is active, a sales unit that
+does not convert to the product's stock unit no longer refuses the sale:
+
+- pricing (`SalesPricingEngine`) and the line unit (`DocumentBuilderService.lineUnit`) fall back to the unit as sent
+  with no frozen factor (`InvoiceItem.uomId` set, `uomFactor` null), so quantity, unit, variant, price, timestamp and
+  device transaction id are kept as the device recorded them;
+- the availability check and reservations skip that line (nothing to convert);
+- the stock-posting job converts the line in its own unit at drain time. While it still fails, the job retries and
+  then quarantines as any failed posting does, with an open `InventoryException` for an operator. Once the unit
+  converts (operator adds the conversion), `POST /pos/posting-monitor/jobs/:id/retry` posts it exactly once.
+
+Online POS still refuses an unconvertible sale before it is finalised (R2 / I1b; never 1:1).
+
+**M-9.** An online sale (counter checkout, saved-order billing) of a stocked product with variants must name the
+variant, unless the till's stock location still holds stock without one (from before the product got variants):
+400 "Choose a variant for <product name>". Rental and repair billing lines, and offline replays, are not checked (an
+offline sale's line is held at posting instead, as above).
+
+**M-10.** A refund restocks the variant the invoice actually issued. A sale posted before this ADR issued the product
+without a variant even when the line named one; its refund now restocks that no-variant stock (ledger lookup by
+invoice, product and variant), not the variant quant.
+
+These are post-parity changes (Nest refused nothing offline and kept no variant on stock). Tests:
+`SyncIT.offlineSaleWithUnconvertibleUnitIsHeld`, `PosVariantIntegrityIT.onlineSaleNeedsTheVariant`,
+`legacyVariantRefundRestocksWhereIssued`.

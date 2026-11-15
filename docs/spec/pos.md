@@ -128,6 +128,15 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
     automatically (note "Posted automatically when the stock posting job retried this line") when the retry posts it.
 11. **A counter checkout fires the kitchen after its invoice (review N7).** A checkout refused at invoicing leaves an
     unfired order; cancelling it records no kitchen waste. ADR-S072 item 10.
+12. **Offline sale with an unconvertible unit is kept (owner decision 1).** A `sale.checkout` replayed from the
+    device keeps the line's unit with no frozen factor; the availability check and reservations skip it and its stock
+    line fails at posting (retry, then quarantine with an `InventoryException`) until the unit converts. Online POS
+    still refuses such a sale. ADR-S072 addendum (decision 1).
+13. **An online sale of a product with variants names the variant (review M-9).** 400 "Choose a variant for
+    <product name>" unless the till's location still holds no-variant stock. Offline replays, rental and repair lines
+    are not checked.
+14. **A refund restocks the variant the sale issued (review M-10).** A pre-ADR-S072 sale that issued no variant
+    restocks the no-variant stock.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 

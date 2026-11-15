@@ -275,6 +275,24 @@ public class UomConversionService {
     }
 
     /**
+     * {@link #resolveLineUnit}, or the line's unit without a factor when it does not convert (owner decision 1: an
+     * offline sale is kept and its posting held). Not transactional on purpose (see {@link #tryFromBase}).
+     */
+    public LineUnit tryResolveLineUnit(String productId, String requestedUomId, UnitRole role) {
+        try {
+            return resolveLineUnit(productId, requestedUomId, role);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            String requested = requestedUomId == null || requestedUomId.isBlank() ? null : requestedUomId;
+            Product product = productId == null || productId.isEmpty() ? null : product(productId);
+            if (requested != null || product == null) {
+                return new LineUnit(requested, null);
+            }
+            String roleUnit = role == UnitRole.PURCHASE ? product.getPurchaseUomId() : product.getSalesUomId();
+            return new LineUnit(roleUnit != null ? roleUnit : product.getUomId(), null);
+        }
+    }
+
+    /**
      * {@link #factorToBase(String, String)}, or null when the unit does not convert. Not transactional on purpose (see
      * {@link #tryFromBase}): a POS checkout freezes factors (Phase I2, audit U-4) without risking its transaction.
      */

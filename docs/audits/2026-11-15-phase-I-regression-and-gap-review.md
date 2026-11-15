@@ -167,6 +167,7 @@ Each fix landed with a regression test that failed before it.
 | U-4 | (see git log) | `PosStockPostingIT.snapshotFreezesUnitFactors` (ADR-S072 addendum) |
 | U-10 | (see git log) | `ProductSizingIT.sizedLinesAreNotScaledTwice` (ADR-S066 addendum) |
 | M-1, M-4, M-5 | (see git log) | `IntegrityI2IT.creditNoteLimitInStockUnitsPerVariant`, procurement `ProductUnitsIT.freeReceiptLineAdvancesThePoInItsUnit`, `SharedFxIT.foreignBillReceivesAtFunctionalCost` |
+| Decision 1, M-9, M-10 | (see git log) | `SyncIT.offlineSaleWithUnconvertibleUnitIsHeld`, `PosVariantIntegrityIT.onlineSaleNeedsTheVariant`, `legacyVariantRefundRestocksWhereIssued` |
 | R-1 | (see git log) | `IntegrityI2IT.ledgerRowsAreTraceable` (`V487__inventory_ledger_traceability.sql`) |
 | U-5, U-6, M-2, A-4 (return query) | (see git log) | `IntegrityI2IT.copiedLinesKeepTheFrozenFactor`, `creditNoteRestocksTheInvoicedUnit`, `creditNoteRestocksAtTheIssueLocationAndCost` |
 
@@ -211,11 +212,17 @@ Notes:
   free goods-receipt line matched by product is in the product's purchase or named unit).
 - M-5: a foreign-currency vendor bill's auto-receipt multiplies the line unit cost by the rate its journal was posted
   at (`DocumentFxRates.entryRate`), so stock and GRNI carry the functional value.
-- M-9 / M-10 (POS variant without legacy stock; pre-I1a refund): not done. The online counter checkout, saved-order
-  billing, rental / repair billing and the offline `sale.checkout` sync all enter `PosInvoiceService.generateInvoice`;
-  owner decision 1 says an offline sale must never be refused, so the check needs an explicit online-only entry point.
-  Until then such a sale is kept and its stock line raises an `InventoryException` at posting ("Choose a variant").
+- Decision 1 (offline posting hold): a `sale.checkout` sync replay runs under `OfflineReplay`; an unconvertible sales
+  unit is kept on the invoice line (unit, no factor), skipped by the availability check and reservations, and its
+  stock line fails at posting (retry → quarantine, `InventoryException`) until the unit converts; then a retry posts it
+  once. Root cause of the earlier refusal: `SalesPricingEngine.quote` converted the unit and marked the transaction
+  rollback-only. ADR-S072 addendum. Test `SyncIT.offlineSaleWithUnconvertibleUnitIsHeld`.
+- M-9: online POS sale of a stocked variant product without a variant → 400 "Choose a variant for <name>" unless the
+  till location holds no-variant stock; offline replays, rental and repair lines are exempt. Test
+  `PosVariantIntegrityIT.onlineSaleNeedsTheVariant`.
+- M-10: the refund restocks the variant the invoice's ledger rows issued (no variant for a pre-I1a sale). Test
+  `PosVariantIntegrityIT.legacyVariantRefundRestocksWhereIssued`.
 
-Still open in I2: the D1 offline POS posting hold (ADR-S072); M-9, M-10; M-6 (Phase A3 load rounding); the web
+Still open in I2: M-6 (Phase A3 load rounding); the web
 items M-7, M-8, M-11, M-12 (client changes, need owner approval).
 

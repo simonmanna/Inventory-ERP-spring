@@ -326,7 +326,10 @@ public class DocumentBuilderService {
      * treated it as factor 1; it now refuses the line with the conversion error.
      */
     private LineUnit lineUnit(String productId, String uomId, UnitRole role) {
-        return units.resolveLineUnit(productId, uomId == null || uomId.isBlank() ? null : uomId, role);
+        String requested = uomId == null || uomId.isBlank() ? null : uomId;
+        // Owner decision 1 (ADR-S072): an offline sale keeps a unit that does not convert (factor null = posting held).
+        return com.inventoryerp.kernel.common.OfflineReplay.active() ? units.tryResolveLineUnit(productId, requested, role)
+                : units.resolveLineUnit(productId, requested, role);
     }
 
     /** Server-side line math: price, discount, tax engine, totals; {@code role} picks each line's default unit. */

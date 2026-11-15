@@ -294,6 +294,57 @@ class PosVariantIntegrityIT extends ApiTestSupport {
         assertThat(quant(p, null)).isEqualByComparingTo("0");
     }
 
+    /** A product that held 10 without a variant before it got Small / Large variants (20 of each). */
+    Map<String, String> legacyVariantProduct() {
+        String p = plainProduct("Legacy kerb", 100);
+        receive(p, null, 10);
+        JsonNode cfg = ok(200, "PUT", "/products/" + p + "/attribute-lines", Map.of("lines", List.of(Map.of(
+                "attributeId", sizeAttr, "valueIds", List.of(small, large)))));
+        Map<String, String> out = new LinkedHashMap<>();
+        out.put("product", p);
+        for (JsonNode v : cfg.get("variants")) {
+            out.put(v.get("name").asString(), v.get("id").asString());
+        }
+        receive(p, out.get("Small"), 20);
+        receive(p, out.get("Large"), 20);
+        return out;
+    }
+
+    @Test
+    @DisplayName("M-9: an online POS sale of a variant product must name the variant unless no-variant stock is left")
+    void onlineSaleNeedsTheVariant() {
+        Map<String, String> v = variantProduct(100);
+        Res refused = keyed("POST", "/pos/checkout", Map.of("cashSessionId", sessionId, "lines", List.of(new LinkedHashMap<>(
+                Map.of("productId", v.get("product"), "description", "line", "quantity", 1, "unitPrice", 100))),
+                "tenders", List.of(Map.of("method", "cash", "amount", 100))));
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).startsWith("Choose a variant for Kerb");
+
+        Map<String, String> legacy = legacyVariantProduct();
+        sale(line(legacy.get("product"), null, 1), 100);
+        asOrgRun(() -> postings.drainSession(sessionId));
+        assertThat(quant(legacy.get("product"), null)).as("sold from the no-variant stock").isEqualByComparingTo("9");
+    }
+
+    @Test
+    @DisplayName("M-10: refunding a pre-I1a variant sale restocks the no-variant stock it was issued from")
+    void legacyVariantRefundRestocksWhereIssued() {
+        Map<String, String> v = legacyVariantProduct();
+        String p = v.get("product");
+        String smallId = v.get("Small");
+        String invoiceId = sale(line(p, smallId, 2), 200).get("invoiceId").asString();
+        // Post it the way the code before ADR-S072 did: the issue drew on the no-variant stock.
+        jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'done' WHERE \"invoiceId\" = ?").param(invoiceId).update();
+        asOrg(() -> stock.issue(StockMove.of(p, warehouseId, BigDecimal.valueOf(2)).source("pos_invoice", invoiceId)));
+        String lineId = jdbc.sql("SELECT id FROM \"InvoiceItem\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(String.class).single();
+        money(200, "POST", "/pos/invoices/" + invoiceId + "/refund", Map.of("reason", "Old sale", "overrideById",
+                adminId, "overridePin", PIN, "stockDisposition", "restock", "cashSessionId", sessionId, "lines",
+                List.of(Map.of("lineId", lineId, "quantity", 1))));
+        assertThat(quant(p, null)).as("back to the no-variant stock").isEqualByComparingTo("9");
+        assertThat(quant(p, smallId)).as("Small untouched").isEqualByComparingTo("20");
+    }
+
     // ------------------------------------------------------------------ V-2: variant price
 
     @Test

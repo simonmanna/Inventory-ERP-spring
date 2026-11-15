@@ -185,6 +185,18 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         return Obj.of("partnerId", partnerId, "lines", out);
     }
 
+    /**
+     * Base units per 1 {@code uomId}. Replaying an offline sale (owner decision 1) a unit that does not convert prices
+     * at factor 1 instead of failing: the device's price stands and the line's stock posting is held.
+     */
+    private BigDecimal factorToBase(String productId, String uomId) {
+        if (com.inventoryerp.kernel.common.OfflineReplay.active()) {
+            BigDecimal f = uoms.tryFactorToBase(productId, uomId);
+            return f == null ? BigDecimal.ONE : f;
+        }
+        return uoms.factorToBase(productId, uomId);
+    }
+
     /** Resolve one line. */
     @Transactional(readOnly = true)
     public Result resolve(Context c) {
@@ -215,7 +227,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             product.put("name", product.get("name") + " (" + v.get("name") + ")");
         }
         LocalDate on = c.on() == null ? LocalDate.now() : c.on();
-        BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : uoms.factorToBase(c.productId(), c.uomId());
+        BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : factorToBase(c.productId(), c.uomId());
         BigDecimal list = dec(product.get("salesPrice")).multiply(factor).setScale(6, RoundingMode.HALF_UP);
         BigDecimal cost = product.get("costPrice") == null || dec(product.get("costPrice")).signum() == 0 ? null
                 : dec(product.get("costPrice")).multiply(factor).setScale(6, RoundingMode.HALF_UP);
@@ -308,7 +320,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             return null;
         }
         BigDecimal agreed = blank(str(a.get("uomId"))) ? BigDecimal.ONE
-                : uoms.factorToBase(c.productId(), str(a.get("uomId")));
+                : factorToBase(c.productId(), str(a.get("uomId")));
         BigDecimal unit = dec(a.get("unitPrice")).multiply(l.factor()).divide(agreed, 6, RoundingMode.HALF_UP);
         return new Priced(new Result(c.productId(), c.quantity(), l.list(), unit, dec(a.get("discountPercent")),
                 "agreement", null, str(a.get("name")), str(a.get("id")), taxId, incl, name, l.cost(), floor.min,
