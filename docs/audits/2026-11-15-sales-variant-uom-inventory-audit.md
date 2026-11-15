@@ -3,6 +3,7 @@
 - Date: 2026-11-15. Read-only audit: no code was changed.
 - Plan: `/root/.claude/plans/i-have-this-review-harmonic-reddy.md` (Step 0). The external review that asked for this
   audit is summarised in that plan's Context section.
+- Addendum (web UI + Android POS): `2026-11-15-ui-android-addendum.md`.
 - Scope: every flow that creates, changes or reverses stock, and how product variants, units of measure (UOM) and
   cost travel through it.
 
