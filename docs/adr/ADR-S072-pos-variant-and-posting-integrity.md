@@ -184,3 +184,25 @@ invoice, product and variant), not the variant quant.
 These are post-parity changes (Nest refused nothing offline and kept no variant on stock). Tests:
 `SyncIT.offlineSaleWithUnconvertibleUnitIsHeld`, `PosVariantIntegrityIT.onlineSaleNeedsTheVariant`,
 `legacyVariantRefundRestocksWhereIssued`.
+
+## Addendum (Phase I5, audit T-1, owner decision D4 item 3, 2026-11-16)
+
+**Posting timings other than "at invoice".** `at_payment` and `at_fulfillment_complete` enqueue the stock-posting job
+from an order event, without an invoice (Nest did the same and the job then posted with no till location, no frozen
+unit, a null source and unconsumed reservations; its refund could not restock and the pending-job guard missed it):
+
+- When the job runs and its order has an invoice, the job takes it (`StockPostingJob.invoiceId` / `invoiceNumber` are
+  filled): it issues in the invoice's frozen units at the till's location, references `pos_invoice`, and consumes the
+  invoice's reservations.
+- Without an invoice yet, it issues at the order's till location and references the order: ledger `referenceType`
+  **`pos_order`**, `referenceId` = order id (the GL reconciliation, the movement register and the ledger detail know
+  the new reference).
+- An invoice generated later for that order links the job; when the order's stock is already posted it is not reserved
+  again.
+- The shift-close and sync drains find a job without an invoice through its order's cash session.
+- A refund's pending-job guard and restock find the issue by invoice or by order (`pos_invoice` or `pos_order` rows).
+
+`at_confirmation` is accepted by the setting, but no POS route fires the order `confirm` transition, so nothing is
+enqueued at confirmation (as in Nest). Left as is.
+
+Tests: `PosVariantIntegrityIT.paymentTimedPostingAndRefund`, `orderPostedBeforeItsInvoice`.

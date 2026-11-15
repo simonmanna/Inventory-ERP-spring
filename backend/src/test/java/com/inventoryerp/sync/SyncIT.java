@@ -376,6 +376,11 @@ class SyncIT extends ApiTestSupport {
         assertThat(noVariant.get("results").get(0).get("status").asString()).as(noVariant.toString())
                 .isEqualTo("failed");
         assertThat(noVariant.toString()).contains("Choose a variant for");
+        // Audit S-5: the refused count leaves no draft count behind (start, draft and submit are one transaction).
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryCountSession\" s WHERE s.\"organizationId\" = ? AND"
+                + " s.status = 'draft' AND s.\"deletedAt\" IS NULL AND EXISTS (SELECT 1 FROM \"InventoryCountLine\" l"
+                + " WHERE l.\"sessionId\" = s.id AND l.\"productId\" = ?)").params(demoOrg, shirt).query(Long.class)
+                .single()).as("no open count left by the refused op").isZero();
     }
 
     @Test

@@ -77,7 +77,7 @@ public class PosGlReconciliationService {
         }
         BigDecimal stockIssues = jdbc.sql("SELECT coalesce(sum(\"totalValue\"), 0) FROM \"InventoryLedger\""
                 + " WHERE \"organizationId\" = ? AND \"createdAt\" >= ? AND \"createdAt\" <= ?"
-                + " AND \"referenceType\" IN ('pos_invoice', 'pos_invoice_extra', 'menu_recipe') AND \"quantityChange\" < 0")
+                + " AND \"referenceType\" IN ('pos_invoice', 'pos_order', 'pos_invoice_extra', 'menu_recipe') AND \"quantityChange\" < 0")
                 .params(org, f, t).query(BigDecimal.class).single();
         Map<String, Object> refunds = SqlRows.one(jdbc.sql("SELECT count(*) AS n, coalesce(sum(amount), 0) AS total"
                 + " FROM \"PosRefund\" WHERE \"organizationId\" = ? AND \"createdAt\" >= ? AND \"createdAt\" <= ?").params(org, f, t));

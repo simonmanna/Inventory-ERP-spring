@@ -641,6 +641,16 @@ public class StockDocService {
     @Transactional
     public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
             List<CountVariance> lines) {
+        return postCountVariances(locationId, responsibleById, notes, lines, false);
+    }
+
+    /**
+     * As {@link #postCountVariances(String, String, String, List)}; {@code opening} (owner decision D5) marks an
+     * opening count, whose value is opening stock: the GL other side is opening-balance equity, not adjustment income.
+     */
+    @Transactional
+    public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
+            List<CountVariance> lines, boolean opening) {
         lookups.requireLocation(locationId);
         Map<String, String> names = lookups.productNames(new LinkedHashSet<>(lines.stream()
                 .map(CountVariance::productId).toList()));
@@ -675,6 +685,7 @@ public class StockDocService {
                     .serials(l.serialNumbers() == null || l.serialNumbers().isEmpty() ? null : l.serialNumbers())
                     .people(responsibleById, user);
             m.deltaQuantity = l.delta();
+            m.openingBalance = opening;
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW

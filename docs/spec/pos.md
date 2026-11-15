@@ -111,7 +111,8 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
    - A plain product is wasted in the line's sales unit and with its variant.
    - Each line runs in its own transaction.
    - A failure is recorded as an `InventoryException` (kind `kitchen_waste`). Nest only logged it.
-6. **POS posting timing and refund (T-1).** Approved; built in Phase I5.
+6. **POS posting timing and refund (T-1).** Built in Phase I5 (ADR-S072 addendum): an order-timed job takes its
+   order's invoice when there is one, else posts against the order (`pos_order`); refunds restock from either.
 7. **Retry a pending posting job (owner request, 2026-11-15).**
    - `POST /pos/posting-monitor/jobs/{id}/retry` also accepts a `pending` job: it runs on the next drain with a fresh
      attempt budget. Lines already posted stay posted once (`postedLineKeys`).

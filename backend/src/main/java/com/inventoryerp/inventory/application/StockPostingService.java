@@ -400,6 +400,16 @@ public class StockPostingService {
     /** Count/adjustment variance: gain → ADJUSTMENT_GAIN, loss → ADJUSTMENT_LOSS. */
     public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
             String sourceId, String description) {
+        postAdjustment(productId, delta, unitCost, date, sourceType, sourceId, description, false);
+    }
+
+    /**
+     * As {@link #postAdjustment(String, BigDecimal, BigDecimal, Instant, String, String, String)}; {@code opening}
+     * (owner decision D5): an opening count's variance is opening stock, so its other side is the opening-balance
+     * equity account (the one the GL opening balance balances against), never the stock adjustment income / expense.
+     */
+    public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
+            String sourceId, String description, boolean opening) {
         if (delta.signum() == 0) {
             return;
         }
@@ -417,6 +427,14 @@ public class StockPostingService {
                             Line.credit(determination.mapped("stock_adjustment_income"), v, "Stock variance gain"))
                     : List.of(Line.debit(determination.mapped("stock_adjustment_expense"), v, "Stock variance loss"),
                             Line.credit(sv, v, "Stock variance loss"));
+        }
+        if (opening) {
+            // The inventory side keeps its account; the gain (credit) / loss (debit) side moves to opening equity.
+            String equity = determination.mapped("retained_earnings");
+            lines = lines.stream().map(l -> (gain ? l.credit() != null : l.debit() != null)
+                    ? new Line(equity, l.debit(), l.credit(), l.partnerId(), "Opening stock", l.branchId(),
+                            l.costCenterId(), l.dimensions())
+                    : l).toList();
         }
         post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
     }

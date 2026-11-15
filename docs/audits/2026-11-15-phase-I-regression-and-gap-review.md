@@ -237,3 +237,49 @@ Notes:
 
 Still open in I2: M-6 (Phase A3 load rounding).
 
+## 8. I3 / I4 pricing progress (same branch)
+
+D1 and the variant pricing were built together (both change the list-price step of `SalesPricingEngine.price`, see
+§6 dependency notes).
+
+| Finding | Regression test(s) |
+|---|---|
+| D1 / P-2 | `VariantPricingIT.salesPriceIsPerSalesUnit` ("sales order line in BOX where salesUomId = BOX is priced at salesPrice") |
+| P-3 | `VariantPricingIT.variantPriceBeatsTheUnitPrice` (engine and invoice builder) |
+| P-1 | `VariantPricingIT.variantRules` (pricelist rule and promotion naming a variant; foreign variant refused) |
+| S-7 | `VariantPricingIT.approvalRepricesInTheLineUnit` |
+| P-5 | `FleetDispatchIT.manualOrderPriceScaledToTheUnit` |
+| Orders module variant | catalogue fallback in a non-sales entry unit uses the variant price (`OrdersService.applyEntryUnits`); `PriceQuery.variantId` passed |
+
+- Records: ADR-S003 addendum (D1 in the engine), ADR-S058 "Variant pricing and precedence" (precedence order,
+  rule matching), `V488__variant_price_rules.sql`.
+- D1 can now be marked complete: the engine test passes.
+- Expectation changed because of D1 (not to hide a defect): `ProductUnitsIT.quotationToOrderKeepsUnit` compared
+  `qty × unitPrice` of the Orders item exactly. With D1 the pack is priced at its own 8500 (was 6 × 1500 = 9000), so
+  the per-piece price 8500 / 6 does not fit the 6-decimal `OrderItem.unitPrice`; the assertion now compares the line
+  value to the cent.
+- Not built: variant pickers on the web pricelist, promotion and agreement screens (the API accepts `variantId`); CRM
+  price rules and named price lists (`PriceListItem`) have no variant column.
+
+I5 items done on the way: A-2 (crushing survey posts a delta under the quant lock), A-3 (fuel-tank dip
+reconciliation posts a delta, no row lock taken before the stock engine's advisory lock). Both are covered by the
+existing `CrushingIT` and `FleetFuelIT` only: no concurrency test was written for them. A-4: both sites already
+filter by organisation (`returnIssuedStock` fixed in I2; `InventoryQueryService` reservations query filters).
+
+## 9. I5 progress (same branch)
+
+| Finding | Proven before the fix | Regression test(s) |
+|---|---|---|
+| T-1 | (behaviour inherited from Nest; tests written with the fix) | `PosVariantIntegrityIT.paymentTimedPostingAndRefund`, `orderPostedBeforeItsInvoice` (ADR-S072 addendum) |
+| S-5 | `SyncIT.stockCountPerVariant` failed: a refused device count left its draft count open | same test |
+| S-6 | `RentalIT.swapMovesTheLineQuantity` failed: 3 out after swapping a line of 2 | same test |
+| A-2, A-3 | not proven (no concurrency test) | `CrushingIT`, `FleetFuelIT` |
+| D5 | (new rule; tests written with the fix) | `OpeningStockIT` (opening count → opening equity; GL opening balance refuses inventory accounts; tie-out variance unchanged) |
+
+- S-5: the sync `stock.count` op runs start + draft + submit in one transaction.
+- D5: an opening count posts against the `retained_earnings` (opening-balance equity) mapping; the GL opening
+  balance refuses inventory accounts (docs/spec/inventory.md deviation 28). An opening count taken later in the
+  organisation's life also posts to opening equity: the count type is the operator's statement that this is opening
+  stock.
+- S-6: a rental swap returns the line's quantity (Nest and the port returned 1). Deviation from Nest, labelled in code.
+- T-1: `at_confirmation` never enqueues: no POS route fires the order `confirm` transition (as in Nest).

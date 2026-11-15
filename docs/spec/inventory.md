@@ -195,6 +195,15 @@ has the same gaps:
     compare `effectiveFrom` with today in the organisation's time zone (`Organization.timezone`, UTC when unset) instead
     of `APP_TIMEZONE` / the database `CURRENT_DATE`; the jobs run hourly (`:15` / `:20` UTC) and skip anything no longer
     approved.
+28. **Opening stock against opening equity (owner decision D5, Phase I5).** Opening stock enters only through an
+    approved opening count (`countType = opening`). Its variance posts the inventory side as before, but the other
+    side goes to the `retained_earnings` mapping (the opening-balance equity the GL opening balance balances against,
+    line text "Opening stock") instead of `stock_adjustment_income` / `_expense`. Every other count, and every manual
+    adjustment, posts ADJUSTMENT_GAIN / LOSS as before. `POST /opening-balances` refuses any account in the inventory
+    account set (`InventoryValuationService.inventoryAccountIds`) with 400 `Account <code> holds inventory value.
+    Enter opening stock with an approved opening count so the stock ledger and the GL agree.` Nest posts the opening
+    count as a stock gain and accepts inventory accounts on the GL opening balance. Test: `OpeningStockIT` (also
+    checks that the GL tie-out variance does not move when the count posts).
 
 Same as Nest, kept on purpose:
 

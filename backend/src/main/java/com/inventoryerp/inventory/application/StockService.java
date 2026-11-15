@@ -892,7 +892,7 @@ public class StockService {
                 dto.responsibleById, dto.approvedById, deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
                         : trace(dto, product, counted, dto.countedQuantity));
         stockPosting.postAdjustment(dto.productId, delta, unitCost, Instant.now(), sourceType, sourceId,
-                "Stock adjustment · " + str(product, "name"));
+                "Stock adjustment · " + str(product, "name"), dto.openingBalance);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -964,7 +964,8 @@ public class StockService {
         BigDecimal absQty = delta.abs();
         if (totalValue.signum() > 0) {
             stockPosting.postAdjustment(dto.productId, delta, Money.div(totalValue, absQty), Instant.now(), sourceType,
-                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name"));
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name"),
+                    dto.openingBalance);
         }
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",

@@ -761,7 +761,8 @@ public class InventoryCountService {
         String responsible = session.get("startedById") != null && !str(session, "startedById").isEmpty()
                 ? str(session, "startedById") : user != null ? user : "";
         Map<String, Object> adj = stockDoc.postCountVariances(str(session, "locationId"), responsible,
-                session.get("countType") + " count " + session.get("countCode"), items);
+                session.get("countType") + " count " + session.get("countCode"), items,
+                "opening".equals(session.get("countType")));
         jdbc.sql("UPDATE \"InventoryCountSession\" SET \"adjustmentId\" = ?" + (forcedOver ? ", notes = ?" : "")
                         + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(forcedOver ? List.of(adj.get("id"), appendForceNote(str(session, "notes"), stale.size(),

@@ -196,9 +196,11 @@ public class PosStockPostingService {
         List<String> ids = db.jdbc().sql("""
                 SELECT j.id FROM "StockPostingJob" j
                  WHERE j."organizationId" = ? AND j.status = 'pending' AND j."nextRetryAt" <= date_trunc('milliseconds', clock_timestamp())::timestamp(3)
-                   AND j."invoiceId" IN (SELECT i.id FROM "Invoice" i WHERE i."organizationId" = ? AND i."cashSessionId" = ?)
+                   AND (j."invoiceId" IN (SELECT i.id FROM "Invoice" i WHERE i."organizationId" = ? AND i."cashSessionId" = ?)
+                        OR (j."invoiceId" IS NULL AND j."orderId" IN (SELECT o.id FROM "Order" o WHERE o."organizationId" = ?
+                            AND o."cashSessionId" = ?)))
                  ORDER BY j."createdAt" ASC LIMIT ?""")
-                .params(org(), org(), cashSessionId, DRAIN_MAX_JOBS).query(String.class).list();
+                .params(org(), org(), cashSessionId, org(), cashSessionId, DRAIN_MAX_JOBS).query(String.class).list();
         // Post-parity: bounded (job count + wall time) so a stalled worker or app.jobs.enabled=false cannot turn the
         // close request into a time-out; whatever is left is posted by the 30 s worker and shows as pending postings.
         long deadline = System.nanoTime() + DRAIN_BUDGET.toNanos();

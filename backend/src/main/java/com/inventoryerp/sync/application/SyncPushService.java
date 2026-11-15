@@ -90,12 +90,15 @@ public class SyncPushService {
     private final DirectStockService directStock;
     private final InventoryCountService counts;
     private final ExpensesService expenses;
+    private final org.springframework.transaction.support.TransactionTemplate tx;
 
     public SyncPushService(PosDb db, JsonMapper mapper, IdempotencyService idempotency, PosService pos,
             PosSettingsService posSettings, PosInvoiceService billing, PosReservationsService reservations,
             CashSessionService cashSessions, CashRegisterService cashRegisters, ProductService products,
-            DirectStockService directStock, InventoryCountService counts, ExpensesService expenses) {
+            DirectStockService directStock, InventoryCountService counts, ExpensesService expenses,
+            org.springframework.transaction.PlatformTransactionManager txm) {
         this.db = db;
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(txm);
         this.jdbc = db.jdbc();
         this.mapper = mapper;
         this.idempotency = idempotency;
@@ -607,7 +610,9 @@ public class SyncPushService {
                 m.put("id", docId);
                 m.put("mapping", mapOf("stockDocId", docId == null ? "" : String.valueOf(docId)));
             }
-            case "stock.count" -> m.putAll(applyStockCount(payload));
+            // Audit S-5: opening the count, entering the figures and submitting are one transaction, so a refused
+            // count leaves no open count behind.
+            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload)));
             case "expense.create" -> {
                 Map<String, Object> e = expenses.create(new ExpensesService.CreateInput(str(payload.get("title")),
                         str(payload.get("description")), decimal(payload.get("amount")), str(payload.get("categoryId")),
@@ -994,9 +999,11 @@ public class SyncPushService {
 
     /** Process the not-yet-done stock-posting jobs of one shift's invoices before its close. */
     private void drainStockPostings(String cashSessionId) {
-        List<String> jobs = jdbc.sql("SELECT j.id FROM \"StockPostingJob\" j JOIN \"Invoice\" i ON i.id = j.\"invoiceId\""
-                + " WHERE i.\"cashSessionId\" = ? AND i.\"organizationId\" = ? AND j.status::text <> 'done'")
-                .params(cashSessionId, TenantContext.organizationId()).query(String.class).list();
+        // T-1 (ADR-S072): an order-timed job without its invoice yet belongs to the shift through its order.
+        List<String> jobs = jdbc.sql("SELECT j.id FROM \"StockPostingJob\" j LEFT JOIN \"Invoice\" i ON i.id = j.\"invoiceId\""
+                + " LEFT JOIN \"Order\" o ON o.id = j.\"orderId\" AND j.\"invoiceId\" IS NULL WHERE j.\"organizationId\" = ?"
+                + " AND (i.\"cashSessionId\" = ? OR o.\"cashSessionId\" = ?) AND j.status::text <> 'done'")
+                .params(TenantContext.organizationId(), cashSessionId, cashSessionId).query(String.class).list();
         for (String job : jobs) {
             try {
                 billing.processStockPostingJob(job);

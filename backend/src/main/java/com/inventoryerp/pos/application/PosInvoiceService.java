@@ -564,6 +564,11 @@ public class PosInvoiceService {
                     "postedBy", user()), "id = ?", invId);
             if ("at_invoice".equals(timing)) {
                 enqueueStockPosting(orderId, invId, invoiceNumber, "at_invoice");
+            } else {
+                // T-1: the order's job (other timings) takes this invoice for its units, reference and refunds.
+                jdbc.sql("UPDATE \"StockPostingJob\" SET \"invoiceId\" = ?, \"invoiceNumber\" = ?"
+                        + " WHERE \"orderId\" = ? AND \"organizationId\" = ? AND \"invoiceId\" IS NULL").params(invId,
+                                invoiceNumber, orderId, orgId).update();
             }
             workflows.transition("order", orderId, "complete", Obj.of("invoiceId", invId, "invoiceNumber", invoiceNumber),
                     order);
@@ -1171,8 +1176,10 @@ public class PosInvoiceService {
                 payout = payout.subtract(share);
             }
             if ("restock".equals(stockDisposition)) {
-                long jobs = jdbc.sql("SELECT count(*) FROM \"StockPostingJob\" WHERE \"invoiceId\" = ? AND \"organizationId\" = ?"
-                        + " AND status <> 'done'").params(invoiceId, orgId).query(Long.class).single();
+                // T-1: an order-timed job may not carry the invoice yet; it is found by the order.
+                long jobs = jdbc.sql("SELECT count(*) FROM \"StockPostingJob\" WHERE (\"invoiceId\" = ? OR (\"orderId\" = ?"
+                        + " AND \"invoiceId\" IS NULL)) AND \"organizationId\" = ? AND status <> 'done'").params(invoiceId,
+                                inv.get("orderId") == null ? "" : inv.get("orderId"), orgId).query(Long.class).single();
                 if (jobs > 0) {
                     throw ApiException.badRequest("Resolve pending stock posting before restocking this return");
                 }
@@ -1236,7 +1243,7 @@ public class PosInvoiceService {
                 // A plain product line's snapshot row is the product itself: restock the variant it was sold from.
                 if (src.get("menuItemId") == null && ing.get("componentType") == null
                         && java.util.Objects.equals(ing.get("productId"), src.get("productId"))) {
-                    mv.variantId = issuedVariant(inv.get("id"), src.get("productId"), (String) src.get("variantId"));
+                    mv.variantId = issuedVariant(inv, src.get("productId"), (String) src.get("variantId"));
                 }
                 mv.unitCost = PosSql.decOf((SqlRows.dec(ing, "totalValue").signum() > 0
                         ? Money.div(returnValue, returnQty) : SqlRows.dec(ing, "unitCost")).doubleValue());
@@ -1247,11 +1254,11 @@ public class PosInvoiceService {
             }
             return;
         }
-        String issuedVariant = issuedVariant(inv.get("id"), src.get("productId"), (String) src.get("variantId"));
+        String issuedVariant = issuedVariant(inv, src.get("productId"), (String) src.get("variantId"));
         List<Map<String, Object>> issues = SqlRows.list(jdbc.sql("SELECT \"locationId\", \"quantityChange\", \"unitCost\""
                 + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                + " AND \"referenceId\" = ? AND \"referenceType\" = 'pos_invoice' AND \"quantityChange\" < 0")
-                .params(orgId, src.get("productId"), issuedVariant, inv.get("id")));
+                + " AND " + SALE_ISSUE + " AND \"quantityChange\" < 0")
+                .params(orgId, src.get("productId"), issuedVariant, inv.get("id"), orderKey(inv)));
         Set<Object> locs = new LinkedHashSet<>();
         issues.forEach(i -> locs.add(i.get("locationId")));
         if (locs.size() != 1) {
@@ -1381,6 +1388,12 @@ public class PosInvoiceService {
             return;
         }
         String orgId = org();
+        // T-1: stock already issued for this order (posted at confirmation) is not reserved again — such a
+        // reservation would never be consumed.
+        if (orderId != null && jdbc.sql("SELECT count(*) FROM \"StockPostingJob\" WHERE \"orderId\" = ? AND"
+                + " \"organizationId\" = ? AND status = 'done'").params(orderId, orgId).query(Long.class).single() > 0) {
+            return;
+        }
         String warehouse = locations.resolve(orgId, null);
         if (warehouse == null) {
             return;
@@ -1473,22 +1486,33 @@ public class PosInvoiceService {
     }
 
     /**
+     * The ledger rows of a POS sale's stock issue: against its invoice, or (T-1) against its order when the order was
+     * posted before it was invoiced. Parameters: invoice id, then {@link #orderKey}.
+     */
+    private static final String SALE_ISSUE = "((\"referenceType\" = 'pos_invoice' AND \"referenceId\" = ?) OR"
+            + " (\"referenceType\" = 'pos_order' AND \"referenceId\" = ?))";
+
+    private static String orderKey(Map<String, Object> inv) {
+        return inv.get("orderId") == null ? "" : (String) inv.get("orderId");
+    }
+
+    /**
      * Review M-10: the variant a POS invoice actually issued for a product line. A sale made before ADR-S072 (I1a)
      * issued the product without a variant even when the line names one; its refund restocks that stock.
      */
-    private String issuedVariant(Object invoiceId, Object productId, String variantId) {
+    private String issuedVariant(Map<String, Object> inv, Object productId, String variantId) {
         if (variantId == null) {
             return null;
         }
-        String base = "SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" ="
-                + " 'pos_invoice' AND \"referenceId\" = ? AND \"productId\" = ? AND \"quantityChange\" < 0 AND ";
-        long own = jdbc.sql(base + "\"variantId\" = ?").params(org(), invoiceId, productId, variantId).query(Long.class)
-                .single();
+        String base = "SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND " + SALE_ISSUE
+                + " AND \"productId\" = ? AND \"quantityChange\" < 0 AND ";
+        long own = jdbc.sql(base + "\"variantId\" = ?").params(org(), inv.get("id"), orderKey(inv), productId, variantId)
+                .query(Long.class).single();
         if (own > 0) {
             return variantId;
         }
-        long legacy = jdbc.sql(base + "\"variantId\" IS NULL").params(org(), invoiceId, productId).query(Long.class)
-                .single();
+        long legacy = jdbc.sql(base + "\"variantId\" IS NULL").params(org(), inv.get("id"), orderKey(inv), productId)
+                .query(Long.class).single();
         return legacy > 0 ? null : variantId;
     }
 
@@ -1563,7 +1587,8 @@ public class PosInvoiceService {
         if (job == null || "done".equals(job.get("status"))) {
             return;
         }
-        Ctx ctx = new Ctx((String) job.get("invoiceId"), (String) job.get("invoiceNumber"), (String) job.get("orderId"));
+        Ctx ctx = adoptInvoice(jobId, new Ctx((String) job.get("invoiceId"), (String) job.get("invoiceNumber"),
+                (String) job.get("orderId")));
         try {
             // Post-parity (ADR-S072, owner requirement R-B): Nest ran the whole job in one transaction with a
             // savepoint per line, but a line failing inside StockService (its own @Transactional) marked that
@@ -1661,6 +1686,26 @@ public class PosInvoiceService {
      * can no longer be posted to (books lock, closed / locked period), they post today, the first permissible open
      * date (as a journal reversal does), and the ledger note says so.
      */
+    /**
+     * T-1 (ADR-S072): a job enqueued by an order-level timing ({@code at_confirmation}, {@code at_payment},
+     * {@code at_fulfillment_complete}) has no invoice. Once its order has one, the job takes it: its frozen units,
+     * till location, ledger reference and reservations. Without one it posts against the order ({@code pos_order}).
+     */
+    private Ctx adoptInvoice(String jobId, Ctx ctx) {
+        if (ctx.invoiceId() != null || ctx.orderId() == null) {
+            return ctx;
+        }
+        Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT i.id, i.\"invoiceNumber\" FROM \"Order\" o JOIN \"Invoice\" i"
+                + " ON i.id = o.\"invoiceId\" WHERE o.id = ? AND o.\"organizationId\" = ?").params(ctx.orderId(), org()));
+        if (inv == null) {
+            return ctx;
+        }
+        jdbc.sql("UPDATE \"StockPostingJob\" SET \"invoiceId\" = ?, \"invoiceNumber\" = ?"
+                + " WHERE id = ? AND \"organizationId\" = ? AND \"invoiceId\" IS NULL").params(inv.get("id"),
+                        inv.get("invoiceNumber"), jobId, org()).update();
+        return new Ctx((String) inv.get("id"), (String) inv.get("invoiceNumber"), ctx.orderId());
+    }
+
     private Ctx datedForStock(Ctx ctx) {
         Instant sale = null;
         if (ctx.invoiceId() != null) {
@@ -1731,6 +1776,11 @@ public class PosInvoiceService {
             Map<String, Object> snapshots) {
         String orgId = org();
         String preferred = null;
+        if (ctx.invoiceId() == null && ctx.orderId() != null) {
+            // T-1: an order posted before it is invoiced issues at its till's location, as its invoice would.
+            preferred = sessionLocation(jdbc.sql("SELECT \"cashSessionId\" FROM \"Order\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(ctx.orderId(), orgId).query(String.class).optional().orElse(null));
+        }
         if (ctx.invoiceId() != null) {
             Map<String, Object> inv = db.first(Invoice.class, "id = ? AND \"organizationId\" = ?", ctx.invoiceId(), orgId);
             if (inv != null) {
@@ -1906,8 +1956,9 @@ public class PosInvoiceService {
                 // parent product. Menu items never reach this branch, so a MenuItemVariant id is never passed here.
                 mv.variantId = (String) it.get("variantId");
                 mv.reference = ref;
-                mv.sourceType = "pos_invoice";
-                mv.sourceId = ctx.invoiceId();
+                // T-1: before the order is invoiced the issue references the order.
+                mv.sourceType = ctx.invoiceId() != null ? "pos_invoice" : "pos_order";
+                mv.sourceId = ctx.invoiceId() != null ? ctx.invoiceId() : ctx.orderId();
                 dated(mv, ctx);
                 StockMove.Issued r = stock.issue(mv);
                 if (invoiceItemId != null) {
@@ -1983,7 +2034,7 @@ public class PosInvoiceService {
             mv.uomFactor = factorOf(ing); // U-4: the factor frozen at checkout
             mv.reference = ref;
             mv.sourceType = "menu_recipe";
-            mv.sourceId = ctx.invoiceId();
+            mv.sourceId = ctx.invoiceId() != null ? ctx.invoiceId() : ctx.orderId();
             mv.notes = name + " → " + ref;
             dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);

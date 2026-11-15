@@ -56,7 +56,7 @@ public class InventoryRegisterService {
     private static final Set<String> DAMAGE_REASONS = Set.of("damaged", "expired", "theft");
 
     private static final Map<String, String> SOURCE_LABELS = Map.ofEntries(
-            Map.entry("pos_invoice", "POS sale"), Map.entry("pos_refund", "POS refund"),
+            Map.entry("pos_invoice", "POS sale"), Map.entry("pos_order", "POS order"), Map.entry("pos_refund", "POS refund"),
             Map.entry("menu_recipe", "Recipe consumption"), Map.entry("goods_receipt", "Purchase receipt (GRN)"),
             Map.entry("direct_stock_in", "Direct stock in"), Map.entry("direct_stock_out", "Direct stock out"),
             Map.entry("stock_out", "Stock-out document"), Map.entry("waste", "Waste / damage record"),

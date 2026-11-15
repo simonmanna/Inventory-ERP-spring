@@ -25,6 +25,8 @@ public final class StockMove {
      * lock (a count posting that must keep movements made after the count, or one lot of a quant).
      */
     public BigDecimal deltaQuantity;
+    /** Adjust only (owner decision D5): an opening count — its value is opening stock against opening equity. */
+    public boolean openingBalance;
     public BigDecimal unitCost;
     public String uomId;
     /**

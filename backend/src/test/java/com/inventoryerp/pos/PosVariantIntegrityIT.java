@@ -345,6 +345,96 @@ class PosVariantIntegrityIT extends ApiTestSupport {
         assertThat(quant(p, smallId)).as("Small untouched").isEqualByComparingTo("20");
     }
 
+    // ------------------------------------------------------------------ T-1: other posting timings
+
+    String awaitJob(String orderId) {
+        for (int i = 0; i < 50; i++) {
+            List<String> ids = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"orderId\" = ?").param(orderId)
+                    .query(String.class).list();
+            if (!ids.isEmpty()) {
+                return ids.getFirst();
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        throw new AssertionError("no stock posting job for order " + orderId);
+    }
+
+    void refundOne(String invoiceId) {
+        String lineId = jdbc.sql("SELECT id FROM \"InvoiceItem\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(String.class).single();
+        money(200, "POST", "/pos/invoices/" + invoiceId + "/refund", Map.of("reason", "Returned", "overrideById",
+                adminId, "overridePin", PIN, "stockDisposition", "restock", "cashSessionId", sessionId, "lines",
+                List.of(Map.of("lineId", lineId, "quantity", 1))));
+    }
+
+    @Test
+    @DisplayName("T-1: a sale posted at payment takes its invoice (unit, till, reference) and its refund restocks")
+    void paymentTimedPostingAndRefund() {
+        ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_payment"));
+        try {
+            Map<String, String> v = variantProduct(100);
+            String p = v.get("product");
+            String invoiceId = sale(line(p, v.get("Small"), 2), 200).get("invoiceId").asString();
+            String orderId = jdbc.sql("SELECT \"orderId\" FROM \"Invoice\" WHERE id = ?").param(invoiceId)
+                    .query(String.class).single();
+            String jobId = awaitJob(orderId);
+            asOrgRun(() -> postings.drainSession(sessionId));
+            assertThat(jdbc.sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                    .query(String.class).single()).isEqualTo("done");
+            assertThat(jdbc.sql("SELECT \"invoiceId\" FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                    .query(String.class).single()).isEqualTo(invoiceId);
+            assertThat(quant(p, v.get("Small"))).isEqualByComparingTo("18");
+            assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'pos_invoice' AND"
+                    + " \"referenceId\" = ? AND \"locationId\" = ?").params(invoiceId, warehouseId).query(Long.class)
+                    .single()).as("issued against the invoice, at the till's location").isEqualTo(1);
+            refundOne(invoiceId);
+            assertThat(quant(p, v.get("Small"))).as("restocked").isEqualByComparingTo("19");
+        } finally {
+            ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_invoice"));
+        }
+    }
+
+    @Test
+    @DisplayName("T-1: an order posted before it is invoiced references the order; the invoice links it and refunds restock")
+    void orderPostedBeforeItsInvoice() {
+        ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_fulfillment_complete"));
+        try {
+            orderPostedBeforeItsInvoiceAtFulfilment();
+        } finally {
+            ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_invoice"));
+        }
+    }
+
+    void orderPostedBeforeItsInvoiceAtFulfilment() {
+        Map<String, String> v = variantProduct(100);
+        String p = v.get("product");
+        String orderId = ok(201, "POST", "/pos/orders", Map.of("orderType", "takeaway", "guestCount", 1,
+                "cashSessionId", sessionId, "lines", List.of(new LinkedHashMap<>(Map.of("productId", p, "variantId",
+                        v.get("Small"), "description", "Kerb", "quantity", 2, "unitPrice", 100))))).get("id").asString();
+        asOrgRun(() -> billing.enqueueStockPosting(orderId, null, null, "at_fulfillment_complete"));
+        String jobId = awaitJob(orderId);
+        asOrgRun(() -> postings.drainSession(sessionId));
+        assertThat(jdbc.sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                .query(String.class).single()).as("the shift drain finds the order's job").isEqualTo("done");
+        assertThat(quant(p, v.get("Small"))).isEqualByComparingTo("18");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'pos_order' AND"
+                + " \"referenceId\" = ? AND \"locationId\" = ?").params(orderId, warehouseId).query(Long.class).single())
+                .isEqualTo(1);
+        JsonNode settled = money(200, "POST", "/pos/orders/" + orderId + "/settle", Map.of("cashSessionId", sessionId, "tenders",
+                List.of(Map.of("method", "cash", "amount", 200))));
+        String invoiceId = settled.has("invoiceId") ? settled.get("invoiceId").asString()
+                : jdbc.sql("SELECT \"invoiceId\" FROM \"Order\" WHERE id = ?").param(orderId).query(String.class).single();
+        assertThat(jdbc.sql("SELECT \"invoiceId\" FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                .query(String.class).single()).as("the invoice links the order's job").isEqualTo(invoiceId);
+        assertThat(quant(p, v.get("Small"))).as("not issued twice").isEqualByComparingTo("18");
+        refundOne(invoiceId);
+        assertThat(quant(p, v.get("Small"))).as("restocked from the order's issue").isEqualByComparingTo("19");
+    }
+
     // ------------------------------------------------------------------ V-2: variant price
 
     @Test
