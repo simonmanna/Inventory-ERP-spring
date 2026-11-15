@@ -20,6 +20,7 @@ interface PO {
     unitPrice: number; receivedQuantity: number;
     productId?: string;
     unitOfMeasureId?: string | null;
+    variantId?: string | null;
   }>;
 }
 
@@ -62,6 +63,8 @@ export function PurchaseOrderReceivePage() {
             description: l.description,
             quantity: receivedQtys[l.id] ?? l.quantity,
             unitCost: l.unitPrice,
+            // ADR-S058: the PO line's own variant (the server uses it in any case).
+            variantId: l.variantId || undefined,
           })) ?? [],
       }),
     onSuccess: (res: any) => {

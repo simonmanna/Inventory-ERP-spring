@@ -14,6 +14,8 @@ export interface CashSaleLine {
   /** ADR-S058: product variant. */
   variantId?: string | null; variantName?: string | null;
   quantity: number; uomId?: string | null; uomCode: string | null; unitPrice: number; discountPercent: number; taxId: string | null; taxName: string | null;
+  /** Where the saved price came from: a pricing-engine source (list, price_list, rule, …) or 'manual'. */
+  priceSource?: string | null;
   lineSubtotal: number; lineTax: number; lineTotal: number; costSnapshot: number | null; trackInventory: boolean;
   deliveredQty?: number; invoicedQty?: number; returnedQty?: number;
   /** ADR-S066: sold by size — pieces × length [× width [× height]] in the product's sizing unit. */

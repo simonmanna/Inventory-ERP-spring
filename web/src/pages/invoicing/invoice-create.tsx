@@ -39,10 +39,10 @@ import { TaxPicker } from '@/components/tax-picker';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { cn } from '@/lib/utils';
-import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { defaultUnitId, unitPrice as priceForUnit, unitPriceUnknown, withVariantPrices } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
 import { VariantSelect } from '@/features/products/variant-select';
-import type { VariantOption } from '@/features/products/variants-api';
+import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 import {
   EMPTY_SIZE, LineSizeFields, hasSize, sizePayload, useProductSizing, type LineSize, type SizingMode,
 } from '@/features/products/sizing';
@@ -147,6 +147,8 @@ interface LineForm {
   sizingMode?: SizingMode | null;
   /** ADR-S071: several taxes / a tax group (empty = the product's tax). */
   taxIds?: string[];
+  /** Screen only: the unit's conversion is unknown here, so the price was cleared and must be typed. */
+  priceUnknown?: boolean;
 }
 
 /** Variant and size fields of a line (ADR-S058 / ADR-S066); empty for a plain line. */
@@ -335,7 +337,7 @@ export function InvoiceCreatePage() {
     const product = productList.find((p) => p.id === l.productId);
     const price = Number.isFinite(l.unitPrice)
       ? Number(l.unitPrice)
-      : product?.salesPrice != null
+      : product?.salesPrice != null && !l.priceUnknown
         ? Number(product.salesPrice)
         : 0;
     const qty = Number.isFinite(l.quantity) ? Number(l.quantity) : 0;
@@ -344,10 +346,44 @@ export function InvoiceCreatePage() {
   };
   const subtotal = (lines ?? []).reduce((s, l) => s + lineTotal(l), 0);
 
+  /**
+   * Per-line price revision: bumped by every product, variant, unit or typed price change, so a price-list answer
+   * that arrives after one of them is dropped instead of overwriting the newer price. Keyed by the row's field id.
+   */
+  const priceRev = useRef(new Map<string, number>());
+  const bumpPrice = (index: number): number => {
+    const key = fields[index]?.id ?? String(index);
+    const next = (priceRev.current.get(key) ?? 0) + 1;
+    priceRev.current.set(key, next);
+    return next;
+  };
+  const priceIsCurrent = (index: number, rev: number) =>
+    (priceRev.current.get(fields[index]?.id ?? String(index)) ?? 0) === rev;
+
+  /**
+   * D1: the line's price in `uomId` from the product's sales price (per default sales unit) or, with a variant, the
+   * variant's effective price, then the unit rule of units.ts. A unit that cannot be converted here clears the price.
+   */
+  const applyUnitPrice = (index: number, productId: string | undefined, variant: VariantOption | null | undefined, uomId: string | undefined) => {
+    const p = productList.find((x) => x.id === productId);
+    if (!p) return;
+    const priced = withVariantPrices(p, variant);
+    const price = priceForUnit(priced, uomId, 'sales');
+    if (price !== null) {
+      setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
+      setValue(`lines.${index}.priceUnknown`, false);
+    } else if (unitPriceUnknown(priced, uomId, 'sales')) {
+      setValue(`lines.${index}.unitPrice`, Number.NaN);
+      setValue(`lines.${index}.priceUnknown`, true);
+    }
+  };
+
   const onProductChange = (index: number, productId: string) => {
+    const rev = bumpPrice(index);
     setValue(`lines.${index}.productId`, productId);
     setValue(`lines.${index}.variantId`, null);
     setValue(`lines.${index}.size`, EMPTY_SIZE);
+    setValue(`lines.${index}.priceUnknown`, false);
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
@@ -358,17 +394,22 @@ export function InvoiceCreatePage() {
         partnerId: getValues('partnerId'), productId, quantity: Number(getValues(`lines.${index}.quantity`)) || 1,
         uomId: defaultUnitId(p, 'sales'),
       }).then((listed) => {
+        // A variant, unit or typed price set while the lookup was in flight wins.
+        if (!priceIsCurrent(index, rev)) return;
         if (listed?.unitPrice != null) setValue(`lines.${index}.unitPrice`, listed.unitPrice);
         if (listed && listed.discountPercent > 0) setValue(`lines.${index}.discountPercent`, listed.discountPercent);
       });
     }
   };
 
-  /** ADR-S058: the variant's price and sales description replace the product's. */
+  /** ADR-S058: the variant's price (in the line's unit) and sales description replace the product's. */
   const onVariantChange = (index: number, variantId: string | null, v: VariantOption | null) => {
     setValue(`lines.${index}.variantId`, variantId);
     if (!v) return;
-    if (v.salesPrice != null && v.salesPrice !== '') setValue(`lines.${index}.unitPrice`, Number(v.salesPrice));
+    bumpPrice(index);
+    if (v.salesPrice != null && v.salesPrice !== '') {
+      applyUnitPrice(index, getValues(`lines.${index}.productId`), v, getValues(`lines.${index}.uomId`));
+    }
     setValue(`lines.${index}.description`, v.description?.trim() || v.displayName || v.name);
   };
 
@@ -379,10 +420,10 @@ export function InvoiceCreatePage() {
   };
 
   const onUnitChange = (index: number, uomId: string) => {
+    bumpPrice(index);
     setValue(`lines.${index}.uomId`, uomId);
-    const p = productList.find((x) => x.id === getValues(`lines.${index}.productId`));
-    const price = priceForUnit(p, uomId, 'sales');
-    if (price !== null) setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
+    const productId = getValues(`lines.${index}.productId`);
+    applyUnitPrice(index, productId, cachedVariantOption(queryClient, productId, getValues(`lines.${index}.variantId`)), uomId);
   };
 
   const onSubmit = handleSubmit(async (values, event) => {
@@ -390,6 +431,10 @@ export function InvoiceCreatePage() {
       | HTMLButtonElement
       | undefined;
     const action = submitter?.value ?? 'save';
+    if (values.lines.some((l) => l.productId && l.priceUnknown && !Number.isFinite(l.unitPrice))) {
+      toast.error(tx('No conversion for this unit — enter the price'));
+      return;
+    }
 
     const payload: CreateInvoiceInput = {
       partnerId: values.partnerId,
@@ -419,8 +464,19 @@ export function InvoiceCreatePage() {
       })),
     };
 
-    const invoice = await createInvoice.mutateAsync(payload);
-    if (action === 'post') await postInvoice.mutateAsync(invoice.id);
+    let invoice: Awaited<ReturnType<typeof createInvoice.mutateAsync>>;
+    try {
+      invoice = await createInvoice.mutateAsync(payload);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, tx('Could not save')));
+      return;
+    }
+    if (action === 'post') {
+      // The draft exists now: on a failed post go to it (retry the post there) instead of leaving this form
+      // submittable, where a second submit would create a duplicate invoice.
+      try { await postInvoice.mutateAsync(invoice.id); }
+      catch (e) { toast.error(tx('Saved as a draft, but posting failed: {{error}}', { error: apiErrorMessage(e, tx('Posting failed')) })); }
+    }
     if (canUpdateInvoice) {
       try { await saveHandoverDraft(`/sales/invoices/${invoice.id}/handover`, handover); }
       catch (e) { toast.error(apiErrorMessage(e, tx('Invoice saved, but the delivery details could not be saved'))); }
@@ -691,7 +747,12 @@ export function InvoiceCreatePage() {
                           </td>
                         )}
                         <td className="px-2 py-1.5">
-                          <input aria-label={tx('Unit price')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.unitPrice`, { valueAsNumber: true })} />
+                          <input aria-label={tx('Unit price')} type="number" step="any"
+                            className={cn(cellClass, 'text-right tabular-nums', watch(`lines.${index}.priceUnknown`) && !Number.isFinite(watch(`lines.${index}.unitPrice`)) && 'border-amber-500')}
+                            {...register(`lines.${index}.unitPrice`, { valueAsNumber: true, onChange: () => bumpPrice(index) })} />
+                          {watch(`lines.${index}.priceUnknown`) && !Number.isFinite(watch(`lines.${index}.unitPrice`)) && (
+                            <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>
+                          )}
                         </td>
                         {show('discount') && (
                           <td className="px-2 py-1.5">

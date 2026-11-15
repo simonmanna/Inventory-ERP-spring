@@ -17,6 +17,7 @@ import { formatMoney } from '@/lib/format';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Location { id: string; code: string; name: string; type: string }
 
@@ -81,7 +82,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const [inResponsibleId, setInResponsibleId] = useState('');
   const [inApprovedId, setInApprovedId] = useState('');
   const [inApproverPin, setInApproverPin] = useState('');
-  const [inLines, setInLines] = useState<{ productId: string; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string }[]>([
+  const [inLines, setInLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string }[]>([
     { productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' },
   ]);
 
@@ -95,6 +96,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         .filter((l) => l.productId && l.quantity > 0)
         .map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           quantity: l.quantity,
           ...(l.unitCost ? { unitCost: Number(l.unitCost) } : {}),
           ...(l.batchNumber ? { batchNumber: l.batchNumber } : {}),
@@ -132,7 +134,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const [outResponsibleId, setOutResponsibleId] = useState('');
   const [outApprovedId, setOutApprovedId] = useState('');
   const [outApproverPin, setOutApproverPin] = useState('');
-  const [outLines, setOutLines] = useState<{ productId: string; name: string; quantity: number; distStrategy: string; batchNumber: string }[]>([
+  const [outLines, setOutLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; distStrategy: string; batchNumber: string }[]>([
     { productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' },
   ]);
 
@@ -142,6 +144,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         .filter((l) => l.productId && l.quantity > 0)
         .map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           quantity: l.quantity,
           distStrategy: l.distStrategy,
           ...(l.batchNumber ? { batchNumber: l.batchNumber } : {}),
@@ -175,7 +178,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
     const p = products.data?.data?.find((x) => x.id === productId);
     if (!p) return;
     const next = [...inLines];
-    next[idx] = { ...next[idx], productId, name: p.name };
+    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
     setInLines(next);
   };
 
@@ -183,7 +186,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
     const p = products.data?.data?.find((x) => x.id === productId);
     if (!p) return;
     const next = [...outLines];
-    next[idx] = { ...next[idx], productId, name: p.name };
+    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
     setOutLines(next);
   };
 
@@ -309,6 +312,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         placeholder={tx('Select product…')}
                         searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
+                      />
+                      <VariantSelect
+                        productId={line.productId || null}
+                        value={line.variantId}
+                        onChange={(v) => setInLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -465,6 +473,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         placeholder={tx('Select product…')}
                         searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
+                      />
+                      <VariantSelect
+                        productId={line.productId || null}
+                        value={line.variantId}
+                        onChange={(v) => setOutLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
                       />
                     </td>
                     <td className="px-2 py-2">

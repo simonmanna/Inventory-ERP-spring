@@ -1,4 +1,6 @@
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -112,8 +114,18 @@ export function CreditNoteCreatePage() {
       })),
     };
 
-    const cn = await createCreditNote.mutateAsync(payload);
-    if (action === 'post') await postCreditNote.mutateAsync(cn.id);
+    let cn: Awaited<ReturnType<typeof createCreditNote.mutateAsync>>;
+    try {
+      cn = await createCreditNote.mutateAsync(payload);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, tx('Could not save')));
+      return;
+    }
+    if (action === 'post') {
+      // The draft exists now: on a failed post go to it (retry the post there), never back to a submittable form.
+      try { await postCreditNote.mutateAsync(cn.id); }
+      catch (e) { toast.error(tx('Saved as a draft, but posting failed: {{error}}', { error: apiErrorMessage(e, tx('Posting failed')) })); }
+    }
     navigate(`/credit-notes/${cn.id}`);
   });
 

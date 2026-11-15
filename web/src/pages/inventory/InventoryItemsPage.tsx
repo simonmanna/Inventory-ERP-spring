@@ -30,7 +30,7 @@ interface ProductStockLevel {
   uom: string | null;
   totalQuantity: number;
   averageCost: number;
-  totalValue: number;
+  totalValue?: number | null;
   isLow: boolean;
   isOut: boolean;
 }
@@ -182,7 +182,8 @@ export function InventoryItemsPage() {
                   <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">{tx('No products found')}</td></tr>
                 )}
                 {items.data.data.map((item) => {
-                  const value = item.averageCost * item.totalQuantity;
+                  // The server values stock by its costing method; the average-cost product is only a fallback.
+                  const value = item.totalValue != null ? Number(item.totalValue) : item.averageCost * item.totalQuantity;
                   return (
                     <tr key={item.id} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => navigate(`/inventory/items/${item.id}`)}>
                       <td className="px-3 py-2 font-medium hover:text-primary hover:underline">{item.name}</td>

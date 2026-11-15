@@ -12,8 +12,10 @@ import { api } from '@/lib/api';
 import { errMsg, useSupplierOptions } from '@/features/procurement/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
-interface Line { productId: string; description: string; quantity: string; estimatedUnitPrice: string; requiredDate: string; preferredSupplierId: string; notes: string }
+/** `variantId`: ADR-S058 variant of a product with variants. */
+interface Line { productId: string; variantId?: string | null; description: string; quantity: string; estimatedUnitPrice: string; requiredDate: string; preferredSupplierId: string; notes: string }
 
 const blank = (): Line => ({ productId: '', description: '', quantity: '1', estimatedUnitPrice: '', requiredDate: '', preferredSupplierId: '', notes: '' });
 
@@ -40,6 +42,7 @@ export function PurchaseRequestCreatePage() {
         neededBy: neededBy || undefined,
         lines: lines.filter((l) => l.description.trim() && Number(l.quantity) > 0).map((l) => ({
           productId: l.productId || undefined,
+          variantId: (l.productId && l.variantId) || undefined,
           description: l.description.trim(),
           quantity: Number(l.quantity),
           estimatedUnitPrice: l.estimatedUnitPrice === '' ? undefined : Number(l.estimatedUnitPrice),
@@ -63,7 +66,7 @@ export function PurchaseRequestCreatePage() {
   const set = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const pickProduct = (i: number, id: string) => {
     const p = products.data?.find((x) => x.id === id);
-    set(i, { productId: id, description: p ? p.name : lines[i].description, estimatedUnitPrice: lines[i].estimatedUnitPrice || (p?.costPrice && Number(p.costPrice) > 0 ? String(Number(p.costPrice)) : '') });
+    set(i, { productId: id, variantId: null, description: p ? p.name : lines[i].description, estimatedUnitPrice: lines[i].estimatedUnitPrice || (p?.costPrice && Number(p.costPrice) > 0 ? String(Number(p.costPrice)) : '') });
   };
   const valid = lines.some((l) => l.description.trim() && Number(l.quantity) > 0);
 
@@ -90,6 +93,17 @@ export function PurchaseRequestCreatePage() {
                   <option value="">{tx('Free text / service')}</option>
                   {(products.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+                <VariantSelect
+                  productId={l.productId || null}
+                  value={l.variantId}
+                  onChange={(variantId, opt) => set(i, {
+                    variantId,
+                    // The variant's cost replaces an empty or product-cost estimate (never a typed one).
+                    ...(opt ? { description: opt.displayName, ...(opt.costPrice != null && (!l.estimatedUnitPrice
+                      || Number(l.estimatedUnitPrice) === Number(products.data?.find((p) => p.id === l.productId)?.costPrice))
+                      ? { estimatedUnitPrice: String(Number(opt.costPrice)) } : {}) } : {}),
+                  })}
+                />
               </div>
               <div className="md:col-span-3"><Label>{tx('Description')}</Label><Input value={l.description} onChange={(e) => set(i, { description: e.target.value })} /></div>
               <div className="md:col-span-1"><Label>{tx('Qty')}</Label><Input type="number" min={0} value={l.quantity} onChange={(e) => set(i, { quantity: e.target.value })} /></div>

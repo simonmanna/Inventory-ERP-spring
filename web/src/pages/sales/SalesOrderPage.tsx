@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { toast } from 'sonner';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, UserPlus, XCircle } from 'lucide-react';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
@@ -26,7 +26,8 @@ import { cn } from '@/lib/utils';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
 import { UnitSelect } from '@/components/unit-select';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
-import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { defaultUnitId, unitPrice as priceForUnit, unitPriceUnknown, withVariantPrices } from '@/features/products/units';
+import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 import {
   salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrderLine,
 } from '@/features/sales/api';
@@ -48,7 +49,8 @@ import { OrderStageStepper } from './delivery/delivery-ui';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
 
 /** A draft line with its typed size (ADR-S066: sold by length / area / volume). */
-type DraftOrderLine = SalesOrderLine & { size: LineSize };
+/** `priceUnknown` (screen only): the unit's conversion is unknown here, so the price was cleared and must be typed. */
+type DraftOrderLine = SalesOrderLine & { size: LineSize; priceUnknown?: boolean };
 const blankLine = (): DraftOrderLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE });
 
 /** Quantity input; derived (read-only) while the product is sold by size and the size is typed. */
@@ -115,6 +117,17 @@ export function SalesOrderPage() {
   });
   const productOpts = useMemo(() => (products.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined })), [products.data]);
   const patchLine = (i: number, p: Partial<DraftOrderLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true); };
+  const qc = useQueryClient();
+  /**
+   * D1 on-screen estimate (the server prices the line on save): the variant's effective price when one is set, else the
+   * product's sales price, then the unit rule of units.ts. A unit that cannot be converted here clears the price.
+   */
+  const estimatePatch = (productId: string | null, variant: VariantOption | null | undefined, uomId: string | null | undefined): Partial<DraftOrderLine> => {
+    const priced = withVariantPrices(products.data?.find((p) => p.id === productId), variant);
+    const price = priceForUnit(priced, uomId ?? undefined, 'sales');
+    if (price !== null) return { unitPrice: Number(price.toFixed(6)), priceUnknown: false };
+    return unitPriceUnknown(priced, uomId ?? undefined, 'sales') ? { unitPrice: 0, priceUnknown: true } : {};
+  };
 
   const save = useSalesMutation(async () => {
     const body = {
@@ -141,6 +154,7 @@ export function SalesOrderPage() {
 
   const doSave = (then?: () => void) => {
     if (!partnerId) return toast.error(tx('Choose a customer'));
+    if (lines.some((l) => l.productId && l.priceUnknown)) return toast.error(tx('No conversion for this unit — enter the price'));
     save.mutate(undefined, {
       onSuccess: async (s) => {
         setDirty(false);
@@ -319,10 +333,10 @@ export function SalesOrderPage() {
                   <tr key={l.id ?? i} className={cn('border-b align-top', l.closedShort && 'text-muted-foreground')}>
                     <td className="py-1.5 pr-2">
                       {editable
-                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined })} options={productOpts} placeholder={tx('Product…')} className="w-72" contentClassName={PRODUCT_PICKER_PANEL} wrap />
+                        ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => patchLine(i, { productId: v || null, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(products.data?.find((p) => p.id === v), 'sales') ?? null, description: l.description || productOpts.find((p) => p.value === v)?.label || '', priceSource: undefined, priceUnknown: false })} options={productOpts} placeholder={tx('Product…')} className="w-72" contentClassName={PRODUCT_PICKER_PANEL} wrap />
                         : <span className="font-medium">{l.productName ?? '—'}</span>}
                       <VariantSelect productId={l.productId} value={l.variantId} disabled={!editable} label={l.variantName} className="w-72"
-                        onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt ? { unitPrice: Number(opt.salesPrice) } : {}), ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
+                        onChange={(v, opt) => patchLine(i, { variantId: v, priceSource: undefined, ...(opt ? estimatePatch(l.productId, opt, l.uomId) : {}), ...(opt && (!l.description || l.description === (productOpts.find((p) => p.value === l.productId)?.label ?? '') || l.description.startsWith(`${opt.productName} (`)) ? { description: opt.description || opt.displayName } : {}) })} />
                       <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
                         onChange={(size, q) => patchLine(i, { size, ...(q !== null ? { quantity: q } : {}) })} />
                       {l.closedShort && <span className="mt-1 block text-[11px]">{tx('Closed short')}: {l.closeShortReason}</span>}
@@ -334,11 +348,12 @@ export function SalesOrderPage() {
                         {editable && l.productId
                           ? <UnitSelect product={products.data?.find((p) => p.id === l.productId)} role="sales" value={l.uomId ?? undefined}
                               className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                              onChange={(uomId) => { const price = priceForUnit(products.data?.find((p) => p.id === l.productId), uomId, 'sales'); patchLine(i, { uomId, priceSource: undefined, ...(price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}) }); }} />
+                              onChange={(uomId) => patchLine(i, { uomId, priceSource: undefined, ...estimatePatch(l.productId, cachedVariantOption(qc, l.productId, l.variantId), uomId) })} />
                           : <span className="text-muted-foreground">{l.uomCode ?? '—'}</span>}
                       </td>
                     )}
-                    <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className="text-right" value={l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value), priceSource: 'manual' })} /></td>
+                    <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className={cn('text-right', l.priceUnknown && 'border-amber-500')} value={l.priceUnknown ? '' : l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value), priceSource: 'manual', priceUnknown: false })} />
+                      {l.priceUnknown && <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>}</td>
                     {show('discount') && <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>}
                     {show('taxes') && <td className="py-1.5 pr-2"><OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>}
                     {!editable && <>

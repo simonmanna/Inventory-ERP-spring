@@ -13498,5 +13498,7 @@
   "No delivery note yet.": "Tewannabaawo kiwandiiko kya kutuusa.",
   "The delivery note is numbered once the document is saved.": "Ekiwandiiko ky'okutuusa kifuna ennamba ng'ekiwandiiko kiterekeddwa.",
   "Each delivery gets a numbered delivery note when it is dispatched.": "Buli kutuusa kufuna ekiwandiiko ky'okutuusa ekirina ennamba nga kusindikiddwa.",
-  "Theme": "Endabika"
+  "Theme": "Endabika",
+  "No conversion for this unit — enter the price": "Ekipimo kino tekirina nkyusa — yingiza omuwendo",
+  "Saved as a draft, but posting failed: {{error}}": "Kiterekeddwa ng'ekiwandiiko, naye okuwandiika kugaanye: {{error}}"
 }

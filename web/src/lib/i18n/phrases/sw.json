@@ -13498,5 +13498,7 @@
   "No delivery note yet.": "Bado hakuna hati ya usafirishaji.",
   "The delivery note is numbered once the document is saved.": "Hati ya usafirishaji hupewa namba hati ikihifadhiwa.",
   "Each delivery gets a numbered delivery note when it is dispatched.": "Kila usafirishaji hupata hati ya usafirishaji yenye namba unapotumwa.",
-  "Theme": "Mandhari"
+  "Theme": "Mandhari",
+  "No conversion for this unit — enter the price": "Hakuna ubadilishaji wa kipimo hiki — weka bei",
+  "Saved as a draft, but posting failed: {{error}}": "Imehifadhiwa kama rasimu, lakini kuandika kumeshindikana: {{error}}"
 }

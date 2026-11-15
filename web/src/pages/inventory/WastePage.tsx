@@ -26,6 +26,7 @@ import {
   type StockLevel, fetchAllStockLevels, fmtQty, apiErrorMessage as errMsg,
 } from '@/features/inventory/stock-levels';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Location { id: string; code: string; name: string }
 
@@ -59,6 +60,8 @@ interface WasteSummary {
 interface DraftLine {
   key: number;
   productId: string;
+  /** ADR-S058: variant of a product with variants. */
+  variantId?: string | null;
   qty: string;
   batchNumber: string;
   isExpiry: boolean;
@@ -213,6 +216,7 @@ export function WastePage() {
         notes: notes.trim() || undefined,
         items: filled.map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           qty: Number(l.qty),
           unit: levelById.get(l.productId)?.uom ?? undefined,
           ...(l.batchNumber.trim() ? { batchNumber: l.batchNumber.trim() } : {}),
@@ -584,13 +588,14 @@ export function WastePage() {
                             <td className="px-2 py-1.5">
                               <SearchableSelect
                                 value={ln.productId}
-                                onValueChange={(v) => updateLine(ln.key, { productId: v })}
+                                onValueChange={(v) => updateLine(ln.key, { productId: v, variantId: null })}
                                 options={productOptions}
                                 placeholder={stockLevels.isLoading ? tx('Loading products…') : tx('Select product…')}
                                 searchPlaceholder={tx('Search products…')}
                                 emptyText={tx('No products match')}
                                 disabled={stockLevels.isLoading}
                               />
+                              <VariantSelect productId={ln.productId || null} value={ln.variantId} onChange={(v) => updateLine(ln.key, { variantId: v })} />
                             </td>
                             <td className="px-2 py-2.5 text-right font-mono tabular-nums text-muted-foreground">
                               {level ? <>{fmtQty(level.totalQuantity)}{level.uom ? <span className="ml-1 text-xs">{level.uom}</span> : null}</> : '—'}

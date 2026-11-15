@@ -13498,5 +13498,7 @@
   "No delivery note yet.": "ገና ናይ ምብጻሕ ሰነድ የለን።",
   "The delivery note is numbered once the document is saved.": "ናይ ምብጻሕ ሰነድ እቲ ሰነድ ምስ ተዓቀበ ቁጽሪ ይወሃቦ።",
   "Each delivery gets a numbered delivery note when it is dispatched.": "ነፍሲ ወከፍ ምብጻሕ ምስ ተላእከ ቁጽሪ ዘለዎ ናይ ምብጻሕ ሰነድ ይረክብ።",
-  "Theme": "ቅዲ"
+  "Theme": "ቅዲ",
+  "No conversion for this unit — enter the price": "ነዚ ኣሃዱ ምቕያር የብሉን — ዋጋ ኣእቱ",
+  "Saved as a draft, but posting failed: {{error}}": "ከም ረቂቕ ተዓቂቡ፣ ግን ምምዝጋብ ፈሺሉ: {{error}}"
 }

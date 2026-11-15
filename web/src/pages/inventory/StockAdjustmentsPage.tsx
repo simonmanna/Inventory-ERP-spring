@@ -23,6 +23,7 @@ import {
   type StockLevel, fetchAllStockLevels, fmtQty, apiErrorMessage as errMsg,
 } from '@/features/inventory/stock-levels';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Location { id: string; code: string; name: string }
 
@@ -41,6 +42,8 @@ interface AdjustmentRow {
 interface DraftLine {
   key: number;
   productId: string;
+  /** ADR-S058: variant of a product with variants (its stock is counted per variant). */
+  variantId?: string | null;
   /** Counted quantity as typed; '' means not yet counted. */
   actual: string;
 }
@@ -140,7 +143,9 @@ export function StockAdjustmentsPage() {
 
   const filled = lines.filter((l) => l.productId);
   const lineCounts = new Map<string, number>();
-  for (const l of filled) lineCounts.set(l.productId, (lineCounts.get(l.productId) ?? 0) + 1);
+  // One line per product and variant: two variants of one product are different stock.
+  const lineKey = (l: DraftLine) => `${l.productId}|${l.variantId ?? ''}`;
+  for (const l of filled) lineCounts.set(lineKey(l), (lineCounts.get(lineKey(l)) ?? 0) + 1);
   const duplicateIds = new Set([...lineCounts].filter(([, n]) => n > 1).map(([id]) => id));
   const invalidActual = filled.some((l) => l.actual.trim() === '' || !Number.isFinite(Number(l.actual)) || Number(l.actual) < 0);
   const canSubmit = !!locationId && !!responsibleId && !!approvedId && filled.length > 0 && !invalidActual && duplicateIds.size === 0 && !stockLevels.isFetching;
@@ -155,6 +160,7 @@ export function StockAdjustmentsPage() {
         notes: notes.trim() || undefined,
         items: filled.map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           qtyActual: Number(l.actual),
           unit: levelById.get(l.productId)?.uom ?? undefined,
         })),
@@ -216,8 +222,10 @@ export function StockAdjustmentsPage() {
   const pickProduct = (key: number, productId: string) => {
     const level = levelById.get(productId);
     // Pre-fill the count with the system figure so only real variances need typing.
-    updateLine(key, { productId, actual: level ? String(Number(level.totalQuantity.toFixed(4))) : '' });
+    updateLine(key, { productId, variantId: null, actual: level ? String(Number(level.totalQuantity.toFixed(4))) : '' });
   };
+  /** The product's on-hand is not per variant: a variant line is counted from scratch. */
+  const pickVariant = (key: number, variantId: string | null) => updateLine(key, { variantId, actual: '' });
 
   const isPending = (s: string) => s === 'pending' || s === 'draft';
 
@@ -415,9 +423,10 @@ export function StockAdjustmentsPage() {
                         const level = ln.productId ? levelById.get(ln.productId) : undefined;
                         const system = level?.totalQuantity ?? 0;
                         const actualNum = Number(ln.actual);
-                        const hasActual = ln.productId && ln.actual.trim() !== '' && Number.isFinite(actualNum);
+                        // The listed on-hand is the product total; a variant's own figure is computed by the server.
+                        const hasActual = ln.productId && !ln.variantId && ln.actual.trim() !== '' && Number.isFinite(actualNum);
                         const diff = hasActual ? actualNum - system : 0;
-                        const dup = duplicateIds.has(ln.productId);
+                        const dup = duplicateIds.has(lineKey(ln));
                         return (
                           <tr key={ln.key} className="border-b align-middle last:border-0">
                             <td className="px-2 py-1.5">
@@ -430,10 +439,11 @@ export function StockAdjustmentsPage() {
                                 emptyText={tx('No products match')}
                                 disabled={stockLevels.isLoading}
                               />
+                              <VariantSelect productId={ln.productId || null} value={ln.variantId} onChange={(v) => pickVariant(ln.key, v)} />
                               {dup && <p className="mt-1 text-xs text-destructive">{tx('Product already on another line')}</p>}
                             </td>
                             <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                              {ln.productId
+                              {ln.productId && !ln.variantId
                                 ? stockLevels.isFetching && !level ? '…' : <>{fmtQty(system)}{level?.uom ? <span className="ml-1 text-xs">{level.uom}</span> : null}</>
                                 : '—'}
                             </td>

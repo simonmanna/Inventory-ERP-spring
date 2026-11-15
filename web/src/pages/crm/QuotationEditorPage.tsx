@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, resolveAssetUrl } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
-import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { defaultUnitId, unitPrice as priceForUnit, withVariantPrices } from '@/features/products/units';
+import { cachedVariantOption } from '@/features/products/variants-api';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
@@ -134,6 +135,7 @@ export function QuotationEditorPage() {
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p, priceSource: p.priceSource ?? (!keepSource && ('unitPrice' in p || 'discountPercent' in p) ? 'manual' : l.priceSource) } : l)));
     setDirty(true);
   };
+  const qc = useQueryClient();
   const productById = (pid: string | null) => (pid ? products.data?.find((x) => x.id === pid) : undefined);
   const setProduct = (i: number, pid: string | null) => {
     const prod = productById(pid);
@@ -143,7 +145,9 @@ export function QuotationEditorPage() {
     setLines(next); setDirty(true); void priceLines(i, next);
   };
   const setUnit = (i: number, uomId: string) => {
-    const price = priceForUnit(productById(lines[i].productId), uomId, 'sales');
+    // D1: the variant's effective price (when one is set) replaces the product's, then the unit rule.
+    const variant = cachedVariantOption(qc, lines[i].productId, lines[i].variantId);
+    const price = priceForUnit(withVariantPrices(productById(lines[i].productId), variant), uomId, 'sales');
     // The server reprices the line in its new unit on save.
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, uomId, priceSource: undefined, ...(price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}) } : l)));
     setDirty(true);
@@ -182,7 +186,9 @@ export function QuotationEditorPage() {
     const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => !isLayout(l) && l.productId && (idx === undefined || i === idx));
     if (!targets.length) return;
     try {
-      const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({ productId: l.productId!, quantity: Number(l.quantity || 1) })) });
+      const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({
+        productId: l.productId!, quantity: Number(l.quantity || 1), variantId: l.variantId || undefined, uomId: l.uomId || undefined,
+      })) });
       setLines((ls) => ls.map((l, i) => {
         const k = targets.findIndex((t) => t.i === i);
         if (k < 0) return l;

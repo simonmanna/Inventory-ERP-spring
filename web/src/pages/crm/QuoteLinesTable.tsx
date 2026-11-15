@@ -10,7 +10,7 @@ import { UnitSelect } from '@/components/unit-select';
 import { VariantSelect } from '@/features/products/variant-select';
 import { LineSizeFields, hasSize, useProductSizing, type LineSize } from '@/features/products/sizing';
 import type { VariantOption } from '@/features/products/variants-api';
-import { unitFactor } from '@/features/products/units';
+import { unitFactor, unitPrice as priceForUnit, withVariantPrices } from '@/features/products/units';
 import type { ProductOption, QuoteLine as ApiQuoteLine } from '@/features/crm/suite-api';
 
 /** A quotation line with its typed size (ADR-S066: sold by length / area / volume). */
@@ -71,13 +71,17 @@ interface Props {
   imageColumn?: { show: boolean; toggle: () => void };
 }
 
-/** Picking a variant: its price (the server reprices on save) and its sales description when the line has none of its own. */
-function variantPatch(l: QuoteLine, variantId: string | null, opt: VariantOption | null): Partial<QuoteLine> {
+/**
+ * Picking a variant: its price in the line's unit (D1: the variant's effective price replaces the product's, then the
+ * unit rule; the server reprices on save) and its sales description when the line has none of its own.
+ */
+function variantPatch(l: QuoteLine, variantId: string | null, opt: VariantOption | null, prod: ProductOption | undefined): Partial<QuoteLine> {
   if (!opt) return { variantId };
   const own = l.description && l.description !== l.productName && !l.description.startsWith(`${opt.productName} (`)
     && l.description !== opt.productName;
+  const price = prod ? priceForUnit(withVariantPrices(prod, opt), l.uomId ?? undefined, 'sales') : Number(opt.salesPrice);
   return {
-    variantId, ...(l.priceSource !== 'manual' ? { unitPrice: Number(opt.salesPrice) } : {}),
+    variantId, ...(l.priceSource !== 'manual' && price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}),
     ...(!own ? { description: opt.description || opt.displayName } : {}),
   };
 }
@@ -140,7 +144,9 @@ export function QuoteLinesTable(p: Props) {
   const unitCost = (l: QuoteLine) => {
     const prod = product(l.productId);
     if (!prod || prod.costPrice == null || prod.costPrice === '') return null;
-    return Number(prod.costPrice) * (unitFactor(prod, l.uomId) ?? 1);
+    // No margin when the unit cannot be converted here (never assume factor 1).
+    const factor = unitFactor(prod, l.uomId);
+    return factor === null ? null : Number(prod.costPrice) * factor;
   };
 
   const productCell = (l: QuoteLine, i: number, withVariant: boolean) => (
@@ -148,7 +154,7 @@ export function QuoteLinesTable(p: Props) {
       {editable
         ? <SearchableSelect value={l.productId ?? ''} onValueChange={(v) => p.onProduct(i, v || null)} options={productOpts} placeholder={tx('Select a product…')} className="w-full min-w-[12rem]" />
         : <span className="font-medium">{l.productName ?? (l.productId ? '' : tx('(no product)'))}</span>}
-      {withVariant && <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt), true)} />}
+      {withVariant && <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? undefined} className="w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt, product(l.productId)), true)} />}
       {l.productId && l.size && <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
         onChange={(size, q) => p.onPatch(i, { size, ...(q !== null ? { quantity: q } : {}) }, true)} />}
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -256,7 +262,7 @@ export function QuoteLinesTable(p: Props) {
                 )}
                 {show('variant') && (
                   <td className="py-1.5 pr-3">
-                    <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? '—'} className="mt-0 w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt), true)} />
+                    <VariantSelect productId={l.productId} value={l.variantId ?? null} disabled={!editable} label={l.variantName ?? '—'} className="mt-0 w-full" onChange={(v, opt) => p.onPatch(i, variantPatch(l, v, opt, product(l.productId)), true)} />
                     {editable && !l.productId && <span className="text-muted-foreground">—</span>}
                   </td>
                 )}

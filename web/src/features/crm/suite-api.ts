@@ -461,7 +461,7 @@ export const crmApi = {
   saveRule: async ({ id, ...body }: Partial<PriceRule> & { id?: string }) =>
     (id ? await api.patch<PriceRule>(`/crm/pricing/rules/${id}`, body) : await api.post<PriceRule>('/crm/pricing/rules', body)).data,
   deleteRule: async (id: string) => (await api.delete(`/crm/pricing/rules/${id}`)).data,
-  resolvePrices: async (body: { partnerId?: string; lines: Array<{ productId: string; quantity: number }> }) =>
+  resolvePrices: async (body: { partnerId?: string; lines: Array<{ productId: string; quantity: number; variantId?: string; uomId?: string }> }) =>
     (await api.post<{ lines: ResolvedPrice[] }>('/crm/pricing/resolve', body)).data,
 
   createQuote: async (body: Record<string, unknown>) => (await api.post<Quotation>(quoteBase(), body)).data,
