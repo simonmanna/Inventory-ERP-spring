@@ -60,7 +60,28 @@ public class DocumentBuilderService {
     public record LineInput(String productId, String menuItemId, String variantId, String variantName,
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
-            String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing) {
+            String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing,
+            BigDecimal uomFactor) {
+
+        /**
+         * A line whose unit factor is resolved now (Phase I2, audit U-5: {@code uomFactor} non-null = the factor frozen
+         * on the source document this line is copied from, kept instead of re-resolving the unit live).
+         */
+        public LineInput(String productId, String menuItemId, String variantId, String variantName, String accountId,
+                String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+                String discountType, BigDecimal discountAmount, String discountReason, String discountSource,
+                String taxId, String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing) {
+            this(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice,
+                    discountPercent, discountType, discountAmount, discountReason, discountSource, taxId, lineType,
+                    taxInclusive, uomId, taxIds, sizing, null);
+        }
+
+        /** The same line with the unit and factor frozen on its source document (U-5). */
+        public LineInput withUnitSnapshot(String unit, BigDecimal factor) {
+            return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
+                    unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
+                    lineType, taxInclusive, unit, taxIds, sizing, unit == null ? null : factor);
+        }
 
         /**
          * A line without a tax list ({@code taxIds}, ADR-S071: its single {@code taxId} or the product's applies) and
@@ -79,28 +100,28 @@ public class DocumentBuilderService {
         public LineInput withDiscountPercent(BigDecimal percent) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice, percent,
                     discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive, uomId,
-                    taxIds, sizing);
+                    taxIds, sizing, uomFactor);
         }
 
         /** The same line sold by size (ADR-S066): the size decides the quantity. */
         public LineInput withSizing(Sizing size) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
                     unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
-                    lineType, taxInclusive, uomId, taxIds, size);
+                    lineType, taxInclusive, uomId, taxIds, size, uomFactor);
         }
 
         /** The same line with another tax list (ADR-S071). */
         public LineInput withTaxIds(List<String> ids) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
                     unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
-                    lineType, taxInclusive, uomId, ids, sizing);
+                    lineType, taxInclusive, uomId, ids, sizing, uomFactor);
         }
 
         /** The same line at another unit price / discount (price lists), keeping everything else. */
         public LineInput withPrice(BigDecimal price, BigDecimal percent) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, price,
                     percent, discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive,
-                    uomId, taxIds, sizing);
+                    uomId, taxIds, sizing, uomFactor);
         }
 
         /** Line in the role's default unit (ADR-S003: {@code uomId} picks another unit of the product). */
@@ -358,7 +379,10 @@ public class DocumentBuilderService {
                     product.put("salesPrice", v.get("price"));
                 }
             }
-            LineUnit unit = meta || product == null ? new LineUnit(null, null) : lineUnit(l.productId(), l.uomId(), role);
+            // U-5: a line copied from another document keeps the unit factor frozen there.
+            LineUnit unit = meta || product == null ? new LineUnit(null, null)
+                    : l.uomFactor() != null && l.uomId() != null && !l.uomId().isBlank()
+                            ? new LineUnit(l.uomId(), l.uomFactor()) : lineUnit(l.productId(), l.uomId(), role);
             BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
                     ? (BigDecimal) product.get("salesPrice") : null;
             if (!meta && l.unitPrice() == null && product != null && unit.factor() != null) {

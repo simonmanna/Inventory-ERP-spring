@@ -1165,7 +1165,7 @@ public class CashSaleService {
                     str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
                     dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
                     Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
-                    ProductSizingService.Sizing.stored(l)));
+                    ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,

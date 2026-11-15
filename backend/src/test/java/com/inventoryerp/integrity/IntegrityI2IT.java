@@ -279,6 +279,94 @@ class IntegrityI2IT extends ApiTestSupport {
         assertThat((BigDecimal) active.getFirst().get("quantity")).isEqualByComparingTo("24");
     }
 
+    // ------------------------------------------------------------------ U-5 / U-6 / M-2
+
+    void repack(String productId, String uomId, int factor) {
+        jdbc.sql("UPDATE \"ProductUom\" SET factor = ? WHERE \"productId\" = ? AND \"uomId\" = ?")
+                .params(factor, productId, uomId).update();
+    }
+
+    JsonNode money(String method, String path, Object body) {
+        Res r = call(method, path, body, Map.of("Authorization", "Bearer " + adminToken, "Idempotency-Key",
+                UUID.randomUUID().toString()));
+        assertThat(r.status()).as(method + " " + path + " → " + r.raw().body()).isLessThan(300);
+        return r.body();
+    }
+
+    @Test
+    @DisplayName("U-5: a quotation line's frozen unit factor survives into the sales order and its invoice")
+    void copiedLinesKeepTheFrozenFactor() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String p = packed("Juice", pcs, box, 24);
+        String qid = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines", List.of(Map.of(
+                "productId", p, "quantity", 2, "uomId", box, "unitPrice", 2400)))).get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + qid + "/submit", null);
+        repack(p, box, 12);
+        String so = ok(200, "POST", "/sales/quotations/" + qid + "/convert", Map.of()).get("converted").get("id")
+                .asString();
+        assertThat(jdbc.sql("SELECT \"uomFactor\" FROM \"SalesOrderLine\" WHERE \"orderId\" = ?").param(so)
+                .query(BigDecimal.class).single()).as("the quoted box of 24").isEqualByComparingTo("24");
+
+        ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 2, \"qtyDelivered\" = 2, \"qtyAccepted\" = 2,"
+                + " \"qtyBillable\" = 2 WHERE \"orderId\" = ?").param(so).update();
+        repack(p, box, 6);
+        String inv = money("POST", "/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
+        assertThat(jdbc.sql("SELECT \"uomFactor\" FROM \"DocumentLine\" WHERE \"documentId\" = ? AND"
+                + " \"productId\" = ?").params(inv, p).query(BigDecimal.class).single()).as("the ordered box of 24")
+                .isEqualByComparingTo("24");
+    }
+
+    @Test
+    @DisplayName("U-6: a credit note restocks the invoice line's frozen unit, not today's pack size")
+    void creditNoteRestocksTheInvoicedUnit() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String p = packed("Soda", pcs, box, 24);
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", p, "quantity", 2, "uomId", box, "unitPrice", 2400)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        assertThat(onHand(p)).as("2 boxes of 24 issued").isEqualByComparingTo("52");
+        repack(p, box, 12);
+
+        String named = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                "reversedDocumentId", inv, "lines", List.of(Map.of("productId", p, "quantity", 1, "uomId", box,
+                        "unitPrice", 2400)))).get("id").asString();
+        ok(200, "POST", "/credit-notes/" + named + "/post", null);
+        assertThat(onHand(p)).as("one box of 24 back").isEqualByComparingTo("76");
+
+        String unnamed = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                "reversedDocumentId", inv, "lines", List.of(Map.of("productId", p, "quantity", 1, "unitPrice", 2400))))
+                .get("id").asString();
+        ok(200, "POST", "/credit-notes/" + unnamed + "/post", null);
+        assertThat(onHand(p)).as("a line without a unit takes the invoice's box of 24").isEqualByComparingTo("100");
+    }
+
+    @Test
+    @DisplayName("M-2: a credit note restocks where the invoice issued, at the cost it issued at")
+    void creditNoteRestocksAtTheIssueLocationAndCost() {
+        String p = stocked("Bricks", 10);
+        String inv = postedInvoice(p, 4);
+        TenantContext.run(TenantStore.organization(demoOrg), () -> stock.receive(StockMove.of(p, warehouse,
+                BigDecimal.TEN).unitCost(BigDecimal.valueOf(40))));
+        String shop = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"InventoryLocation\" (id, \"organizationId\", code, name, type, \"updatedAt\") VALUES"
+                + " (?, ?, ?, ?, 'warehouse', now())").params(shop, demoOrg, "M2-" + sfx(), "M2 shop " + sfx()).update();
+        ok(200, "PUT", "/settings/pos.stockLocationId", Map.of("value", shop));
+        try {
+            String cn = creditNote(inv, p, 2);
+            ok(200, "POST", "/credit-notes/" + cn + "/post", null);
+            Map<String, Object> back = jdbc.sql("SELECT \"locationId\", \"unitCost\" FROM \"InventoryLedger\" WHERE"
+                    + " \"referenceType\" = 'credit_note' AND \"referenceId\" = ?").param(cn).query().singleRow();
+            assertThat(back.get("locationId")).as("back where it left").isEqualTo(warehouse);
+            assertThat((BigDecimal) back.get("unitCost")).as("at the issue cost, not today's average")
+                    .isEqualByComparingTo("10");
+        } finally {
+            ok(200, "PUT", "/settings/pos.stockLocationId", Map.of("value", warehouse));
+        }
+    }
+
     Map<String, Object> map(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {

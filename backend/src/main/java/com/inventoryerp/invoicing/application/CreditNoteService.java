@@ -145,6 +145,7 @@ public class CreditNoteService {
     public Map<String, Object> create(CreditNoteInput dto) {
         builder.assertVariants(dto.lines(), false, true);
         assertVariantResolvable(dto.reversedDocumentId(), dto.lines());
+        List<LineInput> lines = withInvoiceUnits(dto.reversedDocumentId(), dto.lines());
         // A credit note against an invoice is in that invoice's currency and rate unless it says otherwise.
         Map<String, Object> reversed = dto.reversedDocumentId() == null || dto.currencyId() != null ? null
                 : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
@@ -153,7 +154,58 @@ public class CreditNoteService {
         BigDecimal rate = reversed == null ? null : Money.dec(reversed.get("exchangeRate"));
         return builder.createDocument("credit_note", new HeaderInput(dto.partnerId(), dto.issueDate(), null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, currencyId, rate,
-                dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), dto.lines());
+                dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), lines);
+    }
+
+    /**
+     * Phase I2 (audit U-5/U-6): a credit-note line for a product (and variant) the credited invoice sold on one line
+     * keeps that line's unit and frozen factor (its own unit when it names the same one, the invoice's when it names
+     * none), so a pack-size change since the sale never changes what the credit restocks.
+     */
+    private List<LineInput> withInvoiceUnits(String invoiceId, List<LineInput> lines) {
+        if (invoiceId == null || lines == null) {
+            return lines;
+        }
+        List<LineInput> out = new ArrayList<>();
+        for (LineInput l : lines) {
+            boolean product = l.productId() != null && !l.productId().isBlank()
+                    && (l.lineType() == null || "product".equals(l.lineType()));
+            if (!product) {
+                out.add(l);
+                continue;
+            }
+            String variantId = l.variantId() != null && !l.variantId().isBlank() ? l.variantId()
+                    : invoiceVariant(invoiceId, l.productId());
+            List<Map<String, Object>> sold = SqlRows.list(jdbc.sql("SELECT \"uomId\", \"uomFactor\" FROM \"DocumentLine\""
+                    + " WHERE \"documentId\" = ? AND \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT"
+                    + " DISTINCT FROM ? AND \"uomFactor\" IS NOT NULL").params(invoiceId, org(), l.productId(), variantId));
+            Map<String, Object> match = null;
+            for (Map<String, Object> r : sold) {
+                if (l.uomId() == null || l.uomId().isBlank() ? sold.size() == 1 : l.uomId().equals(r.get("uomId"))) {
+                    match = r;
+                    break;
+                }
+            }
+            out.add(match == null || match.get("uomId") == null ? l
+                    : l.withUnitSnapshot((String) match.get("uomId"), Money.dec(match.get("uomFactor"))));
+        }
+        return out;
+    }
+
+    /**
+     * Phase I2 (audit U-6, M-2): where and at what base-unit cost the credited invoice issued this product / variant —
+     * the location that issued most of it and the average cost of the issue — or null when the invoice issued no stock
+     * (goods delivered by Fleet, or a service).
+     */
+    private Map<String, Object> invoiceIssue(String invoiceId, String productId, String variantId) {
+        if (invoiceId == null) {
+            return null;
+        }
+        return SqlRows.one(jdbc.sql("SELECT \"locationId\", SUM(-\"quantityChange\" * \"unitCost\") / NULLIF(SUM("
+                + "-\"quantityChange\"), 0) AS \"unitCost\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = 'sales_invoice' AND \"referenceId\" = ? AND \"productId\" = ? AND \"variantId\" IS"
+                + " NOT DISTINCT FROM ? AND \"quantityChange\" < 0 GROUP BY \"locationId\" ORDER BY SUM(-\"quantityChange\")"
+                + " DESC LIMIT 1").params(org(), invoiceId, productId, variantId));
     }
 
     /**
@@ -412,13 +464,18 @@ public class CreditNoteService {
                         && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                     String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
                             : invoiceVariant(reversed, productId);
+                    // U-6 / M-2: goods the invoice issued come back where they left, at the cost they left at.
+                    Map<String, Object> issued = invoiceIssue(reversed, productId, variantId);
+                    String location = issued != null ? (String) issued.get("locationId") : warehouse;
                     try {
-                        if (warehouse == null) {
+                        if (location == null) {
                             throw ApiException.badRequest("no stock location is configured");
                         }
-                        stock.receiveReturn(StockMove.of(productId, warehouse, qty)
+                        stock.receiveReturn(StockMove.of(productId, location, qty)
                                 .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                         : Money.dec(ln.get("uomFactor")))
+                                .unitCost(issued == null || issued.get("unitCost") == null ? null
+                                        : Money.dec(issued.get("unitCost")))
                                 .reference((String) cn.get("documentNumber")).source("credit_note", id)
                                 .date(issueDate));
                     } catch (ApiException e) {

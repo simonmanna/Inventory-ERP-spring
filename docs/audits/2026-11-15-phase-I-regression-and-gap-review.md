@@ -164,6 +164,7 @@ Each fix landed with a regression test that failed before it.
 | N8 | (see git log) | `ProductionUnitsIT.reversalIssuesByproducts` |
 | C-1, C-2 | (see git log) | `VariantIntegrityIT.variantCostFallbacks`, `itemValueByCostingMethod` |
 | M-3 | (see git log) | `ProductionUnitsIT.reservationsInBaseUnitsUntilConsumed` |
+| U-5, U-6, M-2, A-4 (return query) | (see git log) | `IntegrityI2IT.copiedLinesKeepTheFrozenFactor`, `creditNoteRestocksTheInvoicedUnit`, `creditNoteRestocksAtTheIssueLocationAndCost` |
 
 Notes:
 
@@ -181,6 +182,16 @@ Notes:
   substitute units replace one unit of the component line, and the substitute carries no unit of its own, so its
   quantity is in its base unit. Not a defect under that definition; recorded instead of changed.
 
-Still open in I2: U-4…U-7, U-10, U-5, R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
+- U-5: document copies (quotation → sales order, sales order → invoice, cash sale → invoice, Fleet delivery order →
+  invoice) keep the source line's frozen unit factor; Fleet DO → invoice also keeps the variant. A copied line gets a
+  fresh factor only when its unit changed. Change requests already kept it (N2).
+- U-6 / M-2: a credit-note line for a product (and variant) the credited invoice sold keeps that invoice line's unit
+  and factor (the invoice's unit when the line names none and the invoice sold it on one line). Posting restocks at
+  the location the invoice issued most of it from, at the weighted base-unit cost of that issue (invoice ledger rows).
+  An invoice that issued no stock (Fleet-delivered goods) keeps the POS stock location and current cost.
+- Test-suite issue: `SalesReturnFlowIT.writeOff` looks up a postable `6%` account, which only
+  `GraniteQuarryDemoSeed` creates; it fails when that seed has not run on the database first (order dependency).
+
+Still open in I2: U-4, U-7, U-10, R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
 posting hold (ADR-S072), and the tracked M-1…M-12.
 

@@ -633,7 +633,7 @@ public class SalesOrderService {
             inputs.add(new LineInput(str(m.get("productId")), null, null, null, null, str(m.get("description")),
                     dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent")), null, null, null,
                     "manual", str(m.get("taxId")), null, Boolean.TRUE.equals(m.get("taxInclusive")),
-                    str(m.get("uomId"))));
+                    str(m.get("uomId"))).withUnitSnapshot(str(m.get("uomId")), frozenFactor(m)));
         }
         Totals totals = builder.prepareLines(inputs);
         int i = 0;
@@ -674,6 +674,29 @@ public class SalesOrderService {
             i++;
         }
         return ids;
+    }
+
+    /**
+     * Phase I2 (audit U-5): the unit factor a copied line keeps — the one saved on the line it splits
+     * ({@code savedUomFactor}) or on the quotation line it comes from, when it is still in that unit. Null = resolve
+     * the unit now (a new line, or the unit changed).
+     */
+    private BigDecimal frozenFactor(Map<String, Object> m) {
+        String uomId = str(m.get("uomId"));
+        if (blank(uomId)) {
+            return null;
+        }
+        if (m.get("savedUomFactor") != null) {
+            return dec(m.get("savedUomFactor"));
+        }
+        String quotationLineId = str(m.get("quotationLineId"));
+        if (blank(quotationLineId)) {
+            return null;
+        }
+        Map<String, Object> q = db.row("SELECT \"uomId\", \"uomFactor\" FROM \"SalesQuotationLine\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", quotationLineId, TenantContext.organizationId());
+        return q != null && uomId.equals(str(q.get("uomId"))) && q.get("uomFactor") != null ? dec(q.get("uomFactor"))
+                : null;
     }
 
     /** Validated variant id of a line for {@code productId} (ADR-S058; a product with variants needs one). */

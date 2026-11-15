@@ -222,15 +222,16 @@ public class InvoicingWorkflowsInitializer {
      * invoice's to return (credit note + return). Runs once: an existing compensation for the invoice is never repeated.
      */
     private void returnIssuedStock(String invoiceId, String number, Instant issueDate) {
+        String org = com.inventoryerp.kernel.tenancy.TenantContext.organizationId();
         long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice_cancel'"
-                + " AND \"referenceId\" = ?").param(invoiceId).query(Long.class).single();
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(invoiceId, org).query(Long.class).single();
         if (done > 0) {
             return;
         }
         for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
                 + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
-                + " 'sales_invoice' AND \"referenceId\" = ? AND \"quantityChange\" < 0 ORDER BY \"createdAt\", id")
-                .param(invoiceId))) {
+                + " 'sales_invoice' AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0"
+                + " ORDER BY \"createdAt\", id").params(invoiceId, org))) {
             stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
                     d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
                     .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
