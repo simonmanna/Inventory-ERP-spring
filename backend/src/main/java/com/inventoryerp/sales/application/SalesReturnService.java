@@ -228,7 +228,7 @@ public class SalesReturnService {
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
                 StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
                         .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
-                        .source("sales_return", id);
+                        .source("sales_return", id).sourceLine(str(l.get("id")));
                 stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?", qty, issueCost, l.get("id"));

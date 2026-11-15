@@ -166,6 +166,8 @@ Each fix landed with a regression test that failed before it.
 | M-3 | (see git log) | `ProductionUnitsIT.reservationsInBaseUnitsUntilConsumed` |
 | U-4 | (see git log) | `PosStockPostingIT.snapshotFreezesUnitFactors` (ADR-S072 addendum) |
 | U-10 | (see git log) | `ProductSizingIT.sizedLinesAreNotScaledTwice` (ADR-S066 addendum) |
+| M-1, M-4, M-5 | (see git log) | `IntegrityI2IT.creditNoteLimitInStockUnitsPerVariant`, procurement `ProductUnitsIT.freeReceiptLineAdvancesThePoInItsUnit`, `SharedFxIT.foreignBillReceivesAtFunctionalCost` |
+| R-1 | (see git log) | `IntegrityI2IT.ledgerRowsAreTraceable` (`V487__inventory_ledger_traceability.sql`) |
 | U-5, U-6, M-2, A-4 (return query) | (see git log) | `IntegrityI2IT.copiedLinesKeepTheFrozenFactor`, `creditNoteRestocksTheInvoicedUnit`, `creditNoteRestocksAtTheIssueLocationAndCost` |
 
 Notes:
@@ -196,6 +198,24 @@ Notes:
 
 - U-7: the audit has no U-7 row (the U-series skips it); kitchen-waste units were fixed under V-3 in I1a.
 
-Still open in I2: R-1 (`V487`; V486 went to replenishment variants), the D1 offline POS
-posting hold (ADR-S072), and the tracked M-1…M-12.
+- R-1: every new `InventoryLedger` row records `docUomId`, `uomFactor`, `docQuantity` (= `quantityChange / uomFactor`,
+  signed) and, where the caller names it, `sourceLineId` (sales invoice issue, credit-note restock, cash sale, sales
+  return). Base-unit moves record the stock unit at factor 1; a return converted before receipt keeps the unit it came
+  back in. The `stock.issued` event gains additive `baseQuantity`, `variantId`, `uomId`, `uomFactor`; its `quantity`
+  stays in the document unit as in Nest. Older rows stay null.
+
+- M-1: the credit-note limit compares stock units (quantity × frozen factor) per product and variant; a credit line
+  without a variant counts against the invoice's only variant, as at post. The message is unchanged, its numbers are
+  stock units.
+- M-4: `applyReceiptToPO` converts a receipt line's quantity into the PO line's unit through both frozen factors (a
+  free goods-receipt line matched by product is in the product's purchase or named unit).
+- M-5: a foreign-currency vendor bill's auto-receipt multiplies the line unit cost by the rate its journal was posted
+  at (`DocumentFxRates.entryRate`), so stock and GRNI carry the functional value.
+- M-9 / M-10 (POS variant without legacy stock; pre-I1a refund): not done. The online counter checkout, saved-order
+  billing, rental / repair billing and the offline `sale.checkout` sync all enter `PosInvoiceService.generateInvoice`;
+  owner decision 1 says an offline sale must never be refused, so the check needs an explicit online-only entry point.
+  Until then such a sale is kept and its stock line raises an `InventoryException` at posting ("Choose a variant").
+
+Still open in I2: the D1 offline POS posting hold (ADR-S072); M-9, M-10; M-6 (Phase A3 load rounding); the web
+items M-7, M-8, M-11, M-12 (client changes, need owner approval).
 

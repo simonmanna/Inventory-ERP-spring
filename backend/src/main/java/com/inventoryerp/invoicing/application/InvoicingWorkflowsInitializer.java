@@ -56,6 +56,13 @@ public class InvoicingWorkflowsInitializer {
         this.withholdingCertificates = withholdingCertificates;
     }
 
+    private DocumentFxRates fxRates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setFxRates(DocumentFxRates fxRates) {
+        this.fxRates = fxRates;
+    }
+
     public InvoicingWorkflowsInitializer(WorkflowRegistry registry, JdbcClient jdbc, PostingService posting,
             StockService stock, DocumentBuilderService builder, AccountDeterminationService determination,
             JournalService journals, BillReceiptMatcherService matcher) {
@@ -164,7 +171,7 @@ public class InvoicingWorkflowsInitializer {
                 }
                 StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
                         .variant((String) line.get("variantId")).uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
-                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id)
+                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id).sourceLine((String) line.get("id"))
                         .notes("Auto-issue for invoice " + doc.get("documentNumber"));
                 stock.issue(m);
             }
@@ -442,6 +449,10 @@ public class InvoicingWorkflowsInitializer {
                     null, req));
             entryId = (String) entry.get("id");
         }
+        // Review M-5: a foreign-currency bill receives at the functional value (the rate its journal was posted at),
+        // like a foreign-currency goods receipt (P0-5); a base-currency bill's rate is 1.
+        BigDecimal billRate = entryId == null || fxRates == null ? null : fxRates.entryRate(entryId);
+        BigDecimal functionalRate = billRate == null || billRate.signum() <= 0 ? BigDecimal.ONE : billRate;
         for (Map<String, Object> line : lines) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             if (product == null || !Boolean.TRUE.equals(product.get("trackInventory"))) {
@@ -463,6 +474,9 @@ public class InvoicingWorkflowsInitializer {
             }
             BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
                     Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
+            if (functionalRate.compareTo(BigDecimal.ONE) != 0) {
+                unitCost = unitCost.multiply(functionalRate).setScale(6, java.math.RoundingMode.HALF_UP);
+            }
             StockMove m = StockMove.of((String) line.get("productId"), location, toReceive).unitCost(unitCost)
                     .variant((String) line.get("variantId"))
                     .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),

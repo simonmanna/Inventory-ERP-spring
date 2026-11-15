@@ -410,4 +410,20 @@ class ProductUnitsIT extends ApiTestSupport {
             ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N6 test"));
         }
     }
+
+    @Test
+    @DisplayName("M-4: a goods-receipt line without a PO line id, in pieces, advances a PO ordered in boxes by boxes")
+    void freeReceiptLineAdvancesThePoInItsUnit() {
+        String cola = product("Cola M4", 1);
+        setUnits(cola, List.of(unitRow(box, 12, true, false, null)));
+        String poId = createPo(cola, box, 2, 120);
+        String grn = ok(201, "POST", "/procurement/goods-receipts", Map.of("purchaseOrderId", poId, "warehouseId",
+                warehouse, "lines", List.of(Map.of("productId", cola, "description", "Cola", "quantity", 12, "uomId", pcs,
+                        "unitCost", 10)))).get("id").asString();
+        Res posted = call("PATCH", "/procurement/goods-receipts/" + grn + "/post", null, key());
+        assertThat(posted.status()).as("12 pieces = 1 of the 2 boxes ordered: " + posted.raw().body()).isEqualTo(200);
+        assertThat(jdbc.sql("SELECT \"receivedQuantity\" FROM \"PurchaseOrderLine\" WHERE \"purchaseOrderId\" = ?")
+                .param(poId).query(BigDecimal.class).single()).isEqualByComparingTo("1");
+        assertThat(onHand(cola)).isEqualByComparingTo("12");
+    }
 }

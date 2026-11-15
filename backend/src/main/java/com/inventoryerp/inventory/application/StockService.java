@@ -28,6 +28,7 @@ import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -180,7 +181,10 @@ public class StockService {
                 : resolveCurrentCost(dto.productId, dto.variantId, dto.locationId);
         StockMove m = StockMove.of(dto.productId, dto.locationId, baseQty).variant(dto.variantId).unitCost(unitCost)
                 .reference(dto.reference).source(dto.sourceType, dto.sourceId).notes(dto.notes).moveType("return_in")
-                .serials(dto.serialNumbers);
+                .serials(dto.serialNumbers).sourceLine(dto.sourceLineId);
+        Trace t = trace(dto, product, baseQty, dto.quantity); // R-1: the unit it came back in
+        m.traceUomId = t.docUomId();
+        m.traceFactor = t.factor();
         Received res = receiveCore(m, null);
         BigDecimal totalValue = unitCost.multiply(baseQty);
         if (totalValue.signum() > 0) {
@@ -356,7 +360,7 @@ public class StockService {
                 cost.totalValue(),
                 glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType() : dto.sourceType,
                 glCtx != null && glCtx.sourceId() != null ? glCtx.sourceId() : dto.sourceId,
-                dto.notes, dto.responsibleById, dto.approvedById);
+                dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
 
         if (glCtx != null) {
             if ("stock_gain".equals(glCtx.kind())) {
@@ -563,7 +567,8 @@ public class StockService {
         BigDecimal unitCost;
         boolean carriedCost = !serialTracking && !usesLayers && dto.carriedUnitCost != null
                 && "AVCO".equals(str(product, "costingMethod"));
-        IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId);
+        IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId,
+                trace(dto, product, qty, dto.quantity));
 
         if (serialTracking) {
             List<String> requested = dto.serialNumbers == null ? List.of() : dto.serialNumbers;
@@ -723,6 +728,11 @@ public class StockService {
         payload.put("quantity", JsNumbers.dec(dto.quantity));
         payload.put("unitCost", JsNumbers.dec(unitCost));
         payload.put("totalValue", JsNumbers.dec(totalValue));
+        // Phase I2 (audit R-1): additive keys; "quantity" stays in the caller's (document) unit as in Nest.
+        payload.put("baseQuantity", JsNumbers.dec(qty));
+        payload.put("variantId", variantId);
+        payload.put("uomId", ic.trace.docUomId());
+        payload.put("uomFactor", ic.trace.factor() == null ? null : JsNumbers.dec(ic.trace.factor()));
         events.publishOnCommit("stock.issued", payload);
         audit.recordInTx(AuditInput.of("StockItem", stockItemId, "issue", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
@@ -761,21 +771,24 @@ public class StockService {
         final String variantId;
         final String moveType;
         final String stockItemId;
+        final Trace trace;
 
-        IssueCtx(String org, String ledgerCode, StockMove dto, String variantId, String moveType, String stockItemId) {
+        IssueCtx(String org, String ledgerCode, StockMove dto, String variantId, String moveType, String stockItemId,
+                Trace trace) {
             this.org = org;
             this.ledgerCode = ledgerCode;
             this.dto = dto;
             this.variantId = variantId;
             this.moveType = moveType;
             this.stockItemId = stockItemId;
+            this.trace = trace;
         }
 
         void row(String batchId, String serialId, BigDecimal before, BigDecimal change, BigDecimal after,
                 BigDecimal unitCost, BigDecimal totalValue, String notes) {
             insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, batchId, serialId, moveType, before,
                     change, after, unitCost, totalValue, dto.sourceType, dto.sourceId, notes, dto.responsibleById,
-                    dto.approvedById);
+                    dto.approvedById, trace);
         }
     }
 
@@ -876,7 +889,8 @@ public class StockService {
         String sourceId = dto.sourceId != null ? dto.sourceId : ledgerCode;
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, null, null, moveType, currentQty, delta,
                 counted, unitCost, unitCost.multiply(delta.abs()), sourceType, sourceId, dto.notes,
-                dto.responsibleById, dto.approvedById);
+                dto.responsibleById, dto.approvedById, deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
+                        : trace(dto, product, counted, dto.countedQuantity));
         stockPosting.postAdjustment(dto.productId, delta, unitCost, Instant.now(), sourceType, sourceId,
                 "Stock adjustment · " + str(product, "name"));
         Map<String, Object> payload = new HashMap<>();
@@ -1156,10 +1170,10 @@ public class StockService {
         BigDecimal newToQty = dec(toItem, "quantity");
         String outRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.fromLocationId, null, null,
                 "transfer_out", fromBefore, qty.negate(), newFromQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
         String inRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null,
                 "transfer_in", newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
         // LC-1 (ADR-S053): the units of the out row are the units of the in row — landed cost follows them.
         jdbc.sql("INSERT INTO \"InventoryTransferLineage\" (id, \"organizationId\", \"transferId\","
                         + " \"sourceLedgerId\", \"destinationLedgerId\", quantity) VALUES (?, ?, ?, ?, ?, ?)")
@@ -1387,18 +1401,45 @@ public class StockService {
     private String insertLedger(String org, String ledgerCode, String productId, String variantId, String locationId,
             String batchId, String serialId, String type, BigDecimal qtyBefore, BigDecimal change, BigDecimal after,
             BigDecimal unitCost, BigDecimal totalValue, String referenceType, String referenceId, String notes,
-            String responsibleById, String approvedById) {
+            String responsibleById, String approvedById, Trace trace) {
         String id = UUID.randomUUID().toString();
+        BigDecimal factor = trace == null ? null : trace.factor();
+        BigDecimal docQty = factor == null || factor.signum() == 0 ? null
+                : change.divide(factor, 6, RoundingMode.HALF_UP);
         jdbc.sql("INSERT INTO \"InventoryLedger\" (id, \"organizationId\", \"ledgerCode\", \"productId\", \"variantId\","
                         + " \"locationId\", \"batchId\", \"serialId\", type, \"qtyBefore\", \"quantityChange\","
                         + " \"balanceAfter\", \"unitCost\", \"totalValue\", \"referenceType\", \"referenceId\", notes,"
-                        + " \"performedBy\", \"responsibleById\", \"approvedById\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
-                        + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
+                        + " \"performedBy\", \"responsibleById\", \"approvedById\", \"docUomId\", \"uomFactor\","
+                        + " \"docQuantity\", \"sourceLineId\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
+                        + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
                 .params(id, org, ledgerCode, productId, variantId, locationId, batchId,
                         serialId, type, qtyBefore, change, after, unitCost, totalValue, referenceType, referenceId,
-                        notes, TenantContext.userId(), responsibleById, approvedById)
+                        notes, TenantContext.userId(), responsibleById, approvedById,
+                        trace == null ? null : trace.docUomId(), factor, docQty,
+                        trace == null ? null : trace.sourceLineId())
                 .update();
         return id;
+    }
+
+    /** Phase I2 (audit R-1): the document unit, factor and line a ledger row records. */
+    private record Trace(String docUomId, BigDecimal factor, String sourceLineId) {}
+
+    /**
+     * The trace of a move of {@code docQty} document units that became {@code baseQty} stock units: the caller's unit
+     * and frozen factor when given, the stock unit at factor 1 for a base-unit move, else the factor actually applied.
+     */
+    private static Trace trace(StockMove dto, Map<String, Object> product, BigDecimal baseQty, BigDecimal docQty) {
+        if (dto.traceFactor != null) {
+            return new Trace(dto.traceUomId, dto.traceFactor, dto.sourceLineId);
+        }
+        String base = product == null ? null : str(product, "uomId");
+        if ((dto.uomId == null || dto.uomId.equals(base)) && dto.uomFactor == null) {
+            return new Trace(base, BigDecimal.ONE, dto.sourceLineId);
+        }
+        BigDecimal factor = dto.uomFactor != null ? dto.uomFactor
+                : baseQty != null && docQty != null && docQty.signum() != 0
+                        ? baseQty.abs().divide(docQty.abs(), 10, RoundingMode.HALF_UP) : null;
+        return new Trace(dto.uomId != null ? dto.uomId : base, factor, dto.sourceLineId);
     }
 
     private static String joinNotes(String... parts) {

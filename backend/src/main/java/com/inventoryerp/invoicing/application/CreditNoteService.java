@@ -336,27 +336,29 @@ public class CreditNoteService {
         if (invoiceId == null) {
             return;
         }
+        // Review M-1: compare per product AND variant, in stock (base) units — a box of 24 is 24, not 1.
         Map<String, BigDecimal> invoiced = new HashMap<>();
         for (Map<String, Object> l : builder.lines(invoiceId, false)) {
             if (l.get("productId") != null) {
-                invoiced.merge((String) l.get("productId"), Money.dec(l.get("quantity")), BigDecimal::add);
+                invoiced.merge(creditKey(invoiceId, l), baseQty(l), BigDecimal::add);
             }
         }
         Map<String, BigDecimal> credited = new HashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", sum(l.quantity) AS q FROM"
-                + " \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE d.\"organizationId\" = ? AND"
-                + " d.\"documentType\" = 'credit_note' AND d.\"reversedDocumentId\" = ? AND d.status::text IN ('posted',"
-                + " 'paid') AND d.id <> ? AND l.\"productId\" IS NOT NULL GROUP BY l.\"productId\"")
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", l.\"variantId\", l.quantity,"
+                + " l.\"uomFactor\" FROM \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE"
+                + " d.\"organizationId\" = ? AND d.\"documentType\" = 'credit_note' AND d.\"reversedDocumentId\" = ? AND"
+                + " d.status::text IN ('posted', 'paid') AND d.id <> ? AND l.\"productId\" IS NOT NULL")
                 .params(org(), invoiceId, creditNoteId))) {
-            credited.put((String) r.get("productId"), Money.dec(r.get("q")));
+            credited.merge(creditKey(invoiceId, r), baseQty(r), BigDecimal::add);
         }
         for (Map<String, Object> l : lines) {
             String productId = (String) l.get("productId");
             if (productId == null) {
                 continue;
             }
-            BigDecimal already = credited.merge(productId, Money.dec(l.get("quantity")), BigDecimal::add);
-            BigDecimal sold = invoiced.getOrDefault(productId, Money.ZERO);
+            String key = creditKey(invoiceId, l);
+            BigDecimal already = credited.merge(key, baseQty(l), BigDecimal::add);
+            BigDecimal sold = invoiced.getOrDefault(key, Money.ZERO);
             if (already.compareTo(sold) > 0) {
                 throw ApiException.badRequest("Credit note credits " + JsNumbers.dec(already) + " of a product the"
                         + " invoice sold " + JsNumbers.dec(sold) + " of");
@@ -377,6 +379,20 @@ public class CreditNoteService {
                         + JsNumbers.dec(Money.dec(inv.get("totalAmount"))));
             }
         }
+    }
+
+    /** Product + variant of a line; a credit line without a variant takes the invoice's only variant (as at post). */
+    private String creditKey(String invoiceId, Map<String, Object> line) {
+        String productId = (String) line.get("productId");
+        String variantId = line.get("variantId") != null ? (String) line.get("variantId")
+                : invoiceVariant(invoiceId, productId);
+        return productId + "|" + (variantId == null ? "" : variantId);
+    }
+
+    /** A line's quantity in stock units (its frozen factor; 1 when it has none). */
+    private static BigDecimal baseQty(Map<String, Object> line) {
+        BigDecimal q = Money.dec(line.get("quantity"));
+        return line.get("uomFactor") == null ? q : q.multiply(Money.dec(line.get("uomFactor")));
     }
 
     /** Post a credit note; {@code disposition} restock (default) or scrap. */
@@ -476,7 +492,7 @@ public class CreditNoteService {
                                         : Money.dec(ln.get("uomFactor")))
                                 .unitCost(issued == null || issued.get("unitCost") == null ? null
                                         : Money.dec(issued.get("unitCost")))
-                                .reference((String) cn.get("documentNumber")).source("credit_note", id)
+                                .reference((String) cn.get("documentNumber")).source("credit_note", id).sourceLine((String) ln.get("id"))
                                 .date(issueDate));
                     } catch (ApiException e) {
                         throw ApiException.badRequest("Cannot restock " + product.get("name") + ": " + e.getMessage()

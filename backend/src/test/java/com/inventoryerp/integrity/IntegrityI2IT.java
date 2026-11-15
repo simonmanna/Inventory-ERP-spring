@@ -367,6 +367,81 @@ class IntegrityI2IT extends ApiTestSupport {
         }
     }
 
+    @Test
+    @DisplayName("R-1: ledger rows record the document unit, factor, document quantity and source line")
+    void ledgerRowsAreTraceable() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String p = packed("Water", pcs, box, 24);
+        Map<String, Object> receipt = jdbc.sql("SELECT \"docUomId\", \"uomFactor\", \"docQuantity\" FROM"
+                + " \"InventoryLedger\" WHERE \"productId\" = ? AND \"quantityChange\" > 0").param(p).query().singleRow();
+        assertThat(receipt.get("docUomId")).as("a base-unit receipt is in the stock unit").isEqualTo(pcs);
+        assertThat((BigDecimal) receipt.get("uomFactor")).isEqualByComparingTo("1");
+        assertThat((BigDecimal) receipt.get("docQuantity")).isEqualByComparingTo("100");
+
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", p, "quantity", 2, "uomId", box, "unitPrice", 2400)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        String invLine = jdbc.sql("SELECT id FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(inv)
+                .query(String.class).single();
+        Map<String, Object> issue = jdbc.sql("SELECT \"docUomId\", \"uomFactor\", \"docQuantity\", \"quantityChange\","
+                + " \"sourceLineId\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice' AND"
+                + " \"referenceId\" = ?").param(inv).query().singleRow();
+        assertThat(issue.get("docUomId")).isEqualTo(box);
+        assertThat((BigDecimal) issue.get("uomFactor")).isEqualByComparingTo("24");
+        assertThat((BigDecimal) issue.get("quantityChange")).isEqualByComparingTo("-48");
+        assertThat((BigDecimal) issue.get("docQuantity")).isEqualByComparingTo("-2");
+        assertThat(issue.get("sourceLineId")).isEqualTo(invLine);
+
+        String cn = creditNote(inv, p, 1);
+        ok(200, "POST", "/credit-notes/" + cn + "/post", null);
+        String cnLine = jdbc.sql("SELECT id FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(cn)
+                .query(String.class).single();
+        Map<String, Object> back = jdbc.sql("SELECT \"docUomId\", \"uomFactor\", \"docQuantity\", \"quantityChange\","
+                + " \"sourceLineId\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'credit_note' AND"
+                + " \"referenceId\" = ?").param(cn).query().singleRow();
+        assertThat(back.get("docUomId")).as("came back in the invoiced box").isEqualTo(box);
+        assertThat((BigDecimal) back.get("uomFactor")).isEqualByComparingTo("24");
+        assertThat((BigDecimal) back.get("quantityChange")).isEqualByComparingTo("24");
+        assertThat((BigDecimal) back.get("docQuantity")).isEqualByComparingTo("1");
+        assertThat(back.get("sourceLineId")).isEqualTo(cnLine);
+    }
+
+    @Test
+    @DisplayName("M-1: the credit-note quantity check compares stock units per variant")
+    void creditNoteLimitInStockUnitsPerVariant() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String p = packed("Cups", pcs, box, 24);
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", p, "quantity", 2, "uomId", box, "unitPrice", 2400)))).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        String loose = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                "reversedDocumentId", inv, "lines", List.of(Map.of("productId", p, "quantity", 30, "uomId", pcs,
+                        "unitPrice", 100)))).get("id").asString();
+        Res post = as("POST", "/credit-notes/" + loose + "/post", null);
+        assertThat(post.status()).as("30 cups of the 48 sold in two boxes: " + post.raw().body()).isEqualTo(200);
+        String tooMany = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                "reversedDocumentId", inv, "lines", List.of(Map.of("productId", p, "quantity", 19, "uomId", pcs,
+                        "unitPrice", 1)))).get("id").asString();
+        Res refused = as("POST", "/credit-notes/" + tooMany + "/post", null);
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).isEqualTo("Credit note credits 49 of a product the"
+                + " invoice sold 48 of");
+
+        Map<String, String> v = coloured("Mugs");
+        String inv2 = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines", List.of(
+                Map.of("productId", v.get("product"), "variantId", v.get("Red"), "quantity", 2, "unitPrice", 100),
+                Map.of("productId", v.get("product"), "variantId", v.get("Blue"), "quantity", 2, "unitPrice", 100))))
+                .get("id").asString();
+        ok(200, "POST", "/invoices/" + inv2 + "/post", null);
+        String red = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                "reversedDocumentId", inv2, "lines", List.of(Map.of("productId", v.get("product"), "variantId",
+                        v.get("Red"), "quantity", 3, "unitPrice", 10)))).get("id").asString();
+        Res redPost = as("POST", "/credit-notes/" + red + "/post", null);
+        assertThat(redPost.status()).as("3 Red credited, 2 Red sold: " + redPost.raw().body()).isEqualTo(400);
+    }
+
     Map<String, Object> map(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {

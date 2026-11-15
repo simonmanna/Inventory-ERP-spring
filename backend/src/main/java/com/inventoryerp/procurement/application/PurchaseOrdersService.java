@@ -101,7 +101,14 @@ public class PurchaseOrdersService {
     public record UpdateInput(String description, String expectedDeliveryDate, String notes, String terms) {}
 
     /** A receipt line applied to a PO ({@link #applyReceiptToPO}). */
-    record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {}
+    record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description,
+            BigDecimal uomFactor) {
+
+        /** A receipt line in the PO line's own unit. */
+        ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {
+            this(purchaseOrderLineId, productId, quantity, description, null);
+        }
+    }
 
     /** A receive line after PO-line resolution ({@code _resolvedLineId} / {@code _unitCost}). */
     private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit,
@@ -484,7 +491,7 @@ public class PurchaseOrdersService {
             if (lineId == null) {
                 continue;
             }
-            addByLine.merge(lineId, ln.quantity(), BigDecimal::add);
+            addByLine.merge(lineId, inPoUnits(ln, byId.get(lineId)), BigDecimal::add);
         }
         // Over-receipt beyond the tolerance (policy receiving.overReceiptTolerancePct, default 0 = hard block) is
         // refused — check every affected line first.
@@ -531,6 +538,20 @@ public class PurchaseOrdersService {
         }
         commitments.sync(purchaseOrderId);
         return newStatus;
+    }
+
+    /**
+     * Review M-4: a receipt line's quantity in the PO line's unit. A line received in another unit (a free GRN line
+     * matched by product, in the product's purchase unit) converts through both frozen factors; same unit or no factor
+     * = as received.
+     */
+    private static BigDecimal inPoUnits(ReceiptLine ln, Map<String, Object> poLine) {
+        BigDecimal poFactor = poLine == null || poLine.get("uomFactor") == null ? null : Money.dec(poLine.get("uomFactor"));
+        if (ln.uomFactor() == null || poFactor == null || poFactor.signum() <= 0
+                || ln.uomFactor().compareTo(poFactor) == 0) {
+            return ln.quantity();
+        }
+        return ln.quantity().multiply(ln.uomFactor()).divide(poFactor, 6, java.math.RoundingMode.HALF_UP);
     }
 
     /** Bind a receipt line to exactly one PO line (explicit id, else a product on a single PO line). */
@@ -736,7 +757,7 @@ public class PurchaseOrdersService {
             List<ReceiptLine> applied = new ArrayList<>();
             for (Resolved r : resolved) {
                 applied.add(new ReceiptLine(r.resolvedLineId(), r.line().productId(), r.line().quantity(),
-                        r.line().description()));
+                        r.line().description(), r.unit() == null ? null : r.unit().factor()));
             }
             String newStatus = applyReceiptToPO(id, applied);
             // 3. Post the GRN

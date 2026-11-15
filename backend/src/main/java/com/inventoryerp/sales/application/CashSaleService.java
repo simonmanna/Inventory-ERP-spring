@@ -855,7 +855,7 @@ public class CashSaleService {
                 continue;
             }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
-                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
+                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id).sourceLine(str(l.get("id")))
                     .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);

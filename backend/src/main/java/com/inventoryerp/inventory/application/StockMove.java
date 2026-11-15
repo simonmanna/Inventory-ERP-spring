@@ -64,6 +64,14 @@ public final class StockMove {
      * transfer line's dispatch cost). The quant's average is re-derived so its remaining value stays exact.
      */
     public BigDecimal carriedUnitCost;
+    /** Phase I2 (audit R-1): the document line that caused the move, recorded on its ledger rows. */
+    public String sourceLineId;
+    /**
+     * Phase I2 (audit R-1): the document unit and factor of a move its caller already converted to base units (a
+     * customer return), so the ledger still records the unit it came back in. Internal to {@code StockService}.
+     */
+    String traceUomId;
+    BigDecimal traceFactor;
 
     public static StockMove of(String productId, String locationId, BigDecimal quantity) {
         StockMove m = new StockMove();
@@ -116,6 +124,12 @@ public final class StockMove {
 
     public StockMove reference(String v) {
         this.reference = v;
+        return this;
+    }
+
+    /** The document line that caused this move (Phase I2, audit R-1). */
+    public StockMove sourceLine(String id) {
+        this.sourceLineId = id;
         return this;
     }
 

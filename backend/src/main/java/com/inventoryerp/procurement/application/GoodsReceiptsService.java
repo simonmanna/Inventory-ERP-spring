@@ -325,7 +325,8 @@ public class GoodsReceiptsService {
                 for (Map<String, Object> l : updatedLines) {
                     applied.add(new PurchaseOrdersService.ReceiptLine((String) l.get("purchaseOrderLineId"),
                             (String) l.get("productId"), Money.dec(l.get("quantity")),
-                            (String) l.get("description")));
+                            (String) l.get("description"), l.get("uomFactor") == null ? null
+                                    : Money.dec(l.get("uomFactor"))));
                 }
                 purchaseOrders.applyReceiptToPO((String) grn.get("purchaseOrderId"), applied);
                 po = SqlRows.one(PurchaseOrder.class, jdbc.sql("SELECT * FROM \"PurchaseOrder\" WHERE id = ?"
