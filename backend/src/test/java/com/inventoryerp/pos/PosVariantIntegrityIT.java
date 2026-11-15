@@ -234,6 +234,38 @@ class PosVariantIntegrityIT extends ApiTestSupport {
                 .as("exactly one issue per line").isEqualTo(4);
     }
 
+    @Test
+    @DisplayName("R4: when a retry posts the failed line, its open exception is resolved (history kept)")
+    void retryResolvesTheLinesException() {
+        String p = plainProduct("Retry", 100);
+        jdbc.sql("UPDATE \"Product\" SET \"hasVariants\" = true WHERE id = ?").param(p).update();
+        Timestamp now = Timestamp.from(Instant.now());
+        String orderId = insert("Order", Map.of("organizationId", demoOrg, "orderNumber", "ORD-R4-" + UUID.randomUUID(),
+                "status", "closed", "updatedAt", now));
+        insert("OrderItem", Map.of("organizationId", demoOrg, "orderId", orderId, "description", "line 1", "quantity", 1,
+                "lineNumber", 1, "productId", p, "updatedAt", now));
+        String jobId = insert("StockPostingJob", Map.of("organizationId", demoOrg, "orderId", orderId, "invoiceId",
+                orderId, "invoiceNumber", "INV-R4-" + orderId, "status", "pending", "idempotencyKey", "at_invoice:"
+                        + orderId));
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        String exceptionId = jdbc.sql("SELECT id FROM \"InventoryException\" WHERE \"organizationId\" = ? AND"
+                + " \"invoiceId\" = ? AND status = 'open'").params(demoOrg, orderId).query(String.class).single();
+
+        jdbc.sql("UPDATE \"Product\" SET \"hasVariants\" = false WHERE id = ?").param(p).update();
+        receive(p, null, 10);
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+
+        Map<String, Object> ex = jdbc.sql("SELECT status, \"resolvedAt\", \"resolutionNote\", reason FROM"
+                + " \"InventoryException\" WHERE id = ?").param(exceptionId).query().singleRow();
+        assertThat(ex.get("status")).isEqualTo("resolved");
+        assertThat(ex.get("resolvedAt")).isNotNull();
+        assertThat((String) ex.get("resolutionNote")).contains("retried this line");
+        assertThat((String) ex.get("reason")).as("the original failure is kept").isNotBlank();
+        assertThat(onHand(p)).isEqualByComparingTo("9");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND"
+                + " \"invoiceId\" = ? AND status = 'open'").params(demoOrg, orderId).query(Long.class).single()).isZero();
+    }
+
     // ------------------------------------------------------------------ V-1: variant stock issue + refund
 
     @Test
@@ -352,6 +384,88 @@ class PosVariantIntegrityIT extends ApiTestSupport {
         assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND"
                 + " \"productId\" = ? AND kind = 'kitchen_waste' AND status = 'open'").params(demoOrg, p)
                 .query(Long.class).single()).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ review R2: ATP + reservations
+
+    @Test
+    @DisplayName("R2: strict availability reads the variant's own quant, so a variant in stock sells")
+    void strictAvailabilityIsVariantAware() {
+        Map<String, String> v = variantProduct(100);
+        String p = v.get("product");
+        ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "strict"));
+        try {
+            assertThat(sale(line(p, v.get("Small"), 2), 200).get("total").asDouble()).isEqualTo(200);
+            Res over = keyed("POST", "/pos/checkout", Map.of("cashSessionId", sessionId, "lines",
+                    List.of(priced(line(p, v.get("Large"), 21), 125)), "tenders", List.of(Map.of("method", "cash", "amount",
+                            21 * 125))));
+            assertThat(over.status()).as(over.raw().body()).isEqualTo(400);
+            assertThat(over.body().get("message").toString()).contains("need 21", "20 available");
+        } finally {
+            ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "post_commit"));
+            cancelOpenOrders();
+        }
+    }
+
+    @Test
+    @DisplayName("R2: availability and reservations are in base units (a box of 12 needs 12 pieces) per variant")
+    void availabilityAndReservationsInBaseUnits() {
+        String p = boxedProduct("Plates", 30);
+        // Cancelling the refused sale's order records kitchen waste (a separate finding, N7), so sell another product.
+        String p2 = boxedProduct("Bowls", 30);
+        ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "strict"));
+        ok(200, "PUT", "/settings/inventory.reservationMode", Map.of("value", "invoice"));
+        try {
+            // 3 boxes = 36 pieces > 30 on hand: refused (the sale-unit 3 was compared with 30 before).
+            Res over = keyed("POST", "/pos/checkout", Map.of("cashSessionId", sessionId, "lines",
+                    List.of(priced(line(p, null, 3), 1200)), "tenders", List.of(Map.of("method", "cash", "amount", 3600))));
+            assertThat(over.status()).as(over.raw().body()).isEqualTo(400);
+            assertThat(over.body().get("message").toString()).contains("need 36", "30 available");
+            cancelOpenOrders();
+            // 2 boxes sell and reserve 24 pieces until the posting consumes them.
+            String invoiceId = sale(line(p2, null, 2), 2400).get("invoiceId").asString();
+            assertThat(jdbc.sql("SELECT quantity FROM \"StockReservation\" WHERE \"sourceType\" = 'invoice' AND"
+                    + " \"sourceId\" = ? AND \"productId\" = ?").params(invoiceId, p2).query(BigDecimal.class).single())
+                    .isEqualByComparingTo("24");
+
+            Map<String, String> v = variantProduct(100);
+            String vInvoice = sale(line(v.get("product"), v.get("Large"), 3), 375).get("invoiceId").asString();
+            Map<String, Object> r = jdbc.sql("SELECT \"variantId\", quantity FROM \"StockReservation\" WHERE"
+                    + " \"sourceType\" = 'invoice' AND \"sourceId\" = ?").param(vInvoice).query().singleRow();
+            assertThat(r.get("variantId")).as("reserved on the variant's quant").isEqualTo(v.get("Large"));
+            assertThat((BigDecimal) r.get("quantity")).isEqualByComparingTo("3");
+        } finally {
+            ok(200, "PUT", "/settings/inventory.atpMode", Map.of("value", "post_commit"));
+            ok(200, "PUT", "/settings/inventory.reservationMode", Map.of("value", "none"));
+            cancelOpenOrders();
+            asOrgRun(() -> postings.drainSession(sessionId));
+        }
+    }
+
+    /** A product counted in pieces and sold by the box of 12, with {@code pieces} on hand. */
+    String boxedProduct(String name, int pieces) {
+        String pcs = uom("PCS");
+        String box = uom("BOX");
+        String p = plainProduct(name, 1200);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(pcs, box, p).update();
+        ok(200, "PATCH", "/products/" + p, Map.of("units", List.of(new LinkedHashMap<>(Map.of("uomId", box, "factor",
+                12, "isPurchase", false, "isSales", true)))));
+        receive(p, null, pieces);
+        return p;
+    }
+
+    static Map<String, Object> priced(Map<String, Object> line, int unitPrice) {
+        line.put("unitPrice", unitPrice);
+        return line;
+    }
+
+    /** A refused checkout leaves its order open (created before invoicing); it would block the shift close. */
+    void cancelOpenOrders() {
+        for (String id : jdbc.sql("SELECT id FROM \"Order\" WHERE \"cashSessionId\" = ? AND status::text NOT IN"
+                + " ('closed', 'cancelled', 'completed')").param(sessionId).query(String.class).list()) {
+            keyed("POST", "/pos/orders/" + id + "/cancel", Map.of("reason", "refused sale", "overrideById", adminId,
+                    "overridePin", PIN));
+        }
     }
 
     String uom(String code) {

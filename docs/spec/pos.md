@@ -112,6 +112,20 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
    - Each line runs in its own transaction.
    - A failure is recorded as an `InventoryException` (kind `kitchen_waste`). Nest only logged it.
 6. **POS posting timing and refund (T-1).** Approved; built in Phase I5.
+7. **Retry a pending posting job (owner request, 2026-11-15).**
+   - `POST /pos/posting-monitor/jobs/{id}/retry` also accepts a `pending` job: it runs on the next drain with a fresh
+     attempt budget. Lines already posted stay posted once (`postedLineKeys`).
+   - Nest accepted failed jobs only. The refusal message is now "Only failed or pending jobs can be retried (this one
+     is <status>)".
+   - The retry is a compare-and-set: a job that changed in between gets 409 "Stock posting job changed while retrying
+     (now <status>); refresh and try again" (review R3).
+8. **Availability check and reservations per variant, in base units (review R2).** The `strict` / `pre_invoice` check
+   and invoice reservations use the line's product-variant quant and base-unit quantities; the "need N" in "Low stock
+   for …" is in base units. Nest read the parent product and compared sale units with base units.
+9. **Every posting runner claims the job (review R3).** The shift-close and sync close drains claim a job before
+   running it, like the worker; a job held by another runner is skipped.
+10. **A retried line closes its exception (review R4).** The line's open `InventoryException` is resolved
+    automatically (note "Posted automatically when the stock posting job retried this line") when the retry posts it.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 

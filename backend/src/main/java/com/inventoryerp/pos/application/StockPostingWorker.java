@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
 public class StockPostingWorker {
 
     private static final Logger log = LoggerFactory.getLogger("StockPostingWorker");
-    private static final long STALE_CLAIM_MS = 60_000L;
+    private static final long STALE_CLAIM_MS = PosInvoiceService.STALE_CLAIM_MS;
 
     private final JdbcClient jdbc;
     private final PosInvoiceService billing;
@@ -83,7 +83,7 @@ public class StockPostingWorker {
             }
             TenantContext.run(TenantStore.organization(orgId), () -> {
                 try {
-                    billing.processStockPostingJob(id);
+                    billing.processStockPostingJob(id, claimToken);
                 } catch (RuntimeException err) {
                     log.error("stock job {} failed: {}", id, err.toString());
                 }

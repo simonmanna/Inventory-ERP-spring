@@ -460,7 +460,7 @@ public class SalesQuotationService {
             String taxId = l.containsKey("taxId") ? str(l.get("taxId")) : price == null ? null : price.taxId();
             Boolean incl = l.get("taxInclusive") instanceof Boolean b ? b : price != null && price.taxInclusive();
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
-                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, null, null, size));
+                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
                     "leadTimeDays", leadTime));
@@ -499,7 +499,7 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             priced.add(Obj.of("quotationId", id, "productId", pl.productId(),
-                    "variantId", m.get("variantId"), "uomId", pl.uomId() != null ? pl.uomId() : m.get("uomId"),
+                    "variantId", m.get("variantId"), "uomId", m.get("uomId") != null ? m.get("uomId") : pl.uomId(),
                     "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),

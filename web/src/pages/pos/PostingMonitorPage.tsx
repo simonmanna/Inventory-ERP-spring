@@ -112,7 +112,7 @@ interface Counts {
  * Surfaces the durable inventory-posting queue and the exception work-queue that
  * replaced the old silent `stock_reconcile_needed` audit marker. A sale is never
  * blocked by stock, but every deduction that could not post is now visible and
- * actionable: retry a failed job (safe — it deducted nothing), or resolve an
+ * actionable: retry a failed job (safe — it deducted nothing) or bring a pending one forward, or resolve an
  * exception once the drift has been corrected with a manual stock adjustment.
  */
 export function PostingMonitorPage() {
@@ -369,8 +369,8 @@ export function PostingMonitorPage() {
                     </div>
                     {job.lastError && <CardDescription className="text-amber-500">{job.lastError}</CardDescription>}
                   </CardHeader>
-                  {/* The server re-queues failed jobs only ("Only failed jobs can be retried"); a pending job is drained by the worker. */}
-                  {job.status === 'failed' && canOverride && (
+                  {/* ADR-S072: a failed job restarts; a pending job waiting for its next attempt runs on the next drain. */}
+                  {(job.status === 'failed' || job.status === 'pending') && canOverride && (
                     <CardContent className="flex justify-end">
                       <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate(job.id)}>
                         {retry.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {tx('Retry')}

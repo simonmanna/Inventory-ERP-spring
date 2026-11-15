@@ -7,6 +7,7 @@ import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
 import com.inventoryerp.core.application.PriceSnapshotService;
+import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
@@ -118,14 +119,17 @@ public class PosInvoiceService {
     private final TransactionTemplate tx;
 
     private final PriceSnapshotService snapshots;
+    private final UomConversionService uom;
 
     public PosInvoiceService(PosDb db, AuditService audit, EventBus events, DocumentBuilderService builder,
             SequenceService sequence, PaymentService payments, PostingService posting,
             AccountDeterminationService determination, StockService stock, StockReservationService reservations,
             PosReceiptsService receipts, PosOverridesService overrides, WorkflowService workflows,
             SettingResolverService settings, NotificationsService notifications, PricingPolicy pricing,
-            PosStockLocation locations, PlatformTransactionManager txm, PriceSnapshotService snapshots) {
+            PosStockLocation locations, PlatformTransactionManager txm, PriceSnapshotService snapshots,
+            UomConversionService uom) {
         this.snapshots = snapshots;
+        this.uom = uom;
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -527,9 +531,10 @@ public class PosInvoiceService {
         }
         for (Map<String, Object> it : items) {
             if (it.get("comboId") != null) {
-                List<Map<String, Object>> comps = SqlRows.list(jdbc.sql("SELECT ci.\"productId\", ci.quantity FROM \"ComboItem\" ci"
-                        + " JOIN \"Combo\" c ON c.id = ci.\"comboId\" WHERE c.id = ? AND c.\"organizationId\" = ?"
-                        + " AND c.\"isActive\" = true").params(it.get("comboId"), orgId));
+                List<Map<String, Object>> comps = SqlRows.list(jdbc.sql("SELECT ci.\"productId\", ci.quantity,"
+                        + " p.\"salesUomId\" FROM \"ComboItem\" ci JOIN \"Combo\" c ON c.id = ci.\"comboId\""
+                        + " LEFT JOIN \"Product\" p ON p.id = ci.\"productId\" AND p.\"organizationId\" = c.\"organizationId\""
+                        + " WHERE c.id = ? AND c.\"organizationId\" = ? AND c.\"isActive\" = true").params(it.get("comboId"), orgId));
                 if (comps.isEmpty()) {
                     throw new IllegalStateException("Combo is unavailable or has no stock components");
                 }
@@ -538,27 +543,36 @@ public class PosInvoiceService {
                     if (!(q.signum() > 0)) {
                         throw new IllegalStateException("Combo component quantities must be greater than zero");
                     }
-                    atp(it, (String) c.get("productId"), warehouse, q, "Low stock for \"" + it.get("description")
-                            + "\": need " + JsNumbers.dec(q) + " of component, %s available", atpMode);
+                    BigDecimal base = baseQty((String) c.get("productId"), (String) c.get("salesUomId"), q);
+                    atp((String) c.get("productId"), null, warehouse, base, "Low stock for \"" + it.get("description")
+                            + "\": need " + JsNumbers.dec(base) + " of component, %s available", atpMode);
                 }
             } else if (it.get("menuItemId") != null) {
-                for (Map<String, Object> ing : SqlRows.list(jdbc.sql("SELECT \"productId\", quantity FROM \"MenuProduct\""
-                        + " WHERE \"menuItemId\" = ? AND \"organizationId\" = ?").params(it.get("menuItemId"), orgId))) {
+                for (Map<String, Object> ing : SqlRows.list(jdbc.sql("SELECT \"productId\", quantity, \"uomId\" FROM"
+                        + " \"MenuProduct\" WHERE \"menuItemId\" = ? AND \"organizationId\" = ?").params(it.get("menuItemId"),
+                                orgId))) {
                     BigDecimal q = Money.qtyMul(ing.get("quantity"), it.get("quantity"));
-                    atp(it, (String) ing.get("productId"), warehouse, q, "Low stock for \"" + it.get("description")
-                            + "\": need " + JsNumbers.dec(q) + " of ingredient, %s available", atpMode);
+                    BigDecimal base = baseQty((String) ing.get("productId"), (String) ing.get("uomId"), q);
+                    atp((String) ing.get("productId"), null, warehouse, base, "Low stock for \"" + it.get("description")
+                            + "\": need " + JsNumbers.dec(base) + " of ingredient, %s available", atpMode);
                 }
             } else if (it.get("productId") != null) {
-                BigDecimal q = dec(it.get("quantity"));
-                atp(it, (String) it.get("productId"), warehouse, q, "Low stock for \"" + it.get("description") + "\": need "
-                        + JsFormat.str(q.doubleValue()) + ", %s available", atpMode);
+                String productId = (String) it.get("productId");
+                BigDecimal base = baseQty(productId, salesUnit(productId), dec(it.get("quantity")));
+                atp(productId, (String) it.get("variantId"), warehouse, base, "Low stock for \"" + it.get("description")
+                        + "\": need " + JsFormat.str(base.doubleValue()) + ", %s available", atpMode);
             }
         }
     }
 
-    private void atp(Map<String, Object> it, String productId, String warehouse, BigDecimal q, String template,
+    /**
+     * Post-parity (ADR-S072, review R2): availability is read for the line's own quant (a product variant's stock
+     * lives in its variant quant, ADR-S058) and compared in the base unit the stock is kept in. Nest compared the
+     * sale-unit quantity with the parent product's base-unit stock.
+     */
+    private void atp(String productId, String variantId, String warehouse, BigDecimal q, String template,
             String atpMode) {
-        Map<String, Object> atp = reservations.availableToPromise(productId, warehouse, null);
+        Map<String, Object> atp = reservations.availableToPromise(productId, warehouse, variantId);
         BigDecimal available = dec(atp.get("available"));
         if (q.compareTo(available) > 0) {
             String msg = String.format(template, PosSql.jsString(atp.get("available")));
@@ -1296,39 +1310,61 @@ public class PosInvoiceService {
         if (warehouse == null) {
             return;
         }
-        Map<String, Double> byProduct = new LinkedHashMap<>();
+        // Post-parity (ADR-S072, review R2): reserve per (product, variant) quant in base units, in BigDecimal.
+        Map<List<String>, BigDecimal> byCell = new LinkedHashMap<>();
         for (Map<String, Object> it : db.list(OrderItem.class, "\"orderId\" = ? AND cancelled = false AND \"organizationId\" = ?",
                 orderId, orgId)) {
             if (it.get("rentalAgreementLineId") != null || it.get("repairOrderLineId") != null) {
                 continue;
             }
-            double lineQty = num(it.get("quantity"));
+            BigDecimal lineQty = dec(it.get("quantity"));
             if (it.get("menuItemId") != null) {
                 Boolean tracked = jdbc.sql("SELECT \"isInventoryTracked\" FROM \"MenuItem\" WHERE id = ? AND \"organizationId\" = ?"
                         + " AND \"deletedAt\" IS NULL").params(it.get("menuItemId"), orgId).query(Boolean.class).optional().orElse(null);
                 if (!Boolean.TRUE.equals(tracked)) {
                     continue;
                 }
-                for (Map<String, Object> ing : SqlRows.list(jdbc.sql("SELECT \"productId\", quantity FROM \"MenuProduct\""
-                        + " WHERE \"menuItemId\" = ? AND \"organizationId\" = ?").params(it.get("menuItemId"), orgId))) {
-                    double q = Money.qtyMul(ing.get("quantity"), lineQty).doubleValue();
-                    if (q > 0) {
-                        byProduct.merge((String) ing.get("productId"), q, Double::sum);
+                for (Map<String, Object> ing : SqlRows.list(jdbc.sql("SELECT \"productId\", quantity, \"uomId\" FROM"
+                        + " \"MenuProduct\" WHERE \"menuItemId\" = ? AND \"organizationId\" = ?").params(it.get("menuItemId"),
+                                orgId))) {
+                    BigDecimal q = baseQty((String) ing.get("productId"), (String) ing.get("uomId"),
+                            Money.qtyMul(ing.get("quantity"), lineQty));
+                    if (q.signum() > 0) {
+                        byCell.merge(java.util.Arrays.asList((String) ing.get("productId"), null), q, BigDecimal::add);
                     }
                 }
             } else if (it.get("productId") != null) {
                 Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT \"trackInventory\", \"productType\"::text AS t FROM \"Product\""
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(it.get("productId"), orgId));
                 if (p != null && Boolean.TRUE.equals(p.get("trackInventory"))
-                        && ("stockable".equals(p.get("t")) || "consumable".equals(p.get("t"))) && lineQty > 0) {
-                    byProduct.merge((String) it.get("productId"), lineQty, Double::sum);
+                        && ("stockable".equals(p.get("t")) || "consumable".equals(p.get("t"))) && lineQty.signum() > 0) {
+                    String productId = (String) it.get("productId");
+                    byCell.merge(java.util.Arrays.asList(productId, (String) it.get("variantId")),
+                            baseQty(productId, salesUnit(productId), lineQty), BigDecimal::add);
                 }
             }
         }
-        for (Map.Entry<String, Double> e : byProduct.entrySet()) {
-            reservations.reserve(new StockReservationService.Reserve(e.getKey(), null, warehouse, PosSql.decOf(e.getValue()),
-                    "invoice", (String) invoice.get("id"), "POS bill " + invoice.get("invoiceNumber")));
+        for (Map.Entry<List<String>, BigDecimal> e : byCell.entrySet()) {
+            reservations.reserve(new StockReservationService.Reserve(e.getKey().get(0), e.getKey().get(1), warehouse,
+                    e.getValue(), "invoice", (String) invoice.get("id"), "POS bill " + invoice.get("invoiceNumber")));
         }
+    }
+
+    /**
+     * Quantity in the product's base (stock) unit: {@code qty × factor(uomId → base)}, unrounded. A unit that does not
+     * convert is refused with the conversion's own 400 (never 1:1, review Decision 1).
+     */
+    private BigDecimal baseQty(String productId, String uomId, BigDecimal qty) {
+        if (productId == null || uomId == null) {
+            return qty;
+        }
+        return qty.multiply(uom.factorToBase(productId, uomId));
+    }
+
+    /** The product's default sales unit, which a POS product line is billed (and issued) in (ADR-S003). */
+    private String salesUnit(String productId) {
+        return jdbc.sql("SELECT \"salesUomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, org()).query(String.class).optional().orElse(null);
     }
 
     private void fiscalizeInvoice(Map<String, Object> invoice) {
@@ -1350,10 +1386,32 @@ public class PosInvoiceService {
 
     // ─── stock posting jobs ───
 
-    /** Process one durable stock-posting job (worker tenant scope). */
+    /** A claim older than this is presumed abandoned (crashed worker) and may be taken over (as the worker does). */
+    static final long STALE_CLAIM_MS = 60_000L;
+
+    /**
+     * Process one durable stock-posting job (worker tenant scope), claiming it first. Callers that do not hold a claim
+     * (the shift-close drain, the sync close drain, tests) go through here.
+     */
     public void processStockPostingJob(String jobId) {
+        processStockPostingJob(jobId, null);
+    }
+
+    /**
+     * Process one job under a claim. {@code claimToken} is the worker's batch claim; null = claim it here.
+     * Post-parity (review R3): every runner holds the job's claim ({@code status = processing} + its token) while it
+     * works, and the completion / failure writes apply only while that claim is still its own. A job another runner
+     * holds (fresh claim), or a done job, is left alone. Nest's shift and sync drains ran pending jobs unclaimed, so a
+     * monitor retry or a second drain could run (and re-open) a job already being processed.
+     */
+    public void processStockPostingJob(String jobId, String claimToken) {
         String orgId = org();
-        Map<String, Object> job = db.first(StockPostingJob.class, "id = ? AND \"organizationId\" = ?", jobId, orgId);
+        String token = claimToken != null ? claimToken : claim(jobId, orgId);
+        if (token == null) {
+            return;
+        }
+        Map<String, Object> job = db.first(StockPostingJob.class, "id = ? AND \"organizationId\" = ? AND \"claimToken\" = ?",
+                jobId, orgId, token);
         if (job == null || "done".equals(job.get("status"))) {
             return;
         }
@@ -1364,7 +1422,8 @@ public class PosInvoiceService {
             // transaction rollback-only and undid every good line. Each line now commits on its own together with its
             // key on the job (postOnce); this read and the completion below are short transactions of their own.
             Map<String, Object> current = tx.execute(st -> {
-                List<String> locked = jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE").param(jobId)
+                List<String> locked = jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " FOR UPDATE").params(jobId, orgId)
                         .query(String.class).list();
                 if (locked.isEmpty() || "done".equals(locked.getFirst())) {
                     return null;
@@ -1383,9 +1442,10 @@ public class PosInvoiceService {
                     new LinkedHashSet<>(PosSql.strings(current.get("postedLineKeys"))), snapshots);
             Integer failures = tx.execute(st -> {
                 Map<String, Object> locked = SqlRows.one(jdbc.sql("SELECT status, attempts, \"maxAttempts\","
-                        + " \"postedLineKeys\" FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE").param(jobId));
-                if (locked == null || "done".equals(locked.get("status"))) {
-                    return null;
+                        + " \"postedLineKeys\", \"claimToken\" FROM \"StockPostingJob\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " FOR UPDATE").params(jobId, orgId));
+                if (locked == null || "done".equals(locked.get("status")) || !token.equals(locked.get("claimToken"))) {
+                    return null; // done, or the claim went stale and another runner took the job over
                 }
                 completeJob(jobId, (int) result[0], PosSql.strings(locked.get("postedLineKeys")),
                         PosSql.intOf(locked.get("attempts")), PosSql.intOf(locked.get("maxAttempts")), (String) result[2]);
@@ -1410,8 +1470,11 @@ public class PosInvoiceService {
             String raw = e.getMessage() == null ? e.toString() : e.getMessage();
             String msg = raw.length() > 500 ? raw.substring(0, 500) : raw;
             if (attempts >= PosSql.intOf(job.get("maxAttempts"))) {
-                db.update(StockPostingJob.class, Obj.of("status", "failed", "attempts", attempts, "lastError", msg,
-                        "claimToken", null, "claimedAt", null, "processedAt", PosDb.raw(NOW)), "id = ?", jobId);
+                if (db.updateMany(StockPostingJob.class, Obj.of("status", "failed", "attempts", attempts, "lastError", msg,
+                        "claimToken", null, "claimedAt", null, "processedAt", PosDb.raw(NOW)), "id = ? AND \"claimToken\" = ?",
+                        jobId, token) == 0) {
+                    return; // claim lost: the runner that took the job over owns its outcome
+                }
                 if (ctx.invoiceId() != null) {
                     try {
                         reservations.release("invoice", ctx.invoiceId());
@@ -1424,10 +1487,24 @@ public class PosInvoiceService {
                 alertStockPostingFailure(ctx, msg, 0);
             } else {
                 long backoff = Math.min(60_000L * attempts, 15 * 60_000L);
-                db.update(StockPostingJob.class, Obj.of("status", "pending", "attempts", attempts, "lastError", msg,
-                        "claimToken", null, "claimedAt", null, "nextRetryAt", Instant.now().plusMillis(backoff)), "id = ?", jobId);
+                db.updateMany(StockPostingJob.class, Obj.of("status", "pending", "attempts", attempts, "lastError", msg,
+                        "claimToken", null, "claimedAt", null, "nextRetryAt", Instant.now().plusMillis(backoff)),
+                        "id = ? AND \"claimToken\" = ?", jobId, token);
             }
         }
+    }
+
+    /**
+     * Claim a job that is not running: pending, failed (a close drain retries it), or held by a stale claim. One
+     * atomic update, so of two concurrent runners exactly one gets the token. Null = someone else holds it, or done.
+     */
+    private String claim(String jobId, String orgId) {
+        String token = java.util.UUID.randomUUID().toString();
+        int claimed = jdbc.sql("UPDATE \"StockPostingJob\" SET \"claimToken\" = ?, \"claimedAt\" = NOW(), status = 'processing'"
+                + " WHERE id = ? AND \"organizationId\" = ? AND (status IN ('pending', 'failed')"
+                + " OR (status = 'processing' AND (\"claimedAt\" IS NULL OR \"claimedAt\" < ?)))")
+                .params(token, jobId, orgId, java.sql.Timestamp.from(Instant.now().minusMillis(STALE_CLAIM_MS))).update();
+        return claimed == 0 ? null : token;
     }
 
     /**
@@ -1590,14 +1667,21 @@ public class PosInvoiceService {
      */
     private boolean postOnce(String jobId, String key, Runnable body) {
         return Boolean.TRUE.equals(tx.execute(st -> {
-            boolean posted = jdbc.sql("SELECT ? = ANY(\"postedLineKeys\") FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE")
-                    .params(key, jobId).query(Boolean.class).optional().orElse(false);
+            boolean posted = jdbc.sql("SELECT ? = ANY(\"postedLineKeys\") FROM \"StockPostingJob\" WHERE id = ?"
+                    + " AND \"organizationId\" = ? FOR UPDATE").params(key, jobId, org()).query(Boolean.class).optional().orElse(false);
             if (posted) {
                 return false;
             }
             body.run();
-            jdbc.sql("UPDATE \"StockPostingJob\" SET \"postedLineKeys\" = array_append(\"postedLineKeys\", ?) WHERE id = ?")
-                    .params(key, jobId).update();
+            jdbc.sql("UPDATE \"StockPostingJob\" SET \"postedLineKeys\" = array_append(\"postedLineKeys\", ?) WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(key, jobId, org()).update();
+            // Review R4: an earlier attempt of this line left an open exception; the line is now posted, so close it
+            // (the row and its history stay; the note says how it was settled). Same transaction as the issue.
+            jdbc.sql("UPDATE \"InventoryException\" SET status = 'resolved', \"resolvedAt\" = " + NOW + ","
+                    + " \"resolutionNote\" = 'Posted automatically when the stock posting job retried this line'"
+                    + " WHERE \"organizationId\" = ? AND status = 'open' AND payload->>'lineKey' = ?"
+                    + " AND \"invoiceId\" IS NOT DISTINCT FROM (SELECT \"invoiceId\" FROM \"StockPostingJob\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?)").params(org(), key, jobId, org()).update();
             return true;
         }));
     }

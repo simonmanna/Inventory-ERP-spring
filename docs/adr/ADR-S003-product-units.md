@@ -84,9 +84,11 @@ is what the document holds. Quotation lines (`crm`) have no unit yet.
 Source: `docs/audits/2026-11-15-sales-variant-uom-inventory-audit.md`, findings U-1, U-2, U-3 and A-5.
 
 1. **A line whose unit cannot be converted is refused.**
-   - A sales order, cash sale or quotation line in a named unit with no resolvable factor now gets 400 "The unit of
-     measure of <description> could not be resolved". Before, it was saved with factor 1 and stock moved 1:1 in the
-     wrong unit.
+   - A sales order, cash sale or quotation line in a named unit with no resolvable factor now gets the conversion's
+     own 400: "No conversion from <unit> to <unit> …" (different categories, no density bridge), or "Unit <code> is
+     not enabled for sales on product <name>". Before, it was saved with factor 1 and stock moved 1:1 in the wrong
+     unit. (Corrected by the 2026-11-15 review: the message "The unit of measure of <description> could not be
+     resolved" that this addendum first quoted is only reachable for a deleted product.)
    - A line in the base unit, or one with no unit, still saves factor 1.
    - Quotation lines now store the resolved unit and factor (they kept the DB default of 1).
    - `DocumentBuilderService.lineUnit` (invoices, vendor bills, credit notes) no longer swallows that 400 and keeps no
@@ -104,3 +106,9 @@ Source: `docs/audits/2026-11-15-sales-variant-uom-inventory-audit.md`, findings 
 
 Tests: `ProductUnitsIT` (`unconvertibleDefaultUnitIsRefused`, `legacyReceiptLineMatchesInBaseUnits`,
 `transferAndAdjustInANamedUnit`).
+
+**Review fix R1 (2026-11-15).** I1b made quotation lines store the resolved unit, but the quotation built its line
+without the requested unit, so the product's default sales unit replaced the one the user picked (2 boxes of 24 were
+saved as 2 pieces, and the sales order made from it delivered 2 pieces). The quotation now passes the requested unit
+to the builder and stores it with its factor; a unit the product does not sell in is refused. Test:
+`ProductUnitsIT.quotationKeepsRequestedUnit`.

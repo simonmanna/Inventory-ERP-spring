@@ -353,4 +353,34 @@ class ProductUnitsIT extends ApiTestSupport {
                 .params(cups, warehouse).query(BigDecimal.class).single();
         assertThat(atWarehouse).as("120 - 24 - one box of 12").isEqualByComparingTo("84");
     }
+
+    // ------------------------------------------------------------------ Phase I stabilization (review R1)
+
+    @Test
+    @DisplayName("R1: a quotation keeps the unit the user picked (and its factor) through to the sales order")
+    void quotationKeepsRequestedUnit() {
+        String drink = product("Soda", 1500);
+        setUnits(drink, List.of(unitRow(box, 24, true, false, null), unitRow(pack, 6, false, true, 8500)));
+        JsonNode q = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines",
+                List.of(Map.of("productId", drink, "quantity", 2, "uomId", pack))));
+        JsonNode line = q.get("lines").get(0);
+        assertThat(line.get("uomId").asString()).as("requested unit, not the default sales unit").isEqualTo(pack);
+        assertThat(new BigDecimal(line.get("uomFactor").asString())).isEqualByComparingTo("6");
+
+        String id = q.get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String so = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "sales_order"))
+                .get("convertedId").asString();
+        Map<String, Object> soLine = jdbc.sql("SELECT \"uomId\", \"uomFactor\", quantity FROM \"SalesOrderLine\""
+                + " WHERE \"orderId\" = ?").param(so).query().singleRow();
+        assertThat(soLine.get("uomId")).isEqualTo(pack);
+        assertThat((BigDecimal) soLine.get("uomFactor")).isEqualByComparingTo("6");
+        assertThat((BigDecimal) soLine.get("quantity")).isEqualByComparingTo("2");
+
+        // A unit the product does not sell in (Box is purchase-only) is refused, not swapped for the default unit.
+        Res refused = as("POST", "/sales/quotations", Map.of("partnerId", customer, "lines",
+                List.of(Map.of("productId", drink, "quantity", 1, "uomId", box))));
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).contains("is not enabled for sales on product Soda");
+    }
 }

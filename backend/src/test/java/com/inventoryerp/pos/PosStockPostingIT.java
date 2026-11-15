@@ -217,7 +217,65 @@ class PosStockPostingIT extends ApiTestSupport {
         assertThat(onHand(productId)).isEqualByComparingTo("95");
         Res retryDone = as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
         assertThat(retryDone.body().get("message").asString())
-                .isEqualTo("Only failed jobs can be retried (this one is done)");
+                .isEqualTo("Only failed or pending jobs can be retried (this one is done)");
+    }
+
+    @Test
+    @DisplayName("R3: a drain leaves a job another runner holds alone (no second runner, no re-open)")
+    void drainSkipsAJobHeldByAnotherRunner() {
+        String productId = stockProduct("SPJ-HELD-" + UUID.randomUUID().toString().substring(0, 6));
+        String jobId = job(productId, null, 5);
+        jdbc.sql("UPDATE \"StockPostingJob\" SET \"claimToken\" = 'other-runner', \"claimedAt\" = now() WHERE id = ?")
+                .param(jobId).update();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        assertThat(onHand(productId)).as("nothing issued by the second runner").isEqualByComparingTo("100");
+        Map<String, Object> row = jdbc.sql("SELECT status, \"claimToken\" FROM \"StockPostingJob\" WHERE id = ?")
+                .param(jobId).query().singleRow();
+        assertThat(row.get("status")).isEqualTo("processing");
+        assertThat(row.get("claimToken")).isEqualTo("other-runner");
+        Res retry = as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
+        assertThat(retry.status()).isEqualTo(400);
+        assertThat(retry.body().get("message").asString())
+                .isEqualTo("Only failed or pending jobs can be retried (this one is processing)");
+    }
+
+    @Test
+    @DisplayName("R3: a monitor retry racing a drain never re-opens or re-runs the job; stock is issued once")
+    void retryRacingADrainNeverReopens() {
+        for (int i = 0; i < 8; i++) {
+            String productId = stockProduct("SPJ-RACE-" + UUID.randomUUID().toString().substring(0, 6));
+            String jobId = job(productId, null, 5);
+            jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'pending', \"claimToken\" = NULL, \"claimedAt\" = NULL"
+                    + " WHERE id = ?").param(jobId).update();
+            CompletableFuture<Void> drain = CompletableFuture.runAsync(() -> asOrgRun(() ->
+                    billing.processStockPostingJob(jobId)));
+            CompletableFuture<Res> retry = CompletableFuture.supplyAsync(() ->
+                    as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null));
+            CompletableFuture.allOf(drain, retry).join();
+            assertThat(retry.join().status()).as(retry.join().raw().body()).isIn(201, 400, 409);
+            // A retry that won the race leaves the job pending for the next drain: run it.
+            asOrgRun(() -> billing.processStockPostingJob(jobId));
+            assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(jobId).query(String.class)
+                    .single()).isEqualTo("done");
+            assertThat(onHand(productId)).isEqualByComparingTo("95");
+        }
+    }
+
+    @Test
+    @DisplayName("ADR-S072: a pending job waiting for its next attempt can be retried now; posted lines stay posted once")
+    void retryPendingJob() {
+        String productId = stockProduct("SPJ-PENDING-" + UUID.randomUUID().toString().substring(0, 6));
+        String jobId = job(productId, null, 5);
+        jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'pending', attempts = 3, \"claimToken\" = NULL, "
+                + "\"claimedAt\" = NULL, \"nextRetryAt\" = now() + interval '1 hour', \"lastError\" = 'earlier failure' "
+                + "WHERE id = ?").param(jobId).update();
+        JsonNode r = ok(201, "POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
+        assertThat(r.get("status").asString()).isEqualTo("pending");
+        assertThat(jdbc.sql("SELECT attempts FROM \"StockPostingJob\" WHERE id = ? AND \"nextRetryAt\" <= now()")
+                .param(jobId).query(Integer.class).single()).isZero();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        assertThat(onHand(productId)).isEqualByComparingTo("95");
     }
 
     @Test

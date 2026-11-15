@@ -72,6 +72,40 @@ stock-keeping unit (own quant, own price), the POS was not changed to match:
      the register location, the saved unit, snapshots, `sourceId` and reservation consumption.
    - The restock guard also finds jobs by order.
 
+6. **Retry a pending job (owner request, 2026-11-15).**
+   - The posting monitor's retry also accepts a `pending` job: attempts reset to 0 and `nextRetryAt` to now, so the
+     next drain runs it. Since item 8 every runner claims a job (`processing`) before it works, so a pending job is
+     never being processed.
+   - A job keeps `postedLineKeys`, so its posted lines are never issued twice.
+   - `processing` and `done` jobs are still refused: "Only failed or pending jobs can be retried (this one is
+     <status>)". Nest said "Only failed jobs can be retried …".
+
+7. **Stock checks and reservations per variant, in base units (review R2, 2026-11-15).**
+   - The `strict` / `pre_invoice` availability check reads the line's own quant: a product line with a
+     `ProductVariant` reads that variant's quant. Nest read the parent product (variant key `''`), which is empty for
+     a product with variants, so every variant sale was refused as "Low stock".
+   - The quantity is converted to the base unit before the comparison: a product line in its sales unit, a recipe
+     ingredient in `MenuProduct.uomId`, a combo component in its sales unit. Nest compared the sale-unit quantity
+     with base-unit stock (3 boxes of 12 against 30 pieces passed). The "need N" in the message is now in base units.
+   - Invoice reservations are made per (product, variant) quant in base units, in `BigDecimal` (Nest: per product,
+     sale units, `double`).
+   - A unit that does not convert is refused with the conversion's 400 (never 1:1).
+8. **Every runner claims the job; state changes are compare-and-set (review R3, 2026-11-15).**
+   - `processStockPostingJob` claims the job with one atomic update (`pending` / `failed` / stale `processing` →
+     `processing` + a new token) unless the worker already holds the batch claim. A job another runner holds, or a
+     done job, is skipped. Nest's shift-close drain and sync close drain ran pending jobs without a claim.
+   - The completion and the failure writes apply only while the claim is still the runner's own; a runner whose
+     stale claim was taken over leaves the outcome to the new holder.
+   - The monitor retry is a compare-and-set on the status it read (and, for `pending`, on the job being unclaimed).
+     If the job changed in between, it answers 409 "Stock posting job changed while retrying (now <status>); refresh
+     and try again" and changes nothing, so a processing or done job is never re-opened.
+9. **A retried line closes its exception (review R4, 2026-11-15).**
+   - When `postOnce` posts a line that an earlier attempt failed, the line's open `InventoryException` (same invoice,
+     same `lineKey`) is set to `resolved` with the note "Posted automatically when the stock posting job retried this
+     line", in the same transaction as the issue. The row, its reason and stack trace are kept.
+   - Without this the monitor kept asking an operator to correct stock that had in fact been deducted (risk of a
+     manual double deduction). Nest kept exceptions open until resolved by hand.
+
 ## Consequences
 
 - A POS sale of a variant now issues and refunds that variant's quant, and the cost comes from that quant.
@@ -93,3 +127,9 @@ stock-keeping unit (own quant, own price), the POS was not changed to match:
 
 Regression: `PosStockPostingIT` (exactly-once under a reclaim race, recipe snapshot, F-COGS, dating), `PosFlows2IT`,
 `PosFlows3IT`, `PosMoneyIT`, `SyncInventoryReplayIT`, `ProductVariantIT`.
+
+Retry of a pending job: `PosStockPostingIT.retryPendingJob` (no second issue).
+
+Review R2–R4: `PosVariantIntegrityIT.strictAvailabilityIsVariantAware`, `availabilityAndReservationsInBaseUnits`,
+`retryResolvesTheLinesException`; `PosStockPostingIT.drainSkipsAJobHeldByAnotherRunner`,
+`retryRacingADrainNeverReopens`.
