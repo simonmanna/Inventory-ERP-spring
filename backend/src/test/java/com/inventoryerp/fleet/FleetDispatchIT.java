@@ -477,6 +477,37 @@ class FleetDispatchIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Phase I2 N5: an Orders-module order line is in the sales unit; its delivery order keeps that unit")
+    void salesOrderKeepsSalesUnit() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String boxed = product("Boxed tiles", true);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(pcs, box, boxed)
+                .update();
+        ok(200, "PATCH", "/products/" + boxed, Map.of("units", List.of(Map.of("uomId", box, "factor", 12,
+                "isPurchase", false, "isSales", true))));
+        String order = ok(200, "POST", "/orders", Map.of("partnerId", customer, "orderType", "delivery", "lines",
+                List.of(Map.of("productId", boxed, "quantity", 2, "unitPrice", 45000)))).get("id").asString();
+        try {
+            JsonNode line = ok(201, "POST", "/fleet/delivery-orders/from-sales-order", Map.of("sourceId", order,
+                    "siteId", site, "locationId", yard, "requestedDate", today)).get("lines").get(0);
+            assertThat(dec(line.get("orderedQty"))).isEqualByComparingTo("2");
+            assertThat(line.get("uomId").asString()).as("2 boxes, not 2 pieces").isEqualTo(box);
+            assertThat(dec(line.get("uomFactor"))).isEqualByComparingTo("12");
+        } finally {
+            ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N5 test"));
+        }
+    }
+
+    String unit(String code) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 0.001, now())")
+                .params(id, demoOrg, code + "-" + UUID.randomUUID().toString().substring(0, 8), code).update();
+        return id;
+    }
+
+    @Test
     @DisplayName("posted invoice source: no stock at dispatch; approved shortage → draft credit note (no auto-post);"
             + " transporter freight per trip; draft invoice source hands its stock issue to the delivery")
     void invoicedSourceAndCreditNote() {

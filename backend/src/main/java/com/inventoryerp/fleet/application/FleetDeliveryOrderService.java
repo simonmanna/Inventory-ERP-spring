@@ -318,8 +318,12 @@ public class FleetDeliveryOrderService {
                 if (qty.signum() <= 0) {
                     continue;
                 }
-                lines.add(new Line(productId, str(it.get("variantId")), str(it.get("description")),
-                        (String) product.get("uomId"), BigDecimal.ONE, qty.setScale(3, RoundingMode.HALF_UP),
+                // Phase I2 review N5: an OrderItem carries no unit; its quantity is in the product's sales unit (as the
+                // POS stock issue reads it), so the delivery line keeps that unit and its factor to base.
+                String uomId = product.get("salesUomId") != null ? (String) product.get("salesUomId")
+                        : (String) product.get("uomId");
+                lines.add(new Line(productId, str(it.get("variantId")), str(it.get("description")), uomId,
+                        uoms.factorToBase(productId, uomId), qty.setScale(3, RoundingMode.HALF_UP),
                         str(it.get("id")), decOrNull(it.get("unitPrice")), decOrNull(it.get("discountPercent")),
                         str(it.get("taxId")), null, str(it.get("note"))));
             }
@@ -796,7 +800,7 @@ public class FleetDeliveryOrderService {
     }
 
     private Map<String, Object> product(String productId) {
-        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, name, \"uomId\", \"salesPrice\" FROM \"Product\""
+        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, name, \"uomId\", \"salesUomId\", \"salesPrice\" FROM \"Product\""
                 + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(productId, FleetDb.org()));
         if (p == null) {
             throw ApiException.badRequest("Product not found");
