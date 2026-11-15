@@ -297,17 +297,61 @@ public class FleetWeighbridgeRuleService {
 
     /** Weighbridge tickets of a trip ({@code tripId}) or a delivery order ({@code deliveryOrderId}), oldest first. */
     static List<Map<String, Object>> linkedTickets(FleetDb db, String column, String id) {
+        return linkedTickets(db, column, List.of(id));
+    }
+
+    /**
+     * Weighbridge tickets of several trips or delivery orders, oldest first: the one read model behind the trip and
+     * delivery-order details and the Sales delivery screens. Each row carries both weighings (kg, time, source,
+     * operator name), the latest tolerance exception status, the reissue chain, whether the ticket feeds its trip and
+     * a derived {@code verification} (see {@link #verification(Map)}).
+     */
+    static List<Map<String, Object>> linkedTickets(FleetDb db, String column, java.util.Collection<String> ids) {
         if (!Set.of("tripId", "deliveryOrderId").contains(column)) {
             throw new IllegalArgumentException(column);
         }
-        return SqlRows.list(db.jdbc().sql("SELECT w.id, w.\"ticketNumber\", w.status,"
-                + " w.\"tripId\", l.code AS \"tripCode\", w.\"registrationPlate\", w.\"grossKg\", w.\"tareKg\","
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> rows = SqlRows.list(db.jdbc().sql("SELECT w.id, w.\"ticketNumber\", w.status,"
+                + " w.\"tripId\", l.code AS \"tripCode\", w.\"registrationPlate\", w.\"trailerPlate\","
+                + " COALESCE(w.\"driverName\", d.code) AS \"driverName\", w.\"grossKg\", w.\"tareKg\","
                 + " w.\"netKg\", w.\"netQty\", u.code AS \"netUomCode\", w.\"expectedKg\", w.\"varianceKg\","
                 + " w.\"variancePct\", w.\"withinTolerance\", w.\"isManual\", w.\"usedStoredTare\", w.\"completedAt\","
-                + " w.\"voidedAt\", w.\"voidReason\", w.\"replacedById\", w.\"tripFeedStatus\", w.\"tripFeedMessage\","
-                + " w.\"tripFedAt\", w.\"createdAt\" FROM \"WeighbridgeTicket\" w LEFT JOIN \"FleetLoad\" l ON l.id ="
-                + " w.\"tripId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = w.\"netUomId\" WHERE w.\"organizationId\" = ?"
-                + " AND w.\"" + column + "\" = ? ORDER BY w.\"createdAt\", w.\"ticketNumber\"")
-                .params(FleetDb.org(), id));
+                + " w.\"firstWeightKg\", w.\"firstWeighedAt\", w.\"firstSource\","
+                + " concat_ws(' ', fu.\"firstName\", fu.\"lastName\") AS \"firstOperator\","
+                + " w.\"secondWeightKg\", w.\"secondWeighedAt\", w.\"secondSource\","
+                + " concat_ws(' ', su.\"firstName\", su.\"lastName\") AS \"secondOperator\","
+                + " (SELECT e.status FROM \"WeighbridgeException\" e WHERE e.\"ticketId\" = w.id ORDER BY e.\"raisedAt\""
+                + " DESC LIMIT 1) AS \"exceptionStatus\", w.\"voidedAt\", w.\"voidReason\", w.\"reissuedFromId\","
+                + " w.\"replacedById\", w.\"tripFeedStatus\", w.\"tripFeedMessage\", w.\"tripFedAt\","
+                + " (l.\"weighSourceType\" = 'weighbridge_ticket' AND l.\"weighSourceId\" = w.id) AS \"feedsTrip\","
+                + " w.\"createdAt\" FROM \"WeighbridgeTicket\" w LEFT JOIN \"FleetLoad\" l ON l.id = w.\"tripId\""
+                + " LEFT JOIN \"UnitOfMeasure\" u ON u.id = w.\"netUomId\""
+                + " LEFT JOIN \"FleetDriver\" d ON d.id = w.\"driverId\""
+                + " LEFT JOIN \"User\" fu ON fu.id = w.\"firstBy\" LEFT JOIN \"User\" su ON su.id = w.\"secondBy\""
+                + " WHERE w.\"organizationId\" = ? AND w.\"" + column + "\" = ANY(?::text[])"
+                + " ORDER BY w.\"createdAt\", w.\"ticketNumber\"")
+                .params(FleetDb.org(), ids.toArray(String[]::new)));
+        for (Map<String, Object> r : rows) {
+            r.put("feedsTrip", Boolean.TRUE.equals(r.get("feedsTrip")));
+            r.put("verification", verification(r));
+        }
+        return rows;
+    }
+
+    /**
+     * Verification status of a ticket, derived (the ticket has no such column): {@code verified} (completed within
+     * tolerance), {@code approved_exception} (completed after an approved tolerance exception), {@code
+     * pending_exception}, {@code in_progress} (open / first weighed), {@code cancelled}, {@code voided}.
+     */
+    public static String verification(Map<String, Object> t) {
+        return switch (String.valueOf(t.get("status"))) {
+            case "completed" -> Boolean.FALSE.equals(t.get("withinTolerance")) ? "approved_exception" : "verified";
+            case "exception" -> "pending_exception";
+            case "void" -> "voided";
+            case "cancelled" -> "cancelled";
+            default -> "in_progress";
+        };
     }
 }

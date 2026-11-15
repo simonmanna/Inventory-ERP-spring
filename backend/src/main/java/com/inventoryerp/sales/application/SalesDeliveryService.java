@@ -18,6 +18,8 @@ import com.inventoryerp.fleet.application.DispatchCommands.TripPatch;
 import com.inventoryerp.fleet.application.FleetDeliveryNoteService;
 import com.inventoryerp.fleet.application.FleetDeliveryOrderService;
 import com.inventoryerp.fleet.application.FleetDispatchService;
+import com.inventoryerp.fleet.application.FleetWeighbridgeRuleService;
+import com.inventoryerp.fleet.application.WeighbridgeTicketService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -62,6 +64,8 @@ public class SalesDeliveryService {
                    ) AS stage, t.carrier, t."transporterPlate" AS "vehiclePlate", t."transporterDriverName" AS "driverName",
                    t."plannedDate", t."scheduledTime", t."dispatchedAt", t."departedAt", t."deliveredAt", t."cancelledAt", t."returnedAt",
                    t."deliveryNoteNumber", t."approvalRequired", t."approvedAt",
+                   wt.id AS "weighTicketId", wt."ticketNumber" AS "weighTicketNumber", wt."netKg" AS "weighNetKg",
+                   wt.status AS "weighTicketStatus", wt."withinTolerance" AS "weighWithinTolerance",
                    t."manualGross", t."manualTare", t."cancelReason", t."returnReason", t."attemptFailed", t."rescheduledFromId",
                    t."deliveryMethod", t."driverPhone", t."vehicleType", t."transportCompany", t."trackingNumber",
                    t."destinationLocationId", dl.name AS "destinationLocationName", t."deliveryAddress", t."siteContactName",
@@ -82,6 +86,7 @@ public class SalesDeliveryService {
               LEFT JOIN "Partner" p ON p.id = d."partnerId"
               LEFT JOIN "InventoryLocation" loc ON loc.id = t."locationId"
               LEFT JOIN "InventoryLocation" dl ON dl.id = t."destinationLocationId"
+              LEFT JOIN "WeighbridgeTicket" wt ON t."weighSourceType" = 'weighbridge_ticket' AND wt.id = t."weighSourceId"
             """;
 
     private final SalesDb db;
@@ -94,10 +99,13 @@ public class SalesDeliveryService {
     private final FleetDeliveryNoteService notes;
     private final FilesService files;
     private final AuditService audit;
+    private final WeighbridgeTicketService weighTickets;
+    private final FleetWeighbridgeRuleService weighRules;
 
     public SalesDeliveryService(SalesDb db, SalesOrderService orders, SalesFulfilmentService fulfilment,
             SalesSettingsService settings, SalesAccess access, FleetDeliveryOrderService deliveryOrders,
-            FleetDispatchService dispatch, FleetDeliveryNoteService notes, FilesService files, AuditService audit) {
+            FleetDispatchService dispatch, FleetDeliveryNoteService notes, FilesService files, AuditService audit,
+            WeighbridgeTicketService weighTickets, FleetWeighbridgeRuleService weighRules) {
         this.db = db;
         this.orders = orders;
         this.fulfilment = fulfilment;
@@ -108,6 +116,8 @@ public class SalesDeliveryService {
         this.notes = notes;
         this.files = files;
         this.audit = audit;
+        this.weighTickets = weighTickets;
+        this.weighRules = weighRules;
     }
 
     /** Deliveries of sales orders. Filters: orderId, status (csv), failed, from, to. */
@@ -137,7 +147,9 @@ public class SalesDeliveryService {
             where.append(" AND t.\"createdAt\" < ?::date + 1");
             params.add(SalesDb.date(q.get("to")));
         }
-        return db.rows(LIST + where + " ORDER BY t.\"createdAt\" DESC LIMIT 500", params);
+        List<Map<String, Object>> rows = db.rows(LIST + where + " ORDER BY t.\"createdAt\" DESC LIMIT 500", params);
+        rows.forEach(SalesDeliveryService::weighVerification);
+        return rows;
     }
 
     private Map<String, Object> require(String id) {
@@ -148,7 +160,14 @@ public class SalesDeliveryService {
         if (t == null) {
             throw ApiException.notFound("Delivery not found");
         }
+        weighVerification(t);
         return t;
+    }
+
+    /** Verification of the ticket that fed the trip (null without one), as the fleet read model derives it. */
+    private static void weighVerification(Map<String, Object> row) {
+        row.put("weighVerification", row.get("weighTicketId") == null ? null : FleetWeighbridgeRuleService.verification(
+                Obj.of("status", row.get("weighTicketStatus"), "withinTolerance", row.get("weighWithinTolerance"))));
     }
 
     /** Delivery methods of one delivery. */
@@ -202,6 +221,11 @@ public class SalesDeliveryService {
                 + " WHERE \"loadId\" = ? AND \"organizationId\" = ? ORDER BY \"createdAt\"", id, org());
         photos.forEach(p -> p.put("url", url(str(p.get("fileId")))));
         t.put("photos", photos);
+        List<Map<String, Object>> tickets = weighTickets.ticketsForTrips(List.of(id));
+        t.put("weighbridgeTickets", tickets);
+        t.put("weighbridge", Obj.of("required", weighRules.forTrip(id).required(), "feedingTicketId",
+                tickets.stream().filter(w -> Boolean.TRUE.equals(w.get("feedsTrip"))).map(w -> w.get("id")).findFirst()
+                        .orElse(null)));
         return t;
     }
 
@@ -884,6 +908,16 @@ public class SalesDeliveryService {
     public FleetDeliveryNoteService.Pdf note(String id) {
         require(id);
         return notes.render(id);
+    }
+
+    /**
+     * A weighbridge ticket of this delivery as a PDF view copy (Phase A1): the delivery must be a sales delivery the
+     * user may read and the ticket must belong to it (404 otherwise). Does not count as a ticket print.
+     */
+    @Transactional
+    public WeighbridgeTicketService.PrintedTicket weighTicketPdf(String id, String ticketId) {
+        require(id);
+        return weighTickets.renderCopy(ticketId, id);
     }
 
     /** Order lines against what moved: ordered, dispatched, delivered, damaged, rejected, billable, invoiced, variance. */

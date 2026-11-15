@@ -445,3 +445,38 @@ Post-parity enhancement on the delivery tabs of sales orders, invoices and branc
 - `SalesDeliveryNotePdf` prints a letterhead (`SalesLetterhead`): the company logo (Developer settings) and the
   receipt-header business name, address lines, phone and TIN, falling back to the organization name.
 - Tests: `SalesHandoverIT.deliveryDocumentRecordTypes`, `CashSaleIT.deliveryAndFulfilment`.
+
+### Weighbridge tickets on Sales deliveries (Phase A1, 2026-11-14, no migration)
+
+Read-only visibility of the Fleet weighbridge. Fleet stays the only place that weighs, voids and reissues tickets;
+Sales stores no ticket data. Plan: Phase A (A1 → A4), owner-approved 2026-11-14.
+
+- `GET /sales/deliveries/{id}` adds:
+  - `weighbridgeTickets`: every ticket of the truck, oldest first, including the void / reissue chain. Each ticket has
+    the number, status, plate, trailer, driver, both weighings (kg, time, source, operator), gross / tare / net,
+    `isManual`, `usedStoredTare`, tolerance and variance, the latest exception status, `voidReason`, `replacedById`,
+    `reissuedFromId`, the trip-feed status, `feedsTrip`, and a derived `verification`.
+  - `weighbridge {required, feedingTicketId}`.
+- `verification` is derived; there is no column. Values: `verified` (completed within tolerance),
+  `approved_exception` (completed after an approved tolerance exception), `pending_exception`, `in_progress`,
+  `cancelled`, `voided`.
+- `GET /sales/deliveries` (and the detail) add `weighTicketId`, `weighTicketNumber`, `weighNetKg`,
+  `weighTicketStatus`, `weighWithinTolerance` and `weighVerification`, all taken from the ticket that fed the truck.
+- New route `GET /sales/deliveries/{id}/weigh-tickets/{ticketId}/pdf` (`sales:delivery:read`):
+  - returns the ticket PDF stamped "COPY (view)";
+  - does not count as a print (`printCount` unchanged), and is audited as `reprint` with `copy: "view"`;
+  - returns 404 for a ticket of another delivery, 400 unless the ticket is completed or void.
+
+  No `weighbridge:*` permission is needed. The Fleet print route still needs `weighbridge:weigh`.
+- The delivery note shows "Weighbridge ticket: WBT-… / Gross · Tare · Net kg" (flagged when manual) instead of the
+  raw source id.
+- Web:
+  - a Weighbridge tab and a summary line in the delivery dialog;
+  - a ticket column and section on `/sales/deliveries`;
+  - the link to the weighing screen shows only with `weighbridge:read`.
+- No behaviour change: weighing, dispatch, stock issue and billing are unchanged. The weighed basis still bills at
+  dispatch; A4 moves invoiceability to after POD (D1).
+- Fix included: registering a ticket from a Sales delivery failed with "Sales order not found". The trip pre-fill put
+  the `SalesOrder` id into `salesOrderId`, but the check looked in the POS `"Order"` table. The check now accepts a
+  `SalesOrder` or, as before, a POS `Order`.
+- Tests: `SalesWeighbridgeIT` and `FleetDeliveryNoteWeighLineTest`.
