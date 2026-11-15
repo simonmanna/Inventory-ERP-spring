@@ -94,6 +94,25 @@ Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md
 2. **Stock-posting drain dates COGS at the sale.** Stock moves and COGS of a drained sale use the invoice `issueDate`
    (else the order's `createdAt`); a date in a closed / locked period posts today with a ledger note.
 
+Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-variant-and-posting-integrity.md)):
+
+3. **POS product variants (V-1, V-2).**
+   - A product line's `variantId` (a `ProductVariant`, ADR-S058) is issued and restocked as that variant. Nest
+     issued the parent product.
+   - Its price is the variant's fixed price, else the product price plus the attribute extras. Nest used the fixed
+     price only.
+4. **Per-line stock posting (S-1 / R-B).**
+   - Nest ran one transaction per job with a savepoint per line. A line failing inside `StockService.issue` rolled
+     back the whole sale.
+   - Each line, and each paid modifier or accompaniment, now commits on its own together with its key in
+     `postedLineKeys`.
+   - A failed line is an open `InventoryException`, and the job stays retryable.
+5. **Kitchen waste (V-3).**
+   - A plain product is wasted in the line's sales unit and with its variant.
+   - Each line runs in its own transaction.
+   - A failure is recorded as an `InventoryException` (kind `kitchen_waste`). Nest only logged it.
+6. **POS posting timing and refund (T-1).** Approved; built in Phase I5.
+
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
 - **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's

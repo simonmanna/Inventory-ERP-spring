@@ -1145,6 +1145,11 @@ public class PosInvoiceService {
                 }
                 BigDecimal returnValue = SqlRows.dec(ing, "totalValue").multiply(fraction);
                 StockMove mv = StockMove.of((String) ing.get("productId"), locId, PosSql.decOf(returnQty.doubleValue()));
+                // A plain product line's snapshot row is the product itself: restock the variant it was sold from.
+                if (src.get("menuItemId") == null && ing.get("componentType") == null
+                        && java.util.Objects.equals(ing.get("productId"), src.get("productId"))) {
+                    mv.variantId = (String) src.get("variantId");
+                }
                 mv.unitCost = PosSql.decOf((SqlRows.dec(ing, "totalValue").signum() > 0
                         ? Money.div(returnValue, returnQty) : SqlRows.dec(ing, "unitCost")).doubleValue());
                 mv.reference = "Refund " + refundId;
@@ -1354,21 +1359,36 @@ public class PosInvoiceService {
         }
         Ctx ctx = new Ctx((String) job.get("invoiceId"), (String) job.get("invoiceNumber"), (String) job.get("orderId"));
         try {
-            Integer failures = tx.execute(st -> {
+            // Post-parity (ADR-S072, owner requirement R-B): Nest ran the whole job in one transaction with a
+            // savepoint per line, but a line failing inside StockService (its own @Transactional) marked that
+            // transaction rollback-only and undid every good line. Each line now commits on its own together with its
+            // key on the job (postOnce); this read and the completion below are short transactions of their own.
+            Map<String, Object> current = tx.execute(st -> {
                 List<String> locked = jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE").param(jobId)
                         .query(String.class).list();
                 if (locked.isEmpty() || "done".equals(locked.getFirst())) {
                     return null;
                 }
-                Map<String, Object> current = db.first(StockPostingJob.class, "id = ?", jobId);
-                List<Map<String, Object>> items = ctx.orderId() == null ? List.of() : itemsWithModifiers(ctx.orderId());
-                Object snapshotRaw = PosSql.java(current.get("recipeSnapshot") != null ? current.get("recipeSnapshot")
-                        : job.get("recipeSnapshot"));
-                Map<String, Object> snapshots = snapshotRaw instanceof Map<?, ?> ? PosSql.map(snapshotRaw) : Map.of();
-                Object[] result = issueStockForItems(items, datedForStock(ctx),
-                        new LinkedHashSet<>(PosSql.strings(current.get("postedLineKeys"))), snapshots);
-                completeJob(jobId, (int) result[0], PosSql.strings(result[1]), PosSql.intOf(current.get("attempts")),
-                        PosSql.intOf(current.get("maxAttempts")), (String) result[2]);
+                return db.first(StockPostingJob.class, "id = ?", jobId);
+            });
+            if (current == null) {
+                return;
+            }
+            List<Map<String, Object>> items = ctx.orderId() == null ? List.of() : itemsWithModifiers(ctx.orderId());
+            Object snapshotRaw = PosSql.java(current.get("recipeSnapshot") != null ? current.get("recipeSnapshot")
+                    : job.get("recipeSnapshot"));
+            Map<String, Object> snapshots = snapshotRaw instanceof Map<?, ?> ? PosSql.map(snapshotRaw) : Map.of();
+            Ctx dated = tx.execute(st -> datedForStock(ctx)); // the fiscal-period check needs a transaction
+            Object[] result = issueStockForItems(jobId, items, dated,
+                    new LinkedHashSet<>(PosSql.strings(current.get("postedLineKeys"))), snapshots);
+            Integer failures = tx.execute(st -> {
+                Map<String, Object> locked = SqlRows.one(jdbc.sql("SELECT status, attempts, \"maxAttempts\","
+                        + " \"postedLineKeys\" FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE").param(jobId));
+                if (locked == null || "done".equals(locked.get("status"))) {
+                    return null;
+                }
+                completeJob(jobId, (int) result[0], PosSql.strings(locked.get("postedLineKeys")),
+                        PosSql.intOf(locked.get("attempts")), PosSql.intOf(locked.get("maxAttempts")), (String) result[2]);
                 return (int) result[0];
             });
             if (failures == null) {
@@ -1385,6 +1405,7 @@ public class PosInvoiceService {
                 }
             }
         } catch (RuntimeException e) {
+            log.warn("[stock] posting job {} ({}) failed: {}", jobId, ctx.invoiceNumber(), e.toString());
             int attempts = PosSql.intOf(job.get("attempts")) + 1;
             String raw = e.getMessage() == null ? e.toString() : e.getMessage();
             String msg = raw.length() > 500 ? raw.substring(0, 500) : raw;
@@ -1481,7 +1502,7 @@ public class PosInvoiceService {
     }
 
     /** {failures, postedLineKeys, lastError}. Throws only on a systemic failure (no warehouse). */
-    private Object[] issueStockForItems(List<Map<String, Object>> items, Ctx ctx, Set<String> alreadyPosted,
+    private Object[] issueStockForItems(String jobId, List<Map<String, Object>> items, Ctx ctx, Set<String> alreadyPosted,
             Map<String, Object> snapshots) {
         String orgId = org();
         String preferred = null;
@@ -1535,7 +1556,7 @@ public class PosInvoiceService {
             }
             if (!posted.contains(lineKey)) {
                 try {
-                    Savepoints.run(jdbc, () -> issueLine(line, warehouse, ctx, ref, invoiceItemId,
+                    postOnce(jobId, lineKey, () -> issueLine(line, warehouse, ctx, ref, invoiceItemId,
                             PosSql.map(snapshots.get((String) it.get("id")))));
                     posted.add(lineKey);
                 } catch (RuntimeException e) {
@@ -1548,7 +1569,8 @@ public class PosInvoiceService {
                             lineKey);
                 }
             }
-            for (Object[] f : moveLineExtras(it, num(it.get("quantity")), warehouse, ref, ctx, invoiceItemId, posted)) {
+            for (Object[] f : moveLineExtras(jobId, it, num(it.get("quantity")), warehouse, ref, ctx, invoiceItemId,
+                    posted)) {
                 RuntimeException err = (RuntimeException) f[3];
                 recordFailure(ctx, failures, lastError, "line_extras", (String) f[2], (String) it.get("menuItemId"),
                         f[1] + " on " + (it.get("description") != null ? it.get("description")
@@ -1559,6 +1581,25 @@ public class PosInvoiceService {
             }
         }
         return new Object[] {failures[0], new ArrayList<>(posted), lastError[0]};
+    }
+
+    /**
+     * Post one line (or line extra) of job {@code jobId} in its own transaction, together with its {@code key} on the
+     * job: a failure rolls back only this unit (owner requirement R-B), and the key — checked under the job row lock —
+     * keeps a retry or a concurrent drain from issuing it twice. Returns false when it was already posted.
+     */
+    private boolean postOnce(String jobId, String key, Runnable body) {
+        return Boolean.TRUE.equals(tx.execute(st -> {
+            boolean posted = jdbc.sql("SELECT ? = ANY(\"postedLineKeys\") FROM \"StockPostingJob\" WHERE id = ? FOR UPDATE")
+                    .params(key, jobId).query(Boolean.class).optional().orElse(false);
+            if (posted) {
+                return false;
+            }
+            body.run();
+            jdbc.sql("UPDATE \"StockPostingJob\" SET \"postedLineKeys\" = array_append(\"postedLineKeys\", ?) WHERE id = ?")
+                    .params(key, jobId).update();
+            return true;
+        }));
     }
 
     private void recordFailure(Ctx ctx, int[] failures, String[] lastError, String kind, String productId,
@@ -1625,6 +1666,9 @@ public class PosInvoiceService {
                 // Sell-in-sales-unit, frozen on the invoice item (ADR-S003); pre-V5 items use the live sales unit.
                 mv.uomId = it.get("uomFactor") != null ? (String) it.get("uomId") : (String) product.get("salesUomId");
                 mv.uomFactor = it.get("uomFactor") != null ? dec(it.get("uomFactor")) : null;
+                // Post-parity (ADR-S072): a product line's variantId is a ProductVariant (ADR-S058); Nest issued the
+                // parent product. Menu items never reach this branch, so a MenuItemVariant id is never passed here.
+                mv.variantId = (String) it.get("variantId");
                 mv.reference = ref;
                 mv.sourceType = "pos_invoice";
                 mv.sourceId = ctx.invoiceId();
@@ -1708,8 +1752,8 @@ public class PosInvoiceService {
     }
 
     /** Paid modifiers + accompaniments; returns {componentId, componentType, productId, error} per failure. */
-    private List<Object[]> moveLineExtras(Map<String, Object> item, double lineQty, String warehouse, String reference,
-            Ctx ctx, String invoiceItemId, Set<String> posted) {
+    private List<Object[]> moveLineExtras(String jobId, Map<String, Object> item, double lineQty, String warehouse,
+            String reference, Ctx ctx, String invoiceItemId, Set<String> posted) {
         List<Object[]> failures = new ArrayList<>();
         if (!(lineQty > 0)) {
             return failures;
@@ -1725,7 +1769,7 @@ public class PosInvoiceService {
                         + " FROM \"Modifier\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
                         .params(modifierId, org()));
                 if (mod != null && mod.get("inventoryItemId") != null) {
-                    moveExtra(item, (String) mod.get("inventoryItemId"), modifierId, num(mod.get("consumptionQty")),
+                    moveExtra(jobId, item, (String) mod.get("inventoryItemId"), modifierId, num(mod.get("consumptionQty")),
                             (String) mod.get("consumptionUomId"), "modifier", lineQty, warehouse, reference, ctx,
                             invoiceItemId, posted);
                 }
@@ -1746,7 +1790,7 @@ public class PosInvoiceService {
                         continue;
                     }
                     try {
-                        moveExtra(item, (String) opt.get("inventoryItemId"), (String) opt.get("id"),
+                        moveExtra(jobId, item, (String) opt.get("inventoryItemId"), (String) opt.get("id"),
                                 num(opt.get("consumptionQty")), (String) opt.get("consumptionUomId"), "accompaniment", lineQty,
                                 warehouse, reference, ctx, invoiceItemId, posted);
                     } catch (RuntimeException e) {
@@ -1762,14 +1806,14 @@ public class PosInvoiceService {
         return failures;
     }
 
-    private void moveExtra(Map<String, Object> item, String productId, String componentId, double consumptionQty,
+    private void moveExtra(String jobId, Map<String, Object> item, String productId, String componentId, double consumptionQty,
             String uomId, String componentType, double lineQty, String warehouse, String reference, Ctx ctx,
             String invoiceItemId, Set<String> posted) {
         String componentKey = item.get("id") + ":" + componentId;
         if (posted.contains(componentKey)) {
             return;
         }
-        Savepoints.run(jdbc, () -> {
+        postOnce(jobId, componentKey, () -> {
             double qty = lineQty * (Double.isFinite(consumptionQty) && consumptionQty > 0 ? consumptionQty : 1);
             StockMove mv = StockMove.of(productId, warehouse, PosSql.decOf(qty));
             mv.reference = reference;

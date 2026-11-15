@@ -85,6 +85,15 @@ stock events only after commit, cost policy / standard activation hourly on the 
 `InventoryHardeningIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`, `DetachedWritesTest`, `PosStockPostingIT`,
 `InventoryIT`, `ReplenishmentIT`.
 
+**Sales / variant / UOM / inventory integrity (Phase I, [audit](audits/2026-11-15-sales-variant-uom-inventory-audit.md); not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| I0 | Read-only audit + owner decisions D1–D5 | done |
+| I1a | POS variant stock issue / refund and price extras, per-line stock-posting transactions, kitchen waste in the sold unit and variant with recorded failures (ADR-S072) | done — `PosVariantIntegrityIT` |
+| I1b | Unit validation (no silent factor 1), unit-aware transfer / adjustment, return quarantine | next |
+| I2–I5 | Costing & ledger traceability, variant pricing, `salesPrice` meaning (D1), integration & concurrency | planned |
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |
