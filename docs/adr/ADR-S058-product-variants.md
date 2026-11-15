@@ -56,3 +56,13 @@ product move without a variant whenever a legacy no-variant quant existed, and n
 
 Wire additions (optional fields, older clients unaffected): `variantId` on manual delivery-order lines, replenishment
 rules, reorder rules and device count lines; `variantId` / `variantName` / `unitError` on par-report lines.
+
+### Variant costing (audit C-1 / C-2, owner decision D3)
+
+- AVCO and FIFO cost per variant quant and lot; SPECIFIC per serial. Wherever the stock engine falls back to "the
+  product cost" (first move of an empty quant, overflow past the layers, counts, return restocks, shortfalls) a variant
+  now uses `COALESCE(variant.costPrice, product.costPrice)`; the valuation report's zero-average fallback does the same.
+- **STANDARD stays per product** (D3): a variant of a STANDARD product is valued at the product's standard. Known limit.
+- The item list (`/inventory/product-stock-levels`), item detail (`/inventory/items/{id}`) and movement report value
+  stock by costing method through `InventoryValuationService.currentValueByQuant` (lots, serials, standard), not
+  `qty × runningAverageCost`, which FIFO and STANDARD receipts never set.

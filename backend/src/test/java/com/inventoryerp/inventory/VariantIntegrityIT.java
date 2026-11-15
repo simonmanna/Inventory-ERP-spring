@@ -253,4 +253,52 @@ class VariantIntegrityIT extends ApiTestSupport {
             assertThat(lines.toString()).contains("unitError");
         }
     }
+
+    @Test
+    @DisplayName("C-1: a variant's first count and return restock take the variant's cost, not the product's")
+    void variantCostFallbacks() {
+        String p = product(true);
+        String red = variant(p, "Red", true);
+        jdbc.sql("UPDATE \"ProductVariant\" SET \"costPrice\" = 70 WHERE id = ?").param(red).update();
+        StockMove count = counted(p, "4");
+        count.variantId = red;
+        inTenant(() -> stock.adjust(count));
+        assertThat(jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE \"productId\" = ? AND \"variantId\" = ?"
+                + " AND type::text = 'adjustment_in'").params(p, red).query(BigDecimal.class).single())
+                .as("variant cost 70, not product cost 40").isEqualByComparingTo("70");
+
+        String blue = variant(p, "Blue", true);
+        jdbc.sql("UPDATE \"ProductVariant\" SET \"costPrice\" = 90 WHERE id = ?").param(blue).update();
+        inTenant(() -> stock.receiveReturn(StockMove.of(p, warehouse, new BigDecimal("2")).variant(blue)));
+        assertThat(jdbc.sql("SELECT \"runningAverageCost\" FROM \"StockItem\" WHERE \"productId\" = ? AND"
+                + " \"variantKey\" = ?").params(p, blue).query(BigDecimal.class).single()).isEqualByComparingTo("90");
+    }
+
+    @Test
+    @DisplayName("C-2: the item list and item detail value FIFO stock by its lots, not qty x running average")
+    void itemValueByCostingMethod() {
+        String p = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                + " \"costingMethod\", \"batchTracking\", \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?,"
+                + " ?, 'stockable', true, 'FIFO', true, 40, 100, now())").params(p, demoOrg, "VF-" + sfx, "Fifo " + sfx)
+                .update();
+        inTenant(() -> stock.receive(StockMove.of(p, warehouse, new BigDecimal("10")).batch("A-" + sfx)
+                .unitCost(new BigDecimal("50"))));
+        inTenant(() -> stock.receive(StockMove.of(p, warehouse, new BigDecimal("10")).batch("B-" + sfx)
+                .unitCost(new BigDecimal("70"))));
+        inTenant(() -> stock.issue(StockMove.of(p, warehouse, new BigDecimal("5"))));
+        // 5 left of lot A at 50 + 10 of lot B at 70.
+        JsonNode detail = ok(200, "GET", "/inventory/items/" + p + "?locationId=" + warehouse, null);
+        assertThat(detail.get("totalValue").asDouble()).isEqualTo(950);
+        JsonNode list = ok(200, "GET", "/inventory/product-stock-levels?locationId=" + warehouse + "&search=VF-" + sfx
+                + "&pageSize=200", null);
+        JsonNode row = null;
+        for (JsonNode r : list.get("data")) {
+            if (p.equals(r.get("id").asString())) {
+                row = r;
+            }
+        }
+        assertThat(row).as(list.toString()).isNotNull();
+        assertThat(row.get("totalValue").asDouble()).isEqualTo(950);
+    }
 }

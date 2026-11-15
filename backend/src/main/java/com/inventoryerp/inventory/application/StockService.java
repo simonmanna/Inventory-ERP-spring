@@ -192,9 +192,9 @@ public class StockService {
         return res;
     }
 
-    /** Location running average when positive, else the last positive receipt cost, else the product cost. */
+    /** Location running average when positive, else the last positive receipt cost, else the (variant's) cost. */
     private BigDecimal resolveCurrentCost(String productId, String variantId, String locationId) {
-        Map<String, Object> product = lookups.product(productId);
+        Map<String, Object> product = withVariantCost(lookups.product(productId), variantId);
         Map<String, Object> item = lookups.stockItem(productId, variantId, locationId);
         if (item != null && dec(item, "runningAverageCost").signum() > 0) {
             return dec(item, "runningAverageCost");
@@ -235,6 +235,7 @@ public class StockService {
         }
         requireVariant(product, dto.variantId, dto.locationId,
                 "return_in".equals(dto.moveType) ? VariantRule.EXISTING : VariantRule.INBOUND);
+        product = withVariantCost(product, dto.variantId);
         boolean batchTracking = bool(product, "batchTracking");
         String productName = str(product, "name");
         if (batchTracking && dto.batchNumber == null
@@ -402,6 +403,27 @@ public class StockService {
                 actualValue);
     }
 
+    /**
+     * Phase I2 (audit C-1, owner decision D3): wherever the engine falls back to "the product cost" (first issue of an
+     * empty quant, overflow past the layers, counts, return restocks, shortfalls), a variant uses its own cost
+     * ({@code COALESCE(variant.costPrice, product.costPrice)}, as {@code ProductVariantService.COST_SQL}). STANDARD
+     * stays per product by design (D3).
+     */
+    private Map<String, Object> withVariantCost(Map<String, Object> product, String variantId) {
+        if (product == null || variantId == null || "STANDARD".equals(str(product, "costingMethod"))) {
+            return product;
+        }
+        BigDecimal cost = jdbc.sql("SELECT \"costPrice\" FROM \"ProductVariant\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"costPrice\" IS NOT NULL")
+                .params(variantId, TenantContext.organizationId()).query(BigDecimal.class).optional().orElse(null);
+        if (cost == null) {
+            return product;
+        }
+        Map<String, Object> copy = new java.util.LinkedHashMap<>(product);
+        copy.put("costPrice", cost);
+        return copy;
+    }
+
     /** How strictly {@link #requireVariant} treats a move (Phase I2, owner decision D2). */
     private enum VariantRule {
         /** Adds new stock (receipt, positive count): an active variant of the product is required. */
@@ -459,6 +481,7 @@ public class StockService {
             throw ApiException.notFound("Location not found");
         }
         requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
         String productName = str(product, "name");
         BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
@@ -812,6 +835,7 @@ public class StockService {
             throw ApiException.notFound("Location not found");
         }
         requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
         // Phase I1b (audit U-3): stock documents count in the base unit (ADR-S003); a caller that names a unit gets its
         // count / delta converted instead of being read as base units.
         BigDecimal counted = dto.countedQuantity == null ? null : toBaseQty(product, dto, dto.countedQuantity);
@@ -957,6 +981,7 @@ public class StockService {
             throw ApiException.notFound("Destination location not found");
         }
         requireVariant(product, dto.variantId, dto.fromLocationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
         if (dto.quantity.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }

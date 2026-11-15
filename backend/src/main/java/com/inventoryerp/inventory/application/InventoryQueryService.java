@@ -1,5 +1,6 @@
 package com.inventoryerp.inventory.application;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
@@ -43,9 +44,12 @@ public class InventoryQueryService {
 
     private final JdbcClient jdbc;
     private final UomConversionService uomConversion;
+    private final InventoryValuationService valuation;
     private final LocationScope scope;
 
-    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion, LocationScope scope) {
+    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion, LocationScope scope,
+            InventoryValuationService valuation) {
+        this.valuation = valuation;
         this.jdbc = jdbc;
         this.uomConversion = uomConversion;
         this.scope = scope;
@@ -196,19 +200,21 @@ public class InventoryQueryService {
     private Map<String, Object> mapProduct(Map<String, Object> p, String locationId, Map<String, Double> reserved) {
         List<Map<String, Object>> items = SqlRows.list(jdbc.sql("SELECT si.quantity, si.\"runningAverageCost\","
                 + " si.\"locationId\", l.id AS lid, l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l"
-                + " ON l.id = si.\"locationId\" WHERE si.\"productId\" = ?").param(p.get("id")));
+                + " ON l.id = si.\"locationId\" WHERE si.\"productId\" = ? AND si.\"organizationId\" = ?").params(
+                        p.get("id"), org()));
         List<Map<String, Object>> breakdown = new ArrayList<>();
         double totalQty = 0;
-        double totalCost = 0;
         for (Map<String, Object> si : items) {
             double qty = dec(si, "quantity").doubleValue();
             breakdown.add(Obj.of("locationId", si.get("lid"), "code", si.get("code"), "name", si.get("name"),
                     "quantity", JsNumbers.js(qty)));
             if (locationId == null || locationId.equals(si.get("locationId"))) {
                 totalQty += qty;
-                totalCost += qty * dec(si, "runningAverageCost").doubleValue();
             }
         }
+        // Phase I2 (audit C-2): value by the product's costing method (lots, serials, standard), not qty × average.
+        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(str(p, "id")), locationId).get(str(p, "id"));
+        double totalCost = qv == null ? 0 : qv[1].doubleValue();
         double avg = totalQty > 0 ? totalCost / totalQty : 0;
         BigDecimal min = (BigDecimal) p.get("minQuantity");
         double minQty = min != null ? min.doubleValue() : 0;
@@ -252,10 +258,11 @@ public class InventoryQueryService {
         List<Map<String, Object>> items = SqlRows.list(StockItem.class, jdbc.sql("SELECT * FROM \"StockItem\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ?" + locFilter).params(params));
         BigDecimal onHand = Money.ZERO;
-        BigDecimal value = Money.ZERO;
+        // Phase I2 (audit C-2): value by costing method.
+        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(productId), loc).get(productId);
+        BigDecimal value = qv == null ? Money.ZERO : qv[1];
         for (Map<String, Object> i : items) {
             onHand = onHand.add(dec(i, "quantity"));
-            value = value.add(dec(i, "quantity").multiply(dec(i, "runningAverageCost")));
             i.put("location", SqlRows.one(jdbc.sql("SELECT id, code, name, type::text AS type FROM \"InventoryLocation\""
                     + " WHERE id = ?").param(i.get("locationId"))));
         }
