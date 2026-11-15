@@ -298,7 +298,7 @@ public class SalesReturnService {
                 if (!target.equals(from)) {
                     StockMove m = StockMove.transfer(str(l.get("productId")), from, target, qty)
                             .variant(str(l.get("variantId"))).uom(str(l.get("uomId")),
-                            dec(l.get("uomFactor"))).reference(str(r.get("number")));
+                            dec(l.get("uomFactor"))).reference(str(r.get("number"))).source("sales_return", id);
                     stock.transfer(m);
                 }
             } else if (tracked && "scrap".equals(disposition)) {

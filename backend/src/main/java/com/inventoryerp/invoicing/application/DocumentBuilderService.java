@@ -299,19 +299,13 @@ public class DocumentBuilderService {
     }
 
     /**
-     * Line unit for a document line (ADR-S003). An explicit {@code uomId} is validated strictly. The implicit default
-     * unit never blocks a document: if it cannot be resolved the line keeps no snapshot and stock posting falls back
-     * to the live conversion, exactly as before V5.
+     * Line unit for a document line (ADR-S003). Explicit and implicit (the product's default sales / purchase unit)
+     * units are both validated strictly. Post-V5 Phase I1b (owner decision, audit U-1/U-2): an implicit unit that cannot
+     * be converted to the stock unit used to leave the line without a snapshot, and stock and quantity reports then
+     * treated it as factor 1; it now refuses the line with the conversion error.
      */
     private LineUnit lineUnit(String productId, String uomId, UnitRole role) {
-        if (uomId != null && !uomId.isBlank()) {
-            return units.resolveLineUnit(productId, uomId, role);
-        }
-        try {
-            return units.resolveLineUnit(productId, null, role);
-        } catch (ApiException e) {
-            return new LineUnit(null, null);
-        }
+        return units.resolveLineUnit(productId, uomId == null || uomId.isBlank() ? null : uomId, role);
     }
 
     /** Server-side line math: price, discount, tax engine, totals; {@code role} picks each line's default unit. */

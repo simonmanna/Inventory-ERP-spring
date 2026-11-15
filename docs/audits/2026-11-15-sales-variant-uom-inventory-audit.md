@@ -4,6 +4,8 @@
 - Plan: `/root/.claude/plans/i-have-this-review-harmonic-reddy.md` (Step 0). The external review that asked for this
   audit is summarised in that plan's Context section.
 - Addendum (web UI + Android POS): `2026-11-15-ui-android-addendum.md`.
+- Progress: I1a fixed V-1, V-2, V-3 and S-1 (ADR-S072). I1b fixed U-1, U-2, U-3 and A-5 (ADR-S003 addendum). I1c and
+  the I-web pass fixed the web findings of the addendum that need no new backend (see `docs/PORT_STATUS.md`).
 - Scope: every flow that creates, changes or reverses stock, and how product variants, units of measure (UOM) and
   cost travel through it.
 

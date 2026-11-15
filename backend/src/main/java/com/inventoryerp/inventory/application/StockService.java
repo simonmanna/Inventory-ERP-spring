@@ -793,10 +793,13 @@ public class StockService {
             throw ApiException.notFound("Location not found");
         }
         requireVariant(product, dto.variantId, dto.locationId);
-        BigDecimal counted = dto.countedQuantity;
+        // Phase I1b (audit U-3): stock documents count in the base unit (ADR-S003); a caller that names a unit gets its
+        // count / delta converted instead of being read as base units.
+        BigDecimal counted = dto.countedQuantity == null ? null : toBaseQty(product, dto, dto.countedQuantity);
+        BigDecimal deltaIn = dto.deltaQuantity == null ? null : toBaseQty(product, dto, dto.deltaQuantity);
         String variantId = dto.variantId;
-        boolean deltaMode = dto.deltaQuantity != null;
-        if (deltaMode ? dto.deltaQuantity.signum() == 0
+        boolean deltaMode = deltaIn != null;
+        if (deltaMode ? deltaIn.signum() == 0
                 : counted.signum() == 0 && lookups.stockItem(dto.productId, variantId, dto.locationId) == null) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
         }
@@ -806,7 +809,7 @@ public class StockService {
         Map<String, Object> stockItem = quant.created() ? null : quant.row();
         BigDecimal currentQty = quant.quantity();
         if (deltaMode) {
-            counted = currentQty.add(dto.deltaQuantity);
+            counted = currentQty.add(deltaIn);
         }
         BigDecimal delta = counted.subtract(currentQty);
         if (delta.signum() == 0) {
@@ -931,10 +934,12 @@ public class StockService {
             throw ApiException.notFound("Destination location not found");
         }
         requireVariant(product, dto.variantId, dto.fromLocationId);
-        BigDecimal qty = dto.quantity;
-        if (qty.signum() <= 0) {
+        if (dto.quantity.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }
+        // Phase I1b (audit U-3): a transfer that names a unit (e.g. a sales return moving 2 boxes to quarantine) moves
+        // its base quantity; stock documents keep sending base units (ADR-S003).
+        BigDecimal qty = toBaseQty(product, dto, dto.quantity);
         boolean serialTracking = bool(product, "serialTracking");
         if (serialTracking) {
             assertWholeSerialQuantity(str(product, "name"), qty);
@@ -1115,7 +1120,7 @@ public class StockService {
             stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, Instant.now(),
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
-                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(dto.quantity));
+                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty));
         }
         postCostCorrection(org, dto.productId, str(product, "name"), batchTracking ? layerCorrection
                         : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
@@ -1125,12 +1130,12 @@ public class StockService {
         payload.put("productId", dto.productId);
         payload.put("locationId", dto.toLocationId);
         payload.put("ledgerCode", ledgerCode);
-        payload.put("quantity", JsNumbers.dec(dto.quantity));
+        payload.put("quantity", JsNumbers.dec(qty));
         events.publishOnCommit("stock.transferred", payload);
         audit.recordInTx(AuditInput.of("StockItem", from.id(), "transfer", null,
                 Obj.of("productId", dto.productId, "fromLocationId", dto.fromLocationId, "toLocationId",
-                        dto.toLocationId, "quantity", JsNumbers.js(dto.quantity), "ledgerCode", ledgerCode)));
-        return new Transferred(ledgerCode, dto.quantity, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
+                        dto.toLocationId, "quantity", JsNumbers.js(qty), "ledgerCode", ledgerCode)));
+        return new Transferred(ledgerCode, qty, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
     }
 
     // ================================================================== helpers
@@ -1166,6 +1171,18 @@ public class StockService {
         BigDecimal baseQty = uomConversion.toBase(quantity, sourceUomId, str(product, "id"), baseUom, true);
         BigDecimal factor = Money.div(baseQty, quantity);
         return new BigDecimal[] {baseQty, factor.signum() > 0 ? Money.div(unitCost, factor) : unitCost};
+    }
+
+    /**
+     * {@code quantity} of {@code dto}'s unit (snapshot factor first, else the live conversion) in base units, sign kept;
+     * unchanged when the move names no unit.
+     */
+    private BigDecimal toBaseQty(Map<String, Object> product, StockMove dto, BigDecimal quantity) {
+        if ((dto.uomId == null && dto.uomFactor == null) || quantity.signum() == 0) {
+            return quantity;
+        }
+        BigDecimal base = toBaseQtyCost(product, dto.uomId, dto.uomFactor, quantity.abs(), Money.ZERO)[0];
+        return quantity.signum() < 0 ? base.negate() : base;
     }
 
     /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */

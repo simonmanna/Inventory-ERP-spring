@@ -3,6 +3,10 @@ package com.inventoryerp.procurement;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockService;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
@@ -12,6 +16,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -20,6 +25,9 @@ import tools.jackson.databind.JsonNode;
  * line so editing a product's units never changes what an existing document posts.
  */
 class ProductUnitsIT extends ApiTestSupport {
+
+    @Autowired
+    StockService stock;
 
     String warehouse;
     String supplier;
@@ -273,5 +281,76 @@ class ProductUnitsIT extends ApiTestSupport {
         // No unit on the PO line: the product's purchase unit (Box) is used and frozen.
         receiveAll(createPo(drink, null, 2, 24000), drink, 2);
         assertThat(onHand(drink)).isEqualByComparingTo("48");
+    }
+
+    // ------------------------------------------------------------------ Phase I1b (audit U-1, U-2, U-3)
+
+    @Test
+    @DisplayName("U-1: a sales line whose default unit cannot convert to the stock unit is refused, not saved as factor 1")
+    void unconvertibleDefaultUnitIsRefused() {
+        String kg = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                        + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, 'Kilogram', 'weight', 1, 1, 0.001, now())")
+                .params(kg, demoOrg, "KGX-" + suffix()).update();
+        String soap = product("Soap", 900);
+        // Counted in pieces, sold "by the kilogram" with no piece↔kg conversion configured.
+        jdbc.sql("UPDATE \"Product\" SET \"salesUomId\" = ? WHERE id = ?").params(kg, soap).update();
+        long before = jdbc.sql("SELECT count(*) FROM \"DocumentLine\" WHERE \"productId\" = ?").param(soap)
+                .query(Long.class).single();
+        Res refused = as("POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", soap, "quantity", 2))));
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).startsWith("No conversion from KGX-");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"DocumentLine\" WHERE \"productId\" = ?").param(soap)
+                .query(Long.class).single()).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("U-2: a pre-V5 receipt line (no unit snapshot) is matched in its purchase unit, not 1:1")
+    void legacyReceiptLineMatchesInBaseUnits() {
+        String drink = product("Juice", 700);
+        setUnits(drink, List.of(unitRow(box, 24, true, true, null)));
+        jdbc.sql("UPDATE \"Product\" SET \"purchaseUomId\" = ? WHERE id = ?").params(box, drink).update();
+        JsonNode grn = ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId", supplier,
+                "warehouseId", warehouse, "receivedAt", java.time.Instant.now().toString(), "lines",
+                List.of(Map.of("productId", drink, "description", "Juice", "quantity", 2, "unitCost", 12000,
+                        "uomId", box))));
+        assertThat(onHand(drink)).isEqualByComparingTo("48");
+        // As written before V5: the receipt line has no unit snapshot (it was received in the purchase unit).
+        jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"uomId\" = NULL, \"uomFactor\" = NULL WHERE \"goodsReceiptId\" = ?")
+                .param(grn.get("id").asString()).update();
+
+        JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
+                List.of(Map.of("productId", drink, "quantity", 24, "unitPrice", 500, "uomId", pcs))));
+        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of("override3WM", true,
+                "overrideApproval", true));
+        // 24 pieces = 1 box of the 2 received (was 2 boxes consumed by a 1:1 comparison).
+        BigDecimal billed = jdbc.sql("SELECT \"billedQuantity\" FROM \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ?")
+                .param(grn.get("id").asString()).query(BigDecimal.class).single();
+        assertThat(billed).isEqualByComparingTo("1");
+        assertThat(onHand(drink)).isEqualByComparingTo("48");
+    }
+
+    @Test
+    @DisplayName("U-3: a transfer or adjustment that names a unit moves its base quantity")
+    void transferAndAdjustInANamedUnit() {
+        String cups = product("Cups", 100);
+        setUnits(cups, List.of(unitRow(box, 12, true, true, null)));
+        receiveAll(createPo(cups, pcs, 120, 10), cups, 120);
+        String quarantine = ok(201, "POST", "/inventory/locations", Map.of("code", "UQ-" + suffix(), "name",
+                "Quarantine " + suffix(), "type", "warehouse")).get("id").asString();
+        TenantContext.run(TenantStore.organization(demoOrg), () -> {
+            stock.transfer(StockMove.transfer(cups, warehouse, quarantine, BigDecimal.valueOf(2)).uom(box, null));
+            StockMove adj = StockMove.of(cups, warehouse, null);
+            adj.deltaQuantity = BigDecimal.ONE.negate();
+            adj.uomId = box;
+            stock.adjust(adj);
+        });
+        BigDecimal atQuarantine = jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
+                .params(cups, quarantine).query(BigDecimal.class).single();
+        assertThat(atQuarantine).as("2 boxes = 24 pieces").isEqualByComparingTo("24");
+        BigDecimal atWarehouse = jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
+                .params(cups, warehouse).query(BigDecimal.class).single();
+        assertThat(atWarehouse).as("120 - 24 - one box of 12").isEqualByComparingTo("84");
     }
 }

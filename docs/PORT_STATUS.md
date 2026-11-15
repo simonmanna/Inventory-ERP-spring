@@ -91,7 +91,7 @@ stock events only after commit, cost policy / standard activation hourly on the 
 |---|---|---|
 | I0 | Read-only audit + owner decisions D1–D5 | done |
 | I1a | POS variant stock issue / refund and price extras, per-line stock-posting transactions, kitchen waste in the sold unit and variant with recorded failures (ADR-S072) | done — `PosVariantIntegrityIT` |
-| I1b | Unit validation (no silent factor 1), unit-aware transfer / adjustment, return quarantine | next |
+| I1b | Unit validation (no silent factor 1), bill↔receipt matcher in real units, unit-aware transfer / adjustment, return quarantine in base units ([ADR-S003 addendum](adr/ADR-S003-product-units.md)) | done — `ProductUnitsIT` |
 | I1c | Web: retail POS variant picker and variant barcode scan (`/products/resolve-barcode` now answers variant barcodes and is filtered by organisation); posting monitor in the POS menu behind `pos:reports`, with status/kind filters, assign and invoice links | done — `PosVariantIntegrityIT.variantBarcodeResolves`; web typecheck/lint |
 | I2–I5 | Costing & ledger traceability, variant pricing, `salesPrice` meaning (D1), integration & concurrency | planned |
 

@@ -615,6 +615,10 @@ public class CashSaleService {
                 ins.put("description", pl.description());
                 ins.put("quantity", pl.quantity());
                 ins.put("uomId", pl.uomId());
+                // Phase I1b (U-1): a product line always carries its resolved factor; only lines without a product have none.
+                if (pl.productId() != null && pl.uomFactor() == null) {
+                    throw ApiException.badRequest("The unit of measure of " + pl.description() + " could not be resolved");
+                }
                 ins.put("uomFactor", pl.uomFactor() == null ? BigDecimal.ONE : pl.uomFactor());
                 ins.put("listPrice", m.get("listPrice"));
                 ins.put("unitPrice", pl.unitPrice());

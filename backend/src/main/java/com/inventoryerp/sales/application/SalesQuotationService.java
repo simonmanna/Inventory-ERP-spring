@@ -499,13 +499,18 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             priced.add(Obj.of("quotationId", id, "productId", pl.productId(),
-                    "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
+                    "variantId", m.get("variantId"), "uomId", pl.uomId() != null ? pl.uomId() : m.get("uomId"),
+                    "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
                     "lineTotal", pl.total()));
             priced.getLast().putAll(ProductSizingService.Sizing.columns(pl.sizing()));
+            // Phase I1b (U-1): keep the resolved factor (the column defaulted to 1 for every line).
+            if (pl.uomFactor() != null) {
+                priced.getLast().put("uomFactor", pl.uomFactor());
+            }
             i++;
         }
         insertLayoutRows(id, layout, priced);
