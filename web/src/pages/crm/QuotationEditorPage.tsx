@@ -192,6 +192,12 @@ export function QuotationEditorPage() {
       setLines((ls) => ls.map((l, i) => {
         const k = targets.findIndex((t) => t.i === i);
         if (k < 0) return l;
+        // Review M-11: an answer for a line that changed while it was being priced (other product, variant, unit or
+        // quantity, a price typed since, or a row moved or removed) is stale; the newer request's answer applies.
+        const asked = targets[k].l;
+        if (l.productId !== asked.productId || (l.variantId ?? null) !== (asked.variantId ?? null)
+          || (l.uomId ?? null) !== (asked.uomId ?? null) || Number(l.quantity || 1) !== Number(asked.quantity || 1)
+          || (l.priceSource === 'manual' && asked.priceSource !== 'manual')) return l;
         const r = res.lines[k];
         return { ...l, listPrice: r.listPrice, unitPrice: r.unitPrice, discountPercent: r.discountPercent, priceSource: r.source, taxId: l.taxId ?? r.taxId,
           taxInclusive: taxMode ? taxMode === 'incl' : r.taxInclusive, description: l.description || r.description };

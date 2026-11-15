@@ -24,6 +24,7 @@ import {
 } from '@/features/inventory/stock-levels';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
+import { fetchVariantOptions } from '@/features/products/variants-api';
 
 interface Location { id: string; code: string; name: string }
 
@@ -46,6 +47,8 @@ interface DraftLine {
   variantId?: string | null;
   /** Counted quantity as typed; '' means not yet counted. */
   actual: string;
+  /** Review M-7: the product has variants, so the line must name one (its stock is per variant). */
+  hasVariants?: boolean;
 }
 
 // Must match STOCK_ADJUSTMENT_REASONS in @erp/shared (API rejects anything else).
@@ -148,7 +151,8 @@ export function StockAdjustmentsPage() {
   for (const l of filled) lineCounts.set(lineKey(l), (lineCounts.get(lineKey(l)) ?? 0) + 1);
   const duplicateIds = new Set([...lineCounts].filter(([, n]) => n > 1).map(([id]) => id));
   const invalidActual = filled.some((l) => l.actual.trim() === '' || !Number.isFinite(Number(l.actual)) || Number(l.actual) < 0);
-  const canSubmit = !!locationId && !!responsibleId && !!approvedId && filled.length > 0 && !invalidActual && duplicateIds.size === 0 && !stockLevels.isFetching;
+  const missingVariant = filled.some((l) => l.hasVariants !== false && !l.variantId);
+  const canSubmit = !missingVariant && !!locationId && !!responsibleId && !!approvedId && filled.length > 0 && !invalidActual && duplicateIds.size === 0 && !stockLevels.isFetching;
 
   const create = useMutation({
     mutationFn: async (post: boolean) => {
@@ -221,8 +225,15 @@ export function StockAdjustmentsPage() {
 
   const pickProduct = (key: number, productId: string) => {
     const level = levelById.get(productId);
-    // Pre-fill the count with the system figure so only real variances need typing.
-    updateLine(key, { productId, variantId: null, actual: level ? String(Number(level.totalQuantity.toFixed(4))) : '' });
+    // Review M-7: the listed on-hand is the total of all variants, so a product with variants is not pre-filled and
+    // needs its variant chosen; a product without variants is pre-filled with the system figure.
+    updateLine(key, { productId, variantId: null, actual: '', hasVariants: undefined });
+    fetchVariantOptions(qc, productId).then((options) => {
+      const hasVariants = options.length > 0;
+      setLines((prev) => prev.map((l) => (l.key === key && l.productId === productId
+        ? { ...l, hasVariants, actual: hasVariants || !level ? l.actual : String(Number(level.totalQuantity.toFixed(4))) }
+        : l)));
+    }).catch(() => updateLine(key, { hasVariants: false }));
   };
   /** The product's on-hand is not per variant: a variant line is counted from scratch. */
   const pickVariant = (key: number, variantId: string | null) => updateLine(key, { variantId, actual: '' });
@@ -424,7 +435,7 @@ export function StockAdjustmentsPage() {
                         const system = level?.totalQuantity ?? 0;
                         const actualNum = Number(ln.actual);
                         // The listed on-hand is the product total; a variant's own figure is computed by the server.
-                        const hasActual = ln.productId && !ln.variantId && ln.actual.trim() !== '' && Number.isFinite(actualNum);
+                        const hasActual = ln.productId && !ln.variantId && !ln.hasVariants && ln.actual.trim() !== '' && Number.isFinite(actualNum);
                         const diff = hasActual ? actualNum - system : 0;
                         const dup = duplicateIds.has(lineKey(ln));
                         return (
@@ -443,7 +454,7 @@ export function StockAdjustmentsPage() {
                               {dup && <p className="mt-1 text-xs text-destructive">{tx('Product already on another line')}</p>}
                             </td>
                             <td className="px-2 py-1.5 text-right font-mono tabular-nums text-muted-foreground">
-                              {ln.productId && !ln.variantId
+                              {ln.productId && !ln.variantId && !ln.hasVariants
                                 ? stockLevels.isFetching && !level ? '…' : <>{fmtQty(system)}{level?.uom ? <span className="ml-1 text-xs">{level.uom}</span> : null}</>
                                 : '—'}
                             </td>
@@ -473,6 +484,9 @@ export function StockAdjustmentsPage() {
                     </tbody>
                   </table>
                 </div>
+              )}
+              {missingVariant && filled.some((l) => l.hasVariants) && (
+                <p className="text-xs text-destructive">{tx('Choose a variant on every line of a product with variants.')}</p>
               )}
               {invalidActual && <p className="text-xs text-destructive">{tx('Every selected product needs a counted quantity of 0 or more.')}</p>}
             </div>

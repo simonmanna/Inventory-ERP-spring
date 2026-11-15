@@ -223,6 +223,17 @@ Notes:
 - M-10: the refund restocks the variant the invoice's ledger rows issued (no variant for a pre-I1a sale). Test
   `PosVariantIntegrityIT.legacyVariantRefundRestocksWhereIssued`.
 
-Still open in I2: M-6 (Phase A3 load rounding); the web
-items M-7, M-8, M-11, M-12 (client changes, need owner approval).
+- Web M-7: the stock adjustment form no longer pre-fills a product with variants with the all-variants total; each
+  such line needs a variant ("Choose a variant on every line of a product with variants."). Legacy no-variant stock of
+  such a product is no longer adjustable from this form (the server still accepts it through the API).
+- Web M-8: the credit-note form has a variant picker per line and sends `variantId` (name and, in the sales unit, the
+  variant price fill in).
+- Web M-11: the quotation editor drops a pricing answer for a line that changed while it was being priced (product,
+  variant, unit, quantity, or a price typed since).
+- Web M-12: the sales order form no longer blocks saving on a unit it cannot convert; it leaves the price to the
+  server ("Priced on save in this unit, or enter the price").
+- The web has no unit-test runner: M-7, M-8, M-11 and M-12 are checked by `tsc` and eslint only, not in a browser.
+  New phrases are untranslated (the `i18n:check` gate already fails on `main` with 6,123 gaps).
+
+Still open in I2: M-6 (Phase A3 load rounding).
 

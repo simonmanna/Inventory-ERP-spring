@@ -20,6 +20,8 @@ import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { VariantSelect } from '@/features/products/variant-select';
+import type { VariantOption } from '@/features/products/variants-api';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -32,6 +34,8 @@ interface LineForm {
   discountPercent?: number;
   /** Product unit (ADR-S003). */
   uomId?: string;
+  /** Review M-8: the variant credited (an invoice may sell several variants of one product). */
+  variantId?: string | null;
 }
 interface FormValues {
   partnerId: string;
@@ -78,11 +82,23 @@ export function CreditNoteCreatePage() {
 
   const onProductChange = (index: number, productId: string) => {
     setValue(`lines.${index}.productId`, productId);
+    setValue(`lines.${index}.variantId`, null);
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
       setValue(`lines.${index}.uomId`, defaultUnitId(p, 'sales'));
       if (p.salesPrice != null) setValue(`lines.${index}.unitPrice`, Number(p.salesPrice));
+    }
+  };
+
+  /** The variant's name, and its price when the line is in the product's sales unit. */
+  const onVariantChange = (index: number, variantId: string | null, v: VariantOption | null) => {
+    setValue(`lines.${index}.variantId`, variantId);
+    if (!v) return;
+    setValue(`lines.${index}.description`, v.description?.trim() || v.displayName || v.name);
+    const p = productList.find((x) => x.id === getValues(`lines.${index}.productId`));
+    if (p && v.salesPrice != null && v.salesPrice !== '' && getValues(`lines.${index}.uomId`) === defaultUnitId(p, 'sales')) {
+      setValue(`lines.${index}.unitPrice`, Number(v.salesPrice));
     }
   };
 
@@ -111,6 +127,7 @@ export function CreditNoteCreatePage() {
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
         uomId: l.productId ? l.uomId || undefined : undefined,
+        ...(l.productId && l.variantId ? { variantId: l.variantId } : {}),
       })),
     };
 
@@ -207,6 +224,11 @@ export function CreditNoteCreatePage() {
                     </option>
                   ))}
                 </select>
+                <VariantSelect
+                  productId={watch(`lines.${index}.productId`) || null}
+                  value={watch(`lines.${index}.variantId`)}
+                  onChange={(id, v) => onVariantChange(index, id, v)}
+                />
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">{tx('Description')}</Label>

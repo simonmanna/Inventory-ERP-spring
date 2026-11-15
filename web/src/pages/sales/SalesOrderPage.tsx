@@ -142,7 +142,9 @@ export function SalesOrderPage() {
         // the size (when typed) decides the quantity server-side; the size fields only render for sized products
         ...(l.productId ? sizePayload(l.size, 'volume') : {}),
         uomId: l.productId ? l.uomId || undefined : undefined,
-        unitPrice: (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
+        // Review M-12: a unit this screen cannot convert is priced by the server (it knows every conversion).
+        unitPrice: l.productId && l.priceUnknown ? undefined
+          : (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
         discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
       })),
     };
@@ -154,7 +156,6 @@ export function SalesOrderPage() {
 
   const doSave = (then?: () => void) => {
     if (!partnerId) return toast.error(tx('Choose a customer'));
-    if (lines.some((l) => l.productId && l.priceUnknown)) return toast.error(tx('No conversion for this unit — enter the price'));
     save.mutate(undefined, {
       onSuccess: async (s) => {
         setDirty(false);
@@ -353,7 +354,7 @@ export function SalesOrderPage() {
                       </td>
                     )}
                     <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} className={cn('text-right', l.priceUnknown && 'border-amber-500')} value={l.priceUnknown ? '' : l.unitPrice} onChange={(e) => patchLine(i, { unitPrice: Number(e.target.value), priceSource: 'manual', priceUnknown: false })} />
-                      {l.priceUnknown && <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>}</td>
+                      {l.priceUnknown && <p className="mt-0.5 text-xs text-amber-700">{tx('Priced on save in this unit, or enter the price')}</p>}</td>
                     {show('discount') && <td className="py-1.5 pr-2"><Input disabled={!editable} type="number" min={0} max={100} className="text-right" value={l.discountPercent} onChange={(e) => patchLine(i, { discountPercent: Number(e.target.value) })} /></td>}
                     {show('taxes') && <td className="py-1.5 pr-2"><OptionalSelect disabled={!editable} value={l.taxId ?? ''} onChange={(v) => patchLine(i, { taxId: v || null })} options={(taxes.data ?? []).map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate)}%)` }))} placeholder={tx('No tax')} noneLabel={tx('No tax')} /></td>}
                     {!editable && <>
