@@ -275,6 +275,21 @@ class PosVariantIntegrityIT extends ApiTestSupport {
         assertThat(sale(line(p, v.get("Large"), 1), 180).get("total").asDouble()).isEqualTo(180);
     }
 
+    // ------------------------------------------------------------------ I1c: variant barcode
+
+    @Test
+    @DisplayName("I1c: a variant's barcode resolves to its product plus the variant at its effective price")
+    void variantBarcodeResolves() {
+        Map<String, String> v = variantProduct(100);
+        String code = "VB-" + UUID.randomUUID().toString().substring(0, 10);
+        ok(200, "PATCH", "/products/" + v.get("product") + "/variants/" + v.get("Large"), Map.of("barcode", code));
+        JsonNode r = ok(200, "GET", "/products/resolve-barcode?code=" + code, null);
+        assertThat(r.get("productId").asString()).isEqualTo(v.get("product"));
+        assertThat(r.get("variantId").asString()).isEqualTo(v.get("Large"));
+        assertThat(r.get("variant").get("salesPrice").asDouble()).isEqualTo(125);
+        assertThat(r.get("quantity").asInt()).isEqualTo(1);
+    }
+
     // ------------------------------------------------------------------ V-3: kitchen waste
 
     /** An open tab with one line sent to the kitchen, then voided after the kitchen started it. */
