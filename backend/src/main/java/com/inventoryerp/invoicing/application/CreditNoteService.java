@@ -143,6 +143,8 @@ public class CreditNoteService {
     /** Create a draft credit note. */
     @Transactional
     public Map<String, Object> create(CreditNoteInput dto) {
+        builder.assertVariants(dto.lines(), false, true);
+        assertVariantResolvable(dto.reversedDocumentId(), dto.lines());
         // A credit note against an invoice is in that invoice's currency and rate unless it says otherwise.
         Map<String, Object> reversed = dto.reversedDocumentId() == null || dto.currencyId() != null ? null
                 : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
@@ -251,6 +253,31 @@ public class CreditNoteService {
                 + " \"productId\" = ? AND \"organizationId\" = ? AND \"variantId\" IS NOT NULL").params(invoiceId, productId,
                         org()).query(String.class).list();
         return ids.size() == 1 ? ids.getFirst() : null;
+    }
+
+    /**
+     * Phase I2 (D2, audit V-6): a credit-note line for a product with variants that names none restocks the credited
+     * invoice's variant; when that invoice holds several variants of the product the line must say which one, instead
+     * of the restock landing on the parent product.
+     */
+    private void assertVariantResolvable(String invoiceId, List<LineInput> lines) {
+        if (invoiceId == null || lines == null) {
+            return;
+        }
+        for (LineInput l : lines) {
+            if (l.productId() == null || l.productId().isBlank() || (l.variantId() != null && !l.variantId().isBlank())
+                    || (l.lineType() != null && !"product".equals(l.lineType()))) {
+                continue;
+            }
+            long variants = jdbc.sql("SELECT count(DISTINCT \"variantId\") FROM \"DocumentLine\" WHERE \"documentId\" = ?"
+                    + " AND \"productId\" = ? AND \"organizationId\" = ? AND \"variantId\" IS NOT NULL").params(invoiceId,
+                            l.productId(), org()).query(Long.class).single();
+            if (variants > 1) {
+                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(l.productId(), org()).query(String.class).optional().orElse(l.productId());
+                throw ApiException.badRequest("Choose a variant for " + name);
+            }
+        }
     }
 
     private void assertWithinInvoice(String creditNoteId, String invoiceId, List<Map<String, Object>> lines) {

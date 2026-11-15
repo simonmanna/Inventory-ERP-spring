@@ -540,6 +540,46 @@ public class DocumentBuilderService {
         lines.forEach(l -> saleable.assertSaleable(l.productId()));
     }
 
+    /**
+     * Phase I2 (owner decision D2, audit V-5/V-6/V-8): product variants on document lines entered by a user.
+     * <ul>
+     *   <li>A given variant must be one of the line's product's; unless {@code allowArchived} (a document correcting an
+     *       older one, e.g. a credit note) it must also be active.</li>
+     *   <li>With {@code requireVariant} (a document that receives stock, e.g. a vendor bill), a product with variants
+     *       must name one: new stock never lands on the parent product.</li>
+     * </ul>
+     * Lines without a variant on issuing documents stay allowed: legacy stock without a variant may be sold until it
+     * runs out, and the stock issue refuses the line when none is left (ADR-S058).
+     */
+    public void assertVariants(List<LineInput> lines, boolean requireVariant, boolean allowArchived) {
+        if (lines == null) {
+            return;
+        }
+        for (LineInput l : lines) {
+            boolean meta = l.lineType() != null && !"product".equals(l.lineType());
+            if (meta || l.menuItemId() != null || l.productId() == null || l.productId().isBlank()) {
+                continue;
+            }
+            Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\" FROM \"Product\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(l.productId(), org()));
+            if (product == null) {
+                continue; // the line math reports an unknown product
+            }
+            if (l.variantId() == null || l.variantId().isBlank()) {
+                if (requireVariant && Boolean.TRUE.equals(product.get("hasVariants"))) {
+                    throw ApiException.badRequest("Choose a variant for " + product.get("name"));
+                }
+                continue;
+            }
+            Boolean active = jdbc.sql("SELECT \"isActive\" AND \"deletedAt\" IS NULL FROM \"ProductVariant\" WHERE id = ?"
+                    + " AND \"productId\" = ? AND \"organizationId\" = ?").params(l.variantId(), l.productId(), org())
+                    .query(Boolean.class).optional().orElse(null);
+            if (active == null ? Boolean.TRUE.equals(product.get("hasVariants")) : !active && !allowArchived) {
+                throw ApiException.badRequest("Variant not found");
+            }
+        }
+    }
+
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
         if ("sales_invoice".equals(documentType)) {
             assertSaleable(lines);

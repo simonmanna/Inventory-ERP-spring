@@ -334,6 +334,39 @@ class SyncIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Phase I2 V-4: a device count of a product with variants counts one variant; without a variant it is"
+            + " refused (dead letter), never a 409 retry loop")
+    void stockCountPerVariant() {
+        String location = pinPosWarehouse();
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String shirt = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"hasVariants\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                + " 'stockable', true, 'AVCO', 40, 100, true, now())").params(shirt, demoOrg, "SV-" + suffix,
+                        "Shirt " + suffix).update();
+        String red = UUID.randomUUID().toString();
+        String blue = UUID.randomUUID().toString();
+        for (String[] v : new String[][] {{red, "Red"}, {blue, "Blue"}}) {
+            jdbc.sql("INSERT INTO \"ProductVariant\" (id, \"organizationId\", \"productId\", name, \"combinationKey\","
+                    + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, now())").params(v[0], demoOrg, shirt, v[1], v[0]).update();
+        }
+        JsonNode count = push(List.of(op("stock.count", Map.of("locationId", location, "reason", "Shelf count",
+                "lines", List.of(Map.of("productId", shirt, "variantId", red, "countedQty", 6))))));
+        assertThat(count.get("results").get(0).get("status").asString()).as(count.toString()).isEqualTo("applied");
+        assertThat(jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ? AND"
+                + " \"variantKey\" = ? AND \"locationId\" = ?").params(shirt, red, location).query(BigDecimal.class)
+                .single()).isEqualByComparingTo("6");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"StockItem\" WHERE \"productId\" = ? AND \"variantKey\" = ?")
+                .params(shirt, blue).query(Long.class).single()).as("blue was not counted, so not zeroed").isZero();
+
+        JsonNode noVariant = push(List.of(op("stock.count", Map.of("locationId", location, "lines", List.of(Map.of(
+                "productId", shirt, "countedQty", 3))))));
+        assertThat(noVariant.get("results").get(0).get("status").asString()).as(noVariant.toString())
+                .isEqualTo("failed");
+        assertThat(noVariant.toString()).contains("Choose a variant for");
+    }
+
+    @Test
     @DisplayName("push validation answers class-validator messages after the device guard")
     void validation() {
         Res bad = device("POST", "/sync/push", Map.of("deviceId", deviceId, "ops", List.of(Map.of("opId", "x",

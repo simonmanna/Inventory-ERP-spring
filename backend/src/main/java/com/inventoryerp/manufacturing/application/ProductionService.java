@@ -1,5 +1,6 @@
 package com.inventoryerp.manufacturing.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
@@ -100,13 +101,16 @@ public class ProductionService {
     private final TransactionTemplate newTx;
     private final EventBus events;
 
+    private final ProductVariantService variants;
+
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
             StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
-            PlatformTransactionManager txm, PlmGate plmGate, EventBus events) {
+            PlatformTransactionManager txm, PlmGate plmGate, EventBus events, ProductVariantService variants) {
         this.events = events;
+        this.variants = variants;
         this.plmGate = plmGate;
         this.standards = standards;
         this.quality = quality;
@@ -198,6 +202,12 @@ public class ProductionService {
             }
         }
 
+        // Phase I2 (D2, audit V-9): the output receives new stock and the materials are planned per variant, so each
+        // product with variants names an active variant of its own (also when the BOM was made before one was archived).
+        variants.resolve(outputProductId, outputVariantId);
+        for (MaterialPlan m : materials) {
+            variants.resolve(m.productId(), m.variantId());
+        }
         String locationId = dto.locationId() != null ? dto.locationId() : defLocationId;
         if (!has(locationId)) {
             throw ApiException.badRequest("No production location: pass locationId or set the BOM default.");

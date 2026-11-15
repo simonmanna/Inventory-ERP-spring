@@ -77,7 +77,15 @@ public final class DispatchCommands {
             String taxId,
             @Size(max = 500) String description,
             @Size(max = 80) String batchNumber,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            String variantId) {
+
+        /** Phase I2 (audit V-6): the variant is optional on the wire; older clients send none. */
+        public DeliveryLineInput(String productId, BigDecimal quantity, String uomId, BigDecimal unitPrice, String taxId,
+                String description, String batchNumber, String notes) {
+            this(productId, quantity, uomId, unitPrice, taxId, description, batchNumber, notes, null);
+        }
+    }
 
     public record DeliveryOrderInput(
             @NotBlank String partnerId,

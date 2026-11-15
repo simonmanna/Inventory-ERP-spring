@@ -233,7 +233,8 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
+        requireVariant(product, dto.variantId, dto.locationId,
+                "return_in".equals(dto.moveType) ? VariantRule.EXISTING : VariantRule.INBOUND);
         boolean batchTracking = bool(product, "batchTracking");
         String productName = str(product, "name");
         if (batchTracking && dto.batchNumber == null
@@ -401,25 +402,43 @@ public class StockService {
                 actualValue);
     }
 
+    /** How strictly {@link #requireVariant} treats a move (Phase I2, owner decision D2). */
+    private enum VariantRule {
+        /** Adds new stock (receipt, positive count): an active variant of the product is required. */
+        INBOUND,
+        /** Moves or restores existing stock (issue, transfer, negative count, return restock): legacy rule. */
+        EXISTING
+    }
+
     /**
-     * ADR-S058: a product with variants moves stock per variant. A move without a variant is refused unless the
-     * location still holds a quant without one (stock or documents from before the product got variants).
+     * ADR-S058 + Phase I2 (owner decision D2): a product with variants moves stock per variant.
+     * <ul>
+     *   <li>New stock ({@link VariantRule#INBOUND}) must name an active variant of the product: a receipt or a
+     *       positive count never grows the legacy quant without a variant, and an inactive variant receives nothing.</li>
+     *   <li>Existing stock ({@link VariantRule#EXISTING}) may move without a variant only while the location still
+     *       holds a quant without one (stock from before the product got variants), until it runs out; an inactive
+     *       variant's remaining stock can still be issued, moved, counted down or restored by a return.</li>
+     * </ul>
      */
-    private void requireVariant(Map<String, Object> product, String variantId, String locationId) {
+    private void requireVariant(Map<String, Object> product, String variantId, String locationId, VariantRule rule) {
         if (variantId != null) {
             // The variant must be one of this product's (any organisation's id would otherwise open a foreign quant).
-            boolean own = jdbc.sql("SELECT count(*) FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ?"
-                            + " AND \"organizationId\" = ?")
-                    .params(variantId, str(product, "id"), TenantContext.organizationId()).query(Long.class).single() > 0;
-            if (!own) {
+            Boolean active = jdbc.sql("SELECT \"isActive\" AND \"deletedAt\" IS NULL FROM \"ProductVariant\" WHERE id = ?"
+                            + " AND \"productId\" = ? AND \"organizationId\" = ?")
+                    .params(variantId, str(product, "id"), TenantContext.organizationId()).query(Boolean.class)
+                    .optional().orElse(null);
+            if (active == null) {
                 throw ApiException.notFound("Variant not found");
+            }
+            if (rule == VariantRule.INBOUND && !active) {
+                throw ApiException.badRequest("Variant is inactive: it cannot receive stock");
             }
             return;
         }
         if (!bool(product, "hasVariants")) {
             return;
         }
-        if (lookups.stockItem(str(product, "id"), null, locationId) == null) {
+        if (rule == VariantRule.INBOUND || lookups.stockItem(str(product, "id"), null, locationId) == null) {
             throw ApiException.badRequest("Choose a variant for " + str(product, "name"));
         }
     }
@@ -439,7 +458,7 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
+        requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
         String productName = str(product, "name");
         BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
@@ -792,7 +811,7 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
+        requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
         // Phase I1b (audit U-3): stock documents count in the base unit (ADR-S003); a caller that names a unit gets its
         // count / delta converted instead of being read as base units.
         BigDecimal counted = dto.countedQuantity == null ? null : toBaseQty(product, dto, dto.countedQuantity);
@@ -814,6 +833,10 @@ public class StockService {
         BigDecimal delta = counted.subtract(currentQty);
         if (delta.signum() == 0) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
+        }
+        if (delta.signum() > 0) {
+            // D2: a count that adds stock is a receipt — never onto the legacy no-variant quant or an inactive variant.
+            requireVariant(product, variantId, dto.locationId, VariantRule.INBOUND);
         }
         if (bool(product, "batchTracking") || bool(product, "serialTracking")
                 || "FIFO".equals(str(product, "costingMethod"))) {
@@ -933,7 +956,7 @@ public class StockService {
         if (lookups.location(dto.toLocationId) == null) {
             throw ApiException.notFound("Destination location not found");
         }
-        requireVariant(product, dto.variantId, dto.fromLocationId);
+        requireVariant(product, dto.variantId, dto.fromLocationId, VariantRule.EXISTING);
         if (dto.quantity.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }

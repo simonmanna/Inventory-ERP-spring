@@ -159,7 +159,7 @@ public class FleetDeliveryInvoiceService {
         Instant delivered = db.jdbc().sql("SELECT MAX(\"deliveredAt\") FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND"
                 + " \"deliveryOrderId\" = ?").params(FleetDb.org(), deliveryOrderId).query(java.sql.Timestamp.class)
                 .optional().map(java.sql.Timestamp::toInstant).orElse(null);
-        Map<String, Object> inv = invoices.create(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
+        Map<String, Object> inv = invoices.createCopied(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
                 null, null, null, null, null, delivered == null ? null : JsonConfig.toJsIso(delivered), address, null,
                 null, code, null, null, code, "Delivery order " + code + (o.get("sourceNumber") == null ? ""
                         : " (from " + o.get("sourceNumber") + ")"), lines));

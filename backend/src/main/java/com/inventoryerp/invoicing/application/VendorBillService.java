@@ -219,6 +219,7 @@ public class VendorBillService {
     @Transactional
     public Map<String, Object> create(BillInput dto) {
         validateDates(dto.issueDate(), dto.dueDate());
+        builder.assertVariants(dto.effectiveLines(this::productTax), true, false);
         Map<String, Object> doc = builder.createDocument("vendor_bill", new HeaderInput(dto.partnerId(), dto.issueDate(),
                 dto.dueDate(), null, null, null, null, null, null, null, null, null, null, null, null, null, null,
                 dto.currencyId(), null, dto.reference(), dto.notes(), null, null, dto.branchId()),
@@ -279,6 +280,7 @@ public class VendorBillService {
         if (!"draft".equals(String.valueOf(doc.get("status")))) {
             throw ApiException.badRequest("Only draft bills can be edited");
         }
+        builder.assertVariants(dto.effectiveLines(this::productTax), true, false);
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
         Totals totals = builder.prepareLines(dto.effectiveLines(this::productTax), UnitRole.PURCHASE);
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"currencyId\" = ?,"

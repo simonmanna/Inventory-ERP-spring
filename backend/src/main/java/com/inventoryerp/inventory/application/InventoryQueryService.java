@@ -476,12 +476,18 @@ public class InventoryQueryService {
         return reorderSuggestions(scope.resolve(locationId));
     }
 
+    /**
+     * Par lines. Phase I2 (audit V-10): a product with variants gets one line per active variant, each compared with
+     * the product's par on its own stock (variants are held and bought separately; a surplus of one never hides the
+     * shortage of another). Audit U-9: a product whose purchase unit cannot be converted no longer fails the whole
+     * report — its line keeps the shortfall in the stock unit and says why in {@code unitError}.
+     */
     private List<Map<String, Object>> reorderSuggestions(String locationId) {
         List<Map<String, Object>> products = SqlRows.list(jdbc.sql("SELECT id, code, name, \"minQuantity\", \"reorderQty\","
-                + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\" FROM \"Product\" WHERE"
+                + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\", \"hasVariants\" FROM \"Product\" WHERE"
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"trackInventory\" = true"
                 + " AND (\"minQuantity\" > 0 OR \"reorderQty\" > 0)").param(org()));
-        // On-hand per product in one grouped query (was one per product).
+        // On-hand per product and variant in one grouped query (was one per product).
         List<Object> params = new ArrayList<>(List.of(org()));
         String loc = "";
         if (notBlank(locationId)) {
@@ -489,39 +495,72 @@ public class InventoryQueryService {
             params.add(locationId);
         }
         Map<String, BigDecimal> onHandBy = new HashMap<>();
-        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", COALESCE(SUM(quantity), 0) AS q FROM \"StockItem\""
-                + " WHERE \"organizationId\" = ?" + loc + " GROUP BY \"productId\"").params(params).query()
-                .listOfRows()) {
-            onHandBy.put((String) g.get("productId"), Money.dec(g.get("q")));
+        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", \"variantKey\", COALESCE(SUM(quantity), 0) AS q"
+                + " FROM \"StockItem\" WHERE \"organizationId\" = ?" + loc + " GROUP BY \"productId\", \"variantKey\"")
+                .params(params).query().listOfRows()) {
+            BigDecimal q = Money.dec(g.get("q"));
+            onHandBy.merge((String) g.get("productId"), q, BigDecimal::add);
+            onHandBy.merge(g.get("productId") + "::" + g.get("variantKey"), q, BigDecimal::add);
+        }
+        List<Object> parents = products.stream().filter(p -> Boolean.TRUE.equals(p.get("hasVariants")))
+                .map(p -> p.get("id")).toList();
+        Map<Object, List<Map<String, Object>>> variantsBy = new HashMap<>();
+        if (!parents.isEmpty()) {
+            for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, \"productId\", name FROM \"ProductVariant\""
+                    + " WHERE \"productId\" IN (:ids) AND \"organizationId\" = :org AND \"isActive\" AND \"deletedAt\" IS NULL"
+                    + " ORDER BY name").param("ids", parents).param("org", org()))) {
+                variantsBy.computeIfAbsent(v.get("productId"), k -> new ArrayList<>()).add(v);
+            }
         }
         List<Map<String, Object>> out = new ArrayList<>();
         List<Map<String, Object>> belowPar = new ArrayList<>();
         for (Map<String, Object> p : products) {
-            BigDecimal onHand = onHandBy.getOrDefault(str(p, "id"), Money.ZERO);
-            BigDecimal par = p.get("minQuantity") == null ? Money.ZERO : dec(p, "minQuantity");
-            BigDecimal shortfall = par.subtract(onHand);
-            BigDecimal suggest = Money.ZERO;
-            BigDecimal reorder = (BigDecimal) p.get("reorderQty");
-            if (reorder != null && reorder.signum() > 0) {
-                suggest = reorder;
-            } else if (shortfall.signum() > 0) {
-                String purchaseUom = str(p, "purchaseUomId");
-                if (purchaseUom != null && !purchaseUom.equals(str(p, "uomId"))) {
-                    suggest = uomConversion.fromBase(shortfall, purchaseUom, str(p, "id"), str(p, "uomId"), true)
-                            .setScale(2, RoundingMode.CEILING);
-                } else {
-                    BigDecimal conv = p.get("uomConversion") != null && dec(p, "uomConversion").signum() > 0
-                            ? dec(p, "uomConversion") : BigDecimal.ONE;
-                    suggest = Money.div(shortfall, conv).setScale(2, RoundingMode.CEILING);
+            List<Map<String, Object>> cells = Boolean.TRUE.equals(p.get("hasVariants"))
+                    ? variantsBy.getOrDefault(p.get("id"), List.of()) : java.util.Collections.singletonList(null);
+            for (Map<String, Object> variant : cells) {
+                BigDecimal onHand = variant == null ? onHandBy.getOrDefault(str(p, "id"), Money.ZERO)
+                        : onHandBy.getOrDefault(p.get("id") + "::" + variant.get("id"), Money.ZERO);
+                BigDecimal par = p.get("minQuantity") == null ? Money.ZERO : dec(p, "minQuantity");
+                if (onHand.compareTo(par) > 0) {
+                    continue;
                 }
+                BigDecimal shortfall = par.subtract(onHand);
+                BigDecimal suggest = Money.ZERO;
+                String unitError = null;
+                BigDecimal reorder = (BigDecimal) p.get("reorderQty");
+                if (reorder != null && reorder.signum() > 0) {
+                    suggest = reorder;
+                } else if (shortfall.signum() > 0) {
+                    String purchaseUom = str(p, "purchaseUomId");
+                    if (purchaseUom != null && !purchaseUom.equals(str(p, "uomId"))) {
+                        BigDecimal converted = uomConversion.tryFromBase(shortfall, purchaseUom, str(p, "id"),
+                                str(p, "uomId"), true);
+                        if (converted != null) {
+                            suggest = converted.setScale(2, RoundingMode.CEILING);
+                        } else {
+                            suggest = shortfall.setScale(2, RoundingMode.CEILING);
+                            unitError = "The purchase unit cannot be converted to the stock unit — quantity shown in the"
+                                    + " stock unit";
+                        }
+                    } else {
+                        BigDecimal conv = p.get("uomConversion") != null && dec(p, "uomConversion").signum() > 0
+                                ? dec(p, "uomConversion") : BigDecimal.ONE;
+                        suggest = Money.div(shortfall, conv).setScale(2, RoundingMode.CEILING);
+                    }
+                }
+                belowPar.add(p);
+                Map<String, Object> line = Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"),
+                        "onHand", JsNumbers.js(onHand), "par", JsNumbers.js(par), "belowPar", true, "suggestedOrderQty",
+                        JsNumbers.js(suggest), "supplier", null);
+                if (variant != null) {
+                    line.put("variantId", variant.get("id"));
+                    line.put("variantName", variant.get("name"));
+                }
+                if (unitError != null) {
+                    line.put("unitError", unitError);
+                }
+                out.add(line);
             }
-            if (onHand.compareTo(par) > 0) {
-                continue;
-            }
-            belowPar.add(p);
-            out.add(Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"), "onHand",
-                    JsNumbers.js(onHand), "par", JsNumbers.js(par), "belowPar", true, "suggestedOrderQty",
-                    JsNumbers.js(suggest), "supplier", null));
         }
         Map<String, Map<String, Object>> suppliers = byId(SqlRows.list(jdbc.sql("SELECT id, name FROM \"Partner\""
                 + " WHERE id IN (:ids) AND \"organizationId\" = :org").param("ids", idsOf(belowPar, "supplierId"))

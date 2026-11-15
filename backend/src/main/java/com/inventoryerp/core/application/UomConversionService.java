@@ -262,6 +262,19 @@ public class UomConversionService {
     }
 
     /**
+     * {@link #fromBase}, or null when the units cannot be converted. Not transactional on purpose: the failure is caught
+     * here, inside the caller's transaction, so a report can flag one product without its whole transaction being
+     * marked rollback-only (Phase I2, audit U-9).
+     */
+    public BigDecimal tryFromBase(Object qty, String toUomId, String productId, String productUomId, boolean round) {
+        try {
+            return fromBase(qty, toUomId, productId, productUomId, round);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            return null;
+        }
+    }
+
+    /**
      * Base units of {@code productId} per 1 {@code uomId}, unrounded: 1 for the base unit (or no unit), the
      * product's own {@code ProductUom} factor when declared, else the category factor / density bridge.
      */

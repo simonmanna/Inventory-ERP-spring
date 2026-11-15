@@ -947,15 +947,28 @@ public class SyncPushService {
         lines.forEach(l -> productIds.add(String.valueOf(l.get("productId"))));
         Map<String, Object> session = counts.start(str(payload.get("locationId")), "spot", str(payload.get("notes")), null,
                 null, new ArrayList<>(productIds), null);
-        Map<String, Map<String, Object>> lineByProduct = new HashMap<>();
+        // Phase I2 (audit V-4): a device counts a product's total, or one variant of a product with variants (the
+        // session expands such a product into one line per active variant). Key = product + variant ("" = none).
+        Map<String, Map<String, Object>> lineByCell = new HashMap<>();
         for (Object o : PosSql.list(session.get("lines"))) {
             Map<String, Object> l = PosSql.map(o);
-            // A device counts a product's total: a resumed screen count split per lot (lotLine) cannot take it.
-            if (l.get("variantId") == null && !Boolean.TRUE.equals(l.get("lotLine"))) {
-                lineByProduct.put(String.valueOf(l.get("productId")), l);
+            // A resumed screen count split per lot (lotLine) cannot take a device total.
+            if (!Boolean.TRUE.equals(l.get("lotLine"))) {
+                lineByCell.put(countCell(l.get("productId"), l.get("variantId")), l);
             }
         }
-        long missing = productIds.stream().filter(id -> !lineByProduct.containsKey(id)).count();
+        for (Map<String, Object> l : lines) {
+            if (!PosSql.truthy(l.get("variantId"))) {
+                Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\" FROM \"Product\" WHERE"
+                        + " id = ? AND \"organizationId\" = ?").params(String.valueOf(l.get("productId")),
+                                TenantContext.organizationId()));
+                if (product != null && Boolean.TRUE.equals(product.get("hasVariants"))) {
+                    throw http("Choose a variant for " + product.get("name"), 400);
+                }
+            }
+        }
+        long missing = lines.stream().filter(l -> !lineByCell.containsKey(countCell(l.get("productId"),
+                l.get("variantId")))).count();
         if (missing > 0) {
             throw http("An open spot count on this location does not cover " + missing + " counted product(s) — finish or"
                     + " cancel it in the back office, then retry", 409);
@@ -964,14 +977,18 @@ public class SyncPushService {
         for (Map<String, Object> l : lines) {
             String reason = l.get("reason") instanceof String r && !r.trim().isEmpty() ? r.trim()
                     : payload.get("reason") instanceof String pr && !pr.trim().isEmpty() ? pr.trim() : "Device count";
-            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByProduct.get(String.valueOf(l.get("productId")))
-                    .get("id")), PosSql.dec(l.get("countedQty")), reason));
+            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByCell.get(countCell(l.get("productId"),
+                    l.get("variantId"))).get("id")), PosSql.dec(l.get("countedQty")), reason));
         }
         String sessionId = String.valueOf(session.get("id"));
         counts.saveDraft(sessionId, draft, null, null);
         counts.submit(sessionId, null, null);
         return mapOf("id", session.get("id"), "mapping", mapOf("countId", sessionId,
                 "countCode", session.get("countCode") == null ? "" : String.valueOf(session.get("countCode"))));
+    }
+
+    private static String countCell(Object productId, Object variantId) {
+        return productId + "::" + (PosSql.truthy(variantId) ? String.valueOf(variantId) : "");
     }
 
     /** Process the not-yet-done stock-posting jobs of one shift's invoices before its close. */

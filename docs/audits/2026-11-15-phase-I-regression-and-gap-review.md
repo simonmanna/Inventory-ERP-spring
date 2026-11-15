@@ -32,11 +32,11 @@ Documented in ADR-S072 items 7–9, `docs/spec/pos.md` deviations 7–10, ADR-S0
 | N1 ✔ | critical | Invoice cancel after a posted partial credit note restocks the whole issue and reverses the whole revenue again (only guard: `amountPaid > 0`) | `J/invoicing/application/InvoicingWorkflowsInitializer.java` invoice workflow cancel guard; `CreditNoteService.applyTo` lowers only `amountResidual` | I2 |
 | N2 ✔ | critical | Sales order change request: the split/replacement line drops `variantId`; a product change keeps the old product's unit and factor and leaves the old reservation | `J/sales/application/SalesOrderChangeService.replacement` | I2 |
 | N3 ✔ | critical | Production reversal issues `producedQty` (order unit) as base units; unused-material return receives `qtyConsumed` (line unit) as base; yield variance mixes units | `J/manufacturing/application/ProductionService` reverse (`producedQty` stored in the document unit, received in base), `returnMaterials` | I2 |
-| N4 | high | Bill↔receipt matcher matches by product only (bill for variant A consumes variant B's receipt; the remainder is auto-received as A) | `J/procurement/application/BillReceiptMatcherService` | I2 |
-| N5 | high | Orders-module order → Fleet delivery order: base unit with factor 1 although `OrderItem.quantity` is in the sales unit | `J/fleet/application/FleetDeliveryOrderService` legacy order branch | I2 |
-| N6 | high | Quotation → Orders-module order drops the unit and the variant | `J/sales/application/SalesQuotationService` convert to `orders` | I2 |
-| N7 ✔ | medium | Cancelling the order left open by a refused POS checkout records kitchen waste for every line ("cancelled after kitchen"), although nothing was made (found while writing the R2 test: 3 boxes wasted) | `KitchenWaste` on order cancel | I2 (tracked) |
-| N8 ✔ | medium | Production reversal returns the main output and the materials but never issues the by-products it received (their value stays in stock, WIP is short by the by-product credit) | `J/manufacturing/application/ProductionService.reverseOrder` (found while fixing N3) | I2 (tracked) |
+| N4 ✔ | high | Bill↔receipt matcher matches by product only (bill for variant A consumes variant B's receipt; the remainder is auto-received as A) | `J/procurement/application/BillReceiptMatcherService` | I2 |
+| N5 ✔ | high | Orders-module order → Fleet delivery order: base unit with factor 1 although `OrderItem.quantity` is in the sales unit | `J/fleet/application/FleetDeliveryOrderService` legacy order branch | I2 |
+| N6 ✔ | high | Quotation → Orders-module order drops the unit and the variant | `J/sales/application/SalesQuotationService` convert to `orders` | I2 |
+| N7 | medium | Cancelling the order left open by a refused POS checkout records kitchen waste for every line ("cancelled after kitchen"), although nothing was made (found while writing the R2 test: 3 boxes wasted) | `KitchenWaste` on order cancel | I2 (tracked) |
+| N8 | medium | Production reversal returns the main output and the materials but never issues the by-products it received (their value stays in stock, WIP is short by the by-product credit) | `J/manufacturing/application/ProductionService.reverseOrder` (found while fixing N3) | I2 (tracked) |
 | N9 ✔ | medium | Fleet delivery order from a sales invoice drops the invoice line's variant (`variantId` null), so dispatch issues the product-level quant | `J/fleet/application/FleetDeliveryOrderService.fromInvoice` (found while fixing N5) | I2 with V-4…V-10 |
 
 Medium/low findings tracked for I2 (each needs a failing test first):
@@ -159,6 +159,7 @@ Each fix landed with a regression test that failed before it.
 | N4 | `3ac23f6d` | `ProductVariantIT.billMatchesOnlyItsVariant` |
 | N5 | `3fb2bb5f` | `FleetDispatchIT.salesOrderKeepsSalesUnit` |
 | N6 | `31f0302e` | `ProductUnitsIT.quotationToOrderKeepsUnit`, `ProductVariantIT.quotationToOrderKeepsVariant` |
+| D2, V-5…V-10, V-4, N9, U-9 | (this commit) | `VariantIntegrityIT` (6 tests), `SyncIT.stockCountPerVariant`, `FleetDispatchIT.deliveryOrdersKeepTheVariant` |
 
 Notes:
 
@@ -170,6 +171,12 @@ Notes:
   reason qc_rejection." whenever it runs first. `SalesAgreementIT.commissionsAndTargets` (expected 400, was −100) also fails
   on `main` on a clean container, so it predates Phase I.
 
-Still open in I2: D2 and V-4…V-10 (with N9), U-4…U-10, U-5, R-1 (`V486`), C-1/C-2, M-3, N7, N8, the D1 offline POS
+- D2 / V-10 (ADR-S058 addendum): the par report applies the product's `minQuantity` to each active variant (there is
+  no per-variant par field); per-variant levels live on replenishment / reorder rules. Owner may override.
+- U-8 (production substitute "consumed in its base unit"): by definition (`MfgCommands.SubstituteInput`) `ratio`
+  substitute units replace one unit of the component line, and the substitute carries no unit of its own, so its
+  quantity is in its base unit. Not a defect under that definition; recorded instead of changed.
+
+Still open in I2: U-4…U-7, U-10, U-5, R-1 (`V487`; V486 went to replenishment variants), C-1/C-2, M-3, N7, N8, the D1 offline POS
 posting hold (ADR-S072), and the tracked M-1…M-12.
 

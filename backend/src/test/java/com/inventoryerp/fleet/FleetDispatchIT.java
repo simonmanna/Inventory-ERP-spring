@@ -499,6 +499,36 @@ class FleetDispatchIT extends ApiTestSupport {
         }
     }
 
+    @Test
+    @DisplayName("Phase I2 V-6/N9: manual and invoice-sourced delivery orders keep the product variant")
+    void deliveryOrdersKeepTheVariant() {
+        String tiles = product("Variant tiles", true);
+        jdbc.sql("UPDATE \"Product\" SET \"hasVariants\" = true WHERE id = ?").param(tiles).update();
+        String grey = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"ProductVariant\" (id, \"organizationId\", \"productId\", name, \"combinationKey\","
+                + " \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, 'Grey', ?, 52000, now())").params(grey, demoOrg, tiles,
+                        grey).update();
+
+        // V-6: the manual order names the variant and is priced from it; without one it is refused.
+        Res none = as("POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site, "locationId",
+                yard, "requestedDate", today, "lines", List.of(Map.of("productId", tiles, "quantity", 3))));
+        assertThat(none.status()).as(none.raw().body()).isEqualTo(400);
+        assertThat(none.raw().body()).contains("Choose a variant for");
+        JsonNode manual = ok(201, "POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site,
+                "locationId", yard, "requestedDate", today, "lines", List.of(Map.of("productId", tiles, "variantId",
+                        grey, "quantity", 3)))).get("lines").get(0);
+        assertThat(manual.get("variantId").asString()).isEqualTo(grey);
+        assertThat(dec(manual.get("unitPrice"))).isEqualByComparingTo("52000");
+
+        // N9: a delivery order made from an invoice issues the invoice line's variant.
+        String invoice = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", tiles, "variantId", grey, "quantity", 2, "unitPrice", 52000)))).get("id")
+                .asString();
+        JsonNode fromInvoice = ok(201, "POST", "/fleet/delivery-orders/from-invoice", Map.of("sourceId", invoice,
+                "siteId", site, "locationId", yard)).get("lines").get(0);
+        assertThat(fromInvoice.get("variantId").asString()).isEqualTo(grey);
+    }
+
     String unit(String code) {
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"

@@ -225,7 +225,7 @@ public class SalesBillingService {
                 + " WHERE c.code = ? AND c.code <> g.\"currencyCode\"", org(), o.get("currencyCode"));
         String currencyId = currency == null ? null : str(currency.get("id"));
         BigDecimal rate = currencyId == null ? null : dec(o.get("exchangeRate"));
-        return invoices.create(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
+        return invoices.createCopied(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
                 null, null, str(o.get("ownerId")), null, address, str(o.get("incoterm")), null, str(o.get("number")),
                 currencyId, rate, str(o.get("customerRef")), notes, lines));
     }
