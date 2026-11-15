@@ -121,7 +121,27 @@ public class InvoicingWorkflowsInitializer {
                             && !"cancelled".equals(String.valueOf(status));
                 }, this::postInvoice, null),
                 new Transition("posted", "cancelled", "cancel", "invoice:cancel",
-                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelDocument, null)));
+                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelInvoice, null)));
+    }
+
+    /**
+     * Review N1: an invoice a posted credit note already corrected is not cancelled as a whole — the cancel would
+     * return all the issued stock and reverse all the revenue a second time (the credit note's restock and journal
+     * stay). Remaining corrections go through credit notes. Runs under the workflow's row lock; a credit note posting
+     * locks the invoice first too, so the two never interleave.
+     */
+    private void cancelInvoice(Context ctx) {
+        String id = (String) ctx.entity().get("id");
+        List<String> credits = jdbc.sql("SELECT d.\"documentNumber\" FROM \"Document\" d WHERE d.\"organizationId\" = ?"
+                + " AND d.\"documentType\" = 'credit_note' AND d.status::text IN ('posted', 'paid') AND (d.\"reversedDocumentId\" = ?"
+                + " OR EXISTS (SELECT 1 FROM \"CreditAllocation\" a WHERE a.\"creditDocumentId\" = d.id AND a.\"documentId\" = ?))"
+                + " ORDER BY d.\"documentNumber\"").params(ctx.organizationId(), id, id).query(String.class).list();
+        if (!credits.isEmpty()) {
+            throw ApiException.badRequest("Invoice " + ctx.entity().get("documentNumber") + " has posted credit notes ("
+                    + String.join(", ", credits) + "); it cannot be cancelled. Issue a credit note for the remaining"
+                    + " amount instead.");
+        }
+        cancelDocument(ctx);
     }
 
     private void postInvoice(Context ctx) {

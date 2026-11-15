@@ -312,7 +312,20 @@ public class CreditNoteService {
         if (cn == null) {
             throw ApiException.notFound("Credit note not found");
         }
-        String status = String.valueOf(cn.get("status"));
+        // Review N1 / audit A-1: lock the credited invoice, then the credit note (the invoice cancel locks the invoice
+        // first as well), and read both states under the locks: two concurrent posts never both restock and journal,
+        // and a credit note never posts against an invoice that was cancelled meanwhile.
+        String credited = (String) cn.get("reversedDocumentId");
+        if (credited != null) {
+            String invoiceStatus = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(credited, org()).query(String.class).optional().orElse(null);
+            if ("cancelled".equals(invoiceStatus)) {
+                throw ApiException.badRequest("The credited invoice is cancelled; its stock and revenue were already"
+                        + " reversed");
+            }
+        }
+        String status = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(id, org()).query(String.class).optional().orElse(String.valueOf(cn.get("status")));
         if ("posted".equals(status) || "paid".equals(status)) {
             throw ApiException.badRequest("Credit note is already posted");
         }
