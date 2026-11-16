@@ -4,6 +4,7 @@ import static com.inventoryerp.projects.application.ProjectService.blank;
 import static com.inventoryerp.projects.application.ProjectService.day;
 import static com.inventoryerp.projects.application.ProjectService.org;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -73,7 +74,7 @@ public class ProjectPlantRateService {
         String name = blank(in.name()) == null ? fallback : in.name().trim();
         String unit = unit(in.unit());
         BigDecimal rate = rate(in.rate());
-        String from = day(in.validFrom()) == null ? LocalDate.now().toString() : day(in.validFrom());
+        String from = day(in.validFrom()) == null ? LocalDate.now(AccountingDay.zone(jdbc)).toString() : day(in.validFrom());
         String to = dates(from, day(in.validTo()));
         if (jdbc.sql("SELECT count(*) FROM \"ProjectPlantRate\" WHERE \"organizationId\" = ? AND \"equipmentType\" = ?"
                 + " AND \"equipmentId\" = ? AND unit = ? AND \"validFrom\" = ?::date").params(org(), type, equipment, unit,
