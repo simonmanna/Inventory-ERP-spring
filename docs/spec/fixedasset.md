@@ -88,3 +88,20 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   isolation, and the authorization matrix (54).
 
 Parity scenarios have not yet been run against Nest.
+
+## ADR-S073 impairment (extension)
+
+`GET /fixed-assets/:assetId/impairments` (`fixed_asset:read`) returns the carrying amount, the accumulated impairment,
+the reversal headroom and the history. Two routes post, both with an Idempotency-Key and `fixed_asset:impair`:
+- `POST /fixed-assets/:assetId/impairments {recoverableAmount, date?, reason?}`;
+- `POST .../impairments/reversal`.
+
+Table: `AssetImpairment` (V503).
+
+- Straight-line depreciation after an impairment spreads the new carrying amount over the remaining life.
+- A reversal is capped at the carrying amount the asset would have had without impairment.
+- Disposal clears the accumulated impairment.
+
+Details: [accounting.md § ADR-S073](accounting.md#adr-s073-gl-automation) and
+[ADR-S073](../adr/ADR-S073-recurring-deferrals-bank-rules-impairment.md). Test: `GlAutomationIT.impairmentLifecycle`.
+

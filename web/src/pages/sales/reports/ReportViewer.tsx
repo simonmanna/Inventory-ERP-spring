@@ -30,6 +30,7 @@ const STATUS_OPTIONS: Record<string, string[]> = {
   quotation: ['draft', 'pending_approval', 'approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled', 'converted'],
   invoice: ['not_paid', 'partial', 'paid', 'overpaid'],
   customer: ['active', 'at_risk', 'inactive', 'never'],
+  cashSale: ['draft', 'not_submitted', 'submitted', 'under_review', 'returned_for_correction', 'approved', 'invoiced', 'rejected', 'voided'],
   return: ['requested', 'approved', 'received', 'inspected', 'closed', 'rejected', 'cancelled'],
 };
 
@@ -38,6 +39,7 @@ function statusKind(key: string): string {
   if (key.startsWith('invoice')) return 'invoice';
   if (key === 'customer-activity') return 'customer';
   if (key.startsWith('return')) return 'return';
+  if (key.startsWith('branch-cash')) return 'cashSale';
   return 'order';
 }
 

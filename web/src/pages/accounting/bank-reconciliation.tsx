@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
+import { AllocateLineDialog, BankRulesPanel } from './bank-rules-panel';
 import { Landmark, Lock, Upload, Wand2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +53,7 @@ const STATUS_VARIANT: Record<StatementLineRow['status'], 'default' | 'secondary'
   matched: 'default',
   unmatched: 'secondary',
   excluded: 'outline',
+  partial: 'secondary',
 };
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -198,6 +200,7 @@ export function BankReconciliationPage() {
   const [matching, setMatching] = useState<StatementLineRow | null>(null);
   const [excluding, setExcluding] = useState<StatementLineRow | null>(null);
   const [excludeNote, setExcludeNote] = useState('');
+  const [allocating, setAllocating] = useState<StatementLineRow | null>(null);
   const candidates = usePaymentCandidates(matching?.id);
   const parsed = parseStatementCsv(csv);
 
@@ -279,7 +282,7 @@ export function BankReconciliationPage() {
       render: (l) => (
         <div className="space-y-0.5">
           <Badge variant={STATUS_VARIANT[l.status]}>
-            {l.status === 'matched' ? tx('Matched') : l.status === 'excluded' ? tx('Excluded') : tx('Unmatched')}
+            {l.status === 'matched' ? tx('Matched') : l.status === 'excluded' ? tx('Excluded') : l.status === 'partial' ? tx('Partly matched') : tx('Unmatched')}
           </Badge>
           {(l.matchedPaymentNumber || l.note) && (
             <p className="text-xs text-muted-foreground">{l.matchedPaymentNumber ?? l.note}</p>
@@ -292,6 +295,14 @@ export function BankReconciliationPage() {
       header: '',
       render: (l) => {
         if (!canUpdate) return null;
+        if (l.status === 'partial') {
+          return (
+            <div className="flex gap-1">
+              <Button variant="ghost" size="sm" onClick={() => setAllocating(l)}>{tx('Allocate rest')}</Button>
+              <Button variant="ghost" size="sm" onClick={() => void undo(l.id)} disabled={unmatchLine.isPending}>{tx('Undo')}</Button>
+            </div>
+          );
+        }
         if (l.status !== 'unmatched') {
           return (
             <Button variant="ghost" size="sm" onClick={() => void undo(l.id)} disabled={unmatchLine.isPending}>
@@ -302,6 +313,7 @@ export function BankReconciliationPage() {
         return (
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => setMatching(l)}>{tx('Match')}</Button>
+            <Button variant="ghost" size="sm" onClick={() => setAllocating(l)}>{tx('Split')}</Button>
             <Button variant="ghost" size="sm" onClick={() => setExcluding(l)}>{tx('Exclude')}</Button>
           </div>
         );
@@ -353,6 +365,7 @@ export function BankReconciliationPage() {
           options={[
             { value: 'unmatched', label: tx('Unmatched') },
             { value: 'matched', label: tx('Matched') },
+            { value: 'partial', label: tx('Partly matched') },
             { value: 'excluded', label: tx('Excluded') },
           ]}
         />
@@ -411,6 +424,8 @@ export function BankReconciliationPage() {
             )}
           </ListCard>
 
+          <BankRulesPanel bankAccountId={accountId} canUpdate={canUpdate} />
+
           {(runs.data?.length ?? 0) > 0 && (
             <Card>
               <CardHeader>
@@ -430,6 +445,8 @@ export function BankReconciliationPage() {
           )}
         </>
       )}
+
+      <AllocateLineDialog line={allocating} onClose={() => setAllocating(null)} />
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent>

@@ -128,6 +128,14 @@ export const ACCOUNT_MAPPING_REGISTRY: readonly AccountMappingDef[] = [
     description: 'Deferred revenue for goods or services not yet delivered.',
   },
   {
+    key: 'prepaid_expense',
+    label: 'Prepaid Expenses',
+    group: 'ar_ap',
+    expectedCategories: ['prepaid_expense', 'current_asset'],
+    required: false,
+    description: 'Default balance of a prepaid-expense deferral schedule (ADR-S073). Created on first use.',
+  },
+  {
     key: 'customer_deposit',
     label: 'Customer Deposits',
     group: 'sales',
@@ -397,6 +405,22 @@ export const ACCOUNT_MAPPING_REGISTRY: readonly AccountMappingDef[] = [
     group: 'fixed_assets',
     expectedCategories: ['equity'],
     required: true,
+  },
+  {
+    key: 'asset_impairment_loss',
+    label: 'Asset Impairment Loss',
+    group: 'fixed_assets',
+    expectedCategories: ['other_expense', 'operating_expense'],
+    required: false,
+    description: 'IAS 36 impairment loss; a reversal is credited here (ADR-S073). Created on first use.',
+  },
+  {
+    key: 'accumulated_impairment',
+    label: 'Accumulated Impairment',
+    group: 'fixed_assets',
+    expectedCategories: ['contra_asset', 'accumulated_depreciation'],
+    required: false,
+    description: 'Contra-asset holding impairment losses until disposal (ADR-S073). Created on first use.',
   },
 
   // ------------------------------------------------------------------- fx ---

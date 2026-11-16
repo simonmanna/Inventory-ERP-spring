@@ -201,7 +201,10 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   with the gain/loss going to `asset_gain_loss`.
 - **Depreciation entries** carry the key `asset_depreciation:<id>`.
 - **`double_declining`** = 2 × the straight-line rate. Nest used 4 ×; `declining_balance` keeps Nest's 2 ×.
-- **Not built:** impairment, CIP capitalisation, units of production and per-category accounts.
+- **Impairment (ADR-S073).** It posts Dr `asset_impairment_loss` / Cr `accumulated_impairment`. Depreciation after an
+  impairment is re-based, a reversal is capped, and disposal clears the impairment. See
+  [§ ADR-S073](#adr-s073-gl-automation).
+- **Not built:** CIP capitalisation, units of production and per-category accounts.
 
 **ACC-6: bank reconciliation (B5)**
 
@@ -215,7 +218,9 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - `POST /bank-reconciliation/statement {bankAccountId, asOf, closingBalance, notes}` (`bank_account:update`) locks a
     reconciled statement (V322). After that, lines on or before `asOf` cannot be imported, matched, unmatched or
     excluded.
-- **Not built:** matching to GL lines, partial or grouped matches, matching rules, and journals for bank charges.
+- **Matching rules, partial and grouped matches, and bank-charge journals (ADR-S073).** See
+  [§ ADR-S073](#adr-s073-gl-automation).
+- **Not built:** matching a statement line to a GL line that has no payment behind it.
 
 **ACC-7: tax and fiscal positions** (capability gaps)
 
@@ -392,4 +397,66 @@ Status: built, not compiled or run. `GET /reports/branches/comparison` (`report:
 ledger P&L, sales, open receivables, stock value, deliveries and production per branch plus a total. Screen:
 `/reports/branches`. `ReportFilterBar` (`web/src/components/report-filter-bar.tsx`) is the shared filter row. Tests:
 `BranchPerformanceIT`, `AccountingExtensionsIT.budgetByBranch`.
+
+## ADR-S073 GL automation
+
+Status: built 2026-11-10 (branch `phase/acc-gl`). Spring-only extensions: Nest has no counterpart. Design:
+[ADR-S073](../adr/ADR-S073-recurring-deferrals-bank-rules-impairment.md). Tables (V501–V503):
+`RecurringJournalTemplate`, `RecurringJournalRun`, `DeferralSchedule`, `DeferralRelease`, `BankMatchRule`,
+`BankStatementMatch`, `AssetImpairment`, plus `BankStatementLine.matchedRuleId` and `BankStatementLine.journalEntryId`.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/recurring-entries`, `/{id}`, `/{id}/runs` | `recurring_entry:read` |
+| POST, PATCH, DELETE | `/recurring-entries`, `/{id}` | `recurring_entry:manage` |
+| POST | `/recurring-entries/{id}/pause`, `/{id}/resume` | `recurring_entry:manage` |
+| POST | `/recurring-entries/{id}/run {date?}` (Idempotency-Key) | `recurring_entry:manage` |
+| GET | `/deferrals`, `/deferrals/{id}`, `/deferrals/report?asOf` | `deferral:read` |
+| POST | `/deferrals`, `/deferrals/{id}/cancel` | `deferral:manage` |
+| POST | `/deferrals/from-journal-line`, `/deferrals/{id}/release`, `/deferrals/run` (Idempotency-Key) | `deferral:manage` |
+| GET | `/bank-reconciliation/rules?bankAccountId`, `/lines/{id}/open-payments`, `/lines/{id}/allocations` | `bank_account:read` |
+| POST, PATCH, DELETE | `/bank-reconciliation/rules`, `/rules/{id}` | `bank_account:update` |
+| POST | `/bank-reconciliation/rules/apply?bankAccountId`, `/lines/{id}/allocate`, `/payments/{id}/allocate` (Idempotency-Key) | `bank_account:update` |
+| GET | `/fixed-assets/{assetId}/impairments` | `fixed_asset:read` |
+| POST | `/fixed-assets/{assetId}/impairments`, `/impairments/reversal` (Idempotency-Key) | `fixed_asset:impair` |
+
+**Posting keys:**
+- recurring entries: `recurring:<templateId>:<date>`;
+- deferral releases: `deferral:<scheduleId>:<periodIndex>`, and `deferral:<scheduleId>:initial` for the reclass;
+- bank rules: `bank_rule:<lineId>`;
+- impairment: `asset_impairment:<impairmentId>`.
+
+**Jobs:** `GlAutomationJob` runs `accounting-recurring-entries` at 01:30 and `accounting-deferral-releases` at 01:40.
+Both are ShedLock-guarded and gated by `app.jobs.enabled`.
+
+**Recurring entries:**
+- An occurrence is unique per template and date, so a job that runs twice or a manual re-run replays the existing
+  occurrence.
+- Draft mode stages a draft whose maker is the template author (maker-checker).
+- A closed or locked period refuses the occurrence. The job records it as `failed` and does not advance the schedule.
+
+**Deferrals:**
+- Slices are planned when the schedule is created: `monthly` equal slices, or `daily` slices weighted by the days in
+  each calendar month. Each is rounded to 2 dp and the last takes the remainder.
+- Cancelling releases nothing further.
+- The report compares the schedules' remaining balance with each deferral account's GL balance.
+
+**Bank:**
+- Rules run after every import (after commit, one transaction per line) and on demand.
+- `post_entry` books charges, interest and fees, with optional tax included in the amount.
+- `match_payment` is direction-aware (D-B5).
+- Allocations support one line to several payments and several lines to one payment, partial on either side. A line
+  stays `partial` until its allocations cover it.
+- Outstanding book items and unrecorded statement items net the allocations.
+- `unmatch` removes allocations and reverses a rule entry.
+- Locked statements still freeze their lines.
+
+**Mappings** (optional, created on first use): `asset_impairment_loss`, `accumulated_impairment`, `prepaid_expense`.
+
+**Web:**
+- Accounting has two new screens: Recurring Entries (`/recurring-entries`) and Deferrals (`/deferrals`).
+- Bank Reconciliation has a matching-rules panel and a split/allocate dialog.
+- The asset page has an Impairment tab.
+
+**Tests:** `GlAutomationIT`, `GlSchedulesTest`.
 

@@ -16,6 +16,9 @@ import type { SalesOrder } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 
 interface Billing {
+  /** Phase A A4: historical Fleet goods invoices awaiting a two-person review block goods invoicing. */
+  blocked?: boolean;
+  legacyFleetInvoices?: Array<{ deliveryOrderCode: string; documentId: string; documentNumber: string | null; status: string }>;
   lines: Array<{ lineId: string; description: string; policy: string; quantity: number; amount: number }>;
   amount: number;
   deposits: Array<{ id: string; number: string; amount: number; available: number; status: string; source: string; receivedDate: string; paymentMethod: string | null }>;
@@ -66,11 +69,18 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
   return (
     <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
       <h2 className="mb-2 font-semibold">{tx('Billing')}</h2>
+      {data.blocked && (
+        <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          {tx('Invoicing is blocked: historical Fleet invoices await reconciliation')} —{' '}
+          {(data.legacyFleetInvoices ?? []).map((i) => `${i.documentNumber ?? i.documentId} (${i.deliveryOrderCode})`).join(', ')}.{' '}
+          {tx('A reviewer matches them to the order lines and a second person approves (sales:billing:override).')}
+        </p>
+      )}
       {data.lines.length > 0 ? (
         <p className="text-xs text-muted-foreground">{tx('To invoice')}: {data.lines.map((l) => `${l.description} ${l.quantity}`).join(' · ')} — <strong>{money(data.amount, order.currencyCode)}</strong></p>
       ) : <p className="text-xs text-muted-foreground">{tx('Nothing to invoice right now.')}</p>}
       <div className="mt-2 flex flex-wrap gap-2">
-        {canInvoice && data.lines.length > 0 && <Button size="sm" disabled={invoice.isPending} onClick={() => invoice.mutate({ mode: 'regular' })}><FileText className="mr-1 h-3.5 w-3.5" />{tx('Create invoice')}</Button>}
+        {canInvoice && data.lines.length > 0 && !data.blocked && <Button size="sm" disabled={invoice.isPending} onClick={() => invoice.mutate({ mode: 'regular' })}><FileText className="mr-1 h-3.5 w-3.5" />{tx('Create invoice')}</Button>}
         {canInvoice && <Button size="sm" variant="outline" onClick={() => setDialog('down')}>{tx('Down payment invoice')}</Button>}
         {canDeposit && <Button size="sm" variant="outline" onClick={() => { setAmount(0); setDialog('deposit'); }}><Wallet className="mr-1 h-3.5 w-3.5" />{tx('Record deposit')}</Button>}
       </div>

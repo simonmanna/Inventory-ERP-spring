@@ -20,10 +20,12 @@ public class SalesReconcileJob {
 
     private final JdbcClient jdbc;
     private final SalesFulfilmentService fulfilment;
+    private final SalesBillingService billing;
 
-    public SalesReconcileJob(JdbcClient jdbc, SalesFulfilmentService fulfilment) {
+    public SalesReconcileJob(JdbcClient jdbc, SalesFulfilmentService fulfilment, SalesBillingService billing) {
         this.jdbc = jdbc;
         this.fulfilment = fulfilment;
+        this.billing = billing;
     }
 
     @Scheduled(cron = "0 10 3 * * *")
@@ -37,6 +39,12 @@ public class SalesReconcileJob {
                         fulfilment::reconcile);
                 if (((Number) r.get("linesDrifted")).intValue() > 0) {
                     log.warn("Sales fulfilment drift repaired for {}: {} lines", orgId, r.get("linesDrifted"));
+                }
+                Map<String, Object> f = TenantContext.run(TenantContext.TenantStore.organization(orgId),
+                        billing::financialReconcile);
+                if (!((List<?>) f.get("findings")).isEmpty()) {
+                    log.warn("Sales financial reconciliation for {}: {} findings", orgId, ((List<?>) f.get("findings"))
+                            .size());
                 }
             } catch (RuntimeException e) {
                 log.warn("Sales reconciliation failed for {}: {}", orgId, e.toString());

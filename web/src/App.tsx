@@ -112,6 +112,8 @@ const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
 const WithholdingCertificatesPage = lazy(() => import('@/pages/accounting/withholding-certificates'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
+const RecurringEntriesPage = lazy(() => import('@/pages/accounting/recurring-entries'));
+const DeferralsPage = lazy(() => import('@/pages/accounting/deferrals'));
 const CostCentersPage = lazy(() => import('@/pages/accounting/cost-centers').then((m) => ({ default: m.CostCentersPage })));
 const CurrencyPage = lazy(() => import('@/pages/accounting/currency').then((m) => ({ default: m.CurrencyPage })));
 const InventoryValuationPage = lazy(() => import('@/pages/accounting/inventory-valuation').then((m) => ({ default: m.InventoryValuationPage })));
@@ -464,6 +466,8 @@ export function App() {
             <Route path="/withholding-certificates" element={<RequirePermission permission={PERMISSIONS.withholding.read}><WithholdingCertificatesPage /></RequirePermission>} />
             <Route path="/accounts/payment-terms" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentTermsPage /></RequirePermission>} />
             <Route path="/accounts/fiscal-positions" element={<RequirePermission permission={PERMISSIONS.account.read}><FiscalPositionsPage /></RequirePermission>} />
+            <Route path="/recurring-entries" element={<RequirePermission permission={PERMISSIONS.recurringEntry.read}><RecurringEntriesPage /></RequirePermission>} />
+            <Route path="/deferrals" element={<RequirePermission permission={PERMISSIONS.deferral.read}><DeferralsPage /></RequirePermission>} />
             <Route path="/cost-centers" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCentersPage /></RequirePermission>} />
             <Route path="/cost-center-accounting" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCenterAccountingPage /></RequirePermission>} />
             <Route path="/currency" element={<RequirePermission permission={PERMISSIONS.currency.read}><CurrencyPage /></RequirePermission>} />

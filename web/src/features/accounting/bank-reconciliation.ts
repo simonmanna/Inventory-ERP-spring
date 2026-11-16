@@ -10,10 +10,13 @@ export interface StatementLineRow {
   description: string;
   amount: string;
   currencyCode: string;
-  status: 'unmatched' | 'matched' | 'excluded';
+  status: 'unmatched' | 'matched' | 'excluded' | 'partial';
   note: string | null;
   matchedPaymentId: string | null;
   matchedPaymentNumber: string | null;
+  /** ADR-S073: rule that matched the line and the entry a posting rule made. */
+  matchedRuleId?: string | null;
+  journalEntryId?: string | null;
 }
 
 export interface BankReconciliationSummary {
