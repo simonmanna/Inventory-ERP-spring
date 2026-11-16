@@ -21,7 +21,7 @@ reports use base amounts and exclude drafts, the balance sheet balances.
 | R-3 | High | VAT settlement missed taxes' own accounts; tax payments reduced the next period's VAT | fixed |
 | R-2 | High | Closed months showed zero spend in budget check / consolidated / dashboard / cost-centre / analytic | fixed |
 | P-3 | High | Foreign bill vs non-PO receipt mixed currencies in the price variance | fixed |
-| U-1 | High | Account create / edit always 400 (`isGroup`, `isControlAccount`) | fixed (web); a group account is created then flagged on edit |
+| U-1 | High | Account create / edit always 400 (`isGroup`, `isControlAccount`) | fixed (web + backend: `categoryId` required only for a postable account, so a group is created directly) |
 | U-2 | High | "Post entry" only saved a draft; no post / discard in the UI | fixed (web) |
 | U-3 | High | Ledger drill-down opened "Journal entry not found" | fixed (backend `journalEntryId` + web) |
 | G-3 | Medium | A closed year's period could be reopened and posted into | fixed |
@@ -40,7 +40,7 @@ reports use base amounts and exclude drafts, the balance sheet balances.
 | R-5 | Medium | TB CSV export counted drafts and future lines (Nest same) | fixed |
 | R-6 | Medium | Bank-rec summary book balance wrong after a reversal | fixed |
 | R-7 | Medium | Concurrent auto-match could match one payment twice | fixed (per-account lock) |
-| R-8 | Medium | Reconciliation statement mixes base and account currency; wall-clock vs instant dates | **not fixed** — needs treasury / bank postings to carry the account currency first |
+| R-8 | Medium | Reconciliation statement mixes base and account currency; wall-clock vs instant dates | **not fixed — needs an owner decision.** Dates are not a defect (payment and statement-line dates are date-like and compared as wall clock, per ADR-S070). Currency: foreign-currency bank accounts are not supported end to end — payments refuse them ("POS tenders must use the organization currency…") and treasury deposits / withdrawals / transfers post the typed amount as base with no currency or rate. Summing such an account "in its currency" would show 0. A real fix is foreign-currency treasury (conversion at a rate, lines tagged with the account currency), which is an accounting-policy change |
 | R-9 | Medium | Ageing added document currencies together and tied them to the base control account | fixed |
 | R-10 | Medium | Tax report did not convert procurement debit notes | fixed |
 | R-12 | Low | Account ledger had no opening balance (Nest same) | fixed |
@@ -78,3 +78,11 @@ Tests changed with the behaviour: AccountingIT (reopen → close again), Account
 SalesLedgerAssertions helpers (transaction amounts do not add up across currencies).
 
 The full `./gradlew build` was not run (CI runs it on push).
+
+**Merge into main (2026-11-16).** One conflict, `OpeningBalanceService`: main's I5 inventory guard and this branch's
+manual-posting guard both kept (inventory first, its message is more specific). Also fixed while merging: the four
+failures listed above — `GET /sales/proformas/{id}` (and `/pdf`) answer 404 for an unknown id instead of 500;
+`GET /sales/customers/{id}/credit-by-branch` read a non-existent `CreditLimit."limitAmount"` (column is `amount`);
+`GET /manufacturing/plm/overview` failed when no change was applied in 180 days (null average); SalesAgreementIT now
+states `basis: invoiced` (organizations created since V409 default to `paid`, which the test silently relied on not
+being the case). ExpenseTreasuryIT passes on main.

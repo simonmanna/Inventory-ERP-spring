@@ -273,8 +273,9 @@ export function AccountDetailPage() {
         await createAccount.mutateAsync({
           code: values.code,
           name: values.name,
-          categoryId: values.categoryId,
-          isPostable: true,
+          // A group account is created without a category (the API requires one only for postable accounts).
+          ...(values.isGroup ? {} : { categoryId: values.categoryId }),
+          isPostable: !values.isGroup,
           ...(controlAccountType ? { controlAccountType } : {}),
           parentAccountId: values.parentAccountId || undefined,
           description: values.description || undefined,
@@ -395,17 +396,25 @@ export function AccountDetailPage() {
                     {errors.code && <p className="text-sm text-destructive">{errors.code.message as string}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="categoryId">{tx('Category *')}</Label>
-                    <CategorySelect
-                      id="categoryId"
-                      categories={categoryList}
-                      value={watchCategoryId}
-                      onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
-                    />
+                    <Label htmlFor="categoryId">{watchIsGroup ? tx('Category') : tx('Category *')}</Label>
+                    {watchIsGroup ? (
+                      <p className="text-sm text-muted-foreground pt-2">{tx('None — group account')}</p>
+                    ) : (
+                      <CategorySelect
+                        id="categoryId"
+                        categories={categoryList}
+                        value={watchCategoryId}
+                        onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
+                      />
+                    )}
                     {errors.categoryId && <p className="text-sm text-destructive">{errors.categoryId.message as string}</p>}
                   </div>
                 </div>
-                {selectedCategory && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isGroup')} />
+                  <span>{tx('Group account (cannot post journal lines directly)')}</span>
+                </label>
+                {!watchIsGroup && selectedCategory && (
                   <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
                     <p>
                       <span className="font-medium text-foreground">{humanize(selectedCategory.normalBalance)}{tx('-normal')}</span>
@@ -438,13 +447,16 @@ export function AccountDetailPage() {
                     {tx('Hierarchy is for reporting and navigation only. A parent must be a group account with the same classification.')}
                   </p>
                 </div>
-                <ControlTypeSelect
-                  value={watch('controlAccountType')}
-                  onChange={(v) => setValue('controlAccountType', v)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {tx('New accounts are created postable (a category is required). To make a group account, save it first and then tick "Group account" on its Details tab.')}
-                </p>
+                {watchIsGroup ? (
+                  <p className="text-xs text-muted-foreground">
+                    {tx('A group account is a heading in the chart: it has no category or control type and takes sub-accounts.')}
+                  </p>
+                ) : (
+                  <ControlTypeSelect
+                    value={watch('controlAccountType')}
+                    onChange={(v) => setValue('controlAccountType', v)}
+                  />
+                )}
               </CardContent>
             </Card>
 

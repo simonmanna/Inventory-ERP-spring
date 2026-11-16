@@ -12,6 +12,8 @@ import jakarta.validation.constraints.NotNull;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.hibernate.validator.group.GroupSequenceProvider;
+import org.hibernate.validator.spi.group.DefaultGroupSequenceProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,11 +31,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/accounts")
 public class AccountController {
 
-    /** {@code CreateAccountDto}. */
+    /**
+     * {@code CreateAccountDto}. {@code categoryId} is required only for a postable account (the {@link Postable}
+     * group, added by {@link PostableGroups} unless {@code isPostable} is false): a group account must not have a
+     * category, so Nest's unconditional rule made groups impossible to create (review 2026-11-15, U-1 deviation).
+     */
+    @GroupSequenceProvider(PostableGroups.class)
     public record CreateAccountRequest(
             @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String code,
             @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String name,
-            @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String categoryId,
+            @NotNull(message = "must be a string", groups = Postable.class)
+            @NotBlank(message = "should not be empty", groups = Postable.class) String categoryId,
             String parentAccountId,
             Integer sortOrder,
             String currencyId,
@@ -48,6 +56,26 @@ public class AccountController {
             Boolean isDefault,
             String bankName,
             String accountNumber) {}
+
+    /** Validation group of the constraints that hold only for a postable account. */
+    public interface Postable {}
+
+    /**
+     * Validates {@link CreateAccountRequest} with its default constraints, then the {@link Postable} ones unless
+     * {@code isPostable} is {@code false}. A group sequence stops at the first failing group, so a request that
+     * already fails a default constraint does not also list the {@code categoryId} messages.
+     */
+    public static final class PostableGroups implements DefaultGroupSequenceProvider<CreateAccountRequest> {
+
+        @Override
+        public List<Class<?>> getValidationGroups(Class<?> klass, CreateAccountRequest object) {
+            List<Class<?>> groups = new ArrayList<>(List.of(CreateAccountRequest.class));
+            if (object == null || !Boolean.FALSE.equals(object.isPostable())) {
+                groups.add(Postable.class);
+            }
+            return groups;
+        }
+    }
 
     /** {@code UpdateAccountDto}. */
     public record UpdateAccountRequest(

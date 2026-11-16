@@ -300,6 +300,10 @@ Where Nest behaves the same, the change is a deliberate deviation from the refer
 - **G-9.** Opening balances refuse accounts that do not allow manual posting (inventory, tax and other control
   accounts), as manual journals do.
 - `POST /fx-revaluations` is `@Idempotent` (answers 200, not 201).
+- **U-1.** `POST /accounts` requires `categoryId` only for a postable account (`isPostable` not `false`), with the same
+  messages; a group account is created without one (Nest required it always and also forbade it on a group, so groups
+  could only be made by editing). A request that fails another field's constraint does not also list the `categoryId`
+  messages (validation group sequence).
 - `GET /journal-entries` accepts `journalId`, `status`, `from`, `to` (inclusive org-local dates) and filters by
   organization explicitly; `GET /journal-entries/:id` too.
 

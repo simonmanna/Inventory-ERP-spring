@@ -329,7 +329,8 @@ public class PlmLifecycleService {
                 + " 'applied' AND \"appliedAt\" >= now() - interval '30 days'", null);
         Object avgCycle = db.jdbc().sql("SELECT round(avg(extract(epoch FROM (\"appliedAt\" - \"createdAt\")) / 86400)"
                 + "::numeric, 1) FROM \"EngineeringChange\" WHERE \"organizationId\" = ? AND status = 'applied' AND"
-                + " \"appliedAt\" >= now() - interval '180 days'").param(MfgDb.org()).query().singleValue();
+                + " \"appliedAt\" >= now() - interval '180 days'").param(MfgDb.org()).query(java.math.BigDecimal.class)
+                .optional().orElse(null); // avg is null when nothing was applied in the window
         Map<String, Object> docs = new LinkedHashMap<>();
         for (String s : List.of("draft", "released", "superseded", "obsolete")) {
             docs.put(s, 0L);

@@ -93,6 +93,13 @@ class AccountingIT extends ApiTestSupport {
         Res group = as("POST", "/accounts", Map.of("code", code + "G", "name", "G", "categoryId", cash, "isPostable", false));
         assertThat(group.body().get("message").asString())
                 .isEqualTo("A group account is a structural node in the reporting tree and must not have a category.");
+        // review 2026-11-15 (U-1): a group account is created without a category and can take children
+        JsonNode groupAccount = ok(201, "POST", "/accounts", Map.of("code", code + "G", "name", "Tills",
+                "isPostable", false, "parentAccountId", accountId("1000")));
+        assertThat(groupAccount.get("isPostable").asBoolean()).isFalse();
+        assertThat(ok(201, "POST", "/accounts", Map.of("code", code + "G1", "name", "Till G1", "categoryId", cash,
+                "parentAccountId", groupAccount.get("id").asString())).get("parentAccountId").asString())
+                .isEqualTo(groupAccount.get("id").asString());
         Res underLeaf = as("PATCH", "/accounts/" + created.get("id").asString(), Map.of("parentAccountId", accountId("1100")));
         assertThat(underLeaf.body().get("message").asString())
                 .isEqualTo("'1100 Cash' is a postable account, so it cannot have children. Only group accounts can.");
