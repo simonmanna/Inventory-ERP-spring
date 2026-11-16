@@ -116,7 +116,12 @@ location must be an active `InventoryLocation` with the profile's `branchId`.
   and `verificationSource`:
   - cash: `confirmer_cash`;
   - MoMo: `momo_gateway` (`MobileMoneyService` success);
-  - MoMo or bank: `verifier`, which needs `sales:cash_sale:verify_payment`.
+  - MoMo or bank: `verifier`, which needs `sales:cash_sale:verify_payment`;
+  - any method, branch without `requireSegregation`: `collector` — the line is verified at capture (V445; the UI has
+    no Verify step). With segregation on, the line stays `pending` and the rules above apply.
+- **Payment details** (V445, all optional): `paymentDate`, `payerName`, `payerAccount` (phone for MoMo, account no.
+  for bank), `notes`, `attachmentIds` (DMS documents uploaded to the sale's `sales_submission` record; unknown ids →
+  400 `Attachment not found`). `GET /{id}` returns `attachments` (`id`, `name`, `contentType`) per payment.
 - **Segregation.** With `requireSegregation` on:
   - cash verifier ≠ collector, and verifier ≠ confirmer;
   - confirmer ≠ approver ≠ invoicer.
@@ -145,7 +150,7 @@ location must be an active `InventoryLocation` with the profile's `branchId`.
   `lineSubtotal`, `lineTax`, `lineTotal`, `costSnapshot`, `stockMoveId`.
 - `SalesSubmissionPayment`: `method`, `provider`, `amount`, `reference`, `accountId`, `customerDepositId`,
   `collectedById`, `collectedAt`, `verificationStatus`, `verifiedById`, `verifiedAt`, `verificationSource`,
-  `settlementStatus`.
+  `settlementStatus`, `paymentDate`, `payerName`, `payerAccount`, `notes`, `attachmentIds` (V445).
 - `SalesSubmissionInvoice`: `attempt`, `invoiceId`, `status` (`active` | `cancelled`), `cancelledAt`,
   `cancelledById`, `cancelReason`, `fiscalDocumentId`. Partial unique index on (`submissionId`) WHERE
   `status = 'active'`.
@@ -204,6 +209,7 @@ A rejected sale stays fully posted: revenue, VAT, COGS and deposit stand.
 | POST | `/{id}/void` | `void` | Idempotency-Key; reason + attestation |
 | POST | `/{id}/discard` | `create` | draft only |
 | GET | `/{id}/timeline` | `read` | |
+| GET | `/{id}/excel`, `/{id}/pdf` | `read` | printable "CASH SALES FORM" as XLSX (live total formulas) or A4 PDF (same sections, columns and totals); detail page ⋯ menu → Download Excel / Download PDF |
 | GET | `/sales/cash-sales/dashboard?scope=branch\|head_office` | `read` / `read_all` | tiles + exception queue |
 | CRUD | `/sales/branch-profiles` | `sales:branch_profile:manage` | validation § 4 |
 
@@ -230,7 +236,7 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 | T5 | Several tax categories | VAT per tax account |
 | T6 | Foreign currency; rate changes before invoice | invoice inherits rate; unbilled 0; no FX difference |
 | T7 | Insufficient stock at profile location | 400, no rows posted |
-| T8 | Unverified MoMo / unverified bank | confirm 400, no GL rows |
+| T8 | Unverified MoMo / unverified bank (segregation on) | confirm 400, no GL rows |
 | T9 | Card method | 400 |
 | T10 | Client sends tender accountId | ignored; profile account used |
 | T11 | Profile: income account as tender; deposit mapping to an asset; location in another branch; missing mapping | profile save 400 |
@@ -277,6 +283,27 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 - **Tests** in `CashSaleIT` (12 scenarios, all green), covering T1–T4, T7–T9, T11–T17, T19, T21–T30. T13 is covered as an idempotent confirm replay.
 - **Moved to CS-5:** T5 (several tax categories) and T31.
 - **T6:** see deviation 1.
+
+## Reports (2026-11-10)
+
+Report center category `branch-cash` (`BranchCashSaleReports`, `GET /sales/report-center/run/<key>`, permission
+`sales:report:read`, branch scope applied), web page **Sales → Reporting → Branch Cash Sales**
+(`/sales/reports/branch-cash`). Takings are **confirmed** sales (stock issued, money verified, revenue accrued) whether or
+not head office has invoiced them; drafts, cancelled and voided sales never count. Amounts are `amount × exchangeRate`.
+
+| Key | Report |
+|---|---|
+| `branch-cash-summary` | takings per branch: gross, discount, net, VAT, total, tender split, share, voided |
+| `branch-cash-daily` | takings per day / week / month (`groupBy`), one column per branch |
+| `branch-cash-tenders` | verified money per branch × tender and the account banked to |
+| `branch-cash-register` | every sale with stage and invoice; `status` = execution or processing stage |
+| `branch-cash-products` | quantity, net, average price, issue cost and gross profit per product × branch |
+| `branch-cash-salespeople` | sales, customers, takings per salesperson × branch |
+| `branch-cash-processing` | head-office stage counts, value awaiting invoice, age since sale, days sale → invoice |
+| `branch-cash-exceptions` | voided, rejected, returned sales with the reason |
+
+The Report Library (`reporting/catalogue.json`) links summary and daily under Multi-Branch & Consolidation, tenders
+and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports` and `SalesReportCenterIT`.
 
 ## Deviations (owner to confirm)
 

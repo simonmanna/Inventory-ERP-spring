@@ -7,6 +7,8 @@ import com.inventoryerp.inventory.application.AvcoLineageCalculator;
 import com.inventoryerp.inventory.application.AvcoLineageCalculator.Distribution;
 import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.CostLineageService.AdjustmentInput;
+import com.inventoryerp.inventory.application.LayerCostWriter;
+import com.inventoryerp.inventory.application.LayerCostWriter.Quant;
 import com.inventoryerp.inventory.application.LineageFollower;
 import com.inventoryerp.inventory.application.LineageFollower.Followed;
 import com.inventoryerp.inventory.application.LineageFollower.Mode;
@@ -82,13 +84,28 @@ class LandedCostLayers {
     private final CostLineageService lineage;
     private final LineageFollower follower;
     private final SettingResolverService settings;
+    /** Audit S-3: quant locks and layer cost writes go through the inventory module. */
+    private final LayerCostWriter layers;
 
     LandedCostLayers(JdbcClient jdbc, CostLineageService lineage, LineageFollower follower,
-            SettingResolverService settings) {
+            SettingResolverService settings, LayerCostWriter layers) {
+        this.layers = layers;
         this.jdbc = jdbc;
         this.lineage = lineage;
         this.follower = follower;
         this.settings = settings;
+    }
+
+    /**
+     * Audit S-3: take the engine's quant locks of every (variant, location) the rows of {@code sql} name (columns
+     * {@code variantId}, {@code locationId}) before the layers are read FOR UPDATE and re-costed.
+     */
+    private void lockQuantsOf(String productId, String sql, Object... params) {
+        List<Quant> quants = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql(sql).params(params))) {
+            quants.add(new Quant(productId, (String) r.get("variantId"), (String) r.get("locationId")));
+        }
+        layers.lockQuants(quants);
     }
 
     private static BigDecimal mul(BigDecimal a, BigDecimal b) {
@@ -240,6 +257,11 @@ class LandedCostLayers {
         if (number == null) {
             return disposed(Applied.NONE, allocated, "lot", Map.of());
         }
+        if (write) {
+            lockQuantsOf(g.productId(), "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE"
+                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND"
+                    + " \"batchNumber\" = ?", orgId, g.productId(), g.variantId(), number);
+        }
         List<Map<String, Object>> batches = SqlRows.list(jdbc.sql("SELECT id, \"locationId\", quantity, \"unitCost\""
                         + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\""
                         + " IS NOT DISTINCT FROM ? AND \"batchNumber\" = ? AND quantity > 0 AND \"isActive\" = true ORDER BY"
@@ -272,8 +294,7 @@ class LandedCostLayers {
             touched.add(Map.of("batchId", b.get("id"), "locationId", b.get("locationId"), "units", units, "amount",
                     amount));
             if (write && amount.signum() != 0) {
-                jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                        + " AND \"organizationId\" = ?").params(unitAfter, b.get("id"), orgId).update();
+                layers.setLotUnitCost((String) b.get("id"), unitAfter);
                 if (source != null) {
                     lineage.recordValueOnly(g.productId(), g.variantId(), (String) b.get("locationId"),
                             (String) b.get("id"), amount, source.sourceType(), source.sourceId(), null,
@@ -455,6 +476,9 @@ class LandedCostLayers {
         }
         BigDecimal remaining = units;
         BigDecimal removed = Money.ZERO;
+        lockQuantsOf(product, "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE"
+                + " \"organizationId\" = ? AND \"productId\" = ? AND \"batchNumber\" = ?", org(), product,
+                d.get("batchNumber"));
         for (Map<String, Object> b : SqlRows.list(jdbc.sql("SELECT id, \"locationId\", \"variantId\", quantity,"
                         + " \"unitCost\" FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
                         + " \"batchNumber\" = ? AND quantity > 0 AND \"isActive\" = true ORDER BY \"receivedAt\", id FOR UPDATE")
@@ -470,9 +494,8 @@ class LandedCostLayers {
                 continue;
             }
             removed = removed.add(amount);
-            jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                    .params(Money.max(Money.ZERO, Money.dec(b.get("unitCost")).subtract(Money.div(amount, bq))),
-                            b.get("id")).update();
+            layers.setLotUnitCost((String) b.get("id"),
+                    Money.max(Money.ZERO, Money.dec(b.get("unitCost")).subtract(Money.div(amount, bq))));
             lineage.recordValueOnly(product, (String) b.get("variantId"), (String) b.get("locationId"),
                     (String) b.get("id"), amount.negate(), "reversal", originalEntryId, null, note);
         }
@@ -534,6 +557,11 @@ class LandedCostLayers {
         String lock = write ? " FOR UPDATE" : "";
 
         if (Boolean.TRUE.equals(g.product().get("serialTracking"))) {
+            if (write) {
+                lockQuantsOf(g.productId(), "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventorySerial\""
+                        + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ? AND"
+                        + " status = 'in_stock'", orgId, g.productId(), "goods_receipt:" + grnId);
+            }
             List<Map<String, Object>> serials = jdbc.sql("SELECT id, \"unitCost\" FROM \"InventorySerial\""
                             + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ? AND status = 'in_stock'"
                             + lock)
@@ -544,15 +572,17 @@ class LandedCostLayers {
             int n = (int) Math.min(serials.size(), Math.max(0, Math.floor(onHand.doubleValue())));
             if (write) {
                 for (Map<String, Object> s : serials.subList(0, n)) {
-                    jdbc.sql("UPDATE \"InventorySerial\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                                    + " AND \"organizationId\" = ?")
-                            .params(Money.dec(s.get("unitCost")).add(perUnit), s.get("id"), orgId).update();
+                    layers.setSerialUnitCost((String) s.get("id"), Money.dec(s.get("unitCost")).add(perUnit));
                 }
             }
             return new Applied(dp6(mul(perUnit, onHand)), onHand, first, first.add(perUnit));
         }
 
         if (g.batchId() != null) {
+            if (write) {
+                lockQuantsOf(g.productId(), "SELECT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?", g.batchId(), orgId);
+            }
             List<Map<String, Object>> found = jdbc.sql("SELECT id, quantity, \"unitCost\" FROM \"InventoryBatch\" WHERE"
                     + " id = ? AND \"organizationId\" = ?" + lock).params(g.batchId(), orgId).query().listOfRows();
             if (found.isEmpty()) {
@@ -568,8 +598,7 @@ class LandedCostLayers {
             BigDecimal capitalized = dp6(Money.div(mul(allocated, onHand), qty));
             BigDecimal after = before.add(Money.div(capitalized, batchQty));
             if (write) {
-                jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                        + " AND \"organizationId\" = ?").params(after, batch.get("id"), orgId).update();
+                layers.setLotUnitCost((String) batch.get("id"), after);
             }
             return new Applied(capitalized, onHand, before, after);
         }
@@ -612,8 +641,7 @@ class LandedCostLayers {
     private Applied bumpAverage(Group g, String variantKey, BigDecimal amount, boolean write) {
         String orgId = org();
         if (write) {
-            String lockKey = "avco:" + orgId + ":" + g.productId() + ":" + variantKey + ":" + g.locationId();
-            jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param(lockKey).query().listOfRows();
+            layers.lockQuant(g.productId(), variantKey.isEmpty() ? null : variantKey, g.locationId());
         }
         List<Map<String, Object>> found = jdbc.sql("SELECT id, quantity, \"runningAverageCost\" FROM \"StockItem\""
                         + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ?"
@@ -633,8 +661,7 @@ class LandedCostLayers {
         BigDecimal capitalized = dp6(Money.div(mul(amount, onHand), g.qty()[0]));
         BigDecimal after = before.add(Money.div(capitalized, qty));
         if (write) {
-            jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                    .params(after, item.get("id")).update();
+            layers.setQuantAverageCost((String) item.get("id"), after);
         }
         return new Applied(capitalized, onHand, before, after);
     }
@@ -677,19 +704,23 @@ class LandedCostLayers {
         String orgId = org();
         String productId = (String) alloc.get("productId");
         if (Boolean.TRUE.equals(product.get("serialTracking"))) {
+            lockQuantsOf(productId, "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventorySerial\" WHERE"
+                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ? AND status = 'in_stock'",
+                    orgId, productId, "goods_receipt:" + grnId);
             List<Map<String, Object>> serials = jdbc.sql("SELECT id, \"unitCost\" FROM \"InventorySerial\" WHERE"
                             + " \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ? AND status = 'in_stock'"
                             + " FOR UPDATE")
                     .params(orgId, productId, "goods_receipt:" + grnId).query().listOfRows();
             int n = (int) Math.min(serials.size(), Math.floor(onHandAtPost.doubleValue()));
             for (Map<String, Object> s : serials.subList(0, n)) {
-                jdbc.sql("UPDATE \"InventorySerial\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                        .params(Money.max(Money.ZERO, Money.dec(s.get("unitCost")).subtract(increment)), s.get("id"))
-                        .update();
+                layers.setSerialUnitCost((String) s.get("id"),
+                        Money.max(Money.ZERO, Money.dec(s.get("unitCost")).subtract(increment)));
             }
             return Money.min(capitalized, dp6(mul(increment, BigDecimal.valueOf(n))));
         }
         if (alloc.get("batchId") != null) {
+            lockQuantsOf(productId, "SELECT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", alloc.get("batchId"), orgId);
             List<Map<String, Object>> found = jdbc.sql("SELECT id, quantity, \"unitCost\" FROM \"InventoryBatch\" WHERE"
                     + " id = ? AND \"organizationId\" = ? FOR UPDATE").params(alloc.get("batchId"), orgId).query()
                     .listOfRows();
@@ -701,18 +732,15 @@ class LandedCostLayers {
                 return Money.ZERO;
             }
             BigDecimal removed = Money.min(capitalized, dp6(mul(increment, q)));
-            jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                    .params(Money.max(Money.ZERO, Money.dec(found.getFirst().get("unitCost")).subtract(
-                            Money.div(removed, q))), found.getFirst().get("id"))
-                    .update();
+            layers.setLotUnitCost((String) found.getFirst().get("id"), Money.max(Money.ZERO,
+                    Money.dec(found.getFirst().get("unitCost")).subtract(Money.div(removed, q))));
             return removed;
         }
         if ("STANDARD".equals(product.get("costingMethod"))) {
             return Money.ZERO;
         }
         String variantKey = alloc.get("variantId") == null ? "" : alloc.get("variantId").toString();
-        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("avco:" + orgId + ":" + productId + ":"
-                + variantKey + ":" + alloc.get("locationId")).query().listOfRows();
+        layers.lockQuant(productId, variantKey.isEmpty() ? null : variantKey, (String) alloc.get("locationId"));
         List<Map<String, Object>> found = jdbc.sql("SELECT id, quantity, \"runningAverageCost\" FROM \"StockItem\""
                         + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ?"
                         + " FOR UPDATE")
@@ -727,8 +755,7 @@ class LandedCostLayers {
         }
         // At most the capitalised amount, at most what the remaining quantity carries.
         BigDecimal removed = Money.min(capitalized, Money.min(dp6(mul(avg, q)), dp6(mul(increment, q))));
-        jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(avg.subtract(Money.div(removed, q)), found.getFirst().get("id")).update();
+        layers.setQuantAverageCost((String) found.getFirst().get("id"), avg.subtract(Money.div(removed, q)));
         return removed;
     }
 }

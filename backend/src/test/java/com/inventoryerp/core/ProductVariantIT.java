@@ -184,6 +184,11 @@ class ProductVariantIT extends ApiTestSupport {
                 "warehouseId", warehouse, "lines", List.of(Map.of("purchaseOrderLineId", po.get("lines").get(0).get("id")
                         .asString(), "productId", p, "description", "Screen", "quantity", 5))), h);
         assertThat(rec.status()).as(rec.raw().body()).isIn(200, 201);
+        // The order names each line's variant, on its own lines and on its receipts' lines.
+        JsonNode poView = ok(200, "GET", "/procurement/purchase-orders/" + po.get("id").asString(), null);
+        assertThat(poView.get("lines").get(0).get("variant").get("name").asString()).isEqualTo("White, Small");
+        assertThat(poView.get("receipts").get(0).get("lines").get(0).get("variant").get("name").asString())
+                .isEqualTo("White, Small");
         BigDecimal onHand = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"variantId\" = ?")
                 .param(whiteSmall).query(BigDecimal.class).single();
         assertThat(onHand).isEqualByComparingTo("5");
@@ -318,6 +323,62 @@ class ProductVariantIT extends ApiTestSupport {
         assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
         assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
         assertThat(variantOnHand(bl)).isEqualByComparingTo("5");
+    }
+
+    @Test
+    @DisplayName("Phase I2 N4: a bill for one variant never consumes another variant's open receipt")
+    void billMatchesOnlyItsVariant() {
+        String p = product(100, 40);
+        JsonNode variants = configure(p).get("variants");
+        String ws = byName(variants, "White, Small").get("id").asString();
+        String bl = byName(variants, "Black, Large").get("id").asString();
+        String supplier = partner(false);
+        JsonNode po = ok(201, "POST", "/procurement/purchase-orders", Map.of("partnerId", supplier, "warehouseId",
+                warehouse, "paymentType", "credit", "lines", List.of(Map.of("productId", p, "variantId", ws,
+                        "description", "WS", "quantity", 10, "unitPrice", 30))));
+        String poId = po.get("id").asString();
+        Map<String, String> h = new LinkedHashMap<>();
+        h.put("Authorization", "Bearer " + adminToken);
+        h.put("Idempotency-Key", UUID.randomUUID().toString());
+        Res r = call("POST", "/procurement/purchase-orders/" + poId + "/receive", Map.of("warehouseId", warehouse,
+                "lines", List.of(Map.of("purchaseOrderLineId", po.get("lines").get(0).get("id").asString(),
+                        "productId", p, "description", "x", "quantity", 10))), h);
+        assertThat(r.status()).as(r.raw().body()).isIn(200, 201);
+        assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
+
+        String today = java.time.LocalDate.now().toString();
+        JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
+                List.of(Map.of("productId", p, "variantId", bl, "description", "BL", "quantity", 4,
+                        "unitPrice", 90))));
+        Res posted = as("POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of());
+        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
+        BigDecimal billed = jdbc.sql("SELECT COALESCE(sum(l.\"billedQuantity\"), 0) FROM \"GoodsReceiptLine\" l JOIN"
+                + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" WHERE g.\"purchaseOrderId\" = ?").param(poId)
+                .query(BigDecimal.class).single();
+        assertThat(billed).as("the White, Small receipt stays open").isEqualByComparingTo("0");
+        assertThat(variantOnHand(bl)).as("the Black, Large bill auto-receives its own 4").isEqualByComparingTo("4");
+        assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
+    }
+
+    @Test
+    @DisplayName("Phase I2 N6: a quotation converted to an Orders-module order keeps the variant")
+    void quotationToOrderKeepsVariant() {
+        String p = product(100, 40);
+        String bl = byName(configure(p).get("variants"), "Black, Large").get("id").asString();
+        JsonNode q = ok(201, "POST", "/sales/quotations", Map.of("partnerId", partner(true), "lines",
+                List.of(Map.of("productId", p, "variantId", bl, "quantity", 1))));
+        String id = q.get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String order = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "order",
+                "allowBackorder", true)).get("convertedId").asString();
+        try {
+            Map<String, Object> item = jdbc.sql("SELECT \"variantId\", \"variantName\" FROM \"OrderItem\" WHERE"
+                    + " \"orderId\" = ?").param(order).query().singleRow();
+            assertThat(item.get("variantId")).isEqualTo(bl);
+            assertThat(item.get("variantName")).isEqualTo("Black, Large");
+        } finally {
+            ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N6 test"));
+        }
     }
 
     @Test

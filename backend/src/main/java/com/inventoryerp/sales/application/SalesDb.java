@@ -86,6 +86,22 @@ public class SalesDb {
         return r;
     }
 
+    /**
+     * Audit P-1: {@code variantId} (blank = none) after checking it is a live variant of {@code productId} in this
+     * organisation; 400 "Variant not found" otherwise.
+     */
+    String variantOf(Object variantId, Object productId) {
+        String v = variantId == null || variantId.toString().isBlank() ? null : variantId.toString();
+        if (v == null) {
+            return null;
+        }
+        if (productId == null || row("SELECT id FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", v, productId.toString(), org()) == null) {
+            throw ApiException.badRequest("Variant not found");
+        }
+        return v;
+    }
+
     boolean exists(String table, String id) {
         return id != null && count("SELECT count(*) FROM \"" + table + "\" WHERE id = ? AND \"organizationId\" = ?",
                 List.of(id, org())) > 0;

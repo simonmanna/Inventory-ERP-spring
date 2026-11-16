@@ -58,6 +58,7 @@ import {
   type CashMovementRow,
 } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
+import { localDay } from '@/lib/dates';
 
 const PAGE_SIZE = 50;
 
@@ -70,7 +71,7 @@ const ACCOUNT_TYPE_LABELS: Record<string, string> = {
 
 /** Named ranges — the ones a café manager actually asks for. */
 function presetRange(key: string): { from: string; to: string } {
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const iso = (d: Date) => localDay(d);
   const now = new Date();
   const y = now.getFullYear();
   const m = now.getMonth();

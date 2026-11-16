@@ -6,6 +6,7 @@ import com.inventoryerp.inventory.application.WarehouseOutboundService.LineInput
 import com.inventoryerp.inventory.application.WarehouseOutboundService.PackItem;
 import com.inventoryerp.inventory.application.WarehouseOutboundService.PickOrderInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService;
+import com.inventoryerp.inventory.application.WarehouseSetupService.BinAdjustInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService.BinInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService.RuleInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService.SettingsInput;
@@ -42,7 +43,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * {@code /warehouse}: warehouse management (roadmap 2.1, ADR-S026, extension) — settings, bins, putaway rules, bin
- * stock, putaway / move / pick tasks, pick orders (1–3 steps), packages, waves, ABC classes and cycle counts. Literal
+ * stock (with corrections and reconciliation against the ledger), putaway / move / pick tasks, pick orders (1–3
+ * steps), packages, waves, ABC classes and cycle counts. Literal
  * segments are declared before {@code /{id}} and never collide with a UUID.
  */
 @RestController
@@ -155,6 +157,16 @@ public class WarehouseController {
             @NotEmpty(message = "pickOrderIds should not be empty") List<String> pickOrderIds,
             String notes) {}
 
+    public record AdjustBinRequest(
+            @NotBlank(message = "productId should not be empty") String productId,
+            String variantId,
+            String batchId,
+            @DecimalMin(value = "0", message = "newQty must not be less than 0") BigDecimal newQty,
+            BigDecimal delta,
+            @NotBlank(message = "reason should not be empty") String reason) {}
+
+    public record ReconcileRequest(String productId) {}
+
     public record CycleCountRequest(
             List<@OneOf({"A", "B", "C"}) String> classes,
             @Min(value = 1, message = "limit must not be less than 1") Integer limit) {}
@@ -191,6 +203,13 @@ public class WarehouseController {
     @RequirePermissions(Permissions.WAREHOUSE__READ)
     public Map<String, Object> overview(@PathVariable String locationId) {
         return setup.overview(locationId);
+    }
+
+    @PostMapping("/locations/{locationId}/reconcile")
+    @RequirePermissions(Permissions.WAREHOUSE__MANAGE)
+    public Map<String, Object> reconcile(@PathVariable String locationId,
+            @Valid @RequestBody(required = false) ReconcileRequest dto) {
+        return setup.reconcile(locationId, dto == null ? null : dto.productId());
     }
 
     @GetMapping("/locations/{locationId}/abc")
@@ -247,6 +266,13 @@ public class WarehouseController {
     @RequirePermissions(Permissions.WAREHOUSE__MANAGE)
     public Map<String, Object> deleteBin(@PathVariable String id) {
         return setup.deleteBin(id);
+    }
+
+    @PostMapping("/bins/{id}/adjust")
+    @RequirePermissions(Permissions.WAREHOUSE__MANAGE)
+    public Map<String, Object> adjustBin(@PathVariable String id, @Valid @RequestBody AdjustBinRequest dto) {
+        return setup.adjustBin(id, new BinAdjustInput(dto.productId(), dto.variantId(), dto.batchId(), dto.newQty(),
+                dto.delta(), dto.reason()));
     }
 
     @GetMapping("/bin-stock")

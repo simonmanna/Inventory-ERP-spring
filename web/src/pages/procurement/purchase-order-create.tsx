@@ -10,8 +10,11 @@ import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
-import { defaultUnitId, unitPrice, type UnitAwareProduct } from '@/features/products/units';
+import {
+  defaultUnitId, unitPrice, unitPriceUnknown, withVariantPrices, type UnitAwareProduct,
+} from '@/features/products/units';
 import { VariantSelect } from '@/features/products/variant-select';
+import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 
 interface Partner { id: string; name: string; code: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
@@ -27,6 +30,8 @@ interface Line {
   taxId?: string;
   /** Unit the quantity and price are in (ADR-S003); defaults to the product's purchase unit. */
   unitOfMeasureId?: string;
+  /** Screen only: the unit's conversion is unknown here, so the price was cleared and must be typed. */
+  priceUnknown?: boolean;
 }
 
 export function PurchaseOrderCreatePage() {
@@ -77,7 +82,15 @@ export function PurchaseOrderCreatePage() {
         branchId: branchId || undefined,
         departmentId: departmentId || undefined,
         requestId,
-        lines: lines.filter((l) => l.quantity > 0),
+        lines: lines.filter((l) => l.quantity > 0).map((l) => ({
+          productId: l.productId,
+          variantId: l.variantId,
+          description: l.description,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          taxId: l.taxId,
+          unitOfMeasureId: l.unitOfMeasureId,
+        })),
       })).data,
     onSuccess: (data: any) => {
       notify.success(tx('Purchase {{orderNumber}} created', { orderNumber: data.orderNumber }));
@@ -108,28 +121,56 @@ export function PurchaseOrderCreatePage() {
 
   const addLine = () => setLines([...lines, { description: '', quantity: 1, unitPrice: 0 }]);
   const removeLine = (idx: number) => setLines(lines.filter((_, i) => i !== idx));
+  /**
+   * Purchase price of a line in `uomId` from the cost (the variant's when one is picked; costs are per base unit).
+   * `unknown` when the unit cannot be converted here: the price is then cleared for the user to type, never assumed.
+   */
+  const costFor = (product: Product | undefined, variant: VariantOption | null | undefined, uomId: string | undefined) => {
+    const priced = withVariantPrices(product, variant);
+    return { price: unitPrice(priced, uomId, 'purchase'), unknown: unitPriceUnknown(priced, uomId, 'purchase') };
+  };
   const pickProduct = (idx: number, productId: string) => {
     const product = products.data?.find((p) => p.id === productId);
     if (!product) return;
     const next = [...lines];
     const unitOfMeasureId = defaultUnitId(product, 'purchase');
+    const { price, unknown } = costFor(product, null, unitOfMeasureId);
     next[idx] = {
       productId,
       description: product.name,
       quantity: next[idx].quantity || 1,
-      unitPrice: unitPrice(product, unitOfMeasureId, 'purchase') ?? Number(product.costPrice ?? product.salesPrice ?? 0),
+      // Never the sales price: no known cost leaves the price for the user.
+      unitPrice: price ?? 0,
       taxId: product.taxId,
       unitOfMeasureId,
+      priceUnknown: unknown,
     };
     setLines(next);
   };
   const pickUnit = (idx: number, uomId: string) => {
-    const product = products.data?.find((p) => p.id === lines[idx].productId);
+    const line = lines[idx];
+    const product = products.data?.find((p) => p.id === line.productId);
+    const { price, unknown } = costFor(product, cachedVariantOption(qc, line.productId, line.variantId), uomId);
     const next = [...lines];
-    const price = unitPrice(product, uomId, 'purchase');
-    next[idx] = { ...next[idx], unitOfMeasureId: uomId, unitPrice: price ?? next[idx].unitPrice };
+    next[idx] = {
+      ...line, unitOfMeasureId: uomId,
+      unitPrice: unknown ? 0 : price ?? line.unitPrice, priceUnknown: unknown,
+    };
     setLines(next);
   };
+  const pickVariant = (idx: number, variantId: string | null, opt: VariantOption | null) => {
+    const line = lines[idx];
+    const next = [...lines];
+    let pricing: Partial<Line> = {};
+    if (opt && opt.costPrice != null) {
+      // The variant cost is per base unit: scale it to the line's unit.
+      const { price, unknown } = costFor(products.data?.find((p) => p.id === line.productId), opt, line.unitOfMeasureId);
+      pricing = unknown ? { unitPrice: 0, priceUnknown: true } : price !== null ? { unitPrice: price, priceUnknown: false } : {};
+    }
+    next[idx] = { ...line, variantId, ...(opt ? { description: opt.displayName } : {}), ...pricing };
+    setLines(next);
+  };
+  const priceMissing = lines.some((l) => l.quantity > 0 && l.priceUnknown);
 
   return (
     <div className="space-y-4">
@@ -257,15 +298,7 @@ export function PurchaseOrderCreatePage() {
                   <VariantSelect
                     productId={ln.productId}
                     value={ln.variantId}
-                    onChange={(variantId, opt) => {
-                      const next = [...lines];
-                      next[idx] = {
-                        ...next[idx],
-                        variantId,
-                        ...(opt ? { description: opt.displayName, ...(opt.costPrice != null ? { unitPrice: Number(opt.costPrice) } : {}) } : {}),
-                      };
-                      setLines(next);
-                    }}
+                    onChange={(variantId, opt) => pickVariant(idx, variantId, opt)}
                   />
                 </div>
                 <div className="md:col-span-3">
@@ -305,13 +338,15 @@ export function PurchaseOrderCreatePage() {
                     type="number"
                     step="0.01"
                     min="0"
-                    value={ln.unitPrice}
+                    value={ln.priceUnknown ? '' : ln.unitPrice}
+                    className={ln.priceUnknown ? 'border-amber-500' : undefined}
                     onChange={(e) => {
                       const next = [...lines];
-                      next[idx] = { ...next[idx], unitPrice: Number(e.target.value) };
+                      next[idx] = { ...next[idx], unitPrice: Number(e.target.value), priceUnknown: false };
                       setLines(next);
                     }}
                   />
+                  {ln.priceUnknown && <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>}
                 </div>
                 <div className="md:col-span-1 text-right text-sm tabular-nums">
                   {(ln.quantity * ln.unitPrice).toFixed(2)}
@@ -335,7 +370,7 @@ export function PurchaseOrderCreatePage() {
         <Button variant="outline" onClick={() => navigate(-1)}>{tx('Cancel')}</Button>
         <Button
           onClick={() => create.mutate()}
-          disabled={!partnerId || !warehouseId || lines.length === 0 || create.isPending}
+          disabled={!partnerId || !warehouseId || lines.length === 0 || priceMissing || create.isPending}
         >
           <Save className="mr-2 h-4 w-4" />
           {create.isPending ? tx('Saving…') : tx('Save Purchase')}

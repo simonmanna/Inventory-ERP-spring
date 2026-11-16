@@ -165,6 +165,8 @@ class SyncRepository @Inject constructor(
         db.messageDao().markState(opId, "failed", note)
         db.expenseDao().markSync(opId, "discarded", note)
         db.purchaseDao().markSync(opId, "discarded")
+        // Phase I6: the device mirror of a stock op / restock / kitchen void the server never took.
+        db.inventoryDao().deleteForOp(opId)
         true
     }
 
@@ -198,6 +200,7 @@ class SyncRepository @Inject constructor(
         res.data["products"]?.let { applyProducts(it) }
         res.data["productCategories"]?.let { applyProductCategories(it) }
         res.data["productPackagings"]?.let { applyProductPackagings(it) }
+        res.data["productVariants"]?.let { applyProductVariants(it) }
         res.data["partners"]?.let { applyPartners(it) }
         res.data["reservations"]?.let { applyReservations(it) }
         res.data["conversations"]?.let { applyConversations(it) }
@@ -220,6 +223,9 @@ class SyncRepository @Inject constructor(
             ),
         )
         if (fullResync) config.catalogUnitsVersion = CATALOG_UNITS_VERSION
+        // The scale the server rounds tax to, so the till prices a sale to the server's total.
+        res.currency?.let { config.taxScale = it.decimalPlaces ?: -1 }
+        CartEngine.taxScale = config.taxScale
         // The installation's licence, as the server sees it right now. A pull from an older server
         // carries none, in which case the last known answer stands rather than being reset.
         res.license?.let { licence ->
@@ -443,6 +449,7 @@ class SyncRepository @Inject constructor(
                         name = row.str("name") ?: "",
                         rate = row.num("rate") ?: 0.0,
                         isActive = row.bool("isActive") ?: true,
+                        isInclusive = row.bool("isInclusive") ?: false,
                     ),
                 ),
             )
@@ -783,10 +790,13 @@ class SyncRepository @Inject constructor(
                         uomName = uom?.str("name"),
                         taxId = row.str("taxId"),
                         taxRate = tax?.num("rate") ?: 0.0,
-                        taxInclusive = row.bool("taxInclusive") ?: false,
+                        // The server lets the tax row decide inclusivity; the product flag only without one.
+                        taxInclusive = tax?.bool("isInclusive") ?: row.bool("taxInclusive") ?: false,
                         isActive = row.bool("isActive") ?: true,
                         isService = row.bool("isService") ?: false,
                         updatedAt = parseEpoch(row.str("updatedAt")),
+                        salesUomId = row.str("salesUomId"),
+                        hasVariants = row.bool("hasVariants") ?: false,
                     ),
                 ),
             )
@@ -965,6 +975,28 @@ class SyncRepository @Inject constructor(
         )
     }
 
+    /** Product variants (Phase I6): tombstones (deleted variant or product) and inactive rows leave the till. */
+    private suspend fun applyProductVariants(rows: List<JsonObject>) {
+        val dao = db.productVariantDao()
+        for (row in rows) {
+            val id = row.str("id") ?: continue
+            if (row.deleted()) { dao.delete(id); continue }
+            dao.upsertAll(
+                listOf(
+                    ProductVariantEntity(
+                        id = id,
+                        productId = row.str("productId") ?: continue,
+                        name = row.str("name") ?: "",
+                        sku = row.str("sku"),
+                        barcode = row.str("barcode"),
+                        price = row.num("price") ?: 0.0,
+                        isActive = row.bool("isActive") ?: true,
+                    ),
+                ),
+            )
+        }
+    }
+
     private suspend fun applyStockLevels(rows: List<JsonObject>) {
         db.cashInventoryDao().upsertStockLevels(
             rows.mapNotNull { row ->
@@ -1015,7 +1047,7 @@ class SyncRepository @Inject constructor(
 
     companion object {
         /** Bump to force one full catalog re-pull after a local price-units fix. */
-        const val CATALOG_UNITS_VERSION = 1
+        const val CATALOG_UNITS_VERSION = 2 // 2: Phase I6 — re-pull taxes/products for inclusivity, units, variants
 
         /**
          * Rejections where the server committed nothing (bad input, business
@@ -1037,6 +1069,7 @@ class SyncRepository @Inject constructor(
             "cashRegisters" to "cash_registers",
             "products" to "products",
             "productCategories" to "product_categories",
+            "productVariants" to "product_variants",
         )
     }
 }

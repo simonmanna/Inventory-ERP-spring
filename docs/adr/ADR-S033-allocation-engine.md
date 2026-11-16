@@ -98,6 +98,7 @@ when an unregistered top-level `*Allocat*` class appears in an application packa
 | `CostAllocationService` | accounting | Existing routes and rules (`CostCenterAccountingIT`) | `CostCenterAccountingIT` | Reimplement as a single-segment cycle with routes unchanged — **CM-4** (deferred from CM-3 to keep this PR's risk on new code only) |
 | `AbcCalculator` | costing | Analytic by nature | `AbcCalculatorTest`, `AdvancedCostingIT` | Becomes statistical allocation documents — **CM-9** |
 | `ProcessCostCalculator` | manufacturing | A valuation method (equivalent units), not allocation | `ProcessCostCalculatorTest` | **Permanently independent** |
+| `WeightAllocation` | fleet | Splits a customer-weight *quantity* variance over load lines under per-line caps with overflow redistribution and largest-remainder rounding at the line scale (Phase A A2, plan §7); no money | `WeightAllocationTest`, `SalesCustomerWeightIT` | **Permanently independent** (2026-11-16) |
 
 ## Routes
 

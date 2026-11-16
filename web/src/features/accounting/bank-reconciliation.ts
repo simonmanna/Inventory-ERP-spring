@@ -10,10 +10,13 @@ export interface StatementLineRow {
   description: string;
   amount: string;
   currencyCode: string;
-  status: 'unmatched' | 'matched' | 'excluded';
+  status: 'unmatched' | 'matched' | 'excluded' | 'partial';
   note: string | null;
   matchedPaymentId: string | null;
   matchedPaymentNumber: string | null;
+  /** ADR-S073: rule that matched the line and the entry a posting rule made. */
+  matchedRuleId?: string | null;
+  journalEntryId?: string | null;
 }
 
 export interface BankReconciliationSummary {
@@ -192,4 +195,40 @@ export function useExcludeLine() {
 
 export function useUnmatchLine() {
   return useReconciliationMutation((lineId: string) => idempotentPost(`/bank-reconciliation/unmatch/${lineId}`));
+}
+
+/** ACC-6 statement proof: closing + outstanding book items vs ledger + unrecorded statement lines. */
+export interface ReconciliationStatement {
+  bankAccountId: string;
+  asOf: string;
+  closingBalance: string;
+  ledgerBalance: string;
+  outstandingBook: string;
+  unrecordedStatement: string;
+  difference: string;
+  reconciled: boolean;
+  lockedThrough: string | null;
+  id?: string;
+}
+
+export function useReconciliationStatement(params: { bankAccountId: string; asOf: string; closingBalance: string }) {
+  const closing = params.closingBalance.trim();
+  return useQuery({
+    queryKey: [KEY, 'statement', params.bankAccountId, params.asOf, closing],
+    queryFn: async () =>
+      (
+        await api.get<ReconciliationStatement>('/bank-reconciliation/statement', {
+          params: { bankAccountId: params.bankAccountId, asOf: params.asOf, closingBalance: closing },
+        })
+      ).data,
+    enabled: !!params.bankAccountId && !!params.asOf && closing !== '' && Number.isFinite(Number(closing)),
+  });
+}
+
+/** Lock a reconciled statement (refused by the server unless the difference is zero). */
+export function useLockStatement() {
+  return useReconciliationMutation(
+    (input: { bankAccountId: string; asOf: string; closingBalance: number; notes?: string }) =>
+      idempotentPost<ReconciliationStatement>('/bank-reconciliation/statement', input),
+  );
 }

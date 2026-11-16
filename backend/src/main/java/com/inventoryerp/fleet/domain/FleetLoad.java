@@ -193,7 +193,176 @@ public class FleetLoad {
     @Column(name = "updatedAt", nullable = false)
     private Instant updatedAt;
 
+    // Columns added by Spring migrations (Sales deliveries V405+), declared in Phase A A2 (G10 entity catch-up).
+
+    @Column(name = "approvalRequired", nullable = false)
+    private Boolean approvalRequired;
+
+    @Column(name = "approvedAt")
+    private Instant approvedAt;
+
+    @Column(name = "approvedById")
+    private String approvedById;
+
+    @Column(name = "arrivedAt")
+    private Instant arrivedAt;
+
+    @Column(name = "attemptFailed", nullable = false)
+    private Boolean attemptFailed;
+
+    @Column(name = "deliveryAddress")
+    private String deliveryAddress;
+
+    @Column(name = "deliveryMethod")
+    private String deliveryMethod;
+
+    @Column(name = "destinationLocationId")
+    private String destinationLocationId;
+
+    @Column(name = "driverPhone")
+    private String driverPhone;
+
+    @Column(name = "emptyKm", precision = 10, scale = 1)
+    private BigDecimal emptyKm;
+
+    @Column(name = "expectedArrivalAt")
+    private Instant expectedArrivalAt;
+
+    @Column(name = "manualGross", precision = 14, scale = 3)
+    private BigDecimal manualGross;
+
+    @Column(name = "manualTare", precision = 14, scale = 3)
+    private BigDecimal manualTare;
+
+    @Column(name = "offloadingEquipment")
+    private String offloadingEquipment;
+
+    @Column(name = "rescheduledFromId")
+    private String rescheduledFromId;
+
+    @Column(name = "route")
+    private String route;
+
+    @Column(name = "scheduledTime")
+    private String scheduledTime;
+
+    @Column(name = "siteContactName")
+    private String siteContactName;
+
+    @Column(name = "siteContactPhone")
+    private String siteContactPhone;
+
+    @Column(name = "trackingNumber")
+    private String trackingNumber;
+
+    @Column(name = "transportCompany")
+    private String transportCompany;
+
+    @Column(name = "transportCost", precision = 20, scale = 6)
+    private BigDecimal transportCost;
+
+    @Column(name = "tripExpenses", precision = 20, scale = 6)
+    private BigDecimal tripExpenses;
+
+    @Column(name = "vehicleType")
+    private String vehicleType;
+
     public String getId() {
         return id;
+    }
+    public Boolean getApprovalRequired() {
+        return approvalRequired;
+    }
+
+    public Instant getApprovedAt() {
+        return approvedAt;
+    }
+
+    public String getApprovedById() {
+        return approvedById;
+    }
+
+    public Instant getArrivedAt() {
+        return arrivedAt;
+    }
+
+    public Boolean getAttemptFailed() {
+        return attemptFailed;
+    }
+
+    public String getDeliveryAddress() {
+        return deliveryAddress;
+    }
+
+    public String getDeliveryMethod() {
+        return deliveryMethod;
+    }
+
+    public String getDestinationLocationId() {
+        return destinationLocationId;
+    }
+
+    public String getDriverPhone() {
+        return driverPhone;
+    }
+
+    public BigDecimal getEmptyKm() {
+        return emptyKm;
+    }
+
+    public Instant getExpectedArrivalAt() {
+        return expectedArrivalAt;
+    }
+
+    public BigDecimal getManualGross() {
+        return manualGross;
+    }
+
+    public BigDecimal getManualTare() {
+        return manualTare;
+    }
+
+    public String getOffloadingEquipment() {
+        return offloadingEquipment;
+    }
+
+    public String getRescheduledFromId() {
+        return rescheduledFromId;
+    }
+
+    public String getRoute() {
+        return route;
+    }
+
+    public String getScheduledTime() {
+        return scheduledTime;
+    }
+
+    public String getSiteContactName() {
+        return siteContactName;
+    }
+
+    public String getSiteContactPhone() {
+        return siteContactPhone;
+    }
+
+    public String getTrackingNumber() {
+        return trackingNumber;
+    }
+
+    public String getTransportCompany() {
+        return transportCompany;
+    }
+
+    public BigDecimal getTransportCost() {
+        return transportCost;
+    }
+
+    public BigDecimal getTripExpenses() {
+        return tripExpenses;
+    }
+
+    public String getVehicleType() {
+        return vehicleType;
     }
 }

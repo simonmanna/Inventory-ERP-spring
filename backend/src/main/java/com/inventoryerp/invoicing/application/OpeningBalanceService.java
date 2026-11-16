@@ -3,6 +3,7 @@ package com.inventoryerp.invoicing.application;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.AccountResolverService.AccountMeta;
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -57,9 +58,12 @@ public class OpeningBalanceService {
     private final AccountResolverService accounts;
     private final InvoiceService invoices;
     private final VendorBillService bills;
+    private final InventoryValuationService valuation;
 
     public OpeningBalanceService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, InvoiceService invoices, VendorBillService bills) {
+            AccountResolverService accounts, InvoiceService invoices, VendorBillService bills,
+            InventoryValuationService valuation) {
+        this.valuation = valuation;
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
@@ -111,6 +115,9 @@ public class OpeningBalanceService {
             Set<String> ids = new HashSet<>();
             glLines.forEach(l -> ids.add(l.accountId()));
             Map<String, AccountMeta> meta = accounts.meta(ids);
+            // Owner decision D5: inventory value enters only through an approved opening count, so the stock
+            // subledger and the GL inventory control account start equal.
+            Set<String> inventory = new HashSet<>(valuation.inventoryAccountIds());
             List<Line> lines = new ArrayList<>();
             BigDecimal net = BigDecimal.ZERO;
             for (AccountLine l : glLines) {
@@ -121,6 +128,17 @@ public class OpeningBalanceService {
                 if ("ar".equals(a.controlAccountType()) || "ap".equals(a.controlAccountType())) {
                     throw ApiException.badRequest("Account " + a.code() + " is a receivable / payable control account."
                             + " Enter customer and supplier balances in their own sections.");
+                }
+                if (inventory.contains(a.id())) {
+                    throw ApiException.badRequest("Account " + a.code() + " holds inventory value. Enter opening stock"
+                            + " with an approved opening count so the stock ledger and the GL agree.");
+                }
+                if (!a.allowManualPosting()) {
+                    // tax and other control accounts are fed by their sub-ledger; a GL-only opening balance would never
+                    // tie out (review 2026-11-15, G-9). Inventory accounts get the more specific message above.
+                    throw ApiException.badRequest("Account " + a.code() + " does not allow manual posting ("
+                            + (a.categoryName() == null ? "control account" : a.categoryName())
+                            + "). Enter its opening balance through its own module.");
                 }
                 BigDecimal d = l.debit() == null ? BigDecimal.ZERO : l.debit();
                 BigDecimal c = l.credit() == null ? BigDecimal.ZERO : l.credit();

@@ -122,7 +122,7 @@ public class CostCenterRulesService {
 
     private static NormalizedLine with(NormalizedLine l, String cc) {
         return new NormalizedLine(l.accountId(), l.partnerId(), l.description(), l.branchId(), cc, l.dimensions(),
-                l.debit(), l.credit(), l.baseDebit(), l.baseCredit());
+                l.debit(), l.credit(), l.baseDebit(), l.baseCredit(), l.currencyId(), l.foreignAmount());
     }
 
     private String defaultFor(String partnerId, String branchId, String userId) {
@@ -187,19 +187,21 @@ public class CostCenterRulesService {
             Map<String, Object> dims = new LinkedHashMap<>(l.dimensions());
             dims.remove(SPLIT_DIMENSION);
             Map<String, Object> rest = dims.isEmpty() ? null : dims;
-            BigDecimal[] left = {l.debit(), l.credit(), l.baseDebit(), l.baseCredit()};
+            BigDecimal foreign = l.foreignAmount() == null ? BigDecimal.ZERO : l.foreignAmount();
+            BigDecimal[] left = {l.debit(), l.credit(), l.baseDebit(), l.baseCredit(), foreign};
             for (int i = 0; i < targets.size(); i++) {
                 Map<String, Object> t = targets.get(i);
                 boolean last = i == targets.size() - 1;
                 BigDecimal share = SqlRows.dec(t, "weight");
-                BigDecimal[] part = new BigDecimal[4];
-                BigDecimal[] orig = {l.debit(), l.credit(), l.baseDebit(), l.baseCredit()};
-                for (int k = 0; k < 4; k++) {
+                BigDecimal[] part = new BigDecimal[5];
+                BigDecimal[] orig = {l.debit(), l.credit(), l.baseDebit(), l.baseCredit(), foreign};
+                for (int k = 0; k < 5; k++) {
                     part[k] = last ? left[k] : Money6.share(orig[k], share, total);
                     left[k] = left[k].subtract(part[k]);
                 }
                 out.add(new NormalizedLine(l.accountId(), l.partnerId(), l.description(), l.branchId(),
-                        (String) t.get("costCenterId"), rest, part[0], part[1], part[2], part[3]));
+                        (String) t.get("costCenterId"), rest, part[0], part[1], part[2], part[3], l.currencyId(),
+                        l.foreignAmount() == null ? null : part[4]));
             }
         }
         return out;

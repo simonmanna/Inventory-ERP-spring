@@ -94,6 +94,13 @@ Pending owner approval:
    `The base unit of <name> cannot be changed after stock has moved. Add the new unit as an extra unit with
    its conversion instead.`
 
+Approved by the owner (`phase/inv-hardening`, see [inventory deviations](inventory.md#deviations) 17–18):
+
+7. **`PATCH /products/:id` with stock on hand.** A different `costingMethod` is refused (400) while any quant is
+   non-zero; a changed `costPrice` of a STANDARD product revalues the stock on hand in the same transaction (posting
+   source `product_cost_price`), and is refused (400) for a product governed by an active standard cost. Implemented
+   through the `ProductStockGuard` port (inventory module).
+
 ## Status
 
 P2: 81/81 routes. `CoreIT` (CRUD contract, partners, products, UoM, payment terms, fiscal positions,

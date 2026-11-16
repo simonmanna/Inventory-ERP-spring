@@ -1,5 +1,5 @@
 import {
-  BadgePercent, BarChart3, ClipboardList, FileText, LineChart, Package, Receipt, Telescope, TrendingUp, Users, UsersRound,
+  BadgePercent, BarChart3, Banknote, ClipboardList, FileText, LineChart, Package, Receipt, Telescope, TrendingUp, Users, UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReportCatalog, ReportParams } from '@/features/sales/report-center-api';
@@ -14,6 +14,7 @@ export const REPORT_PAGES: ReportPage[] = [
   { slug: 'orders', title: 'Orders & Fulfilment', description: 'Order registers and status, backorders, fulfilment, deliveries, trips, vehicles and drivers.', icon: ClipboardList, categories: ['orders', 'deliveries'] },
   { slug: 'quotations', title: 'Quotations & Pipeline', description: 'Quotation registers, conversion, follow-up, lost opportunities and the CRM pipeline.', icon: FileText, categories: ['quotations'] },
   { slug: 'billing', title: 'Billing & Collections', description: 'Invoices, aging, credit vs cash sales, tax, receipts, balances, deposits and allocations.', icon: Receipt, categories: ['invoices', 'collections'] },
+  { slug: 'branch-cash', title: 'Branch Cash Sales', description: 'Takings per branch and day, cash / mobile money / bank split, the cash sale register, products and salespeople per branch, head-office processing and exceptions.', icon: Banknote, categories: ['branch-cash'] },
   { slug: 'discounts', title: 'Discounts & Returns', description: 'Discounts by customer, product and salesperson, approvals, returns and net sales.', icon: BadgePercent, categories: ['discounts'] },
   { slug: 'team', title: 'Team Performance', description: 'Representatives: sales, targets, ranking, acquisition, retention, collections, commission and activity.', icon: UsersRound, categories: ['team'] },
   { slug: 'profitability', title: 'Profitability', description: 'Gross profit on actual inventory cost by product, customer, branch and salesperson; margin and price analysis.', icon: BarChart3, categories: ['profitability'] },

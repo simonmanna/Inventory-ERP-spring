@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAccounts } from '@/features/accounting/api';
+import { isPostingAccount, useAccounts } from '@/features/accounting/api';
 import {
   useAbcActivities,
   useAbcDrivers,
@@ -244,7 +244,7 @@ function AbcTab() {
   const [to, setTo] = useState(today);
   const [selected, setSelected] = useState<string>();
   const { data: run } = useAbcRun(selected);
-  const expenseAccounts = (accounts?.data ?? []).filter((a) => !a.isGroup && a.isActive);
+  const expenseAccounts = (accounts?.data ?? []).filter((a) => isPostingAccount(a));
 
   return (
     <div className="space-y-4">

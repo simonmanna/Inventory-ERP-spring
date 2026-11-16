@@ -59,6 +59,10 @@
     "update": "tax:update",
     "delete": "tax:delete"
   },
+  "withholding": {
+    "read": "withholding:read",
+    "update": "withholding:update"
+  },
   "currency": {
     "create": "currency:create",
     "read": "currency:read",
@@ -201,6 +205,14 @@
     "post": "journal_entry:post",
     "reverse": "journal_entry:reverse"
   },
+  "recurringEntry": {
+    "read": "recurring_entry:read",
+    "manage": "recurring_entry:manage"
+  },
+  "deferral": {
+    "read": "deferral:read",
+    "manage": "deferral:manage"
+  },
   "accountMapping": {
     "read": "account_mapping:read",
     "update": "account_mapping:update"
@@ -265,6 +277,10 @@
   "alerts": {
     "read": "alerts:read",
     "manage": "alerts:manage"
+  },
+  "notificationRouting": {
+    "read": "notification_routing:read",
+    "manage": "notification_routing:manage"
   },
   "bi": {
     "export": "bi:export"
@@ -590,7 +606,8 @@
     "delete": "fixed_asset:delete",
     "dispose": "fixed_asset:dispose",
     "transfer": "fixed_asset:transfer",
-    "approveTransfer": "fixed_asset:approve_transfer"
+    "approveTransfer": "fixed_asset:approve_transfer",
+    "impair": "fixed_asset:impair"
   },
   "assetCategory": {
     "create": "asset_category:create",
@@ -663,6 +680,10 @@
     "deliveryRead": "sales:delivery:read",
     "deliveryWrite": "sales:delivery:write",
     "deliveryApprove": "sales:delivery:approve",
+    "deliveryDispatch": "sales:delivery:dispatch",
+    "deliveryConfirm": "sales:delivery:confirm",
+    "deliveryPodCorrect": "sales:delivery:pod_correct",
+    "deliveryCancel": "sales:delivery:cancel",
     "customerRead": "sales:customer:read",
     "customerManage": "sales:customer:manage",
     "customerMerge": "sales:customer:merge",

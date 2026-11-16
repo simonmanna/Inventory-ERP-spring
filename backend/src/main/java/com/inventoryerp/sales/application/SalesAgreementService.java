@@ -82,7 +82,8 @@ public class SalesAgreementService {
         }
         Map<String, BigDecimal> released = released(id);
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\","
-                + " u.code AS \"uomCode\" FROM \"SalesAgreementLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\""
+                + " pv.name AS \"variantName\", u.code AS \"uomCode\" FROM \"SalesAgreementLine\" l LEFT JOIN \"Product\" pr"
+                + " ON pr.id = l.\"productId\" LEFT JOIN \"ProductVariant\" pv ON pv.id = l.\"variantId\""
                 + " LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"agreementId\" = ? ORDER BY pr.name", id);
         BigDecimal value = BigDecimal.ZERO;
         BigDecimal releasedValue = BigDecimal.ZERO;
@@ -239,9 +240,12 @@ public class SalesAgreementService {
             if (disc.signum() < 0 || disc.compareTo(SalesPricingEngine.HUNDRED) > 0) {
                 throw ApiException.badRequest("discountPercent must be between 0 and 100");
             }
-            db.insert("SalesAgreementLine", Obj.of("agreementId", id, "productId", productId, "uomId",
+            Map<String, Object> row = Obj.of("agreementId", id, "productId", productId, "uomId",
                     blank(str(l.get("uomId"))) ? null : str(l.get("uomId")), "contractQty", qty, "unitPrice", price,
-                    "discountPercent", disc, "minReleaseQty", dec(l.get("minReleaseQty"))));
+                    "discountPercent", disc, "minReleaseQty", dec(l.get("minReleaseQty")));
+            // P-1: the agreed price may be for one variant of the product (a product still appears once).
+            row.put("variantId", db.variantOf(l.get("variantId"), productId));
+            db.insert("SalesAgreementLine", row);
         }
     }
 

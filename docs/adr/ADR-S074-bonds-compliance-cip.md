@@ -1,7 +1,7 @@
 # ADR-S074 — Bonds and guarantees, subcontractor compliance, CIP capitalisation
 
 - Status: accepted (built 2026-11-10)
-- Migrations: `V492__project_bonds.sql`, `V493__subcontract_compliance.sql`, `V494__cip_capitalisation.sql`
+- Migrations: `V504__project_bonds.sql`, `V505__subcontract_compliance.sql`, `V506__cip_capitalisation.sql`
 - Extension: no NestJS counterpart. Module `com.inventoryerp.projects` (the fixed-asset register is written through
   `fixedasset.application.AssetCapitalisationService`; supplier payments call the `invoicing` SPI
   `SupplierPaymentGuard`).

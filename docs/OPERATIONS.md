@@ -161,6 +161,10 @@ system must be identical → scratch database dropped. Run it before every relea
   p95 < 300 ms). Start the API with `THROTTLE_ENABLED=false` or it measures 429s.
 - JVM: heap = 75 % of the container memory (`MaxRAMPercentage`), `ExitOnOutOfMemoryError`; give the API container
   ≥ 2 GB. `DB_POOL_SIZE` (default 20) must stay below Postgres `max_connections` minus maintenance headroom.
+- Discuss (ADR-S064): presence, typing and live messages travel over the in-process SSE fan-out of
+  `/communication/stream`. Running more than one API instance needs sticky sessions for that path (for example
+  nginx `ip_hash` or a cookie). Otherwise users on different instances see each other as offline and only get
+  messages on the next poll (30 s). Department channels resync hourly (`DiscussDepartmentSyncJob`, ShedLock).
 - Index review: enable `pg_stat_statements` (`shared_preload_libraries`) on the server, run the load suite, then
   `SELECT query, calls, mean_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20`.
 - Commit durability: business transactions always commit synchronously. Two bookkeeping writes commit with

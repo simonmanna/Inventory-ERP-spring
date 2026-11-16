@@ -27,6 +27,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -411,7 +413,21 @@ public class SubcontractComplianceService implements SupplierPaymentGuard {
         if (override == null) {
             String org = org();
             String user = TenantContext.userId();
-            newTx.executeWithoutResult(t -> insertLog(org, user, subcontractId, gate, billId, "blocked", issues, null));
+            Runnable write = () -> newTx.executeWithoutResult(t -> insertLog(org, user, subcontractId, gate, billId,
+                    "blocked", issues, null));
+            // The caller holds the Subcontract row FOR UPDATE; the log's FK check needs a key-share lock on that row, so
+            // writing it in a parallel transaction now would wait on our own suspended transaction forever. Write it
+            // once the rejected transaction has rolled back and released its locks.
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        write.run();
+                    }
+                });
+            } else {
+                write.run();
+            }
             throw ApiException.badRequest("Compliance check failed: " + String.join("; ", blocking) + ". Record the"
                     + " documents or ask a user with compliance:override to record an override");
         }

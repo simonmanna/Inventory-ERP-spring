@@ -1,5 +1,6 @@
 package com.inventoryerp.projects.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import static com.inventoryerp.projects.application.ProjectService.blank;
 import static com.inventoryerp.projects.application.ProjectService.day;
 import static com.inventoryerp.projects.application.ProjectService.org;
@@ -123,7 +124,7 @@ public class ProjectBondService {
                         + " ORDER BY b.\"expiryDate\", b.number")
                 .param("org", org()).param("project", blank(projectId)).param("status", blank(status))
                 .param("direction", blank(direction)).param("type", blank(bondType)));
-        rows.forEach(ProjectBondService::decorate);
+        rows.forEach(this::decorate);
         return rows;
     }
 
@@ -143,7 +144,7 @@ public class ProjectBondService {
         return b;
     }
 
-    private static void decorate(Map<String, Object> b) {
+    private void decorate(Map<String, Object> b) {
         LocalDate expiry = (LocalDate) b.get("expiryDate");
         b.put("daysToExpiry", LIVE.contains(b.get("status")) && expiry != null
                 ? ChronoUnit.DAYS.between(today(), expiry) : null);
@@ -619,12 +620,13 @@ public class ProjectBondService {
         return v != null ? v : fallback == null ? null : fallback.toString();
     }
 
-    private static String date(String v) {
+    private String date(String v) {
         String d = day(v);
         return d == null ? today().toString() : d;
     }
 
-    static LocalDate today() {
-        return LocalDate.now(ZoneOffset.UTC);
+    /** The organisation-local day (ADR-S070): bond events and expiry dates are org calendar days. */
+    LocalDate today() {
+        return LocalDate.now(AccountingDay.zone(jdbc));
     }
 }

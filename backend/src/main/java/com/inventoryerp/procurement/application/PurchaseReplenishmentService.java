@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
@@ -42,7 +43,15 @@ public class PurchaseReplenishmentService {
     /** Rule body. */
     public record RuleInput(String productId, String locationId, String branchId, String method,
             BigDecimal minQuantity, BigDecimal maxQuantity, BigDecimal safetyStock, Integer leadTimeDays,
-            BigDecimal orderMultiple, String preferredSupplierId, Boolean autoRaise, Boolean isActive) {}
+            BigDecimal orderMultiple, String preferredSupplierId, Boolean autoRaise, Boolean isActive, String variantId) {
+
+        public RuleInput(String productId, String locationId, String branchId, String method, BigDecimal minQuantity,
+                BigDecimal maxQuantity, BigDecimal safetyStock, Integer leadTimeDays, BigDecimal orderMultiple,
+                String preferredSupplierId, Boolean autoRaise, Boolean isActive) {
+            this(productId, locationId, branchId, method, minQuantity, maxQuantity, safetyStock, leadTimeDays,
+                    orderMultiple, preferredSupplierId, autoRaise, isActive, null);
+        }
+    }
 
     private static final BigDecimal DAYS = BigDecimal.valueOf(90);
 
@@ -51,9 +60,12 @@ public class PurchaseReplenishmentService {
     private final AuditService audit;
     private final TransactionTemplate tx;
 
+    private final ProductVariantService variants;
+
     public PurchaseReplenishmentService(JdbcClient jdbc, PurchaseRequestsService requests, AuditService audit,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm, ProductVariantService variants) {
         this.jdbc = jdbc;
+        this.variants = variants;
         this.requests = requests;
         this.audit = audit;
         this.tx = new TransactionTemplate(txm);
@@ -70,6 +82,9 @@ public class PurchaseReplenishmentService {
                 .params(in.locationId(), orgId).query(Long.class).single() == 0) {
             throw ApiException.notFound("Store not found");
         }
+        // Phase I2 (audit V-10, D2): a rule for a product with variants watches one active variant of its own.
+        String variantId = in.variantId() == null || in.variantId().isBlank() ? null : in.variantId();
+        variants.resolve(in.productId(), variantId);
         BigDecimal min = nz(in.minQuantity());
         BigDecimal max = nz(in.maxQuantity());
         if (max.compareTo(min) < 0) {
@@ -77,9 +92,10 @@ public class PurchaseReplenishmentService {
         }
         String id = jdbc.sql("INSERT INTO \"ReorderRule\" (id, \"organizationId\", \"productId\", \"locationId\", \"branchId\","
                         + " method, \"minQuantity\", \"maxQuantity\", \"safetyStock\", \"leadTimeDays\", \"orderMultiple\","
-                        + " \"preferredSupplierId\", \"autoRaise\", \"isActive\", \"createdBy\", \"createdAt\", \"updatedAt\")"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") ON CONFLICT"
-                        + " (\"organizationId\", \"productId\", \"locationId\") DO UPDATE SET \"branchId\" ="
+                        + " \"preferredSupplierId\", \"autoRaise\", \"isActive\", \"createdBy\", \"variantId\", \"createdAt\","
+                        + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW
+                        + ") ON CONFLICT (\"organizationId\", \"productId\", (COALESCE(\"variantId\", '')), \"locationId\")"
+                        + " DO UPDATE SET \"branchId\" ="
                         + " EXCLUDED.\"branchId\", method = EXCLUDED.method, \"minQuantity\" = EXCLUDED.\"minQuantity\","
                         + " \"maxQuantity\" = EXCLUDED.\"maxQuantity\", \"safetyStock\" = EXCLUDED.\"safetyStock\","
                         + " \"leadTimeDays\" = EXCLUDED.\"leadTimeDays\", \"orderMultiple\" = EXCLUDED.\"orderMultiple\","
@@ -88,7 +104,7 @@ public class PurchaseReplenishmentService {
                 .params(UUID.randomUUID().toString(), orgId, in.productId(), in.locationId(), in.branchId(),
                         in.method() == null ? "min_max" : in.method(), min, max, nz(in.safetyStock()),
                         in.leadTimeDays() == null ? 7 : in.leadTimeDays(), in.orderMultiple(), in.preferredSupplierId(),
-                        Boolean.TRUE.equals(in.autoRaise()), in.isActive() == null || in.isActive(), user())
+                        Boolean.TRUE.equals(in.autoRaise()), in.isActive() == null || in.isActive(), user(), variantId)
                 .query(String.class).single();
         audit.record(AuditInput.of("ReorderRule", id, "update", null, Obj.of("productId", in.productId(), "locationId",
                 in.locationId(), "min", JsNumbers.dec(min), "max", JsNumbers.dec(max))));
@@ -142,7 +158,7 @@ public class PurchaseReplenishmentService {
                         + " for " + s.get("locationName"), new BigDecimal((String) s.get("suggestedQuantity")), null,
                         s.get("lastPrice") == null ? null : new BigDecimal((String) s.get("lastPrice")), null, null,
                         (String) s.get("locationId"), (String) s.get("preferredSupplierId"), null, null, "reorder",
-                        (String) s.get("ruleId")));
+                        (String) s.get("ruleId"), (String) s.get("variantId")));
             }
             String branchId = (String) picked.getFirst().get("branchId");
             Map<String, Object> pr = requests.create(new PurchaseRequestsService.CreateInput(null, branchId,
@@ -159,23 +175,28 @@ public class PurchaseReplenishmentService {
     private Map<String, Object> evaluate(Map<String, Object> r) {
         String orgId = org();
         String productId = (String) r.get("productId");
+        // Phase I2 (audit V-10): a variant rule measures that variant's stock, orders, requests and use.
+        String variantId = (String) r.get("variantId");
         BigDecimal onHand = Money.dec(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE"
-                + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?").params(orgId, productId,
-                r.get("locationId")).query(BigDecimal.class).single());
+                + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?"
+                + " AND (?::text IS NULL OR \"variantId\" = ?::text)").params(orgId, productId,
+                r.get("locationId"), variantId, variantId).query(BigDecimal.class).single());
         BigDecimal onOrder = Money.dec(jdbc.sql("SELECT COALESCE(SUM(GREATEST(0, l.quantity - l.\"receivedQuantity\""
                 + " - l.\"cancelledQuantity\") * COALESCE(l.\"uomFactor\", 1)), 0) FROM \"PurchaseOrderLine\" l JOIN"
                 + " \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\" WHERE l.\"organizationId\" = ? AND l.\"productId\" = ?"
-                + " AND o.status::text IN ('draft', 'active', 'partially_received') AND o.\"deletedAt\" IS NULL")
-                .params(orgId, productId).query(BigDecimal.class).single());
+                + " AND o.status::text IN ('draft', 'active', 'partially_received') AND o.\"deletedAt\" IS NULL"
+                + " AND (?::text IS NULL OR l.\"variantId\" = ?::text)")
+                .params(orgId, productId, variantId, variantId).query(BigDecimal.class).single());
         BigDecimal requested = Money.dec(jdbc.sql("SELECT COALESCE(SUM(GREATEST(0, l.quantity - l.\"orderedQuantity\")), 0)"
                 + " FROM \"PurchaseRequestLine\" l JOIN \"PurchaseRequest\" q ON q.id = l.\"purchaseRequestId\" WHERE"
                 + " l.\"organizationId\" = ? AND l.\"productId\" = ? AND q.status::text IN ('draft', 'submitted', 'approved')"
-                + " AND q.\"deletedAt\" IS NULL").params(orgId, productId).query(BigDecimal.class).single());
+                + " AND q.\"deletedAt\" IS NULL AND (?::text IS NULL OR l.\"variantId\" = ?::text)")
+                .params(orgId, productId, variantId, variantId).query(BigDecimal.class).single());
         BigDecimal used = Money.dec(jdbc.sql("SELECT COALESCE(-SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND \"quantityChange\" < 0 AND"
                 + " type::text NOT IN ('transfer_out', 'reversal_out', 'return_to_supplier') AND \"createdAt\" >= "
-                + NOW + " - interval '90 days'").params(orgId, productId, r.get("locationId")).query(BigDecimal.class)
-                .single());
+                + NOW + " - interval '90 days' AND (?::text IS NULL OR \"variantId\" = ?::text)")
+                .params(orgId, productId, r.get("locationId"), variantId, variantId).query(BigDecimal.class).single());
         BigDecimal daily = used.divide(DAYS, 6, RoundingMode.HALF_UP);
         BigDecimal lead = BigDecimal.valueOf(((Number) r.get("leadTimeDays")).longValue());
         BigDecimal safety = Money.dec(r.get("safetyStock"));
@@ -211,6 +232,10 @@ public class PurchaseReplenishmentService {
         s.put("productId", productId);
         s.put("productName", r.get("productName"));
         s.put("productCode", r.get("productCode"));
+        if (variantId != null) {
+            s.put("variantId", variantId);
+            s.put("variantName", r.get("variantName"));
+        }
         s.put("locationId", r.get("locationId"));
         s.put("locationName", r.get("locationName"));
         s.put("branchId", r.get("branchId"));
@@ -245,7 +270,8 @@ public class PurchaseReplenishmentService {
     }
 
     private static final String RULES = "SELECT r.*, p.name AS \"productName\", p.code AS \"productCode\", l.name AS"
-            + " \"locationName\", s.name AS \"supplierName\" FROM \"ReorderRule\" r JOIN \"Product\" p ON p.id = r.\"productId\""
+            + " \"locationName\", s.name AS \"supplierName\", pv.name AS \"variantName\" FROM \"ReorderRule\" r"
+            + " JOIN \"Product\" p ON p.id = r.\"productId\" LEFT JOIN \"ProductVariant\" pv ON pv.id = r.\"variantId\""
             + " JOIN \"InventoryLocation\" l ON l.id = r.\"locationId\" LEFT JOIN \"Partner\" s ON s.id ="
             + " r.\"preferredSupplierId\"";
 

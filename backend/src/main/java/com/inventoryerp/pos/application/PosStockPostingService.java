@@ -108,26 +108,41 @@ public class PosStockPostingService {
         return out;
     }
 
-    /** Re-queue a FAILED job (a failed job deducted nothing, so this is safe). */
+    /**
+     * Re-queue a job. A FAILED job restarts with a fresh attempt budget; a PENDING job (waiting for its next attempt)
+     * is brought forward to the next drain. Either way {@code postedLineKeys} is kept, so a line that already posted
+     * is never issued again (ADR-S072, deviation: Nest retried failed jobs only).
+     * <p>Review R3: the change is a compare-and-set on the status (and, for a pending job, on it being unclaimed) that
+     * was read, so a job a runner claimed, or completed, in between is never re-opened or restarted.
+     */
     public Map<String, Object> retryJob(String id) {
         Map<String, Object> job = db.first(StockPostingJob.class, "id = ? AND \"organizationId\" = ?", id, org());
         if (job == null) {
             throw ApiException.notFound("Stock posting job not found");
         }
-        if (!"failed".equals(job.get("status"))) {
-            throw ApiException.badRequest("Only failed jobs can be retried (this one is " + job.get("status") + ")");
+        Object status = job.get("status");
+        boolean failed = "failed".equals(status);
+        if (!failed && !"pending".equals(status)) {
+            throw ApiException.badRequest("Only failed or pending jobs can be retried (this one is " + status + ")");
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "pending");
         data.put("attempts", 0);
-        data.put("lastError", null);
         data.put("nextRetryAt", PosDb.raw(NOW));
-        data.put("claimToken", null);
-        data.put("claimedAt", null);
-        Map<String, Object> updated = db.update(StockPostingJob.class, data, "id = ? AND \"organizationId\" = ?", id,
-                org());
+        if (failed) {
+            data.put("lastError", null);
+        }
+        int changed = db.updateMany(StockPostingJob.class, data, "id = ? AND \"organizationId\" = ? AND status = ?"
+                + " AND \"claimToken\" IS NULL", id, org(), status);
+        if (changed == 0) {
+            Object now = db.jdbc().sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(id, org()).query(String.class).optional().orElse(null);
+            throw ApiException.conflict("Stock posting job changed while retrying (now " + now
+                    + "); refresh and try again");
+        }
+        Map<String, Object> updated = db.first(StockPostingJob.class, "id = ? AND \"organizationId\" = ?", id, org());
         audit.record(AuditInput.of("StockPostingJob", id, "update", null,
-                Obj.of("retried", true, "invoiceNumber", job.get("invoiceNumber"))));
+                Obj.of("retried", true, "from", status, "invoiceNumber", job.get("invoiceNumber"))));
         return Obj.of("id", updated.get("id"), "status", updated.get("status"));
     }
 
@@ -181,9 +196,11 @@ public class PosStockPostingService {
         List<String> ids = db.jdbc().sql("""
                 SELECT j.id FROM "StockPostingJob" j
                  WHERE j."organizationId" = ? AND j.status = 'pending' AND j."nextRetryAt" <= date_trunc('milliseconds', clock_timestamp())::timestamp(3)
-                   AND j."invoiceId" IN (SELECT i.id FROM "Invoice" i WHERE i."organizationId" = ? AND i."cashSessionId" = ?)
+                   AND (j."invoiceId" IN (SELECT i.id FROM "Invoice" i WHERE i."organizationId" = ? AND i."cashSessionId" = ?)
+                        OR (j."invoiceId" IS NULL AND j."orderId" IN (SELECT o.id FROM "Order" o WHERE o."organizationId" = ?
+                            AND o."cashSessionId" = ?)))
                  ORDER BY j."createdAt" ASC LIMIT ?""")
-                .params(org(), org(), cashSessionId, DRAIN_MAX_JOBS).query(String.class).list();
+                .params(org(), org(), cashSessionId, org(), cashSessionId, DRAIN_MAX_JOBS).query(String.class).list();
         // Post-parity: bounded (job count + wall time) so a stalled worker or app.jobs.enabled=false cannot turn the
         // close request into a time-out; whatever is left is posted by the 30 s worker and shows as pending postings.
         long deadline = System.nanoTime() + DRAIN_BUDGET.toNanos();

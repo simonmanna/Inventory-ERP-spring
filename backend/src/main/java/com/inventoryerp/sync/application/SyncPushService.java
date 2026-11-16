@@ -13,6 +13,8 @@ import com.inventoryerp.core.domain.Tax;
 import com.inventoryerp.expenses.application.ExpensesService;
 import com.inventoryerp.inventory.application.DirectStockService;
 import com.inventoryerp.inventory.application.InventoryCountService;
+import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.OccurredAt;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -22,8 +24,10 @@ import com.inventoryerp.kernel.idempotency.IdempotencyService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.kernel.web.JsonConfig;
+import com.inventoryerp.pos.application.KitchenWaste;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosInvoiceService;
+import com.inventoryerp.pos.application.PosOverridesService;
 import com.inventoryerp.pos.application.PosReservationsService;
 import com.inventoryerp.pos.application.PosService;
 import com.inventoryerp.pos.application.PosSettingsService;
@@ -90,12 +94,22 @@ public class SyncPushService {
     private final DirectStockService directStock;
     private final InventoryCountService counts;
     private final ExpensesService expenses;
+    private final PosOverridesService overrides;
+    private final KitchenWaste kitchenWaste;
+    private final AuditService audit;
+    private final org.springframework.transaction.support.TransactionTemplate tx;
 
     public SyncPushService(PosDb db, JsonMapper mapper, IdempotencyService idempotency, PosService pos,
             PosSettingsService posSettings, PosInvoiceService billing, PosReservationsService reservations,
             CashSessionService cashSessions, CashRegisterService cashRegisters, ProductService products,
-            DirectStockService directStock, InventoryCountService counts, ExpensesService expenses) {
+            DirectStockService directStock, InventoryCountService counts, ExpensesService expenses,
+            org.springframework.transaction.PlatformTransactionManager txm, PosOverridesService overrides,
+            KitchenWaste kitchenWaste, AuditService audit) {
+        this.overrides = overrides;
+        this.kitchenWaste = kitchenWaste;
+        this.audit = audit;
         this.db = db;
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(txm);
         this.jdbc = db.jdbc();
         this.mapper = mapper;
         this.idempotency = idempotency;
@@ -350,7 +364,8 @@ public class SyncPushService {
                 checkout.remove("clientId");
                 Object provisional = checkout.remove("provisionalNumber");
                 checkout.put("occurredAt", occurredAt);
-                Map<String, Object> res = pos.checkout(checkout);
+                // Decision 1 (ADR-S072): the sale happened offline — keep it; an unconvertible unit holds its posting.
+                Map<String, Object> res = com.inventoryerp.kernel.common.OfflineReplay.run(() -> pos.checkout(checkout));
                 stampSale(res, device.id(), str(provisional));
                 m.put("id", res.get("invoiceId"));
                 m.put("mapping", mapOf("invoiceId", res.get("invoiceId"), "orderId", res.get("orderId"),
@@ -381,7 +396,7 @@ public class SyncPushService {
                 if (!isVoid && payload.get("lines") instanceof List<?> l && !l.isEmpty()) {
                     lines = new ArrayList<>();
                     for (Object o : l) {
-                        lines.add(PosSql.map(o));
+                        lines.add(lineByNumber(String.valueOf(payload.get("invoiceId")), PosSql.map(o)));
                     }
                 }
                 Map<String, Object> res = billing.refund(String.valueOf(payload.get("invoiceId")), reason,
@@ -606,7 +621,10 @@ public class SyncPushService {
                 m.put("id", docId);
                 m.put("mapping", mapOf("stockDocId", docId == null ? "" : String.valueOf(docId)));
             }
-            case "stock.count" -> m.putAll(applyStockCount(payload));
+            // Audit S-5: opening the count, entering the figures and submitting are one transaction, so a refused
+            // count leaves no open count behind.
+            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload)));
+            case "kitchen.void" -> m.putAll(kitchenVoid(device, op, payload));
             case "expense.create" -> {
                 Map<String, Object> e = expenses.create(new ExpensesService.CreateInput(str(payload.get("title")),
                         str(payload.get("description")), decimal(payload.get("amount")), str(payload.get("categoryId")),
@@ -632,6 +650,66 @@ public class SyncPushService {
     /** JS {@code new Date(iso)} for a validated ISO string. */
     static Instant jsDate(String iso) {
         return EntityPatch.toInstant(iso);
+    }
+
+    /**
+     * Phase I6 (additive): a device never learns server invoice-line ids, so a partial refund names its lines by
+     * {@code lineNumber} (1-based position in the sale it sent; the invoice keeps that order). A line that already
+     * carries a {@code lineId} is passed through unchanged; an unknown number leaves it unresolved, so the refund
+     * answers "Refund line is not on this invoice".
+     */
+    private Map<String, Object> lineByNumber(String invoiceId, Map<String, Object> line) {
+        if (PosSql.truthy(line.get("lineId")) || line.get("lineNumber") == null) {
+            return line;
+        }
+        Map<String, Object> out = new LinkedHashMap<>(line);
+        out.remove("lineNumber");
+        out.put("lineId", jdbc.sql("SELECT id FROM \"InvoiceItem\" WHERE \"invoiceId\" = ? AND \"organizationId\" = ? AND"
+                + " \"lineNumber\" = ? LIMIT 1").params(invoiceId, TenantContext.organizationId(),
+                        PosSql.dec(line.get("lineNumber")).intValue()).query(String.class).optional().orElse(null));
+        return out;
+    }
+
+    /**
+     * Phase I6: a line taken off a device-held tab after its kitchen ticket printed. The tab never reached the server
+     * (it is sent as one {@code sale.checkout} when settled), so there is no order line to void: the manager approval
+     * is re-verified as for {@code DELETE /pos/orders/:id/items/:itemId} and the started food is issued as kitchen
+     * waste at the shift's register location ({@link KitchenWaste#recordDeviceVoid}).
+     */
+    private Map<String, Object> kitchenVoid(Device device, Op op, Map<String, Object> payload) {
+        String reason = payload.get("reason") == null ? null : str(payload.get("reason")).trim();
+        if (reason == null || reason.isEmpty()) {
+            throw ApiException.badRequest("A reason is required to void an item");
+        }
+        String overrideById = str(payload.get("overrideById"));
+        if (!PosSql.truthy(overrideById)) {
+            throw ApiException.forbidden(
+                    "This item was already sent to the kitchen — a manager approval and PIN are required to void it");
+        }
+        overrides.verifyOperationApproval(overrideById, str(payload.get("overridePin")), "void");
+        List<KitchenWaste.DeviceLine> lines = new ArrayList<>();
+        for (Object o : PosSql.list(payload.get("lines"))) {
+            Map<String, Object> l = PosSql.map(o);
+            double qty = l.get("quantity") == null ? 0 : PosSql.num(l.get("quantity"));
+            if (!PosSql.truthy(l.get("menuItemId")) && !PosSql.truthy(l.get("productId")) || !(qty > 0)) {
+                throw http("kitchen.void lines need a menuItemId or productId and a positive quantity", 400);
+            }
+            lines.add(new KitchenWaste.DeviceLine(str(l.get("menuItemId")), str(l.get("productId")),
+                    str(l.get("variantId")), qty, str(l.get("description"))));
+        }
+        if (lines.isEmpty()) {
+            throw http("kitchen.void requires lines", 400);
+        }
+        String orgId = TenantContext.organizationId();
+        int wasted = kitchenWaste.recordDeviceVoid(orgId, str(payload.get("cashSessionId")), "device:" + op.opId(),
+                str(payload.get("tableLabel")), lines, reason, overrideById);
+        List<Map<String, Object>> voided = new ArrayList<>();
+        lines.forEach(l -> voided.add(mapOf("description", l.description(), "menuItemId", l.menuItemId(), "productId",
+                l.productId(), "variantId", l.variantId(), "quantity", PosSql.js(l.quantity()))));
+        audit.record(AuditInput.of("PosDevice", device.id(), "cancel", null, mapOf("kind", "item_void", "source",
+                "device_tab", "tableLabel", payload.get("tableLabel"), "reason", reason, "approvedById", overrideById,
+                "hadBeenFired", true, "lines", voided, "wastedLines", wasted)));
+        return mapOf("id", op.opId(), "mapping", mapOf("kitchenVoidId", op.opId()));
     }
 
     static String offlineStockDisposition(Object value) {
@@ -947,14 +1025,28 @@ public class SyncPushService {
         lines.forEach(l -> productIds.add(String.valueOf(l.get("productId"))));
         Map<String, Object> session = counts.start(str(payload.get("locationId")), "spot", str(payload.get("notes")), null,
                 null, new ArrayList<>(productIds), null);
-        Map<String, Map<String, Object>> lineByProduct = new HashMap<>();
+        // Phase I2 (audit V-4): a device counts a product's total, or one variant of a product with variants (the
+        // session expands such a product into one line per active variant). Key = product + variant ("" = none).
+        Map<String, Map<String, Object>> lineByCell = new HashMap<>();
         for (Object o : PosSql.list(session.get("lines"))) {
             Map<String, Object> l = PosSql.map(o);
-            if (l.get("variantId") == null) {
-                lineByProduct.put(String.valueOf(l.get("productId")), l);
+            // A resumed screen count split per lot (lotLine) cannot take a device total.
+            if (!Boolean.TRUE.equals(l.get("lotLine"))) {
+                lineByCell.put(countCell(l.get("productId"), l.get("variantId")), l);
             }
         }
-        long missing = productIds.stream().filter(id -> !lineByProduct.containsKey(id)).count();
+        for (Map<String, Object> l : lines) {
+            if (!PosSql.truthy(l.get("variantId"))) {
+                Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\" FROM \"Product\" WHERE"
+                        + " id = ? AND \"organizationId\" = ?").params(String.valueOf(l.get("productId")),
+                                TenantContext.organizationId()));
+                if (product != null && Boolean.TRUE.equals(product.get("hasVariants"))) {
+                    throw http("Choose a variant for " + product.get("name"), 400);
+                }
+            }
+        }
+        long missing = lines.stream().filter(l -> !lineByCell.containsKey(countCell(l.get("productId"),
+                l.get("variantId")))).count();
         if (missing > 0) {
             throw http("An open spot count on this location does not cover " + missing + " counted product(s) — finish or"
                     + " cancel it in the back office, then retry", 409);
@@ -963,8 +1055,8 @@ public class SyncPushService {
         for (Map<String, Object> l : lines) {
             String reason = l.get("reason") instanceof String r && !r.trim().isEmpty() ? r.trim()
                     : payload.get("reason") instanceof String pr && !pr.trim().isEmpty() ? pr.trim() : "Device count";
-            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByProduct.get(String.valueOf(l.get("productId")))
-                    .get("id")), PosSql.dec(l.get("countedQty")), reason));
+            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByCell.get(countCell(l.get("productId"),
+                    l.get("variantId"))).get("id")), PosSql.dec(l.get("countedQty")), reason));
         }
         String sessionId = String.valueOf(session.get("id"));
         counts.saveDraft(sessionId, draft, null, null);
@@ -973,11 +1065,17 @@ public class SyncPushService {
                 "countCode", session.get("countCode") == null ? "" : String.valueOf(session.get("countCode"))));
     }
 
+    private static String countCell(Object productId, Object variantId) {
+        return productId + "::" + (PosSql.truthy(variantId) ? String.valueOf(variantId) : "");
+    }
+
     /** Process the not-yet-done stock-posting jobs of one shift's invoices before its close. */
     private void drainStockPostings(String cashSessionId) {
-        List<String> jobs = jdbc.sql("SELECT j.id FROM \"StockPostingJob\" j JOIN \"Invoice\" i ON i.id = j.\"invoiceId\""
-                + " WHERE i.\"cashSessionId\" = ? AND i.\"organizationId\" = ? AND j.status::text <> 'done'")
-                .params(cashSessionId, TenantContext.organizationId()).query(String.class).list();
+        // T-1 (ADR-S072): an order-timed job without its invoice yet belongs to the shift through its order.
+        List<String> jobs = jdbc.sql("SELECT j.id FROM \"StockPostingJob\" j LEFT JOIN \"Invoice\" i ON i.id = j.\"invoiceId\""
+                + " LEFT JOIN \"Order\" o ON o.id = j.\"orderId\" AND j.\"invoiceId\" IS NULL WHERE j.\"organizationId\" = ?"
+                + " AND (i.\"cashSessionId\" = ? OR o.\"cashSessionId\" = ?) AND j.status::text <> 'done'")
+                .params(TenantContext.organizationId(), cashSessionId, cashSessionId).query(String.class).list();
         for (String job : jobs) {
             try {
                 billing.processStockPostingJob(job);

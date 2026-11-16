@@ -99,7 +99,9 @@ public class RentalSwapService {
                 "reason", dto.get("reason"), "priceDelta", RentalRows.dec(delta), "byUserId", RentalRows.user()));
         String swapId = (String) swap.get("id");
 
-        posting.returnTransfer(agreementId, productId, 1, "returned");
+        // Audit S-6: the line's quantity goes back, as it goes out below (Nest returned 1 whatever the quantity).
+        double lineQty = RentalRows.num(line.get("quantity"));
+        posting.returnTransfer(agreementId, productId, lineQty == 0 || Double.isNaN(lineQty) ? 1 : lineQty, "returned");
         posting.checkoutTransfer(agreementId, productId, line.get("quantity"));
 
         Map<String, Object> booking = db.first(RentalBooking.class, "\"organizationId\" = ? AND \"sourceType\" ="

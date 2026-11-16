@@ -198,8 +198,9 @@ class ReportingIT extends ApiTestSupport {
             currency.upsertRate("EUR", base, now.minus(Duration.ofMinutes(1)), new BigDecimal("2.5"), "test");
             return revaluation.run(now);
         });
-        assertThat(result.revalued()).isEqualTo(1);
-        assertThat(result.totalGain()).isEqualTo("50");
+        // demoOrg is shared: other classes' open foreign items (e.g. a received, unpaid foreign PO, whose AP now carries
+        // its currency — review 2026-11-15, G-1 / P-4) are revalued in the same run, so check this account's row.
+        assertThat(result.revalued()).isGreaterThanOrEqualTo(1);
         // ACC-2: the row is keyed by the real fiscal period of asOf (was the constant 'adhoc').
         BigDecimal fxGain = jdbc.sql("SELECT \"fxGain\" FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND"
                         + " \"accountId\" = ? ORDER BY \"asOf\" DESC LIMIT 1")

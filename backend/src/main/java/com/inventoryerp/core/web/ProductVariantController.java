@@ -1,5 +1,6 @@
 package com.inventoryerp.core.web;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -17,14 +18,31 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Product attributes &amp; variants (ADR-S058): attribute masters, a product's attribute lines and its variants. */
+/**
+ * Product attributes &amp; variants (ADR-S058): attribute masters, a product's attribute lines and its variants; and how
+ * the product is sold by size (ADR-S066).
+ */
 @RestController
 public class ProductVariantController {
 
     private final ProductVariantService variants;
+    private final ProductSizingService sizing;
 
-    public ProductVariantController(ProductVariantService variants) {
+    public ProductVariantController(ProductVariantService variants, ProductSizingService sizing) {
         this.variants = variants;
+        this.sizing = sizing;
+    }
+
+    @GetMapping("/products/{id}/sizing")
+    @RequirePermissions(Permissions.PRODUCT__READ)
+    public Map<String, Object> sizing(@PathVariable String id) {
+        return sizing.config(id);
+    }
+
+    @PutMapping("/products/{id}/sizing")
+    @RequirePermissions(Permissions.PRODUCT__UPDATE)
+    public Map<String, Object> saveSizing(@PathVariable String id, @RequestBody Map<String, Object> dto) {
+        return sizing.save(id, dto);
     }
 
     @GetMapping("/variant-attributes")

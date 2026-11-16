@@ -1,6 +1,7 @@
 package com.inventoryerp.costing.application;
 
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.AccountingPolicyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
@@ -666,7 +667,7 @@ public class QuarryCostingService {
                     + " e.\"postingDate\" < ? AND jl.\"journalEntryId\" IN (SELECT \"journalEntryId\" FROM"
                     + " \"QuarryRehabMovement\" WHERE \"obligationId\" = ? UNION SELECT \"reversalEntryId\" FROM"
                     + " \"QuarryRehabMovement\" WHERE \"obligationId\" = ? AND \"reversalEntryId\" IS NOT NULL)")
-                    .params(provision, java.sql.Timestamp.from(to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant()),
+                    .params(provision, AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc)),
                             id, id).query(BigDecimal.class).single();
             Map<String, Object> row = Obj.of("obligationId", id, "code", o.get("code"), "zoneId", o.get("zoneId"),
                     "zoneCode", o.get("zoneCode"), "opening", JsNumbers.dec(opening));

@@ -20,10 +20,13 @@ public final class Savepoints {
         }
         String name = "sp_" + UUID.randomUUID().toString().replace("-", "");
         jdbc.sql("SAVEPOINT " + name).update();
+        int mark = DetachedWrites.mark();
         try {
             body.run();
         } catch (RuntimeException | Error e) {
             jdbc.sql("ROLLBACK TO SAVEPOINT " + name).update();
+            // Events announcing what the savepoint just undid must not go out when the outer transaction commits.
+            DetachedWrites.rewind(mark);
             throw e;
         }
         jdbc.sql("RELEASE SAVEPOINT " + name).update();

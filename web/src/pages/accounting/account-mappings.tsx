@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import { DataTable, type Column } from '@/components/data-table';
 import {
+  isPostingAccount,
   useAccountMappingRegistry,
   useAccountMappings,
   useAccounts,
@@ -114,9 +115,7 @@ function AccountMappingsPage() {
    * filtering here means an invalid choice is never offered in the first place.
    */
   const eligibleAccounts = useMemo(() => {
-    const postable = allAccounts.filter(
-      (a) => !a.isGroup && a.isActive && !a.deprecatedAt,
-    );
+    const postable = allAccounts.filter(isPostingAccount);
     if (!editingDef || editingDef.expectedCategories.length === 0) return postable;
     return postable.filter(
       (a) => a.category?.key && editingDef.expectedCategories.includes(a.category.key),

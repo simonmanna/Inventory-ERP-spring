@@ -1,5 +1,6 @@
 package com.inventoryerp.projects.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import static com.inventoryerp.projects.application.ProjectService.blank;
 import static com.inventoryerp.projects.application.ProjectService.day;
 import static com.inventoryerp.projects.application.ProjectService.org;
@@ -182,7 +183,7 @@ public class CapitalProjectService {
             throw ApiException.badRequest("Only " + balance.setScale(2, RoundingMode.HALF_UP).toPlainString()
                     + " is left in construction in progress");
         }
-        String d = day(in.date()) == null ? LocalDate.now(ZoneOffset.UTC).toString() : day(in.date());
+        String d = day(in.date()) == null ? LocalDate.now(AccountingDay.zone(jdbc)).toString() : day(in.date());
         String id = UUID.randomUUID().toString();
         String number = seq.next("project_capitalisation", "CAP/", 5);
         String label = "Capitalisation " + number + " · project " + p.get("code");

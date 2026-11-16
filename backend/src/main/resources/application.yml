@@ -128,6 +128,10 @@ app:
     quarry: ${ENABLE_QUARRY:false}
     portal: ${ENABLE_PORTAL:false}
     alerts: ${ENABLE_ALERTS:false}
+  # Notification routing (ADR-S065): tell the responsible people when a catalogued event happens. false keeps the
+  # settings editable and sends nothing.
+  notification-routing:
+    enabled: ${NOTIFICATION_ROUTING_ENABLED:true}
   # Scheduled alerts (ADR-S021): hourly scan of yard-level types, daily scan of the rest (ShedLock).
   alerts:
     hourly-cron: ${ALERTS_HOURLY_CRON:0 10 * * * *}

@@ -116,7 +116,12 @@ public class FleetDeliveryNoteService {
         if (t.get("loadedTonnes") != null) {
             carrier.append("\nLoaded: ").append(plain(t.get("loadedTonnes"))).append(" t");
         }
-        if (t.get("weighSourceType") != null && !"manual".equals(t.get("weighSourceType"))) {
+        if ("weighbridge_ticket".equals(t.get("weighSourceType"))) {
+            Map<String, Object> ticket = ((List<Map<String, Object>>) t.getOrDefault("weighbridgeTickets", List.of()))
+                    .stream().filter(w -> String.valueOf(t.get("weighSourceId")).equals(w.get("id"))).findFirst()
+                    .orElse(null);
+            carrier.append("\n").append(weighLine(ticket, t.get("weighSourceId")));
+        } else if (t.get("weighSourceType") != null && !"manual".equals(t.get("weighSourceType"))) {
             carrier.append("\nWeighed: ").append(t.get("weighSourceType")).append(" ")
                     .append(s(t.get("weighSourceId")));
         }
@@ -153,6 +158,10 @@ public class FleetDeliveryNoteService {
                     : " (" + pod.get("receiverPhone") + ")") + " on " + dt(pod.get("receivedAt"))
                     + (pod.get("latitude") == null ? "" : " at GPS " + pod.get("latitude") + ", " + pod.get("longitude"))
                     + (pod.get("signatureFileId") == null ? "" : " — signed electronically"), f10));
+            String weight = customerWeightLine(pod);
+            if (weight != null) {
+                pdf.add(new Paragraph(weight, f10));
+            }
         } else {
             pdf.add(new Paragraph(" "));
             pdf.add(new Paragraph("Received in good order by: ______________________   Signature: ______________"
@@ -177,6 +186,39 @@ public class FleetDeliveryNoteService {
 
     private static String s(Object o) {
         return o == null ? "" : o.toString();
+    }
+
+    /**
+     * Phase A A2: "Customer weight 19 000 kg (ticket CW-7) · quarry 20 000 kg · variance 1 000 kg — disputed" when the
+     * customer's weighing was recorded; null otherwise. Evidence only: the note's quantities do not change.
+     */
+    static String customerWeightLine(Map<String, Object> pod) {
+        if (pod == null || pod.get("customerNetKg") == null) {
+            return null;
+        }
+        String outcome = switch (s(pod.get("weightOutcome"))) {
+            case "within_tolerance" -> "within tolerance";
+            case "heavier" -> "customer heavier (flagged)";
+            case "disputed" -> "disputed";
+            case "awaiting_split" -> "disputed — split to confirm";
+            default -> "no quarry weight to compare";
+        };
+        return "Customer weight " + plain(pod.get("customerNetKg")) + " kg"
+                + (pod.get("customerTicketRef") == null ? "" : " (ticket " + pod.get("customerTicketRef") + ")")
+                + (pod.get("quarryNetKg") == null ? "" : " · quarry " + plain(pod.get("quarryNetKg")) + " kg · variance "
+                        + plain(pod.get("weightVarianceKg")) + " kg")
+                + " — " + outcome;
+    }
+
+    /** "Weighbridge ticket WBT-… · gross / tare / net kg" for the ticket that fed the trip (flagged when manual). */
+    static String weighLine(Map<String, Object> ticket, Object fallbackId) {
+        if (ticket == null) {
+            return "Weighbridge ticket: " + s(fallbackId);
+        }
+        return "Weighbridge ticket: " + s(ticket.get("ticketNumber"))
+                + "\nGross " + plain(ticket.get("grossKg")) + " kg · Tare " + plain(ticket.get("tareKg"))
+                + " kg · Net " + plain(ticket.get("netKg")) + " kg"
+                + (Boolean.TRUE.equals(ticket.get("isManual")) ? " (manual weight)" : "");
     }
 
     private static String plain(Object o) {

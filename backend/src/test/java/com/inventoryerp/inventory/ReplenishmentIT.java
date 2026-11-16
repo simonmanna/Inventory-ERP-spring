@@ -230,6 +230,41 @@ class ReplenishmentIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("request bodies are validated records: unknown fields are refused, service messages kept")
+    void bodies() {
+        String p = product();
+        String l = location();
+        Map<String, Object> unknown = new java.util.HashMap<>(Map.of("productId", p, "locationId", l, "minQty", 10,
+                "colour", "red"));
+        assertThat(as("POST", "/inventory/replenishment/rules", unknown).status()).isEqualTo(400);
+        Res badRoute = as("POST", "/inventory/replenishment/rules", Map.of("productId", p, "locationId", l, "minQty",
+                10, "route", "teleport"));
+        assertThat(badRoute.status()).isEqualTo(400);
+        assertThat(badRoute.body().get("message").asString()).isEqualTo("route must be one of: buy, manufacture, transfer");
+        String id = ok(201, "POST", "/inventory/replenishment/rules", Map.of("productId", p, "locationId", l, "minQty", 10,
+                "maxQty", 30, "reorderQty", 5, "supplierId", supplier, "leadTimeDays", 3, "autoRequisition", false,
+                "route", "buy")).get("id").asString();
+        assertThat(as("PATCH", "/inventory/replenishment/rules/" + id, Map.of("productId", p)).status()).isEqualTo(400);
+        Map<String, Object> clear = new java.util.HashMap<>();
+        clear.put("maxQty", null);
+        clear.put("leadTimeDays", 7);
+        JsonNode patched = ok(200, "PATCH", "/inventory/replenishment/rules/" + id, clear);
+        assertThat(patched.get("maxQty").isNull()).isTrue();
+        assertThat(patched.get("leadTimeDays").asInt()).isEqualTo(7);
+        assertThat(new BigDecimal(patched.get("minQty").asString()).compareTo(BigDecimal.TEN)).isZero();
+        String source = location();
+        JsonNode transfer = ok(200, "PATCH", "/inventory/replenishment/rules/" + id, Map.of("route", "transfer",
+                "sourceLocationId", source));
+        assertThat(transfer.get("route").asString()).isEqualTo("transfer");
+        assertThat(as("POST", "/inventory/replenishment/alerts/" + UUID.randomUUID() + "/dismiss", Map.of("reason", "x",
+                "note", "y")).status()).isEqualTo(400);
+        assertThat(as("POST", "/inventory/replenishment/requisition", Map.of("alertIds", List.of(), "force", true))
+                .status()).isEqualTo(400);
+        assertThat(as("POST", "/inventory/replenishment/requisition", Map.of("alertIds", List.of())).body().get("message")
+                .asString()).isEqualTo("alertIds is required");
+    }
+
+    @Test
     @DisplayName("another organization sees no rule or alert, and cannot touch one")
     void tenantIsolation() {
         String p = product();

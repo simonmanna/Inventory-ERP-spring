@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ChevronRight, Plus, Lock, Unlock, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +45,11 @@ const STATUS_BADGE: Record<FiscalPeriod['status'], { label: string; className: s
 
 function FiscalPeriodsPage() {
   const navigate = useNavigate();
+  // Same permissions the backend enforces (FiscalPeriodController / PeriodCloseController).
+  const has = useAuthStore((s) => s.hasPermission);
+  const canCreate = has(PERMISSIONS.fiscalPeriod.create);
+  const canUpdate = has(PERMISSIONS.fiscalPeriod.update);
+  const canReopen = has(PERMISSIONS.fiscalPeriod.reopen);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
@@ -107,9 +114,11 @@ function FiscalPeriodsPage() {
             {tx('Manage accounting periods — open, close, and lock periods to control posting windows.')}
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" /> {tx('Create Period')}
-        </Button>
+        {canCreate && (
+          <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" /> {tx('Create Period')}
+          </Button>
+        )}
       </div>
 
       {/* Table */}
@@ -198,7 +207,7 @@ function FiscalPeriodsPage() {
                           >
                             {tx('Checklist')}
                           </Button>
-                          {p.status === 'open' && (
+                          {p.status === 'open' && canUpdate && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -211,6 +220,7 @@ function FiscalPeriodsPage() {
                           )}
                           {p.status === 'closed' && (
                             <>
+                              {canReopen && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -220,6 +230,8 @@ function FiscalPeriodsPage() {
                               >
                                 <RotateCcw className="h-3 w-3" /> {tx('Reopen')}
                               </Button>
+                              )}
+                              {canUpdate && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -229,6 +241,7 @@ function FiscalPeriodsPage() {
                               >
                                 <Unlock className="h-3 w-3" /> {tx('Lock')}
                               </Button>
+                              )}
                             </>
                           )}
                           {p.status === 'locked' && (

@@ -21,6 +21,7 @@ import androidx.lifecycle.viewModelScope
 import com.poscafe.pos.data.local.dao.InventoryDao
 import com.poscafe.pos.data.local.dao.MenuDao
 import com.poscafe.pos.data.local.dao.ProductDao
+import com.poscafe.pos.data.local.dao.ProductVariantDao
 import com.poscafe.pos.data.local.entity.InventoryMovementEntity
 import com.poscafe.pos.data.repo.AuthRepository
 import com.poscafe.pos.ui.components.EmptyState
@@ -33,13 +34,15 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
-data class CountRow(val id: String, val name: String, val isProduct: Boolean, val onHand: Double)
-data class CountEntry(val id: String, val isProduct: Boolean, val onHand: Double, val counted: Double)
+/** [variantId]: Phase I6 — a product with variants is counted per variant (the server keeps a quant per variant). */
+data class CountRow(val id: String, val name: String, val isProduct: Boolean, val onHand: Double, val variantId: String? = null)
+data class CountEntry(val id: String, val isProduct: Boolean, val onHand: Double, val counted: Double, val variantId: String? = null)
 
 @HiltViewModel
 class InventoryCountViewModel @Inject constructor(
     menuDao: MenuDao,
     productDao: ProductDao,
+    productVariantDao: ProductVariantDao,
     private val inventoryDao: InventoryDao,
     private val auth: AuthRepository,
     private val stock: com.poscafe.pos.data.repo.StockRepository,
@@ -48,15 +51,21 @@ class InventoryCountViewModel @Inject constructor(
     val products = productDao.all().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val levels = inventoryDao.stockLevels().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val productLevels = inventoryDao.productStockLevels().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val variants = productVariantDao.allActive().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     var posted by mutableStateOf<Int?>(null); private set
     var error by mutableStateOf<String?>(null); private set
 
     /** Server on-hand at this till's location + device movements since the last pull. */
     var productOnHand by mutableStateOf<Map<String, Double>>(emptyMap()); private set
+    /** The same per (productId, variantId). */
+    var variantOnHand by mutableStateOf<Map<Pair<String, String?>, Double>>(emptyMap()); private set
 
     fun refreshOnHand() {
-        viewModelScope.launch { productOnHand = stock.productOnHand() }
+        viewModelScope.launch {
+            variantOnHand = stock.variantOnHand()
+            productOnHand = stock.productOnHand()
+        }
     }
 
     /**
@@ -73,6 +82,7 @@ class InventoryCountViewModel @Inject constructor(
                             productId = if (e.isProduct) e.id else null,
                             onHand = e.onHand,
                             counted = e.counted,
+                            variantId = e.variantId,
                         )
                     },
                     reason,
@@ -91,15 +101,27 @@ fun InventoryCountScreen(onBack: () -> Unit, vm: InventoryCountViewModel = hiltV
     val products by vm.products.collectAsStateWithLifecycle()
     val levels by vm.levels.collectAsStateWithLifecycle()
     val productLevels by vm.productLevels.collectAsStateWithLifecycle()
+    val variants by vm.variants.collectAsStateWithLifecycle()
 
     val levelByItem = remember(levels) { levels.associate { it.menuItemId to it.onHand } }
     LaunchedEffect(productLevels) { vm.refreshOnHand() }
     val levelByProduct = remember(productLevels, vm.productOnHand) {
-        productLevels.associate { it.productId to it.onHand } + vm.productOnHand
+        productLevels.groupBy({ it.productId }, { it.onHand }).mapValues { (_, qs) -> qs.sum() } + vm.productOnHand
     }
-    val rows = remember(items, products, levelByItem, levelByProduct) {
+    val levelByVariant = remember(productLevels, vm.variantOnHand) {
+        productLevels.associate { (it.productId to it.variantId) to it.onHand } + vm.variantOnHand
+    }
+    val rows = remember(items, products, variants, levelByItem, levelByProduct, levelByVariant) {
+        val byProduct = variants.groupBy { it.productId }
         items.map { CountRow(it.id, it.name, false, levelByItem[it.id] ?: 0.0) } +
-            products.map { CountRow(it.id, it.name, true, levelByProduct[it.id] ?: 0.0) }
+            products.flatMap { p ->
+                val vs = byProduct[p.id].orEmpty()
+                if (p.hasVariants && vs.isNotEmpty()) {
+                    vs.map { v -> CountRow(p.id, "${p.name} · ${v.name}", true, levelByVariant[p.id to v.id] ?: 0.0, v.id) }
+                } else {
+                    listOf(CountRow(p.id, p.name, true, levelByProduct[p.id] ?: 0.0))
+                }
+            }
     }
     // rowId → typed count
     val counts = remember { mutableStateMapOf<String, String>() }
@@ -123,7 +145,7 @@ fun InventoryCountScreen(onBack: () -> Unit, vm: InventoryCountViewModel = hiltV
             vm.postCount(
                 rows.mapNotNull { r ->
                     val c = counts[rowKey(r)]?.toDoubleOrNull() ?: return@mapNotNull null
-                    CountEntry(r.id, r.isProduct, r.onHand, c)
+                    CountEntry(r.id, r.isProduct, r.onHand, c, r.variantId)
                 },
                 reason,
             )
@@ -200,5 +222,5 @@ fun InventoryCountScreen(onBack: () -> Unit, vm: InventoryCountViewModel = hiltV
     }
 }
 
-private fun rowKey(r: CountRow): String = (if (r.isProduct) "p:" else "m:") + r.id
+private fun rowKey(r: CountRow): String = (if (r.isProduct) "p:" else "m:") + r.id + (r.variantId?.let { ":$it" } ?: "")
 private fun fmtQ(q: Double): String = if (q % 1.0 == 0.0) q.toInt().toString() else "%.2f".format(q)

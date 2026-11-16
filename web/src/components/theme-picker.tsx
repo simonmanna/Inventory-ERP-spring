@@ -1,13 +1,16 @@
 /**
- * ThemePicker — compact two-way switch between the app's themes
- * (Luxury Sky / Light Charcoal), shown in the header.
+ * ThemePicker — header dropdown for the app's colour themes (Luxury Sky / Light Charcoal), styled like the user
+ * menu: the trigger shows the active theme's swatch and name, the menu lists every theme with a tick on the active one.
  *
- * A thumb slides under the active option. Switching reveals the new theme as
- * a circle growing from the button (View Transitions API); browsers without
+ * Switching reveals the new theme as a circle growing from the trigger (View Transitions API); browsers without
  * it — or users who prefer reduced motion — get a short colour crossfade.
  */
 import { useRef } from 'react';
 import { flushSync } from 'react-dom';
+import { Check, ChevronDown, Palette } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useSidebarTheme, SIDEBAR_THEMES, type SidebarThemeKey } from '@/lib/sidebar-theme';
 import { tx } from '@/lib/i18n/tx';
@@ -18,17 +21,28 @@ type ViewTransitionDoc = Document & {
   startViewTransition?: (cb: () => void) => { ready: Promise<void> };
 };
 
+function Swatch({ color, className }: { color: string; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn('h-4 w-4 shrink-0 rounded-full ring-1 ring-black/10', className)}
+      style={{ background: color, boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.45)' }}
+    />
+  );
+}
+
 export function ThemePicker({ compact = false }: { compact?: boolean }) {
   const { key, setKey } = useSidebarTheme();
   const busy = useRef(false);
-  const activeIndex = ORDER.indexOf(key);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const current = SIDEBAR_THEMES[key];
 
-  const choose = (next: SidebarThemeKey, e: React.MouseEvent<HTMLButtonElement>) => {
+  const choose = (next: SidebarThemeKey) => {
     if (next === key || busy.current) return;
     const doc = document as ViewTransitionDoc;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    if (!doc.startViewTransition || reduce) {
+    if (!doc.startViewTransition || reduce || !trigger.current) {
       const root = document.documentElement;
       root.classList.add('theme-anim');
       setKey(next);
@@ -36,7 +50,7 @@ export function ThemePicker({ compact = false }: { compact?: boolean }) {
       return;
     }
 
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = trigger.current.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const r = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
@@ -55,46 +69,48 @@ export function ThemePicker({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <div
-      role="radiogroup"
-      aria-label={tx('Color theme')}
-      className="relative grid grid-cols-[1fr_1fr] items-center rounded-full border border-border/80 bg-muted/60 p-0.5 shadow-[inset_0_1px_2px_hsl(var(--shadow)/0.06)]"
-    >
-      {/* Sliding thumb */}
-      <span
-        aria-hidden
-        className="absolute inset-y-0.5 left-0.5 rounded-full bg-card shadow-[0_1px_2px_hsl(var(--shadow)/0.10),0_4px_12px_-4px_hsl(var(--shadow)/0.22)] ring-1 ring-gold/40"
-        style={{
-          width: 'calc(50% - 2px)',
-          transform: `translateX(${activeIndex * 100}%)`,
-          transition: 'transform 320ms cubic-bezier(0.77, 0, 0.175, 1)',
-        }}
-      />
-      {ORDER.map((k) => {
-        const t = SIDEBAR_THEMES[k];
-        const active = k === key;
-        return (
-          <button
-            key={k}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            title={t.label}
-            onClick={(e) => choose(k, e)}
-            className={cn(
-              'press relative z-10 flex items-center justify-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold',
-              active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            <span
-              aria-hidden
-              className="h-3.5 w-3.5 shrink-0 rounded-full ring-1 ring-black/10"
-              style={{ background: t.swatch, boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.45)' }}
-            />
-            <span className={cn('whitespace-nowrap', compact ? 'sr-only' : 'hidden lg:inline')}>{t.label}</span>
-          </button>
-        );
-      })}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          ref={trigger}
+          type="button"
+          aria-label={tx('Color theme')}
+          title={current.label}
+          className="flex items-center gap-2 rounded-full px-1.5 py-1 outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10" aria-hidden="true">
+            <Swatch color={current.swatch} />
+          </span>
+          <span className={cn('text-sm font-medium text-foreground', compact ? 'sr-only' : 'hidden lg:inline')}>
+            {current.label}
+          </span>
+          <ChevronDown className="hidden h-4 w-4 text-muted-foreground sm:inline" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Palette className="h-4 w-4 text-muted-foreground" />
+          {tx('Theme')}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {ORDER.map((k) => {
+          const t = SIDEBAR_THEMES[k];
+          const active = k === key;
+          return (
+            <DropdownMenuItem
+              key={k}
+              onSelect={() => choose(k)}
+              className={cn('cursor-pointer gap-2', active && 'font-semibold')}
+              aria-checked={active}
+              role="menuitemradio"
+            >
+              <Swatch color={t.swatch} />
+              <span className="flex-1">{t.label}</span>
+              {active && <Check className="h-4 w-4 text-primary" />}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

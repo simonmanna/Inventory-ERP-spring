@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.invoicing.application.StatementService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -83,13 +84,24 @@ public class SalesStatementService {
                 where.append(" AND lower(e.\"sourceType\") LIKE ?");
                 params.add("%" + q.get("type").toLowerCase(java.util.Locale.ROOT) + "%");
             }
+            // A bare date is an org-local day (ADR-S070); other values keep the original timestamp cast.
+            java.time.ZoneId zone = AccountingDay.zone(db.jdbc());
             if (!blank(q.get("from"))) {
                 where.append(" AND e.\"postingDate\" >= ?::timestamp");
-                params.add(q.get("from"));
+                params.add(AccountingDay.isDateOnly(q.get("from")) && !AccountingDay.isUtc(zone)
+                        ? AccountingDay.startTs(java.time.LocalDate.parse(q.get("from").trim()), zone).toLocalDateTime()
+                                .toString()
+                        : q.get("from"));
             }
             if (!blank(q.get("to"))) {
-                where.append(" AND e.\"postingDate\" < ?::timestamp + interval '1 day'");
-                params.add(q.get("to"));
+                if (AccountingDay.isDateOnly(q.get("to")) && !AccountingDay.isUtc(zone)) {
+                    where.append(" AND e.\"postingDate\" < ?::timestamp");
+                    params.add(AccountingDay.endExclusiveTs(java.time.LocalDate.parse(q.get("to").trim()), zone)
+                            .toLocalDateTime().toString());
+                } else {
+                    where.append(" AND e.\"postingDate\" < ?::timestamp + interval '1 day'");
+                    params.add(q.get("to"));
+                }
             }
             List<Map<String, Object>> lines = new ArrayList<>();
             BigDecimal running = BigDecimal.ZERO;

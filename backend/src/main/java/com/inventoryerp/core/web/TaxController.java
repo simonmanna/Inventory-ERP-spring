@@ -9,6 +9,7 @@ import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -36,7 +37,11 @@ public class TaxController {
             Boolean isInclusive,
             Boolean isCompound,
             @OneOf({"standard", "zero_rated", "exempt", "out_of_scope"}) String vatCategory,
-            String accountId) {}
+            String accountId,
+            /* ADR-S071: a group applies its ordered children; reverse charge self-assesses VAT on vendor bills. */
+            Boolean isGroup,
+            Boolean reverseCharge,
+            List<String> children) {}
 
     /** Update body (all optional). */
     public record UpdateRequest(
@@ -48,7 +53,10 @@ public class TaxController {
             Boolean isCompound,
             @OneOf({"standard", "zero_rated", "exempt", "out_of_scope"}) String vatCategory,
             String accountId,
-            Boolean isActive) {}
+            Boolean isActive,
+            Boolean isGroup,
+            Boolean reverseCharge,
+            List<String> children) {}
 
     private final TaxService service;
 

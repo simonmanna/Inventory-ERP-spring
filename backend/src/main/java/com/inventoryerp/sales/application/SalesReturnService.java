@@ -228,7 +228,7 @@ public class SalesReturnService {
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
                 StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
                         .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
-                        .source("sales_return", id);
+                        .source("sales_return", id).sourceLine(str(l.get("id")));
                 stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?", qty, issueCost, l.get("id"));
@@ -298,7 +298,7 @@ public class SalesReturnService {
                 if (!target.equals(from)) {
                     StockMove m = StockMove.transfer(str(l.get("productId")), from, target, qty)
                             .variant(str(l.get("variantId"))).uom(str(l.get("uomId")),
-                            dec(l.get("uomFactor"))).reference(str(r.get("number")));
+                            dec(l.get("uomFactor"))).reference(str(r.get("number"))).source("sales_return", id);
                     stock.transfer(m);
                 }
             } else if (tracked && "scrap".equals(disposition)) {

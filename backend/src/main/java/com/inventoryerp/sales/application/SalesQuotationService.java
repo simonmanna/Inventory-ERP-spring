@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
@@ -74,11 +75,26 @@ public class SalesQuotationService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private ProductSizingService sizing;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
     private SalesAccess access;
     private SalesAlerts alerts;
     private com.inventoryerp.kernel.notifications.NotificationsService mail;
     private SalesLostReasonService lostReasons;
     private SalesProformaService proformas;
+
+    private SalesProductImages images;
+
+    /** Product images on quotation lines (sales setting {@code quoteLineImages}). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setImages(SalesProductImages images) {
+        this.images = images;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setAccess(SalesAccess access) {
@@ -177,9 +193,15 @@ public class SalesQuotationService {
         Map<String, Object> q = require(id);
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
                 + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
-                + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", t.name AS \"taxName\","
+                + " pr.\"trackInventory\", pr.\"productType\"::text AS \"productType\", pr.\"sizingMode\","
+                + " pr.\"sizingUnit\", pr.image AS \"productImage\", t.name AS \"taxName\","
                 + " t.rate AS \"taxRate\" FROM \"SalesQuotationLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\""
                 + " LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? ORDER BY l.\"sortOrder\"", id);
+        // Product images only when the organization turned them on; a fresh signed URL per line.
+        boolean withImages = config.quoteLineImages();
+        for (Map<String, Object> l : lines) {
+            l.put("productImage", withImages ? images.url(str(l.get("productImage"))) : null);
+        }
         Map<String, Map<String, Object>> stock = stock(lines.stream().map(l -> str(l.get("productId")))
                 .filter(s -> s != null).distinct().toList());
         for (Map<String, Object> l : lines) {
@@ -194,6 +216,7 @@ public class SalesQuotationService {
             }
         }
         q.put("lines", lines);
+        q.put("lineImages", withImages);
         q.put("credit", credit(str(q.get("partnerId")), BigDecimal.ZERO));
         q.put("canApprove", canApprove());
         return q;
@@ -395,7 +418,9 @@ public class SalesQuotationService {
                 throw ApiException.badRequest("leadTimeDays must not be less than 0");
             }
             String productId = str(l.get("productId"));
-            BigDecimal qty = dec(l.get("quantity"));
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]]
+            ProductSizingService.Sizing size = sizing.fromLine(blank(productId) ? null : productId, l);
+            BigDecimal qty = size != null ? size.quantity() : dec(l.get("quantity"));
             if (qty.signum() <= 0) {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
@@ -435,7 +460,7 @@ public class SalesQuotationService {
             String taxId = l.containsKey("taxId") ? str(l.get("taxId")) : price == null ? null : price.taxId();
             Boolean incl = l.get("taxInclusive") instanceof Boolean b ? b : price != null && price.taxInclusive();
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
-                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl));
+                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
                     "leadTimeDays", leadTime));
@@ -474,12 +499,18 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             priced.add(Obj.of("quotationId", id, "productId", pl.productId(),
-                    "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
+                    "variantId", m.get("variantId"), "uomId", m.get("uomId") != null && pl.sizing() == null ? m.get("uomId") : pl.uomId(),
+                    "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
                     "lineTotal", pl.total()));
+            priced.getLast().putAll(ProductSizingService.Sizing.columns(pl.sizing()));
+            // Phase I1b (U-1): keep the resolved factor (the column defaulted to 1 for every line).
+            if (pl.uomFactor() != null) {
+                priced.getLast().put("uomFactor", pl.uomFactor());
+            }
             i++;
         }
         insertLayoutRows(id, layout, priced);
@@ -547,7 +578,7 @@ public class SalesQuotationService {
         BigDecimal maxDisc = dec(q.get("maxDiscountPercent"));
         BigDecimal limit = dec(s.get("quoteMaxDiscountPercent"));
         // Discounts granted by price rules are pre-approved: only the part beyond the resolved price counts.
-        BigDecimal extra = extraDiscount(str(q.get("id")), str(q.get("partnerId")), (LocalDate) q.get("issueDate"));
+        BigDecimal extra = extraDiscount(q);
         if (extra.compareTo(limit) > 0) {
             reasons.add("Discount " + extra.setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
                     + "% exceeds the " + limit.stripTrailingZeros().toPlainString() + "% limit");
@@ -573,14 +604,23 @@ public class SalesQuotationService {
         return reasons;
     }
 
-    private BigDecimal extraDiscount(String id, String partnerId, LocalDate on) {
+    private BigDecimal extraDiscount(Map<String, Object> q) {
+        String partnerId = str(q.get("partnerId"));
+        LocalDate on = (LocalDate) q.get("issueDate");
         BigDecimal max = BigDecimal.ZERO;
-        for (Map<String, Object> l : db.rows("SELECT \"productId\", quantity, \"unitPrice\", \"discountPercent\","
-                + " \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL", id)) {
+        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", \"uomId\", quantity, \"unitPrice\","
+                + " \"discountPercent\", \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
+                + " \"displayType\" IS NULL", str(q.get("id")))) {
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
+            // ADR-S058: a variant line is authorized at the variant's price, not the product's. Audit S-7: the line is
+            // re-priced as it was priced (its unit, the quotation's site, branch, currency and agreement), so a rule
+            // or agreement price is not mistaken for a discount, nor a unit's price for one.
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
-                    : price(partnerId, str(l.get("productId")), dec(l.get("quantity")), on).net();
+                    : engine.resolve(new SalesPricingEngine.Context(partnerId, str(l.get("productId")),
+                            dec(l.get("quantity")), str(l.get("uomId")), str(q.get("siteId")), str(q.get("branchId")),
+                            str(q.get("currencyCode")), on, str(q.get("agreementId")), str(l.get("variantId")))).price()
+                            .net();
             if (authorized.signum() > 0 && net.compareTo(authorized) < 0) {
                 max = max.max(BigDecimal.ONE.subtract(net.divide(authorized, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
@@ -764,6 +804,9 @@ public class SalesQuotationService {
             for (Map<String, Object> l : lines) {
                 Map<String, Object> ol = new LinkedHashMap<>();
                 ol.put("productId", l.get("productId"));
+                // Phase I2 review N6: the quoted variant and unit carry over (Orders converts the unit to the sales unit).
+                ol.put("variantId", l.get("variantId"));
+                ol.put("uomId", l.get("uomId"));
                 ol.put("description", l.get("description"));
                 ol.put("quantity", l.get("quantity"));
                 ol.put("unitPrice", l.get("unitPrice"));
@@ -786,7 +829,8 @@ public class SalesQuotationService {
             for (Map<String, Object> l : lines) {
                 inputs.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
                         dec(l.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
-                        "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive"))));
+                        "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), null,
+                        null, ProductSizingService.Sizing.stored(l)));
             }
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), LocalDate.now().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
@@ -854,13 +898,34 @@ public class SalesQuotationService {
         return expired.size();
     }
 
-    /** Customer-facing PDF; internal notes never appear. */
+    /** Customer-facing PDF; internal notes never appear. Product images follow the sales setting. */
     @Transactional(readOnly = true)
     public byte[] pdf(String id) {
+        return pdf(id, null);
+    }
+
+    /**
+     * Customer-facing PDF. {@code withImages} = the printing user's Image column choice; {@code null} follows the sales
+     * setting. Images never print while the setting is off.
+     */
+    @Transactional(readOnly = true)
+    public byte[] pdf(String id, Boolean withImages) {
         Map<String, Object> q = require(id);
-        List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\","
-                + " \"lineTotal\" AS total FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ? AND NOT"
-                + " COALESCE(\"isOptional\", false) AND \"displayType\" IS NULL ORDER BY \"sortOrder\"", id, org());
+        boolean showImages = config.quoteLineImages() && !Boolean.FALSE.equals(withImages);
+        List<Map<String, Object>> lines = db.rows("SELECT l.description, l.quantity, l.\"unitPrice\", l.\"discountPercent\","
+                + " l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height, p.\"sizingUnit\", p.image FROM"
+                + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND"
+                + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) AND l.\"displayType\" IS NULL ORDER BY"
+                + " l.\"sortOrder\"", id, org());
+        if (showImages) {
+            Map<String, byte[]> loaded = new HashMap<>();
+            for (Map<String, Object> l : lines) {
+                String stored = str(l.get("image"));
+                if (stored != null) {
+                    l.put("imageBytes", loaded.computeIfAbsent(stored, images::bytes));
+                }
+            }
+        }
         String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
                 + " \"Organization\" WHERE id = ?", org()).get("n"));
         return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),
@@ -868,7 +933,7 @@ public class SalesQuotationService {
                         new SalesDocumentPdf.Total("Untaxed", dec(q.get("subtotal"))), new SalesDocumentPdf.Total("Tax",
                                 dec(q.get("taxAmount"))), new SalesDocumentPdf.Total("Total", dec(q.get("total")))), List.of(
                                         new SalesDocumentPdf.Block("Notes", str(q.get("notes"))),
-                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))));
+                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))), showImages);
     }
 
     /** Email the PDF to the customer; an approved quotation becomes sent. */
@@ -934,21 +999,6 @@ public class SalesQuotationService {
             throw ApiException.notFound("Opportunity not found");
         }
         return port.visibleOpportunity(dealId);
-    }
-
-    private QuotationPricingPort.Price price(String partnerId, String productId, BigDecimal qty, LocalDate on) {
-        QuotationPricingPort port = pricing.getIfAvailable();
-        if (port != null) {
-            return port.price(partnerId, productId, qty, on);
-        }
-        Map<String, Object> p = db.row("SELECT name, \"salesPrice\", \"taxId\", \"taxInclusive\" FROM \"Product\""
-                + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL", productId, org());
-        if (p == null) {
-            throw ApiException.notFound("Product not found");
-        }
-        BigDecimal list = dec(p.get("salesPrice"));
-        return new QuotationPricingPort.Price(list, list, BigDecimal.ZERO, "list", null, str(p.get("taxId")),
-                Boolean.TRUE.equals(p.get("taxInclusive")), str(p.get("name")));
     }
 
     String orgCurrency() {

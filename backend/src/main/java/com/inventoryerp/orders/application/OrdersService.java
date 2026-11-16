@@ -489,6 +489,8 @@ public class OrdersService {
         boolean carried;
         String punchedById;
         String punchedByName;
+        /** Phase I2 review N6: the variant a converted quotation line named (stored on the item, not priced here). */
+        String variantId;
         /** UOM-1: the unit typed on the line, the quantity and price as typed, and sales units per typed unit. */
         String uomId;
         BigDecimal entryQuantity;
@@ -510,6 +512,7 @@ public class OrdersService {
             r.note = (String) l.get("note");
             r.taxInclusive = (Boolean) l.get("taxInclusive");
             r.uomId = (String) l.get("uomId");
+            r.variantId = (String) l.get("variantId");
             return r;
         }
 
@@ -530,6 +533,7 @@ public class OrdersService {
             r.carried = true;
             r.punchedById = (String) it.get("punchedById");
             r.punchedByName = (String) it.get("punchedByName");
+            r.variantId = (String) it.get("variantId");
             return r;
         }
 
@@ -611,7 +615,7 @@ public class OrdersService {
                 continue;
             }
             ListPrice p = priceLists.resolve(new PriceQuery((String) order.get("partnerId"), l.productId,
-                    l.quantity, l.uomId, (String) order.get("branchId"), null, null));
+                    l.quantity, l.uomId, (String) order.get("branchId"), null, null, l.variantId));
             if (p != null) {
                 l.unitPrice = p.unitPrice();
                 if (l.discountPercent.signum() == 0) {
@@ -640,9 +644,16 @@ public class OrdersService {
             BigDecimal ratio = entered.factor().divide(sold.factor(), UomConversionService.DECIMAL_JS);
             BigDecimal price = l.unitPrice;
             if (price == null) {
-                BigDecimal list = jdbc.sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
-                        .params(l.productId, org()).query(BigDecimal.class).optional().orElse(null);
-                price = units.defaultUnitPrice(l.productId, entered, UnitRole.SALES, list);
+                // Audit P-1/P-3: a variant line's catalogue price is the variant's, scaled to the entered unit.
+                boolean variant = PosSql.truthy(l.variantId);
+                BigDecimal list = variant
+                        ? jdbc.sql("SELECT " + com.inventoryerp.core.application.ProductVariantService.PRICE_SQL
+                                + " FROM \"ProductVariant\" v JOIN \"Product\" p ON p.id = v.\"productId\" WHERE v.id = ? AND"
+                                + " v.\"productId\" = ? AND v.\"organizationId\" = ?").params(l.variantId, l.productId, org())
+                                .query(BigDecimal.class).optional().orElse(null)
+                        : jdbc.sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                                .params(l.productId, org()).query(BigDecimal.class).optional().orElse(null);
+                price = units.defaultUnitPrice(l.productId, entered, UnitRole.SALES, list, variant && list != null);
             }
             l.entryQuantity = l.quantity;
             l.entryUnitPrice = price == null ? BigDecimal.ZERO : price;
@@ -652,6 +663,11 @@ public class OrdersService {
                 l.unitPrice = price.divide(ratio, 6, RoundingMode.HALF_UP);
             }
         }
+    }
+
+    private String variantName(String variantId) {
+        return jdbc.sql("SELECT name FROM \"ProductVariant\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(variantId, org()).query(String.class).optional().orElse(null);
     }
 
     /** Who writes these lines (denormalized name, like {@code PosOrdersService.actorStamp}). */
@@ -730,6 +746,10 @@ public class OrdersService {
             data.put("taxId", p.taxId());
             data.put("taxInclusive", p.taxInclusive());
             data.put("note", src == null ? null : src.note);
+            if (src != null && src.variantId != null) {
+                data.put("variantId", src.variantId);
+                data.put("variantName", variantName(src.variantId));
+            }
             data.put("lineNumber", p.lineNumber());
             boolean carried = src != null && src.carried;
             data.put("punchedById", carried && src.punchedById != null ? src.punchedById : stamp[0]);

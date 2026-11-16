@@ -1,5 +1,6 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -50,8 +51,8 @@ public class VarianceAnalysisService {
         if (to.isBefore(from)) {
             throw com.inventoryerp.shared.web.ApiException.badRequest("to must not be before from");
         }
-        Object start = java.sql.Timestamp.valueOf(from.atStartOfDay());
-        Object end = java.sql.Timestamp.valueOf(to.plusDays(1).atStartOfDay());
+        Object start = AccountingDay.startTs(from, AccountingDay.zone(jdbc));
+        Object end = AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc));
         String range = " v.\"organizationId\" = ? AND v.\"createdAt\" >= ? AND v.\"createdAt\" < ?";
 
         List<Map<String, Object>> byKind = new ArrayList<>();

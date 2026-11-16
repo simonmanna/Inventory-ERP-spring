@@ -48,6 +48,21 @@ public class EventBus {
         });
     }
 
+    /**
+     * Like {@link #publish}, but only once the caller's transaction commits (dropped on rollback, and when the
+     * {@link com.inventoryerp.kernel.common.Savepoints} block it was published in rolls back): for events that
+     * announce a fact of that transaction, such as a stock movement. Outside a transaction it publishes at once.
+     */
+    public void publishOnCommit(String eventName, Map<String, Object> payload) {
+        detached.submitOnCommit(() -> {
+            try {
+                newTx.executeWithoutResult(s -> outbox.publish(eventName, payload));
+            } catch (RuntimeException err) {
+                log.error("Failed to publish {}: {}", eventName, err.toString());
+            }
+        });
+    }
+
     /** Subscribe an in-process handler, dispatched by the outbox worker (at-least-once). */
     public void subscribe(String eventName, Consumer<JsonNode> handler) {
         handlers.subscribe(eventName, handler);

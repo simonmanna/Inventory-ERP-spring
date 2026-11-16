@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.fleet.application.FuelCommands.DipInput;
 import com.inventoryerp.fleet.application.FuelCommands.ReconcileInput;
 import com.inventoryerp.fleet.application.FuelCommands.TankInput;
@@ -405,13 +406,15 @@ public class FleetFuelTankService {
         return applyDecision(dipId, "approved".equals(status), decider);
     }
 
-    /** Post the variance as a stock adjustment of the tank location (count = current book + variance). */
+    /**
+     * Post the variance as a stock adjustment of the tank location (book + variance). Audit A-3: a delta, so the stock
+     * engine reads the book under its own lock order (advisory, then row) instead of this service row-locking first.
+     */
     private Map<String, Object> apply(String dipId, Map<String, Object> t, BigDecimal variance, String deciderId) {
-        BigDecimal current = lockedLevel(t);
         StockMove m = StockMove.of((String) t.get("productId"), (String) t.get("locationId"), null)
                 .source(DIP_SOURCE, dipId).notes("Dip reconciliation " + t.get("code") + ": "
                         + FuelEfficiencyPolicy.plain(variance) + " L");
-        m.countedQuantity = current.add(variance);
+        m.deltaQuantity = variance;
         m.approvedById = deciderId;
         Adjusted adj = stock.adjust(m);
         BigDecimal value = adj.unitCost() == null ? BigDecimal.ZERO : adj.unitCost().multiply(variance.abs());
@@ -459,7 +462,8 @@ public class FleetFuelTankService {
                     + FuelEfficiencyPolicy.plain(level(t)) + " L, variance " + FuelEfficiencyPolicy.plain(variance)
                     + " L)";
         }
-        Instant now = Instant.now();
+        // Lock date and period bounds are org-local wall clock (ADR-S070).
+        Instant now = AccountingDay.toWallClock(Instant.now(), AccountingDay.zone(db.jdbc()));
         Instant lock = db.jdbc().sql("SELECT \"booksLockDate\" FROM \"Organization\" WHERE id = ?").param(FleetDb.org())
                 .query(java.sql.Timestamp.class).optional().map(ts -> ts.toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .orElse(null);
@@ -470,14 +474,6 @@ public class FleetFuelTankService {
                 + " \"deletedAt\" IS NULL AND \"startDate\" <= ? AND \"endDate\" >= ? AND status IN ('closed', 'locked')")
                 .params(FleetDb.org(), SqlRows.ts(now), SqlRows.ts(now)).query(Long.class).single();
         return closed > 0 ? "The current fiscal period is closed; stock cannot move today" : null;
-    }
-
-    /** Current book litres with the tank's stock row locked (serialises adjustments with issues). */
-    private BigDecimal lockedLevel(Map<String, Object> t) {
-        db.jdbc().sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
-                + " \"locationId\" = ? FOR UPDATE").params(FleetDb.org(), t.get("productId"), t.get("locationId"))
-                .query().listOfRows();
-        return level(t);
     }
 
     private BigDecimal unitCost(Map<String, Object> t) {

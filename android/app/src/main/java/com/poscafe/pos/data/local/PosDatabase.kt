@@ -41,6 +41,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         ProductEntity::class,
         ProductCategoryEntity::class,
         ProductPackagingEntity::class,
+        ProductVariantEntity::class,
         LocalHoldEntity::class,
         LocalTabEntity::class,
         ReservationEntity::class,
@@ -54,7 +55,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         StockLocationEntity::class,
         StockLevelEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class PosDatabase : RoomDatabase() {
@@ -76,6 +77,7 @@ abstract class PosDatabase : RoomDatabase() {
     abstract fun productDao(): ProductDao
     abstract fun productCategoryDao(): ProductCategoryDao
     abstract fun productPackagingDao(): ProductPackagingDao
+    abstract fun productVariantDao(): ProductVariantDao
     abstract fun holdDao(): HoldDao
     abstract fun tabDao(): TabDao
     abstract fun reservationDao(): ReservationDao
@@ -312,6 +314,29 @@ abstract class PosDatabase : RoomDatabase() {
             }
         }
 
+        /** v13 → v14 (Phase I6): product variants, the tax row's inclusivity, the
+         *  product's sales unit, per-line refunds with a disposition, and variant /
+         *  op links on stock movements. Additive — queued sales survive. */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `product_variants` (`id` TEXT NOT NULL, `productId` TEXT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `sku` TEXT, `barcode` TEXT, `price` REAL NOT NULL, " +
+                        "`isActive` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_product_variants_productId` ON `product_variants` (`productId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_product_variants_barcode` ON `product_variants` (`barcode`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_product_variants_sku` ON `product_variants` (`sku`)")
+                db.execSQL("ALTER TABLE `taxes` ADD COLUMN `isInclusive` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `products` ADD COLUMN `salesUomId` TEXT")
+                db.execSQL("ALTER TABLE `products` ADD COLUMN `hasVariants` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `local_refunds` ADD COLUMN `linesJson` TEXT")
+                db.execSQL("ALTER TABLE `local_refunds` ADD COLUMN `stockDisposition` TEXT")
+                db.execSQL("ALTER TABLE `inventory_movements` ADD COLUMN `variantId` TEXT")
+                db.execSQL("ALTER TABLE `inventory_movements` ADD COLUMN `opId` TEXT")
+            }
+        }
+
         /** SQLCipher-encrypted. Passphrase stored in EncryptedSharedPreferences
          *  (Android Keystore-backed) — stolen device yields ciphertext only. */
         fun build(context: Context, passphrase: ByteArray): PosDatabase {
@@ -321,7 +346,7 @@ abstract class PosDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
                     MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13,
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
                 )
                 .build()
         }

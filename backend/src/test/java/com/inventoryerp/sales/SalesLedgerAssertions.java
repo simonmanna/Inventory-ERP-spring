@@ -35,7 +35,8 @@ public final class SalesLedgerAssertions {
 
     /** Trial balance of the organization's posted entries sums to zero. */
     public void trialBalanceZero() {
-        BigDecimal diff = jdbc.sql("SELECT COALESCE(SUM(l.debit - l.credit), 0) FROM \"JournalLine\" l JOIN"
+        // in base: debit / credit are transaction-currency amounts, which do not add up across currencies
+        BigDecimal diff = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
                 + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.status::text IN"
                 + " ('posted', 'reversed')").param(org).query(BigDecimal.class).single();
         assertThat(diff).as("trial balance").isEqualByComparingTo(BigDecimal.ZERO);

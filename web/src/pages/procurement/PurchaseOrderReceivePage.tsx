@@ -20,6 +20,8 @@ interface PO {
     unitPrice: number; receivedQuantity: number;
     productId?: string;
     unitOfMeasureId?: string | null;
+    variantId?: string | null;
+    variant?: { id: string; name: string; sku?: string | null } | null;
   }>;
 }
 
@@ -62,6 +64,8 @@ export function PurchaseOrderReceivePage() {
             description: l.description,
             quantity: receivedQtys[l.id] ?? l.quantity,
             unitCost: l.unitPrice,
+            // ADR-S058: the PO line's own variant (the server uses it in any case).
+            variantId: l.variantId || undefined,
           })) ?? [],
       }),
     onSuccess: (res: any) => {
@@ -171,6 +175,7 @@ export function PurchaseOrderReceivePage() {
                       {uomCode(l.unitOfMeasureId) && (
                         <span className="ml-1 text-xs text-muted-foreground">({uomCode(l.unitOfMeasureId)})</span>
                       )}
+                      {l.variant?.name && <span className="block text-xs text-muted-foreground">{l.variant.name}</span>}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{ordered}</td>
                     <td className="px-3 py-2 text-right font-mono">{received}</td>

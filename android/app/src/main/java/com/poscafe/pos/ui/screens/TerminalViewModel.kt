@@ -67,6 +67,7 @@ import com.poscafe.pos.data.local.dao.OpQueueDao
 import com.poscafe.pos.data.local.dao.ProductCategoryDao
 import com.poscafe.pos.data.local.dao.ProductDao
 import com.poscafe.pos.data.local.dao.ProductPackagingDao
+import com.poscafe.pos.data.local.dao.ProductVariantDao
 import com.poscafe.pos.data.local.dao.RegisterDao
 import com.poscafe.pos.data.local.dao.SettingsDao
 import com.poscafe.pos.data.local.dao.StaffDao
@@ -99,6 +100,8 @@ class TerminalViewModel @Inject constructor(
     private val productDao: ProductDao,
     private val productCategoryDao: ProductCategoryDao,
     private val productPackagingDao: ProductPackagingDao,
+    private val productVariantDao: ProductVariantDao,
+    private val kitchenVoids: KitchenVoidRepository,
     private val holdDao: HoldDao,
     private val customerDao: CustomerDao,
     private val customerRepo: CustomerRepository,
@@ -203,6 +206,8 @@ class TerminalViewModel @Inject constructor(
             .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     init {
+        // Price the cart to the server's tax scale (organisation currency decimals, from the last pull).
+        CartEngine.taxScale = config.taxScale
         // Retail has no tables — a table picked in cafe mode must never leak
         // into a retail sale as dine_in.
         viewModelScope.launch {
@@ -222,6 +227,54 @@ class TerminalViewModel @Inject constructor(
     var firedLineIds by mutableStateOf<Set<String>>(emptySet()); private set
 
     val hasUnfiredLines: Boolean get() = cart.any { it.lineId !in firedLineIds }
+
+    /**
+     * Phase I6: taking a line off the tab after it was sent to the kitchen is a
+     * kitchen void — it needs a reason and a manager PIN, and the started food
+     * is wasted on the server (`kitchen.void`). [quantity] is how much comes off.
+     */
+    data class VoidRequest(val line: CartEngine.CartLine, val quantity: Double)
+
+    var voidRequest by mutableStateOf<VoidRequest?>(null); private set
+    var voidMessage by mutableStateOf<String?>(null); private set
+
+    fun cancelVoid() { voidRequest = null; voidMessage = null }
+
+    /** Verify the approver (pos:override + pos:void, as the server checks), then queue the void. */
+    fun confirmKitchenVoid(reason: String, pin: String) {
+        val req = voidRequest ?: return
+        val cashier = auth.current ?: return
+        viewModelScope.launch {
+            voidMessage = null
+            if (reason.isBlank()) { voidMessage = "A reason is required to void an item"; return@launch }
+            val approver = auth.verifyApproval(pin, "pos:void")
+            if (approver.isFailure) {
+                voidMessage = approver.exceptionOrNull()?.message ?: "PIN rejected"
+                return@launch
+            }
+            val table = selectedTable.value
+            runCatching {
+                kitchenVoids.record(
+                    actorUserId = cashier.userId,
+                    tableLabel = table?.let { tableLabel(it) } ?: "",
+                    reason = reason,
+                    overrideById = approver.getOrThrow().userId,
+                    overridePin = pin,
+                    voided = listOf(KitchenVoidRepository.Voided(req.line, req.quantity)),
+                )
+            }.onSuccess {
+                val left = req.line.quantity - req.quantity
+                cart = cart.mapNotNull {
+                    if (it.lineId != req.line.lineId) it else if (left <= 0.0) null else it.copy(quantity = left)
+                }
+                if (left <= 0.0) firedLineIds = firedLineIds - req.line.lineId
+                table?.let {
+                    tabRepo.save(it.id, cart, guestCount = 0, partnerId = selectedCustomer?.id, firedLineIds = firedLineIds, actorUserId = cashier.userId)
+                }
+                voidRequest = null
+            }.onFailure { voidMessage = it.message ?: "Void failed" }
+        }
+    }
 
     /** Switch tables: bank the current tab, then load the target table's tab.
      *  Items rung up before any table was picked (takeaway-in-progress) follow
@@ -424,27 +477,57 @@ class TerminalViewModel @Inject constructor(
             val modGroups = menuDao.modifierGroupsFor(item.id).map { ModGroup(it, menuDao.modifiers(it.id)) }
             val accGroups = menuDao.accompanimentGroupsFor(item.id).map { AccGroup(it, menuDao.accompanimentOptions(it.id)) }
             if (variants.isEmpty() && modGroups.isEmpty() && accGroups.isEmpty()) {
-                addSimple(item)
+                addSimple(item, taxOf(item))
             } else {
                 itemConfig = ItemConfig(item, variants, modGroups, accGroups)
             }
         }
     }
 
+    /** Phase I6: a product with variants asks which one before it goes on the cart. */
+    data class VariantPick(val product: ProductEntity, val variants: List<ProductVariantEntity>)
+
+    var variantPick by mutableStateOf<VariantPick?>(null); private set
+
+    fun dismissVariantPick() { variantPick = null }
+
     fun onProductTap(product: ProductEntity) {
-        val price = product.salesPrice
-        val existing = cart.find { it.productId == product.id && it.note == null }
+        viewModelScope.launch {
+            val variants = if (product.hasVariants) productVariantDao.forProduct(product.id) else emptyList()
+            if (variants.isNotEmpty()) {
+                variantPick = VariantPick(product, variants)
+            } else {
+                addProduct(product, null)
+            }
+        }
+    }
+
+    fun onVariantPicked(product: ProductEntity, variant: ProductVariantEntity) {
+        variantPick = null
+        addProduct(product, variant)
+    }
+
+    /** Add one unit of [product] (or of its [variant], priced at the variant's effective price). */
+    private fun addProduct(product: ProductEntity, variant: ProductVariantEntity?) {
+        // Never merge into a line already sent to the kitchen: that quantity was fired.
+        val existing = cart.find {
+            it.productId == product.id && it.variantId == variant?.id && it.note == null && it.lineId !in firedLineIds
+        }
         cart = if (existing != null) {
             cart.map { if (it.lineId == existing.lineId) it.copy(quantity = it.quantity + 1) else it }
         } else {
             cart + CartEngine.CartLine(
                 lineId = UUID.randomUUID().toString(),
                 productId = product.id,
-                name = product.name,
+                name = variant?.let { "${product.name} · ${it.name}" } ?: product.name,
                 quantity = 1.0,
-                baseUnitPrice = price,
+                baseUnitPrice = variant?.price ?: product.salesPrice,
+                variantId = variant?.id,
+                productVariantName = variant?.name,
                 taxRatePercent = product.taxRate,
                 taxInclusive = product.taxInclusive,
+                taxId = product.taxId,
+                uomId = product.salesUomId,
             )
         }
     }
@@ -465,6 +548,16 @@ class TerminalViewModel @Inject constructor(
                 onProductTap(product)
                 productSearchQuery.value = ""
                 return@launch
+            }
+            // A variant's own barcode / SKU puts exactly that variant on the cart.
+            val variant = productVariantDao.byCode(query.trim())
+            if (variant != null) {
+                val base = productDao.byId(variant.productId)
+                if (base != null) {
+                    addProduct(base, variant)
+                    productSearchQuery.value = ""
+                    return@launch
+                }
             }
             val pack = productPackagingDao.byBarcode(query.trim())
             if (pack != null) {
@@ -487,14 +580,23 @@ class TerminalViewModel @Inject constructor(
             baseUnitPrice = product.salesPrice,
             taxRatePercent = product.taxRate,
             taxInclusive = product.taxInclusive,
+            taxId = product.taxId,
+            uomId = product.salesUomId,
         )
     }
 
     fun dismissConfig() { itemConfig = null }
 
-    private fun addSimple(item: MenuItemEntity) {
+    /** The menu item's tax row (server prices a menu line with `MenuItem.taxId`'s rate and inclusivity). */
+    private suspend fun taxOf(item: MenuItemEntity): TaxEntity? =
+        item.taxId?.let { menuDao.tax(it) }?.takeIf { it.isActive }
+
+    private fun addSimple(item: MenuItemEntity, tax: TaxEntity?) {
         val price = item.basePriceMajor ?: 0.0
-        val existing = cart.find { it.menuItemId == item.id && it.variantId == null && it.modifiers.isEmpty() && it.accompaniments.isEmpty() && it.note == null }
+        val existing = cart.find {
+            it.menuItemId == item.id && it.variantId == null && it.modifiers.isEmpty() && it.accompaniments.isEmpty() &&
+                it.note == null && it.lineId !in firedLineIds
+        }
         cart = if (existing != null) {
             cart.map { if (it.lineId == existing.lineId) it.copy(quantity = it.quantity + 1) else it }
         } else {
@@ -504,6 +606,9 @@ class TerminalViewModel @Inject constructor(
                 name = item.name,
                 quantity = 1.0,
                 baseUnitPrice = price,
+                taxRatePercent = tax?.rate ?: 0.0,
+                taxInclusive = tax?.isInclusive ?: false,
+                taxId = tax?.id,
             )
         }
     }
@@ -516,29 +621,50 @@ class TerminalViewModel @Inject constructor(
         note: String?,
         quantity: Int,
     ) {
-        cart = cart + CartEngine.CartLine(
-            lineId = UUID.randomUUID().toString(),
-            menuItemId = item.id,
-            name = item.name,
-            quantity = quantity.toDouble(),
-            baseUnitPrice = variant?.price ?: (item.basePriceMajor ?: 0.0),
-            variantId = variant?.id,
-            variantName = variant?.name,
-            modifiers = modifiers,
-            accompaniments = accompaniments,
-            note = note?.takeIf { it.isNotBlank() },
-        )
         itemConfig = null
+        viewModelScope.launch {
+            val tax = taxOf(item)
+            cart = cart + CartEngine.CartLine(
+                lineId = UUID.randomUUID().toString(),
+                menuItemId = item.id,
+                name = item.name,
+                quantity = quantity.toDouble(),
+                baseUnitPrice = variant?.price ?: (item.basePriceMajor ?: 0.0),
+                variantId = variant?.id,
+                variantName = variant?.name,
+                modifiers = modifiers,
+                accompaniments = accompaniments,
+                note = note?.takeIf { it.isNotBlank() },
+                taxRatePercent = tax?.rate ?: 0.0,
+                taxInclusive = tax?.isInclusive ?: false,
+                taxId = tax?.id,
+            )
+        }
     }
 
     fun changeQty(lineId: String, delta: Double) {
+        val line = cart.find { it.lineId == lineId } ?: return
+        if (delta < 0 && lineId in firedLineIds) {
+            // Already in the kitchen: coming off is a kitchen void (reason + manager PIN).
+            voidMessage = null
+            voidRequest = VoidRequest(line, minOf(-delta, line.quantity))
+            return
+        }
         cart = cart.mapNotNull {
             if (it.lineId != lineId) it
             else (it.quantity + delta).let { q -> if (q <= 0) null else it.copy(quantity = q) }
         }
     }
 
-    fun removeLine(lineId: String) { cart = cart.filterNot { it.lineId == lineId } }
+    fun removeLine(lineId: String) {
+        val line = cart.find { it.lineId == lineId } ?: return
+        if (lineId in firedLineIds) {
+            voidMessage = null
+            voidRequest = VoidRequest(line, line.quantity)
+            return
+        }
+        cart = cart.filterNot { it.lineId == lineId }
+    }
 
     /** Per-line discount %. Folds into the line via CartEngine before tax. */
     fun setLineDiscount(lineId: String, percent: Double) {
@@ -548,7 +674,14 @@ class TerminalViewModel @Inject constructor(
 
     fun setOrderDiscount(percent: Double) { orderDiscountPercent = percent.coerceIn(0.0, 100.0) }
 
-    fun clear() { cart = emptyList(); orderDiscountPercent = 0.0 }
+    fun clear() {
+        if (cart.any { it.lineId in firedLineIds }) {
+            error = "Items already sent to the kitchen must be voided one by one (manager PIN)."
+            return
+        }
+        cart = emptyList()
+        orderDiscountPercent = 0.0
+    }
 
     /** Split tender: settle the whole cart with one or more payment legs. */
     fun charge(tenders: List<SaleRepository.Tender>, onDone: () -> Unit) {

@@ -918,5 +918,45 @@
   "webRoute": "/fleet/reports",
   "apiRoute": "/fleet/reports/tonnes",
   "description": "Tonnes delivered by vehicle, customer and site."
+ },
+ {
+  "id": "sales.branch-cash-summary",
+  "category": "CONSOLIDATION",
+  "title": "Branch Cash Sales Summary",
+  "level": "OPERATIONAL",
+  "permission": "sales:report:read",
+  "webRoute": "/sales/reports/branch-cash?r=branch-cash-summary",
+  "apiRoute": "/sales/report-center/run/branch-cash-summary",
+  "description": "Cash sale takings per branch with the cash / mobile money / bank split (Sales report center)."
+ },
+ {
+  "id": "sales.branch-cash-daily",
+  "category": "CONSOLIDATION",
+  "title": "Daily Cash Takings by Branch",
+  "level": "OPERATIONAL",
+  "permission": "sales:report:read",
+  "webRoute": "/sales/reports/branch-cash?r=branch-cash-daily",
+  "apiRoute": "/sales/report-center/run/branch-cash-daily",
+  "description": "Branch cash sale takings per day, one column per branch (Sales report center)."
+ },
+ {
+  "id": "sales.branch-cash-tenders",
+  "category": "CASH_AND_BANK",
+  "title": "Branch Takings by Payment Mode",
+  "level": "OPERATIONAL",
+  "permission": "sales:report:read",
+  "webRoute": "/sales/reports/branch-cash?r=branch-cash-tenders",
+  "apiRoute": "/sales/report-center/run/branch-cash-tenders",
+  "description": "Verified cash, MTN MoMo, Airtel Money and bank takings per branch and the account banked to (Sales report center)."
+ },
+ {
+  "id": "sales.branch-cash-register",
+  "category": "CASH_AND_BANK",
+  "title": "Branch Cash Sale Register",
+  "level": "OPERATIONAL",
+  "permission": "sales:report:read",
+  "webRoute": "/sales/reports/branch-cash?r=branch-cash-register",
+  "apiRoute": "/sales/report-center/run/branch-cash-register",
+  "description": "Every branch cash sale with payment, head-office stage and invoice (Sales report center)."
  }
 ]

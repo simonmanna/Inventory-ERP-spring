@@ -182,6 +182,18 @@ public class StockPostingService {
     /** Voucher a goods receipt against the supplier: Dr GRNI + Dr Input Tax / Cr AP. */
     public void postReceiptVoucher(String partnerId, BigDecimal netTotal, BigDecimal taxTotal, Instant date,
             String sourceType, String sourceId, String description, String postingKey) {
+        postReceiptVoucher(partnerId, netTotal, taxTotal, date, sourceType, sourceId, description, postingKey, null,
+                BigDecimal.ONE);
+    }
+
+    /**
+     * As above for a foreign-currency PO: the amounts are functional; the AP line also carries the PO currency and its
+     * amount (functional ÷ {@code rate}), so the payable is a foreign open item to FX revaluation and settlement
+     * (spec P0-5; review 2026-11-15, P-4).
+     */
+    public void postReceiptVoucher(String partnerId, BigDecimal netTotal, BigDecimal taxTotal, Instant date,
+            String sourceType, String sourceId, String description, String postingKey, String currencyCode,
+            BigDecimal rate) {
         BigDecimal net = Money.dec(netTotal);
         BigDecimal tax = Money.dec(taxTotal);
         BigDecimal gross = net.add(tax);
@@ -198,7 +210,11 @@ public class StockPostingService {
             lines.add(Line.debit(determination.mapped("tax_receivable"), JsNumbers.dec(tax), "Input tax"));
         }
         String label = description != null ? description : "Goods received";
-        lines.add(new Line(apAccount, null, JsNumbers.dec(gross), partnerId, label, null, null, null));
+        Line ap = new Line(apAccount, null, JsNumbers.dec(gross), partnerId, label, null, null, null);
+        if (currencyCode != null && rate != null && rate.signum() > 0 && rate.compareTo(BigDecimal.ONE) != 0) {
+            ap = ap.inCurrency(currencyCode, JsNumbers.dec(gross.divide(rate, 6, java.math.RoundingMode.HALF_UP)));
+        }
+        lines.add(ap);
         posting.post(PostingRequest.of("PURCH", date, label, sourceType, sourceId,
                 postingKey != null ? postingKey : "receipt_voucher:" + sourceType + ":" + sourceId, lines));
     }
@@ -206,6 +222,17 @@ public class StockPostingService {
     /** Settle a purchase against cash/bank: Dr AP / Cr Cash|Bank. */
     public Map<String, Object> postPurchasePayment(String cashSessionId, String partnerId, BigDecimal amount,
             String method, Instant date, String sourceType, String sourceId, String description, String postingKey) {
+        return postPurchasePayment(cashSessionId, partnerId, amount, method, date, sourceType, sourceId, description,
+                postingKey, null, null);
+    }
+
+    /**
+     * As above; a foreign PO's payment tags its AP line with the PO currency and the amount paid in it, so it settles
+     * the currency balance the receipt voucher raised and FX revaluation sees it as paid (review 2026-11-15, G-1 / P-4).
+     */
+    public Map<String, Object> postPurchasePayment(String cashSessionId, String partnerId, BigDecimal amount,
+            String method, Instant date, String sourceType, String sourceId, String description, String postingKey,
+            String currencyCode, BigDecimal foreignAmount) {
         if (amount.signum() <= 0) {
             return null;
         }
@@ -214,14 +241,23 @@ public class StockPostingService {
                 cashSessionId).accountId();
         String label = description != null ? description : "Purchase payment";
         String v = JsNumbers.dec(amount);
+        Line ap = new Line(apAccount, v, null, partnerId, label, null, null, null);
+        if (currencyCode != null && foreignAmount != null && foreignAmount.compareTo(amount) != 0) {
+            ap = ap.inCurrency(currencyCode, JsNumbers.dec(foreignAmount));
+        }
         return posting.post(PostingRequest.of("cash".equals(method) ? "CASH" : "BANK", date, label, sourceType,
-                sourceId, postingKey, List.of(new Line(apAccount, v, null, partnerId, label, null, null, null),
-                        Line.credit(funds, v, label))));
+                sourceId, postingKey, List.of(ap, Line.credit(funds, v, label))));
     }
 
     /** Negative-stock cost correction (AVCO): amount &gt; 0 → Dr COGS / Cr Stock Valuation, else the reverse. */
     public void postNegativeStockCostCorrection(String productId, BigDecimal amount, Instant date, String sourceType,
             String sourceId, String description) {
+        postNegativeStockCostCorrection(productId, amount, date, sourceType, sourceId, description, null);
+    }
+
+    /** As above; {@code postingKey} makes the entry idempotent (one correction per stock move). */
+    public void postNegativeStockCostCorrection(String productId, BigDecimal amount, Instant date, String sourceType,
+            String sourceId, String description, String postingKey) {
         if (amount.signum() == 0) {
             return;
         }
@@ -238,7 +274,7 @@ public class StockPostingService {
                     : List.of(Line.debit(sv, v, label), Line.credit(cogs, v, label));
         }
         post("INV", date, description != null ? description : "Negative-stock cost correction · " + name, sourceType,
-                sourceId, null, lines);
+                sourceId, postingKey, lines);
         log.warn("[stock] negative-stock cost correction {} posted for {} ({}:{})", JsNumbers.dec(amount), name,
                 sourceType, sourceId);
     }
@@ -394,6 +430,16 @@ public class StockPostingService {
     /** Count/adjustment variance: gain → ADJUSTMENT_GAIN, loss → ADJUSTMENT_LOSS. */
     public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
             String sourceId, String description) {
+        postAdjustment(productId, delta, unitCost, date, sourceType, sourceId, description, false);
+    }
+
+    /**
+     * As {@link #postAdjustment(String, BigDecimal, BigDecimal, Instant, String, String, String)}; {@code opening}
+     * (owner decision D5): an opening count's variance is opening stock, so its other side is the opening-balance
+     * equity account (the one the GL opening balance balances against), never the stock adjustment income / expense.
+     */
+    public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
+            String sourceId, String description, boolean opening) {
         if (delta.signum() == 0) {
             return;
         }
@@ -411,6 +457,14 @@ public class StockPostingService {
                             Line.credit(determination.mapped("stock_adjustment_income"), v, "Stock variance gain"))
                     : List.of(Line.debit(determination.mapped("stock_adjustment_expense"), v, "Stock variance loss"),
                             Line.credit(sv, v, "Stock variance loss"));
+        }
+        if (opening) {
+            // The inventory side keeps its account; the gain (credit) / loss (debit) side moves to opening equity.
+            String equity = determination.mapped("retained_earnings");
+            lines = lines.stream().map(l -> (gain ? l.credit() != null : l.debit() != null)
+                    ? new Line(equity, l.debit(), l.credit(), l.partnerId(), "Opening stock", l.branchId(),
+                            l.costCenterId(), l.dimensions())
+                    : l).toList();
         }
         post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
     }
@@ -472,6 +526,46 @@ public class StockPostingService {
         }
         post("INV", date, description != null ? description : "Production consume · " + name, sourceType, sourceId,
                 null, lines);
+    }
+
+    /**
+     * Production reversal (audit S-4): the stock leaves at the value the engine issued it at ({@code issuedValue}, Cr
+     * Stock Valuation, so the GL follows the stock ledger) while WIP takes back what the output credited out of it
+     * ({@code wipValue}); a difference (the item's cost moved since the output) is a stock adjustment gain / loss.
+     */
+    public void postProductionReversal(String productId, BigDecimal issuedValue, BigDecimal wipValue, Instant date,
+            String sourceType, String sourceId, String description) {
+        BigDecimal issued = issuedValue.signum() > 0 ? issuedValue : BigDecimal.ZERO;
+        BigDecimal wipBack = wipValue.signum() > 0 ? wipValue : BigDecimal.ZERO;
+        if (issued.signum() == 0 && wipBack.signum() == 0) {
+            return;
+        }
+        String name = productName(productId);
+        String label = description != null ? description : "Production reversal · " + name;
+        String sv = determination.mapped("stock_valuation");
+        String wip = wipOr(sv);
+        List<Line> lines = new ArrayList<>();
+        List<Line> consume = issued.signum() > 0 ? resolveLines("PRODUCTION_CONSUME", productId, issued) : null;
+        if (consume != null) {
+            lines.addAll(consume);
+        } else if (issued.signum() > 0) {
+            String v = JsNumbers.dec(issued);
+            lines.add(Line.debit(wip, v, "Production consume · " + name));
+            lines.add(Line.credit(sv, v, "Production consume · " + name));
+        }
+        BigDecimal diff = wipBack.subtract(issued);
+        if (diff.signum() != 0) {
+            String v = JsNumbers.dec(diff.abs());
+            String text = "Production reversal cost difference · " + name;
+            if (diff.signum() > 0) {
+                lines.add(Line.debit(wip, v, text));
+                lines.add(Line.credit(determination.mapped("stock_adjustment_income"), v, text));
+            } else {
+                lines.add(Line.debit(determination.mapped("stock_adjustment_expense"), v, text));
+                lines.add(Line.credit(wip, v, text));
+            }
+        }
+        post("INV", date, label, sourceType, sourceId, null, lines);
     }
 
     /** Production output: Dr Stock Valuation / Cr WIP. */

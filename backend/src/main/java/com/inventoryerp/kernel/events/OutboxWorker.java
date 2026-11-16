@@ -37,7 +37,7 @@ public class OutboxWorker {
     private static final long FIRST_BACKOFF_MS = 5_000;
     private static final long MAX_BACKOFF_MS = 15 * 60_000;
 
-    private record Claimed(String id, String eventName, String payload, int attempts) {}
+    private record Claimed(String id, String eventName, String payload, int attempts, String actorId) {}
 
     private final JdbcClient jdbc;
     private final OutboxHandlers handlers;
@@ -86,10 +86,10 @@ public class OutboxWorker {
                           LIMIT ?
                           FOR UPDATE SKIP LOCKED
                         )
-                        RETURNING "id", "eventName", "payload"::text AS payload, attempts""")
+                        RETURNING "id", "eventName", "payload"::text AS payload, attempts, "actorId\"""")
                 .params(claimToken, staleBefore, batchSize)
                 .query((rs, n) -> new Claimed(rs.getString("id"), rs.getString("eventName"), rs.getString("payload"),
-                        rs.getInt("attempts")))
+                        rs.getInt("attempts"), rs.getString("actorId")))
                 .list();
         // Dispatched rows are marked shipped together (one statement / commit per batch instead of per row). A crash
         // before that leaves them claimed; the stale-claim rule re-ships them, as it would a crash mid-dispatch.
@@ -98,7 +98,7 @@ public class OutboxWorker {
             for (Claimed row : claimed) {
                 try {
                     JsonNode payload = row.payload() == null ? mapper.nullNode() : mapper.readTree(row.payload());
-                    handlers.dispatch(row.eventName(), payload);
+                    handlers.dispatch(new OutboxDelivery(row.id(), row.eventName(), row.actorId(), payload));
                     shipped.add(row.id());
                 } catch (RuntimeException err) {
                     String msg = err.toString();

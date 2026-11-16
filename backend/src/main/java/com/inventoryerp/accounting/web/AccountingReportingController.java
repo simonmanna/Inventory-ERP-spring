@@ -65,8 +65,10 @@ public class AccountingReportingController {
 
     @GetMapping("/general-ledger")
     public Map<String, Object> generalLedger(@RequestParam(required = false) String from,
-            @RequestParam(required = false) String to, @RequestParam(required = false) String page) {
-        return reports.generalLedger(from, to, JsNumbers.orDefault(page, 1), 100);
+            @RequestParam(required = false) String to, @RequestParam(required = false) String page,
+            @RequestParam(required = false) String pageSize, @RequestParam(required = false) String accountId) {
+        int size = Math.max(1, Math.min(500, JsNumbers.orDefault(pageSize, 100)));
+        return reports.generalLedger(from, to, Math.max(1, JsNumbers.orDefault(page, 1)), size, accountId);
     }
 
     @GetMapping("/profit-and-loss")

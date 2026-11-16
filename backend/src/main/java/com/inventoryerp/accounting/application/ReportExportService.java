@@ -71,12 +71,15 @@ public class ReportExportService {
     @Transactional(readOnly = true)
     public Export trialBalanceCsv(String asOf) {
         String org = TenantContext.organizationId();
-        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf) : Instant.now();
-        // Verbatim Nest SQL: the entry filter sits in the LEFT JOIN condition.
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.dateEnd(asOf, zone) : Instant.now();
+        // Nest put the entry filter only in the LEFT JOIN condition but summed every line, so drafts and lines after
+        // asOf were counted; sum only lines whose entry passed the filter (review 2026-11-15, R-5).
         List<List<Object>> rows = SqlRows.list(jdbc.sql("SELECT a.code, a.name, ac.key AS \"categoryKey\", ac.name AS \"categoryName\","
-                        + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\"), 0)::text AS debit,"
-                        + " COALESCE(SUM(jl.\"baseCredit\"), 0)::text AS credit,"
-                        + " COALESCE(SUM(jl.\"baseDebit\" - jl.\"baseCredit\"), 0)::text AS balance"
+                        + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\") FILTER (WHERE je.id IS NOT NULL), 0)::text AS debit,"
+                        + " COALESCE(SUM(jl.\"baseCredit\") FILTER (WHERE je.id IS NOT NULL), 0)::text AS credit,"
+                        + " COALESCE(SUM(jl.\"baseDebit\" - jl.\"baseCredit\") FILTER (WHERE je.id IS NOT NULL), 0)::text"
+                        + " AS balance"
                         + " FROM \"Account\" a LEFT JOIN \"AccountCategory\" ac ON ac.id = a.\"categoryId\""
                         + " LEFT JOIN \"JournalLine\" jl ON jl.\"accountId\" = a.id"
                         + " LEFT JOIN \"JournalEntry\" je ON je.id = jl.\"journalEntryId\" AND je.status IN ('posted', 'reversed')"
@@ -89,7 +92,9 @@ public class ReportExportService {
                         toFixed2(r.get("debit")), toFixed2(r.get("credit")), toFixed2(r.get("balance"))))
                 .toList();
         String body = csv(List.of("code", "name", "category", "classification", "debit", "credit", "balance"), rows);
-        return new Export("trial-balance-" + day(date) + ".csv", body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // The as-of day is the organisation's calendar day (accounting day): name the file after it, not after the UTC
+        // instant of its midnight (which is the day before east of UTC).
+        return new Export("trial-balance-" + java.time.LocalDate.ofInstant(date, zone) + ".csv", body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Transactional(readOnly = true)

@@ -5,6 +5,7 @@ import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -94,6 +95,20 @@ public class WarehouseStore {
         }
         Map<String, Object> loc = lookups.requireLocation(locationId);
         locationScope.assertAllowed(locationId);
+        return loc;
+    }
+
+    /**
+     * {@link #location} for warehouse work (operate / manage routes): refused while the location's warehouse settings
+     * are stored with {@code enabled = false}. A location that never saved settings keeps working as before.
+     */
+    Map<String, Object> operable(String locationId) {
+        Map<String, Object> loc = location(locationId);
+        Settings s = settings(locationId);
+        if (s.stored() && !s.enabled()) {
+            throw ApiException.badRequest("Warehouse management is switched off for this location; turn it on in the"
+                    + " warehouse settings first");
+        }
         return loc;
     }
 
@@ -189,6 +204,21 @@ public class WarehouseStore {
                 .subtract(stagedQty(locationId, productId, variantKey)).max(BigDecimal.ZERO);
     }
 
+    /** Quantity in open pick tasks of the location (allocated to pick orders, still in the bins). */
+    BigDecimal openPickQty(String locationId, String productId, String variantKey) {
+        return jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseTask\" WHERE \"organizationId\" = ?"
+                + " AND \"locationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND type = 'pick'"
+                + " AND status = 'open'").params(org(), locationId, productId, variantKey).query(BigDecimal.class).single();
+    }
+
+    /** Quantity of one bin cell that open pick / move tasks will take out of the bin. */
+    BigDecimal reservedInBin(String binId, String productId, String variantKey, String batchKey) {
+        return jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseTask\" WHERE \"fromBinId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"batchKey\" = ? AND status = 'open'"
+                        + " AND type IN ('pick', 'move')")
+                .params(binId, productId, variantKey, batchKey).query(BigDecimal.class).single();
+    }
+
     BigDecimal binQty(String binId) {
         return jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseBinStock\" WHERE \"binId\" = ?")
                 .param(binId).query(BigDecimal.class).single();
@@ -209,6 +239,16 @@ public class WarehouseStore {
     /** Put {@code qty} into a bin, enforcing its capacity and single-product flag. */
     void addStock(Map<String, Object> bin, String productId, String variantKey, String batchKey, BigDecimal qty) {
         String binId = SqlRows.str(bin, "id");
+        // Serialise every put into this bin (any product): capacity and the single-product flag are read under the
+        // row lock, so two putaways cannot both pass the checks. NO KEY UPDATE does not block the key-share locks of
+        // task / bin-stock inserts referencing the bin.
+        Map<String, Object> locked = SqlRows.one(jdbc.sql("SELECT \"maxQty\", \"mixedProducts\" FROM \"WarehouseBin\""
+                + " WHERE id = ? AND \"organizationId\" = ? FOR NO KEY UPDATE").params(binId, org()));
+        if (locked != null) {
+            bin = new HashMap<>(bin);
+            bin.put("maxQty", locked.get("maxQty"));
+            bin.put("mixedProducts", locked.get("mixedProducts"));
+        }
         BigDecimal max = (BigDecimal) bin.get("maxQty");
         if (max != null && binQty(binId).add(qty).compareTo(max) > 0) {
             throw ApiException.badRequest("Bin " + bin.get("code") + " capacity exceeded (max " + max.stripTrailingZeros()

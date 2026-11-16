@@ -307,7 +307,7 @@ class ConstructionControlsIT extends ApiTestSupport {
         String[] p = project(false);
         String supplier = partner("CSU", false);
         String sc = subcontract(p[0], p[1], supplier, 100000);
-        assertThat(valuation(sc, 1000).status()).isEqualTo(201); // nothing gated: unchanged behaviour
+        assertThat(valuation(sc, 1000).status()).isEqualTo(200); // nothing gated: unchanged behaviour
         gates(Map.of("tax_clearance", "block", "insurance_certificate", "warn"));
 
         Res blocked = valuation(sc, 2000);
@@ -328,7 +328,7 @@ class ConstructionControlsIT extends ApiTestSupport {
         document(Map.of("partnerId", supplier, "documentType", "tax_clearance", "documentNumber", "TCC-10",
                 "validFrom", today.minusDays(5).toString(), "validTo", today.plusDays(300).toString()), true);
         Res warned = valuation(sc, 2000);
-        assertThat(warned.status()).isEqualTo(201);
+        assertThat(warned.status()).isEqualTo(200);
         assertThat(warned.body().get("complianceWarnings").toString()).contains("Insurance certificate is missing");
         assertThat(gateLog(sc, "warned")).isEqualTo(1);
 
@@ -341,7 +341,7 @@ class ConstructionControlsIT extends ApiTestSupport {
         String ov = ok(201, "POST", "/subcontract-compliance/overrides", Map.of("subcontractId", sc, "gate",
                 "valuation", "reason", "Licence renewal receipt seen; certificate in the post")).get("id").asString();
         Res passed = valuation(sc, 3000);
-        assertThat(passed.status()).isEqualTo(201);
+        assertThat(passed.status()).isEqualTo(200);
         assertThat(passed.body().get("complianceWarnings").toString()).contains("Override: Licence renewal receipt");
         assertThat(jdbc.sql("SELECT \"consumedAt\" IS NOT NULL FROM \"ComplianceOverride\" WHERE id = ?").param(ov)
                 .query(Boolean.class).single()).isTrue();

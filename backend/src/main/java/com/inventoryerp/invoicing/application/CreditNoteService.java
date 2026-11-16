@@ -140,18 +140,89 @@ public class CreditNoteService {
         return d;
     }
 
+    /** A document currency as an upper-case code, the organisation's currency when none is set. */
+    private String currencyCode(Object currencyId) {
+        if (currencyId != null && !currencyId.toString().isBlank()) {
+            return currencyId.toString().trim().toUpperCase(java.util.Locale.ROOT);
+        }
+        return jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org()).query(String.class)
+                .optional().orElse("").toUpperCase(java.util.Locale.ROOT);
+    }
+
     /** Create a draft credit note. */
     @Transactional
     public Map<String, Object> create(CreditNoteInput dto) {
-        // A credit note against an invoice is in that invoice's currency and rate unless it says otherwise.
-        Map<String, Object> reversed = dto.reversedDocumentId() == null || dto.currencyId() != null ? null
+        builder.assertVariants(dto.lines(), false, true);
+        assertVariantResolvable(dto.reversedDocumentId(), dto.lines());
+        List<LineInput> lines = withInvoiceUnits(dto.reversedDocumentId(), dto.lines());
+        // A credit note against an invoice is in that invoice's currency and rate; another currency would settle the
+        // invoice by the raw number (review 2026-11-15, P-7), so it is refused.
+        Map<String, Object> reversed = dto.reversedDocumentId() == null ? null
                 : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
                         + " \"organizationId\" = ?").params(dto.reversedDocumentId(), org()));
-        String currencyId = reversed == null ? dto.currencyId() : (String) reversed.get("currencyId");
-        BigDecimal rate = reversed == null ? null : Money.dec(reversed.get("exchangeRate"));
+        if (reversed != null && dto.currencyId() != null
+                && !currencyCode(dto.currencyId()).equals(currencyCode(reversed.get("currencyId")))) {
+            throw ApiException.badRequest("A credit note must be in the credited invoice's currency ("
+                    + currencyCode(reversed.get("currencyId")) + ")");
+        }
+        // an explicit (same) currency takes the table rate, as before; otherwise the invoice's currency and rate
+        boolean inherit = reversed != null && dto.currencyId() == null;
+        String currencyId = inherit ? (String) reversed.get("currencyId") : dto.currencyId();
+        BigDecimal rate = inherit ? Money.dec(reversed.get("exchangeRate")) : null;
         return builder.createDocument("credit_note", new HeaderInput(dto.partnerId(), dto.issueDate(), null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, currencyId, rate,
-                dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), dto.lines());
+                dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), lines);
+    }
+
+    /**
+     * Phase I2 (audit U-5/U-6): a credit-note line for a product (and variant) the credited invoice sold on one line
+     * keeps that line's unit and frozen factor (its own unit when it names the same one, the invoice's when it names
+     * none), so a pack-size change since the sale never changes what the credit restocks.
+     */
+    private List<LineInput> withInvoiceUnits(String invoiceId, List<LineInput> lines) {
+        if (invoiceId == null || lines == null) {
+            return lines;
+        }
+        List<LineInput> out = new ArrayList<>();
+        for (LineInput l : lines) {
+            boolean product = l.productId() != null && !l.productId().isBlank()
+                    && (l.lineType() == null || "product".equals(l.lineType()));
+            if (!product) {
+                out.add(l);
+                continue;
+            }
+            String variantId = l.variantId() != null && !l.variantId().isBlank() ? l.variantId()
+                    : invoiceVariant(invoiceId, l.productId());
+            List<Map<String, Object>> sold = SqlRows.list(jdbc.sql("SELECT \"uomId\", \"uomFactor\" FROM \"DocumentLine\""
+                    + " WHERE \"documentId\" = ? AND \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT"
+                    + " DISTINCT FROM ? AND \"uomFactor\" IS NOT NULL").params(invoiceId, org(), l.productId(), variantId));
+            Map<String, Object> match = null;
+            for (Map<String, Object> r : sold) {
+                if (l.uomId() == null || l.uomId().isBlank() ? sold.size() == 1 : l.uomId().equals(r.get("uomId"))) {
+                    match = r;
+                    break;
+                }
+            }
+            out.add(match == null || match.get("uomId") == null ? l
+                    : l.withUnitSnapshot((String) match.get("uomId"), Money.dec(match.get("uomFactor"))));
+        }
+        return out;
+    }
+
+    /**
+     * Phase I2 (audit U-6, M-2): where and at what base-unit cost the credited invoice issued this product / variant —
+     * the location that issued most of it and the average cost of the issue — or null when the invoice issued no stock
+     * (goods delivered by Fleet, or a service).
+     */
+    private Map<String, Object> invoiceIssue(String invoiceId, String productId, String variantId) {
+        if (invoiceId == null) {
+            return null;
+        }
+        return SqlRows.one(jdbc.sql("SELECT \"locationId\", SUM(-\"quantityChange\" * \"unitCost\") / NULLIF(SUM("
+                + "-\"quantityChange\"), 0) AS \"unitCost\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = 'sales_invoice' AND \"referenceId\" = ? AND \"productId\" = ? AND \"variantId\" IS"
+                + " NOT DISTINCT FROM ? AND \"quantityChange\" < 0 GROUP BY \"locationId\" ORDER BY SUM(-\"quantityChange\")"
+                + " DESC LIMIT 1").params(org(), invoiceId, productId, variantId));
     }
 
     /**
@@ -183,6 +254,9 @@ public class CreditNoteService {
         }
         if (!String.valueOf(cn.get("partnerId")).equals(String.valueOf(inv.get("partnerId")))) {
             throw ApiException.badRequest("Credit note and invoice belong to different customers");
+        }
+        if (!currencyCode(cn.get("currencyId")).equals(currencyCode(inv.get("currencyId")))) {
+            throw ApiException.badRequest("Credit note and invoice are in different currencies");
         }
         BigDecimal open = Money.dec(cn.get("amountResidual"));
         if (amount.compareTo(open) > 0) {
@@ -253,31 +327,58 @@ public class CreditNoteService {
         return ids.size() == 1 ? ids.getFirst() : null;
     }
 
+    /**
+     * Phase I2 (D2, audit V-6): a credit-note line for a product with variants that names none restocks the credited
+     * invoice's variant; when that invoice holds several variants of the product the line must say which one, instead
+     * of the restock landing on the parent product.
+     */
+    private void assertVariantResolvable(String invoiceId, List<LineInput> lines) {
+        if (invoiceId == null || lines == null) {
+            return;
+        }
+        for (LineInput l : lines) {
+            if (l.productId() == null || l.productId().isBlank() || (l.variantId() != null && !l.variantId().isBlank())
+                    || (l.lineType() != null && !"product".equals(l.lineType()))) {
+                continue;
+            }
+            long variants = jdbc.sql("SELECT count(DISTINCT \"variantId\") FROM \"DocumentLine\" WHERE \"documentId\" = ?"
+                    + " AND \"productId\" = ? AND \"organizationId\" = ? AND \"variantId\" IS NOT NULL").params(invoiceId,
+                            l.productId(), org()).query(Long.class).single();
+            if (variants > 1) {
+                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(l.productId(), org()).query(String.class).optional().orElse(l.productId());
+                throw ApiException.badRequest("Choose a variant for " + name);
+            }
+        }
+    }
+
     private void assertWithinInvoice(String creditNoteId, String invoiceId, List<Map<String, Object>> lines) {
         if (invoiceId == null) {
             return;
         }
+        // Review M-1: compare per product AND variant, in stock (base) units — a box of 24 is 24, not 1.
         Map<String, BigDecimal> invoiced = new HashMap<>();
         for (Map<String, Object> l : builder.lines(invoiceId, false)) {
             if (l.get("productId") != null) {
-                invoiced.merge((String) l.get("productId"), Money.dec(l.get("quantity")), BigDecimal::add);
+                invoiced.merge(creditKey(invoiceId, l), baseQty(l), BigDecimal::add);
             }
         }
         Map<String, BigDecimal> credited = new HashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", sum(l.quantity) AS q FROM"
-                + " \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE d.\"organizationId\" = ? AND"
-                + " d.\"documentType\" = 'credit_note' AND d.\"reversedDocumentId\" = ? AND d.status::text IN ('posted',"
-                + " 'paid') AND d.id <> ? AND l.\"productId\" IS NOT NULL GROUP BY l.\"productId\"")
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", l.\"variantId\", l.quantity,"
+                + " l.\"uomFactor\" FROM \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE"
+                + " d.\"organizationId\" = ? AND d.\"documentType\" = 'credit_note' AND d.\"reversedDocumentId\" = ? AND"
+                + " d.status::text IN ('posted', 'paid') AND d.id <> ? AND l.\"productId\" IS NOT NULL")
                 .params(org(), invoiceId, creditNoteId))) {
-            credited.put((String) r.get("productId"), Money.dec(r.get("q")));
+            credited.merge(creditKey(invoiceId, r), baseQty(r), BigDecimal::add);
         }
         for (Map<String, Object> l : lines) {
             String productId = (String) l.get("productId");
             if (productId == null) {
                 continue;
             }
-            BigDecimal already = credited.merge(productId, Money.dec(l.get("quantity")), BigDecimal::add);
-            BigDecimal sold = invoiced.getOrDefault(productId, Money.ZERO);
+            String key = creditKey(invoiceId, l);
+            BigDecimal already = credited.merge(key, baseQty(l), BigDecimal::add);
+            BigDecimal sold = invoiced.getOrDefault(key, Money.ZERO);
             if (already.compareTo(sold) > 0) {
                 throw ApiException.badRequest("Credit note credits " + JsNumbers.dec(already) + " of a product the"
                         + " invoice sold " + JsNumbers.dec(sold) + " of");
@@ -300,6 +401,20 @@ public class CreditNoteService {
         }
     }
 
+    /** Product + variant of a line; a credit line without a variant takes the invoice's only variant (as at post). */
+    private String creditKey(String invoiceId, Map<String, Object> line) {
+        String productId = (String) line.get("productId");
+        String variantId = line.get("variantId") != null ? (String) line.get("variantId")
+                : invoiceVariant(invoiceId, productId);
+        return productId + "|" + (variantId == null ? "" : variantId);
+    }
+
+    /** A line's quantity in stock units (its frozen factor; 1 when it has none). */
+    private static BigDecimal baseQty(Map<String, Object> line) {
+        BigDecimal q = Money.dec(line.get("quantity"));
+        return line.get("uomFactor") == null ? q : q.multiply(Money.dec(line.get("uomFactor")));
+    }
+
     /** Post a credit note; {@code disposition} restock (default) or scrap. */
     @Transactional
     public Map<String, Object> post(String id, String disposition) {
@@ -312,7 +427,20 @@ public class CreditNoteService {
         if (cn == null) {
             throw ApiException.notFound("Credit note not found");
         }
-        String status = String.valueOf(cn.get("status"));
+        // Review N1 / audit A-1: lock the credited invoice, then the credit note (the invoice cancel locks the invoice
+        // first as well), and read both states under the locks: two concurrent posts never both restock and journal,
+        // and a credit note never posts against an invoice that was cancelled meanwhile.
+        String credited = (String) cn.get("reversedDocumentId");
+        if (credited != null) {
+            String invoiceStatus = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(credited, org()).query(String.class).optional().orElse(null);
+            if ("cancelled".equals(invoiceStatus)) {
+                throw ApiException.badRequest("The credited invoice is cancelled; its stock and revenue were already"
+                        + " reversed");
+            }
+        }
+        String status = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(id, org()).query(String.class).optional().orElse(String.valueOf(cn.get("status")));
         if ("posted".equals(status) || "paid".equals(status)) {
             throw ApiException.badRequest("Credit note is already posted");
         }
@@ -372,14 +500,19 @@ public class CreditNoteService {
                         && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                     String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
                             : invoiceVariant(reversed, productId);
+                    // U-6 / M-2: goods the invoice issued come back where they left, at the cost they left at.
+                    Map<String, Object> issued = invoiceIssue(reversed, productId, variantId);
+                    String location = issued != null ? (String) issued.get("locationId") : warehouse;
                     try {
-                        if (warehouse == null) {
+                        if (location == null) {
                             throw ApiException.badRequest("no stock location is configured");
                         }
-                        stock.receiveReturn(StockMove.of(productId, warehouse, qty)
+                        stock.receiveReturn(StockMove.of(productId, location, qty)
                                 .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                         : Money.dec(ln.get("uomFactor")))
-                                .reference((String) cn.get("documentNumber")).source("credit_note", id)
+                                .unitCost(issued == null || issued.get("unitCost") == null ? null
+                                        : Money.dec(issued.get("unitCost")))
+                                .reference((String) cn.get("documentNumber")).source("credit_note", id).sourceLine((String) ln.get("id"))
                                 .date(issueDate));
                     } catch (ApiException e) {
                         throw ApiException.badRequest("Cannot restock " + product.get("name") + ": " + e.getMessage()

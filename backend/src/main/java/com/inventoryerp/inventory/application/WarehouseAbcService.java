@@ -48,7 +48,7 @@ public class WarehouseAbcService {
     /** Recompute the classes of a location; count history ({@code lastCountedAt}) is kept. */
     @Transactional
     public Map<String, Object> classify(String locationId) {
-        store.location(locationId);
+        store.operable(locationId);
         Settings s = store.settings(locationId);
         List<Item> items = jdbc.sql("WITH used AS (SELECT \"productId\", sum(abs(\"totalValue\")) AS v"
                         + " FROM \"InventoryLedger\" WHERE \"organizationId\" = :org AND \"locationId\" = :loc"
@@ -135,7 +135,7 @@ public class WarehouseAbcService {
      */
     @Transactional
     public Map<String, Object> generateCycleCount(String locationId, List<String> classes, Integer limit) {
-        store.location(locationId);
+        store.operable(locationId);
         String open = jdbc.sql("SELECT \"countCode\" FROM \"InventoryCountSession\" WHERE \"organizationId\" = ?"
                 + " AND \"locationId\" = ? AND \"countType\"::text = 'cycle' AND status = 'draft'"
                 + " AND \"deletedAt\" IS NULL LIMIT 1").params(org(), locationId).query(String.class).optional()

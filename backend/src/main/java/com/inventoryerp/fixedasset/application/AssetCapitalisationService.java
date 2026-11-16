@@ -16,6 +16,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import org.springframework.modulith.NamedInterface;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
  * ACC-5 never runs for these assets.
  */
 @Service
+@NamedInterface("capitalisation")
 public class AssetCapitalisationService {
 
     /** One asset to create; {@code usefulLife} in months (the category default when null). */

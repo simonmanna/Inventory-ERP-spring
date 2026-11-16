@@ -78,6 +78,12 @@ error, per-branch close lock and open-order check, handover carries open orders.
 
 Pending owner approval:
 
+0. **Accounting day = organisation-local calendar day** (ADR-S070). Nest buckets the ledger by UTC day: period
+   control, entry-number year and every ledger report compare `postingDate` against UTC day bounds. Here
+   `Organization.timezone` decides: a bare report date is a local day, fiscal-period / year / VAT-settlement /
+   books-lock bounds are local wall clock, and a date-only posting (UTC midnight) is stored at local noon of its date.
+   A Kampala sale at 22:30 UTC on 31 January is a 1 February entry. UTC organisations are unchanged (every
+   conversion is the identity).
 1. **`GET /reports/accounting/pos-gl-reconciliation`**: `inventory.jobCounts` values are numbers and
    `unpostedJobs` is their sum. Nest groups with `_count: { _all: true }`, so in production each value is
    a `{ "_all": n }` object and `unpostedJobs` becomes the string `"[object Object]00"` (the note then
@@ -89,6 +95,13 @@ Pending owner approval:
 3. **Unhandled errors** (an invalid date in a report query, `to` before `from` on POS → GL
    reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
    development-only `error` detail text comes from Java rather than Prisma.
+
+Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 20):
+
+4. **Inventory GL tie-out date basis + daily check.** `GET /reports/inventory/gl-tieout` and the historical
+   `GET /reports/inventory/valuation?asOf=` date stock ledger rows by their source's inventory journal posting date
+   (else `createdAt`); job `inventory-gl-tieout-check` (daily 02:40 UTC) raises an `InventoryException`
+   (`gl_tieout_variance`) + in-app alert above `inventory.glTieOut.tolerance` (setting `inventory.glTieOut.enabled`).
 
 Same as Nest, kept on purpose:
 
@@ -191,7 +204,10 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **CIP capitalisation** (ADR-S074): a capital project's cost accumulates in 1690 Construction in Progress (mapping
   `construction_in_progress`). A capitalisation posts Dr `fixed_asset_valuation` / Cr CIP and creates `constructed`
   assets with an in-service date, where depreciation starts. It can be reversed while no depreciation is posted.
-- **Not built:** impairment, units of production and per-category accounts.
+- **Impairment (ADR-S073).** It posts Dr `asset_impairment_loss` / Cr `accumulated_impairment`. Depreciation after an
+  impairment is re-based, a reversal is capped, and disposal clears the impairment. See
+  [§ ADR-S073](#adr-s073-gl-automation).
+- **Not built:** units of production and per-category accounts.
 
 **ACC-6: bank reconciliation (B5)**
 
@@ -205,7 +221,9 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - `POST /bank-reconciliation/statement {bankAccountId, asOf, closingBalance, notes}` (`bank_account:update`) locks a
     reconciled statement (V322). After that, lines on or before `asOf` cannot be imported, matched, unmatched or
     excluded.
-- **Not built:** matching to GL lines, partial or grouped matches, matching rules, and journals for bank charges.
+- **Matching rules, partial and grouped matches, and bank-charge journals (ADR-S073).** See
+  [§ ADR-S073](#adr-s073-gl-automation).
+- **Not built:** matching a statement line to a GL line that has no payment behind it.
 
 **ACC-7: tax and fiscal positions** (capability gaps)
 
@@ -223,14 +241,93 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - `GET /tax-settlements` lists the settled periods.
 - **Tax-period lock:** `PostingService` refuses any line on a tax account dated on or before the latest settled period
   end. Tax accounts are the output, input and withholding mappings plus each tax's own account.
-- **Not built:**
+- **Built since (ADR-S071, V482):**
   - tax groups;
-  - more than one tax per line;
-  - the compound-inclusive fix;
-  - withholding tax on bills;
+  - several taxes per line (`taxIds`) through `TaxCalculationService`, compound and inclusive included;
+  - withholding tax on vendor bills, with a residual net of withholding, `withholding_payable` and issued
+    certificates;
+  - withholding suffered on customer receipts (`withholding_receivable`, received certificates);
+  - reverse-charge VAT on vendor bills;
+  - `/withholding-certificates` routes and the filing report.
+  - See [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+- **Not built:**
+  - remitting withholding to the authority as a dedicated flow (today it is a journal or a supplier payment);
   - recording the partner-default position name on the document;
-  - an invoice cancelled after settlement still reverses on its original date when that accounting period is open (the
-    tax lock then refuses it, so the user cancels after re-dating via a credit note).
+  - ~~an invoice cancelled after settlement still reverses on its original date when that accounting period is open~~ —
+    fixed by the 2026-11-15 review (G-2): a reversal whose original date is inside a settled VAT period is dated today.
+
+## Accounting review deviations (2026-11-15, owner-approved: "fix the above")
+
+Findings and evidence: `docs/audits/2026-11-15-accounting-review.md`. IDs below (R-, G-, P-, U-) are that review's.
+Where Nest behaves the same, the change is a deliberate deviation from the reference.
+
+**Reports**
+
+- **R-1 (Nest has the same bug).** A bare `YYYY-MM-DD` `to` / `asOf` is the **last** instant of that org-local day
+  (`LedgerQueries.dateEnd`), so `postingDate <= to` keeps the whole end day. It applies to trial balance, P&L, balance
+  sheet (summary and detailed), account and general ledger, detailed, consolidated and branch reports, POS-GL
+  reconciliation, TB CSV export, tax report, statements and intercompany consolidation. Before, the end day was dropped
+  and Cash Flow (end-inclusive) disagreed with P&L over the same range.
+- **R-2.** Budget vs actual, the budget-control commitment check, consolidated / branch P&L, the dashboard net
+  income, cost-centre and analytic reports exclude closing entries (`LedgerQueries.CLOSING_FILTER`).
+- **R-4 (Nest same).** A snapshot is stale when any balance-affecting line up to `asOf` was posted after it was taken
+  (`coalesce(postedAt, createdAt)`), not only when dated after it.
+- **R-5 (Nest same).** The TB CSV export sums only lines whose entry passes the status / date filter.
+- **R-6.** The bank-reconciliation summary's book balance counts `posted` and `reversed` entries.
+- **R-7.** Auto-match and manual match take the per-account advisory lock; an auto-match update requires the line to be
+  still `unmatched`.
+- **R-9.** Ageing summaries, exposure and sub-ledger tie-outs add open items in base currency (`residual × document
+  rate`; unapplied payments at the payment rate). Detail rows keep the document currency and amount.
+- **R-10.** The tax report converts procurement debit notes at their rate.
+- **R-12 (Nest same).** `GET /reports/accounting/account-ledger/:id` adds `openingBalance` (everything before `from`)
+  and `normalBalance`; the running balance starts from the opening balance. Ledger rows (account and general) add
+  `journalEntryId`. `GET /reports/accounting/general-ledger` accepts `accountId` and `pageSize` (1–500, default 100).
+- **R-3.** VAT settlement measures output VAT on `tax_payable` **and every tax's own account**, input VAT on
+  `tax_receivable`, and excludes treasury "Tax payment" entries (and their reversals). A settlement must start the day
+  after the last settled period (no gaps). The settlement range ends at 23:59:59.999.
+
+**Ledger**
+
+- **G-1.** A foreign-currency payment's AR / AP line carries the documents' currency and the payment amount
+  (`PostingRequest.Line.inCurrency`); its base stays the carrying value. FX revaluation therefore sees settled items as
+  settled. A receipt voucher of a foreign PO carries the PO currency on its AP line (P0-5), and a foreign bill re-measures
+  its vouchered share to the bill rate (`vendor_bill:fx_voucher:<id>`, Dr/Cr AP vs FX gain / loss; reversed on cancel).
+  A foreign PO's payment (`/purchase-orders/:id/pay`) tags its AP line with the PO currency and the amount paid in it,
+  so it settles that currency balance.
+- **G-2.** The VAT tax-period lock also applies to staging and approving drafts and to reversals. A reversal with no
+  stated date whose original date is inside a settled VAT period is dated today. A settlement entry's reversal is exempt.
+- **G-3.** A period inside a closed fiscal year cannot be reopened ("reopen the fiscal year first").
+- **G-4.** Fiscal-year `netIncome` excludes closing entries and their reopen reversals.
+- **G-5 (Nest same).** Period reopen flips the period to open first, then reverses the closing entry, so the reversal
+  keeps the closing entry's date inside the period: the period can be closed again and no closing amounts land in the
+  current period.
+- **G-6.** A foreign-currency entry must balance in its own currency too (tolerance 0.01). The rounding line is stored
+  in base with no currency. V499 adds `NOT VALID` CHECK constraints: non-negative amounts, never debit and credit on one
+  line.
+- **G-7 / G-8.** Reverse and draft approval lock the entry row; approval re-checks the draft's accounts.
+- **G-9.** Opening balances refuse accounts that do not allow manual posting (inventory, tax and other control
+  accounts), as manual journals do.
+- `POST /fx-revaluations` is `@Idempotent` (answers 200, not 201).
+- **U-1.** `POST /accounts` requires `categoryId` only for a postable account (`isPostable` not `false`), with the same
+  messages; a group account is created without one (Nest required it always and also forbade it on a group, so groups
+  could only be made by editing). A request that fails another field's constraint does not also list the `categoryId`
+  messages (validation group sequence).
+- `GET /journal-entries` accepts `journalId`, `status`, `from`, `to` (inclusive org-local dates) and filters by
+  organization explicitly; `GET /journal-entries/:id` too.
+
+**Postings**
+
+- **P-1 (Nest same).** Cancelling a vendor bill returns the stock it auto-received (`return_to_supplier`, Dr GRNI / Cr
+  stock at issue cost; a cost difference clears GRNI against price variance).
+- **P-3.** A foreign bill matched to a receipt without a PO converts that receipt's (functional) value at the bill rate
+  before computing the price variance.
+- **P-5 (Nest same).** A return-to-vendor debit note posts Dr AP gross / Cr stock, Cr input VAT, variance to purchase
+  price variance (stock adjustment expense when unmapped), stores its tax and total, and lowers the referenced bill's
+  open amount. Not done: debiting GRNI for unvouchered receipts.
+- **P-6.** POS invoices and refunds split a group tax over its children's accounts (`PosInvoiceService.taxSplit`).
+- **P-7.** A credit note must be in the credited invoice's currency; allocation refuses different currencies.
+- **P-8.** Asset capitalisation credits asset clearing (`suspense`, tagged with the vendor) instead of AP; the supplier's
+  bill clears it.
 
 ## Extensions beyond Nest (ADR-S005)
 
@@ -303,4 +400,66 @@ Status: built, not compiled or run. `GET /reports/branches/comparison` (`report:
 ledger P&L, sales, open receivables, stock value, deliveries and production per branch plus a total. Screen:
 `/reports/branches`. `ReportFilterBar` (`web/src/components/report-filter-bar.tsx`) is the shared filter row. Tests:
 `BranchPerformanceIT`, `AccountingExtensionsIT.budgetByBranch`.
+
+## ADR-S073 GL automation
+
+Status: built 2026-11-10 (branch `phase/acc-gl`). Spring-only extensions: Nest has no counterpart. Design:
+[ADR-S073](../adr/ADR-S073-recurring-deferrals-bank-rules-impairment.md). Tables (V501–V503):
+`RecurringJournalTemplate`, `RecurringJournalRun`, `DeferralSchedule`, `DeferralRelease`, `BankMatchRule`,
+`BankStatementMatch`, `AssetImpairment`, plus `BankStatementLine.matchedRuleId` and `BankStatementLine.journalEntryId`.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/recurring-entries`, `/{id}`, `/{id}/runs` | `recurring_entry:read` |
+| POST, PATCH, DELETE | `/recurring-entries`, `/{id}` | `recurring_entry:manage` |
+| POST | `/recurring-entries/{id}/pause`, `/{id}/resume` | `recurring_entry:manage` |
+| POST | `/recurring-entries/{id}/run {date?}` (Idempotency-Key) | `recurring_entry:manage` |
+| GET | `/deferrals`, `/deferrals/{id}`, `/deferrals/report?asOf` | `deferral:read` |
+| POST | `/deferrals`, `/deferrals/{id}/cancel` | `deferral:manage` |
+| POST | `/deferrals/from-journal-line`, `/deferrals/{id}/release`, `/deferrals/run` (Idempotency-Key) | `deferral:manage` |
+| GET | `/bank-reconciliation/rules?bankAccountId`, `/lines/{id}/open-payments`, `/lines/{id}/allocations` | `bank_account:read` |
+| POST, PATCH, DELETE | `/bank-reconciliation/rules`, `/rules/{id}` | `bank_account:update` |
+| POST | `/bank-reconciliation/rules/apply?bankAccountId`, `/lines/{id}/allocate`, `/payments/{id}/allocate` (Idempotency-Key) | `bank_account:update` |
+| GET | `/fixed-assets/{assetId}/impairments` | `fixed_asset:read` |
+| POST | `/fixed-assets/{assetId}/impairments`, `/impairments/reversal` (Idempotency-Key) | `fixed_asset:impair` |
+
+**Posting keys:**
+- recurring entries: `recurring:<templateId>:<date>`;
+- deferral releases: `deferral:<scheduleId>:<periodIndex>`, and `deferral:<scheduleId>:initial` for the reclass;
+- bank rules: `bank_rule:<lineId>`;
+- impairment: `asset_impairment:<impairmentId>`.
+
+**Jobs:** `GlAutomationJob` runs `accounting-recurring-entries` at 01:30 and `accounting-deferral-releases` at 01:40.
+Both are ShedLock-guarded and gated by `app.jobs.enabled`.
+
+**Recurring entries:**
+- An occurrence is unique per template and date, so a job that runs twice or a manual re-run replays the existing
+  occurrence.
+- Draft mode stages a draft whose maker is the template author (maker-checker).
+- A closed or locked period refuses the occurrence. The job records it as `failed` and does not advance the schedule.
+
+**Deferrals:**
+- Slices are planned when the schedule is created: `monthly` equal slices, or `daily` slices weighted by the days in
+  each calendar month. Each is rounded to 2 dp and the last takes the remainder.
+- Cancelling releases nothing further.
+- The report compares the schedules' remaining balance with each deferral account's GL balance.
+
+**Bank:**
+- Rules run after every import (after commit, one transaction per line) and on demand.
+- `post_entry` books charges, interest and fees, with optional tax included in the amount.
+- `match_payment` is direction-aware (D-B5).
+- Allocations support one line to several payments and several lines to one payment, partial on either side. A line
+  stays `partial` until its allocations cover it.
+- Outstanding book items and unrecorded statement items net the allocations.
+- `unmatch` removes allocations and reverses a rule entry.
+- Locked statements still freeze their lines.
+
+**Mappings** (optional, created on first use): `asset_impairment_loss`, `accumulated_impairment`, `prepaid_expense`.
+
+**Web:**
+- Accounting has two new screens: Recurring Entries (`/recurring-entries`) and Deferrals (`/deferrals`).
+- Bank Reconciliation has a matching-rules panel and a split/allocate dialog.
+- The asset page has an Impairment tab.
+
+**Tests:** `GlAutomationIT`, `GlSchedulesTest`.
 

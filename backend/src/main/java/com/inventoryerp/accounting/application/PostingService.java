@@ -18,6 +18,7 @@ import com.inventoryerp.shared.web.EntityJson;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -97,7 +98,8 @@ public class PostingService {
             }
         }
         Journal journal = journal(request.journalCode());
-        Instant date = request.date();
+        ZoneId zone = AccountingDay.zone(jdbc, organizationId);
+        Instant date = AccountingDay.normalize(request.date(), zone);
         fiscalPeriod.assertOpen(date);
         CurrencyService.Resolution fx = resolution(request, date);
         BigDecimal rate = fx.rate();
@@ -108,7 +110,7 @@ public class PostingService {
         }
         assertAccounts(lines, true);
         assertTaxPeriodOpen(organizationId, date, lines, request.sourceType());
-        applyRounding(lines);
+        applyRounding(lines, request.currencyId());
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
@@ -117,7 +119,7 @@ public class PostingService {
             costingDimensions.check(lines, request.branchId(), request.sourceType(), date);
         }
 
-        int year = date.atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(date, zone);
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
         Map<String, String> entryDims = normalizeDimensions(request.dimensions());
@@ -160,9 +162,11 @@ public class PostingService {
     @Transactional
     public Map<String, Object> reverse(String journalEntryId, Instant date, String description) {
         String organizationId = TenantContext.organizationId();
+        // row lock: two concurrent reversals must not both mirror the entry (G-7)
         JournalEntry original = em.createQuery("select e from JournalEntry e where e.id = :id and e.organizationId = :org",
                         JournalEntry.class)
                 .setParameter("id", journalEntryId).setParameter("org", organizationId)
+                .setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
                 .getResultList().stream().findFirst().orElse(null);
         if (original == null) {
             throw ApiException.notFound("Journal entry not found");
@@ -170,10 +174,20 @@ public class PostingService {
         if (original.getStatus() != JournalEntryStatus.POSTED) {
             throw ApiException.badRequest("Only posted entries can be reversed");
         }
-        Instant when = date != null ? date : reversalDate(original.getPostingDate());
+        ZoneId zone = AccountingDay.zone(jdbc, organizationId);
+        Set<String> originalAccounts = new LinkedHashSet<>();
+        lines(original.getId()).forEach(l -> originalAccounts.add(l.getAccountId()));
+        // a settlement entry's reversal is exempt, as the settlement itself is
+        String lockSource = "tax_settlement".equals(original.getSourceType()) ? "tax_settlement" : "reversal";
+        Instant when = date != null ? AccountingDay.normalize(date, zone) : reversalDate(original.getPostingDate());
+        if (date == null && taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null) {
+            // the original's date is inside a settled VAT period: reverse today, never into filed VAT (G-2)
+            when = Instant.now();
+        }
         fiscalPeriod.assertOpen(when);
+        assertTaxPeriodOpenFor(organizationId, when, originalAccounts, lockSource);
         Journal journal = em.find(Journal.class, original.getJournalId());
-        int year = when.atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(when, zone);
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
 
@@ -252,26 +266,48 @@ public class PostingService {
      * settlement entry itself is exempt.
      */
     private void assertTaxPeriodOpen(String org, Instant date, List<NormalizedLine> lines, String sourceType) {
+        assertTaxPeriodOpenFor(org, date, lines.stream().map(NormalizedLine::accountId).toList(), sourceType);
+    }
+
+    /**
+     * As {@link #assertTaxPeriodOpen} for account ids. Every path into the books checks it: {@link #post},
+     * {@link #stageDraft} / {@link #postDraft} and {@link #reverse} (review 2026-11-15, G-2).
+     */
+    private void assertTaxPeriodOpenFor(String org, Instant date, java.util.Collection<String> accountIds,
+            String sourceType) {
+        Instant settled = taxLockedThrough(org, date, accountIds, sourceType);
+        if (settled != null) {
+            ZoneId zone = AccountingDay.zone(jdbc, org);
+            throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
+                    + "; tax cannot be posted on " + FiscalPeriodControl.day(date, zone));
+        }
+    }
+
+    /** The settled VAT period end when posting {@code accountIds} on {@code date} would hit a tax account in it. */
+    private Instant taxLockedThrough(String org, Instant date, java.util.Collection<String> accountIds,
+            String sourceType) {
         if ("tax_settlement".equals(sourceType)) {
-            return;
+            return null;
         }
         Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?")
                 .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);
-        if (settled == null || date.isAfter(settled)) {
-            return;
+        ZoneId zone = AccountingDay.zone(jdbc, org);
+        if (settled == null || date.isAfter(AccountingDay.fromWallClock(settled, zone))) {
+            return null;
         }
         java.util.Set<String> taxAccounts = new java.util.HashSet<>(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\""
-                        + " WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable', 'withholding_payable')"
+                        + " WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable', 'withholding_payable',"
+                        + " 'withholding_receivable')"
                         + " AND \"deletedAt\" IS NULL UNION SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ?"
                         + " AND \"accountId\" IS NOT NULL").params(org, org).query(String.class).list());
-        for (NormalizedLine l : lines) {
-            if (taxAccounts.contains(l.accountId())) {
-                throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
-                        + "; tax cannot be posted on " + FiscalPeriodControl.day(date));
+        for (String id : accountIds) {
+            if (taxAccounts.contains(id)) {
+                return settled;
             }
         }
+        return null;
     }
 
     /** Stage a manual entry as a DRAFT (validated + balanced, not in the books). */
@@ -282,7 +318,7 @@ public class PostingService {
         }
         String organizationId = TenantContext.organizationId();
         Journal journal = journal(request.journalCode());
-        Instant date = request.date();
+        Instant date = AccountingDay.normalize(request.date(), AccountingDay.zone(jdbc, organizationId));
         fiscalPeriod.assertOpen(date);
         BigDecimal rate = resolution(request, date).rate();
         List<NormalizedLine> lines = new ArrayList<>(PostingMath.normalizeLines(request.lines(), rate));
@@ -291,7 +327,8 @@ public class PostingService {
             throw ApiException.badRequest(errors.getFirst().message());
         }
         assertAccounts(lines, false);
-        applyRounding(lines);
+        assertTaxPeriodOpen(organizationId, date, lines, request.sourceType());
+        applyRounding(lines, request.currencyId());
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
@@ -322,9 +359,11 @@ public class PostingService {
     @Transactional
     public Map<String, Object> postDraft(String entryId) {
         String organizationId = TenantContext.organizationId();
+        // row lock: two concurrent approvals must not both number and post the draft (G-7)
         JournalEntry draft = em.createQuery("select e from JournalEntry e where e.id = :id and e.organizationId = :org",
                         JournalEntry.class)
                 .setParameter("id", entryId).setParameter("org", organizationId)
+                .setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
                 .getResultList().stream().findFirst().orElse(null);
         if (draft == null) {
             throw ApiException.notFound("Journal entry not found");
@@ -337,8 +376,13 @@ public class PostingService {
             throw ApiException.forbidden("The user who created a journal entry cannot post it (maker-checker).");
         }
         fiscalPeriod.assertOpen(draft.getPostingDate());
+        // accounts may have been deactivated, and VAT settled, since the draft was staged (G-2, G-8)
+        Set<String> draftAccounts = new LinkedHashSet<>();
+        lines(draft.getId()).forEach(l -> draftAccounts.add(l.getAccountId()));
+        assertAccountIds(draftAccounts, false);
+        assertTaxPeriodOpenFor(organizationId, draft.getPostingDate(), draftAccounts, draft.getSourceType());
         Journal journal = em.find(Journal.class, draft.getJournalId());
-        int year = draft.getPostingDate().atOffset(ZoneOffset.UTC).getYear();
+        int year = AccountingDay.year(draft.getPostingDate(), AccountingDay.zone(jdbc, organizationId));
         String entryNumber = sequence.next("journal:" + journal.getCode() + ":" + year,
                 journal.getCode() + "/" + year + "/", 5);
         draft.setEntryNumber(entryNumber);
@@ -441,6 +485,10 @@ public class PostingService {
     private void assertAccounts(List<NormalizedLine> lines, boolean systemContext) {
         Set<String> ids = new LinkedHashSet<>();
         lines.forEach(l -> ids.add(l.accountId()));
+        assertAccountIds(ids, systemContext);
+    }
+
+    private void assertAccountIds(Set<String> ids, boolean systemContext) {
         List<Account> found = em.createQuery("select a from Account a left join fetch a.category"
                         + " where a.organizationId = :org and a.id in :ids", Account.class)
                 .setParameter("org", TenantContext.organizationId()).setParameter("ids", ids).getResultList();
@@ -453,8 +501,19 @@ public class PostingService {
         }
     }
 
-    /** A residual ≤ 0.01 goes to the rounding account; larger imbalances are rejected. */
-    private void applyRounding(List<NormalizedLine> lines) {
+    /**
+     * A residual ≤ 0.01 goes to the rounding account; larger imbalances are rejected. A foreign-currency entry must also
+     * balance in its own currency (a base-only check let 1 JPY through at a 0.0067 rate). The rounding line is stored in
+     * base with no currency: it has no transaction-currency amount (review 2026-11-15, G-6).
+     */
+    private void applyRounding(List<NormalizedLine> lines, String currencyId) {
+        if (currencyId != null && !currencyId.isBlank()) {
+            PostingMath.Totals tx = PostingMath.transactionTotals(lines);
+            if (tx.debit().subtract(tx.credit()).abs().compareTo(ROUNDING_EPSILON) > 0) {
+                throw ApiException.badRequest("Unbalanced entry: total debit " + plain(tx.debit()) + " != total credit "
+                        + plain(tx.credit()) + " " + currencyId);
+            }
+        }
         PostingMath.Totals t = PostingMath.totals(lines);
         BigDecimal imbalance = t.debit().subtract(t.credit());
         if (imbalance.signum() == 0) {
@@ -467,8 +526,10 @@ public class PostingService {
         String roundingAccountId = accounts.ensureByCode("ROUNDING", "Rounding Differences", "other_expense", "rounding");
         BigDecimal abs = imbalance.abs();
         lines.add(imbalance.signum() > 0
-                ? new NormalizedLine(roundingAccountId, null, null, null, null, null, BigDecimal.ZERO, abs, BigDecimal.ZERO, abs)
-                : new NormalizedLine(roundingAccountId, null, null, null, null, null, abs, BigDecimal.ZERO, abs, BigDecimal.ZERO));
+                ? new NormalizedLine(roundingAccountId, null, null, null, null, null, BigDecimal.ZERO, abs, BigDecimal.ZERO,
+                        abs, PostingMath.BASE_ONLY, null)
+                : new NormalizedLine(roundingAccountId, null, null, null, null, null, abs, BigDecimal.ZERO, abs,
+                        BigDecimal.ZERO, PostingMath.BASE_ONLY, null));
     }
 
     /** decimal.js {@code toString()} (no trailing zeros). */
@@ -488,10 +549,25 @@ public class PostingService {
             row.setAccountId(l.accountId());
             row.setPartnerId(l.partnerId());
             row.setDescription(l.description());
-            row.setDebit(l.debit());
-            row.setCredit(l.credit());
-            row.setCurrencyId(request.currencyId());
-            row.setExchangeRate(rate);
+            if (PostingMath.BASE_ONLY.equals(l.currencyId())) {
+                row.setDebit(l.baseDebit());
+                row.setCredit(l.baseCredit());
+                row.setCurrencyId(null);
+                row.setExchangeRate(BigDecimal.ONE);
+            } else if (l.overridesCurrency()) {
+                boolean debit = l.baseDebit().signum() > 0;
+                BigDecimal base = debit ? l.baseDebit() : l.baseCredit();
+                row.setDebit(debit ? l.foreignAmount() : BigDecimal.ZERO);
+                row.setCredit(debit ? BigDecimal.ZERO : l.foreignAmount());
+                row.setCurrencyId(l.currencyId());
+                row.setExchangeRate(l.foreignAmount().signum() == 0 ? BigDecimal.ONE
+                        : base.divide(l.foreignAmount(), 8, java.math.RoundingMode.HALF_UP));
+            } else {
+                row.setDebit(l.debit());
+                row.setCredit(l.credit());
+                row.setCurrencyId(request.currencyId());
+                row.setExchangeRate(rate);
+            }
             row.setBaseDebit(l.baseDebit());
             row.setBaseCredit(l.baseCredit());
             row.setBranchId(l.branchId() != null ? l.branchId() : request.branchId());

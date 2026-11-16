@@ -12,7 +12,8 @@ public interface IncomingSupplyProvider {
     /**
      * Quantity in the product's base unit that is ordered or requested for {@code locationId} (current tenant) and not
      * yet received or cancelled. {@code onlyRule} is true when this is the product's only active replenishment rule:
-     * supply with no known destination then counts for it too.
+     * supply with no known destination then counts for it too. A non-null {@code variantId} counts only that variant's
+     * supply (Phase I2, audit V-10); null counts the product's total.
      */
-    BigDecimal incoming(String productId, String locationId, boolean onlyRule);
+    BigDecimal incoming(String productId, String variantId, String locationId, boolean onlyRule);
 }

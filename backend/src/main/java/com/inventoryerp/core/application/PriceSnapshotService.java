@@ -40,23 +40,23 @@ public class PriceSnapshotService {
             "sales_order", new Source(
                     "SELECT \"partnerId\", \"branchId\", \"siteId\", NULL::date AS \"on\" FROM \"SalesOrder\" WHERE id = ?"
                             + " AND \"organizationId\" = ?",
-                    "SELECT id, \"productId\", quantity, \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\" FROM"
+                    "SELECT id, \"productId\", \"variantId\", quantity, \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\" FROM"
                             + " \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ? ORDER BY \"sortOrder\", id"),
             "invoice", new Source(
                     "SELECT \"partnerId\", \"branchId\", NULL AS \"siteId\", \"issueDate\"::date AS \"on\" FROM \"Document\""
                             + " WHERE id = ? AND \"organizationId\" = ?",
-                    "SELECT id, \"productId\", quantity, \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\" FROM"
+                    "SELECT id, \"productId\", \"variantId\", quantity, \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\" FROM"
                             + " \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ? ORDER BY \"lineNumber\", id"),
             "order", new Source(
                     "SELECT \"partnerId\", \"branchId\", NULL AS \"siteId\", NULL::date AS \"on\" FROM \"Order\" WHERE id = ?"
                             + " AND \"organizationId\" = ?",
-                    "SELECT id, \"productId\", quantity, NULL AS \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\""
+                    "SELECT id, \"productId\", NULL AS \"variantId\", quantity, NULL AS \"uomId\", \"unitPrice\", \"discountPercent\", \"taxId\""
                             + " FROM \"OrderItem\" WHERE \"orderId\" = ? AND \"organizationId\" = ? AND NOT cancelled ORDER BY"
                             + " \"lineNumber\", id"),
             "delivery_order", new Source(
                     "SELECT \"partnerId\", \"branchId\", \"siteId\", \"requestedDate\"::date AS \"on\" FROM"
                             + " \"FleetDeliveryOrder\" WHERE id = ? AND \"organizationId\" = ?",
-                    "SELECT id, \"productId\", \"orderedQty\" AS quantity, \"uomId\", \"unitPrice\", \"discountPercent\","
+                    "SELECT id, \"productId\", \"variantId\", \"orderedQty\" AS quantity, \"uomId\", \"unitPrice\", \"discountPercent\","
                             + " \"taxId\" FROM \"FleetDeliveryOrderLine\" WHERE \"deliveryOrderId\" = ? AND \"organizationId\""
                             + " = ? ORDER BY \"lineNumber\", id"));
 
@@ -102,7 +102,7 @@ public class PriceSnapshotService {
             if (priceable) {
                 try {
                     q = e.quote(new PriceQuery(partnerId, productId, qty, (String) l.get("uomId"),
-                            (String) h.get("branchId"), (String) h.get("siteId"), on));
+                            (String) h.get("branchId"), (String) h.get("siteId"), on, (String) l.get("variantId")));
                 } catch (ApiException unpriceable) {
                     q = null; // e.g. a unit with no conversion: the agreed price stands alone
                 }

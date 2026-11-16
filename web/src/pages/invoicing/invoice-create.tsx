@@ -6,7 +6,9 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { HandoverDraftPanel } from '@/pages/sales/HandoverDetails';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from '@/pages/sales/handover-draft';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Trash2, Loader2 } from 'lucide-react';
+import { Trash2, Loader2, UserPlus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -26,16 +28,24 @@ import {
   useFiscalPositions,
   useJournals,
   useCompanySettings,
+  useTaxes,
   type PaymentTerm,
   type Journal,
 } from '@/features/accounting/api';
 import { useHrEmployees, type HrEmployee } from '@/features/hr/api';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { TaxPicker } from '@/components/tax-picker';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
-import { SearchableSelect } from '@/components/ui/searchable-select';
-import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
+import { cn } from '@/lib/utils';
+import { defaultUnitId, unitPrice as priceForUnit, unitPriceUnknown, withVariantPrices } from '@/features/products/units';
 import { resolveListPrice } from '@/features/invoicing/price-list-api';
+import { VariantSelect } from '@/features/products/variant-select';
+import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
+import {
+  EMPTY_SIZE, LineSizeFields, hasSize, sizePayload, useProductSizing, type LineSize, type SizingMode,
+} from '@/features/products/sizing';
 
 /** Odoo-style flat field: no box, a hairline underline that turns blue on focus. */
 const fieldClass =
@@ -129,7 +139,46 @@ interface LineForm {
   discountPercent?: number;
   /** Product unit (ADR-S003): Pack, Box, … defaults to the product's sales unit. */
   uomId?: string;
+  /** ADR-S058: product variant (required for a product with variants). */
+  variantId?: string | null;
+  /** ADR-S066: pieces × length [× width [× height]] of a product sold by size; decides the quantity. */
+  size?: LineSize;
+  /** Sizing mode of the line's product (null = sold by quantity). */
+  sizingMode?: SizingMode | null;
+  /** ADR-S071: several taxes / a tax group (empty = the product's tax). */
+  taxIds?: string[];
+  /** Screen only: the unit's conversion is unknown here, so the price was cleared and must be typed. */
+  priceUnknown?: boolean;
 }
+
+/** Variant and size fields of a line (ADR-S058 / ADR-S066); empty for a plain line. */
+function lineExtras(l: LineForm): Record<string, unknown> {
+  if (!l.productId) return {};
+  return {
+    ...(l.variantId ? { variantId: l.variantId } : {}),
+    ...(l.size && hasSize(l.size) ? sizePayload(l.size, l.sizingMode) : {}),
+  };
+}
+
+/** Variant picker and size inputs under a line's product; reports the product's sizing mode. */
+function LineVariantAndSize({ productId, variantId, size, onVariant, onSize, onMode }: {
+  productId?: string; variantId?: string | null; size: LineSize;
+  onVariant: (variantId: string | null, variant: VariantOption | null) => void;
+  onSize: (size: LineSize, quantity: number | null) => void;
+  onMode: (mode: SizingMode | null) => void;
+}) {
+  const { data: cfg } = useProductSizing(productId);
+  const mode = cfg?.sizingMode ?? null;
+  useEffect(() => { onMode(mode); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!productId) return null;
+  return (
+    <>
+      <VariantSelect productId={productId} value={variantId} onChange={onVariant} />
+      <LineSizeFields productId={productId} variantId={variantId} value={size} onChange={onSize} />
+    </>
+  );
+}
+
 interface FormValues {
   partnerId: string;
   issueDate: string;
@@ -154,6 +203,8 @@ export function InvoiceCreatePage() {
   const navigate = useNavigate();
   const partners = usePartners({ page: 1, pageSize: 200 });
   const products = useProducts({ page: 1, pageSize: 200 });
+  const taxQuery = useTaxes({ page: 1, pageSize: 200 });
+  const taxList = taxQuery.data?.data ?? [];
   const { data: paymentTerms } = usePaymentTerms();
   const { data: fiscalPositions } = useFiscalPositions();
   const { data: journalsData } = useJournals();
@@ -161,6 +212,9 @@ export function InvoiceCreatePage() {
   const createInvoice = useCreateInvoice();
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
   const canUpdateInvoice = useAuthStore((s) => s.hasPermission(PERMISSIONS.invoice.update));
+  const canCreatePartner = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const queryClient = useQueryClient();
     const postInvoice = usePostInvoice();
     const currency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
     const companySettingsQ = useCompanySettings();
@@ -253,6 +307,8 @@ export function InvoiceCreatePage() {
           unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
           discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
           uomId: l.uomId || undefined,
+          ...lineExtras(l),
+          taxIds: l.taxIds && l.taxIds.length > 0 ? l.taxIds : undefined,
         })),
     };
     const t = setTimeout(async () => {
@@ -281,7 +337,7 @@ export function InvoiceCreatePage() {
     const product = productList.find((p) => p.id === l.productId);
     const price = Number.isFinite(l.unitPrice)
       ? Number(l.unitPrice)
-      : product?.salesPrice != null
+      : product?.salesPrice != null && !l.priceUnknown
         ? Number(product.salesPrice)
         : 0;
     const qty = Number.isFinite(l.quantity) ? Number(l.quantity) : 0;
@@ -290,8 +346,44 @@ export function InvoiceCreatePage() {
   };
   const subtotal = (lines ?? []).reduce((s, l) => s + lineTotal(l), 0);
 
+  /**
+   * Per-line price revision: bumped by every product, variant, unit or typed price change, so a price-list answer
+   * that arrives after one of them is dropped instead of overwriting the newer price. Keyed by the row's field id.
+   */
+  const priceRev = useRef(new Map<string, number>());
+  const bumpPrice = (index: number): number => {
+    const key = fields[index]?.id ?? String(index);
+    const next = (priceRev.current.get(key) ?? 0) + 1;
+    priceRev.current.set(key, next);
+    return next;
+  };
+  const priceIsCurrent = (index: number, rev: number) =>
+    (priceRev.current.get(fields[index]?.id ?? String(index)) ?? 0) === rev;
+
+  /**
+   * D1: the line's price in `uomId` from the product's sales price (per default sales unit) or, with a variant, the
+   * variant's effective price, then the unit rule of units.ts. A unit that cannot be converted here clears the price.
+   */
+  const applyUnitPrice = (index: number, productId: string | undefined, variant: VariantOption | null | undefined, uomId: string | undefined) => {
+    const p = productList.find((x) => x.id === productId);
+    if (!p) return;
+    const priced = withVariantPrices(p, variant);
+    const price = priceForUnit(priced, uomId, 'sales');
+    if (price !== null) {
+      setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
+      setValue(`lines.${index}.priceUnknown`, false);
+    } else if (unitPriceUnknown(priced, uomId, 'sales')) {
+      setValue(`lines.${index}.unitPrice`, Number.NaN);
+      setValue(`lines.${index}.priceUnknown`, true);
+    }
+  };
+
   const onProductChange = (index: number, productId: string) => {
+    const rev = bumpPrice(index);
     setValue(`lines.${index}.productId`, productId);
+    setValue(`lines.${index}.variantId`, null);
+    setValue(`lines.${index}.size`, EMPTY_SIZE);
+    setValue(`lines.${index}.priceUnknown`, false);
     const p = productList.find((x) => x.id === productId);
     if (p) {
       setValue(`lines.${index}.description`, p.name);
@@ -302,17 +394,36 @@ export function InvoiceCreatePage() {
         partnerId: getValues('partnerId'), productId, quantity: Number(getValues(`lines.${index}.quantity`)) || 1,
         uomId: defaultUnitId(p, 'sales'),
       }).then((listed) => {
+        // A variant, unit or typed price set while the lookup was in flight wins.
+        if (!priceIsCurrent(index, rev)) return;
         if (listed?.unitPrice != null) setValue(`lines.${index}.unitPrice`, listed.unitPrice);
         if (listed && listed.discountPercent > 0) setValue(`lines.${index}.discountPercent`, listed.discountPercent);
       });
     }
   };
 
+  /** ADR-S058: the variant's price (in the line's unit) and sales description replace the product's. */
+  const onVariantChange = (index: number, variantId: string | null, v: VariantOption | null) => {
+    setValue(`lines.${index}.variantId`, variantId);
+    if (!v) return;
+    bumpPrice(index);
+    if (v.salesPrice != null && v.salesPrice !== '') {
+      applyUnitPrice(index, getValues(`lines.${index}.productId`), v, getValues(`lines.${index}.uomId`));
+    }
+    setValue(`lines.${index}.description`, v.description?.trim() || v.displayName || v.name);
+  };
+
+  /** ADR-S066: the size decides the quantity. */
+  const onSizeChange = (index: number, size: LineSize, quantity: number | null) => {
+    setValue(`lines.${index}.size`, size);
+    if (quantity !== null) setValue(`lines.${index}.quantity`, quantity);
+  };
+
   const onUnitChange = (index: number, uomId: string) => {
+    bumpPrice(index);
     setValue(`lines.${index}.uomId`, uomId);
-    const p = productList.find((x) => x.id === getValues(`lines.${index}.productId`));
-    const price = priceForUnit(p, uomId, 'sales');
-    if (price !== null) setValue(`lines.${index}.unitPrice`, Number(price.toFixed(6)));
+    const productId = getValues(`lines.${index}.productId`);
+    applyUnitPrice(index, productId, cachedVariantOption(queryClient, productId, getValues(`lines.${index}.variantId`)), uomId);
   };
 
   const onSubmit = handleSubmit(async (values, event) => {
@@ -320,6 +431,10 @@ export function InvoiceCreatePage() {
       | HTMLButtonElement
       | undefined;
     const action = submitter?.value ?? 'save';
+    if (values.lines.some((l) => l.productId && l.priceUnknown && !Number.isFinite(l.unitPrice))) {
+      toast.error(tx('No conversion for this unit — enter the price'));
+      return;
+    }
 
     const payload: CreateInvoiceInput = {
       partnerId: values.partnerId,
@@ -331,7 +446,7 @@ export function InvoiceCreatePage() {
       invoicingJournalId: values.invoicingJournalId || undefined,
       salespersonId: values.salespersonId || undefined,
       deliveryDate: handover.scheduledDate || values.deliveryDate || undefined,
-      deliveryAddress: (handover.method === 'delivery' ? handover.address : '') || values.deliveryAddress || undefined,
+      deliveryAddress: (handover.method !== 'pickup' ? handover.address : '') || values.deliveryAddress || undefined,
       incoterm: values.incoterm || undefined,
       incotermLocation: values.incotermLocation || undefined,
       sourceDocument: values.sourceDocument || undefined,
@@ -344,11 +459,24 @@ export function InvoiceCreatePage() {
         unitPrice: Number.isFinite(l.unitPrice) ? Number(l.unitPrice) : undefined,
         discountPercent: Number.isFinite(l.discountPercent) ? Number(l.discountPercent) : undefined,
         uomId: l.productId ? l.uomId || undefined : undefined,
+        ...lineExtras(l),
+        taxIds: l.taxIds && l.taxIds.length > 0 ? l.taxIds : undefined,
       })),
     };
 
-    const invoice = await createInvoice.mutateAsync(payload);
-    if (action === 'post') await postInvoice.mutateAsync(invoice.id);
+    let invoice: Awaited<ReturnType<typeof createInvoice.mutateAsync>>;
+    try {
+      invoice = await createInvoice.mutateAsync(payload);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, tx('Could not save')));
+      return;
+    }
+    if (action === 'post') {
+      // The draft exists now: on a failed post go to it (retry the post there) instead of leaving this form
+      // submittable, where a second submit would create a duplicate invoice.
+      try { await postInvoice.mutateAsync(invoice.id); }
+      catch (e) { toast.error(tx('Saved as a draft, but posting failed: {{error}}', { error: apiErrorMessage(e, tx('Posting failed')) })); }
+    }
     if (canUpdateInvoice) {
       try { await saveHandoverDraft(`/sales/invoices/${invoice.id}/handover`, handover); }
       catch (e) { toast.error(apiErrorMessage(e, tx('Invoice saved, but the delivery details could not be saved'))); }
@@ -359,6 +487,7 @@ export function InvoiceCreatePage() {
   const busy = createInvoice.isPending || postInvoice.isPending;
 
   const partnerOptions = (partners.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
+  const productOptions = productList.map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined }));
   const linkBtn = 'text-sm text-blue-600 hover:text-blue-800 hover:underline';
   const thBase = 'py-2.5 px-2 text-sm font-semibold text-slate-800';
 
@@ -425,15 +554,31 @@ export function InvoiceCreatePage() {
             <div>
               <MetaRow label={tx('Customer')}>
                 <input type="hidden" {...register('partnerId', { required: true })} />
-                <SearchableSelect
-                  value={watch('partnerId') ?? ''}
-                  onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
-                  options={partnerOptions}
-                  placeholder={tx('Search a customer…')}
-                  searchPlaceholder={tx('Search customers…')}
-                  className={fieldClass}
-                />
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <SearchableSelect
+                      value={watch('partnerId') ?? ''}
+                      onValueChange={(v) => setValue('partnerId', v, { shouldValidate: true, shouldDirty: true })}
+                      options={partnerOptions}
+                      placeholder={tx('Search a customer…')}
+                      searchPlaceholder={tx('Search customers…')}
+                      className={fieldClass}
+                    />
+                  </div>
+                  {canCreatePartner && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')}
+                      aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </MetaRow>
+              <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+                // Use the new customer at once: refresh the customer list and select it.
+                void queryClient.invalidateQueries({ queryKey: ['partners'] });
+                setValue('partnerId', c.id, { shouldValidate: true, shouldDirty: true });
+                if (!getValues('deliveryAddress') && c.address) setValue('deliveryAddress', c.address);
+              }} />
               <MetaRow label={tx('Reference')}>
                 <Input id="reference" className={fieldClass} {...register('reference')} />
               </MetaRow>
@@ -551,19 +696,32 @@ export function InvoiceCreatePage() {
                       <tr key={field.id} className="group border-b border-slate-100 align-middle hover:bg-slate-50/60">
                         <td className="pl-3 text-slate-300">⠿</td>
                         <td className="px-2 py-1.5">
-                          <select
-                            aria-label={tx('Product')}
-                            className={cellClass}
+                          <SearchableSelect
                             value={watch(`lines.${index}.productId`) ?? ''}
-                            onChange={(e) => onProductChange(index, e.target.value)}
-                          >
-                            <option value="">{tx('Select a product')}</option>
-                            {productList.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
+                            onValueChange={(v) => onProductChange(index, v)}
+                            options={productOptions}
+                            placeholder={tx('Select a product')}
+                            searchPlaceholder={tx('Search products…')}
+                            className={cn(cellClass, 'min-w-[16rem] px-1')}
+                            contentClassName={PRODUCT_PICKER_PANEL}
+                            wrap
+                          />
+                          <LineVariantAndSize
+                            productId={watch(`lines.${index}.productId`)}
+                            variantId={watch(`lines.${index}.variantId`)}
+                            size={watch(`lines.${index}.size`) ?? EMPTY_SIZE}
+                            onVariant={(id, v) => onVariantChange(index, id, v)}
+                            onSize={(size, q) => onSizeChange(index, size, q)}
+                            onMode={(m) => setValue(`lines.${index}.sizingMode`, m)}
+                          />
+                          <div className="mt-1">
+                            <TaxPicker
+                              kind="sales"
+                              taxes={taxList}
+                              value={watch(`lines.${index}.taxIds`) ?? []}
+                              onChange={(ids) => setValue(`lines.${index}.taxIds`, ids)}
+                            />
+                          </div>
                         </td>
                         {show('description') && (
                           <td className="px-2 py-1.5">
@@ -571,7 +729,11 @@ export function InvoiceCreatePage() {
                           </td>
                         )}
                         <td className="px-2 py-1.5">
-                          <input aria-label={tx('Quantity')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
+                          <input aria-label={tx('Quantity')} type="number" step="any"
+                            readOnly={!!watch(`lines.${index}.sizingMode`) && hasSize(watch(`lines.${index}.size`))}
+                            title={watch(`lines.${index}.sizingMode`) && hasSize(watch(`lines.${index}.size`)) ? tx('Computed from the size') : undefined}
+                            className={`${cellClass} text-right tabular-nums read-only:bg-slate-50 read-only:text-slate-500`}
+                            {...register(`lines.${index}.quantity`, { valueAsNumber: true })} />
                         </td>
                         {show('uom') && (
                           <td className="px-2 py-1.5">
@@ -585,7 +747,12 @@ export function InvoiceCreatePage() {
                           </td>
                         )}
                         <td className="px-2 py-1.5">
-                          <input aria-label={tx('Unit price')} type="number" step="any" className={`${cellClass} text-right tabular-nums`} {...register(`lines.${index}.unitPrice`, { valueAsNumber: true })} />
+                          <input aria-label={tx('Unit price')} type="number" step="any"
+                            className={cn(cellClass, 'text-right tabular-nums', watch(`lines.${index}.priceUnknown`) && !Number.isFinite(watch(`lines.${index}.unitPrice`)) && 'border-amber-500')}
+                            {...register(`lines.${index}.unitPrice`, { valueAsNumber: true, onChange: () => bumpPrice(index) })} />
+                          {watch(`lines.${index}.priceUnknown`) && !Number.isFinite(watch(`lines.${index}.unitPrice`)) && (
+                            <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>
+                          )}
                         </td>
                         {show('discount') && (
                           <td className="px-2 py-1.5">

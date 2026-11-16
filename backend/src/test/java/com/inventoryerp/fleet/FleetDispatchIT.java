@@ -477,6 +477,67 @@ class FleetDispatchIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Phase I2 N5: an Orders-module order line is in the sales unit; its delivery order keeps that unit")
+    void salesOrderKeepsSalesUnit() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String boxed = product("Boxed tiles", true);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(pcs, box, boxed)
+                .update();
+        ok(200, "PATCH", "/products/" + boxed, Map.of("units", List.of(Map.of("uomId", box, "factor", 12,
+                "isPurchase", false, "isSales", true))));
+        String order = ok(200, "POST", "/orders", Map.of("partnerId", customer, "orderType", "delivery", "lines",
+                List.of(Map.of("productId", boxed, "quantity", 2, "unitPrice", 45000)))).get("id").asString();
+        try {
+            JsonNode line = ok(201, "POST", "/fleet/delivery-orders/from-sales-order", Map.of("sourceId", order,
+                    "siteId", site, "locationId", yard, "requestedDate", today)).get("lines").get(0);
+            assertThat(dec(line.get("orderedQty"))).isEqualByComparingTo("2");
+            assertThat(line.get("uomId").asString()).as("2 boxes, not 2 pieces").isEqualTo(box);
+            assertThat(dec(line.get("uomFactor"))).isEqualByComparingTo("12");
+        } finally {
+            ok(200, "POST", "/orders/" + order + "/cancel", Map.of("reason", "N5 test"));
+        }
+    }
+
+    @Test
+    @DisplayName("Phase I2 V-6/N9: manual and invoice-sourced delivery orders keep the product variant")
+    void deliveryOrdersKeepTheVariant() {
+        String tiles = product("Variant tiles", true);
+        jdbc.sql("UPDATE \"Product\" SET \"hasVariants\" = true WHERE id = ?").param(tiles).update();
+        String grey = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"ProductVariant\" (id, \"organizationId\", \"productId\", name, \"combinationKey\","
+                + " \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, 'Grey', ?, 52000, now())").params(grey, demoOrg, tiles,
+                        grey).update();
+
+        // V-6: the manual order names the variant and is priced from it; without one it is refused.
+        Res none = as("POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site, "locationId",
+                yard, "requestedDate", today, "lines", List.of(Map.of("productId", tiles, "quantity", 3))));
+        assertThat(none.status()).as(none.raw().body()).isEqualTo(400);
+        assertThat(none.raw().body()).contains("Choose a variant for");
+        JsonNode manual = ok(201, "POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site,
+                "locationId", yard, "requestedDate", today, "lines", List.of(Map.of("productId", tiles, "variantId",
+                        grey, "quantity", 3)))).get("lines").get(0);
+        assertThat(manual.get("variantId").asString()).isEqualTo(grey);
+        assertThat(dec(manual.get("unitPrice"))).isEqualByComparingTo("52000");
+
+        // N9: a delivery order made from an invoice issues the invoice line's variant.
+        String invoice = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                List.of(Map.of("productId", tiles, "variantId", grey, "quantity", 2, "unitPrice", 52000)))).get("id")
+                .asString();
+        JsonNode fromInvoice = ok(201, "POST", "/fleet/delivery-orders/from-invoice", Map.of("sourceId", invoice,
+                "siteId", site, "locationId", yard)).get("lines").get(0);
+        assertThat(fromInvoice.get("variantId").asString()).isEqualTo(grey);
+    }
+
+    String unit(String code) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 0.001, now())")
+                .params(id, demoOrg, code + "-" + UUID.randomUUID().toString().substring(0, 8), code).update();
+        return id;
+    }
+
+    @Test
     @DisplayName("posted invoice source: no stock at dispatch; approved shortage → draft credit note (no auto-post);"
             + " transporter freight per trip; draft invoice source hands its stock issue to the delivery")
     void invoicedSourceAndCreditNote() {
@@ -761,7 +822,7 @@ class FleetDispatchIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without a token and 403 without the permission on every dispatch route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.dispatch")).isEqualTo(55);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.dispatch")).isEqualTo(60);
         assertThat(call("GET", "/fleet/delivery-orders", null, clerkToken).status()).isEqualTo(200);
         Res plan = call("POST", "/fleet/delivery-orders/" + UUID.randomUUID() + "/plan-loads", Map.of(), clerkToken);
         assertThat(plan.status()).isEqualTo(403);
@@ -769,5 +830,27 @@ class FleetDispatchIT extends ApiTestSupport {
         assertThat(call("POST", "/fleet/delivery-charge-rules", Map.of(), clerkToken).status()).isEqualTo(403);
         assertThat(call("POST", "/fleet/delivery-discrepancies/x/approve", null, key(clerkToken)).status())
                 .isEqualTo(403);
+    }
+
+    @Test
+    @DisplayName("P-5 (D1): a manual delivery order line in another unit is priced in that unit, not at the bag price")
+    void manualOrderPriceScaledToTheUnit() {
+        String kg = UUID.randomUUID().toString();
+        String bag = UUID.randomUUID().toString();
+        for (String[] u : List.of(new String[] {kg, "KG"}, new String[] {bag, "BAG"})) {
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                    + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 0.001, now())")
+                    .params(u[0], demoOrg, u[1] + "-" + sfx + "-" + (++seq), u[1]).update();
+        }
+        String cement = product("Bagged cement", false);
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(kg, bag, cement).update();
+        ok(200, "PATCH", "/products/" + cement, Map.of("units", List.of(Map.of("uomId", bag, "factor", 50,
+                "isPurchase", true, "isSales", true))));
+        // salesPrice 45000 is per bag (the sales unit): a line in kg is 900 a kg, a line in bags 45000 a bag.
+        JsonNode lines = ok(201, "POST", "/fleet/delivery-orders", Map.of("partnerId", customer, "siteId", site,
+                "locationId", yard, "requestedDate", today, "lines", List.of(Map.of("productId", cement, "quantity", 100),
+                        Map.of("productId", cement, "quantity", 2, "uomId", bag)))).get("lines");
+        assertThat(dec(lines.get(0).get("unitPrice"))).isEqualByComparingTo("900");
+        assertThat(dec(lines.get(1).get("unitPrice"))).isEqualByComparingTo("45000");
     }
 }
