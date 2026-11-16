@@ -27,7 +27,7 @@ reports use base amounts and exclude drafts, the balance sheet balances.
 | G-3 | Medium | A closed year's period could be reopened and posted into | fixed |
 | G-4 | Medium | Year `netIncome` counted reversals of closing entries | fixed |
 | G-5 | Medium | A reopened period with no new activity could not be closed again (Nest same) | fixed |
-| G-6 | Medium | Balance checked in base only; rounding line mixed currencies; no DB check | fixed (V495 `NOT VALID` checks) |
+| G-6 | Medium | Balance checked in base only; rounding line mixed currencies; no DB check | fixed (V499 `NOT VALID` checks) |
 | G-7 | Low | Concurrent reversals / approvals not row-locked | fixed |
 | G-8 | Low | Draft approval did not re-check accounts | fixed |
 | G-9 | Low | Opening balances bypassed the manual-posting rule | fixed |

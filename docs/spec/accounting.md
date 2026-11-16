@@ -294,7 +294,7 @@ Where Nest behaves the same, the change is a deliberate deviation from the refer
   keeps the closing entry's date inside the period: the period can be closed again and no closing amounts land in the
   current period.
 - **G-6.** A foreign-currency entry must balance in its own currency too (tolerance 0.01). The rounding line is stored
-  in base with no currency. V495 adds `NOT VALID` CHECK constraints: non-negative amounts, never debit and credit on one
+  in base with no currency. V499 adds `NOT VALID` CHECK constraints: non-negative amounts, never debit and credit on one
   line.
 - **G-7 / G-8.** Reverse and draft approval lock the entry row; approval re-checks the draft's accounts.
 - **G-9.** Opening balances refuse accounts that do not allow manual posting (inventory, tax and other control
