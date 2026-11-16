@@ -849,8 +849,8 @@ public class CashSaleService {
         String number = str(s.get("number"));
         LocalDate saleDate = s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now();
         Instant postDate = saleDate.equals(LocalDate.now()) ? Instant.now() : saleDate.atStartOfDay().toInstant(ZoneOffset.UTC);
-        // P1 — stock leaves the showroom at handover
-        for (Map<String, Object> l : lines) {
+        // P1 — stock leaves the showroom at handover (S-2: in the engine's lock order)
+        for (Map<String, Object> l : StockMove.inLockOrder(lines)) {
             if (!Boolean.TRUE.equals(l.get("trackInventory"))) {
                 continue;
             }

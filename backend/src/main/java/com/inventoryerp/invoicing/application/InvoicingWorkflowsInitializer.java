@@ -158,7 +158,8 @@ public class InvoicingWorkflowsInitializer {
         // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here.
         boolean stockByDelivery = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE id = ? AND"
                 + " data->>'stockIssuedBy' IS NOT NULL").param(id).query(Long.class).single() > 0;
-        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : lines) {
+        // Audit S-2: issue in the engine's lock order (the posting groups below keep the document order).
+        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : StockMove.inLockOrder(lines)) {
             String productId = (String) line.get("productId");
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
@@ -238,7 +239,7 @@ public class InvoicingWorkflowsInitializer {
         for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
                 + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
                 + " 'sales_invoice' AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0"
-                + " ORDER BY \"createdAt\", id").params(invoiceId, org))) {
+                + " ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"createdAt\", id").params(invoiceId, org))) {
             stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
                     d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
                     .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
@@ -453,7 +454,7 @@ public class InvoicingWorkflowsInitializer {
         // like a foreign-currency goods receipt (P0-5); a base-currency bill's rate is 1.
         BigDecimal billRate = entryId == null || fxRates == null ? null : fxRates.entryRate(entryId);
         BigDecimal functionalRate = billRate == null || billRate.signum() <= 0 ? BigDecimal.ONE : billRate;
-        for (Map<String, Object> line : lines) {
+        for (Map<String, Object> line : StockMove.inLockOrder(lines)) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             if (product == null || !Boolean.TRUE.equals(product.get("trackInventory"))) {
                 continue;

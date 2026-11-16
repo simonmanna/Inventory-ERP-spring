@@ -274,6 +274,9 @@ filter by organisation (`returnIssuedStock` fixed in I2; `InventoryQueryService`
 | S-5 | `SyncIT.stockCountPerVariant` failed: a refused device count left its draft count open | same test |
 | S-6 | `RentalIT.swapMovesTheLineQuantity` failed: 3 out after swapping a line of 2 | same test |
 | A-2, A-3 | not proven (no concurrency test) | `CrushingIT`, `FleetFuelIT` |
+| S-4 | `CostingAuditIT.reversalAfterTheCostMoved` failed: GL stock moved 0 while the ledger moved −10 | same test |
+| S-2 | not proven (no deadlock test); helper unit-tested | `StockLockOrderTest`; cash sale, invoicing, procurement, fleet, POS suites |
+| S-3 | not proven (no concurrency test) | procurement landed-cost suites |
 | D5 | (new rule; tests written with the fix) | `OpeningStockIT` (opening count → opening equity; GL opening balance refuses inventory accounts; tie-out variance unchanged) |
 
 - S-5: the sync `stock.count` op runs start + draft + submit in one transaction.

@@ -118,10 +118,7 @@ public class StockDocService {
      * documents' own rows and responses keep the entered order.
      */
     static <T extends Map<String, Object>> List<T> lockOrder(List<T> lines) {
-        List<T> sorted = new ArrayList<>(lines);
-        sorted.sort(Comparator.comparing((T i) -> String.valueOf(i.get("productId")))
-                .thenComparing(i -> i.get("variantId") == null ? "" : String.valueOf(i.get("variantId"))));
-        return sorted;
+        return StockMove.inLockOrder(lines);
     }
 
     /** Approval-engine gate; throws while a request is pending. */

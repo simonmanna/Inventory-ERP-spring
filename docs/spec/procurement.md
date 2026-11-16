@@ -103,6 +103,7 @@ Post-parity fixes (ADR-PROCUREMENT-001 wave 1, `fix(procurement)!`, 2026-10-30; 
 | P1-2 | `POST /purchase-orders/:id/activate` | activates an order whose approval was rejected | `403 This purchase order's approval was rejected — it cannot be activated`; an approved request now activates the order automatically (`PurchaseOrderApprovalSubscriber`) |
 | P1-3 | GRN reverse of a cancelled PO | set the PO back to active | cancelled / closed orders keep their status; received quantity floored at 0 |
 | P1-7 | vendor bill priced above a vouchered receipt | difference silently dropped (AP at receipt value) | Dr PPV / Cr AP for the difference; bill residual carries it; receipt lines locked `FOR UPDATE` while matching |
+| I5 S-3 | landed cost / voucher post and reversal on lots, serials and averages | re-costs lots and serials without the stock engine's quant lock (a concurrent issue could read the old cost) | takes the engine's quant locks first and writes layer costs through the inventory API `LayerCostWriter` (module boundary); no route change |
 | P1-12 | receiving a service / non-tracked product | put into stock and vouchered — and the bill expensed it again (AP twice) | not stocked, not vouchered; billed as an expense |
 
 Same as Nest, kept on purpose:

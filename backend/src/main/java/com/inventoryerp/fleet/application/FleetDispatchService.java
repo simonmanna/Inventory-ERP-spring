@@ -931,7 +931,8 @@ public class FleetDispatchService {
         BigDecimal tonnes = BigDecimal.ZERO;
         boolean knownT = false;
         BigDecimal total = BigDecimal.ZERO;
-        for (Map<String, Object> l : lines(id)) {
+        // Audit S-2: issue in the engine's lock order.
+        for (Map<String, Object> l : StockMove.inLockOrder(lines(id), r -> (String) r.get("productId"), this::variantOf)) {
             BigDecimal qty = l.get("loadedQty") != null ? SqlRows.dec(l, "loadedQty") : SqlRows.dec(l, "plannedQty");
             Map<String, Object> data = Obj.of("dispatchedQty", qty, "billableQty", qty, "loadedQty", qty);
             if (qty.signum() > 0 && moveStock) {

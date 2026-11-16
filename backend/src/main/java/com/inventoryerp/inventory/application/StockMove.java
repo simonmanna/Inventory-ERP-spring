@@ -2,7 +2,12 @@ package com.inventoryerp.inventory.application;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * Input of a {@link StockService} movement (port of {@code ReceiveStockDto} / {@code IssueStockDto} /
@@ -10,6 +15,23 @@ import java.util.List;
  * call sites readable; unset fields are {@code null} like the optional Nest DTO properties.
  */
 public final class StockMove {
+
+    /**
+     * Lines in the stock engine's lock order (productId, variantId) — audit S-2: every multi-line posting feeds the
+     * engine in this order, so two documents over the same items lock their quants in the same sequence and cannot
+     * deadlock. Documents keep their own rows and responses in the entered order.
+     */
+    public static <T> List<T> inLockOrder(List<T> lines, Function<T, String> productId, Function<T, String> variantId) {
+        List<T> sorted = new ArrayList<>(lines);
+        sorted.sort(Comparator.comparing((T l) -> Objects.toString(productId.apply(l), ""))
+                .thenComparing(l -> Objects.toString(variantId.apply(l), "")));
+        return sorted;
+    }
+
+    /** {@link #inLockOrder(List, Function, Function)} over rows keyed {@code productId} / {@code variantId}. */
+    public static <T extends Map<String, Object>> List<T> inLockOrder(List<T> lines) {
+        return inLockOrder(lines, l -> (String) l.get("productId"), l -> (String) l.get("variantId"));
+    }
 
     public String productId;
     public String variantId;

@@ -1248,9 +1248,14 @@ public class StockService {
         return quantity.signum() < 0 ? base.negate() : base;
     }
 
+    /** The advisory-lock key of one quant (shared with {@link LayerCostWriter}). */
+    static String quantLockKey(String org, String productId, String variantKey, String locationId) {
+        return "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
+    }
+
     /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */
     private void lockQuantForAvco(String org, String productId, String variantKey, String locationId) {
-        String key = "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
+        String key = quantLockKey(org, productId, variantKey, locationId);
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param(key).query().listOfRows();
     }
 

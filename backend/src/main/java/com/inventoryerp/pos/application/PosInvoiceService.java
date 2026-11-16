@@ -1914,7 +1914,7 @@ public class PosInvoiceService {
             if (components.isEmpty()) {
                 throw new IllegalStateException("Combo has no immutable stock-component snapshot");
             }
-            for (Object o : components) {
+            for (Object o : StockMove.inLockOrder(components, r -> (String) PosSql.map(r).get("productId"), r -> null)) {
                 Map<String, Object> c = PosSql.map(o);
                 BigDecimal quantity = Money.qtyMul(c.get("quantity"), it.get("quantity"));
                 if (quantity.signum() <= 0) {
@@ -2023,7 +2023,8 @@ public class PosInvoiceService {
                     + " Add a recipe or turn off inventory tracking for this item.");
         }
         String name = menuItem == null || menuItem.get("name") == null ? "menu item" : (String) menuItem.get("name");
-        for (Object o : recipe) {
+        // Audit S-2: ingredients in the engine's lock order (one transaction per line issues them all).
+        for (Object o : StockMove.inLockOrder(recipe, r -> (String) PosSql.map(r).get("productId"), r -> null)) {
             Map<String, Object> ing = PosSql.map(o);
             BigDecimal qty = Money.qtyMul(ing.get("quantity"), effective);
             if (qty.signum() <= 0) {

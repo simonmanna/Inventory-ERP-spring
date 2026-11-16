@@ -139,6 +139,7 @@ Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-
 | A6 | `POST /production-orders/:id/complete` | `ProductionOutput.batchId` never set | set from the receipt's ledger row |
 | A7 | BOM / order create & update | unknown product / location → 500 (FK) | 404 `Product <id> not found` / `Location not found` / `Routing not found` |
 | A8 | `POST/PATCH /boms` | `routingId` not settable; `overheadCost` create-only | `routingId` on create + update, `overheadCost` on update (draft BOMs) |
+| I5 S-4 | `POST /production-orders/:id/reverse` | stock issued at the current cost, GL credits stock with the output's cost (ledger and GL drift when the cost moved) | GL credits stock with the issued value, WIP takes back the output's value, the difference is a stock adjustment gain / loss (`StockPostingService.postProductionReversal`; test `CostingAuditIT.reversalAfterTheCostMoved`, failed before the fix) |
 | A9 | list routes (BOMs, orders, requests, plans) | unbounded | optional `limit` (1–1000) / `offset`; still a bare array, unbounded when absent |
 
 ## Status

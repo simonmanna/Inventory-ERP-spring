@@ -812,19 +812,19 @@ public class ProductionService {
         }
         String code = str(order, "orderCode");
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
-        stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
-                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code));
-        stockPosting.postProductionConsume(str(order, "outputProductId"), fgValue, date, "production_reversal", code,
-                "Production reversal · " + code);
+        // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
+        // gets the output's value back, the difference is a stock adjustment gain / loss.
+        BigDecimal fgIssued = stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
+                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)).totalValue();
+        stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
+                "production_reversal", code, "Production reversal · " + code);
         // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
         for (Map<String, Object> bp : byproducts) {
-            stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
-                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code));
+            BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
+                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)).totalValue();
             BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
-            if (bpValue.signum() > 0) {
-                stockPosting.postProductionConsume(str(bp, "productId"), bpValue, date, "production_reversal", code,
-                        "Production reversal (by-product) · " + code);
-            }
+            stockPosting.postProductionReversal(str(bp, "productId"), bpIssued, bpValue, date, "production_reversal",
+                    code, "Production reversal (by-product) · " + code);
         }
         // 2) Materials back to their source location, clearing WIP (Dr Stock Valuation / Cr WIP).
         returnMaterials(order, "production_reversal", date, "Production reversal · " + code);

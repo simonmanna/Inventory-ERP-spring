@@ -498,6 +498,46 @@ public class StockPostingService {
                 null, lines);
     }
 
+    /**
+     * Production reversal (audit S-4): the stock leaves at the value the engine issued it at ({@code issuedValue}, Cr
+     * Stock Valuation, so the GL follows the stock ledger) while WIP takes back what the output credited out of it
+     * ({@code wipValue}); a difference (the item's cost moved since the output) is a stock adjustment gain / loss.
+     */
+    public void postProductionReversal(String productId, BigDecimal issuedValue, BigDecimal wipValue, Instant date,
+            String sourceType, String sourceId, String description) {
+        BigDecimal issued = issuedValue.signum() > 0 ? issuedValue : BigDecimal.ZERO;
+        BigDecimal wipBack = wipValue.signum() > 0 ? wipValue : BigDecimal.ZERO;
+        if (issued.signum() == 0 && wipBack.signum() == 0) {
+            return;
+        }
+        String name = productName(productId);
+        String label = description != null ? description : "Production reversal · " + name;
+        String sv = determination.mapped("stock_valuation");
+        String wip = wipOr(sv);
+        List<Line> lines = new ArrayList<>();
+        List<Line> consume = issued.signum() > 0 ? resolveLines("PRODUCTION_CONSUME", productId, issued) : null;
+        if (consume != null) {
+            lines.addAll(consume);
+        } else if (issued.signum() > 0) {
+            String v = JsNumbers.dec(issued);
+            lines.add(Line.debit(wip, v, "Production consume · " + name));
+            lines.add(Line.credit(sv, v, "Production consume · " + name));
+        }
+        BigDecimal diff = wipBack.subtract(issued);
+        if (diff.signum() != 0) {
+            String v = JsNumbers.dec(diff.abs());
+            String text = "Production reversal cost difference · " + name;
+            if (diff.signum() > 0) {
+                lines.add(Line.debit(wip, v, text));
+                lines.add(Line.credit(determination.mapped("stock_adjustment_income"), v, text));
+            } else {
+                lines.add(Line.debit(determination.mapped("stock_adjustment_expense"), v, text));
+                lines.add(Line.credit(wip, v, text));
+            }
+        }
+        post("INV", date, label, sourceType, sourceId, null, lines);
+    }
+
     /** Production output: Dr Stock Valuation / Cr WIP. */
     public void postProductionOutput(String productId, BigDecimal totalValue, Instant date, String sourceType,
             String sourceId, String description) {

@@ -204,6 +204,10 @@ has the same gaps:
     Enter opening stock with an approved opening count so the stock ledger and the GL agree.` Nest posts the opening
     count as a stock gain and accepts inventory accounts on the GL opening balance. Test: `OpeningStockIT` (also
     checks that the GL tie-out variance does not move when the count posts).
+29. **Lock order everywhere (Phase I5, audit S-2).** Cash sale handover, invoice auto-issue, vendor-bill receipt,
+    credit-note restock, goods receipt, fleet dispatch and POS recipe / combo components also feed the engine in
+    (productId, variantId) order (`StockMove.inLockOrder`), extending item 3. Landed cost takes the same quant locks
+    before re-costing lots, serials or averages (`LayerCostWriter`, S-3).
 
 Same as Nest, kept on purpose:
 
