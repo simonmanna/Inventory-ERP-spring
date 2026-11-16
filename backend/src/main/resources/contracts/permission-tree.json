@@ -948,7 +948,8 @@
   "project": {
     "read": "project:read",
     "manage": "project:manage",
-    "post": "project:post"
+    "post": "project:post",
+    "rateOverride": "project:rate_override"
   },
   "contract": {
     "read": "contract:read",

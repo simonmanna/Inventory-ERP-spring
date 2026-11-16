@@ -1012,6 +1012,15 @@ Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load f
 
 `DispatchPoliciesTest` (unit) and `FleetDispatchIT` (see Status). `FleetClaimsIT` now refers to a real trip.
 
+### Project links (ADR-S075)
+
+- `FleetCustomerSite.projectId` (optional, `Project not found`): a site belongs to a construction project; delivery
+  orders created or re-pointed to that site copy `projectId`.
+- `PUT /fleet/trips/:id/project` (`fleet_trip:update`) and `PUT /fleet/work-orders/:id/project`
+  (`fleet_maintenance:update`) tag a trip or work order with `{ projectId, wbsId }` (null clears). The projects module
+  charges tagged own-carrier trips and completed work orders to the job (`POST /projects/:id/costs/fleet`, Dr WIP /
+  Cr 5392 Plant Recovery to Projects); see `docs/spec/projects.md`.
+
 ### Known gaps / owner decisions (1.3)
 
 - Billing a sales order through the orders module's own `generateInvoice` (POS billing spine, frozen) still deducts

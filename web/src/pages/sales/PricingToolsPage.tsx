@@ -96,7 +96,7 @@ function TierGrid() {
   );
 }
 
-const TIER_LABEL: Record<string, string> = { agreement: 'Customer agreement', promotion: 'Promotion', customer_rule: 'Customer rule', crm_rule: 'CRM rule', customer_pricelist: 'Customer pricelist', category_pricelist: 'Customer category pricelist', price_list: 'Named price list', branch_default: 'Branch default', org_default: 'Organization default', standing_discount: 'Standing discount' };
+const TIER_LABEL: Record<string, string> = { agreement: 'Customer agreement', promotion: 'Promotion', site_pricelist: 'Customer site pricelist', customer_rule: 'Customer rule', crm_rule: 'CRM rule', customer_pricelist: 'Customer pricelist', category_pricelist: 'Customer category pricelist', price_list: 'Named price list', branch_default: 'Branch default', org_default: 'Organization default', standing_discount: 'Standing discount' };
 
 function Precedence({ canManage }: { canManage: boolean }) {
   const { data } = useQuery({ queryKey: ['sales', 'pricing-policy'], queryFn: async () => (await api.get<{ precedence: string[]; tiers: string[] }>('/sales/pricing/policy')).data });

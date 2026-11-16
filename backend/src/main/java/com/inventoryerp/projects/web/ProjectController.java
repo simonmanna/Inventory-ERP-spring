@@ -119,7 +119,11 @@ public class ProjectController {
             BigDecimal hours,
             BigDecimal ratePerHour,
             String date,
-            String notes) {}
+            String notes,
+            // ADR-S075: a plant of the plant rate table, the quantity in the rate's unit (hour / day / km).
+            String plantId,
+            BigDecimal quantity,
+            String unit) {}
 
     public record ReclassRequest(
             @NotBlank(message = "wbsId should not be empty") String wbsId,
@@ -300,7 +304,7 @@ public class ProjectController {
     @RequirePermissions(Permissions.PROJECT__POST)
     public Map<String, Object> equipment(@PathVariable String id, @Valid @RequestBody EquipmentRequest r) {
         return costs.equipment(id, new EquipmentInput(r.wbsId(), r.siteId(), r.equipmentRef(), r.hours(),
-                r.ratePerHour(), r.date(), r.notes()));
+                r.ratePerHour(), r.date(), r.notes(), r.plantId(), r.quantity(), r.unit()));
     }
 
     @PostMapping("/{id}/costs/reclass")

@@ -26,6 +26,9 @@ All tables carry `organizationId` and the tenant row-level-security policy.
 | Workspace (V430) | `Project` workspace columns, `ProjectMember`, `ProjectFavorite`, `ProjectTaskStage`, `ProjectTag`, `ProjectMilestone`, `ProjectCounter` |
 | Tasks (V430) | `ProjectTask`, `ProjectTaskAssignee`, `ProjectTaskTag`, `ProjectTaskDependency`, `ProjectTaskChecklistItem`, `ProjectTaskFollower`, `ProjectMessage` |
 | Time (V430) | `ProjectTimesheetLine` (mirrored to `HrTimesheetEntry`), `ProjectTimer`, `ProjectUpdate` |
+| Contractor billing (V507, ADR-S075) | `ContractSovLine`, `ProgressClaimLine`, `SubcontractVariation`; `ContractVariation.sovLineId / sovCode / sovDescription`; `PurchaseRequestLine.wbsId` |
+| Plant and overhead (V508, ADR-S075) | `ProjectPlantRate`, `ProjectOverheadRule`, `ProjectOverheadRun`; `ProjectCostLine.sourceType` adds `project_fleet`; `FleetLoad` / `FleetWorkOrder.projectId, wbsId` |
+| Supplies side (V509, ADR-S075) | `FleetCustomerSite.projectId`, `FleetDeliveryOrder.projectId`, `Pricelist.customerSiteId` |
 
 Enumerations: project status `draft, active, on_hold, completed, closed, cancelled`; privacy `internal, members`;
 member role `manager, member, viewer`; stage kind `open, done, cancelled`; task priority `low, normal, high, urgent`;
@@ -38,7 +41,8 @@ kanban state `normal, blocked, ready`; recurrence `daily, weekly, monthly, yearl
 |---|---|
 | `project:read` | job-costing reads: projects, budgets, forecast, costs, cost report; cost figures on the overview |
 | `project:manage` | create projects (incl. workspace, from sales order, duplicate), sites, WBS, budgets, forecast, status; sees every project |
-| `project:post` | cost capture and reversal (journal entries) |
+| `project:post` | cost capture and reversal (journal entries), fleet charges, overhead runs |
+| `project:rate_override` | charge plant with a manual rate instead of the plant rate table (ADR-S075) |
 | `contract:read` / `contract:manage` / `contract:post` / `contract:approve` | ADR-S039 contract routes; approvals are never your own |
 | `project_task:read` | boards, tasks, milestones, updates, chatter of visible projects; dashboard and gantt |
 | `project_task:write` | create and edit tasks, chatter, checklist, dependencies; settings / stages / milestones / members / updates also need the project manager role or `project:manage` |
@@ -49,7 +53,7 @@ kanban state `normal, blocked, ready`; recurrence `daily, weekly, monthly, yearl
 
 ## Routes
 
-116 routes. All responses are plain JSON (no envelope); `GET /project-tasks` is `{ data, total }`. Posting routes
+141 routes. All responses are plain JSON (no envelope); `GET /project-tasks` is `{ data, total }`. Posting routes
 require an `Idempotency-Key` and replay it.
 
 ### ProjectController
@@ -120,6 +124,42 @@ require an `Idempotency-Key` and replay it.
 | POST | `/projects/onerous-assessments/:assessmentId/reject` | `contract:approve` |  | 200 | object |
 | POST | `/projects/onerous-assessments/:assessmentId/post` | `contract:post` | yes | 200 | object |
 | GET | `/projects/:id/contract-position` | `contract:read` |  | 200 | object |
+
+### ContractorController (ADR-S075)
+
+| Verb | Path | Permission | Idempotency-Key | Status | Response |
+|---|---|---|---|---|---|
+| GET | `/projects/:id/sov` | `contract:read` |  | 200 | `{ projectId, lines[], totals }` |
+| POST | `/projects/:id/sov` | `contract:manage` |  | 201 | object |
+| PATCH | `/projects/sov/:lineId` | `contract:manage` |  | 200 | object |
+| DELETE | `/projects/sov/:lineId` | `contract:manage` |  | 200 | object |
+| GET | `/projects/claims/:claimId/payment-application` | `contract:read` |  | 200 | `{ summary (G702), lines[] (G703), totals }` |
+| GET | `/projects/claims/:claimId/payment-application/pdf` | `contract:read` |  | 200 | `application/pdf` |
+| POST | `/projects/subcontracts/:subcontractId/variations` | `contract:manage` |  | 201 | object |
+| POST | `/projects/subcontract-variations/:variationId/approve` | `contract:approve` |  | 200 | object |
+| POST | `/projects/subcontract-variations/:variationId/reject` | `contract:approve` |  | 200 | object |
+| GET | `/projects/:id/commitments` | `project:read` |  | 200 | `{ purchasing[], subcontracts[], byWbs[], total }` |
+| GET | `/projects/plant-rates` | `project:read` |  | 200 | array |
+| POST | `/projects/plant-rates` | `project:manage` |  | 201 | object |
+| PATCH | `/projects/plant-rates/:rateId` | `project:manage` |  | 200 | object |
+| DELETE | `/projects/plant-rates/:rateId` | `project:manage` |  | 200 | object (deactivated) |
+| GET | `/projects/:id/costs/fleet` | `project:post` |  | 200 | `{ trips[], workOrders[] }` (uncharged) |
+| POST | `/projects/:id/costs/fleet` | `project:post` | yes | 201 | cost line + `basis` |
+| GET | `/projects/overhead-rules` | `project:read` |  | 200 | array |
+| POST | `/projects/overhead-rules` | `project:manage` |  | 201 | object |
+| PATCH | `/projects/overhead-rules/:ruleId` | `project:manage` |  | 200 | object |
+| DELETE | `/projects/overhead-rules/:ruleId` | `project:manage` |  | 200 | object |
+| GET | `/projects/:id/overhead-runs` | `project:read` |  | 200 | array |
+| GET | `/projects/:id/overhead-runs/preview?period` | `project:read` |  | 200 | object |
+| POST | `/projects/:id/overhead-runs` | `project:post` | yes | 201 | run (the posted run of the period when there is one) |
+| POST | `/projects/overhead-runs` | `project:post` | yes | 201 | `{ period, projects[] }` |
+| POST | `/projects/overhead-runs/:runId/reverse` | `project:post` | yes | 200 | run |
+
+Changed bodies: `POST /projects/:id/claims` takes `lines[] { sovLineId, workCompletedThisPeriod | percentComplete,
+materialsStored }` instead of `cumulativeCertified` (one or the other); `POST /projects/:id/variations` takes `sovLineId`
+or `sovCode` + `sovDescription`; `POST /projects/:id/costs/equipment` takes `plantId`, `quantity`, `unit`;
+purchase request lines take `wbsId`; `PUT /fleet/trips/:id/project` and `PUT /fleet/work-orders/:id/project` tag fleet
+records; customer sites take `projectId`; price lists take `customerSiteId`.
 
 ### ProjectWorkspaceController
 
@@ -215,6 +255,32 @@ require an `Idempotency-Key` and replay it.
   while it has no valuation (`A subcontract with valuations cannot be cancelled; complete it instead`); a closed one
   answers `This subcontract is already <status>`.
 
+### Contractor billing, commitments, plant and overhead (ADR-S075)
+
+- Schedule of values: line codes are unique per project; a line that has been claimed changes value only through an
+  approved variation (`PATCH` of `scheduledValue` and `DELETE` are refused). Approving a variation with `sovLineId` adds
+  its price to `variationValue` of that line; with `sovCode` it inserts a new line.
+- Line-level claim: per line `workCompletedThisPeriod` or `percentComplete` (not both) and `materialsStored`. G = D + E
+  + F never above the line's current value (`Line X: work completed and stored (…) exceeds its scheduled value …`).
+  Retention per line = the line's movement this claim (G − previous D − previous F, when positive) × the line's
+  retention % (else the claim's). The claim keeps its cumulative / this-claim / retention / net totals, so certifying,
+  invoicing and retention release are unchanged. The payment application (G702 summary + G703 lines) is the same JSON
+  as the PDF.
+- Committed = open purchasing commitments (by WBS through the purchase request line) + for active subcontracts
+  (value + approved subcontract variations − latest cumulative valuation). Valuations are capped at the adjusted value.
+  The report adds a `wbs` array (budget, actual, committedPurchasing, committedSubcontracts, committed,
+  costToComplete, eac, variance) and the split totals.
+- Plant: equipment cost with `plantId` takes the rate in force on the date from `ProjectPlantRate` (per hour, day or
+  km); a manual rate needs `project:rate_override` (403 `Overriding the plant rate needs the project:rate_override
+  permission`). Dr WIP equipment / Cr 5392 Plant Recovery to Projects with the vehicle's cost centre.
+- Fleet charges: an own-carrier trip delivered to the project (trip tag or delivery order / customer site project) is
+  charged at the vehicle's plant rate (km × distance, hours dispatch → delivery, or one day), else the vehicle's monthly
+  fleet cost rates; a completed work order at its posted line amounts. Each trip / work order is charged once while
+  the charge is posted (`409`), reversing frees it.
+- Overhead: rules per project or org-wide, `direct_cost_pct` (optionally of one cost element) or `labour_hour`. One
+  posted run per project and period (re-posting returns it), Dr WIP overhead per WBS / Cr 5350 Overhead Absorbed;
+  reversing reverses the journal entry and cost lines and the period can run again. Periods in the future are refused.
+
 ### Visibility (`PmSupport`)
 
 - A project is visible when the caller has `project_task:manage` or `project:manage`, the project is `internal`, or
@@ -290,7 +356,7 @@ the assignees of tasks due today, tomorrow or overdue (templates excluded). Shed
 | `/projects/timesheets` | weekly grid, list, running timer |
 | `/projects/reports` | task, timesheet and workload analysis |
 | `/projects/tags` | tag maintenance |
-| `/projects/:id` | header: project status selector (`project:manage`; closed / cancelled are final). Tabs: Board (kanban), List (bulk actions: stage, priority, assignee, deadline), Overview, Timeline (gantt), Milestones, Status updates, Discussion, **Costing** (sites and WBS with edit / delete, budgets with draft edit / delete and approval, forecast, cost capture with a reclass line picker, reversal, cost report — `project:read` / `manage` / `post`), **Contract** (variations, advances, claims, subcontracts with complete / cancel, retentions, revenue runs, onerous assessments, contract position — `contract:*`), Settings |
+| `/projects/:id` | header: project status selector (`project:manage`; closed / cancelled are final). Tabs: Board (kanban), List (bulk actions: stage, priority, assignee, deadline), Overview, Timeline (gantt), Milestones, Status updates, Discussion, **Costing** (sites and WBS with edit / delete, budgets with draft edit / delete and approval, forecast, cost capture with a reclass line picker, reversal, cost report — `project:read` / `manage` / `post`), **Contract** (variations, advances, claims with a payment application PDF, subcontracts with complete / cancel, retentions, revenue runs, onerous assessments, contract position — `contract:*`), Settings |
 
 ## Tests
 
@@ -298,13 +364,14 @@ the assignees of tasks due today, tomorrow or overdue (templates excluded). Shed
 |---|---|
 | `ProjectCostScenarioIT` | ADR-S038 capture paths, reversal, report and WIP tie-out, authz matrix of `ProjectController` (27 routes) |
 | `ContractRevenueScenarioIT` | ADR-S039 contract flows, authz matrix of `ContractController` (32 routes) |
+| `ContractorScenarioIT` | CT-1..6 (ADR-S075): schedule of values with variations and two line-level claims, G702 / G703 JSON and PDF; committed by WBS with subcontract variations; plant rates and the override permission, fleet trip and work order charges; overhead runs (idempotent, reversible); site price lists; authz matrix of `ContractorController` (25 routes) and 404 for another organisation |
 | `ProjectManagementIT` | PM-1..6: workspace, tasks, privacy, timesheets with HR mirror and cost capture, sales orders and templates, authz matrix of the three PM controllers (57 routes), GET sweep |
 | `ProjectStructureIT` | PS-1..6: site, WBS and draft-budget edit / delete rules, reclass candidates, subcontract complete / cancel, 404 for another organisation on every new route |
-| `ProjectAuthorizationIT` | PA-1: all 116 routes denied with every *other* project-family permission and allowed past the guard with exactly their own; PA-2: in-service rules (manager vs member, delete, `project_task:manage`, timesheet manager, reports) |
+| `ProjectAuthorizationIT` | PA-1: all 141 routes denied with every *other* project-family permission and allowed past the guard with exactly their own; PA-2: in-service rules (manager vs member, delete, `project_task:manage`, timesheet manager, reports) |
 | `ProjectTenantIsolationIT` | PT-1: 40 record routes answer 404 to another organisation, lists and reports never leak, nothing changes; PT-2: members-only privacy across every surface |
 | `ProjectTaskBehaviourIT` | PTB-1..6: dependencies, checklist counters, recurrence intervals and end date, board order / bulk / following, personal tasks and subtasks, timer and timesheet edge cases, weekly grid |
 | `ProjectWorkspaceBehaviourIT` | PWB-1..5: stage kinds and rules, milestones, members / favourites / chatter / updates / status, duplicate and sales-order projects, tags and report shapes |
 
 ## Deviations
 
-None (no Nest reference). Owner-visible choices are recorded in ADR-S062.
+None (no Nest reference). Owner-visible choices are recorded in ADR-S062 and ADR-S075.

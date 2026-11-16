@@ -6,6 +6,7 @@ import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.projects.web.ContractController;
+import com.inventoryerp.projects.web.ContractorController;
 import com.inventoryerp.projects.web.ProjectController;
 import com.inventoryerp.projects.web.ProjectTaskController;
 import com.inventoryerp.projects.web.ProjectTimesheetController;
@@ -35,13 +36,14 @@ import tools.jackson.databind.JsonNode;
 class ProjectAuthorizationIT extends ApiTestSupport {
 
     static final List<Class<?>> CONTROLLERS = List.of(ProjectController.class, ContractController.class,
-            ProjectWorkspaceController.class, ProjectTaskController.class, ProjectTimesheetController.class);
+            ProjectWorkspaceController.class, ProjectTaskController.class, ProjectTimesheetController.class,
+            ContractorController.class);
 
     static final Set<String> FAMILY = new LinkedHashSet<>(List.of(Permissions.PROJECT__READ, Permissions.PROJECT__MANAGE,
             Permissions.PROJECT__POST, Permissions.CONTRACT__READ, Permissions.CONTRACT__MANAGE,
             Permissions.CONTRACT__POST, Permissions.CONTRACT__APPROVE, Permissions.PROJECT_TASK__READ,
             Permissions.PROJECT_TASK__WRITE, Permissions.PROJECT_TASK__MANAGE, Permissions.PROJECT_TIMESHEET__LOG,
-            Permissions.PROJECT_TIMESHEET__MANAGE, Permissions.PROJECT_REPORT__READ));
+            Permissions.PROJECT_TIMESHEET__MANAGE, Permissions.PROJECT_REPORT__READ, Permissions.PROJECT__RATE_OVERRIDE));
 
     final Map<Set<String>, String> tokens = new HashMap<>();
 
@@ -100,7 +102,7 @@ class ProjectAuthorizationIT extends ApiTestSupport {
     @DisplayName("PA-1: every project route — denied with all other project-family permissions, allowed with its own")
     void crossFamilyMatrix() {
         List<Route> routes = routes();
-        assertThat(routes).hasSize(116);
+        assertThat(routes).hasSize(141);
         List<String> failures = new ArrayList<>();
         for (Route r : routes) {
             Set<String> others = new TreeSet<>(FAMILY);

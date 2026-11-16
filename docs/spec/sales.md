@@ -239,6 +239,12 @@ standing_discount; catalogue list last). Every result carries `breakdown` (base,
 `PriceSnapshot` (insert-only) records each line at sales order confirmation, invoice posting, POS billing and manual
 delivery order creation. Routes added: `GET|PUT /sales/pricing/policy`. Tests: `CentralPricingIT`, `PriceListIT`.
 
+Site price lists (ADR-S075): a price list with `customerSiteId` (a `FleetCustomerSite` of the customer; never a default
+list) prices only quotes / orders / invoices for that delivery site. Tier `site_pricelist` sits after `promotion`; an
+org policy saved before it existed gets it inserted ahead of the first tier that is not agreement / promotion. The
+site is passed as `siteId` to `POST /sales/pricing/resolve`. Invoices raised from a delivery order or a site-tagged
+sales order store `customerSiteId` / `projectId` in `Document.data`.
+
 ## Delivery & fulfilment handover (orders and invoices)
 
 Same model as the branch cash sale delivery tab (`docs/spec/cash-sales.md`), stored in `SalesHandover` (V350, one

@@ -51,7 +51,9 @@ public class PurchaseRequestsController {
             String costCenterId,
             String projectId,
             // ADR-S058: product variant (required for a product with variants on the order).
-            String variantId) {}
+            String variantId,
+            // ADR-S075: WBS element of the project (commitments by WBS).
+            String wbsId) {}
 
     /** {@code CreatePRDto}. */
     public record CreatePRRequest(
@@ -95,7 +97,7 @@ public class PurchaseRequestsController {
                 dto.lines().stream().map(l -> new LineInput(l.productId(), l.description(), l.quantity(),
                         l.unitOfMeasureId(), l.estimatedUnitPrice(), l.notes(), l.requiredDate(),
                         l.deliveryLocationId(), l.preferredSupplierId(), l.costCenterId(), l.projectId(), null, null,
-                        l.variantId()))
+                        l.variantId(), l.wbsId()))
                         .toList(), dto.departmentId()));
     }
 

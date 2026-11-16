@@ -153,7 +153,7 @@ public class FleetDeliveryInvoiceService {
         }
         LocalDate issue = in != null && in.issueDate() != null ? in.issueDate() : FleetDeliveryOrderService.today();
         Map<String, Object> site = o.get("siteId") == null ? null : SqlRows.one(db.jdbc().sql("SELECT name, address,"
-                + " city FROM \"FleetCustomerSite\" WHERE id = ?").param(o.get("siteId")));
+                + " city, \"projectId\" FROM \"FleetCustomerSite\" WHERE id = ?").param(o.get("siteId")));
         String address = site == null ? null : String.join(", ", java.util.stream.Stream.of(site.get("name"),
                 site.get("address"), site.get("city")).filter(x -> x != null).map(Object::toString).toList());
         Instant delivered = db.jdbc().sql("SELECT MAX(\"deliveredAt\") FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND"
@@ -165,6 +165,8 @@ public class FleetDeliveryInvoiceService {
                         : " (from " + o.get("sourceNumber") + ")"), lines));
         String invoiceId = (String) inv.get("id");
         String number = (String) inv.get("documentNumber");
+        invoices.setSiteReference(invoiceId, (String) o.get("siteId"), site == null ? null : (String) site.get(
+                "projectId"));
         boolean goodsAdded = goods && lines.stream().anyMatch(l -> l.productId() != null);
         if (goodsAdded) {
             invoices.setStockIssuedByDelivery(invoiceId, code);

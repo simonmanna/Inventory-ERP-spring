@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BadgeCheck, Plus, X } from 'lucide-react';
+import { BadgeCheck, FileDown, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,7 +9,7 @@ import { useTaxes } from '@/features/accounting/api';
 import type { Workspace } from '@/features/projects/api';
 import { selectClass, shortDate, todayIso } from '@/features/projects/ui';
 import {
-  RETENTION_CONDITIONS, conditionLabel, contractApi, opt, useClaim, useClaims, useContractMutation,
+  RETENTION_CONDITIONS, conditionLabel, contractApi, downloadPaymentApplication, opt, useClaim, useClaims, useContractMutation,
   type Claim, type ContractPosition, type RetentionCondition,
 } from '@/features/projects/contract-api';
 import { Empty, Field, FormDialog, Money, Section, StatusPill, Table, isAmount, num, pct, td, tdRight, type ContractPerms } from './shared';
@@ -77,6 +77,12 @@ export function ClaimsSection({ ws, perms, position }: { ws: Workspace; perms: C
               <td className={cn(tdRight, 'font-medium')}><Money value={c.netAmount} /></td>
               <td className={td}><StatusPill status={c.status} /></td>
               <td className={cn(td, 'whitespace-nowrap text-right')} onClick={(e) => e.stopPropagation()}>
+                {c.status !== 'cancelled' && (
+                  <Button size="sm" variant="ghost" className="mr-1" aria-label={tx('Payment application PDF')} title={tx('Payment application PDF')}
+                    onClick={() => downloadPaymentApplication(c.id, c.number).catch(() => undefined)}>
+                    <FileDown className="h-3.5 w-3.5" />
+                  </Button>
+                )}
                 {c.status === 'draft' && perms.post && (
                   <Button size="sm" variant="outline" className="mr-1" disabled={certify.isPending} onClick={() => certify.mutate(c.id)}>
                     <BadgeCheck className="mr-1 h-3.5 w-3.5" />{tx('Certify')}

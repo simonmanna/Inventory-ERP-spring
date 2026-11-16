@@ -394,3 +394,14 @@ export const methodLabel = (m: string) => ({
 
 /** Blank → undefined, so optional numeric fields are omitted rather than sent as "". */
 export const opt = (v: string | null | undefined) => (v == null || v.trim() === '' ? undefined : v.trim());
+
+/** Download the G702 / G703-style payment application of a claim as a PDF (ADR-S075). */
+export async function downloadPaymentApplication(claimId: string, number?: string) {
+  const res = await api.get<Blob>(`/projects/claims/${claimId}/payment-application/pdf`, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `payment-application-${(number ?? claimId).replace(/[^A-Za-z0-9-]+/g, '-')}.pdf`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

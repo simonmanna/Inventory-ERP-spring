@@ -1205,6 +1205,8 @@ export const PERMISSIONS = {
     manage: 'project:manage',
     /// Capture cost to a project (stock issues, timesheets, equipment, reclasses) and reverse it (journal entries).
     post: 'project:post',
+    /// Charge plant at a manual rate instead of the plant rate table (ADR-S075).
+    rateOverride: 'project:rate_override',
   },
   contract: {
     /// Contract variations, progress claims, retentions, advances, subcontracts, revenue and onerous assessments.

@@ -63,6 +63,10 @@ public class FleetCustomerSite {
     @Column(name = "distanceKm", precision = 10, scale = 1)
     private BigDecimal distanceKm;
 
+    /** The customer's job (project) this site belongs to (ADR-S075). */
+    @Column(name = "projectId")
+    private String projectId;
+
     @Column(name = "isActive", nullable = false)
     private Boolean isActive;
 

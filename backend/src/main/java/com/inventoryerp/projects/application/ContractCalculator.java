@@ -45,6 +45,38 @@ public final class ContractCalculator {
         return new Claim(thisClaim, retention, recovery, net);
     }
 
+    /**
+     * A claim whose retention is already known (line-level claims sum the retention of each schedule-of-values line,
+     * ADR-S075): advance recovery and net as {@link #claim}.
+     */
+    public static Claim claimWithRetention(BigDecimal cumulative, BigDecimal previous, BigDecimal retention,
+            BigDecimal recoveryPct, BigDecimal advanceOutstanding) {
+        BigDecimal thisClaim = cumulative.subtract(previous).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal r = retention.max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal recovery = pct(thisClaim, recoveryPct).min(advanceOutstanding.max(BigDecimal.ZERO));
+        return new Claim(thisClaim, r, recovery, thisClaim.subtract(r).subtract(recovery));
+    }
+
+    /** One G703 line: C scheduled, D previous completed, E this period, F stored, G, %, H and retention. */
+    public record SovLine(BigDecimal scheduled, BigDecimal previousCompleted, BigDecimal previousStored,
+            BigDecimal thisPeriod, BigDecimal stored, BigDecimal total, BigDecimal percent, BigDecimal balance,
+            BigDecimal retentionPct, BigDecimal retention) {}
+
+    /**
+     * G703 arithmetic: G = D + E + F; % = G ÷ C × 100 (4 places, 0 when C is 0); H = C − G; retention = the line's
+     * movement this claim (G − previous D − previous F), when positive, × retention %.
+     */
+    public static SovLine sovLine(BigDecimal scheduled, BigDecimal previousCompleted, BigDecimal previousStored,
+            BigDecimal thisPeriod, BigDecimal stored, BigDecimal retentionPct) {
+        BigDecimal total = previousCompleted.add(thisPeriod).add(stored).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal percent = scheduled.signum() == 0 ? BigDecimal.ZERO.setScale(4)
+                : total.multiply(HUNDRED).divide(scheduled, 4, RoundingMode.HALF_UP);
+        BigDecimal movement = total.subtract(previousCompleted).subtract(previousStored).max(BigDecimal.ZERO);
+        return new SovLine(scheduled, previousCompleted, previousStored, thisPeriod.setScale(2, RoundingMode.HALF_UP),
+                stored.setScale(2, RoundingMode.HALF_UP), total, percent, scheduled.subtract(total),
+                retentionPct == null ? BigDecimal.ZERO : retentionPct, pct(movement, retentionPct));
+    }
+
     static BigDecimal pct(BigDecimal amount, BigDecimal pct) {
         if (pct == null || pct.signum() == 0) {
             return BigDecimal.ZERO.setScale(2);

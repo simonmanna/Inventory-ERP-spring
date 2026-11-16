@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.projects.application.ContractCalculator.Claim;
 import com.inventoryerp.projects.application.ContractCalculator.OnerousInput;
 import com.inventoryerp.projects.application.ContractCalculator.OnerousResult;
+import com.inventoryerp.projects.application.ContractCalculator.SovLine;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,5 +69,33 @@ class ContractCalculatorTest {
         OnerousResult claims = ContractCalculator.onerous(new OnerousInput(d("1000"), d("900"), d("1500"), d("300"),
                 null, d("0")));
         assertThat(claims.provision()).as("EAC above revenue alone does not provide").isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("G703 line: G = D + E + F, percent, balance, retention on this claim's movement only (ADR-S075)")
+    void sovLine() {
+        SovLine first = ContractCalculator.sovLine(d("40000"), d("0"), d("0"), d("9000"), d("2000"), d("5"));
+        assertThat(first.total()).isEqualByComparingTo("11000");
+        assertThat(first.percent()).isEqualByComparingTo("27.5");
+        assertThat(first.balance()).isEqualByComparingTo("29000");
+        assertThat(first.retention()).isEqualByComparingTo("550");
+        // stored materials installed next period: D carries 9 000, previous F 2 000, E 3 000, F 0
+        SovLine second = ContractCalculator.sovLine(d("45000"), d("9000"), d("2000"), d("3000"), d("0"), d("5"));
+        assertThat(second.total()).isEqualByComparingTo("12000");
+        assertThat(second.retention()).as("only the 1 000 movement").isEqualByComparingTo("50");
+        SovLine down = ContractCalculator.sovLine(d("100"), d("50"), d("20"), d("0"), d("0"), d("10"));
+        assertThat(down.retention()).as("no negative retention").isEqualByComparingTo("0");
+        assertThat(ContractCalculator.sovLine(d("0"), d("0"), d("0"), d("0"), d("0"), null).percent())
+                .isEqualByComparingTo("0");
+    }
+
+    @Test
+    @DisplayName("claim with a known retention: advance recovery capped, net = the rest")
+    void claimWithRetention() {
+        Claim c = ContractCalculator.claimWithRetention(d("41000"), d("0"), d("3550"), d("10"), d("1000"));
+        assertThat(c.thisClaim()).isEqualByComparingTo("41000");
+        assertThat(c.retention()).isEqualByComparingTo("3550");
+        assertThat(c.advanceRecovery()).isEqualByComparingTo("1000");
+        assertThat(c.net()).isEqualByComparingTo("36450");
     }
 }
