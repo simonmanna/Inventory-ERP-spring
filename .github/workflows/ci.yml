@@ -15,7 +15,9 @@ permissions:
 jobs:
   backend:
     name: Backend build, tests, quality gates
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which has no postgresql-client-16 package (the backup round-trip test needs
+    # the client to match the Testcontainers server major).
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
