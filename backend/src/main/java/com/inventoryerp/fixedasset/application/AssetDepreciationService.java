@@ -120,7 +120,7 @@ public class AssetDepreciationService {
         long already = em.createQuery("select count(d) from AssetDepreciation d where d.assetId = :id"
                 + " and d.period = :p", Long.class).setParameter("id", assetId).setParameter("p", period)
                 .getSingleResult();
-        if (asset == null || already > 0) {
+        if (asset == null || already > 0 || beforeInService(assetId, period)) {
             return null;
         }
         List<AssetDepreciation> last = em.createQuery("select d from AssetDepreciation d where d.assetId = :id"
@@ -164,6 +164,20 @@ public class AssetDepreciationService {
         asset.setCurrentValue(r.bookValue());
         em.flush();
         return e;
+    }
+
+    /**
+     * ADR-S074: an asset with an in-service date (capitalised from a capital project) is not depreciated for periods
+     * before the month it went into service. Assets without one are unaffected.
+     */
+    private boolean beforeInService(String assetId, String period) {
+        if (period == null || !PERIOD.matcher(period).matches()) {
+            return false;
+        }
+        List<?> rows = em.createNativeQuery("SELECT \"inServiceDate\" FROM \"Asset\" WHERE id = ?1")
+                .setParameter(1, assetId).getResultList();
+        Object v = rows.isEmpty() ? null : rows.getFirst();
+        return v != null && period.substring(0, 7).compareTo(v.toString().substring(0, 7)) < 0;
     }
 
     /** Dr Depreciation Expense / Cr Accumulated Depreciation; stamps the entry. No-op when already posted. */

@@ -119,12 +119,30 @@ export interface CostReportRow {
   variance: Num;
 }
 
+/** One WBS element of the report (ADR-S075): committed split into purchasing and unvalued subcontract balance. */
+export interface CostReportWbsRow {
+  wbsId: string | null;
+  wbsCode?: string | null;
+  budget: Num;
+  actual: Num;
+  committedPurchasing: Num;
+  committedSubcontracts: Num;
+  committed: Num;
+  costToComplete: Num;
+  eac: Num;
+  variance: Num;
+}
+
 export interface CostReport {
   projectId: string;
   code: string;
   budgetId?: string | null;
   rows: CostReportRow[];
-  totals: { budget: Num; committed: Num; actual: Num; costToComplete: Num; eac: Num; variance: Num };
+  wbs?: CostReportWbsRow[];
+  totals: {
+    budget: Num; committed: Num; committedPurchasing?: Num; committedSubcontracts?: Num;
+    actual: Num; costToComplete: Num; eac: Num; variance: Num;
+  };
   wipTieOut: { glWip: Num; subledger: Num; difference: Num };
 }
 

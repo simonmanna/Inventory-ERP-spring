@@ -137,6 +137,7 @@ public class FleetCustomerSiteService {
         data.put("zone", FleetVehicleService.trim(in.zone()));
         data.put("distanceKm", in.distanceKm());
         data.put("notes", FleetVehicleService.trim(in.notes()));
+        data.put("projectId", project(in.projectId()));
         data.put("createdBy", TenantContext.userId());
         data.put("updatedBy", TenantContext.userId());
         Map<String, Object> row = db.insert(FleetCustomerSite.class, data);
@@ -160,6 +161,7 @@ public class FleetCustomerSiteService {
         putIf(data, "distanceKm", in.distanceKm());
         putIf(data, "isActive", in.isActive());
         putIf(data, "notes", FleetVehicleService.trim(in.notes()));
+        putIf(data, "projectId", project(in.projectId()));
         if (in.clear() != null) {
             for (String c : in.clear()) {
                 data.put(c, null);
@@ -188,6 +190,15 @@ public class FleetCustomerSiteService {
         db.update(FleetCustomerSite.class, id, Obj.of("deletedAt", Instant.now(), "isActive", false));
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "delete", before, null));
         return Obj.of("id", id, "deleted", true, "deactivated", false);
+    }
+
+    /** A project of this organisation (ADR-S075 site ↔ job link); blank = none. */
+    private String project(String projectId) {
+        String p = FleetVehicleService.trim(projectId);
+        if (p != null && !db.exists("Project", p, false)) {
+            throw ApiException.badRequest("Project not found");
+        }
+        return p;
     }
 
     private void assertPartner(String partnerId) {

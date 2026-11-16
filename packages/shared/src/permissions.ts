@@ -1238,6 +1238,8 @@ export const PERMISSIONS = {
     manage: 'project:manage',
     /// Capture cost to a project (stock issues, timesheets, equipment, reclasses) and reverse it (journal entries).
     post: 'project:post',
+    /// Charge plant at a manual rate instead of the plant rate table (ADR-S075).
+    rateOverride: 'project:rate_override',
   },
   contract: {
     /// Contract variations, progress claims, retentions, advances, subcontracts, revenue and onerous assessments.
@@ -1248,6 +1250,23 @@ export const PERMISSIONS = {
     post: 'contract:post',
     /// Approve variations and onerous-contract assessments (never your own).
     approve: 'contract:approve',
+  },
+  // ---- Construction controls (ADR-S074) ----
+  bond: {
+    /// Bonds and guarantees register, lifecycle history and the exposure report (read only).
+    read: 'bond:read',
+    /// Record and edit draft bonds and guarantees (issued and received).
+    manage: 'bond:manage',
+    /// Activate, extend, reduce, release and call bonds (margin, commission and call journal entries).
+    post: 'bond:post',
+  },
+  compliance: {
+    /// Subcontractor compliance documents, lien waivers, gating settings and the gate log (read only).
+    read: 'compliance:read',
+    /// Record, verify and reject compliance documents and lien waivers; change the gating settings.
+    manage: 'compliance:manage',
+    /// Pass a blocking compliance gate once (valuation or payment) with a recorded reason (audited).
+    override: 'compliance:override',
   },
   profitability: {
     /// Profitability facts by layer (actual / standard / estimate) and the GL reconciliation.

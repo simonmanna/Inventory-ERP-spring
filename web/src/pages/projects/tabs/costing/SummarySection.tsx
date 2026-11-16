@@ -22,7 +22,7 @@ export function SummarySection({ project }: { project: JobProject }) {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label={tx('Approved budget')} value={money(t.budget)} hint={r.budgetId ? undefined : tx('No approved budget')} tone={r.budgetId ? undefined : 'warning'} />
-        <StatCard label={tx('Committed')} value={money(t.committed)} hint={tx('Open purchase commitments')} />
+        <StatCard label={tx('Committed')} value={money(t.committed)} hint={t.committedSubcontracts == null ? tx('Open purchase commitments') : `${tx('Purchasing')} ${money(t.committedPurchasing)} · ${tx('Subcontracts')} ${money(t.committedSubcontracts)}`} />
         <StatCard label={tx('Actual cost')} value={money(t.actual)} />
         <StatCard label={tx('Cost to complete')} value={money(t.costToComplete)} />
         <StatCard label={tx('Estimate at completion')} value={money(t.eac)} hint={tx('Actual + committed + to complete')} />
@@ -34,6 +34,41 @@ export function SummarySection({ project }: { project: JobProject }) {
           <StatCard label={tx('Projected margin')} value={money(margin)} tone={margin! < 0 ? 'danger' : 'success'} />
           <StatCard label={tx('Projected margin %')} value={marginPct == null ? '—' : `${marginPct.toFixed(1)} %`} tone={margin! < 0 ? 'danger' : undefined} />
         </div>
+      )}
+
+      {(r.wbs?.length ?? 0) > 0 && (
+        <Section title={tx('Committed and forecast by WBS element')}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b">
+                <tr>
+                  <th className={thClass}>{tx('WBS')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('Budget')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('Actual')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('Committed purchasing')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('Committed subcontracts')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('To complete')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('EAC')}</th>
+                  <th className={cn(thClass, 'text-right')}>{tx('Variance')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {r.wbs!.map((row) => (
+                  <tr key={row.wbsId ?? 'unassigned'}>
+                    <td className={tdClass}>{row.wbsId ? wbsLabel(project.wbs, row.wbsId, row.wbsCode) : tx('Not assigned to a WBS element')}</td>
+                    <td className={numCell}>{money(row.budget)}</td>
+                    <td className={numCell}>{money(row.actual)}</td>
+                    <td className={numCell}>{money(row.committedPurchasing)}</td>
+                    <td className={numCell}>{money(row.committedSubcontracts)}</td>
+                    <td className={numCell}>{money(row.costToComplete)}</td>
+                    <td className={numCell}>{money(row.eac)}</td>
+                    <td className={cn(numCell, num(row.variance) < 0 && 'text-rose-600')}>{money(row.variance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       )}
 
       <Section title={tx('By WBS element and cost element')}>

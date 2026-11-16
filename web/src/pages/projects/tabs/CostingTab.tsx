@@ -14,9 +14,10 @@ import { BudgetsSection } from './costing/BudgetsSection';
 import { ForecastSection } from './costing/ForecastSection';
 import { CostLinesSection } from './costing/CostLinesSection';
 import { StructureSection } from './costing/StructureSection';
+import { CapitalSection } from './costing/CapitalSection';
 import { CaptureCostDialog, type CaptureKind } from './costing/CaptureCostDialog';
 
-type View = 'summary' | 'budgets' | 'forecast' | 'costs' | 'structure';
+type View = 'summary' | 'budgets' | 'forecast' | 'costs' | 'structure' | 'capital';
 
 /**
  * Job costing of one project (CM-8a): cost report, budgets, cost-to-complete forecast, the cost sub-ledger with
@@ -45,6 +46,7 @@ export function CostingTab({ ws }: { ws: Workspace }) {
     { id: 'forecast', label: tx('Forecast') },
     { id: 'costs', label: tx('Cost lines') },
     { id: 'structure', label: tx('WBS & sites') },
+    { id: 'capital', label: tx('Capital / CIP') },
   ];
   const captures: Array<{ id: CaptureKind; label: string; icon: typeof Boxes }> = [
     { id: 'issue', label: tx('Issue stock'), icon: Boxes },
@@ -98,6 +100,7 @@ export function CostingTab({ ws }: { ws: Workspace }) {
       {view === 'forecast' && <ForecastSection project={project} canManage={canManage} />}
       {view === 'costs' && <CostLinesSection project={project} canPost={canPost} />}
       {view === 'structure' && <StructureSection project={project} canManage={canManage} />}
+      {view === 'capital' && <CapitalSection projectId={project.id} canManage={canManage} canPost={canPost} />}
 
       <CaptureCostDialog kind={capture} project={project} onClose={() => setCapture(null)} />
     </div>

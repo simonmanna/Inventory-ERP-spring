@@ -3,7 +3,9 @@
 Package `com.inventoryerp.projects`. Spring-native (no NestJS counterpart). Designs:
 [ADR-S038](../adr/ADR-S038-project-core.md) (project core and job costing, V231),
 [ADR-S039](../adr/ADR-S039-contract-commercials.md) (contract commercials, IFRS 15 / IAS 37),
-[ADR-S062](../adr/ADR-S062-project-management.md) (project management workspace, V430).
+[ADR-S062](../adr/ADR-S062-project-management.md) (project management workspace, V430),
+[ADR-S074](../adr/ADR-S074-bonds-compliance-cip.md) (bonds and guarantees, subcontractor compliance, CIP
+capitalisation, V504–V506).
 
 ## Purpose
 
@@ -26,6 +28,12 @@ All tables carry `organizationId` and the tenant row-level-security policy.
 | Workspace (V430) | `Project` workspace columns, `ProjectMember`, `ProjectFavorite`, `ProjectTaskStage`, `ProjectTag`, `ProjectMilestone`, `ProjectCounter` |
 | Tasks (V430) | `ProjectTask`, `ProjectTaskAssignee`, `ProjectTaskTag`, `ProjectTaskDependency`, `ProjectTaskChecklistItem`, `ProjectTaskFollower`, `ProjectMessage` |
 | Time (V430) | `ProjectTimesheetLine` (mirrored to `HrTimesheetEntry`), `ProjectTimer`, `ProjectUpdate` |
+| Bonds (V504) | `ProjectBond`, `ProjectBondEvent` |
+| Compliance (V505) | `ComplianceDocument`, `ComplianceRequirement`, `ComplianceOverride`, `ComplianceGateLog` |
+| CIP (V506) | `Project.isCapital`, `ProjectCapitalisation`, `ProjectCapitalisationAsset` (and `Asset.inServiceDate`) |
+| Contractor billing (V507, ADR-S075) | `ContractSovLine`, `ProgressClaimLine`, `SubcontractVariation`; `ContractVariation.sovLineId / sovCode / sovDescription`; `PurchaseRequestLine.wbsId` |
+| Plant and overhead (V508, ADR-S075) | `ProjectPlantRate`, `ProjectOverheadRule`, `ProjectOverheadRun`; `ProjectCostLine.sourceType` adds `project_fleet`; `FleetLoad` / `FleetWorkOrder.projectId, wbsId` |
+| Supplies side (V509, ADR-S075) | `FleetCustomerSite.projectId`, `FleetDeliveryOrder.projectId`, `Pricelist.customerSiteId` |
 
 Enumerations: project status `draft, active, on_hold, completed, closed, cancelled`; privacy `internal, members`;
 member role `manager, member, viewer`; stage kind `open, done, cancelled`; task priority `low, normal, high, urgent`;
@@ -38,7 +46,8 @@ kanban state `normal, blocked, ready`; recurrence `daily, weekly, monthly, yearl
 |---|---|
 | `project:read` | job-costing reads: projects, budgets, forecast, costs, cost report; cost figures on the overview |
 | `project:manage` | create projects (incl. workspace, from sales order, duplicate), sites, WBS, budgets, forecast, status; sees every project |
-| `project:post` | cost capture and reversal (journal entries) |
+| `project:post` | cost capture and reversal (journal entries), fleet charges, overhead runs |
+| `project:rate_override` | charge plant with a manual rate instead of the plant rate table (ADR-S075) |
 | `contract:read` / `contract:manage` / `contract:post` / `contract:approve` | ADR-S039 contract routes; approvals are never your own |
 | `project_task:read` | boards, tasks, milestones, updates, chatter of visible projects; dashboard and gantt |
 | `project_task:write` | create and edit tasks, chatter, checklist, dependencies; settings / stages / milestones / members / updates also need the project manager role or `project:manage` |
@@ -46,10 +55,12 @@ kanban state `normal, blocked, ready`; recurrence `daily, weekly, monthly, yearl
 | `project_timesheet:log` | own timesheet lines, weekly grid, timer |
 | `project_timesheet:manage` | everyone's time |
 | `project_report:read` | task, timesheet and workload analysis |
+| `bond:read` / `bond:manage` / `bond:post` | bonds register and exposure / draft bonds / lifecycle steps (journal entries) |
+| `compliance:read` / `compliance:manage` / `compliance:override` | compliance documents, waivers, settings, gate log / record, verify, reject, settings / one-time override of a blocking gate |
 
 ## Routes
 
-116 routes. All responses are plain JSON (no envelope); `GET /project-tasks` is `{ data, total }`. Posting routes
+167 routes. All responses are plain JSON (no envelope); `GET /project-tasks` is `{ data, total }`. Posting routes
 require an `Idempotency-Key` and replay it.
 
 ### ProjectController
@@ -120,6 +131,83 @@ require an `Idempotency-Key` and replay it.
 | POST | `/projects/onerous-assessments/:assessmentId/reject` | `contract:approve` |  | 200 | object |
 | POST | `/projects/onerous-assessments/:assessmentId/post` | `contract:post` | yes | 200 | object |
 | GET | `/projects/:id/contract-position` | `contract:read` |  | 200 | object |
+
+### ProjectBondController (ADR-S074)
+
+| Verb | Path | Permission | Idempotency-Key | Status | Response |
+|---|---|---|---|---|---|
+| GET | `/project-bonds?projectId&status&direction&bondType` | `bond:read` |  | 200 | array (with `daysToExpiry`) |
+| GET | `/project-bonds/exposure` | `bond:read` |  | 200 | `{ asOf, byBank, byProject, totals }` |
+| GET | `/project-bonds/:id` | `bond:read` |  | 200 | object with `events[]` |
+| POST | `/project-bonds` | `bond:manage` |  | 201 | object (draft) |
+| PATCH | `/project-bonds/:id` | `bond:manage` |  | 200 | object (draft only) |
+| POST | `/project-bonds/:id/activate` | `bond:post` | yes | 200 | object |
+| POST | `/project-bonds/:id/extend` | `bond:post` | yes | 200 | object |
+| POST | `/project-bonds/:id/reduce` | `bond:post` | yes | 200 | object |
+| POST | `/project-bonds/:id/release` | `bond:post` | yes | 200 | object |
+| POST | `/project-bonds/:id/call` | `bond:post` | yes | 200 | object |
+
+### SubcontractComplianceController (ADR-S074)
+
+| Verb | Path | Permission | Idempotency-Key | Status | Response |
+|---|---|---|---|---|---|
+| GET | `/subcontract-compliance/requirements` | `compliance:read` |  | 200 | array `{ documentType, label, mode }` |
+| PUT | `/subcontract-compliance/requirements` | `compliance:manage` |  | 200 | array |
+| GET | `/subcontract-compliance/documents?partnerId&subcontractId&documentType` | `compliance:read` |  | 200 | array |
+| POST | `/subcontract-compliance/documents` | `compliance:manage` |  | 201 | object |
+| GET | `/subcontract-compliance/documents/:id` | `compliance:read` |  | 200 | object |
+| PATCH | `/subcontract-compliance/documents/:id` | `compliance:manage` |  | 200 | object (not once verified) |
+| POST | `/subcontract-compliance/documents/:id/verify` | `compliance:manage` |  | 200 | object |
+| POST | `/subcontract-compliance/documents/:id/reject` | `compliance:manage` |  | 200 | object |
+| GET | `/subcontract-compliance/subcontracts/:subcontractId` | `compliance:read` |  | 200 | object (documents, lien waivers, valuations, payments, `valuationGate`, overrides, log) |
+| GET | `/subcontract-compliance/suppliers/:partnerId` | `compliance:read` |  | 200 | object (summary per type, documents, subcontracts) |
+| POST | `/subcontract-compliance/overrides` | `compliance:override` |  | 201 | object |
+
+### CapitalProjectController (ADR-S074)
+
+| Verb | Path | Permission | Idempotency-Key | Status | Response |
+|---|---|---|---|---|---|
+| GET | `/projects/cip-report` | `project:read` |  | 200 | object (per capital project, GL tie-out) |
+| PUT | `/projects/:id/capital` | `project:manage` |  | 200 | CIP object |
+| GET | `/projects/:id/cip` | `project:read` |  | 200 | object (`costCaptured, capitalised, balance, glBalance, difference, capitalisations[]`) |
+| POST | `/projects/:id/capitalisations` | `project:post` | yes | 201 | object with `assets[]` |
+| POST | `/projects/capitalisations/:capitalisationId/reverse` | `project:post` | yes | 200 | object |
+
+### ContractorController (ADR-S075)
+
+| Verb | Path | Permission | Idempotency-Key | Status | Response |
+|---|---|---|---|---|---|
+| GET | `/projects/:id/sov` | `contract:read` |  | 200 | `{ projectId, lines[], totals }` |
+| POST | `/projects/:id/sov` | `contract:manage` |  | 201 | object |
+| PATCH | `/projects/sov/:lineId` | `contract:manage` |  | 200 | object |
+| DELETE | `/projects/sov/:lineId` | `contract:manage` |  | 200 | object |
+| GET | `/projects/claims/:claimId/payment-application` | `contract:read` |  | 200 | `{ summary (G702), lines[] (G703), totals }` |
+| GET | `/projects/claims/:claimId/payment-application/pdf` | `contract:read` |  | 200 | `application/pdf` |
+| POST | `/projects/subcontracts/:subcontractId/variations` | `contract:manage` |  | 201 | object |
+| POST | `/projects/subcontract-variations/:variationId/approve` | `contract:approve` |  | 200 | object |
+| POST | `/projects/subcontract-variations/:variationId/reject` | `contract:approve` |  | 200 | object |
+| GET | `/projects/:id/commitments` | `project:read` |  | 200 | `{ purchasing[], subcontracts[], byWbs[], total }` |
+| GET | `/projects/plant-rates` | `project:read` |  | 200 | array |
+| POST | `/projects/plant-rates` | `project:manage` |  | 201 | object |
+| PATCH | `/projects/plant-rates/:rateId` | `project:manage` |  | 200 | object |
+| DELETE | `/projects/plant-rates/:rateId` | `project:manage` |  | 200 | object (deactivated) |
+| GET | `/projects/:id/costs/fleet` | `project:post` |  | 200 | `{ trips[], workOrders[] }` (uncharged) |
+| POST | `/projects/:id/costs/fleet` | `project:post` | yes | 201 | cost line + `basis` |
+| GET | `/projects/overhead-rules` | `project:read` |  | 200 | array |
+| POST | `/projects/overhead-rules` | `project:manage` |  | 201 | object |
+| PATCH | `/projects/overhead-rules/:ruleId` | `project:manage` |  | 200 | object |
+| DELETE | `/projects/overhead-rules/:ruleId` | `project:manage` |  | 200 | object |
+| GET | `/projects/:id/overhead-runs` | `project:read` |  | 200 | array |
+| GET | `/projects/:id/overhead-runs/preview?period` | `project:read` |  | 200 | object |
+| POST | `/projects/:id/overhead-runs` | `project:post` | yes | 201 | run (the posted run of the period when there is one) |
+| POST | `/projects/overhead-runs` | `project:post` | yes | 201 | `{ period, projects[] }` |
+| POST | `/projects/overhead-runs/:runId/reverse` | `project:post` | yes | 200 | run |
+
+Changed bodies: `POST /projects/:id/claims` takes `lines[] { sovLineId, workCompletedThisPeriod | percentComplete,
+materialsStored }` instead of `cumulativeCertified` (one or the other); `POST /projects/:id/variations` takes `sovLineId`
+or `sovCode` + `sovDescription`; `POST /projects/:id/costs/equipment` takes `plantId`, `quantity`, `unit`;
+purchase request lines take `wbsId`; `PUT /fleet/trips/:id/project` and `PUT /fleet/work-orders/:id/project` tag fleet
+records; customer sites take `projectId`; price lists take `customerSiteId`.
 
 ### ProjectWorkspaceController
 
@@ -215,6 +303,46 @@ require an `Idempotency-Key` and replay it.
   while it has no valuation (`A subcontract with valuations cannot be cancelled; complete it instead`); a closed one
   answers `This subcontract is already <status>`.
 
+### Bonds, compliance and CIP (ADR-S074)
+
+- Bonds: only a draft is edited; `activate` from draft; `extend` (later expiry), `reduce` (lower amount) and `call` on a
+  live bond (active, extended, reduced); `release` on a live or expired bond. Margin and commission are booked on
+  issued bonds only (`Margin and commission are booked only on bonds we issue`). A call on a received bond needs
+  `recoveryTo` (`project_cost` → negative cost line on the subcontract's WBS / `wbsId`; `claim_income`). Postings are
+  listed in ADR-S074 §1. `ProjectBondJob` expires bonds daily.
+- Compliance gating is off until `PUT /subcontract-compliance/requirements` sets a type to `warn` or `block`. Valuation
+  certification and supplier payments of subcontract bills are checked (`400 Compliance check failed: …`; warnings
+  come back as `complianceWarnings` on the valuation). An override is consumed by the next matching gate.
+- Capital projects post cost to 1690 CIP instead of 1460 WIP; the flag changes only before any cost line. Capitalisation
+  never exceeds the CIP balance (`Only X is left in construction in progress`); reversal is refused once an asset has
+  posted depreciation.
+
+### Contractor billing, commitments, plant and overhead (ADR-S075)
+
+- Schedule of values: line codes are unique per project; a line that has been claimed changes value only through an
+  approved variation (`PATCH` of `scheduledValue` and `DELETE` are refused). Approving a variation with `sovLineId` adds
+  its price to `variationValue` of that line; with `sovCode` it inserts a new line.
+- Line-level claim: per line `workCompletedThisPeriod` or `percentComplete` (not both) and `materialsStored`. G = D + E
+  + F never above the line's current value (`Line X: work completed and stored (…) exceeds its scheduled value …`).
+  Retention per line = the line's movement this claim (G − previous D − previous F, when positive) × the line's
+  retention % (else the claim's). The claim keeps its cumulative / this-claim / retention / net totals, so certifying,
+  invoicing and retention release are unchanged. The payment application (G702 summary + G703 lines) is the same JSON
+  as the PDF.
+- Committed = open purchasing commitments (by WBS through the purchase request line) + for active subcontracts
+  (value + approved subcontract variations − latest cumulative valuation). Valuations are capped at the adjusted value.
+  The report adds a `wbs` array (budget, actual, committedPurchasing, committedSubcontracts, committed,
+  costToComplete, eac, variance) and the split totals.
+- Plant: equipment cost with `plantId` takes the rate in force on the date from `ProjectPlantRate` (per hour, day or
+  km); a manual rate needs `project:rate_override` (403 `Overriding the plant rate needs the project:rate_override
+  permission`). Dr WIP equipment (CIP on a capital project, ADR-S074) / Cr 5392 Plant Recovery to Projects with the vehicle's cost centre.
+- Fleet charges: an own-carrier trip delivered to the project (trip tag or delivery order / customer site project) is
+  charged at the vehicle's plant rate (km × distance, hours dispatch → delivery, or one day), else the vehicle's monthly
+  fleet cost rates; a completed work order at its posted line amounts. Each trip / work order is charged once while
+  the charge is posted (`409`), reversing frees it.
+- Overhead: rules per project or org-wide, `direct_cost_pct` (optionally of one cost element) or `labour_hour`. One
+  posted run per project and period (re-posting returns it), Dr WIP overhead per WBS (CIP on a capital project) / Cr 5350 Overhead Absorbed;
+  reversing reverses the journal entry and cost lines and the period can run again. Periods in the future are refused.
+
 ### Visibility (`PmSupport`)
 
 - A project is visible when the caller has `project_task:manage` or `project:manage`, the project is `internal`, or
@@ -279,6 +407,10 @@ Cost and contract postings publish the accounting events of ADR-S038 / S039.
 `ProjectReminderJob` — daily at `app.projects.reminder-cron` (default 06:00): one notification per open task and day to
 the assignees of tasks due today, tomorrow or overdue (templates excluded). ShedLock `project-deadline-reminders`.
 
+`ProjectBondJob` — daily at `app.projects.bond-expiry-cron` (default 00:15): live bonds past their expiry date become
+`expired`. ShedLock `project-bond-expiry`. Expiry alerts (bonds and compliance documents, 30 / 14 / 7 days and expired)
+come from `ConstructionAlertSource` under the `expiring_document` alert type.
+
 ## Screens (web)
 
 | Route | Screen |
@@ -290,7 +422,10 @@ the assignees of tasks due today, tomorrow or overdue (templates excluded). Shed
 | `/projects/timesheets` | weekly grid, list, running timer |
 | `/projects/reports` | task, timesheet and workload analysis |
 | `/projects/tags` | tag maintenance |
-| `/projects/:id` | header: project status selector (`project:manage`; closed / cancelled are final). Tabs: Board (kanban), List (bulk actions: stage, priority, assignee, deadline), Overview, Timeline (gantt), Milestones, Status updates, Discussion, **Costing** (sites and WBS with edit / delete, budgets with draft edit / delete and approval, forecast, cost capture with a reclass line picker, reversal, cost report — `project:read` / `manage` / `post`), **Contract** (variations, advances, claims, subcontracts with complete / cancel, retentions, revenue runs, onerous assessments, contract position — `contract:*`), Settings |
+| `/projects/bonds` | bonds & guarantees register, lifecycle dialogs, exposure by bank and project (`bond:*`) |
+| `/suppliers/:id` | **Compliance** tab for suppliers (`compliance:*`) |
+| `/projects/:id` | header: project status selector (`project:manage`; closed / cancelled are final). Tabs: Board (kanban), List (bulk actions: stage, priority, assignee, deadline), Overview, Timeline (gantt), Milestones, Status updates, Discussion, **Costing** (sites and WBS with edit / delete, budgets with draft edit / delete and approval, forecast, cost capture with a reclass line picker, reversal, cost report — `project:read` / `manage` / `post`), **Contract** (variations, advances, claims with a payment application PDF, subcontracts with complete / cancel, retentions, revenue runs, onerous assessments, contract position — `contract:*`; a **Bonds** panel (`bond:read`) and a **Compliance** dialog per subcontract
+(`compliance:*`)), **Capital project** panel on Costing (flag, CIP balance, Capitalise, reversal — `project:*`), Settings |
 
 ## Tests
 
@@ -298,13 +433,15 @@ the assignees of tasks due today, tomorrow or overdue (templates excluded). Shed
 |---|---|
 | `ProjectCostScenarioIT` | ADR-S038 capture paths, reversal, report and WIP tie-out, authz matrix of `ProjectController` (27 routes) |
 | `ContractRevenueScenarioIT` | ADR-S039 contract flows, authz matrix of `ContractController` (32 routes) |
+| `ContractorScenarioIT` | CT-1..6 (ADR-S075): schedule of values with variations and two line-level claims, G702 / G703 JSON and PDF; committed by WBS with subcontract variations; plant rates and the override permission, fleet trip and work order charges; overhead runs (idempotent, reversible); site price lists; authz matrix of `ContractorController` (25 routes) and 404 for another organisation |
 | `ProjectManagementIT` | PM-1..6: workspace, tasks, privacy, timesheets with HR mirror and cost capture, sales orders and templates, authz matrix of the three PM controllers (57 routes), GET sweep |
 | `ProjectStructureIT` | PS-1..6: site, WBS and draft-budget edit / delete rules, reclass candidates, subcontract complete / cancel, 404 for another organisation on every new route |
-| `ProjectAuthorizationIT` | PA-1: all 116 routes denied with every *other* project-family permission and allowed past the guard with exactly their own; PA-2: in-service rules (manager vs member, delete, `project_task:manage`, timesheet manager, reports) |
+| `ConstructionControlsIT` | ADR-S074: bond lifecycle and postings, calls, expiry job and alerts; compliance gate block / warn / override on valuation and payment, lien waiver chain; capital project CIP, capitalisation into two assets, depreciation from the in-service month, reversal; tenant isolation |
+| `ProjectAuthorizationIT` | PA-1: all 167 routes denied with every *other* project-family permission and allowed past the guard with exactly their own; PA-2: in-service rules (manager vs member, delete, `project_task:manage`, timesheet manager, reports) |
 | `ProjectTenantIsolationIT` | PT-1: 40 record routes answer 404 to another organisation, lists and reports never leak, nothing changes; PT-2: members-only privacy across every surface |
 | `ProjectTaskBehaviourIT` | PTB-1..6: dependencies, checklist counters, recurrence intervals and end date, board order / bulk / following, personal tasks and subtasks, timer and timesheet edge cases, weekly grid |
 | `ProjectWorkspaceBehaviourIT` | PWB-1..5: stage kinds and rules, milestones, members / favourites / chatter / updates / status, duplicate and sales-order projects, tags and report shapes |
 
 ## Deviations
 
-None (no Nest reference). Owner-visible choices are recorded in ADR-S062.
+None (no Nest reference). Owner-visible choices are recorded in ADR-S062 and ADR-S075.

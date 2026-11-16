@@ -8,6 +8,7 @@ import com.inventoryerp.projects.application.ContractService.ClaimInput;
 import com.inventoryerp.projects.application.ContractService.OnerousAssessmentInput;
 import com.inventoryerp.projects.application.ContractService.SubcontractInput;
 import com.inventoryerp.projects.application.ContractService.VariationInput;
+import com.inventoryerp.projects.application.ContractSovService.ClaimLineInput;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.math.BigDecimal;
@@ -41,12 +42,21 @@ public class ContractController {
             BigDecimal costDelta,
             String wbsId,
             String costElement,
-            String modification) {}
+            String modification,
+            // ADR-S075: the schedule-of-values line the variation changes, or the line it adds.
+            String sovLineId,
+            String sovCode,
+            String sovDescription) {}
 
     public record AdvanceRequest(BigDecimal amount, BigDecimal recoveryPct, String date) {}
 
+    public record ClaimLineRequest(String sovLineId, BigDecimal workCompletedThisPeriod, BigDecimal percentComplete,
+            BigDecimal materialsStored, BigDecimal retentionPct) {}
+
     public record ClaimRequest(String claimDate, BigDecimal cumulativeCertified, BigDecimal retentionPct,
-            String retentionCondition, String retentionReleaseDate, String taxId) {}
+            String retentionCondition, String retentionReleaseDate, String taxId,
+            // ADR-S075: line-level claim against the schedule of values (G703).
+            List<ClaimLineRequest> lines) {}
 
     public record SubcontractRequest(
             @NotBlank(message = "supplierId should not be empty") String supplierId,
@@ -107,7 +117,7 @@ public class ContractController {
     @RequirePermissions(Permissions.CONTRACT__MANAGE)
     public Map<String, Object> variation(@PathVariable String id, @Valid @RequestBody VariationRequest r) {
         return contracts.createVariation(id, new VariationInput(r.description(), r.priceDelta(), r.costDelta(),
-                r.wbsId(), r.costElement(), r.modification()));
+                r.wbsId(), r.costElement(), r.modification(), r.sovLineId(), r.sovCode(), r.sovDescription()));
     }
 
     @PostMapping("/variations/{variationId}/approve")
@@ -149,7 +159,10 @@ public class ContractController {
     @RequirePermissions(Permissions.CONTRACT__MANAGE)
     public Map<String, Object> claim(@PathVariable String id, @RequestBody ClaimRequest r) {
         return contracts.createClaim(id, new ClaimInput(r.claimDate(), r.cumulativeCertified(), r.retentionPct(),
-                r.retentionCondition(), r.retentionReleaseDate(), r.taxId()));
+                r.retentionCondition(), r.retentionReleaseDate(), r.taxId(), r.lines() == null ? null
+                        : r.lines().stream().map(l -> l == null ? null : new ClaimLineInput(l.sovLineId(),
+                                l.workCompletedThisPeriod(), l.percentComplete(), l.materialsStored(),
+                                l.retentionPct())).toList()));
     }
 
     @GetMapping("/claims/{claimId}")

@@ -466,6 +466,7 @@ public class FleetDeliveryOrderService {
         data.put("code", sequence.next("fleet_delivery_order", "DO-", 6));
         data.put("partnerId", h.partnerId());
         data.put("siteId", h.siteId());
+        data.put("projectId", site == null ? null : site.get("projectId"));
         data.put("sourceType", sourceType);
         data.put("sourceId", sourceId);
         data.put("sourceNumber", sourceNumber);
@@ -526,8 +527,9 @@ public class FleetDeliveryOrderService {
         assertEditable(before);
         Map<String, Object> data = new LinkedHashMap<>();
         if (blank(in.siteId()) != null) {
-            sites.requireFor(in.siteId(), (String) before.get("partnerId"));
+            Map<String, Object> site = sites.requireFor(in.siteId(), (String) before.get("partnerId"));
             data.put("siteId", in.siteId());
+            data.put("projectId", site.get("projectId"));
         }
         if (blank(in.locationId()) != null) {
             if (stockLocations.resolve(FleetDb.org(), in.locationId()) == null) {

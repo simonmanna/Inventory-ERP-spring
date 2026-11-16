@@ -51,7 +51,17 @@ public class PurchaseRequestsService {
     public record LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
             BigDecimal estimatedUnitPrice, String notes, String requiredDate, String deliveryLocationId,
             String preferredSupplierId, String costCenterId, String projectId, String demandSource,
-            String demandRef, String variantId) {
+            String demandRef, String variantId, String wbsId) {
+
+        /** Without a WBS element (ADR-S075 adds {@code wbsId}). */
+        public LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
+                BigDecimal estimatedUnitPrice, String notes, String requiredDate, String deliveryLocationId,
+                String preferredSupplierId, String costCenterId, String projectId, String demandSource,
+                String demandRef, String variantId) {
+            this(productId, description, quantity, unitOfMeasureId, estimatedUnitPrice, notes, requiredDate,
+                    deliveryLocationId, preferredSupplierId, costCenterId, projectId, demandSource, demandRef, variantId,
+                    null);
+        }
 
         public LineInput(String productId, String description, BigDecimal quantity, String unitOfMeasureId,
                 BigDecimal estimatedUnitPrice, String notes, String requiredDate, String deliveryLocationId,
@@ -129,20 +139,27 @@ public class PurchaseRequestsService {
                     .single() == 0) {
                 throw ApiException.badRequest("Project not found");
             }
+            String wbsId = ln.wbsId() == null || ln.wbsId().isBlank() ? null : ln.wbsId();
+            if (wbsId != null && (ln.projectId() == null || ln.projectId().isBlank()
+                    || jdbc.sql("SELECT count(*) FROM \"ProjectWbsElement\" WHERE id = ? AND \"projectId\" = ? AND"
+                            + " \"organizationId\" = ?").params(wbsId, ln.projectId(), orgId).query(Long.class)
+                            .single() == 0)) {
+                throw ApiException.badRequest("WBS element not found on this project");
+            }
             String lineId = UUID.randomUUID().toString();
             lines.add(SqlRows.one(PurchaseRequestLine.class, jdbc.sql("INSERT INTO \"PurchaseRequestLine\" (id,"
                             + " \"organizationId\", \"purchaseRequestId\", \"productId\", description, quantity,"
                             + " \"unitOfMeasureId\", \"estimatedUnitPrice\", notes, \"lineNumber\", \"requiredDate\","
                             + " \"deliveryLocationId\", \"preferredSupplierId\", \"costCenterId\", \"projectId\","
-                            + " \"demandSource\", \"demandRef\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::date,"
-                            + " ?, ?, ?, ?, COALESCE(?, 'manual'), ?, ?) RETURNING *")
+                            + " \"demandSource\", \"demandRef\", \"variantId\", \"wbsId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                            + " ?::date, ?, ?, ?, ?, COALESCE(?, 'manual'), ?, ?, ?) RETURNING *")
                     .params(lineId, orgId, id, ln.productId(), ln.description(), ln.quantity(),
                             ln.unitOfMeasureId(), ln.estimatedUnitPrice(), ln.notes(), ++idx,
                             ln.requiredDate() == null || ln.requiredDate().isBlank() ? null
                                     : ln.requiredDate().substring(0, 10),
                             ln.deliveryLocationId(), ln.preferredSupplierId(), ln.costCenterId(), ln.projectId(),
                             ln.demandSource(), ln.demandRef(),
-                            ln.variantId() == null || ln.variantId().isBlank() ? null : ln.variantId())));
+                            ln.variantId() == null || ln.variantId().isBlank() ? null : ln.variantId(), wbsId)));
         }
         pr.put("lines", lines);
         return pr;

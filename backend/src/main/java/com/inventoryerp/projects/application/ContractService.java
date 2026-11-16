@@ -23,6 +23,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.projects.application.ContractCalculator.Claim;
+import com.inventoryerp.projects.application.ContractSovService.ClaimLineInput;
 import com.inventoryerp.projects.application.ContractCalculator.OnerousInput;
 import com.inventoryerp.projects.application.ContractCalculator.OnerousResult;
 import com.inventoryerp.shared.web.ApiException;
@@ -73,11 +74,25 @@ public class ContractService {
     static final Set<String> INDICATORS = Set.of("negative_margin", "eac_increase", "dispute", "penalty_notice",
             "management_flag");
 
+    /** A variation; {@code sovLineId} (change a line) or {@code sovCode} + {@code sovDescription} (add a line). */
     public record VariationInput(String description, BigDecimal priceDelta, BigDecimal costDelta, String wbsId,
-            String costElement, String modification) {}
+            String costElement, String modification, String sovLineId, String sovCode, String sovDescription) {
 
+        public VariationInput(String description, BigDecimal priceDelta, BigDecimal costDelta, String wbsId,
+                String costElement, String modification) {
+            this(description, priceDelta, costDelta, wbsId, costElement, modification, null, null, null);
+        }
+    }
+
+    /** A progress claim: a cumulative amount, or schedule-of-values {@code lines} (ADR-S075) whose G sum it becomes. */
     public record ClaimInput(String claimDate, BigDecimal cumulativeCertified, BigDecimal retentionPct,
-            String retentionCondition, String retentionReleaseDate, String taxId) {}
+            String retentionCondition, String retentionReleaseDate, String taxId, List<ClaimLineInput> lines) {
+
+        public ClaimInput(String claimDate, BigDecimal cumulativeCertified, BigDecimal retentionPct,
+                String retentionCondition, String retentionReleaseDate, String taxId) {
+            this(claimDate, cumulativeCertified, retentionPct, retentionCondition, retentionReleaseDate, taxId, null);
+        }
+    }
 
     public record SubcontractInput(String supplierId, String wbsId, String scope, BigDecimal value,
             BigDecimal retentionPct, String retentionCondition) {}
@@ -96,10 +111,12 @@ public class ContractService {
     private final VendorBillService bills;
     private final SequenceService seq;
     private final AuditService audit;
+    private final ContractSovService sov;
 
     public ContractService(JdbcClient jdbc, ProjectService projects, ProjectCostService costs, PostingService posting,
             AccountResolverService accounts, AccountingPolicyService policies, InvoiceService invoices,
-            VendorBillService bills, SequenceService seq, AuditService audit) {
+            VendorBillService bills, SequenceService seq, AuditService audit, ContractSovService sov) {
+        this.sov = sov;
         this.jdbc = jdbc;
         this.projects = projects;
         this.costs = costs;
@@ -110,6 +127,14 @@ public class ContractService {
         this.bills = bills;
         this.seq = seq;
         this.audit = audit;
+    }
+
+    /** Subcontractor compliance gate (ADR-S074), set by the container; a hook so the constructor stays as is. */
+    private SubcontractComplianceService compliance;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCompliance(SubcontractComplianceService compliance) {
+        this.compliance = compliance;
     }
 
     // ---- accounts -----------------------------------------------------------------------------------------------------
@@ -226,13 +251,19 @@ public class ContractService {
             projects.wbs(projectId, in.wbsId());
             ProjectService.element(in.costElement());
         }
+        sov.validateVariation(projectId, in.sovLineId(), in.sovCode(), in.sovDescription());
+        if (blank(in.wbsId()) != null && costDelta.signum() == 0) {
+            projects.wbs(projectId, in.wbsId());
+        }
         String id = UUID.randomUUID().toString();
         String number = seq.next("contract_variation", "VAR/", 5);
         jdbc.sql("INSERT INTO \"ContractVariation\" (id, \"organizationId\", \"projectId\", number, description,"
-                        + " \"priceDelta\", \"costDelta\", \"wbsId\", \"costElement\", modification, \"createdBy\") VALUES"
-                        + " (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                        + " \"priceDelta\", \"costDelta\", \"wbsId\", \"costElement\", modification, \"createdBy\","
+                        + " \"sovLineId\", \"sovCode\", \"sovDescription\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(id, org(), projectId, number, in.description().trim(), money(in.priceDelta()), costDelta,
-                        blank(in.wbsId()), blank(in.costElement()), modification, TenantContext.userId())
+                        blank(in.wbsId()), blank(in.costElement()), modification, TenantContext.userId(),
+                        blank(in.sovLineId()), blank(in.sovCode()) == null ? null : in.sovCode().trim(),
+                        blank(in.sovDescription()) == null ? null : in.sovDescription().trim())
                 .update();
         audit.recordInTx(AuditInput.of("ContractVariation", id, "create", null, Obj.of("number", number)));
         return variation(id);
@@ -256,6 +287,9 @@ public class ContractService {
                     (String) v.get("costElement"), costDelta, "separate_contract".equals(v.get("modification"))
                             ? BigDecimal.ZERO : SqlRows.dec(v, "priceDelta").max(BigDecimal.ZERO),
                     "Variation " + v.get("number"));
+        }
+        if (approve && !"separate_contract".equals(v.get("modification"))) {
+            sov.applyVariation(v);
         }
         jdbc.sql("UPDATE \"ContractVariation\" SET status = ?, \"budgetId\" = ?, \"decidedBy\" = ?, \"decidedAt\" ="
                 + " now() WHERE id = ?").params(approve ? "approved" : "rejected", budgetId, TenantContext.userId(), id)
@@ -291,6 +325,9 @@ public class ContractService {
         for (Map<String, Object> r : rows) {
             r.put("valuations", SqlRows.list(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE"
                     + " \"subcontractId\" = ? ORDER BY \"valuationDate\", number").param(r.get("id"))));
+            r.put("variations", SqlRows.list(jdbc.sql("SELECT * FROM \"SubcontractVariation\" WHERE"
+                    + " \"subcontractId\" = ? ORDER BY number").param(r.get("id"))));
+            r.put("adjustedValue", JsNumbers.dec(adjustedValue(r)));
         }
         return rows;
     }
@@ -345,10 +382,21 @@ public class ContractService {
     public Map<String, Object> createClaim(String projectId, ClaimInput in) {
         Map<String, Object> p = projects.project(projectId, true);
         customer(p);
-        if (in.cumulativeCertified() == null) {
+        boolean lineLevel = in.lines() != null && !in.lines().isEmpty();
+        if (lineLevel && in.cumulativeCertified() != null) {
+            throw ApiException.badRequest("Give cumulativeCertified or lines, not both");
+        }
+        if (!lineLevel && in.cumulativeCertified() == null) {
             throw ApiException.badRequest("cumulativeCertified should not be empty");
         }
-        BigDecimal cumulative = money(in.cumulativeCertified());
+        BigDecimal claimPct = in.retentionPct() == null ? BigDecimal.ZERO : in.retentionPct();
+        if (lineLevel && (claimPct.signum() < 0 || claimPct.compareTo(BigDecimal.valueOf(100)) >= 0)) {
+            throw ApiException.badRequest("retentionPct must be between 0 and 100");
+        }
+        List<ContractSovService.ComputedLine> sovLines = lineLevel ? sov.computeClaim(projectId, in.lines(), claimPct)
+                : null;
+        BigDecimal cumulative = lineLevel ? money(sovLines.stream().map(l -> l.line().total())
+                .reduce(BigDecimal.ZERO, BigDecimal::add)) : money(in.cumulativeCertified());
         BigDecimal previous = previousCertified(projectId);
         if (cumulative.compareTo(previous) <= 0) {
             throw ApiException.badRequest("cumulativeCertified must exceed the " + previous.toPlainString()
@@ -374,8 +422,10 @@ public class ContractService {
         Map<String, Object> adv = SqlRows.one(jdbc.sql("SELECT coalesce(sum(amount - recovered), 0) AS outstanding,"
                 + " coalesce(max(\"recoveryPct\"), 0) AS pct FROM \"CustomerAdvance\" WHERE \"projectId\" = ? AND status ="
                 + " 'open'").param(projectId));
-        Claim c = ContractCalculator.claim(cumulative, previous, retentionPct, SqlRows.dec(adv, "pct"),
-                SqlRows.dec(adv, "outstanding"));
+        Claim c = lineLevel ? ContractCalculator.claimWithRetention(cumulative, previous, sovLines.stream()
+                .map(l -> l.line().retention()).reduce(BigDecimal.ZERO, BigDecimal::add), SqlRows.dec(adv, "pct"),
+                SqlRows.dec(adv, "outstanding")) : ContractCalculator.claim(cumulative, previous, retentionPct,
+                SqlRows.dec(adv, "pct"), SqlRows.dec(adv, "outstanding"));
         if (c.net().signum() < 0) {
             throw ApiException.badRequest("Deductions exceed the claim");
         }
@@ -393,6 +443,9 @@ public class ContractService {
                                 : day(in.claimDate()), cumulative, previous, c.thisClaim(), retentionPct, c.retention(),
                         condition, release, c.advanceRecovery(), c.net(), blank(in.taxId()), TenantContext.userId())
                 .update();
+        if (lineLevel) {
+            sov.insertClaimLines(id, sovLines);
+        }
         audit.recordInTx(AuditInput.of("ProgressClaim", id, "create", null, Obj.of("number", number, "thisClaim",
                 c.thisClaim())));
         return claim(id);
@@ -500,6 +553,10 @@ public class ContractService {
                 + " \"organizationId\" = ?").params(id, org()));
         if (c == null) {
             throw ApiException.notFound("Progress claim not found");
+        }
+        List<Map<String, Object>> lines = sov.claimLines(id);
+        if (!lines.isEmpty()) {
+            c.put("lines", lines);
         }
         return c;
     }
@@ -610,11 +667,13 @@ public class ContractService {
             throw ApiException.badRequest("cumulativeValue must exceed the " + previous.toPlainString()
                     + " already valued");
         }
-        if (cumulative.compareTo(SqlRows.dec(s, "value")) > 0) {
+        if (cumulative.compareTo(adjustedValue(s)) > 0) {
             throw ApiException.badRequest("cumulativeValue exceeds the subcontract value");
         }
         Claim c = ContractCalculator.claim(cumulative, previous, SqlRows.dec(s, "retentionPct"), BigDecimal.ZERO,
                 BigDecimal.ZERO);
+        // ADR-S074: subcontractor compliance gate (no-op while no document type is gated).
+        List<String> complianceWarnings = compliance == null ? List.of() : compliance.checkValuation(subcontractId);
         String d = day(date) == null ? today().toString() : day(date);
         String id = UUID.randomUUID().toString();
         String number = seq.next("subcontract_valuation", "SCV/", 5);
@@ -624,7 +683,7 @@ public class ContractService {
         Map<String, Object> dims = Obj.of("projectId", projectId, "wbsId", s.get("wbsId"), "subcontractId",
                 subcontractId);
         List<Line> lines = new ArrayList<>();
-        lines.add(new Line(costs.wipAccount(), JsNumbers.dec(c.thisClaim()), null, supplier, label,
+        lines.add(new Line(costs.costAccount(p), JsNumbers.dec(c.thisClaim()), null, supplier, label,
                 (String) p.get("branchId"), (String) p.get("costCenterId"), dims));
         lines.add(new Line(clearing, null, JsNumbers.dec(c.net()), supplier, label, (String) p.get("branchId"), null,
                 dims));
@@ -658,7 +717,75 @@ public class ContractService {
         }
         audit.recordInTx(AuditInput.of("SubcontractValuation", id, "post", null, Obj.of("thisValuation",
                 c.thisClaim())));
-        return SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE id = ?").param(id));
+        Map<String, Object> result = SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE id = ?")
+                .param(id));
+        if (!complianceWarnings.isEmpty()) {
+            result.put("complianceWarnings", complianceWarnings);
+        }
+        return result;
+    }
+
+    /** Subcontract value + approved subcontract variations (ADR-S075). */
+    BigDecimal adjustedValue(Map<String, Object> s) {
+        return SqlRows.dec(s, "value").add(jdbc.sql("SELECT coalesce(sum(\"valueDelta\"), 0) FROM"
+                + " \"SubcontractVariation\" WHERE \"subcontractId\" = ? AND status = 'approved'").param(s.get("id"))
+                .query(BigDecimal.class).single());
+    }
+
+    /** A pending subcontract variation (maker); an approved one raises the subcontract's adjusted value. */
+    @Transactional
+    public Map<String, Object> createSubcontractVariation(String subcontractId, String description,
+            BigDecimal valueDelta) {
+        Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE").params(subcontractId, org()));
+        if (s == null) {
+            throw ApiException.notFound("Subcontract not found");
+        }
+        if (!"active".equals(s.get("status"))) {
+            throw ApiException.badRequest("Only an active subcontract can be varied");
+        }
+        if (description == null || description.isBlank()) {
+            throw ApiException.badRequest("description should not be empty");
+        }
+        if (valueDelta == null || valueDelta.signum() == 0) {
+            throw ApiException.badRequest("valueDelta must not be 0");
+        }
+        String id = UUID.randomUUID().toString();
+        String number = seq.next("subcontract_variation", "SCVAR/", 5);
+        jdbc.sql("INSERT INTO \"SubcontractVariation\" (id, \"organizationId\", \"subcontractId\", number,"
+                + " description, \"valueDelta\", \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?)").params(id, org(),
+                subcontractId, number, description.trim(), money(valueDelta), TenantContext.userId()).update();
+        audit.recordInTx(AuditInput.of("SubcontractVariation", id, "create", null, Obj.of("number", number,
+                "valueDelta", money(valueDelta))));
+        return SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractVariation\" WHERE id = ?").param(id));
+    }
+
+    /** Approve or reject a pending subcontract variation (never your own). */
+    @Transactional
+    public Map<String, Object> decideSubcontractVariation(String id, boolean approve) {
+        Map<String, Object> v = SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractVariation\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE").params(id, org()));
+        if (v == null) {
+            throw ApiException.notFound("Subcontract variation not found");
+        }
+        if (!"pending".equals(v.get("status"))) {
+            throw ApiException.badRequest("Only a pending variation can be decided");
+        }
+        notSelf(v.get("createdBy"), "A variation must be approved by someone other than its author");
+        if (approve) {
+            Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT * FROM \"Subcontract\" WHERE id = ? FOR UPDATE")
+                    .param(v.get("subcontractId")));
+            BigDecimal valued = jdbc.sql("SELECT coalesce(max(\"cumulativeValue\"), 0) FROM \"SubcontractValuation\""
+                    + " WHERE \"subcontractId\" = ?").param(s.get("id")).query(BigDecimal.class).single();
+            if (adjustedValue(s).add(SqlRows.dec(v, "valueDelta")).compareTo(valued) < 0) {
+                throw ApiException.badRequest("The variation would take the subcontract below the "
+                        + valued.toPlainString() + " already valued");
+            }
+        }
+        jdbc.sql("UPDATE \"SubcontractVariation\" SET status = ?, \"decidedBy\" = ?, \"decidedAt\" = now() WHERE id = ?")
+                .params(approve ? "approved" : "rejected", TenantContext.userId(), id).update();
+        audit.recordInTx(AuditInput.of("SubcontractVariation", id, approve ? "approve" : "reject", null, null));
+        return SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractVariation\" WHERE id = ?").param(id));
     }
 
     /** A back-charge or defects deduction: reduces the retention payable and the project cost. */
@@ -684,7 +811,7 @@ public class ContractService {
                 "project_back_charge", id, null, "projects:back_charge:" + org() + ":" + id, (String) p.get("branchId"),
                 null, null, List.of(new Line(retentionPayableAccount(), JsNumbers.dec(a), null,
                         (String) r.get("partnerId"), label, (String) p.get("branchId"), null, dims),
-                        new Line(costs.wipAccount(), null, JsNumbers.dec(a), (String) r.get("partnerId"), label,
+                        new Line(costs.costAccount(p), null, JsNumbers.dec(a), (String) r.get("partnerId"), label,
                                 (String) p.get("branchId"), (String) p.get("costCenterId"), dims))));
         String je = entry == null ? null : (String) entry.get("id");
         costLine(id, projectId, wbsId, "project_back_charge", id, retentionId, today().toString(), a.negate(),

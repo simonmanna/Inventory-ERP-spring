@@ -33,6 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
  * line wins, the catalogue {@code list} price is always last:
  * <ol>
  *   <li>{@code agreement}: the sales agreement the document releases against (active on the date, S9);</li>
+ *   <li>{@code site_pricelist}: the active pricelist scoped to the delivery site (ADR-S075; site → customer → branch →
+ *       default);</li>
  *   <li>{@code customer_rule}: pricelist rules bound to the customer or its category (any active pricelist);</li>
  *   <li>{@code crm_rule}: CRM customer price rules (ADR-S010);</li>
  *   <li>{@code customer_pricelist}, {@code category_pricelist}: the customer's, then its category's pricelist;</li>
@@ -51,7 +53,8 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     /** Tiers in their default order (ADR-S022 §4); {@code list} is implicit and always last. */
-    public static final List<String> TIERS = List.of("agreement", "promotion", "customer_rule", "crm_rule", "customer_pricelist",
+    public static final List<String> TIERS = List.of("agreement", "promotion", "site_pricelist", "customer_rule", "crm_rule",
+            "customer_pricelist",
             "category_pricelist", "price_list", "branch_default", "org_default", "standing_discount");
 
     private SalesPricingToolsService limits;
@@ -251,9 +254,10 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         boolean incl = Boolean.TRUE.equals(product.get("taxInclusive"));
         String name = str(product.get("name"));
         Floor floor = floor(c, product, partnerCat, cost, on);
-        for (String tier : precedence()) {
+        for (String tier : effectivePrecedence()) {
             Priced p = switch (tier) {
                 case "agreement" -> agreement(line, taxId, incl, name, floor);
+                case "site_pricelist" -> blank(c.siteId()) ? null : siteList(line, c.siteId(), taxId, incl, name, floor);
                 // Sales documents only: POS, invoice and delivery quotes come through quote() and keep their prices.
                 case "promotion" -> named != null ? null : promotion(line, taxId, incl, name, floor);
                 case "customer_rule" -> c.partnerId() == null ? null
@@ -364,14 +368,23 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         return item == null ? null : new Priced(result(l, item, taxId, incl, name, floor, 0), false);
     }
 
+    /** The active pricelist scoped to the customer site (ADR-S075), dates as any pricelist. */
+    private Priced siteList(Line l, String siteId, String taxId, boolean incl, String name, Floor floor) {
+        Object id = value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"customerSiteId\" = ? AND"
+                + " \"isActive\" AND \"deletedAt\" IS NULL AND (\"validFrom\" IS NULL OR \"validFrom\" <= ?) AND"
+                + " (\"validTo\" IS NULL OR \"validTo\" >= ?) ORDER BY \"createdAt\", id LIMIT 1", org(), siteId, l.on(),
+                l.on());
+        return id == null ? null : pricelist(l, bestItem(l, str(id), false), taxId, incl, name, floor);
+    }
+
     private Priced defaultList(Line l, String branchId, String taxId, boolean incl, String name, Floor floor) {
         Object id = branchId == null
                 ? value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" IS NULL AND"
-                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", id LIMIT 1",
-                        org())
+                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL AND \"customerSiteId\" IS NULL"
+                        + " ORDER BY \"createdAt\", id LIMIT 1", org())
                 : value("SELECT id FROM \"Pricelist\" WHERE \"organizationId\" = ? AND \"branchId\" = ? AND"
-                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", id LIMIT 1",
-                        org(), branchId);
+                        + " \"isDefault\" AND \"isActive\" AND \"deletedAt\" IS NULL AND \"customerSiteId\" IS NULL"
+                        + " ORDER BY \"createdAt\", id LIMIT 1", org(), branchId);
         return id == null ? null : pricelist(l, bestItem(l, str(id), false), taxId, incl, name, floor);
     }
 
@@ -424,6 +437,27 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         Map<String, Object> p = db.row("SELECT precedence FROM \"PricingPolicy\" WHERE \"organizationId\" = ?", org());
         List<String> configured = p == null ? List.of() : SalesDb.strings(p.get("precedence"));
         return configured.isEmpty() ? TIERS : configured;
+    }
+
+    /**
+     * The order the engine applies: {@link #precedence()}, with {@code site_pricelist} inserted before the first
+     * customer / branch / default tier when a configured order predates it (ADR-S075).
+     */
+    List<String> effectivePrecedence() {
+        List<String> p = precedence();
+        if (p.contains("site_pricelist")) {
+            return p;
+        }
+        List<String> out = new ArrayList<>(p);
+        int at = out.size();
+        for (int i = 0; i < out.size(); i++) {
+            if (!List.of("agreement", "promotion").contains(out.get(i))) {
+                at = i;
+                break;
+            }
+        }
+        out.add(at, "site_pricelist");
+        return out;
     }
 
     /** {@code PUT /sales/pricing/policy}: an order of {@link #TIERS} (a subset skips the tiers left out). */
@@ -558,6 +592,9 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         sql.append(" AND (p.\"currencyCode\" IS NULL OR ?::text IS NULL OR p.\"currencyCode\" = ?)");
         params.add(c.currencyCode());
         params.add(c.currencyCode());
+        // ADR-S075: a site-scoped pricelist prices only deliveries to its site.
+        sql.append(" AND (p.\"customerSiteId\" IS NULL OR p.\"customerSiteId\" = ?)");
+        params.add(c.siteId() == null ? "" : c.siteId());
         sql.append(" AND ((i.scope = 'product' AND i.\"productId\" = ?) OR (i.scope = 'category' AND"
                 + " i.\"productCategoryId\" = ?) OR i.scope = 'all')");
         params.add(c.productId());

@@ -291,6 +291,7 @@ const ProjectMyTasksPage = lazy(() => import('@/pages/projects/MyTasksPage').the
 const ProjectTimesheetsPage = lazy(() => import('@/pages/projects/TimesheetsPage').then((m) => ({ default: m.TimesheetsPage })));
 const ProjectDashboardPage = lazy(() => import('@/pages/projects/ProjectDashboardPage').then((m) => ({ default: m.ProjectDashboardPage })));
 const ProjectReportsPage = lazy(() => import('@/pages/projects/ProjectReportsPage').then((m) => ({ default: m.ProjectReportsPage })));
+const ProjectBondsPage = lazy(() => import('@/pages/projects/BondsPage').then((m) => ({ default: m.BondsPage })));
 const ProjectTagsPage = lazy(() => import('@/pages/projects/ProjectTagsPage').then((m) => ({ default: m.ProjectTagsPage })));
 const TaskEditPage = lazy(() => import('@/pages/tasks/TaskEditPage').then((m) => ({ default: m.TaskEditPage })));
 
@@ -626,6 +627,7 @@ export function App() {
             <Route path="/projects/my-tasks" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectMyTasksPage /></RequirePermission>} />
             <Route path="/projects/timesheets" element={<RequirePermission permission={PERMISSIONS.projectTimesheet.log}><ProjectTimesheetsPage /></RequirePermission>} />
             <Route path="/projects/reports" element={<RequirePermission permission={PERMISSIONS.projectReport.read}><ProjectReportsPage /></RequirePermission>} />
+            <Route path="/projects/bonds" element={<RequirePermission permission={PERMISSIONS.bond.read}><ProjectBondsPage /></RequirePermission>} />
             <Route path="/projects/tags" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectTagsPage /></RequirePermission>} />
             <Route path="/projects/:id" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectDetailPage /></RequirePermission>} />
             <Route path="/tasks" element={<TasksPage />} />

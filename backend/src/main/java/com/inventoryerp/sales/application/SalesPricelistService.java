@@ -95,6 +95,13 @@ public class SalesPricelistService {
         if (d.get("branchId") != null && !db.exists("Branch", str(d.get("branchId")))) {
             throw ApiException.notFound("Branch not found");
         }
+        if (in.containsKey("customerSiteId")) {
+            String site = blank(str(in.get("customerSiteId"))) ? null : str(in.get("customerSiteId"));
+            if (site != null && !db.exists("FleetCustomerSite", site)) {
+                throw ApiException.notFound("Customer site not found");
+            }
+            d.put("customerSiteId", site);
+        }
         if (in.containsKey("basePricelistId")) {
             String b = blank(str(in.get("basePricelistId"))) ? null : str(in.get("basePricelistId"));
             if (b != null && (b.equals(id) || !db.exists("Pricelist", b))) {
@@ -107,6 +114,13 @@ public class SalesPricelistService {
             if (in.containsKey(k)) {
                 d.put(k, Boolean.TRUE.equals(in.get(k)));
             }
+        }
+        Object siteScope = d.containsKey("customerSiteId") ? d.get("customerSiteId")
+                : id == null ? null : require(id).get("customerSiteId");
+        boolean makesDefault = d.containsKey("isDefault") ? Boolean.TRUE.equals(d.get("isDefault"))
+                : id != null && Boolean.TRUE.equals(require(id).get("isDefault"));
+        if (siteScope != null && makesDefault) {
+            throw ApiException.badRequest("A site pricelist cannot be a default pricelist");
         }
         if (Boolean.TRUE.equals(d.get("isDefault"))) {
             Object branch = d.containsKey("branchId") ? d.get("branchId") : id == null ? null : require(id).get("branchId");

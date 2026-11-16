@@ -19,6 +19,7 @@ import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
@@ -66,8 +67,19 @@ public class ProjectCostService {
 
     public record TimesheetInput(String wbsId, String from, String to, BigDecimal ratePerHour) {}
 
+    /**
+     * Equipment capture. Without {@code plantId}: hours × the given rate, credited to 5391 (CM-8a). With
+     * {@code plantId} (ADR-S075): quantity (or hours) × the plant rate table's rate in force on the date (a manual
+     * rate needs {@code project:rate_override}), credited to plant recovery on the plant's cost centre.
+     */
     public record EquipmentInput(String wbsId, String siteId, String equipmentRef, BigDecimal hours,
-            BigDecimal ratePerHour, String date, String notes) {}
+            BigDecimal ratePerHour, String date, String notes, String plantId, BigDecimal quantity, String unit) {
+
+        public EquipmentInput(String wbsId, String siteId, String equipmentRef, BigDecimal hours,
+                BigDecimal ratePerHour, String date, String notes) {
+            this(wbsId, siteId, equipmentRef, hours, ratePerHour, date, notes, null, null, null);
+        }
+    }
 
     public record ReclassInput(String wbsId, String siteId, String journalLineId, BigDecimal amount,
             String costElement, Boolean excludeFromProgress, String date, String notes) {}
@@ -79,10 +91,11 @@ public class ProjectCostService {
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final AuditService audit;
+    private final ProjectPlantRateService plantRates;
 
     public ProjectCostService(JdbcClient jdbc, ProjectService projects, PostingService posting,
             AccountResolverService accounts, StockService stock, StockPostingService stockPosting,
-            AuditService audit) {
+            AuditService audit, ProjectPlantRateService plantRates) {
         this.jdbc = jdbc;
         this.projects = projects;
         this.posting = posting;
@@ -90,10 +103,24 @@ public class ProjectCostService {
         this.stock = stock;
         this.stockPosting = stockPosting;
         this.audit = audit;
+        this.plantRates = plantRates;
     }
 
     public String wipAccount() {
         return accounts.ensureByCode("1460", "Project Work in Progress", "current_asset", "project_wip");
+    }
+
+    /**
+     * Construction in Progress (ADR-S074): where a capital (own-use) project accumulates its cost instead of 1460.
+     */
+    public String cipAccount() {
+        return accounts.ensureByCode("1690", "Construction in Progress", "construction_in_progress",
+                "construction_in_progress");
+    }
+
+    /** The account a project's cost is debited to: CIP for a capital project, otherwise project WIP 1460. */
+    public String costAccount(Map<String, Object> project) {
+        return Boolean.TRUE.equals(project.get("isCapital")) ? cipAccount() : wipAccount();
     }
 
     public String labourAbsorbedAccount() {
@@ -104,6 +131,16 @@ public class ProjectCostService {
     public String equipmentAbsorbedAccount() {
         return accounts.ensureByCode("5391", "Equipment Absorbed to Projects", "operating_expense",
                 "project_equipment_absorbed");
+    }
+
+    /** Plant recovery (5392, {@code plant_recovery}): credited when plant cost is charged to a job (ADR-S075). */
+    public String plantRecoveryAccount() {
+        return accounts.ensureByCode("5392", "Plant Recovery to Projects", "operating_expense", "plant_recovery");
+    }
+
+    /** Overhead absorbed ({@code overhead_absorbed}; 5350 when the mapping is not configured yet, ADR-S075). */
+    public String overheadAbsorbedAccount() {
+        return accounts.ensureByCode("5350", "Overhead Absorbed", "operating_expense", "overhead_absorbed");
     }
 
     // ---- capture paths ------------------------------------------------------------------------------------------------
@@ -201,9 +238,12 @@ public class ProjectCostService {
         return Obj.of("batchId", batch, "journalEntryId", je, "entries", rows.size(), "total", JsNumbers.dec(total));
     }
 
-    /** Equipment hours × rate. */
+    /** Equipment hours × rate, or a plant from the plant rate table × quantity (ADR-S075). */
     @Transactional
     public Map<String, Object> equipment(String projectId, EquipmentInput in) {
+        if (blank(in.plantId()) != null) {
+            return plantEquipment(projectId, in);
+        }
         Map<String, Object> p = capturable(projectId);
         Map<String, Object> w = costableWbs(projectId, in.wbsId());
         String siteId = site(projectId, in.siteId());
@@ -224,6 +264,51 @@ public class ProjectCostService {
                 "project_equipment", id, p);
         insert(id, projectId, (String) w.get("id"), siteId, "equipment", "project_equipment", id, in.equipmentRef(),
                 date, in.hours(), in.ratePerHour(), amount, false, credit, je, in.notes() == null ? text : in.notes());
+        return line(id);
+    }
+
+    private Map<String, Object> plantEquipment(String projectId, EquipmentInput in) {
+        Map<String, Object> p = capturable(projectId);
+        Map<String, Object> w = costableWbs(projectId, in.wbsId());
+        String siteId = site(projectId, in.siteId());
+        BigDecimal qty = in.quantity() != null ? in.quantity() : in.hours();
+        if (qty == null || qty.signum() <= 0) {
+            throw ApiException.badRequest("quantity must be greater than 0");
+        }
+        Instant date = instant(in.date());
+        LocalDate day = date.atZone(ZoneOffset.UTC).toLocalDate();
+        Map<String, Object> rate = plantRates.resolve(in.plantId().trim(), blank(in.unit()), day);
+        BigDecimal unitRate;
+        if (in.ratePerHour() != null) {
+            if (!TenantContext.has(Permissions.PROJECT__RATE_OVERRIDE)) {
+                throw ApiException.forbidden("Overriding the plant rate needs the " + Permissions.PROJECT__RATE_OVERRIDE
+                        + " permission");
+            }
+            if (in.ratePerHour().signum() <= 0) {
+                throw ApiException.badRequest("ratePerHour must be greater than 0");
+            }
+            unitRate = in.ratePerHour();
+        } else if (rate == null) {
+            throw ApiException.badRequest("No plant rate is in force for " + in.plantId().trim() + " on " + day);
+        } else {
+            unitRate = SqlRows.dec(rate, "rate");
+        }
+        BigDecimal amount = qty.multiply(unitRate).setScale(2, RoundingMode.HALF_UP);
+        if (amount.signum() <= 0) {
+            throw ApiException.badRequest("The charge rounds to 0");
+        }
+        String unit = rate == null ? (blank(in.unit()) == null ? "hour" : in.unit()) : (String) rate.get("unit");
+        String plantName = rate == null ? in.plantId().trim() : String.valueOf(rate.get("name"));
+        String costCenter = plantRates.costCenter(rate, in.plantId().trim());
+        String id = UUID.randomUUID().toString();
+        String text = "Project " + p.get("code") + " · " + w.get("code") + " · plant " + plantName + " · "
+                + qty.stripTrailingZeros().toPlainString() + " " + unit;
+        String credit = plantRecoveryAccount();
+        String je = post(List.of(debit(p, w, siteId, amount, text), new Line(credit, null, JsNumbers.dec(amount), null,
+                text, branch(p), costCenter, Obj.of("projectId", projectId, "plantId", in.plantId().trim(),
+                        "plantRateId", rate == null ? null : rate.get("id")))), text, date, "project_equipment", id, p);
+        insert(id, projectId, (String) w.get("id"), siteId, "equipment", "project_equipment", id, in.plantId().trim(),
+                date, qty, unitRate, amount, false, credit, je, in.notes() == null ? text : in.notes());
         return line(id);
     }
 
@@ -405,10 +490,94 @@ public class ProjectCostService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    /** Open commitments (purchase requests / orders) that carry the project. */
+    /**
+     * Committed cost: open commitments (purchase requests / orders) that carry the project plus the unvalued balance of
+     * its active subcontracts (value + approved subcontract variations − certified valuations, ADR-S075).
+     */
     public BigDecimal committed(String projectId) {
-        return jdbc.sql("SELECT coalesce(sum(\"openAmount\"), 0) FROM \"Commitment\" WHERE \"organizationId\" = ? AND"
-                + " \"projectId\" = ? AND status = 'open'").params(org(), projectId).query(BigDecimal.class).single();
+        return committedByWbs(projectId).values().stream().map(c -> c[0].add(c[1])).reduce(BigDecimal.ZERO,
+                BigDecimal::add);
+    }
+
+    /** Open purchasing commitments of the project per WBS element (key null = not assigned to an element). */
+    public Map<String, BigDecimal> purchasingByWbs(String projectId) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT coalesce(rl.\"wbsId\", prl.\"wbsId\") AS \"wbsId\","
+                + " coalesce(sum(c.\"openAmount\"), 0) AS amount FROM \"Commitment\" c"
+                + " LEFT JOIN \"PurchaseRequestLine\" rl ON c.\"sourceType\" = 'purchase_request' AND rl.id ="
+                + " c.\"sourceLineId\" LEFT JOIN \"PurchaseOrderLine\" pl ON c.\"sourceType\" = 'purchase_order' AND"
+                + " pl.id = c.\"sourceLineId\" LEFT JOIN \"PurchaseRequestLine\" prl ON prl.id = pl.\"requestLineId\""
+                + " WHERE c.\"organizationId\" = ? AND c.\"projectId\" = ? AND c.status = 'open' GROUP BY 1 ORDER BY 1")
+                .params(org(), projectId))) {
+            out.merge((String) r.get("wbsId"), SqlRows.dec(r, "amount"), BigDecimal::add);
+        }
+        return out;
+    }
+
+    /** Unvalued balance of the project's active subcontracts per WBS element. */
+    public Map<String, BigDecimal> subcontractsByWbs(String projectId) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT s.\"wbsId\", sum(greatest(s.value + coalesce((SELECT"
+                + " sum(v.\"valueDelta\") FROM \"SubcontractVariation\" v WHERE v.\"subcontractId\" = s.id AND v.status ="
+                + " 'approved'), 0) - coalesce((SELECT max(sv.\"cumulativeValue\") FROM \"SubcontractValuation\" sv WHERE"
+                + " sv.\"subcontractId\" = s.id), 0), 0)) AS amount FROM \"Subcontract\" s WHERE s.\"organizationId\" = ?"
+                + " AND s.\"projectId\" = ? AND s.status = 'active' GROUP BY 1 ORDER BY 1").params(org(), projectId))) {
+            out.merge((String) r.get("wbsId"), SqlRows.dec(r, "amount"), BigDecimal::add);
+        }
+        return out;
+    }
+
+    /**
+     * Committed cost detail (ADR-S075): the open purchasing commitments (with their WBS element, from the request line
+     * the order was sourced from) and the active subcontracts with their unvalued balance, plus per-WBS totals.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> commitments(String projectId) {
+        projects.project(projectId, false);
+        List<Map<String, Object>> purchasing = SqlRows.list(jdbc.sql("SELECT c.id, c.\"sourceType\", c.\"sourceId\","
+                + " c.\"sourceNumber\", c.\"sourceLineId\", c.amount, c.\"openAmount\", c.period,"
+                + " coalesce(rl.\"wbsId\", prl.\"wbsId\") AS \"wbsId\", w.code AS \"wbsCode\" FROM \"Commitment\" c"
+                + " LEFT JOIN \"PurchaseRequestLine\" rl ON c.\"sourceType\" = 'purchase_request' AND rl.id ="
+                + " c.\"sourceLineId\" LEFT JOIN \"PurchaseOrderLine\" pl ON c.\"sourceType\" = 'purchase_order' AND"
+                + " pl.id = c.\"sourceLineId\" LEFT JOIN \"PurchaseRequestLine\" prl ON prl.id = pl.\"requestLineId\""
+                + " LEFT JOIN \"ProjectWbsElement\" w ON w.id = coalesce(rl.\"wbsId\", prl.\"wbsId\")"
+                + " WHERE c.\"organizationId\" = ? AND c.\"projectId\" = ? AND c.status = 'open'"
+                + " ORDER BY c.\"sourceNumber\", c.id").params(org(), projectId));
+        List<Map<String, Object>> subcontracts = SqlRows.list(jdbc.sql("SELECT x.*, greatest(x.\"adjustedValue\" -"
+                + " x.valued, 0) AS balance FROM (SELECT s.id, s.number, s.\"wbsId\", w.code AS \"wbsCode\", pa.name AS"
+                + " \"supplierName\", s.value, s.value + coalesce((SELECT sum(v.\"valueDelta\") FROM"
+                + " \"SubcontractVariation\" v WHERE v.\"subcontractId\" = s.id AND v.status = 'approved'), 0) AS"
+                + " \"adjustedValue\", coalesce((SELECT max(sv.\"cumulativeValue\") FROM \"SubcontractValuation\" sv"
+                + " WHERE sv.\"subcontractId\" = s.id), 0) AS valued FROM \"Subcontract\" s JOIN \"ProjectWbsElement\" w"
+                + " ON w.id = s.\"wbsId\" LEFT JOIN \"Partner\" pa ON pa.id = s.\"supplierId\" WHERE"
+                + " s.\"organizationId\" = ? AND s.\"projectId\" = ? AND s.status = 'active') x ORDER BY x.number")
+                .params(org(), projectId));
+        Map<String, Object> codes = new LinkedHashMap<>();
+        SqlRows.list(jdbc.sql("SELECT id, code FROM \"ProjectWbsElement\" WHERE \"projectId\" = ?").param(projectId))
+                .forEach(r -> codes.put((String) r.get("id"), r.get("code")));
+        List<Map<String, Object>> byWbs = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (Map.Entry<String, BigDecimal[]> e : committedByWbs(projectId).entrySet()) {
+            BigDecimal[] c = e.getValue();
+            total = total.add(c[0]).add(c[1]);
+            byWbs.add(Obj.of("wbsId", e.getKey(), "wbsCode", e.getKey() == null ? null : codes.get(e.getKey()),
+                    "purchasing", JsNumbers.dec(c[0]), "subcontracts", JsNumbers.dec(c[1]), "committed",
+                    JsNumbers.dec(c[0].add(c[1]))));
+        }
+        return Obj.of("projectId", projectId, "purchasing", purchasing, "subcontracts", subcontracts, "byWbs", byWbs,
+                "total", JsNumbers.dec(total));
+    }
+
+    /** {@code [purchasing, subcontracts]} committed per WBS element (key null = unassigned). */
+    public Map<String, BigDecimal[]> committedByWbs(String projectId) {
+        Map<String, BigDecimal[]> out = new LinkedHashMap<>();
+        purchasingByWbs(projectId).forEach((k, v) -> out.computeIfAbsent(k, x -> zeros())[0] = v);
+        subcontractsByWbs(projectId).forEach((k, v) -> out.computeIfAbsent(k, x -> zeros())[1] = v);
+        return out;
+    }
+
+    private static BigDecimal[] zeros() {
+        return new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO};
     }
 
     /** Budget vs committed vs actual vs EAC per WBS element and cost element, with the WIP tie-out. */
@@ -451,19 +620,60 @@ public class ProjectCostService {
                     JsNumbers.dec(etc), "eac", JsNumbers.dec(a.add(etc)), "variance", JsNumbers.dec(b.subtract(
                             a.add(etc)))));
         }
-        BigDecimal committed = committed(projectId);
+        Map<String, BigDecimal[]> byWbs = committedByWbs(projectId);
+        BigDecimal purchasing = BigDecimal.ZERO;
+        BigDecimal subcontracts = BigDecimal.ZERO;
+        for (BigDecimal[] c : byWbs.values()) {
+            purchasing = purchasing.add(c[0]);
+            subcontracts = subcontracts.add(c[1]);
+        }
+        BigDecimal committed = purchasing.add(subcontracts);
         BigDecimal eac = ta.add(committed).add(te);
+        List<Map<String, Object>> wbsRows = wbsSummary(out, byWbs, codes);
         BigDecimal wip = jdbc.sql("SELECT coalesce(sum(jl.\"baseDebit\" - jl.\"baseCredit\"), 0) FROM \"JournalLine\" jl"
                 + " JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\" WHERE jl.\"organizationId\" = ? AND"
                 + " jl.\"accountId\" = ? AND jl.dimensions ->> 'projectId' = ? AND e.status <> 'draft'").params(org(),
-                wipAccount(), projectId).query(BigDecimal.class).single();
-        BigDecimal released = releasedFromWip(projectId);
-        return Obj.of("projectId", projectId, "code", p.get("code"), "budgetId", budget, "rows", out, "totals",
-                Obj.of("budget", JsNumbers.dec(tb), "committed", JsNumbers.dec(committed), "actual",
-                        JsNumbers.dec(ta), "costToComplete", JsNumbers.dec(te), "eac", JsNumbers.dec(eac),
-                        "variance", JsNumbers.dec(tb.subtract(eac))),
+                costAccount(p), projectId).query(BigDecimal.class).single();
+        BigDecimal released = releasedFromWip(projectId).add(capitalised(projectId));
+        return Obj.of("projectId", projectId, "code", p.get("code"), "budgetId", budget, "rows", out, "wbs", wbsRows,
+                "totals", Obj.of("budget", JsNumbers.dec(tb), "committed", JsNumbers.dec(committed),
+                        "committedPurchasing", JsNumbers.dec(purchasing), "committedSubcontracts",
+                        JsNumbers.dec(subcontracts), "actual", JsNumbers.dec(ta), "costToComplete", JsNumbers.dec(te),
+                        "eac", JsNumbers.dec(eac), "variance", JsNumbers.dec(tb.subtract(eac))),
                 "wipTieOut", Obj.of("glWip", JsNumbers.dec(wip), "subledger", JsNumbers.dec(ta.subtract(released)),
                         "difference", JsNumbers.dec(wip.subtract(ta.subtract(released)))));
+    }
+
+    /**
+     * Per WBS element (ADR-S075): budget, actual, committed (purchasing + subcontract balance), cost to complete and
+     * EAC = actual + committed + cost to complete. Commitments without an element are reported on a row with
+     * {@code wbsId = null}.
+     */
+    private static List<Map<String, Object>> wbsSummary(List<Map<String, Object>> rows,
+            Map<String, BigDecimal[]> committed, Map<String, Object> codes) {
+        Map<String, BigDecimal[]> acc = new LinkedHashMap<>();
+        for (Map<String, Object> r : rows) {
+            BigDecimal[] a = acc.computeIfAbsent((String) r.get("wbsId"), k -> new BigDecimal[] {BigDecimal.ZERO,
+                    BigDecimal.ZERO, BigDecimal.ZERO});
+            a[0] = a[0].add(new BigDecimal(String.valueOf(r.get("budget"))));
+            a[1] = a[1].add(new BigDecimal(String.valueOf(r.get("actual"))));
+            a[2] = a[2].add(new BigDecimal(String.valueOf(r.get("costToComplete"))));
+        }
+        for (String k : committed.keySet()) {
+            acc.computeIfAbsent(k, x -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO});
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, BigDecimal[]> e : acc.entrySet()) {
+            BigDecimal[] a = e.getValue();
+            BigDecimal[] c = committed.getOrDefault(e.getKey(), zeros());
+            BigDecimal com = c[0].add(c[1]);
+            BigDecimal eac = a[1].add(com).add(a[2]);
+            out.add(Obj.of("wbsId", e.getKey(), "wbsCode", e.getKey() == null ? null : codes.get(e.getKey()), "budget",
+                    JsNumbers.dec(a[0]), "actual", JsNumbers.dec(a[1]), "committedPurchasing", JsNumbers.dec(c[0]),
+                    "committedSubcontracts", JsNumbers.dec(c[1]), "committed", JsNumbers.dec(com), "costToComplete",
+                    JsNumbers.dec(a[2]), "eac", JsNumbers.dec(eac), "variance", JsNumbers.dec(a[0].subtract(eac))));
+        }
+        return out;
     }
 
     /** Cost already released from project WIP to cost of revenue (contract revenue recognition, CM-8b). */
@@ -472,15 +682,26 @@ public class ProjectCostService {
                 + " \"projectId\" = ? AND status = 'posted'").param(projectId).query(BigDecimal.class).single();
     }
 
+    /** Cost moved out of CIP into fixed assets by posted capitalisations (ADR-S074); 0 for other projects. */
+    public BigDecimal capitalised(String projectId) {
+        return jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"ProjectCapitalisation\" WHERE \"projectId\" = ? AND"
+                + " status = 'posted'").param(projectId).query(BigDecimal.class).single();
+    }
+
     private static Map<String, Object> row(Map<String, Map<String, Object>> rows, Map<String, Object> l) {
         String key = l.get("wbsId") + "|" + l.get("costElement");
         return rows.computeIfAbsent(key, k -> new LinkedHashMap<>(Map.of("wbsId", l.get("wbsId"), "costElement",
                 l.get("costElement"))));
     }
 
+    /** The project row (404 otherwise). */
+    Map<String, Object> projectRow(String projectId) {
+        return projects.project(projectId, false);
+    }
+
     // ---- helpers ------------------------------------------------------------------------------------------------------
 
-    private Map<String, Object> capturable(String projectId) {
+    Map<String, Object> capturable(String projectId) {
         Map<String, Object> p = projects.project(projectId, true);
         if (!CAPTURE_STATUSES.contains(p.get("status"))) {
             throw ApiException.badRequest("Cost can only be captured on an active project");
@@ -488,7 +709,7 @@ public class ProjectCostService {
         return p;
     }
 
-    private Map<String, Object> costableWbs(String projectId, String wbsId) {
+    Map<String, Object> costableWbs(String projectId, String wbsId) {
         Map<String, Object> w = projects.wbs(projectId, wbsId);
         if (!Boolean.TRUE.equals(w.get("isCostable"))) {
             throw ApiException.badRequest("WBS element " + w.get("code") + " does not accept cost");
@@ -496,7 +717,7 @@ public class ProjectCostService {
         return w;
     }
 
-    private String site(String projectId, String siteId) {
+    String site(String projectId, String siteId) {
         if (blank(siteId) == null) {
             return null;
         }
@@ -507,17 +728,17 @@ public class ProjectCostService {
         return siteId;
     }
 
-    private Line debit(Map<String, Object> p, Map<String, Object> w, String siteId, BigDecimal amount, String text) {
-        return new Line(wipAccount(), JsNumbers.dec(amount), null, (String) p.get("customerId"), text, branch(p),
+    Line debit(Map<String, Object> p, Map<String, Object> w, String siteId, BigDecimal amount, String text) {
+        return new Line(costAccount(p), JsNumbers.dec(amount), null, (String) p.get("customerId"), text, branch(p),
                 (String) p.get("costCenterId"), Obj.of("projectId", p.get("id"), "wbsId", w.get("id"), "siteId",
                         siteId));
     }
 
-    private static String branch(Map<String, Object> p) {
+    static String branch(Map<String, Object> p) {
         return (String) p.get("branchId");
     }
 
-    private String post(List<Line> lines, String text, Instant date, String sourceType, String sourceId,
+    String post(List<Line> lines, String text, Instant date, String sourceType, String sourceId,
             Map<String, Object> p) {
         if (lines.isEmpty()) {
             return null;
@@ -527,7 +748,7 @@ public class ProjectCostService {
         return je == null ? null : (String) je.get("id");
     }
 
-    private void insert(String id, String projectId, String wbsId, String siteId, String element, String sourceType,
+    void insert(String id, String projectId, String wbsId, String siteId, String element, String sourceType,
             String sourceId, String sourceLineId, Instant date, BigDecimal qty, BigDecimal rate, BigDecimal amount,
             boolean exclude, String creditAccount, String je, String description) {
         jdbc.sql("INSERT INTO \"ProjectCostLine\" (id, \"organizationId\", \"projectId\", \"wbsId\", \"siteId\","
@@ -540,7 +761,7 @@ public class ProjectCostService {
                 .update();
     }
 
-    private static Instant instant(String d) {
+    static Instant instant(String d) {
         String v = day(d);
         return v == null ? Instant.now() : LocalDate.parse(v).atStartOfDay(ZoneOffset.UTC).toInstant();
     }

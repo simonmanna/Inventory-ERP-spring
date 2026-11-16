@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ChevronRight, ArrowLeft, Users, Building2, Mail, Phone, Pencil, Save, SlidersHorizontal, Landmark,
-  MapPin, FileText, DollarSign, ShoppingCart, BookOpen, Activity, Receipt, Handshake,
+  MapPin, FileText, DollarSign, ShoppingCart, BookOpen, Activity, Receipt, Handshake, ShieldCheck,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Input } from '@/components/ui/input';
@@ -17,9 +17,10 @@ import {
 import { money, date, dateTime } from '@/lib/format';
 import { api } from '@/lib/api';
 import type { PaginatedResult } from '@erp/shared';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CustomFieldsPanel } from '@/features/customization/CustomFieldInputs';
 import { useAuthStore } from '@/stores/auth.store';
+import { SupplierComplianceTab } from '@/pages/projects/compliance/ComplianceUi';
 import {
   usePartner, useCustomerStatement, useUpdatePartner, useAddContact, useUpdateContact, useDeleteContact,
   usePartnerProfile, useUpdatePartnerProfile, EMPTY_PROFILE, type Partner, type PartnerContact, type PartnerProfile,
@@ -836,7 +837,9 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
   const updatePartner = useUpdatePartner();
   const [editing, setEditing] = useState(false);
   const [general, setGeneral] = useState<GeneralValues>(EMPTY_GENERAL);
-  const [tab, setTab] = useState('overview');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') ?? 'overview');
+  const canCompliance = hasPermission(PERMISSIONS.compliance.read);
 
   if (isLoading) {
     return (
@@ -909,6 +912,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
     tabs.push({ value: 'purchase-orders', label: tx('Purchases'), icon: ShoppingCart });
     tabs.push({ value: 'ledger', label: tx('Ledger'), icon: BookOpen });
   }
+  if (!isCustomer && canCompliance) tabs.push({ value: 'compliance', label: tx('Compliance'), icon: ShieldCheck });
 
   return (
     <div className="space-y-5 px-2 md:px-4 py-3 mx-auto">
@@ -1048,6 +1052,11 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
             <TabsContent value="ledger" className="mt-5">
               <TabLedger partnerId={partner.id} />
             </TabsContent>
+            {canCompliance && (
+              <TabsContent value="compliance" className="mt-5">
+                <SupplierComplianceTab partnerId={partner.id} />
+              </TabsContent>
+            )}
           </>
         )}
       </Tabs>

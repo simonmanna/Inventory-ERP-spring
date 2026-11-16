@@ -622,6 +622,21 @@ public class InvoiceService {
     }
 
     /**
+     * Tag a sales invoice with the customer site it was delivered to and that site's project (ADR-S075); stored in the
+     * document's {@code data} as {@code customerSiteId} / {@code projectId}. A null site leaves the document unchanged.
+     */
+    @Transactional
+    public void setSiteReference(String id, String customerSiteId, String projectId) {
+        if (customerSiteId == null) {
+            return;
+        }
+        jdbc.sql("UPDATE \"Document\" SET data = COALESCE(data, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object("
+                        + "'customerSiteId', ?::text, 'projectId', ?::text)), \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                        + " \"organizationId\" = ?")
+                .params(customerSiteId, projectId, id, org()).update();
+    }
+
+    /**
      * Mark a <b>draft</b> sales invoice whose goods leave the yard through another module's delivery (fleet 1.3
      * dispatch issues the stock per load): posting it then skips the automatic stock issue of its tracked lines, so the
      * goods are issued exactly once. {@code deliveryReference} null clears the mark. Additive (ADR-S009 §2): invoices

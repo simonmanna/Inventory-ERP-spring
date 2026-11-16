@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.projects.web.CapitalProjectController;
 import com.inventoryerp.projects.web.ContractController;
+import com.inventoryerp.projects.web.ContractorController;
+import com.inventoryerp.projects.web.ProjectBondController;
 import com.inventoryerp.projects.web.ProjectController;
 import com.inventoryerp.projects.web.ProjectTaskController;
 import com.inventoryerp.projects.web.ProjectTimesheetController;
 import com.inventoryerp.projects.web.ProjectWorkspaceController;
+import com.inventoryerp.projects.web.SubcontractComplianceController;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -26,7 +30,7 @@ import org.springframework.web.method.HandlerMethod;
 import tools.jackson.databind.JsonNode;
 
 /**
- * Projects authorization beyond the "no permission at all" matrix of the scenario ITs: every route of the five project
+ * Projects authorization beyond the "no permission at all" matrix of the scenario ITs: every route of the eight project
  * controllers is denied to a user holding every other project-family permission (so the families do not leak into each
  * other — e.g. {@code project_task:*} never opens job costing, {@code contract:manage} never approves), and is let
  * through the permission guard for a user holding exactly the required permission. Plus the in-service rules that
@@ -35,13 +39,17 @@ import tools.jackson.databind.JsonNode;
 class ProjectAuthorizationIT extends ApiTestSupport {
 
     static final List<Class<?>> CONTROLLERS = List.of(ProjectController.class, ContractController.class,
-            ProjectWorkspaceController.class, ProjectTaskController.class, ProjectTimesheetController.class);
+            ProjectWorkspaceController.class, ProjectTaskController.class, ProjectTimesheetController.class,
+            ContractorController.class, ProjectBondController.class, SubcontractComplianceController.class,
+            CapitalProjectController.class);
 
     static final Set<String> FAMILY = new LinkedHashSet<>(List.of(Permissions.PROJECT__READ, Permissions.PROJECT__MANAGE,
             Permissions.PROJECT__POST, Permissions.CONTRACT__READ, Permissions.CONTRACT__MANAGE,
             Permissions.CONTRACT__POST, Permissions.CONTRACT__APPROVE, Permissions.PROJECT_TASK__READ,
             Permissions.PROJECT_TASK__WRITE, Permissions.PROJECT_TASK__MANAGE, Permissions.PROJECT_TIMESHEET__LOG,
-            Permissions.PROJECT_TIMESHEET__MANAGE, Permissions.PROJECT_REPORT__READ));
+            Permissions.PROJECT_TIMESHEET__MANAGE, Permissions.PROJECT_REPORT__READ, Permissions.PROJECT__RATE_OVERRIDE,
+            Permissions.BOND__READ, Permissions.BOND__MANAGE, Permissions.BOND__POST, Permissions.COMPLIANCE__READ,
+            Permissions.COMPLIANCE__MANAGE, Permissions.COMPLIANCE__OVERRIDE));
 
     final Map<Set<String>, String> tokens = new HashMap<>();
 
@@ -97,10 +105,10 @@ class ProjectAuthorizationIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("PA-1: every project route — denied with all other project-family permissions, allowed with its own")
+    @DisplayName("PA-1: every project route (incl. ADR-S074 bonds, compliance, CIP) — denied with all other project-family permissions, allowed with its own")
     void crossFamilyMatrix() {
         List<Route> routes = routes();
-        assertThat(routes).hasSize(116);
+        assertThat(routes).hasSize(167);
         List<String> failures = new ArrayList<>();
         for (Route r : routes) {
             Set<String> others = new TreeSet<>(FAMILY);

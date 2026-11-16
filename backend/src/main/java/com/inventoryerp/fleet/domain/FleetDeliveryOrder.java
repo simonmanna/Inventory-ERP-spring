@@ -36,6 +36,10 @@ public class FleetDeliveryOrder {
     @Column(name = "siteId")
     private String siteId;
 
+    /** The customer's job served (from the site's project link, ADR-S075). */
+    @Column(name = "projectId")
+    private String projectId;
+
     @Column(name = "sourceType", nullable = false)
     private String sourceType;
 

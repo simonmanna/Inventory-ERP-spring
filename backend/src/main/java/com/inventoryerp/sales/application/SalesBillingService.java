@@ -268,8 +268,8 @@ public class SalesBillingService {
     }
 
     private Map<String, Object> create(Map<String, Object> o, String issue, List<LineInput> lines, String notes) {
-        Map<String, Object> site = o.get("siteId") == null ? null : db.row("SELECT name, address, city FROM"
-                + " \"FleetCustomerSite\" WHERE id = ?", o.get("siteId"));
+        Map<String, Object> site = o.get("siteId") == null ? null : db.row("SELECT name, address, city, \"projectId\""
+                + " FROM \"FleetCustomerSite\" WHERE id = ?", o.get("siteId"));
         String address = site != null ? String.join(", ", java.util.stream.Stream.of(site.get("name"), site.get(
                 "address"), site.get("city")).filter(x -> x != null).map(Object::toString).toList())
                 : str(o.get("deliveryAddress"));
@@ -278,9 +278,14 @@ public class SalesBillingService {
                 + " WHERE c.code = ? AND c.code <> g.\"currencyCode\"", org(), o.get("currencyCode"));
         String currencyId = currency == null ? null : str(currency.get("id"));
         BigDecimal rate = currencyId == null ? null : dec(o.get("exchangeRate"));
-        return invoices.createCopied(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
-                null, null, str(o.get("ownerId")), null, address, str(o.get("incoterm")), null, str(o.get("number")),
-                currencyId, rate, str(o.get("customerRef")), notes, lines));
+        Map<String, Object> inv = invoices.createCopied(new InvoiceInput(str(o.get("partnerId")), issue, null,
+                str(o.get("paymentTermId")), null, null, null, str(o.get("ownerId")), null, address,
+                str(o.get("incoterm")), null, str(o.get("number")), currencyId, rate, str(o.get("customerRef")), notes,
+                lines));
+        // ADR-S075: an invoice to a customer site carries the site and its project.
+        invoices.setSiteReference(str(inv.get("id")), str(o.get("siteId")), site == null ? null
+                : str(site.get("projectId")));
+        return inv;
     }
 
     private void link(String orderId, String lineId, String documentId, String kind, BigDecimal qty, BigDecimal amount,

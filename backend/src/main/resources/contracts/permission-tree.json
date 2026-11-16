@@ -969,13 +969,24 @@
   "project": {
     "read": "project:read",
     "manage": "project:manage",
-    "post": "project:post"
+    "post": "project:post",
+    "rateOverride": "project:rate_override"
   },
   "contract": {
     "read": "contract:read",
     "manage": "contract:manage",
     "post": "contract:post",
     "approve": "contract:approve"
+  },
+  "bond": {
+    "read": "bond:read",
+    "manage": "bond:manage",
+    "post": "bond:post"
+  },
+  "compliance": {
+    "read": "compliance:read",
+    "manage": "compliance:manage",
+    "override": "compliance:override"
   },
   "profitability": {
     "read": "profitability:read",

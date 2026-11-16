@@ -1552,7 +1552,7 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 
 ## Projects — job costing, contracts and project management (ADR-S038 / S039 / S062, extension: no Nest counterpart)
 
-[Spec](spec/projects.md). 116 routes: job costing (`ProjectController`, 27), contracts (`ContractController`, 32), project management workspace, tasks and timesheets (`ProjectWorkspaceController`, `ProjectTaskController`, `ProjectTimesheetController`, 57). Migrations V231, V232, V430. Tests: `ProjectCostScenarioIT`, `ContractRevenueScenarioIT`, `ProjectStructureIT`, `ProjectManagementIT`, `ProjectAuthorizationIT`, `ProjectTenantIsolationIT`, `ProjectTaskBehaviourIT`, `ProjectWorkspaceBehaviourIT`. Web: `/projects/*` with Board, List, Overview, Timeline, Milestones, Status updates, Discussion, Costing, Contract and Settings tabs.
+[Spec](spec/projects.md). 141 routes here (167 in the project family with the 26 ADR-S074 routes listed under "Bonds, subcontractor compliance and CIP capitalisation" below): job costing (`ProjectController`, 27), contracts (`ContractController`, 32), contractor billing / commitments / plant / overhead (`ContractorController`, 25, ADR-S075, V507–V509), project management workspace, tasks and timesheets (`ProjectWorkspaceController`, `ProjectTaskController`, `ProjectTimesheetController`, 57). Migrations V231, V232, V430. Tests: `ProjectCostScenarioIT`, `ContractRevenueScenarioIT`, `ProjectStructureIT`, `ProjectManagementIT`, `ProjectAuthorizationIT`, `ProjectTenantIsolationIT`, `ProjectTaskBehaviourIT`, `ProjectWorkspaceBehaviourIT`, `ContractorScenarioIT`. Web: `/projects/*` with Board, List, Overview, Timeline, Milestones, Status updates, Discussion, Costing, Contract and Settings tabs.
 
 - [x] GET /api/v1/projects — ProjectController.list
 - [x] POST /api/v1/projects — ProjectController.create
@@ -1613,6 +1613,31 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/projects/onerous-assessments/:assessmentId/reject — ContractController.rejectOnerous
 - [x] POST /api/v1/projects/onerous-assessments/:assessmentId/post — ContractController.postOnerous
 - [x] GET /api/v1/projects/:id/contract-position — ContractController.position
+- [x] GET /api/v1/projects/:id/sov — ContractorController.schedule
+- [x] POST /api/v1/projects/:id/sov — ContractorController.addSovLine
+- [x] PATCH /api/v1/projects/sov/:lineId — ContractorController.updateSovLine
+- [x] DELETE /api/v1/projects/sov/:lineId — ContractorController.deleteSovLine
+- [x] GET /api/v1/projects/claims/:claimId/payment-application — ContractorController.paymentApplication
+- [x] GET /api/v1/projects/claims/:claimId/payment-application/pdf — ContractorController.paymentApplicationPdf
+- [x] POST /api/v1/projects/subcontracts/:subcontractId/variations — ContractorController.subcontractVariation
+- [x] POST /api/v1/projects/subcontract-variations/:variationId/approve — ContractorController.approveSubcontractVariation
+- [x] POST /api/v1/projects/subcontract-variations/:variationId/reject — ContractorController.rejectSubcontractVariation
+- [x] GET /api/v1/projects/:id/commitments — ContractorController.commitments
+- [x] GET /api/v1/projects/plant-rates — ContractorController.plantRates
+- [x] POST /api/v1/projects/plant-rates — ContractorController.createPlantRate
+- [x] PATCH /api/v1/projects/plant-rates/:rateId — ContractorController.updatePlantRate
+- [x] DELETE /api/v1/projects/plant-rates/:rateId — ContractorController.deactivatePlantRate
+- [x] GET /api/v1/projects/:id/costs/fleet — ContractorController.fleetCandidates
+- [x] POST /api/v1/projects/:id/costs/fleet — ContractorController.chargeFleet
+- [x] GET /api/v1/projects/overhead-rules — ContractorController.overheadRules
+- [x] POST /api/v1/projects/overhead-rules — ContractorController.createOverheadRule
+- [x] PATCH /api/v1/projects/overhead-rules/:ruleId — ContractorController.updateOverheadRule
+- [x] DELETE /api/v1/projects/overhead-rules/:ruleId — ContractorController.deleteOverheadRule
+- [x] GET /api/v1/projects/:id/overhead-runs — ContractorController.overheadRuns
+- [x] GET /api/v1/projects/:id/overhead-runs/preview — ContractorController.previewOverhead
+- [x] POST /api/v1/projects/:id/overhead-runs — ContractorController.runOverhead
+- [x] POST /api/v1/projects/overhead-runs — ContractorController.runOverheadAll
+- [x] POST /api/v1/projects/overhead-runs/:runId/reverse — ContractorController.reverseOverhead
 - [x] GET /api/v1/projects/workspace — ProjectWorkspaceController.board
 - [x] POST /api/v1/projects/workspace — ProjectWorkspaceController.create
 - [x] POST /api/v1/projects/from-sales-order — ProjectWorkspaceController.fromSalesOrder
@@ -1744,3 +1769,7 @@ channels per event. The actor is never told.
 
 - [x] ADR-S071 tax groups, multi-tax lines, withholding (bills, receipts, certificates: GET/PATCH /api/v1/withholding-certificates, GET /api/v1/withholding-certificates/report) and reverse-charge VAT — WithholdingCertificateController, TaxController
 - [x] ADR-S073 GL automation (extension): 28 routes — recurring entries, deferral schedules, bank matching rules + grouped/partial matches, asset impairment (V501–V503); tests `GlAutomationIT`, `GlSchedulesTest`.
+
+## Bonds, subcontractor compliance and CIP capitalisation (ADR-S074, extension: no Nest counterpart)
+
+[Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).

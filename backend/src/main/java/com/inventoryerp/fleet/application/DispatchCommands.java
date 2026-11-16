@@ -46,10 +46,12 @@ public final class DispatchCommands {
             @Size(max = 2000) String accessNotes,
             @Size(max = 80) String zone,
             @DecimalMin("0") @Digits(integer = 9, fraction = 1) BigDecimal distanceKm,
-            @Size(max = 2000) String notes) {}
+            @Size(max = 2000) String notes,
+            // ADR-S075: the customer's job (project) this site belongs to.
+            String projectId) {}
 
     public static final List<String> SITE_CLEARABLE = List.of("address", "city", "latitude", "longitude",
-            "contactName", "contactPhone", "accessNotes", "zone", "distanceKm", "notes");
+            "contactName", "contactPhone", "accessNotes", "zone", "distanceKm", "notes", "projectId");
 
     public record SitePatch(
             @Size(max = 160) String name,
@@ -65,7 +67,8 @@ public final class DispatchCommands {
             Boolean isActive,
             @Size(max = 2000) String notes,
             List<@OneOf({"address", "city", "latitude", "longitude", "contactName", "contactPhone", "accessNotes",
-                "zone", "distanceKm", "notes"}) String> clear) {}
+                "zone", "distanceKm", "notes", "projectId"}) String> clear,
+            String projectId) {}
 
     // ------------------------------------------------------------------ delivery orders
 
