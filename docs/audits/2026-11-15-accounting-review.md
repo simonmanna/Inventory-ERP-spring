@@ -54,5 +54,27 @@ currency, back-dated withdrawal funds check, the CSV "1.500" thousands heuristic
 
 ## Verification
 
-See the PR description / commit message for the exact test classes run. The full `./gradlew build` was not run (CI runs
-it on push).
+Ran on fresh Testcontainers databases (`./gradlew test --tests …`), about 400 tests in 75 classes:
+
+- unit: AccountingSpecsTest, InventoryUnitTest, PosUnitTest;
+- accounting: AccountingIT, Acc0 FinancialReporting / Fx / Reversal / Idempotency / ArAp / Lifecycle / FixedAsset /
+  BankReconciliation / MoneyPrecision / TenantIsolation, BankReconciliationIT, Acc7TaxIT, Acc71TaxIT,
+  AccountingExtensionsIT, FiscalYearIT, PeriodCloseChecklistIT, FinancialStatementsIT, FinancialReportIntegrityIT,
+  AccountingDayIT, FixedAssetIT, CostCenterAccountingIT, AnalyticDimensionIT, IntercompanyIT, ReportingIT,
+  ReportEngineIT, LabelsAndBankFilesIT, ProfitabilityReconciliationIT, AllocationCycleIT, TreasurySpecsIT;
+- sub-ledgers: SharedFxIT, InvoicingIT, VendorBillListIT, SupplierPaymentScheduleIT, Procurement IT / Integrity /
+  Control / Controls / SupplierPolicy, ReceivingQualityIT, LandedCostVoucherIT, SourceToPayEndToEndIT, POS Flows 1–4 /
+  Money / Sale / StockPosting / VariantIntegrity / LakeviewSim, SalesReturnsIT, IntegrityI2IT, SalesReturnIT,
+  SalesReturnFlowIT, SalesBillingIT, CashSaleIT, SalesReportCenterIT, SalesStabilizationIT, Expense Accrual / Claims /
+  Controls / Treasury, ProjectCostScenarioIT, AdvancedCostingIT, FleetFuelIT, QuarryIT, GetRouteSweepIT.
+
+All pass except four failures that also fail on the base commit `3d493469` (checked by running them there):
+`ExpenseTreasuryIT` petty cash (line 120), `GetRouteSweepIT` "sales" and "manufacturing", `SalesAgreementIT`
+commissions (line 182).
+
+Tests changed with the behaviour: AccountingIT (reopen → close again), AccountingDayIT (inclusive `to`), Acc0FxIT
+(revaluation 200), AnalyticDimensionIT (closing line excluded), ProcurementIT (RTV variance to PPV), ReportingIT
+(revaluation checked per account), and base-amount sums in the AccountingFixtures / ProcurementIntegrityIT /
+SalesLedgerAssertions helpers (transaction amounts do not add up across currencies).
+
+The full `./gradlew build` was not run (CI runs it on push).
