@@ -173,10 +173,10 @@ class ContractorScenarioIT extends ApiTestSupport {
         assertThat(num(s.get("currentPaymentDue"))).isEqualByComparingTo("6350");
         assertThat(app.get("lines").size()).isEqualTo(3);
         assertThat(num(app.get("totals").get("totalCompleted"))).isEqualByComparingTo("48000");
-        Res pdf = call("GET", "/projects/claims/" + c2id + "/payment-application/pdf", null, adminToken);
-        assertThat(pdf.status()).isEqualTo(200);
-        assertThat(pdf.raw().headers().firstValue("Content-Type").orElse("")).contains("application/pdf");
-        assertThat(pdf.raw().body()).startsWith("%PDF");
+        var pdf = downloadBytes("/projects/claims/" + c2id + "/payment-application/pdf");
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(pdf.headers().firstValue("Content-Type").orElse("")).contains("application/pdf");
+        assertThat(new String(pdf.body(), 0, 4, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF");
 
         // a lump-sum claim still works next to it and is shown as one line
         JsonNode c3 = ok(201, "POST", "/projects/" + pid + "/claims", Map.of("cumulativeCertified", 50000));
@@ -252,7 +252,7 @@ class ContractorScenarioIT extends ApiTestSupport {
         assertThat(call("POST", "/projects/plant-rates", Map.of("equipmentType", "code", "equipmentId", crane, "unit",
                 "day", "rate", 1, "validFrom", "2020-01-01"), adminToken).status()).isEqualTo(409);
         Res charge = post("/projects/" + pid + "/costs/equipment", Map.of("wbsId", w, "plantId", crane, "quantity", 2));
-        assertThat(charge.status()).as(charge.raw().body()).isEqualTo(201);
+        assertThat(charge.status()).as(charge.raw().body()).isEqualTo(200); // idempotent route + key → 200 (Nest parity)
         assertThat(num(charge.body().get("amount"))).isEqualByComparingTo("500000");
         String je = charge.body().get("journalEntryId").asString();
         assertThat(entry(je, "1460")).isEqualByComparingTo("500000");
@@ -262,7 +262,7 @@ class ContractorScenarioIT extends ApiTestSupport {
                 "quantity", 1, "ratePerHour", 1000), key(poster));
         assertThat(manual.status()).isEqualTo(403);
         assertThat(post("/projects/" + pid + "/costs/equipment", Map.of("wbsId", w, "plantId", crane, "quantity", 1,
-                "ratePerHour", 1000)).status()).as("admin holds project:rate_override").isEqualTo(201);
+                "ratePerHour", 1000)).status()).as("admin holds project:rate_override").isEqualTo(200);
         assertThat(post("/projects/" + pid + "/costs/equipment", Map.of("wbsId", w, "plantId", "NOPE-" + sfx,
                 "quantity", 1)).status()).isEqualTo(400);
         ok(200, "DELETE", "/projects/plant-rates/" + rate, null);
@@ -298,7 +298,7 @@ class ContractorScenarioIT extends ApiTestSupport {
         JsonNode cands = ok(200, "GET", "/projects/" + pid + "/costs/fleet", null);
         assertThat(cands.get("trips").toString()).contains(trip);
         Res tc = post("/projects/" + pid + "/costs/fleet", Map.of("sourceType", "trip", "sourceId", trip, "wbsId", w));
-        assertThat(tc.status()).as(tc.raw().body()).isEqualTo(201);
+        assertThat(tc.status()).as(tc.raw().body()).isEqualTo(200);
         assertThat(num(tc.body().get("amount"))).isEqualByComparingTo("60000"); // 40 km × 1 500
         assertThat(tc.body().get("basis").asString()).isEqualTo("plant_rate_km");
         assertThat(post("/projects/" + pid + "/costs/fleet", Map.of("sourceType", "trip", "sourceId", trip, "wbsId",
@@ -316,13 +316,13 @@ class ContractorScenarioIT extends ApiTestSupport {
         jdbc.sql("UPDATE \"FleetWorkOrder\" SET status = 'completed', \"completedAt\" = now() WHERE id = ?").param(wo)
                 .update();
         Res wc = post("/projects/" + pid + "/costs/fleet", Map.of("sourceType", "work_order", "sourceId", wo));
-        assertThat(wc.status()).as(wc.raw().body()).isEqualTo(201);
+        assertThat(wc.status()).as(wc.raw().body()).isEqualTo(200);
         assertThat(num(wc.body().get("amount"))).isEqualByComparingTo("750");
         // reversing the charge frees the trip for a new charge
         assertThat(post("/projects/costs/" + tc.body().get("id").asString() + "/reverse", null).status())
                 .isEqualTo(200);
         assertThat(post("/projects/" + pid + "/costs/fleet", Map.of("sourceType", "trip", "sourceId", trip, "wbsId",
-                w)).status()).isEqualTo(201);
+                w)).status()).isEqualTo(200);
         assertWipTied(pid);
     }
 
