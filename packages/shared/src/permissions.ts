@@ -218,6 +218,16 @@ export const PERMISSIONS = {
     post: 'journal_entry:post',
     reverse: 'journal_entry:reverse',
   },
+  /** ADR-S073: recurring journal templates (generate entries on a schedule). */
+  recurringEntry: {
+    read: 'recurring_entry:read',
+    manage: 'recurring_entry:manage',
+  },
+  /** ADR-S073: deferred revenue / prepaid expense schedules. */
+  deferral: {
+    read: 'deferral:read',
+    manage: 'deferral:manage',
+  },
   accountMapping: {
     read: 'account_mapping:read',
     update: 'account_mapping:update',
@@ -671,6 +681,8 @@ export const PERMISSIONS = {
     dispose: 'fixed_asset:dispose',
     transfer: 'fixed_asset:transfer',
     approveTransfer: 'fixed_asset:approve_transfer',
+    /** ADR-S073: record an impairment loss or its reversal (IAS 36). */
+    impair: 'fixed_asset:impair',
   },
   assetCategory: {
     create: 'asset_category:create',

@@ -51,6 +51,7 @@ public class AssetDepreciationService {
     private final PostingService posting;
     private final AccountDeterminationService determination;
     private final TransactionTemplate tx;
+    private AssetImpairmentService impairments;
 
     public AssetDepreciationService(EntityManager em, EventBus events, AssetService assets, PostingService posting,
             AccountDeterminationService determination, PlatformTransactionManager txm) {
@@ -60,6 +61,12 @@ public class AssetDepreciationService {
         this.posting = posting;
         this.determination = determination;
         this.tx = new TransactionTemplate(txm);
+    }
+
+    /** ADR-S073: impaired assets depreciate from their carrying amount; optional for hand-built instances. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setImpairments(AssetImpairmentService impairments) {
+        this.impairments = impairments;
     }
 
     @Transactional(readOnly = true)
@@ -130,8 +137,13 @@ public class AssetDepreciationService {
                 ? category.getDepreciationMethod().value() : "straight_line";
         BigDecimal accum = lastDepr != null ? lastDepr.getAccumulatedDepr() : BigDecimal.ZERO;
         BigDecimal book = lastDepr != null ? lastDepr.getBookValue() : cost.subtract(accum);
-        DepreciationCalculator.Result r = DepreciationCalculator.calculate(method,
-                new DepreciationCalculator.Input(cost, salvage, usefulLife, book, accum));
+        AssetImpairmentService.Base impaired = impairments == null ? null : impairments.latestBase(assetId);
+        DepreciationCalculator.Result r = impaired == null
+                ? DepreciationCalculator.calculate(method,
+                        new DepreciationCalculator.Input(cost, salvage, usefulLife, book, accum))
+                : DepreciationCalculator.calculateImpaired(method, salvage, usefulLife,
+                        asset.getCurrentValue() != null ? asset.getCurrentValue() : book, accum,
+                        impaired.carryingAfter(), impaired.remainingLifeMonths());
         if (r.depreciationAmount().signum() <= 0) {
             return null;
         }

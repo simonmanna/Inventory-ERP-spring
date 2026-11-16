@@ -1596,3 +1596,4 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+- [x] ADR-S073 GL automation (extension): 28 routes — recurring entries, deferral schedules, bank matching rules + grouped/partial matches, asset impairment (V501–V503); tests `GlAutomationIT`, `GlSchedulesTest`.

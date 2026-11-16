@@ -129,10 +129,18 @@ public class AssetLedgerService {
         BigDecimal accumulated = jdbc.sql("SELECT coalesce(sum(\"depreciationAmount\"), 0) FROM \"AssetDepreciation\""
                 + " WHERE \"assetId\" = ? AND \"isPosted\" = true").param(asset.getId()).query(BigDecimal.class).single();
         BigDecimal received = nz(proceeds);
-        BigDecimal gain = received.subtract(cost.subtract(accumulated));
+        // ADR-S073: impairment still on the books (losses less reversals) is cleared with the asset.
+        BigDecimal impaired = jdbc.sql("SELECT coalesce(sum(CASE WHEN kind = 'impairment' THEN amount ELSE -amount END),"
+                + " 0) FROM \"AssetImpairment\" WHERE \"organizationId\" = ? AND \"assetId\" = ?")
+                .params(TenantContext.organizationId(), asset.getId()).query(BigDecimal.class).single();
+        BigDecimal gain = received.subtract(cost.subtract(accumulated).subtract(impaired));
         List<Line> lines = new ArrayList<>();
         if (accumulated.signum() > 0) {
             lines.add(Line.debit(accumAcct, JsNumbers.dec(accumulated), "Accumulated depreciation removed"));
+        }
+        if (impaired.signum() > 0) {
+            lines.add(Line.debit(determination.mapped("accumulated_impairment"), JsNumbers.dec(impaired),
+                    "Accumulated impairment removed"));
         }
         if (received.signum() > 0) {
             lines.add(Line.debit(proceedsAccountId != null ? proceedsAccountId : determination.mapped("default_cash"),

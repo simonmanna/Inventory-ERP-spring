@@ -516,6 +516,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar, group: 'Customers' },
       { to: '/payment-schedule', label: tx('Payment Schedule'), icon: CalendarClock, permission: PERMISSIONS.expense.read, group: 'Vendors' },
       { to: '/journal-entries', label: tx('Journal Entries'), icon: ScrollText, permission: PERMISSIONS.journalEntry.read, group: 'Entries' },
+      { to: '/recurring-entries', label: tx('Recurring Entries'), icon: CalendarClock, permission: PERMISSIONS.recurringEntry.read, group: 'Entries' },
+      { to: '/deferrals', label: tx('Deferrals'), icon: CalendarClock, permission: PERMISSIONS.deferral.read, group: 'Entries' },
       { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read, group: 'Entries' },
       { to: '/fiscal-years', label: tx('Fiscal Years'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },

@@ -18,6 +18,7 @@ import { useAsset, useAllAssetCategories, useAssetAssignments, useCreateAssignme
 import type { Asset } from '@/features/fixed-asset/types';
 import { tx } from '@/lib/i18n/tx';
 import { PlantUnitLink } from './PlantUnitLink';
+import { ImpairmentTab } from './ImpairmentTab';
 
 const statusColor: Record<string, string> = { active: 'bg-green-100 text-green-800', under_maintenance: 'bg-yellow-100 text-yellow-800', disposed: 'bg-red-100 text-red-800', lost_stolen: 'bg-red-100 text-red-800', in_repair: 'bg-orange-100 text-orange-800', reserved: 'bg-blue-100 text-blue-800' };
 
@@ -29,6 +30,7 @@ export function AssetDetailPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canEdit = hasPermission(PERMISSIONS.fixedAsset.update);
   const canDispose = hasPermission(PERMISSIONS.fixedAsset.dispose);
+  const canImpair = hasPermission(PERMISSIONS.fixedAsset.impair);
   const [tab, setTab] = useState('overview');
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">{tx('Loading...')}</div>;
@@ -54,6 +56,7 @@ export function AssetDetailPage() {
           <TabsTrigger value="depreciation">{tx('Depreciation')}</TabsTrigger>
           <TabsTrigger value="maintenance">{tx('Maintenance')}</TabsTrigger>
           <TabsTrigger value="warranty">{tx('Warranty')}</TabsTrigger>
+          <TabsTrigger value="impairment">{tx('Impairment')}</TabsTrigger>
           <TabsTrigger value="disposal">{tx('Disposal')}</TabsTrigger>
         </TabsList>
 
@@ -66,6 +69,7 @@ export function AssetDetailPage() {
         <TabsContent value="depreciation"><DepreciationTab assetId={asset.id} /></TabsContent>
         <TabsContent value="maintenance"><MaintenanceTab assetId={asset.id} canCreate={canEdit} /></TabsContent>
         <TabsContent value="warranty"><WarrantyTab assetId={asset.id} canCreate={canEdit} /></TabsContent>
+        <TabsContent value="impairment"><ImpairmentTab assetId={asset.id} canImpair={canImpair} disposed={asset.status === 'disposed'} /></TabsContent>
         <TabsContent value="disposal"><DisposalTab assetId={asset.id} assetName={asset.name} canDispose={canDispose} /></TabsContent>
       </Tabs>
     </div>
