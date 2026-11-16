@@ -212,7 +212,38 @@ public final class DispatchCommands {
             @NotEmpty @Valid List<PodLineInput> lines,
             @Size(max = 1_500_000) String signature,
             @DecimalMin("0") @DecimalMax("9999999999999.9") @Digits(integer = 13, fraction = 1) BigDecimal endOdometer,
-            @Size(max = 2000) String notes) {}
+            @Size(max = 2000) String notes,
+            @Valid CustomerWeightInput customerWeight) {
+
+        /** Without customer weight evidence (callers before Phase A A2). */
+        public PodInput(String receiverName, String receiverPhone, Instant receivedAt, BigDecimal latitude,
+                BigDecimal longitude, List<PodLineInput> lines, String signature, BigDecimal endOdometer,
+                String notes) {
+            this(receiverName, receiverPhone, receivedAt, latitude, longitude, lines, signature, endOdometer, notes,
+                    null);
+        }
+    }
+
+    /**
+     * Phase A A2: the customer's weighing of the truck (plan §7). Give {@code netKg}, or {@code grossKg} and
+     * {@code tareKg}. {@code allocations} is the user-confirmed split of a disputed variance over the lines (needed
+     * for a multi-product truck or a line without a weight factor); omitted, a single weighable line is split
+     * automatically and anything else is only proposed.
+     */
+    public record CustomerWeightInput(
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal grossKg,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal tareKg,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal netKg,
+            @Size(max = 80) String ticketRef,
+            Instant weighedAt,
+            @Size(max = 2000) String notes,
+            @Size(max = 200) List<@Valid WeightShareInput> allocations) {}
+
+    /** One line's share of a disputed variance: quantity in the line's unit; {@code kg} only for a line without a factor. */
+    public record WeightShareInput(
+            @NotBlank String loadLineId,
+            @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal quantity,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal kg) {}
 
     public record CloseTripInput(
             @DecimalMin("0") @DecimalMax("9999999999999.9") @Digits(integer = 13, fraction = 1) BigDecimal endOdometer,

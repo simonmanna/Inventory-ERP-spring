@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { idem, readDataUrl, useDeliveryAction, type SalesDelivery } from '@/features/sales/delivery-api';
 import { Labeled } from './DeliveryEditorDialog';
 import { REASON_OPTIONS, fromLocalInput, n, qty, toLocalInput } from './delivery-ui';
+import { CustomerWeightFields, emptyWeightForm, uploadWeightEvidence, weightBody, type WeightForm } from './CustomerWeight';
 
 type Entry = { delivered: string; rejected: string; damaged: string; reason: string; notes: string };
 
@@ -32,6 +33,9 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
   const [remarks, setRemarks] = useState('');
   const [photos, setPhotos] = useState<Array<{ name: string; dataUrl: string }>>([]);
   const pad = useRef<SignaturePadHandle>(null);
+  const [weighOpen, setWeighOpen] = useState(false);
+  const [weight, setWeight] = useState<WeightForm>(() => emptyWeightForm());
+  const cw = weightBody(weight);
   const patch = (id: string, p: Partial<Entry>) => setE((x) => ({ ...x, [id]: { ...x[id], ...p } }));
 
   const rows = lines.map((l) => {
@@ -47,6 +51,7 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
   if (rows.some((r) => r.needsReason)) problems.push(tx('Give a reason for each shortage'));
   if (rows.some((r) => [r.x.delivered, r.x.rejected, r.x.damaged].some((v) => n(v) < 0))) problems.push(tx('Quantities must not be less than 0'));
   if (arrived && received && new Date(arrived) > new Date(received)) problems.push(tx('Arrival must be before the confirmation time'));
+  if (weighOpen) problems.push(...cw.problems);
 
   const confirm = useDeliveryAction(async () => {
     await api.post(`/sales/deliveries/${delivery.id}/confirm`, {
@@ -56,7 +61,9 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
         loadLineId: l.id, deliveredQty: n(x.delivered), rejectedQty: n(x.rejected), damagedQty: n(x.damaged),
         reason: x.reason || undefined, notes: x.notes || undefined,
       })),
+      customerWeight: weighOpen && cw.body ? cw.body : undefined,
     }, idem());
+    if (weighOpen && cw.body) await uploadWeightEvidence(delivery.id, weight);
     for (const p of photos) await api.post(`/sales/deliveries/${delivery.id}/photos`, { dataUrl: p.dataUrl, caption: p.name });
   }, tx('Delivery confirmed'));
 
@@ -135,6 +142,19 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="rounded-lg border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={weighOpen} onChange={(ev) => setWeighOpen(ev.target.checked)} />
+            {tx('The customer weighed the truck')}
+          </label>
+          {weighOpen && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-muted-foreground">{tx('Evidence only: the quarry ticket, stock and invoice do not change. Lighter by more than the tolerance raises a weight claim for approval; a multi-product truck asks you to confirm the split afterwards on the proof of delivery.')}</p>
+              <CustomerWeightFields form={weight} onChange={setWeight} />
+            </div>
+          )}
         </div>
 
         {problems.length > 0 && (

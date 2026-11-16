@@ -849,7 +849,7 @@ Status: **done** (Track C, 2026-10-29). Design: ADR-S009 §3 (tables), §6 (GL).
 `packages/shared/src/events.ts`): `fleet.trip.dispatched`, `fleet.trip.delivered`, `fleet.trip.closed`,
 `fleet.trip.returned`, `fleet.delivery.discrepancy_decided`.
 
-### Routes (1.3) — 55, all under `/api/v1`, `@RequiresModule("fleet")`, package `fleet.web.dispatch`
+### Routes (1.3) — 57, all under `/api/v1`, `@RequiresModule("fleet")`, package `fleet.web.dispatch`
 
 Idempotent (Idempotency-Key required, answer 200): trip dispatch, proof of delivery, return, discrepancy approve,
 delivery-order invoice — they move stock or raise accounting documents. Other POSTs answer 201.
@@ -884,6 +884,8 @@ delivery-order invoice — they move stock or raise accounting documents. Other 
 | POST | `/fleet/trips/{id}/depart` | `fleet_trip:dispatch` | → `in_transit` |
 | POST | `/fleet/trips/{id}/proof-of-delivery` | `fleet_trip:deliver` | `{receiverName, receiverPhone?, receivedAt?, latitude?, longitude?, signature (PNG / JPEG data URL)?, endOdometer?, lines[{loadLineId, deliveredQty, returnedQty?, reason?, notes?}]}`; Idempotency-Key |
 | POST | `/fleet/trips/{id}/pod-photo` | `fleet_trip:deliver` | multipart `file` (image), after the POD |
+| POST | `/fleet/trips/{id}/customer-weight` | `fleet_trip:deliver` | Phase A2: customer's weighing (gross / tare or net, ticket ref, allocations); Idempotency-Key required |
+| POST | `/fleet/trips/{id}/customer-weight-evidence` | `fleet_trip:deliver` | Phase A2: multipart `file` (image or PDF) of the customer's ticket |
 | POST | `/fleet/trips/{id}/close` | `fleet_trip:close` | `{endOdometer?, distanceKm?}` → distance + freight |
 | POST | `/fleet/trips/{id}/cancel` | `fleet_trip:cancel` | `{reason}`, before dispatch |
 | POST | `/fleet/trips/{id}/return` | `fleet_trip:close` | `{reason, reasonCode?}` whole load back; Idempotency-Key |
@@ -1020,6 +1022,17 @@ Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load f
 - Editing a draft source invoice after its DO exists does not re-sync the DO lines.
 - Transporter freight is computed on the trip; 1.9 freight bills post it (AP vendor bill + accrual, Dr 6460).
 - Load factors are a stop-gap until Phase 4 UoM / density work.
+
+### Customer weight evidence (Phase A2, V496)
+
+`POST /fleet/trips/{id}/customer-weight` (`fleet_trip:deliver`, Idempotency-Key required) and multipart
+`POST /fleet/trips/{id}/customer-weight-evidence` record the customer's weighing of a delivered or closed trip on its
+POD (`CustomerWeightEvidence`), the same use case as the Sales route. The tolerance is an investigation trigger, not
+a deduction: lighter beyond tolerance raises a pending **weight** discrepancy (new kind) for the full variance,
+split over the lines; heavier is flagged only. Weight claims never auto-approve, even when the workflow is inactive.
+A claim withdrawn by corrected evidence gets `withdrawnAt` and its approval request cancelled
+(`ApprovalsService.withdraw`). The ticket, stock and delivered quantities never change. Full rules:
+[sales.md, Phase A2](sales.md#customer-weight-evidence-on-the-proof-of-delivery-phase-a2-2026-11-16-v496).
 ## 1.4 Weighbridge — done (1.4a core + 1.4b dispatch wiring)
 
 Requirements §5.1, ADR-S009 §3 / §7. 1.4a = stations, devices + adapter SPI, stored tares, the ticket workflow with

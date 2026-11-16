@@ -158,6 +158,10 @@ public class FleetDeliveryNoteService {
                     : " (" + pod.get("receiverPhone") + ")") + " on " + dt(pod.get("receivedAt"))
                     + (pod.get("latitude") == null ? "" : " at GPS " + pod.get("latitude") + ", " + pod.get("longitude"))
                     + (pod.get("signatureFileId") == null ? "" : " — signed electronically"), f10));
+            String weight = customerWeightLine(pod);
+            if (weight != null) {
+                pdf.add(new Paragraph(weight, f10));
+            }
         } else {
             pdf.add(new Paragraph(" "));
             pdf.add(new Paragraph("Received in good order by: ______________________   Signature: ______________"
@@ -182,6 +186,28 @@ public class FleetDeliveryNoteService {
 
     private static String s(Object o) {
         return o == null ? "" : o.toString();
+    }
+
+    /**
+     * Phase A A2: "Customer weight 19 000 kg (ticket CW-7) · quarry 20 000 kg · variance 1 000 kg — disputed" when the
+     * customer's weighing was recorded; null otherwise. Evidence only: the note's quantities do not change.
+     */
+    static String customerWeightLine(Map<String, Object> pod) {
+        if (pod == null || pod.get("customerNetKg") == null) {
+            return null;
+        }
+        String outcome = switch (s(pod.get("weightOutcome"))) {
+            case "within_tolerance" -> "within tolerance";
+            case "heavier" -> "customer heavier (flagged)";
+            case "disputed" -> "disputed";
+            case "awaiting_split" -> "disputed — split to confirm";
+            default -> "no quarry weight to compare";
+        };
+        return "Customer weight " + plain(pod.get("customerNetKg")) + " kg"
+                + (pod.get("customerTicketRef") == null ? "" : " (ticket " + pod.get("customerTicketRef") + ")")
+                + (pod.get("quarryNetKg") == null ? "" : " · quarry " + plain(pod.get("quarryNetKg")) + " kg · variance "
+                        + plain(pod.get("weightVarianceKg")) + " kg")
+                + " — " + outcome;
     }
 
     /** "Weighbridge ticket WBT-… · gross / tare / net kg" for the ticket that fed the trip (flagged when manual). */

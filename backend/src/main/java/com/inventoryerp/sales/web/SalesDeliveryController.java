@@ -147,6 +147,21 @@ public class SalesDeliveryController {
         return deliveries.confirm(id, SalesController.body(b));
     }
 
+    /** Phase A A2: the customer's weighing of a delivered delivery (evidence, comparison, weight claims). */
+    @PostMapping("/deliveries/{id}/customer-weight")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> customerWeight(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.customerWeight(id, SalesController.body(b));
+    }
+
+    /** Phase A A2: a photo or PDF of the customer's weighbridge ticket ({@code dataUrl}). */
+    @PostMapping("/deliveries/{id}/customer-weight/evidence")
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> customerWeightEvidence(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.customerWeightEvidence(id, SalesController.body(b));
+    }
+
     @PostMapping("/deliveries/{id}/photos")
     @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
     public Map<String, Object> photo(@PathVariable String id, @RequestBody Map<String, Object> b) {

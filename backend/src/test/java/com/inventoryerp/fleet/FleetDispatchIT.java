@@ -822,7 +822,7 @@ class FleetDispatchIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: 401 without a token and 403 without the permission on every dispatch route")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.dispatch")).isEqualTo(55);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fleet.web.dispatch")).isEqualTo(57);
         assertThat(call("GET", "/fleet/delivery-orders", null, clerkToken).status()).isEqualTo(200);
         Res plan = call("POST", "/fleet/delivery-orders/" + UUID.randomUUID() + "/plan-loads", Map.of(), clerkToken);
         assertThat(plan.status()).isEqualTo(403);

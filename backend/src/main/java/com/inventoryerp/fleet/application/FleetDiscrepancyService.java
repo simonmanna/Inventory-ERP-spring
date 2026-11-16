@@ -153,10 +153,58 @@ public class FleetDiscrepancyService {
                 JsNumbers.dec(differenceQty)));
         if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
             db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("approvalRequestId", gate.get("requestId")));
-        } else {
+        } else if (!"weight".equals(kind)) {
             decide(id, true, null, "Approved automatically (no active approval workflow)");
         }
+        // Phase A A2 (plan §11): a weight claim is never approved automatically; with the workflow switched off it
+        // stays pending until someone with the approve-discrepancy permission decides it.
         return db.require(FleetDeliveryDiscrepancy.class, id, false, "Discrepancy not found");
+    }
+
+    /** Phase A A2: a weight claim (kind {@code weight}) for a load line, carrying its truck-level kg. */
+    Map<String, Object> raiseWeightClaim(Map<String, Object> trip, Map<String, Object> line, BigDecimal qty,
+            BigDecimal kg, String notes) {
+        Map<String, Object> row = raise(trip, line, "weight", "weighing_variance", SqlRows.dec(line, "dispatchedQty"),
+                line.get("deliveredQty") == null ? BigDecimal.ZERO : SqlRows.dec(line, "deliveredQty"), qty, notes);
+        return db.update(FleetDeliveryDiscrepancy.class, (String) row.get("id"), Obj.of("claimKg", kg));
+    }
+
+    /**
+     * Phase A A2: corrected customer evidence changes a still-pending weight claim's quantity (audited); a decided
+     * claim answers 409 (the plan's resubmission rule).
+     */
+    Map<String, Object> updateWeightClaim(String id, BigDecimal qty, BigDecimal kg, String notes) {
+        Map<String, Object> x = lock(id);
+        assertPendingWeightClaim(x);
+        Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("differenceQty", qty,
+                "claimKg", kg, "notes", FleetVehicleService.trim(notes)));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", x, after));
+        return after;
+    }
+
+    /**
+     * Phase A A2: a pending weight claim that corrected customer evidence no longer supports is dismissed (the POD
+     * already says the goods were delivered, so the quantity stays accepted) and its approval request withdrawn.
+     */
+    void withdrawWeightClaim(String id, String note) {
+        Map<String, Object> x = lock(id);
+        assertPendingWeightClaim(x);
+        decide(id, false, TenantContext.userId(), note);
+        db.jdbc().sql("UPDATE \"FleetDeliveryDiscrepancy\" SET \"withdrawnAt\" = " + FleetDb.NOW
+                + " WHERE id = ? AND \"organizationId\" = ?").params(id, FleetDb.org()).update();
+        if (x.get("approvalRequestId") != null) {
+            approvals.withdraw((String) x.get("approvalRequestId"), note);
+        }
+    }
+
+    private static void assertPendingWeightClaim(Map<String, Object> x) {
+        if (!"weight".equals(x.get("kind"))) {
+            throw new IllegalStateException("Discrepancy " + x.get("code") + " is not a weight claim");
+        }
+        if (!"pending".equals(x.get("status"))) {
+            throw ApiException.conflict("Weight claim " + x.get("code") + " is already " + ("approved".equals(
+                    x.get("status")) ? "confirmed" : "dismissed") + "; the customer weight can no longer change it");
+        }
     }
 
     @Transactional
@@ -296,6 +344,7 @@ public class FleetDiscrepancyService {
         return switch (kind) {
             case "returned" -> "return";
             case "excess" -> "excess";
+            case "weight" -> "weight variance";
             default -> "shortage";
         };
     }

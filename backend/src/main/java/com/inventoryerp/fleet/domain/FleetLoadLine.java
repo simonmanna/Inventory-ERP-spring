@@ -87,7 +87,22 @@ public class FleetLoadLine {
     @Column(name = "updatedAt", nullable = false)
     private Instant updatedAt;
 
+    // Columns added by Spring migrations (Sales deliveries V405+), declared in Phase A A2 (G10 entity catch-up).
+
+    @Column(name = "damagedQty", nullable = false, precision = 14, scale = 3)
+    private BigDecimal damagedQty;
+
+    @Column(name = "rejectedQty", nullable = false, precision = 14, scale = 3)
+    private BigDecimal rejectedQty;
+
     public String getId() {
         return id;
+    }
+    public BigDecimal getDamagedQty() {
+        return damagedQty;
+    }
+
+    public BigDecimal getRejectedQty() {
+        return rejectedQty;
     }
 }

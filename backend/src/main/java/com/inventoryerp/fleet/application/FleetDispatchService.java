@@ -80,6 +80,8 @@ public class FleetDispatchService {
     private final FleetDb db;
     private final FleetDeliveryOrderService orders;
     private final FleetDiscrepancyService discrepancies;
+    /** Phase A A2: customer weight evidence (set after construction; keeps the constructor stable). */
+    private CustomerWeightEvidence customerWeights;
     private final FleetVehicleService vehicles;
     private final FleetDriverService drivers;
     private final FleetDispatchEligibilityService eligibility;
@@ -189,6 +191,11 @@ public class FleetDispatchService {
                 + " LIMIT ? OFFSET ?").params(pp)), p, size, total);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCustomerWeights(CustomerWeightEvidence customerWeights) {
+        this.customerWeights = customerWeights;
+    }
+
     /** Trip with lines, delivery order + site, assignment, proof of delivery (signed URLs) and discrepancies. */
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
@@ -215,6 +222,11 @@ public class FleetDispatchService {
         if (pod != null) {
             pod.put("signatureUrl", url((String) pod.get("signatureFileId")));
             pod.put("photoUrl", url((String) pod.get("photoFileId")));
+            List<String> evidence = new ArrayList<>();
+            if (pod.get("customerWeightFileIds") instanceof List<?> ids) {
+                ids.forEach(f -> evidence.add(url((String) f)));
+            }
+            pod.put("customerWeightFileUrls", evidence);
         }
         t.put("pod", pod);
         t.put("discrepancies", SqlRows.list(db.jdbc().sql("SELECT x.*, pr.name AS \"productName\" FROM"
@@ -1102,10 +1114,53 @@ public class FleetDispatchService {
             discrepancies.raise(after, d.line(), d.kind(), d.reason(), d.dispatched(), d.delivered(), d.diff(),
                     d.notes());
         }
+        if (in.customerWeight() != null) {
+            customerWeights.record(after, lines(id), in.customerWeight());
+        }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", t.get("status")),
                 Obj.of("status", "delivered", "receiver", in.receiverName().trim(), "discrepancies", diffs.size())));
         orders.refreshStatus((String) order.get("id"));
         events.publish(DomainEvents.FLEET_TRIP_DELIVERED, tripEvent(after));
+        return get(id);
+    }
+
+    /**
+     * Phase A A2: record or correct the customer's weighing of a delivered trip (plan §7). Locks the delivery order
+     * and the trip; returns the trip with {@code customerWeight} (the frozen comparison and the split).
+     */
+    @Transactional
+    public Map<String, Object> recordCustomerWeight(String id, DispatchCommands.CustomerWeightInput in) {
+        Locked k = lockTrip(id);
+        Map<String, Object> t = k.trip();
+        if (!List.of("delivered", "closed").contains(t.get("status"))) {
+            throw ApiException.badRequest("Record the proof of delivery of trip " + t.get("code")
+                    + " before the customer weight");
+        }
+        Map<String, Object> result = customerWeights.record(t, lines(id), in);
+        Map<String, Object> out = get(id);
+        out.put("customerWeight", result);
+        return out;
+    }
+
+    /** Phase A A2: a photo or scan of the customer's weighbridge ticket, kept with the POD evidence. */
+    @Transactional
+    public Map<String, Object> customerWeightPhoto(String id, String filename, String contentType, byte[] bytes) {
+        Map<String, Object> t = require(id, true);
+        if (contentType == null || !(contentType.startsWith("image/") || "application/pdf".equals(contentType))) {
+            throw ApiException.badRequest("Customer weight evidence must be an image or a PDF");
+        }
+        Map<String, Object> pod = SqlRows.one(FleetProofOfDelivery.class, db.jdbc().sql("SELECT * FROM"
+                + " \"FleetProofOfDelivery\" WHERE \"organizationId\" = ? AND \"loadId\" = ? FOR UPDATE")
+                .params(FleetDb.org(), id));
+        if (pod == null) {
+            throw ApiException.badRequest("Record the proof of delivery of trip " + t.get("code") + " first");
+        }
+        Map<String, Object> file = files.upload(filename, contentType, bytes, OWNER_TYPE, id);
+        db.jdbc().sql("UPDATE \"FleetProofOfDelivery\" SET \"customerWeightFileIds\" = array_append("
+                + "\"customerWeightFileIds\", ?), \"updatedAt\" = " + FleetDb.NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(file.get("id"), pod.get("id"), FleetDb.org()).update();
+        audit.recordInTx(AuditInput.of("FleetProofOfDelivery", (String) pod.get("id"), "update", null,
+                Obj.of("customerWeightFile", file.get("id"))));
         return get(id);
     }
 
