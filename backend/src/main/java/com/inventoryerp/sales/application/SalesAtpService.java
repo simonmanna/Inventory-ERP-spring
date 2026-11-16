@@ -260,6 +260,8 @@ public class SalesAtpService {
             BigDecimal free = dec(cell.get("onhand")).subtract(dec(cell.get("reserved"))).max(BigDecimal.ZERO);
             reservable = desired.min(free);
         }
+        // Review N2: a line whose product, variant or location changed drops its reservation on the old cell.
+        reservations.releaseOtherCells(SOURCE, lineId, productId, variantId, location);
         if (reservable.signum() > 0) {
             reservations.reserve(new StockReservationService.Reserve(productId, variantId, location, reservable, SOURCE, lineId,
                     "Sales order " + o.get("number")));

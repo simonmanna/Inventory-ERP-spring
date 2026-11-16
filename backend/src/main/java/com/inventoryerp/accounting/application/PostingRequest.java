@@ -16,9 +16,26 @@ public record PostingRequest(String journalCode, Instant date, String descriptio
         Object exchangeRate, String sourceType, String sourceId, String postingType, String postingKey,
         String branchId, String costCenterId, Map<String, Object> dimensions, List<Line> lines) {
 
-    /** One posting line; exactly one of debit/credit must be positive. */
+    /**
+     * One posting line; exactly one of debit/credit must be positive. {@code currencyId} / {@code foreignAmount}
+     * optionally state the line's own transaction currency and amount when it differs from the entry's (a base-currency
+     * settlement relieving a foreign open item keeps that item's currency, so FX revaluation sees it settled); the
+     * debit / credit stays in the entry's currency and the stored rate is base ÷ foreign.
+     */
     public record Line(String accountId, Object debit, Object credit, String partnerId, String description,
-            String branchId, String costCenterId, Map<String, Object> dimensions) {
+            String branchId, String costCenterId, Map<String, Object> dimensions, String currencyId,
+            Object foreignAmount) {
+
+        public Line(String accountId, Object debit, Object credit, String partnerId, String description,
+                String branchId, String costCenterId, Map<String, Object> dimensions) {
+            this(accountId, debit, credit, partnerId, description, branchId, costCenterId, dimensions, null, null);
+        }
+
+        /** This line carried in {@code currency} for {@code amount} (see the record comment). */
+        public Line inCurrency(String currency, Object amount) {
+            return new Line(accountId, debit, credit, partnerId, description, branchId, costCenterId, dimensions,
+                    currency, amount);
+        }
 
         public static Line debit(String accountId, Object amount, String description) {
             return new Line(accountId, amount, null, null, description, null, null, null);

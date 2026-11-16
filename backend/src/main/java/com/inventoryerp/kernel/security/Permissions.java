@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (703 permissions). Constant name = GROUP__ACTION.
+ * exactly (722 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -51,6 +51,8 @@ public final class Permissions {
     public static final String TAX__READ = "tax:read";
     public static final String TAX__UPDATE = "tax:update";
     public static final String TAX__DELETE = "tax:delete";
+    public static final String WITHHOLDING__READ = "withholding:read";
+    public static final String WITHHOLDING__UPDATE = "withholding:update";
     public static final String CURRENCY__CREATE = "currency:create";
     public static final String CURRENCY__READ = "currency:read";
     public static final String CURRENCY__UPDATE = "currency:update";
@@ -137,6 +139,10 @@ public final class Permissions {
     public static final String JOURNAL_ENTRY__CREATE = "journal_entry:create";
     public static final String JOURNAL_ENTRY__POST = "journal_entry:post";
     public static final String JOURNAL_ENTRY__REVERSE = "journal_entry:reverse";
+    public static final String RECURRING_ENTRY__READ = "recurring_entry:read";
+    public static final String RECURRING_ENTRY__MANAGE = "recurring_entry:manage";
+    public static final String DEFERRAL__READ = "deferral:read";
+    public static final String DEFERRAL__MANAGE = "deferral:manage";
     public static final String ACCOUNT_MAPPING__READ = "account_mapping:read";
     public static final String ACCOUNT_MAPPING__UPDATE = "account_mapping:update";
     public static final String BANK_ACCOUNT__CREATE = "bank_account:create";
@@ -178,6 +184,8 @@ public final class Permissions {
     public static final String INVENTORY_LOCATION__DELETE = "inventory_location:delete";
     public static final String ALERTS__READ = "alerts:read";
     public static final String ALERTS__MANAGE = "alerts:manage";
+    public static final String NOTIFICATION_ROUTING__READ = "notification_routing:read";
+    public static final String NOTIFICATION_ROUTING__MANAGE = "notification_routing:manage";
     public static final String BI__EXPORT = "bi:export";
     public static final String INVENTORY__READ = "inventory:read";
     public static final String INVENTORY__MOVE = "inventory:move";
@@ -406,6 +414,7 @@ public final class Permissions {
     public static final String FIXED_ASSET__DISPOSE = "fixed_asset:dispose";
     public static final String FIXED_ASSET__TRANSFER = "fixed_asset:transfer";
     public static final String FIXED_ASSET__APPROVE_TRANSFER = "fixed_asset:approve_transfer";
+    public static final String FIXED_ASSET__IMPAIR = "fixed_asset:impair";
     public static final String ASSET_CATEGORY__CREATE = "asset_category:create";
     public static final String ASSET_CATEGORY__READ = "asset_category:read";
     public static final String ASSET_CATEGORY__UPDATE = "asset_category:update";
@@ -466,6 +475,10 @@ public final class Permissions {
     public static final String SALES__DELIVERY_READ = "sales:delivery:read";
     public static final String SALES__DELIVERY_WRITE = "sales:delivery:write";
     public static final String SALES__DELIVERY_APPROVE = "sales:delivery:approve";
+    public static final String SALES__DELIVERY_DISPATCH = "sales:delivery:dispatch";
+    public static final String SALES__DELIVERY_CONFIRM = "sales:delivery:confirm";
+    public static final String SALES__DELIVERY_POD_CORRECT = "sales:delivery:pod_correct";
+    public static final String SALES__DELIVERY_CANCEL = "sales:delivery:cancel";
     public static final String SALES__CUSTOMER_READ = "sales:customer:read";
     public static final String SALES__CUSTOMER_MANAGE = "sales:customer:manage";
     public static final String SALES__CUSTOMER_MERGE = "sales:customer:merge";
@@ -683,6 +696,12 @@ public final class Permissions {
     public static final String CONTRACT__MANAGE = "contract:manage";
     public static final String CONTRACT__POST = "contract:post";
     public static final String CONTRACT__APPROVE = "contract:approve";
+    public static final String BOND__READ = "bond:read";
+    public static final String BOND__MANAGE = "bond:manage";
+    public static final String BOND__POST = "bond:post";
+    public static final String COMPLIANCE__READ = "compliance:read";
+    public static final String COMPLIANCE__MANAGE = "compliance:manage";
+    public static final String COMPLIANCE__OVERRIDE = "compliance:override";
     public static final String PROFITABILITY__READ = "profitability:read";
     public static final String PROFITABILITY__MANAGE = "profitability:manage";
     public static final String COSTING_CLOSE__READ = "costing_close:read";
@@ -757,6 +776,8 @@ public final class Permissions {
             "tax:read",
             "tax:update",
             "tax:delete",
+            "withholding:read",
+            "withholding:update",
             "currency:create",
             "currency:read",
             "currency:update",
@@ -843,6 +864,10 @@ public final class Permissions {
             "journal_entry:create",
             "journal_entry:post",
             "journal_entry:reverse",
+            "recurring_entry:read",
+            "recurring_entry:manage",
+            "deferral:read",
+            "deferral:manage",
             "account_mapping:read",
             "account_mapping:update",
             "bank_account:create",
@@ -884,6 +909,8 @@ public final class Permissions {
             "inventory_location:delete",
             "alerts:read",
             "alerts:manage",
+            "notification_routing:read",
+            "notification_routing:manage",
             "bi:export",
             "inventory:read",
             "inventory:move",
@@ -1112,6 +1139,7 @@ public final class Permissions {
             "fixed_asset:dispose",
             "fixed_asset:transfer",
             "fixed_asset:approve_transfer",
+            "fixed_asset:impair",
             "asset_category:create",
             "asset_category:read",
             "asset_category:update",
@@ -1172,6 +1200,10 @@ public final class Permissions {
             "sales:delivery:read",
             "sales:delivery:write",
             "sales:delivery:approve",
+            "sales:delivery:dispatch",
+            "sales:delivery:confirm",
+            "sales:delivery:pod_correct",
+            "sales:delivery:cancel",
             "sales:customer:read",
             "sales:customer:manage",
             "sales:customer:merge",
@@ -1389,6 +1421,12 @@ public final class Permissions {
             "contract:manage",
             "contract:post",
             "contract:approve",
+            "bond:read",
+            "bond:manage",
+            "bond:post",
+            "compliance:read",
+            "compliance:manage",
+            "compliance:override",
             "profitability:read",
             "profitability:manage",
             "costing_close:read",

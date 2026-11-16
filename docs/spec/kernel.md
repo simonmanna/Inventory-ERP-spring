@@ -132,6 +132,13 @@ SG-0 stabilization (2026-11-06), pending owner approval:
   also finds sales orders and quotations. Scope is checked after the per-type limit, so a restricted user can see fewer
   than five hits of a type.
 
+Owner-requested extension (2026-11-13), no Nest counterpart:
+
+- **Sidebar tagline.** `PUT /settings/developer` accepts `sidebarTagline` (string, at most 60 characters after
+  trimming; blank or `null` clears it), stored in `Organization.settings.sidebarTagline`. `GET /settings/developer` and
+  `GET /settings/features` return it (`null` when unset). The web sidebar shows it under the organization name and
+  falls back to "Point of Sale". Tests in `SidebarTaglineIT`.
+
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

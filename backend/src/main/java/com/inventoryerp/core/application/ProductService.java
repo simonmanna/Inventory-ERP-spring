@@ -73,14 +73,16 @@ public class ProductService extends BaseCrudService<Product> {
     private final EventBus events;
     private final FilesService files;
     private final ObjectProvider<ProductCostingPolicy> costingPolicy;
+    private final ObjectProvider<ProductStockGuard> stockGuard;
 
     public ProductService(EntityManager em, AuditService audit, EventBus events, FilesService files,
-            ObjectProvider<ProductCostingPolicy> costingPolicy) {
+            ObjectProvider<ProductCostingPolicy> costingPolicy, ObjectProvider<ProductStockGuard> stockGuard) {
         super(em, Product.class);
         this.audit = audit;
         this.events = events;
         this.files = files;
         this.costingPolicy = costingPolicy;
+        this.stockGuard = stockGuard;
     }
 
     @Override
@@ -200,18 +202,27 @@ public class ProductService extends BaseCrudService<Product> {
         Map<String, Object> data = EntityPatch.data(dto, "packagings", "units");
         boolean beverageTouched = BEVERAGE_FIELDS.stream().anyMatch(data::containsKey);
         boolean inventoryTouched = INVENTORY_CONFIG_FIELDS.stream().anyMatch(data::containsKey);
-        if (beverageTouched || inventoryTouched) {
+        boolean costTouched = data.containsKey("costPrice");
+        BigDecimal[] revalue = null;
+        if (beverageTouched || inventoryTouched || costTouched) {
             Product existing = find(id);
             if (beverageTouched) {
                 applyBeverageComputation(data, existing);
             }
             if (inventoryTouched) {
                 applyCostingPolicy(data, existing);
+                assertCostingMethodChangeAllowed(data, existing);
                 applyInventoryConfig(data, existing);
+            }
+            if (costTouched) {
+                revalue = costPriceRevaluation(data, existing);
             }
         }
         Product row = require(id);
         assertBaseUnitChangeAllowed(row, data);
+        if (revalue != null) {
+            stockGuard.getObject().revalueStandardCostPrice(id, revalue[0], revalue[1]);
+        }
         EntityPatch.apply(row, data);
         em.flush();
         syncUnits(row, units, data);
@@ -262,17 +273,20 @@ public class ProductService extends BaseCrudService<Product> {
     }
 
     /**
-     * Resolve a scanned barcode: the product's own barcode (qty 1) first, then an active packaging barcode
-     * (qty = pack size). {@code null} when not found.
+     * Resolve a scanned barcode in the caller's organisation: the product's own barcode (qty 1) first, then an active
+     * variant's barcode (qty 1, plus {@code variantId} and {@code variant} with its effective price — ADR-S058, Phase
+     * I1c), then an active packaging barcode (qty = pack size). {@code null} when not found.
      */
     @Transactional(readOnly = true)
     public Map<String, Object> resolveBarcode(String code) {
         if (code == null || code.isEmpty()) {
             return null;
         }
-        Product product = em.createQuery("select p from Product p where p.barcode = :code and p.isActive = true",
-                        Product.class)
-                .setParameter("code", code).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        String org = TenantContext.organizationId();
+        Product product = em.createQuery("select p from Product p where p.organizationId = :org and p.barcode = :code"
+                        + " and p.isActive = true", Product.class)
+                .setParameter("org", org).setParameter("code", code).setMaxResults(1).getResultList().stream()
+                .findFirst().orElse(null);
         if (product != null) {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("productId", product.getId());
@@ -281,10 +295,34 @@ public class ProductService extends BaseCrudService<Product> {
             out.put("packaging", null);
             return out;
         }
-        ProductPackaging pack = em.createQuery(
-                        "select p from ProductPackaging p where p.barcode = :code and p.isActive = true",
-                        ProductPackaging.class)
-                .setParameter("code", code).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        // ADR-S058 / Phase I1c: a variant's own barcode resolves to its product plus the variant (effective price).
+        @SuppressWarnings("unchecked")
+        List<Object[]> variant = em.createNativeQuery("SELECT v.id, v.name, v.\"productId\", "
+                        + ProductVariantService.PRICE_SQL + " FROM \"ProductVariant\" v JOIN \"Product\" p"
+                        + " ON p.id = v.\"productId\" WHERE v.\"organizationId\" = ? AND v.barcode = ? AND v.\"isActive\" = true"
+                        + " AND v.\"deletedAt\" IS NULL AND p.\"isActive\" = true AND p.\"deletedAt\" IS NULL LIMIT 1")
+                .setParameter(1, org).setParameter(2, code).getResultList();
+        if (!variant.isEmpty()) {
+            Object[] v = variant.getFirst();
+            Product parent = em.find(Product.class, (String) v[2]);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("productId", parent.getId());
+            out.put("product", withUom(parent));
+            out.put("quantity", 1);
+            out.put("packaging", null);
+            out.put("variantId", v[0]);
+            Map<String, Object> vm = new LinkedHashMap<>();
+            vm.put("id", v[0]);
+            vm.put("name", v[1]);
+            vm.put("displayName", parent.getName() + " (" + v[1] + ")");
+            vm.put("salesPrice", v[3] == null ? null : jsNumber((java.math.BigDecimal) v[3]));
+            out.put("variant", vm);
+            return out;
+        }
+        ProductPackaging pack = em.createQuery("select p from ProductPackaging p where p.organizationId = :org"
+                        + " and p.barcode = :code and p.isActive = true", ProductPackaging.class)
+                .setParameter("org", org).setParameter("code", code).setMaxResults(1).getResultList().stream()
+                .findFirst().orElse(null);
         if (pack != null) {
             Number qty = jsNumber(pack.getQuantity());
             Map<String, Object> packaging = new LinkedHashMap<>();
@@ -441,6 +479,55 @@ public class ProductService extends BaseCrudService<Product> {
             throw ApiException.badRequest("The costing method of " + existing.getName() + " cannot be changed after"
                     + " stock has moved while an inventory cost policy is active; approve a new policy version instead");
         }
+    }
+
+    /**
+     * The costing method decides what the stock on hand is worth, so it does not change on the product while any
+     * location holds stock: the stock has to be re-costed through a cost policy (AVCO ↔ FIFO, ADR-S007) or a standard
+     * cost with {@code convertMethod} (→ STANDARD, ADR-S008). Re-sending the current method is not a change.
+     */
+    private void assertCostingMethodChangeAllowed(Map<String, Object> data, Product existing) {
+        ProductStockGuard guard = stockGuard.getIfAvailable();
+        String requested = enumValue(data.get("costingMethod"));
+        if (guard == null || existing == null || requested == null
+                || requested.equals(enumValue(existing.getCostingMethod()))) {
+            return;
+        }
+        if (guard.hasStockOnHand(existing.getId())) {
+            throw ApiException.badRequest("The costing method of " + existing.getName() + " cannot be changed while it"
+                    + " has stock on hand; re-cost the stock through a cost policy (/inventory/cost-policies) or a"
+                    + " standard cost (/inventory/standard-costs) instead");
+        }
+    }
+
+    /**
+     * A cost price change on a STANDARD product values its stock at the new price, so the stock on hand is revalued
+     * (GL + stock ledger) in the same transaction. A product governed by an active standard cost takes its price from
+     * that standard only. AVCO / FIFO / SPECIFIC products carry stock at their own layers (the cost price is only a
+     * fallback): nothing to revalue. Returns {old, new} when a revaluation is due, else null.
+     */
+    private BigDecimal[] costPriceRevaluation(Map<String, Object> data, Product existing) {
+        ProductStockGuard guard = stockGuard.getIfAvailable();
+        if (guard == null || existing == null) {
+            return null;
+        }
+        Object raw = data.get("costPrice");
+        BigDecimal next = raw == null ? null : raw instanceof BigDecimal b ? b : new BigDecimal(String.valueOf(raw));
+        BigDecimal old = existing.getCostPrice();
+        BigDecimal nextValue = next == null ? BigDecimal.ZERO : next;
+        BigDecimal oldValue = old == null ? BigDecimal.ZERO : old;
+        if (nextValue.compareTo(oldValue) == 0) {
+            return null;
+        }
+        String method = enumValue(eff(data, "costingMethod", existing.getCostingMethod()));
+        if (!"STANDARD".equals(method) || !"STANDARD".equals(enumValue(existing.getCostingMethod()))) {
+            return null;
+        }
+        if (guard.standardGoverned(existing.getId())) {
+            throw ApiException.badRequest("The cost price of " + existing.getName() + " is set by its active standard"
+                    + " cost; change it through a new standard cost (/inventory/standard-costs)");
+        }
+        return guard.hasStockOnHand(existing.getId()) ? new BigDecimal[] {oldValue, nextValue} : null;
     }
 
     /** {@code data[k] !== undefined ? data[k] : existing?.[k]}. */

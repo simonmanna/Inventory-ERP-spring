@@ -352,7 +352,7 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 | 1.2 drivers & operators | done (37 routes) | `DriverEligibilityPolicyTest`, `AllowanceCalculatorTest` (unit); `FleetDriversIT` (8: profiles, expiring documents, eligibility blocks, assignment history, check-out / check-in with meters + photos + breakdown, concurrent check-outs, tenant isolation, authorization matrix 17 routes); `FleetClaimsIT` (8: allowance rules, draft pricing / validation, approval flow incl. inbox subscriber and no-workflow, pay via expenses with idempotency replay + GL + reversal, expense:post / driver SoD, payroll export → payroll run → reversals, tenant isolation, authorization matrix 20 routes) |
 | 1.5 fuel, 1.6 maintenance | done | see their sections below |
 | 1.7 tyres, incidents, fines; 1.8 telematics | done | see their sections below |
-| 1.3 trips, delivery planning & dispatch | done (55 routes) | `DispatchPoliciesTest` (unit: load splitting by payload / volume / whole units, freight, delivery-charge rule choice + amounts, trip state machine); `FleetDispatchIT` (9: sales order → DO → loads → eligibility / capacity blocks → weighed → dispatch once with replay → delivery note → POD shortage → SoD approval → close → invoice + transport charge without a second stock issue; posted-invoice source → credit-note request + transporter freight + draft-invoice hand-over; returns; concurrent dispatch; weighbridge API; settings / validation / trip FK; tenant isolation; authorization matrix 55 routes) |
+| 1.3 trips, delivery planning & dispatch | done (55 routes; 60 with Phase A2 / A3) | `DispatchPoliciesTest` (unit: load splitting by payload / volume / whole units, freight, delivery-charge rule choice + amounts, trip state machine); `FleetDispatchIT` (9: sales order → DO → loads → eligibility / capacity blocks → weighed → dispatch once with replay → delivery note → POD shortage → SoD approval → close → invoice + transport charge without a second stock issue; posted-invoice source → credit-note request + transporter freight + draft-invoice hand-over; returns; concurrent dispatch; weighbridge API; settings / validation / trip FK; tenant isolation; authorization matrix 55 routes) |
 | 1.4a weighbridge core | done (36 routes) | `WeighbridgePoliciesTest`, `FleetWeighbridgeIT` — see "1.4 Weighbridge" |
 | 1.4b weighbridge ↔ dispatch | done (6 routes) | `WeighbridgeDispatchRulesTest` (unit), `FleetWeighbridgeDispatchIT` (7), `FleetPhase1EndToEndIT` (3, Phase 1 exit) — see "1.4b" |
 | 1.9 costing, profitability & reports | done (22 routes) | `FleetCostingPoliciesTest`, `FleetCostingIT`, `FleetRemindersPayrollIT`, `FleetDemoSeedIT` — see "1.9" |
@@ -849,7 +849,7 @@ Status: **done** (Track C, 2026-10-29). Design: ADR-S009 §3 (tables), §6 (GL).
 `packages/shared/src/events.ts`): `fleet.trip.dispatched`, `fleet.trip.delivered`, `fleet.trip.closed`,
 `fleet.trip.returned`, `fleet.delivery.discrepancy_decided`.
 
-### Routes (1.3) — 55, all under `/api/v1`, `@RequiresModule("fleet")`, package `fleet.web.dispatch`
+### Routes (1.3) — 57, all under `/api/v1`, `@RequiresModule("fleet")`, package `fleet.web.dispatch`
 
 Idempotent (Idempotency-Key required, answer 200): trip dispatch, proof of delivery, return, discrepancy approve,
 delivery-order invoice — they move stock or raise accounting documents. Other POSTs answer 201.
@@ -884,6 +884,8 @@ delivery-order invoice — they move stock or raise accounting documents. Other 
 | POST | `/fleet/trips/{id}/depart` | `fleet_trip:dispatch` | → `in_transit` |
 | POST | `/fleet/trips/{id}/proof-of-delivery` | `fleet_trip:deliver` | `{receiverName, receiverPhone?, receivedAt?, latitude?, longitude?, signature (PNG / JPEG data URL)?, endOdometer?, lines[{loadLineId, deliveredQty, returnedQty?, reason?, notes?}]}`; Idempotency-Key |
 | POST | `/fleet/trips/{id}/pod-photo` | `fleet_trip:deliver` | multipart `file` (image), after the POD |
+| POST | `/fleet/trips/{id}/customer-weight` | `fleet_trip:deliver` | Phase A2: customer's weighing (gross / tare or net, ticket ref, allocations); Idempotency-Key required |
+| POST | `/fleet/trips/{id}/customer-weight-evidence` | `fleet_trip:deliver` | Phase A2: multipart `file` (image or PDF) of the customer's ticket |
 | POST | `/fleet/trips/{id}/close` | `fleet_trip:close` | `{endOdometer?, distanceKm?}` → distance + freight |
 | POST | `/fleet/trips/{id}/cancel` | `fleet_trip:cancel` | `{reason}`, before dispatch |
 | POST | `/fleet/trips/{id}/return` | `fleet_trip:close` | `{reason, reasonCode?}` whole load back; Idempotency-Key |
@@ -892,6 +894,9 @@ delivery-order invoice — they move stock or raise accounting documents. Other 
 | POST | `/fleet/delivery-discrepancies/{id}/approve` | `fleet_dispatch:approve_discrepancy` | `{notes?}`; Idempotency-Key |
 | POST | `/fleet/delivery-discrepancies/{id}/reject` | `fleet_dispatch:approve_discrepancy` | `{notes}` required |
 | POST | `/fleet/delivery-discrepancies/{id}/sync` | `fleet_dispatch:approve_discrepancy` | apply an inbox decision now |
+| POST | `/fleet/delivery-discrepancies/{id}/reduce` | `fleet_dispatch:approve_discrepancy` | Phase A3: `{quantity, reason}` lowers a pending weight claim; 0 withdraws it |
+| GET | `/fleet/reconciliation/findings` | `fleet:report` | Phase A3: `scope (operational / financial), status (open / resolved), page, pageSize` |
+| POST | `/fleet/reconciliation/run` | `fleet:report` | Phase A3: run the operational quantity reconciliation now (nightly 03:40) |
 | GET / POST | `/fleet/transporter-rates` | `fleet_dispatch:read` / `fleet:settings` | `{partnerId (supplier), name, basis per_trip / per_tonne / per_km, rate, zone?, effectiveFrom/To?}` |
 | PATCH / DELETE | `/fleet/transporter-rates/{id}` | `fleet:settings` | delete when unused, otherwise deactivate |
 | GET / POST | `/fleet/delivery-charge-rules` | `fleet_dispatch:read` / `fleet:settings` | `{name, partnerId?, zone?, minDistanceKm?, maxDistanceKm?, basis flat / per_trip / per_tonne / per_m3 / per_km, rate, minAmount?, taxId?}` |
@@ -1029,6 +1034,51 @@ Dispatch Settings `/fleet/settings/dispatch` (charges, transporter rates, load f
 - Editing a draft source invoice after its DO exists does not re-sync the DO lines.
 - Transporter freight is computed on the trip; 1.9 freight bills post it (AP vendor bill + accrual, Dr 6460).
 - Load factors are a stop-gap until Phase 4 UoM / density work.
+
+### Customer weight evidence (Phase A2, V496)
+
+`POST /fleet/trips/{id}/customer-weight` (`fleet_trip:deliver`, Idempotency-Key required) and multipart
+`POST /fleet/trips/{id}/customer-weight-evidence` record the customer's weighing of a delivered or closed trip on its
+POD (`CustomerWeightEvidence`), the same use case as the Sales route. The tolerance is an investigation trigger, not
+a deduction: lighter beyond tolerance raises a pending **weight** discrepancy (new kind) for the full variance,
+split over the lines; heavier is flagged only. Weight claims never auto-approve, even when the workflow is inactive.
+A claim withdrawn by corrected evidence gets `withdrawnAt` and its approval request cancelled
+(`ApprovalsService.withdraw`). The ticket, stock and delivered quantities never change. Full rules:
+[sales.md, Phase A2](sales.md#customer-weight-evidence-on-the-proof-of-delivery-phase-a2-2026-11-16-v496).
+
+### Quantity buckets, POD correction and history (Phase A3, V497)
+
+Fleet owns each delivery line's quantity buckets. dispatched = accepted + returned + damaged + confirmed shortage +
+pending dispute, with excess beside it (`LoadLineQuantities`, `LoadLineQuantityService`). `billableQty` = accepted
+since A3, kept in step in every transaction that changes a line's facts or claims.
+
+- Claims raised before A3 keep resolution model 1 and their old billing meaning.
+- `decide()` on a model-2 claim does no billable arithmetic of its own. It only records the decision (`dismissReason`
+  on reject) and recomputes.
+- The POD takes `damagedQty` per line, raises a `damaged` claim, and refuses returned + damaged > dispatched.
+- `FleetDispatchService.correctPod` raises Δ against open shortage claims (they become `reconciled`). It needs a reason
+  and evidence, the POD recorder cannot do it, and the lock order is delivery order → trip → claims.
+- Every change writes an immutable `FleetLoadLineQuantityEvent` row.
+- `FleetQuantityReconciliation`, nightly through `FleetQuantityReconcileJob`, records operational findings and repairs
+  a drifted `billableQty`.
+- Dispatch issues a non-base-unit line's base quantity cumulatively per delivery-order line (Phase I2 M-6).
+
+Full rules: [sales.md, Phase A3](sales.md#quantity-buckets-pod-correction-and-line-history-phase-a3-2026-11-16-v497).
+
+### Goods invoice ledger and ownership (Phase A4, V500)
+
+`POST /fleet/delivery-orders/{id}/invoice` no longer invoices the goods of a **Sales-module** order's delivery order:
+Sales owns them, and only the transport charge is invoiced here. Other delivery orders, including back-office orders
+of the orders module (Nest parity), invoice what is accepted and not yet on a live invoice. Partial invoicing works;
+each goods line is recorded in the immutable `FleetDeliveryInvoiceLine` ledger through `DeliveryInvoicing`.
+
+- A goods invoice from before A4 (no ledger rows) counts as having invoiced the delivery order in full.
+- Cancelling or rejecting the invoice releases its allocations; credit notes do not.
+- A late confirmed claim credits at most what was invoiced beyond accepted.
+- `FleetInvoicePostGuard` refuses to post a draft whose delivery order now invoices more than it accepted.
+- The reconciliation run adds `financial` findings.
+
+Full rules: [sales.md, Phase A4](sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v500).
 ## 1.4 Weighbridge — done (1.4a core + 1.4b dispatch wiring)
 
 Requirements §5.1, ADR-S009 §3 / §7. 1.4a = stations, devices + adapter SPI, stored tares, the ticket workflow with
@@ -1143,6 +1193,14 @@ Consumed: `approval.decided` (entity type `weighbridge_exception`, `WeighbridgeA
 - `WeighbridgeAdapter` SPI (+ `WeighbridgeAdapters` registry), `AsciiFrameParser`, `WeighbridgeCalculator`,
   `WeighbridgeUnits.kgPerUnit(productId, uomId)`.
 - Additive in procurement: `GoodsReceiptsService.cancelDraft(id, reason)`.
+- Sales Phase A1 (2026-11-14):
+  - `WeighbridgeTicketService.ticketsForTrips(tripIds)` returns the linked-ticket rows. It shares its query with
+    `FleetWeighbridgeRuleService.linkedTickets`, which now also returns trailer, driver, both weighings with operator,
+    exception status, reissue chain, `feedsTrip` and the derived `verification`.
+  - `renderCopy(id, tripId)` renders a "COPY (view)" PDF, leaves `printCount` unchanged and is audited as `reprint`
+    with `copy: "view"`.
+  - Both are unconditional services, so Sales never calls a Fleet controller.
+  - Ticket validation now accepts a `SalesOrder` id in `salesOrderId`, as well as a POS `Order` id.
 
 ### GL
 

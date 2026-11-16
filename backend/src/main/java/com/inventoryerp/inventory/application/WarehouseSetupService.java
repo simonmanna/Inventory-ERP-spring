@@ -39,6 +39,10 @@ public class WarehouseSetupService {
     public record RuleInput(String locationId, String productId, String categoryId, String targetBinId,
             String targetZoneId, Integer priority, Boolean isActive) {}
 
+    /** A bin stock correction: exactly one of {@code newQty} (absolute) or {@code delta} (signed). */
+    public record BinAdjustInput(String productId, String variantId, String batchId, BigDecimal newQty,
+            BigDecimal delta, String reason) {}
+
     private final JdbcClient jdbc;
     private final WarehouseStore store;
     private final AuditService audit;
@@ -128,7 +132,7 @@ public class WarehouseSetupService {
 
     @Transactional
     public Map<String, Object> createBin(BinInput in) {
-        store.location(in.locationId());
+        store.operable(in.locationId());
         if (in.code() == null || in.code().isBlank()) {
             throw ApiException.badRequest("code should not be empty");
         }
@@ -163,7 +167,7 @@ public class WarehouseSetupService {
     public Map<String, Object> updateBin(String id, BinInput in) {
         Map<String, Object> bin = store.bin(id);
         String locationId = SqlRows.str(bin, "locationId");
-        store.location(locationId);
+        store.operable(locationId);
         String parentId = in.parentId() != null ? (in.parentId().isEmpty() ? null : in.parentId())
                 : SqlRows.str(bin, "parentId");
         if (parentId != null) {
@@ -217,7 +221,7 @@ public class WarehouseSetupService {
     @Transactional
     public Map<String, Object> deleteBin(String id) {
         Map<String, Object> bin = store.bin(id);
-        store.location(SqlRows.str(bin, "locationId"));
+        store.operable(SqlRows.str(bin, "locationId"));
         if (store.binQty(id).signum() > 0) {
             throw ApiException.badRequest("Bin " + bin.get("code") + " holds stock; empty it first");
         }
@@ -282,7 +286,7 @@ public class WarehouseSetupService {
 
     @Transactional
     public Map<String, Object> createRule(RuleInput in) {
-        store.location(in.locationId());
+        store.operable(in.locationId());
         checkRuleTargets(in.locationId(), in.productId(), in.categoryId(), in.targetBinId(), in.targetZoneId());
         String id = id();
         jdbc.sql("INSERT INTO \"WarehousePutawayRule\" (id, \"organizationId\", \"locationId\", \"productId\", \"categoryId\","
@@ -308,7 +312,7 @@ public class WarehouseSetupService {
     public Map<String, Object> updateRule(String id, RuleInput in) {
         Map<String, Object> r = rule(id);
         String locationId = SqlRows.str(r, "locationId");
-        store.location(locationId);
+        store.operable(locationId);
         String productId = in.productId() != null ? emptyToNull(in.productId()) : SqlRows.str(r, "productId");
         String categoryId = in.categoryId() != null ? emptyToNull(in.categoryId()) : SqlRows.str(r, "categoryId");
         String binId = in.targetBinId() != null ? emptyToNull(in.targetBinId()) : SqlRows.str(r, "targetBinId");
@@ -326,7 +330,7 @@ public class WarehouseSetupService {
     @Transactional
     public Map<String, Object> deleteRule(String id) {
         Map<String, Object> r = rule(id);
-        store.location(SqlRows.str(r, "locationId"));
+        store.operable(SqlRows.str(r, "locationId"));
         jdbc.sql("DELETE FROM \"WarehousePutawayRule\" WHERE id = ? AND \"organizationId\" = ?").params(id, org())
                 .update();
         audit.recordInTx(AuditInput.of("WarehousePutawayRule", id, "delete"));
@@ -398,6 +402,7 @@ public class WarehouseSetupService {
                 + " FROM keys k JOIN \"Product\" p ON p.id = k.\"productId\" ORDER BY p.name")
                 .param("org", org()).param("loc", locationId));
         BigDecimal totalUnbinned = BigDecimal.ZERO;
+        int mismatches = 0;
         List<Map<String, Object>> products = new ArrayList<>();
         for (Map<String, Object> r : rows) {
             BigDecimal unbinned = SqlRows.dec(r, "locationQty").subtract(SqlRows.dec(r, "binnedQty"))
@@ -405,6 +410,11 @@ public class WarehouseSetupService {
             Map<String, Object> out = new LinkedHashMap<>(r);
             out.put("unbinnedQty", unbinned.max(BigDecimal.ZERO));
             out.put("mismatch", unbinned.signum() < 0);
+            // Bins (plus staging) holding more than the ledger: what POST .../reconcile would take out of the bins.
+            out.put("excessBinnedQty", unbinned.negate().max(BigDecimal.ZERO).min(SqlRows.dec(r, "binnedQty")));
+            if (unbinned.signum() < 0) {
+                mismatches++;
+            }
             totalUnbinned = totalUnbinned.add(unbinned.max(BigDecimal.ZERO));
             products.add(out);
         }
@@ -416,7 +426,149 @@ public class WarehouseSetupService {
                 + " AND \"locationId\" = ? AND status NOT IN ('shipped', 'cancelled')").params(org(), locationId)
                 .query(Long.class).single();
         return Obj.of("locationId", locationId, "settings", settingsView(store.settings(locationId)), "bins", bins,
-                "openTasks", openTasks, "openPickOrders", openPicks, "unbinnedQty", totalUnbinned, "products",
-                products);
+                "openTasks", openTasks, "openPickOrders", openPicks, "unbinnedQty", totalUnbinned, "mismatches",
+                mismatches, "products", products);
+    }
+
+    // ---------------------------------------------------------------- bin sub-ledger corrections
+
+    private static String plain(BigDecimal v) {
+        return v.stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * Correct the quantity of one product (variant, lot) in one bin. Bins are a sub-ledger: nothing is posted to the
+     * stock ledger or GL. An increase must come from unbinned stock (location on-hand − binned − staged − open
+     * putaway), so the bins never hold more than the ledger; a decrease cannot take what open pick / move tasks
+     * still need from the bin. Capacity and the single-product flag apply to increases.
+     */
+    @Transactional
+    public Map<String, Object> adjustBin(String binId, BinAdjustInput in) {
+        Map<String, Object> bin = store.bin(binId);
+        String locationId = SqlRows.str(bin, "locationId");
+        store.operable(locationId);
+        if (!"bin".equals(bin.get("kind"))) {
+            throw ApiException.badRequest("Only bins hold stock; " + bin.get("code") + " is a " + bin.get("kind"));
+        }
+        if ((in.newQty() == null) == (in.delta() == null)) {
+            throw ApiException.badRequest("Give either newQty or delta");
+        }
+        if (in.reason() == null || in.reason().isBlank()) {
+            throw ApiException.badRequest("A reason is required to adjust bin stock");
+        }
+        store.product(in.productId());
+        String variant = WarehouseStore.key(in.variantId());
+        String batch = WarehouseStore.key(in.batchId());
+        if (!batch.isEmpty() && jdbc.sql("SELECT count(*) FROM \"InventoryBatch\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"productId\" = ? AND \"locationId\" = ?").params(batch, org(), in.productId(), locationId)
+                .query(Long.class).single() == 0) {
+            throw ApiException.notFound("Batch not found");
+        }
+        store.lock(locationId, in.productId());
+        BigDecimal current = jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseBinStock\" WHERE \"binId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"batchKey\" = ?")
+                .params(binId, in.productId(), variant, batch).query(BigDecimal.class).single();
+        BigDecimal target = in.newQty() != null ? in.newQty() : current.add(in.delta());
+        if (target.signum() < 0) {
+            throw ApiException.badRequest("Bin " + bin.get("code") + " holds only " + plain(current) + " of "
+                    + store.productName(in.productId()));
+        }
+        BigDecimal change = target.subtract(current);
+        if (change.signum() > 0) {
+            if (!Boolean.TRUE.equals(bin.get("isActive"))) {
+                throw ApiException.badRequest("Bin " + bin.get("code") + " is inactive");
+            }
+            BigDecimal free = store.unbinnedQty(locationId, in.productId(), variant)
+                    .subtract(store.openPutawayQty(locationId, in.productId(), variant, null)).max(BigDecimal.ZERO);
+            if (change.compareTo(free) > 0) {
+                throw ApiException.badRequest("Only " + plain(free) + " of " + store.productName(in.productId())
+                        + " is unbinned in this location; the bins cannot hold more than the stock ledger");
+            }
+            store.addStock(bin, in.productId(), variant, batch, change);
+        } else if (change.signum() < 0) {
+            BigDecimal reserved = store.reservedInBin(binId, in.productId(), variant, batch);
+            if (target.compareTo(reserved) < 0) {
+                throw ApiException.badRequest(plain(reserved) + " of " + store.productName(in.productId()) + " in bin "
+                        + bin.get("code") + " is held by open pick / move tasks");
+            }
+            store.removeStock(bin, in.productId(), variant, batch, change.negate());
+        }
+        audit.recordInTx(AuditInput.of("WarehouseBinStock", binId, "adjust", Obj.of("quantity", current),
+                Obj.of("productId", in.productId(), "variantKey", variant, "batchKey", batch, "quantity", target,
+                        "change", change, "reason", in.reason().trim())));
+        Map<String, Object> out = binView(bin);
+        out.put("stock", binStockRows(null, binId, null));
+        out.put("change", change);
+        return out;
+    }
+
+    /**
+     * Take bin stock that exceeds the stock ledger out of the bins (per product and variant: binned + staged −
+     * location on-hand, capped at what is binned). Bins are emptied in a fixed order: pickable bins (storage, then
+     * receiving) before output / quarantine, each by pick sequence and code, lots expiring first, and quantity not
+     * held by open tasks before held quantity. Nothing is posted to the ledger.
+     */
+    @Transactional
+    public Map<String, Object> reconcile(String locationId, String productId) {
+        store.operable(locationId);
+        List<Map<String, Object>> keys = SqlRows.list(jdbc.sql("SELECT DISTINCT \"productId\", \"variantKey\""
+                        + " FROM \"WarehouseBinStock\" WHERE \"organizationId\" = ? AND \"locationId\" = ? AND quantity > 0"
+                        + (productId == null ? "" : " AND \"productId\" = ?") + " ORDER BY \"productId\", \"variantKey\"")
+                .params(productId == null ? List.of(org(), locationId) : List.of(org(), locationId, productId)));
+        List<Map<String, Object>> removed = new ArrayList<>();
+        for (Map<String, Object> k : keys) {
+            String prod = SqlRows.str(k, "productId");
+            String variant = SqlRows.str(k, "variantKey");
+            store.lock(locationId, prod);
+            BigDecimal binned = store.binnedQty(locationId, prod, variant);
+            BigDecimal excess = binned.add(store.stagedQty(locationId, prod, variant))
+                    .subtract(store.locationQty(locationId, prod, variant)).min(binned);
+            if (excess.signum() <= 0) {
+                continue;
+            }
+            List<Map<String, Object>> cells = SqlRows.list(jdbc.sql("SELECT s.\"binId\", b.code, s.\"batchKey\","
+                    + " s.quantity, coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
+                    + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
+                    + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0) AS held"
+                    + " FROM \"WarehouseBinStock\" s JOIN \"WarehouseBin\" b ON b.id = s.\"binId\""
+                    + " LEFT JOIN \"InventoryBatch\" ib ON ib.id = s.\"batchKey\""
+                    + " WHERE s.\"organizationId\" = ? AND s.\"locationId\" = ? AND s.\"productId\" = ?"
+                    + " AND s.\"variantKey\" = ? AND s.quantity > 0"
+                    + " ORDER BY CASE b.usage WHEN 'storage' THEN 0 WHEN 'receiving' THEN 1 ELSE 2 END,"
+                    + " b.\"pickSequence\", b.code, ib.\"expiryDate\" ASC NULLS LAST, s.\"batchKey\"")
+                    .params(org(), locationId, prod, variant));
+            Map<String, BigDecimal> take = new LinkedHashMap<>();
+            BigDecimal rest = excess;
+            for (int pass = 0; pass < 2 && rest.signum() > 0; pass++) {
+                for (Map<String, Object> c : cells) {
+                    if (rest.signum() <= 0) {
+                        break;
+                    }
+                    String cellKey = c.get("binId") + "|" + c.get("batchKey");
+                    BigDecimal qty = SqlRows.dec(c, "quantity").subtract(take.getOrDefault(cellKey, BigDecimal.ZERO));
+                    BigDecimal free = pass == 0 ? qty.subtract(SqlRows.dec(c, "held")).max(BigDecimal.ZERO) : qty;
+                    BigDecimal t = free.min(rest);
+                    if (t.signum() > 0) {
+                        take.merge(cellKey, t, BigDecimal::add);
+                        rest = rest.subtract(t);
+                    }
+                }
+            }
+            for (Map<String, Object> c : cells) {
+                String cellKey = c.get("binId") + "|" + c.get("batchKey");
+                BigDecimal t = take.get(cellKey);
+                if (t == null || t.signum() <= 0) {
+                    continue;
+                }
+                store.removeStock(store.bin(SqlRows.str(c, "binId")), prod, variant, SqlRows.str(c, "batchKey"), t);
+                removed.add(Obj.of("binId", c.get("binId"), "binCode", c.get("code"), "productId", prod, "productName",
+                        store.productName(prod), "variantKey", variant, "batchKey", c.get("batchKey"), "quantity", t));
+            }
+        }
+        if (!removed.isEmpty()) {
+            audit.recordInTx(AuditInput.of("WarehouseBinStock", locationId, "reconcile", null, Obj.of("removed",
+                    removed)));
+        }
+        return Obj.of("locationId", locationId, "reconciled", removed.size(), "removed", removed);
     }
 }

@@ -88,8 +88,10 @@ data class LocalHoldEntity(
  * `sale.void` op replays against the server which reverses the invoice GL,
  * restocks, and returns drawer cash. `serverInvoiceId` is the real invoice id
  * when the sale already synced; otherwise the sale's local id (the server
- * resolves it via the batch clientId map). Partial refunds are not yet
- * supported offline (the device never sees server invoice-item ids).
+ * resolves it via the batch clientId map). A partial refund names its lines
+ * by position in the sale ([linesJson], `lineNumber` on the wire); each row
+ * carries one stock disposition, so a refund with mixed dispositions is
+ * several rows / ops.
  */
 @Entity(tableName = "local_refunds")
 data class LocalRefundEntity(
@@ -111,6 +113,14 @@ data class LocalRefundEntity(
     /** queued | pushed | failed | discarded */
     val syncStatus: String,
     val lastError: String?,
+    /**
+     * Refunded lines as JSON `[{"lineIndex":0,"quantity":1.0}]` (0-based index
+     * into the sale's lines). Null = every line in full (void, or a refund
+     * recorded before partial refunds existed).
+     */
+    val linesJson: String? = null,
+    /** restock | waste | no_return — what happens to the returned goods. */
+    val stockDisposition: String? = null,
 )
 
 /**

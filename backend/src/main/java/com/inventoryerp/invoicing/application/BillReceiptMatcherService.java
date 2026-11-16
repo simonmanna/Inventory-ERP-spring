@@ -2,6 +2,7 @@ package com.inventoryerp.invoicing.application;
 
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.core.application.UomConversionService;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,35 +28,44 @@ public class BillReceiptMatcherService {
             List<Consumption> consumptions, BigDecimal accruedReceiptValue, String locationId) {}
 
     private final JdbcClient jdbc;
+    private final UomConversionService units;
 
-    public BillReceiptMatcherService(JdbcClient jdbc) {
+    public BillReceiptMatcherService(JdbcClient jdbc, UomConversionService units) {
         this.jdbc = jdbc;
+        this.units = units;
     }
 
     /** Read-only split of a bill line against posted receipts of the same supplier + product. */
     public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity) {
-        return matchLine(organizationId, partnerId, productId, quantity, null);
+        return matchLine(organizationId, partnerId, productId, null, quantity, null);
     }
 
     /**
      * Unit-aware split (ADR-S003). When the bill line and a receipt line both carry a unit snapshot, quantities are
      * compared in base units: billing 1 Box (24) consumes 24 Piece of an open receipt. Consumed quantities are
      * stamped in each receipt line's own unit; the returned vouchered/accrued/unmatched quantities are in bill-line
-     * units. Lines without a snapshot compare 1:1 like before V5.
+     * units. Phase I1b (audit U-2): a side without a snapshot (a pre-V5 bill or receipt line) is converted with the
+     * live factor of its unit — the receipt line's unit, else the product's purchase unit, which is how pre-V5 lines
+     * were received and billed — instead of being compared 1:1. Phase I2 review N4: only receipt lines of the bill
+     * line's variant are consumed (a line without a variant matches receipt lines without one), so a bill for one
+     * variant never vouchers another variant's receipt; the unmatched remainder is auto-received as that variant.
      */
-    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, BigDecimal quantity,
-            BigDecimal billUomFactor) {
+    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, String variantId,
+            BigDecimal quantity, BigDecimal billUomFactor) {
         BigDecimal wanted = Money.dec(quantity);
         if (wanted.signum() <= 0 || partnerId == null) {
             return new BillLineMatch(Money.ZERO, Money.ZERO, wanted, List.of(), Money.ZERO, null);
         }
         List<Map<String, Object>> lines = SqlRows.list(jdbc.sql("SELECT l.id, l.\"purchaseOrderLineId\", l.quantity,"
-                        + " l.\"billedQuantity\", l.\"unitCost\", l.\"uomFactor\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
+                        + " l.\"billedQuantity\", l.\"unitCost\", l.\"uomFactor\", l.\"uomId\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM \"GoodsReceiptLine\" l"
                         + " JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE l.\"organizationId\" = ?"
-                        + " AND l.\"productId\" = ? AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
+                        + " AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
                         + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC, l.id ASC FOR UPDATE OF l")
-                .params(organizationId, productId, organizationId, partnerId));
+                .params(organizationId, productId, variantId, organizationId, partnerId));
         // P1-7: the open receipt lines are locked, so two bills posting at once cannot both consume the same quantity.
+        BigDecimal billFactor = billUomFactor != null && billUomFactor.signum() > 0 ? billUomFactor
+                : legacyFactor(organizationId, productId);
         BigDecimal remaining = wanted;
         BigDecimal vouchered = Money.ZERO;
         BigDecimal accrued = Money.ZERO;
@@ -70,13 +80,16 @@ public class BillReceiptMatcherService {
             if (open.signum() <= 0) {
                 continue;
             }
-            // ratio = receipt-line units per bill-line unit (1 when either side predates unit snapshots).
-            BigDecimal receiptFactor = line.get("uomFactor") == null ? null : Money.dec(line.get("uomFactor"));
-            BigDecimal ratio = billUomFactor == null || receiptFactor == null || receiptFactor.signum() <= 0
-                    ? BigDecimal.ONE : Money.div(billUomFactor, receiptFactor);
-            BigDecimal openInBill = Money.div(open, ratio);
+            // ratio = receipt-line units per bill-line unit, in base units on both sides.
+            BigDecimal receiptFactor = line.get("uomFactor") != null && Money.dec(line.get("uomFactor")).signum() > 0
+                    ? Money.dec(line.get("uomFactor"))
+                    : line.get("uomId") != null ? units.factorToBase(productId, (String) line.get("uomId"))
+                            : legacyFactor(organizationId, productId);
+            // Multiply before dividing so whole units stay exact (24 Piece of a Box-24 line is exactly 1 Box).
+            BigDecimal openInBill = Money.div(open.multiply(receiptFactor), billFactor);
             BigDecimal takeInBill = Money.min(openInBill, remaining);
-            BigDecimal take = takeInBill.compareTo(openInBill) == 0 ? open : takeInBill.multiply(ratio);
+            BigDecimal take = takeInBill.compareTo(openInBill) == 0 ? open
+                    : Money.div(takeInBill.multiply(billFactor), receiptFactor);
             boolean isVouchered = line.get("purchaseOrderId") != null;
             BigDecimal unitCost = Money.dec(line.get("unitCost"));
             consumptions.add(new Consumption((String) line.get("id"), (String) line.get("purchaseOrderLineId"), take,
@@ -94,6 +107,13 @@ public class BillReceiptMatcherService {
         }
         return new BillLineMatch(vouchered, accrued, remaining.signum() <= 0 ? Money.ZERO : remaining, consumptions,
                 accruedValue, locationId);
+    }
+
+    /** Base units per 1 purchase unit of {@code productId} (1 when it has none): the unit pre-V5 lines used. */
+    private BigDecimal legacyFactor(String organizationId, String productId) {
+        String purchaseUomId = jdbc.sql("SELECT \"purchaseUomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, organizationId).query(String.class).optional().orElse(null);
+        return units.factorToBase(productId, purchaseUomId);
     }
 
     /** Stamp consumed quantity onto receipt (and PO) lines and record the claim. */

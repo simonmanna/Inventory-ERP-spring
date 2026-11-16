@@ -57,21 +57,25 @@ public class AssetLedgerService {
         return cost;
     }
 
-    /** Dr fixed assets / Cr payable (vendor) or asset clearing. Returns the entry id, or null for a zero cost. */
+    /**
+     * Dr fixed assets / Cr asset clearing ({@code suspense}), tagged with the vendor. The supplier's bill for the asset
+     * clears it (its line on the clearing account) and is the AP open item. Crediting AP here raised a payable with no
+     * bill behind it, so the AP control no longer matched the open items and a real bill doubled it (review
+     * 2026-11-15, P-8). Returns the entry id, or null for a zero cost.
+     */
     public String capitalise(Asset asset, AssetAcquisition acq, Instant date) {
         BigDecimal cost = capitalisedCost(asset, acq);
         if (cost.signum() <= 0) {
             return null;
         }
         String vendor = acq != null && acq.getVendorId() != null ? acq.getVendorId() : asset.getSupplierId();
-        String credit = vendor != null ? determination.payableAccount(payableOf(vendor))
-                : determination.mapped("suspense");
+        String credit = determination.mapped("suspense");
         String value = JsNumbers.dec(cost);
         return id(posting.post(new PostingRequest("GEN", date, "Capitalisation " + asset.getAssetCode(), null, null,
                 "asset_acquisition", asset.getId(), null, "asset_acquisition:" + asset.getId(), asset.getBranchId(),
                 null, null, List.of(new Line(determination.mapped("fixed_asset_valuation"), value, null, null,
                         "Asset " + asset.getAssetCode(), asset.getBranchId(), null, null),
-                        new Line(credit, null, value, vendor, vendor != null ? "Payable for asset" : "Asset clearing",
+                        new Line(credit, null, value, vendor, "Asset clearing" + (vendor != null ? " · awaiting the supplier's bill" : ""),
                                 asset.getBranchId(), null, null)))));
     }
 
@@ -129,10 +133,18 @@ public class AssetLedgerService {
         BigDecimal accumulated = jdbc.sql("SELECT coalesce(sum(\"depreciationAmount\"), 0) FROM \"AssetDepreciation\""
                 + " WHERE \"assetId\" = ? AND \"isPosted\" = true").param(asset.getId()).query(BigDecimal.class).single();
         BigDecimal received = nz(proceeds);
-        BigDecimal gain = received.subtract(cost.subtract(accumulated));
+        // ADR-S073: impairment still on the books (losses less reversals) is cleared with the asset.
+        BigDecimal impaired = jdbc.sql("SELECT coalesce(sum(CASE WHEN kind = 'impairment' THEN amount ELSE -amount END),"
+                + " 0) FROM \"AssetImpairment\" WHERE \"organizationId\" = ? AND \"assetId\" = ?")
+                .params(TenantContext.organizationId(), asset.getId()).query(BigDecimal.class).single();
+        BigDecimal gain = received.subtract(cost.subtract(accumulated).subtract(impaired));
         List<Line> lines = new ArrayList<>();
         if (accumulated.signum() > 0) {
             lines.add(Line.debit(accumAcct, JsNumbers.dec(accumulated), "Accumulated depreciation removed"));
+        }
+        if (impaired.signum() > 0) {
+            lines.add(Line.debit(determination.mapped("accumulated_impairment"), JsNumbers.dec(impaired),
+                    "Accumulated impairment removed"));
         }
         if (received.signum() > 0) {
             lines.add(Line.debit(proceedsAccountId != null ? proceedsAccountId : determination.mapped("default_cash"),
@@ -171,11 +183,6 @@ public class AssetLedgerService {
                 + " e.\"sourceType\" = 'asset_revaluation' AND e.\"sourceId\" = ? AND e.status = 'posted' AND"
                 + " l.\"accountId\" = ?").params(TenantContext.organizationId(), assetId, surplusAccount)
                 .query(BigDecimal.class).single();
-    }
-
-    private String payableOf(String partnerId) {
-        return jdbc.sql("SELECT \"payableAccountId\" FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(partnerId, TenantContext.organizationId()).query(String.class).optional().orElse(null);
     }
 
     private static String id(Map<String, Object> entry) {

@@ -66,10 +66,15 @@ public class FleetDiscrepancyService {
     private final FleetDeliveryOrderService orders;
     private final AuditService audit;
     private final EventBus events;
+    private final LoadLineQuantityService quantities;
+    private final LoadLineHistory history;
+    private final DeliveryInvoicing ledger;
 
     public FleetDiscrepancyService(FleetDb db, SequenceService sequence, ApprovalsService approvals,
             ApprovalAdminService approvalAdmin, CreditNoteService creditNotes, FleetDeliveryOrderService orders,
-            AuditService audit, EventBus events) {
+            AuditService audit, EventBus events, LoadLineQuantityService quantities, LoadLineHistory history,
+            DeliveryInvoicing ledger) {
+        this.ledger = ledger;
         this.db = db;
         this.sequence = sequence;
         this.approvals = approvals;
@@ -78,6 +83,8 @@ public class FleetDiscrepancyService {
         this.orders = orders;
         this.audit = audit;
         this.events = events;
+        this.quantities = quantities;
+        this.history = history;
     }
 
     @Transactional(readOnly = true)
@@ -107,8 +114,10 @@ public class FleetDiscrepancyService {
         List<Object> pp = new ArrayList<>(params);
         pp.add(size);
         pp.add((p - 1) * size);
-        return PageResult.of(SqlRows.list(db.jdbc().sql(SELECT + where + " ORDER BY x.\"createdAt\" DESC, x.id LIMIT ?"
-                + " OFFSET ?").params(pp)), p, size, total);
+        List<Map<String, Object>> rows = SqlRows.list(db.jdbc().sql(SELECT + where + " ORDER BY x.\"createdAt\" DESC,"
+                + " x.id LIMIT ? OFFSET ?").params(pp));
+        rows.forEach(LoadLineQuantityService::decorate);
+        return PageResult.of(rows, p, size, total);
     }
 
     @Transactional(readOnly = true)
@@ -118,6 +127,7 @@ public class FleetDiscrepancyService {
         if (x == null) {
             throw ApiException.notFound("Discrepancy not found");
         }
+        LoadLineQuantityService.decorate(x);
         x.put("approvalRequest", x.get("approvalRequestId") == null ? null : SqlRows.one(db.jdbc().sql("SELECT id,"
                 + " status::text AS status, \"currentStep\" FROM \"ApprovalRequest\" WHERE id = ? AND"
                 + " \"organizationId\" = ?").params(x.get("approvalRequestId"), FleetDb.org())));
@@ -147,16 +157,184 @@ public class FleetDiscrepancyService {
                 "raisedBy", TenantContext.userId()));
         String id = (String) row.get("id");
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "create", null, row));
+        history.record(line, "claim_opened", LoadLineHistory.bucketOf(kind), BigDecimal.ZERO, differenceQty,
+                kind + " " + row.get("code") + " (" + reason + ")", null, "discrepancy", id);
         ensureWorkflow();
         Map<String, Object> gate = approvals.checkOrRequestApproval(APPROVAL_ENTITY, id, Obj.of("discrepancy",
                 row.get("code"), "trip", trip.get("code"), "kind", kind, "reason", reason, "quantity",
                 JsNumbers.dec(differenceQty)));
         if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
             db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("approvalRequestId", gate.get("requestId")));
-        } else {
+        } else if (!"weight".equals(kind)) {
             decide(id, true, null, "Approved automatically (no active approval workflow)");
         }
+        // Phase A A2 (plan §11): a weight claim is never approved automatically; with the workflow switched off it
+        // stays pending until someone with the approve-discrepancy permission decides it.
+        quantities.refresh((String) line.get("id"));
         return db.require(FleetDeliveryDiscrepancy.class, id, false, "Discrepancy not found");
+    }
+
+    /** Phase A A2: a weight claim (kind {@code weight}) for a load line, carrying its truck-level kg. */
+    Map<String, Object> raiseWeightClaim(Map<String, Object> trip, Map<String, Object> line, BigDecimal qty,
+            BigDecimal kg, String notes) {
+        Map<String, Object> row = raise(trip, line, "weight", "weighing_variance", SqlRows.dec(line, "dispatchedQty"),
+                line.get("deliveredQty") == null ? BigDecimal.ZERO : SqlRows.dec(line, "deliveredQty"), qty, notes);
+        return db.update(FleetDeliveryDiscrepancy.class, (String) row.get("id"), Obj.of("claimKg", kg));
+    }
+
+    /**
+     * Phase A A2: corrected customer evidence changes a still-pending weight claim's quantity (audited); a decided
+     * claim answers 409 (the plan's resubmission rule).
+     */
+    Map<String, Object> updateWeightClaim(String id, BigDecimal qty, BigDecimal kg, String notes) {
+        Map<String, Object> x = lock(id);
+        assertPendingWeightClaim(x);
+        Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("differenceQty", qty,
+                "claimKg", kg, "notes", FleetVehicleService.trim(notes)));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", x, after));
+        if (SqlRows.dec(x, "differenceQty").compareTo(qty) != 0) {
+            history.record(lineOf(x), "claim_quantity_changed", "pending_disputed", SqlRows.dec(x, "differenceQty"),
+                    qty, "Corrected customer weight", null, "discrepancy", id);
+        }
+        quantities.refresh((String) x.get("loadLineId"));
+        return after;
+    }
+
+    /**
+     * Phase A A2: a pending weight claim that corrected customer evidence no longer supports is dismissed (the POD
+     * already says the goods were delivered, so the quantity stays accepted) and its approval request withdrawn.
+     */
+    void withdrawWeightClaim(String id, String note) {
+        Map<String, Object> x = lock(id);
+        assertPendingWeightClaim(x);
+        withdraw(x, note);
+    }
+
+    /** Close a pending claim as withdrawn (not a decision): status rejected + {@code withdrawnAt}, request cancelled. */
+    private void withdraw(Map<String, Object> x, String note) {
+        String id = (String) x.get("id");
+        Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("status", "rejected",
+                "decidedBy", TenantContext.userId(), "decidedAt", Instant.now(), "decisionNotes", note, "withdrawnAt",
+                Instant.now()));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", x, after));
+        if (x.get("approvalRequestId") != null) {
+            approvals.withdraw((String) x.get("approvalRequestId"), note);
+        }
+        history.record(lineOf(x), "claim_withdrawn", LoadLineHistory.bucketOf((String) x.get("kind")),
+                LoadLineQuantityService.claim(x).open(), BigDecimal.ZERO, note, null, "discrepancy", id);
+        quantities.refresh((String) x.get("loadLineId"));
+        publishDecided(x, after);
+    }
+
+    /**
+     * Phase A A3 (plan §2): reduce a pending weight claim (audited, with a reason) before it is decided; 0 withdraws
+     * it. Model-2 claims only.
+     */
+    @Transactional
+    public Map<String, Object> reduceClaim(String id, BigDecimal qty, String reason) {
+        Map<String, Object> x = lock(id);
+        String why = FleetVehicleService.trim(reason);
+        if (why == null) {
+            throw ApiException.badRequest("A reason is required to reduce a claim");
+        }
+        if (!"weight".equals(x.get("kind"))) {
+            throw ApiException.badRequest("Only a weight claim can be reduced; correct the proof of delivery instead");
+        }
+        assertPendingWeightClaim(x);
+        BigDecimal current = SqlRows.dec(x, "differenceQty");
+        if (qty == null || qty.signum() < 0 || qty.compareTo(current) >= 0) {
+            throw ApiException.badRequest("The reduced quantity must be at least 0 and less than the claim ("
+                    + JsNumbers.dec(current) + ")");
+        }
+        if (qty.signum() == 0) {
+            withdraw(x, why);
+            return get(id);
+        }
+        BigDecimal kg = x.get("claimKg") == null ? null : SqlRows.dec(x, "claimKg").multiply(qty)
+                .divide(current, 3, java.math.RoundingMode.HALF_UP);
+        Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, Obj.of("differenceQty", qty,
+                "claimKg", kg));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", x, Obj.of("differenceQty", after.get("differenceQty"),
+                "reason", why)));
+        history.record(lineOf(x), "claim_quantity_changed", "pending_disputed", current, qty, why, null, "discrepancy",
+                id);
+        quantities.refresh((String) x.get("loadLineId"));
+        return get(id);
+    }
+
+    /**
+     * Phase A A3 (plan §2): a POD correction raised the delivered quantity of {@code line} by {@code x}: reconcile that
+     * much of the line's open POD-shortage claims (pending or dismissed, oldest first). A fully corrected claim
+     * becomes {@code reconciled} (its approval request withdrawn); a partial one stays open for the rest. Returns the
+     * quantity that found no open claim (the caller refuses the correction when it is above 0).
+     */
+    BigDecimal reconcileShortage(Map<String, Object> line, BigDecimal x, String reason, List<String> evidence) {
+        BigDecimal left = x;
+        for (Map<String, Object> c : SqlRows.list(db.jdbc().sql("SELECT * FROM \"FleetDeliveryDiscrepancy\" WHERE"
+                + " \"organizationId\" = ? AND \"loadLineId\" = ? AND kind = 'shortage' AND \"resolutionModel\" = 2 AND"
+                + " status IN ('pending', 'rejected') AND \"withdrawnAt\" IS NULL ORDER BY \"createdAt\", id FOR UPDATE")
+                .params(FleetDb.org(), line.get("id")))) {
+            if (left.signum() <= 0) {
+                break;
+            }
+            BigDecimal open = LoadLineQuantityService.claim(c).open();
+            BigDecimal take = open.min(left);
+            if (take.signum() <= 0) {
+                continue;
+            }
+            left = left.subtract(take);
+            BigDecimal reconciled = LoadLineQuantityService.dec(c, "reconciledQty").add(take);
+            boolean full = take.compareTo(open) == 0;
+            Map<String, Object> data = new java.util.LinkedHashMap<>(Obj.of("reconciledQty", reconciled));
+            if (full) {
+                data.put("status", "reconciled");
+                data.put("decidedBy", TenantContext.userId());
+                data.put("decidedAt", Instant.now());
+                data.put("decisionNotes", reason);
+            }
+            String id = (String) c.get("id");
+            Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, data);
+            if (evidence != null && !evidence.isEmpty()) {
+                db.jdbc().sql("UPDATE \"FleetDeliveryDiscrepancy\" SET \"evidenceFileIds\" = \"evidenceFileIds\" ||"
+                        + " ?::text[] WHERE id = ? AND \"organizationId\" = ?").params(evidence.toArray(String[]::new), id,
+                                FleetDb.org()).update();
+            }
+            audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", c, Obj.of("reconciledQty", reconciled, "status",
+                    after.get("status"), "reason", reason)));
+            if (full && "pending".equals(c.get("status")) && c.get("approvalRequestId") != null) {
+                approvals.withdraw((String) c.get("approvalRequestId"), "Reconciled by a POD correction");
+            }
+            history.record(line, "claim_reconciled", "pending_disputed", open, open.subtract(take), reason, evidence,
+                    "discrepancy", id);
+            if (full) {
+                publishDecided(c, after);
+            }
+        }
+        return left;
+    }
+
+    private Map<String, Object> lineOf(Map<String, Object> x) {
+        return Obj.of("id", x.get("loadLineId"), "loadId", x.get("loadId"), "uomId", x.get("uomId"));
+    }
+
+    private void publishDecided(Map<String, Object> before, Map<String, Object> after) {
+        events.publish(DomainEvents.FLEET_DELIVERY_DISCREPANCY_DECIDED, Obj.of("organizationId", FleetDb.org(),
+                "discrepancyId", after.get("id"), "code", before.get("code"), "loadId", before.get("loadId"),
+                "loadLineId", before.get("loadLineId"), "kind", before.get("kind"), "deliveryOrderId",
+                before.get("deliveryOrderId"), "status", after.get("status"), "claimDecision",
+                LoadLineQuantities.Claim.decision((String) after.get("status"), after.get("withdrawnAt") != null),
+                "differenceQty", JsNumbers.dec(SqlRows.dec(before, "differenceQty")), "creditNoteId",
+                after.get("creditNoteId")));
+    }
+
+    private static void assertPendingWeightClaim(Map<String, Object> x) {
+        if (!"weight".equals(x.get("kind"))) {
+            throw new IllegalStateException("Discrepancy " + x.get("code") + " is not a weight claim");
+        }
+        if (!"pending".equals(x.get("status"))) {
+            throw ApiException.conflict("Weight claim " + x.get("code") + " is already " + ("approved".equals(
+                    x.get("status")) ? "confirmed" : "dismissed") + "; the customer weight can no longer change it");
+        }
     }
 
     @Transactional
@@ -239,7 +417,24 @@ public class FleetDiscrepancyService {
         }
         Map<String, Object> data = Obj.of("status", approved ? "approved" : "rejected", "decidedBy", deciderId,
                 "decidedAt", Instant.now(), "decisionNotes", notes);
-        if (approved) {
+        boolean model2 = x.get("resolutionModel") != null && ((Number) x.get("resolutionModel")).intValue() == 2;
+        if (!approved && model2) {
+            data.put("dismissReason", notes);
+        }
+        if (model2) {
+            // Plan §2/§3: the decision moves quantity between buckets; the line's billable quantity follows the
+            // accepted bucket (refreshed below), never arithmetic on it.
+            BigDecimal open = LoadLineQuantityService.claim(x).open();
+            if (approved && open.signum() > 0 && ("shortage".equals(x.get("kind")) || "weight".equals(x.get("kind")))) {
+                Map<String, Object> order = orders.require((String) x.get("deliveryOrderId"), false);
+                Map<String, Object> cn = lateCredit(x, order, open);
+                if (cn != null) {
+                    data.put("creditNoteId", cn.get("id"));
+                    data.put("creditNoteNumber", cn.get("documentNumber"));
+                    data.put("creditAmount", cn.get("totalAmount"));
+                }
+            }
+        } else if (approved) {
             Map<String, Object> line = db.require(FleetLoadLine.class, (String) x.get("loadLineId"), true,
                     "Trip line not found");
             BigDecimal diff = SqlRows.dec(x, "differenceQty");
@@ -259,10 +454,35 @@ public class FleetDiscrepancyService {
         }
         Map<String, Object> after = db.update(FleetDeliveryDiscrepancy.class, id, data);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, approved ? "approve" : "reject", x, after));
-        events.publish(DomainEvents.FLEET_DELIVERY_DISCREPANCY_DECIDED, Obj.of("organizationId", FleetDb.org(),
-                "discrepancyId", id, "code", x.get("code"), "loadId", x.get("loadId"), "deliveryOrderId",
-                x.get("deliveryOrderId"), "status", approved ? "approved" : "rejected", "differenceQty",
-                JsNumbers.dec(SqlRows.dec(x, "differenceQty")), "creditNoteId", after.get("creditNoteId")));
+        BigDecimal open = LoadLineQuantityService.claim(x).open();
+        history.record(lineOf(x), approved ? "claim_confirmed" : "claim_dismissed",
+                approved ? "confirmed_shortage" : LoadLineHistory.bucketOf((String) x.get("kind")), open,
+                approved ? open : BigDecimal.ZERO, notes, null, "discrepancy", id);
+        quantities.refresh((String) x.get("loadLineId"));
+        publishDecided(x, after);
+    }
+
+    /**
+     * Credit note for a claim confirmed after the goods were invoiced on the delivery order (Fleet-owned goods only;
+     * Sales-owned orders credit through Sales). A4 narrows the quantity to what was invoiced beyond accepted.
+     */
+    private Map<String, Object> lateCredit(Map<String, Object> x, Map<String, Object> order, BigDecimal qty) {
+        if (order.get("goodsInvoiceId") == null
+                || ledger.salesOwned((String) order.get("sourceType"), (String) order.get("sourceId"))) {
+            return null;
+        }
+        // Phase A A4 (plan §13): with the goods ledger, credit only what was invoiced beyond accepted —
+        // min(confirmed, gross invoiced − accepted). Accepted already excludes the pending claim being confirmed.
+        if (ledger.hasLedger((String) order.get("id"))) {
+            String doLine = db.jdbc().sql("SELECT \"deliveryOrderLineId\" FROM \"FleetLoadLine\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(x.get("loadLineId"), FleetDb.org()).query(String.class).optional()
+                    .orElse(null);
+            qty = doLine == null ? BigDecimal.ZERO : qty.min(ledger.overInvoiced(doLine));
+            if (qty.signum() <= 0) {
+                return null;
+            }
+        }
+        return creditNoteRequest(x, order, qty);
     }
 
     /** Draft credit note for an approved shortage on invoiced goods (null when the line has no price). */
@@ -295,7 +515,9 @@ public class FleetDiscrepancyService {
     private static String kindLabel(String kind) {
         return switch (kind) {
             case "returned" -> "return";
+            case "damaged" -> "damage";
             case "excess" -> "excess";
+            case "weight" -> "weight variance";
             default -> "shortage";
         };
     }

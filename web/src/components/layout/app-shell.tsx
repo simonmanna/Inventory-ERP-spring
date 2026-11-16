@@ -148,7 +148,7 @@ import {
 } from '@/components/ui/select';
 import { useAuthStore } from '@/stores/auth.store';
 import { useSidebarStore } from '@/lib/sidebar.store';
-import { useOrgFeatures } from '@/lib/use-org-features';
+import { useOrgFeatures, useSidebarTagline } from '@/lib/use-org-features';
 import { featureAvailable, posModeAllows, sectionEnabled } from '@/lib/features';
 import { usePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
@@ -160,6 +160,7 @@ import { GlobalSearch } from '@/components/global-search';
 import { PushBootstrap } from '@/components/push-bootstrap';
 import { ThemePicker } from '@/components/theme-picker';
 import { LanguageSwitcher } from '@/components/language-switcher';
+import { DiscussHeaderButton } from '@/features/communication/discuss-header-button';
 import { useTranslation } from 'react-i18next';
 import { useSidebarTheme } from '@/lib/sidebar-theme';
 import {
@@ -364,6 +365,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/reports/orders', label: tx('Orders & Fulfilment'), icon: ClipboardList, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/quotations', label: tx('Quotations & Pipeline'), icon: FileText, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/billing', label: tx('Billing & Collections'), icon: Receipt, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/branch-cash', label: tx('Branch Cash Sales'), icon: Banknote, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/discounts', label: tx('Discounts & Returns'), icon: Percent, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/team', label: tx('Team Performance'), icon: UsersRound, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/profitability', label: tx('Profitability'), icon: BarChart3, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
@@ -407,6 +409,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/pos/kds', label: tx('Kitchen Display'), icon: ChefHat, permission: PERMISSIONS.pos.kds, posVisibility: 'showKitchenDisplay' },
       { to: '/pos/reports', label: tx('POS Reports'), icon: BarChart3, permission: PERMISSIONS.pos.reports, reportId: POS_REPORT_TAB_IDS, group: 'Reporting' },
       { to: '/pos/kds-reports', label: tx('Kitchen Reports'), icon: BarChart3, permission: PERMISSIONS.pos.reports, reportId: 'pos.kds', posVisibility: 'showKitchenReports', group: 'Reporting' },
+      { to: '/inventory/posting-monitor', label: tx('Posting monitor'), icon: ListChecks, permission: PERMISSIONS.pos.reports, group: 'Reporting' },
       // F13 — combo authoring hidden while combo selling is paused (the POS
       // checkout guard rejects combo lines). Route kept for when it is finished.
       { to: '/menu', label: tx('Menu'), icon: Coffee, permission: PERMISSIONS.menu.view, group: 'Configuration', posModes: ['cafe'] },
@@ -469,17 +472,17 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Inventory',
     icon: Package,
     items: [
-      { to: '/inventory', label: tx('Stock Levels'), icon: Package, permission: 'inventory:read' },
-      { to: '/inventory/transfers', label: tx('Stock Transfers'), icon: Truck, permission: PERMISSIONS.inventoryDoc.read },
-      { to: '/inventory/adjustments', label: tx('Stock Adjustments'), icon: Scale, permission: PERMISSIONS.inventoryDoc.read },
-      { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read },
-      { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read },
-      { to: '/inventory/reservations', label: tx('Stock Reservations'), icon: ClipboardCheck, permission: 'inventory:read' },
-      { to: '/inventory/warehouse', label: tx('Warehouse Management'), icon: Warehouse, permission: PERMISSIONS.warehouse.read },
-      { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print },
       { to: '/products', label: tx('Products'), icon: Package, permission: PERMISSIONS.products.view, group: 'Products' },
       { to: '/products/specifications', label: tx('Product Specifications'), icon: ClipboardList, permission: PERMISSIONS.product.read, group: 'Products' },
       { to: '/uom', label: tx('Units of Measure'), icon: Ruler, permission: PERMISSIONS.uom.read, group: 'Products' },
+      { to: '/inventory', label: tx('Stock Levels'), icon: Package, permission: 'inventory:read', group: 'Stock Movements' },
+      { to: '/inventory/transfers', label: tx('Stock Transfers'), icon: Truck, permission: PERMISSIONS.inventoryDoc.read, group: 'Stock Movements' },
+      { to: '/inventory/adjustments', label: tx('Stock Adjustments'), icon: Scale, permission: PERMISSIONS.inventoryDoc.read, group: 'Stock Movements' },
+      { to: '/inventory/count', label: tx('Stock Count'), icon: ClipboardList, permission: PERMISSIONS.inventoryCount.read, group: 'Stock Movements' },
+      { to: '/inventory/waste', label: tx('Damages & Waste'), icon: PackageX, permission: PERMISSIONS.inventoryDoc.read, group: 'Stock Movements' },
+      { to: '/inventory/reservations', label: tx('Stock Reservations'), icon: ClipboardCheck, permission: 'inventory:read', group: 'Stock Movements' },
+      { to: '/inventory/warehouse', label: tx('Warehouse Management'), icon: Warehouse, permission: PERMISSIONS.warehouse.read, group: 'Stock Movements' },
+      { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print, group: 'Stock Movements' },
       { to: '/beverage', label: tx('Alcohol Dashboard'), icon: Wine, permission: PERMISSIONS.beverage.read, flag: 'VITE_ENABLE_BEVERAGE', group: 'Beverage' },
       { to: '/beverage/count', label: tx('Bottle Count'), icon: Scale, permission: PERMISSIONS.beverage.count, flag: 'VITE_ENABLE_BEVERAGE', group: 'Beverage' },
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read', group: 'Reporting' },
@@ -516,10 +519,12 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/statements', label: tx('Statements'), icon: ScrollText, permission: PERMISSIONS.report.ar, group: 'Customers' },
       { to: '/payment-schedule', label: tx('Payment Schedule'), icon: CalendarClock, permission: PERMISSIONS.expense.read, group: 'Vendors' },
       { to: '/journal-entries', label: tx('Journal Entries'), icon: ScrollText, permission: PERMISSIONS.journalEntry.read, group: 'Entries' },
+      { to: '/recurring-entries', label: tx('Recurring Entries'), icon: CalendarClock, permission: PERMISSIONS.recurringEntry.read, group: 'Entries' },
+      { to: '/deferrals', label: tx('Deferrals'), icon: CalendarClock, permission: PERMISSIONS.deferral.read, group: 'Entries' },
       { to: '/opening-balances', label: tx('Opening Balances'), icon: FileInput, permission: PERMISSIONS.openingBalance.read, group: 'Entries' },
       { to: '/fiscal-years', label: tx('Fiscal Years'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
       { to: '/fiscal-periods', label: tx('Fiscal Periods'), icon: CalendarDays, permission: PERMISSIONS.fiscalPeriod.read, group: 'Entries' },
-      { to: '/year-end-close', label: tx('Year-End Close'), icon: Lock, permission: PERMISSIONS.fiscalPeriod.update, group: 'Entries' },
+      { to: '/year-end-close', label: tx('Period Close'), icon: Lock, permission: PERMISSIONS.fiscalPeriod.update, group: 'Entries' },
       { to: '/period-end', label: tx('Period-end (FX & VAT)'), icon: Lock, permission: PERMISSIONS.report.accounting, group: 'Entries' },
       { to: '/profit-and-loss', label: tx('Profit & Loss'), icon: TrendingUp, permission: PERMISSIONS.report.accounting, reportId: 'accounting.profit-and-loss', group: 'Statements' },
       { to: '/balance-sheet', label: tx('Balance Sheet'), icon: Landmark, permission: PERMISSIONS.report.accounting, reportId: 'accounting.balance-sheet', group: 'Statements' },
@@ -527,6 +532,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/trial-balance', label: tx('Trial Balance'), icon: Scale, permission: PERMISSIONS.report.accounting, reportId: 'accounting.trial-balance', group: 'Statements' },
       { to: '/general-ledger', label: tx('General Ledger'), icon: ArrowUpDown, permission: PERMISSIONS.report.accounting, reportId: 'accounting.general-ledger', group: 'Statements' },
       { to: '/tax-report', label: tx('Tax Report'), icon: ReceiptText, permission: PERMISSIONS.report.accounting, group: 'Statements' },
+      { to: '/withholding-certificates', label: tx('Withholding Certificates'), icon: ReceiptText, permission: PERMISSIONS.withholding.read, group: 'Statements' },
       { to: '/ar-aging', label: tx('Accounts Receivable'), icon: Clock, permission: PERMISSIONS.report.ar, reportId: 'sales.ar-aging', group: 'Aging' },
       { to: '/ap-aging', label: tx('Accounts Payable'), icon: Clock, permission: PERMISSIONS.report.ar, group: 'Aging' },
       { to: '/tieout', label: tx('Tie-Out'), icon: ShieldCheck, permission: PERMISSIONS.report.accounting, reportId: 'accounting.tieout', group: 'Reconciliation' },
@@ -829,6 +835,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/projects', label: tx('Projects'), icon: FolderKanban, permission: PERMISSIONS.projectTask.read },
       { to: '/projects/my-tasks', label: tx('My Tasks'), icon: ListTodo, permission: PERMISSIONS.projectTask.read },
       { to: '/projects/timesheets', label: tx('Timesheets'), icon: Timer, permission: PERMISSIONS.projectTimesheet.log },
+      { to: '/projects/bonds', label: tx('Bonds & Guarantees'), icon: ShieldCheck, permission: PERMISSIONS.bond.read },
       { to: '/projects/reports', label: tx('Project Reports'), icon: BarChart3, permission: PERMISSIONS.projectReport.read, group: 'Reporting' },
       { to: '/projects/tags', label: tx('Task Tags'), icon: Tags, permission: PERMISSIONS.projectTask.read, group: 'Configuration' },
     ],
@@ -869,7 +876,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Communication',
     icon: MessagesSquare,
     items: [
-      { to: '/communication', label: tx('Inbox'), icon: MessagesSquare, permission: PERMISSIONS.communication.conversationRead },
+      { to: '/communication', label: tx('Discuss'), icon: MessagesSquare, permission: PERMISSIONS.communication.conversationRead },
       { to: '/communication/channels', label: tx('Channels'), icon: Radio, permission: PERMISSIONS.communication.channelRead, group: 'Configuration' },
       { to: '/communication/rules', label: tx('Automation'), icon: Zap, permission: PERMISSIONS.communication.channelManage, group: 'Configuration' },
     ],
@@ -917,6 +924,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/settings/custom-fields', label: tx('Custom Fields & Objects'), icon: SettingsIcon, permission: PERMISSIONS.customization.read, group: 'Customization' },
       { to: '/settings/print-templates', label: tx('Print Templates'), icon: FileText, permission: PERMISSIONS.printTemplate.read, group: 'Customization' },
       { to: '/settings/automation', label: tx('Automation Rules'), icon: Zap, permission: PERMISSIONS.automation.read, group: 'Customization' },
+      { to: '/settings/notification-routing', label: tx('Notification Routing'), icon: BellRing, permission: PERMISSIONS.notificationRouting.read, group: 'Customization' },
       { to: '/settings/api-clients', label: tx('API Clients'), icon: KeyRound, permission: PERMISSIONS.apiClient.read, group: 'Customization' },
       { to: '/settings/developer', label: tx('Developer Settings'), icon: SettingsIcon, permission: PERMISSIONS.setting.read, group: 'Advanced' },
     ],
@@ -1012,6 +1020,7 @@ export function AppShell() {
   // for a request — the server still refuses an unlicensed route with a clear
   // message if someone reaches it by URL.
   const { data: orgFeatures } = useOrgFeatures();
+  const { data: sidebarTagline } = useSidebarTagline();
   const { data: license } = useLicense();
   // Menus and Tables only apply to the cafe/restaurant POS mode.
   const { data: posSettings } = usePosSettings();
@@ -1320,7 +1329,7 @@ export function AppShell() {
                   marginTop: 2,
                 }}
               >
-                {tx('Point of Sale')}
+                {sidebarTagline || tx('Point of Sale')}
               </span>
             </div>
           )}
@@ -1390,6 +1399,7 @@ export function AppShell() {
               </div>
             </div>
             <div className="flex items-center gap-1 sm:gap-2">
+              <DiscussHeaderButton />
               <LanguageSwitcher />
               <ThemePicker />
               <DropdownMenu>

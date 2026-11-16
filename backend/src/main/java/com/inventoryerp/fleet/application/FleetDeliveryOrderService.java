@@ -1,5 +1,7 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
+import com.inventoryerp.core.application.ProductVariantService.VariantRef;
 import com.inventoryerp.core.application.PriceSnapshotService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
@@ -101,13 +103,15 @@ public class FleetDeliveryOrderService {
     private final BranchScopeService scopes;
     private final PriceListService priceLists;
     private final PriceSnapshotService snapshots;
+    private final ProductVariantService variants;
 
     public FleetDeliveryOrderService(FleetDb db, SequenceService sequence, AuditService audit,
             FleetCustomerSiteService sites, UomConversionService uoms, PosStockLocation stockLocations,
             OrdersService orders, InvoiceService invoices, FleetLoadFactors factors, List<DeliverySourcePort> sources,
             CreditControlService credit, BranchScopeService scopes, PriceListService priceLists,
-            PriceSnapshotService snapshots) {
+            PriceSnapshotService snapshots, ProductVariantService variants) {
         this.snapshots = snapshots;
+        this.variants = variants;
         this.sources = sources;
         this.scopes = scopes;
         this.priceLists = priceLists;
@@ -255,14 +259,23 @@ public class FleetDeliveryOrderService {
         List<Line> lines = new ArrayList<>();
         for (DeliveryLineInput l : in.lines()) {
             Map<String, Object> product = product(l.productId());
+            // Phase I2 (D2, audit V-6): a product with variants is delivered per active variant, priced from it.
+            VariantRef variant = variants.resolve(l.productId(), blank(l.variantId()));
             String uomId = blank(l.uomId()) == null ? (String) product.get("uomId") : l.uomId();
             BigDecimal factor = uoms.factorToBase(l.productId(), uomId);
             // SALES-3: a line with no price takes the customer's list, by site and zone, else the catalogue price.
             ListPrice listed = l.unitPrice() != null ? null : priceLists.resolve(new PriceQuery(in.partnerId(),
-                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate()));
+                    l.productId(), l.quantity(), uomId, blank(in.branchId()), blank(in.siteId()), in.requestedDate(),
+                    variant == null ? null : variant.id()));
+            // Audit P-5 (D1): the catalogue price is per default sales unit; a line in another unit takes that unit's
+            // own price or the scaled one (a variant's price is scaled, audit P-3).
+            BigDecimal catalogue = variant != null ? variant.salesPrice() : (BigDecimal) product.get("salesPrice");
             BigDecimal price = l.unitPrice() != null ? l.unitPrice() : listed != null && listed.unitPrice() != null
-                    ? listed.unitPrice() : (BigDecimal) product.get("salesPrice");
-            lines.add(new Line(l.productId(), null, FleetVehicleService.trim(l.description()), uomId, factor,
+                    ? listed.unitPrice() : uoms.defaultUnitPrice(l.productId(),
+                            new UomConversionService.LineUnit(uomId, factor), UomConversionService.UnitRole.SALES,
+                            catalogue, variant != null);
+            lines.add(new Line(l.productId(), variant == null ? null : variant.id(),
+                    FleetVehicleService.trim(l.description()), uomId, factor,
                     l.quantity(), null, price, listed == null || listed.discountPercent().signum() == 0 ? null
                             : listed.discountPercent(), blank(l.taxId()), FleetVehicleService.trim(l.batchNumber()),
                     FleetVehicleService.trim(l.notes())));
@@ -318,8 +331,12 @@ public class FleetDeliveryOrderService {
                 if (qty.signum() <= 0) {
                     continue;
                 }
-                lines.add(new Line(productId, str(it.get("variantId")), str(it.get("description")),
-                        (String) product.get("uomId"), BigDecimal.ONE, qty.setScale(3, RoundingMode.HALF_UP),
+                // Phase I2 review N5: an OrderItem carries no unit; its quantity is in the product's sales unit (as the
+                // POS stock issue reads it), so the delivery line keeps that unit and its factor to base.
+                String uomId = product.get("salesUomId") != null ? (String) product.get("salesUomId")
+                        : (String) product.get("uomId");
+                lines.add(new Line(productId, str(it.get("variantId")), str(it.get("description")), uomId,
+                        uoms.factorToBase(productId, uomId), qty.setScale(3, RoundingMode.HALF_UP),
                         str(it.get("id")), decOrNull(it.get("unitPrice")), decOrNull(it.get("discountPercent")),
                         str(it.get("taxId")), null, str(it.get("note"))));
             }
@@ -403,7 +420,8 @@ public class FleetDeliveryOrderService {
                 String uomId = l.get("uomId") != null ? str(l.get("uomId")) : (String) product.get("uomId");
                 BigDecimal factor = l.get("uomFactor") != null ? dec(l.get("uomFactor"))
                         : uoms.factorToBase(productId, uomId);
-                lines.add(new Line(productId, null, str(l.get("description")), uomId, factor,
+                // Phase I2 N9: the delivery issues the invoice line's variant, not the product-level quant.
+                lines.add(new Line(productId, str(l.get("variantId")), str(l.get("description")), uomId, factor,
                         qty.setScale(3, RoundingMode.HALF_UP), str(l.get("id")), decOrNull(l.get("unitPrice")),
                         decOrNull(l.get("discountPercent")), str(l.get("taxId")), null, null));
             }
@@ -798,7 +816,7 @@ public class FleetDeliveryOrderService {
     }
 
     private Map<String, Object> product(String productId) {
-        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, name, \"uomId\", \"salesPrice\" FROM \"Product\""
+        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, name, \"uomId\", \"salesUomId\", \"salesPrice\" FROM \"Product\""
                 + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(productId, FleetDb.org()));
         if (p == null) {
             throw ApiException.badRequest("Product not found");

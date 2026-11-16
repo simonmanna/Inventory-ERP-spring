@@ -22,17 +22,15 @@ import { useAuthStore } from '@/stores/auth.store';
 import { PERMISSIONS } from '@erp/shared';
 import { money, date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { firstOfMonth, localDay } from '@/lib/dates';
 
 /** Whether the signed-in user holds `permission` (re-renders when permissions refresh). */
 function useHasPermission(permission: string): boolean {
   return useAuthStore((s) => s.permissions).includes(permission);
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
-const monthStart = () => {
-  const d = new Date();
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), 1)).toISOString().slice(0, 10);
-};
+const today = () => localDay();
+const monthStart = () => firstOfMonth();
 
 /** Period-end tasks (ACC-2 / ACC-7): unrealised FX revaluation and VAT settlement with its period lock. */
 export function PeriodEndPage() {

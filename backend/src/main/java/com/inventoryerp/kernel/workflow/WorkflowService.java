@@ -32,6 +32,14 @@ public class WorkflowService {
 
         void updateStatus(String table, String id, Map<String, Object> values);
 
+        /**
+         * Lock the row for the rest of the transaction and return its current status (null = not supported / no row).
+         * Default: no lock (unit-test stores).
+         */
+        default String lockStatus(String table, String id) {
+            return null;
+        }
+
         Set<String> columns(String table);
     }
 
@@ -104,11 +112,27 @@ public class WorkflowService {
             throw ApiException.badRequest("Entity " + entityType + " has no 'status' field");
         }
         String fromState = String.valueOf(status);
+        // Review N1 / audit A-1: serialize transitions of one row. The row is locked and its status re-read, so two
+        // concurrent posts or cancels never both run their side effects (stock issue / return, journal / reversal):
+        // the second one waits and then finds the state the first one left.
+        String locked = store.lockStatus(table, entityId);
+        if (locked != null) {
+            // Guards and side effects read the row as it is under the lock (status, amountPaid, …), keeping any extra
+            // keys a caller-supplied entity carries.
+            Map<String, Object> fresh = store.load(table, entityId);
+            row = new LinkedHashMap<>(row);
+            if (fresh != null) {
+                row.putAll(fresh);
+            }
+            row.put("status", locked);
+            fromState = locked;
+        }
+        String from = fromState;
         Transition transition = def.transitions().stream()
-                .filter(t -> t.from().equals(fromState) && t.action().equals(action))
+                .filter(t -> t.from().equals(from) && t.action().equals(action))
                 .findFirst()
                 .orElseThrow(() -> ApiException.badRequest(
-                        "No '" + action + "' transition from '" + fromState + "' for " + entityType));
+                        "No '" + action + "' transition from '" + from + "' for " + entityType));
         List<String> perms = permissions.get();
         Context ctx = new Context(entityType, entityId, TenantContext.organizationId(), TenantContext.userId(), perms,
                 action, fromState, transition.to(), payload, row);
@@ -222,6 +246,17 @@ public class WorkflowService {
                 }
                 return row;
             }).optional().orElse(null);
+        }
+
+        @Override
+        public String lockStatus(String table, String id) {
+            Set<String> cols = columns(table);
+            String org = cols.contains("organizationId") ? " AND \"organizationId\" = :org" : "";
+            var q = jdbc.sql("SELECT status::text FROM \"" + table + "\" WHERE id = :id" + org + " FOR UPDATE").param("id", id);
+            if (!org.isEmpty()) {
+                q = q.param("org", TenantContext.organizationId());
+            }
+            return q.query(String.class).optional().orElse(null);
         }
 
         @Override

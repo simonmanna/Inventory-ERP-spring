@@ -75,6 +75,8 @@ class OrdersViewModel @Inject constructor(
     var detail by mutableStateOf<Pair<LocalSaleEntity, ParsedSale>?>(null); private set
     var printMessage by mutableStateOf<String?>(null); private set
     var refundedSaleIds by mutableStateOf<Set<String>>(emptySet()); private set
+    /** Per line of the open sale: what is still refundable (Phase I6 partial refunds). */
+    var refundable by mutableStateOf<List<RefundRepository.Refundable>>(emptyList()); private set
     var pinPrompt by mutableStateOf<PinPrompt?>(null); private set
     var actionMessage by mutableStateOf<String?>(null); private set
 
@@ -83,9 +85,18 @@ class OrdersViewModel @Inject constructor(
     fun openDetail(sale: LocalSaleEntity) {
         viewModelScope.launch {
             detail = sale to parse(sale)
-            if (refundDao.forSale(sale.id).isNotEmpty()) refundedSaleIds = refundedSaleIds + sale.id
+            loadRefundable(sale.id)
         }
     }
+
+    private suspend fun loadRefundable(saleId: String) {
+        refundable = refunds.refundable(saleId)
+        val any = refundDao.forSale(saleId).any { it.syncStatus != "discarded" }
+        if (any && refundable.all { it.remaining <= 0.0 }) refundedSaleIds = refundedSaleIds + saleId
+    }
+
+    /** Has the open sale been partly refunded already (a void is then no longer possible)? */
+    val partlyRefunded: Boolean get() = refundable.any { it.remaining < it.sold }
 
     fun closeDetail() { detail = null; printMessage = null; pinPrompt = null; actionMessage = null }
 
@@ -103,7 +114,7 @@ class OrdersViewModel @Inject constructor(
      * The sale row is unchanged (device wins); the server reverses GL + restocks
      * + returns drawer cash when the op replays.
      */
-    fun confirmAction(reason: String, pin: String) {
+    fun confirmAction(reason: String, pin: String, quantities: Map<Int, Double>, disposition: String) {
         val prompt = pinPrompt ?: return
         val cashier = auth.current ?: return
         viewModelScope.launch {
@@ -120,12 +131,14 @@ class OrdersViewModel @Inject constructor(
             val override = mgr.getOrThrow()
             runCatching {
                 if (prompt.kind == "void") {
-                    refunds.void(cashier.userId, prompt.sale.id, reason, override.userId, pin)
+                    refunds.void(cashier.userId, prompt.sale.id, reason, override.userId, pin, disposition)
                 } else {
-                    refunds.refund(cashier.userId, prompt.sale.id, reason, override.userId, pin)
+                    val lines = quantities.filterValues { it > 0.0 }
+                        .map { (i, q) -> RefundRepository.RefundLine(i, q) }
+                    refunds.refund(cashier.userId, prompt.sale.id, reason, override.userId, pin, lines, disposition)
                 }
             }.onSuccess {
-                refundedSaleIds = refundedSaleIds + prompt.sale.id
+                loadRefundable(prompt.sale.id)
                 pinPrompt = null
                 printMessage = if (prompt.kind == "void") "Sale voided — queued for sync" else "Refund queued for sync"
             }.onFailure { actionMessage = it.message ?: "Failed" }
@@ -242,6 +255,7 @@ fun OrdersScreen(onMenu: (() -> Unit)? = null, vm: OrdersViewModel = hiltViewMod
             timeFmt = timeFmt,
             printMessage = vm.printMessage,
             refunded = sale.id in vm.refundedSaleIds,
+            partlyRefunded = vm.partlyRefunded,
             canRefund = sale.syncStatus != "failed",
             onRefund = { vm.requestAction("refund") },
             onVoid = { vm.requestAction("void") },
@@ -253,8 +267,9 @@ fun OrdersScreen(onMenu: (() -> Unit)? = null, vm: OrdersViewModel = hiltViewMod
     vm.pinPrompt?.let { prompt ->
         OverridePinDialog(
             kind = prompt.kind,
+            refundable = vm.refundable,
             message = vm.actionMessage,
-            onConfirm = { reason, pin -> vm.confirmAction(reason, pin) },
+            onConfirm = { reason, pin, qty, disposition -> vm.confirmAction(reason, pin, qty, disposition) },
             onDismiss = { vm.cancelPin() },
         )
     }
@@ -330,6 +345,7 @@ private fun SaleDetailDialog(
     timeFmt: DateTimeFormatter,
     printMessage: String?,
     refunded: Boolean,
+    partlyRefunded: Boolean,
     canRefund: Boolean,
     onRefund: () -> Unit,
     onVoid: () -> Unit,
@@ -399,12 +415,20 @@ private fun SaleDetailDialog(
                     }
                     canRefund -> {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        if (partlyRefunded) {
+                            Text(
+                                "Partly refunded",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = onRefund, modifier = Modifier.weight(1f), shape = MaterialTheme.shapes.medium) {
                                 Text("Refund")
                             }
                             OutlinedButton(
                                 onClick = onVoid,
+                                enabled = !partlyRefunded,
                                 modifier = Modifier.weight(1f),
                                 shape = MaterialTheme.shapes.medium,
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -426,17 +450,25 @@ private fun SaleDetailDialog(
 }
 
 /** Manager-PIN gate for an offline refund/void (verified on-device against the
- *  synced bcrypt hashes; the server re-validates the override on replay). */
+ *  synced bcrypt hashes; the server re-validates the override on replay).
+ *  A refund picks the quantity per line (Phase I6) and one stock disposition
+ *  for the goods; refund again for a different disposition. */
 @Composable
 private fun OverridePinDialog(
     kind: String,
+    refundable: List<RefundRepository.Refundable>,
     message: String?,
-    onConfirm: (reason: String, pin: String) -> Unit,
+    onConfirm: (reason: String, pin: String, quantities: Map<Int, Double>, disposition: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var reason by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
+    var disposition by remember { mutableStateOf("restock") }
+    val quantities = remember(refundable) {
+        mutableStateMapOf<Int, Double>().apply { refundable.forEach { put(it.lineIndex, it.remaining) } }
+    }
     val isVoid = kind == "void"
+    val anySelected = isVoid || quantities.values.any { it > 0.0 }
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = MaterialTheme.shapes.extraLarge,
@@ -448,10 +480,37 @@ private fun OverridePinDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!isVoid) {
+                    refundable.filter { it.remaining > 0.0 }.forEach { line ->
+                        val q = quantities[line.lineIndex] ?: 0.0
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(line.description, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            TextButton(
+                                onClick = { quantities[line.lineIndex] = (q - 1.0).coerceAtLeast(0.0) },
+                                enabled = q > 0.0,
+                            ) { Text("−") }
+                            Text("${fmtQty(q)} / ${fmtQty(line.remaining)}", style = MaterialTheme.typography.bodyMedium)
+                            TextButton(
+                                onClick = { quantities[line.lineIndex] = (q + 1.0).coerceAtMost(line.remaining) },
+                                enabled = q < line.remaining,
+                            ) { Text("+") }
+                        }
+                    }
+                }
+                Text("Returned goods", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("restock" to "Back to stock", "waste" to "Waste", "no_return" to "Not returned").forEach { (v, label) ->
+                        FilterChip(selected = disposition == v, onClick = { disposition = v }, label = { Text(label) })
+                    }
+                }
                 OutlinedTextField(
                     value = reason,
                     onValueChange = { reason = it },
-                    label = { Text("Reason (optional)") },
+                    label = { Text("Reason") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -471,8 +530,8 @@ private fun OverridePinDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(reason, pin) },
-                enabled = pin.length >= 4,
+                onClick = { onConfirm(reason, pin, quantities.toMap(), disposition) },
+                enabled = pin.length >= 4 && anySelected,
                 shape = MaterialTheme.shapes.medium,
                 colors = if (isVoid) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors(),
             ) { Text(if (isVoid) "Void" else "Refund") }
@@ -480,3 +539,5 @@ private fun OverridePinDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+private fun fmtQty(v: Double): String = if (v % 1.0 == 0.0) v.toLong().toString() else "%.3f".format(v).trimEnd('0')

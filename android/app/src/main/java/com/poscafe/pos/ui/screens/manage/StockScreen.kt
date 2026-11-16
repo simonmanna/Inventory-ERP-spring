@@ -53,6 +53,7 @@ class StockViewModel @Inject constructor(
     menuDao: MenuDao,
     supplierDao: SupplierDao,
     productDao: ProductDao,
+    productVariantDao: com.poscafe.pos.data.local.dao.ProductVariantDao,
     settingsDao: SettingsDao,
     private val inventoryDao: InventoryDao,
     private val auth: AuthRepository,
@@ -68,8 +69,13 @@ class StockViewModel @Inject constructor(
     val productLevels: StateFlow<List<InventoryDao.ProductStockLevel>> =
         inventoryDao.productStockLevels().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Phase I6: active product variants — a product with variants keeps its stock per variant. */
+    val variants: StateFlow<List<com.poscafe.pos.data.local.entity.ProductVariantEntity>> =
+        productVariantDao.allActive().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     /** Server on-hand at this till's location + device movements since the last pull. */
     var productOnHand by mutableStateOf<Map<String, Double>>(emptyMap()); private set
+    var variantOnHand by mutableStateOf<Map<Pair<String, String?>, Double>>(emptyMap()); private set
     var locationName by mutableStateOf<String?>(null); private set
     var error by mutableStateOf<String?>(null); private set
     val approval = ApprovalGate(auth, StockRepository.APPROVE_PERMISSION)
@@ -77,6 +83,7 @@ class StockViewModel @Inject constructor(
 
     fun refreshOnHand() {
         viewModelScope.launch {
+            variantOnHand = stock.variantOnHand()
             productOnHand = stock.productOnHand()
             locationName = stock.location()?.name
         }
@@ -111,7 +118,7 @@ class StockViewModel @Inject constructor(
      *  (purchase +, waste/transfer −, adjustment carries its own direction).
      *  Product rows use menuItemId = "" + productId, matching sale movements, and
      *  reach the server as stock in/out — which needs an approver. */
-    fun record(menuItemId: String, productId: String?, type: String, qty: Double, direction: Int, unitCost: Double?, supplierId: String?, reason: String?, onDone: () -> Unit) {
+    fun record(menuItemId: String, productId: String?, type: String, qty: Double, direction: Int, unitCost: Double?, supplierId: String?, reason: String?, variantId: String? = null, onDone: () -> Unit) {
         error = null
         approval.request(
             viewModelScope,
@@ -122,6 +129,7 @@ class StockViewModel @Inject constructor(
                 stock.record(
                     menuItemId, productId, type, qty, direction, unitCost, supplierId, reason,
                     approval = approverId?.let { StockRepository.Approval(it, pin) },
+                    variantId = variantId,
                 )
             }.onSuccess { refreshOnHand(); onDone() }
                 .onFailure { error = it.message }
@@ -132,7 +140,14 @@ class StockViewModel @Inject constructor(
 }
 
 /** One row in the Levels list — either a menu item or a retail product. */
-private data class StockRow(val id: String, val name: String, val isProduct: Boolean, val onHand: Double, val reorder: Double? = null)
+private data class StockRow(
+    val id: String,
+    val name: String,
+    val isProduct: Boolean,
+    val onHand: Double,
+    val reorder: Double? = null,
+    val variantId: String? = null,
+)
 
 /** A row is low when at/below its reorder point (or a default floor of 5). */
 private fun StockRow.isLow(): Boolean = onHand <= (reorder ?: 5.0)
@@ -155,15 +170,27 @@ fun StockScreen(onBack: () -> Unit, vm: StockViewModel = hiltViewModel()) {
     LaunchedEffect(productLevels) { vm.refreshOnHand() }
     // The server-synced figure when this device has one; the local movement sum otherwise.
     val levelByProduct = remember(productLevels, vm.productOnHand) {
-        productLevels.associate { it.productId to it.onHand } + vm.productOnHand
+        productLevels.groupBy({ it.productId }, { it.onHand }).mapValues { (_, qs) -> qs.sum() } + vm.productOnHand
     }
     val itemNames = remember(items) { items.associate { it.id to it.name } }
     val productNames = remember(products) { products.associate { it.id to it.name } }
     var lowOnly by remember { mutableStateOf(false) }
     // Levels list: both catalogs, active mode's catalog first, empty ones hidden.
-    val sections = remember(items, products, levelByItem, levelByProduct, isRetail, reorderByItem, lowOnly) {
+    val variants by vm.variants.collectAsStateWithLifecycle()
+    val levelByVariant = remember(productLevels, vm.variantOnHand) {
+        productLevels.associate { (it.productId to it.variantId) to it.onHand } + vm.variantOnHand
+    }
+    val sections = remember(items, products, variants, levelByItem, levelByProduct, levelByVariant, isRetail, reorderByItem, lowOnly) {
         val menuRows = items.map { StockRow(it.id, it.name, isProduct = false, onHand = levelByItem[it.id] ?: 0.0, reorder = reorderByItem[it.id]) }
-        val productRows = products.map { StockRow(it.id, it.name, isProduct = true, onHand = levelByProduct[it.id] ?: 0.0) }
+        val variantsByProduct = variants.groupBy { it.productId }
+        val productRows = products.flatMap { p ->
+            val vs = variantsByProduct[p.id].orEmpty()
+            if (p.hasVariants && vs.isNotEmpty()) {
+                vs.map { v -> StockRow(p.id, "${p.name} · ${v.name}", isProduct = true, onHand = levelByVariant[p.id to v.id] ?: 0.0, variantId = v.id) }
+            } else {
+                listOf(StockRow(p.id, p.name, isProduct = true, onHand = levelByProduct[p.id] ?: 0.0))
+            }
+        }
         val ordered =
             if (isRetail) listOf("Retail products" to productRows, "Menu items" to menuRows)
             else listOf("Menu items" to menuRows, "Retail products" to productRows)
@@ -223,7 +250,7 @@ fun StockScreen(onBack: () -> Unit, vm: StockViewModel = hiltViewModel()) {
                                     )
                                 }
                             }
-                            items(rows, key = { it.id }) { row ->
+                            items(rows, key = { (if (it.isProduct) "p:" else "m:") + it.id + (it.variantId?.let { v -> ":$v" } ?: "") }) { row ->
                                 Surface(
                                     onClick = { detailFor = row },
                                     shape = MaterialTheme.shapes.large,
@@ -334,6 +361,7 @@ fun StockScreen(onBack: () -> Unit, vm: StockViewModel = hiltViewModel()) {
                     productId = if (row.isProduct) row.id else null,
                     type = type, qty = qty, direction = direction,
                     unitCost = cost, supplierId = supplierId, reason = reason,
+                    variantId = row.variantId,
                 ) { recordFor = null }
             },
             onDismiss = { recordFor = null },

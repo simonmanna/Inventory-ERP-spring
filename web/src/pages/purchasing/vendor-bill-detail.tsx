@@ -237,6 +237,12 @@ export function VendorBillDetailPage() {
               <SummaryRow label={tx('Subtotal')} value={money(bill.subtotal)} />
               <SummaryRow label={tx('Tax')} value={money(bill.taxAmount)} />
               <SummaryRow label={tx('Total')} value={money(bill.totalAmount)} bold />
+              {Number((bill as { withholdingAmount?: string | number }).withholdingAmount ?? 0) !== 0 && (
+                <SummaryRow
+                  label={tx('Withholding tax')}
+                  value={`− ${money((bill as { withholdingAmount?: string | number }).withholdingAmount ?? 0)}`}
+                />
+              )}
               <SummaryRow label={tx('Paid')} value={money(bill.amountPaid)} />
               <SummaryRow label={tx('Balance due')} value={money(bill.amountResidual)} bold />
             </div>

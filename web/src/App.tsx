@@ -106,10 +106,14 @@ const CustomFieldsPage = lazy(() => import('@/pages/settings/custom-fields'));
 const CustomObjectRecordsPage = lazy(() => import('@/pages/settings/custom-object-records'));
 const PrintTemplatesPage = lazy(() => import('@/pages/settings/print-templates'));
 const AutomationRulesPage = lazy(() => import('@/pages/settings/automation-rules'));
+const NotificationRoutingPage = lazy(() => import('@/pages/settings/NotificationRoutingPage').then((m) => ({ default: m.NotificationRoutingPage })));
 const ApiClientsPage = lazy(() => import('@/pages/settings/api-clients'));
 const TaxesPage = lazy(() => import('@/pages/accounting/taxes'));
+const WithholdingCertificatesPage = lazy(() => import('@/pages/accounting/withholding-certificates'));
 const PaymentTermsPage = lazy(() => import('@/pages/accounting/payment-terms'));
 const FiscalPositionsPage = lazy(() => import('@/pages/accounting/fiscal-positions'));
+const RecurringEntriesPage = lazy(() => import('@/pages/accounting/recurring-entries'));
+const DeferralsPage = lazy(() => import('@/pages/accounting/deferrals'));
 const CostCentersPage = lazy(() => import('@/pages/accounting/cost-centers').then((m) => ({ default: m.CostCentersPage })));
 const CurrencyPage = lazy(() => import('@/pages/accounting/currency').then((m) => ({ default: m.CurrencyPage })));
 const InventoryValuationPage = lazy(() => import('@/pages/accounting/inventory-valuation').then((m) => ({ default: m.InventoryValuationPage })));
@@ -286,6 +290,7 @@ const ProjectMyTasksPage = lazy(() => import('@/pages/projects/MyTasksPage').the
 const ProjectTimesheetsPage = lazy(() => import('@/pages/projects/TimesheetsPage').then((m) => ({ default: m.TimesheetsPage })));
 const ProjectDashboardPage = lazy(() => import('@/pages/projects/ProjectDashboardPage').then((m) => ({ default: m.ProjectDashboardPage })));
 const ProjectReportsPage = lazy(() => import('@/pages/projects/ProjectReportsPage').then((m) => ({ default: m.ProjectReportsPage })));
+const ProjectBondsPage = lazy(() => import('@/pages/projects/BondsPage').then((m) => ({ default: m.BondsPage })));
 const ProjectTagsPage = lazy(() => import('@/pages/projects/ProjectTagsPage').then((m) => ({ default: m.ProjectTagsPage })));
 const TaskEditPage = lazy(() => import('@/pages/tasks/TaskEditPage').then((m) => ({ default: m.TaskEditPage })));
 
@@ -401,7 +406,7 @@ export function App() {
             <Route path="/accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><ChartOfAccountsPage /></RequirePermission>} />
             <Route path="/accounts/new" element={<RequirePermission permission={PERMISSIONS.account.create}><AccountDetailPage /></RequirePermission>} />
             {/* Static segments must stay ahead of /accounts/:id. */}
-            <Route path="/accounts/categories" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountCategoriesPage /></RequirePermission>} />
+            <Route path="/accounts/categories" element={<RequirePermission permission={PERMISSIONS.accountCategory.read}><AccountCategoriesPage /></RequirePermission>} />
             <Route path="/accounts/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountDetailPage /></RequirePermission>} />
             {/* Money & Accounts — overview keeps the old /accounts/cash-accounts URL. */}
             <Route path="/accounts/cash-accounts" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyOverviewPage /></RequirePermission>} />
@@ -416,7 +421,7 @@ export function App() {
             <Route path="/settings/registers" element={<RequirePermission permission={PERMISSIONS.cashRegister.read}><RegistersSettingsPage /></RequirePermission>} />
             <Route path="/settings/payment-methods" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentMethodsSettingsPage /></RequirePermission>} />
             <Route path="/accounts/mappings" element={<RequirePermission permission={PERMISSIONS.accountMapping.read}><AccountMappingsPage /></RequirePermission>} />
-            <Route path="/accounts/posting-rules" element={<RequirePermission permission={PERMISSIONS.account.read}><InventoryPostingRulesPage /></RequirePermission>} />
+            <Route path="/accounts/posting-rules" element={<RequirePermission permission={PERMISSIONS.inventoryPostingRule.read}><InventoryPostingRulesPage /></RequirePermission>} />
             <Route path="/journals" element={<RequirePermission permission={PERMISSIONS.journal.read}><JournalsPage /></RequirePermission>} />
             <Route path="/journals/new" element={<RequirePermission permission={PERMISSIONS.journal.create}><JournalEditPage /></RequirePermission>} />
             <Route path="/journals/:id" element={<RequirePermission permission={PERMISSIONS.journal.read}><JournalDetailPage /></RequirePermission>} />
@@ -442,7 +447,7 @@ export function App() {
             <Route path="/accounting-detailed-report" element={<RequireReport reportId="accounting.detailed"><DetailedAccountingReportPage /></RequireReport>} />
             <Route path="/profit-and-loss" element={<RequireReport reportId="accounting.profit-and-loss"><ProfitAndLossPage /></RequireReport>} />
             <Route path="/cash-flow" element={<RequireReport reportId="accounting.cash-flow-statement"><RequirePermission permission={PERMISSIONS.report.accounting}><CashFlowPage /></RequirePermission></RequireReport>} />
-            <Route path="/accounts/ledger/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><AccountLedgerPage /></RequirePermission>} />
+            <Route path="/accounts/ledger/:id" element={<RequirePermission permission={PERMISSIONS.report.accounting}><AccountLedgerPage /></RequirePermission>} />
             <Route path="/tieout" element={<RequireReport reportId="accounting.tieout"><TieOutPage /></RequireReport>} />
             <Route path="/pos-gl-reconciliation" element={<RequireReport reportId="accounting.pos-gl-recon"><PosGlReconciliationPage /></RequireReport>} />
             <Route path="/audit-log" element={<RequirePermission permission={PERMISSIONS.auditLog.read}><AuditLogPage /></RequirePermission>} />
@@ -455,11 +460,15 @@ export function App() {
             <Route path="/custom-objects/:key" element={<RequirePermission permission={PERMISSIONS.customRecord.read}><CustomObjectRecordsPage /></RequirePermission>} />
             <Route path="/settings/print-templates" element={<RequirePermission permission={PERMISSIONS.printTemplate.read}><PrintTemplatesPage /></RequirePermission>} />
             <Route path="/settings/automation" element={<RequirePermission permission={PERMISSIONS.automation.read}><AutomationRulesPage /></RequirePermission>} />
+            <Route path="/settings/notification-routing" element={<RequirePermission permission={PERMISSIONS.notificationRouting.read}><NotificationRoutingPage /></RequirePermission>} />
             <Route path="/settings/api-clients" element={<RequirePermission permission={PERMISSIONS.apiClient.read}><ApiClientsPage /></RequirePermission>} />
             <Route path="/fiscal-periods/:id/checklist" element={<RequirePermission permission={PERMISSIONS.fiscalPeriod.read}><PeriodCloseChecklistPage /></RequirePermission>} />
             <Route path="/taxes" element={<RequirePermission permission={PERMISSIONS.tax.read}><TaxesPage /></RequirePermission>} />
+            <Route path="/withholding-certificates" element={<RequirePermission permission={PERMISSIONS.withholding.read}><WithholdingCertificatesPage /></RequirePermission>} />
             <Route path="/accounts/payment-terms" element={<RequirePermission permission={PERMISSIONS.account.read}><PaymentTermsPage /></RequirePermission>} />
             <Route path="/accounts/fiscal-positions" element={<RequirePermission permission={PERMISSIONS.account.read}><FiscalPositionsPage /></RequirePermission>} />
+            <Route path="/recurring-entries" element={<RequirePermission permission={PERMISSIONS.recurringEntry.read}><RecurringEntriesPage /></RequirePermission>} />
+            <Route path="/deferrals" element={<RequirePermission permission={PERMISSIONS.deferral.read}><DeferralsPage /></RequirePermission>} />
             <Route path="/cost-centers" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCentersPage /></RequirePermission>} />
             <Route path="/cost-center-accounting" element={<RequirePermission permission={PERMISSIONS.costCenter.read}><CostCenterAccountingPage /></RequirePermission>} />
             <Route path="/currency" element={<RequirePermission permission={PERMISSIONS.currency.read}><CurrencyPage /></RequirePermission>} />
@@ -490,7 +499,7 @@ export function App() {
             <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
             <Route path="/settings/devices" element={<DevicesPage />} />
             <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />
-            <Route path="/inventory/posting-monitor" element={<PostingMonitorPage />} />
+            <Route path="/inventory/posting-monitor" element={<RequirePermission permission={PERMISSIONS.pos.reports}><PostingMonitorPage /></RequirePermission>} />
             <Route path="/fixed-assets" element={<AssetDashboardPage />} />
             <Route path="/fixed-assets/categories" element={<AssetCategoriesPage />} />
             <Route path="/fixed-assets/register" element={<AssetsPage />} />
@@ -616,6 +625,7 @@ export function App() {
             <Route path="/projects/my-tasks" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectMyTasksPage /></RequirePermission>} />
             <Route path="/projects/timesheets" element={<RequirePermission permission={PERMISSIONS.projectTimesheet.log}><ProjectTimesheetsPage /></RequirePermission>} />
             <Route path="/projects/reports" element={<RequirePermission permission={PERMISSIONS.projectReport.read}><ProjectReportsPage /></RequirePermission>} />
+            <Route path="/projects/bonds" element={<RequirePermission permission={PERMISSIONS.bond.read}><ProjectBondsPage /></RequirePermission>} />
             <Route path="/projects/tags" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectTagsPage /></RequirePermission>} />
             <Route path="/projects/:id" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectDetailPage /></RequirePermission>} />
             <Route path="/tasks" element={<TasksPage />} />

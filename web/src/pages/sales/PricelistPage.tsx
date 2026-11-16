@@ -15,6 +15,7 @@ import { useCategoryOptions, useProductOptions } from '@/features/crm/suite-api'
 import { pricingApi, usePricelist, useSalesMutation, type PriceCompute, type PricelistItem, type PricelistType } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
+import { RuleVariantSelect } from '@/features/products/variant-select';
 import { PRICELIST_TYPE_LABEL } from './PricelistsPage';
 
 const COMPUTE_LABEL: Record<PriceCompute, string> = {
@@ -22,7 +23,7 @@ const COMPUTE_LABEL: Record<PriceCompute, string> = {
 };
 
 const blankItem = (): PricelistItem => ({
-  scope: 'product', productId: null, productCategoryId: null, partnerId: null, partnerCategoryId: null, uomId: null, minQuantity: 0,
+  scope: 'product', productId: null, variantId: null, productCategoryId: null, partnerId: null, partnerCategoryId: null, uomId: null, minQuantity: 0,
   siteZone: null, branchId: null, validFrom: null, validTo: null, compute: 'fixed', value: 0, priority: 0,
 });
 
@@ -85,7 +86,7 @@ export function PricelistPage() {
             <tbody>
               {(p.items ?? []).map((it) => (
                 <tr key={it.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => canManage && setEdit({ ...it })}>
-                  <td className="py-1.5">{it.scope === 'product' ? it.productName : it.scope === 'category' ? productCats.data?.find((c) => c.id === it.productCategoryId)?.name : tx('All products')}</td>
+                  <td className="py-1.5">{it.scope === 'product' ? (it.variantName ? `${it.productName} · ${it.variantName}` : it.productName) : it.scope === 'category' ? productCats.data?.find((c) => c.id === it.productCategoryId)?.name : tx('All products')}</td>
                   <td>{it.partnerName ?? (it.partnerCategoryId ? partnerCats.data?.find((c) => c.id === it.partnerCategoryId)?.name : '—')}</td>
                   <td className="text-right tabular-nums">{Number(it.minQuantity)}</td>
                   <td>{it.siteZone ?? '—'}</td>
@@ -125,11 +126,12 @@ export function PricelistPage() {
             <DialogHeader><DialogTitle>{edit.id ? tx('Edit rule') : tx('New rule')}</DialogTitle></DialogHeader>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={tx('Applies to')}>
-                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={edit.scope} onChange={(e) => setEdit({ ...edit, scope: e.target.value as PricelistItem['scope'] })}>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={edit.scope} onChange={(e) => setEdit({ ...edit, scope: e.target.value as PricelistItem['scope'], variantId: e.target.value === 'product' ? edit.variantId : null })}>
                   <option value="product">{tx('One product')}</option><option value="category">{tx('Product category')}</option><option value="all">{tx('All products')}</option>
                 </select>
               </Field>
-              {edit.scope === 'product' && <Field label={tx('Product')}><SearchableSelect value={edit.productId ?? ''} onValueChange={(v) => setEdit({ ...edit, productId: v || null })} options={productOpts} /></Field>}
+              {edit.scope === 'product' && <Field label={tx('Product')}><SearchableSelect value={edit.productId ?? ''} onValueChange={(v) => setEdit({ ...edit, productId: v || null, variantId: v === edit.productId ? edit.variantId : null, variantName: v === edit.productId ? edit.variantName : null })} options={productOpts} /></Field>}
+              {edit.scope === 'product' && edit.productId && <RuleVariantSelectField productId={edit.productId} value={edit.variantId} label={edit.variantName} onChange={(variantId, v) => setEdit({ ...edit, variantId, variantName: v?.name ?? null })} />}
               {edit.scope === 'category' && <Field label={tx('Product category')}>
                 <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={edit.productCategoryId ?? ''} onChange={(e) => setEdit({ ...edit, productCategoryId: e.target.value || null })}>
                   <option value="" />{(productCats.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -159,4 +161,9 @@ export function PricelistPage() {
       )}
     </div>
   );
+}
+
+/** Variant field of a product rule; hidden when the product has no variants. */
+function RuleVariantSelectField(props: Parameters<typeof RuleVariantSelect>[0]) {
+  return <Field label={tx('Variant')} hint={tx('Optional — price one variant only')}><RuleVariantSelect {...props} /></Field>;
 }

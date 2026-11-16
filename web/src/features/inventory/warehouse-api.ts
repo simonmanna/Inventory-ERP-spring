@@ -29,6 +29,8 @@ export interface WarehouseOverviewRow {
   putawayQty: Num;
   unbinnedQty: Num;
   mismatch: boolean;
+  /** Bins (plus staging) above the ledger: what reconcile takes out of the bins. */
+  excessBinnedQty?: Num;
 }
 
 export interface WarehouseOverview {
@@ -38,6 +40,8 @@ export interface WarehouseOverview {
   openTasks: number;
   openPickOrders: number;
   unbinnedQty: Num;
+  /** Products whose bins hold more than the stock ledger. */
+  mismatches?: number;
   products: WarehouseOverviewRow[];
 }
 

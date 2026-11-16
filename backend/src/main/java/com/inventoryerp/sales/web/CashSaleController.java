@@ -8,6 +8,7 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.sales.application.BranchSalesProfileService;
 import com.inventoryerp.sales.application.CashSaleFormExporter;
+import com.inventoryerp.sales.application.SalesDeliveryNotePdf;
 import com.inventoryerp.sales.application.CashSaleService;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +77,28 @@ public final class CashSaleController {
                     .header(HttpHeaders.CONTENT_TYPE, CashSaleFormExporter.CONTENT_TYPE)
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + e.filename() + "\"")
                     .body(e.content());
+        }
+
+        /** The same form as an A4 PDF. */
+        @GetMapping("/{id}/pdf")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public ResponseEntity<byte[]> formPdf(@PathVariable String id) {
+            CashSaleFormExporter.Export e = form.exportPdf(id);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, CashSaleFormExporter.PDF_CONTENT_TYPE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + e.filename() + "\"")
+                    .body(e.content());
+        }
+
+        /** Printable delivery note (PDF) of the sale. */
+        @GetMapping("/{id}/delivery-note")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public ResponseEntity<byte[]> deliveryNote(@PathVariable String id) {
+            SalesDeliveryNotePdf.Pdf pdf = svc.deliveryNote(id);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_TYPE, CashSaleFormExporter.PDF_CONTENT_TYPE)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + pdf.filename() + "\"")
+                    .body(pdf.content());
         }
 
         @GetMapping("/{id}/timeline")

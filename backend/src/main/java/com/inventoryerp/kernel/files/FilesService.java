@@ -207,6 +207,23 @@ public class FilesService {
     }
 
     /** Metadata of a live file in any organization (internal jobs, public share links). */
+    /**
+     * Move a file of the current organization from one owner to another, only if it is still owned by
+     * {@code fromOwnerType}/{@code fromOwnerId} (a draft upload being attached). Returns the file, or {@code null}
+     * when it is missing or no longer owned that way.
+     */
+    @Transactional
+    public FileMeta claim(String fileId, String fromOwnerType, String fromOwnerId, String toOwnerType,
+            String toOwnerId) {
+        int n = jdbc.sql("""
+                        UPDATE "File" SET "ownerType" = ?, "ownerId" = ?
+                        WHERE id = ? AND "organizationId" = ? AND "deletedAt" IS NULL AND "ownerType" = ?
+                          AND "ownerId" = ?""")
+                .params(toOwnerType, toOwnerId, fileId, TenantContext.organizationId(), fromOwnerType, fromOwnerId)
+                .update();
+        return n == 0 ? null : meta(fileId);
+    }
+
     public FileMeta metaUnscoped(String fileId) {
         return jdbc.sql("""
                         SELECT id, "organizationId", filename, "contentType", "byteSize", "storageKey" FROM "File"

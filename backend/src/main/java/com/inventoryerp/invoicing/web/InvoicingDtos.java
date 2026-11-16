@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.core.application.ProductSizingService.Sizing;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.shared.validation.OneOf;
@@ -31,15 +32,34 @@ public final class InvoicingDtos {
             @OneOf({"product", "section", "note"}) String lineType,
             String uomId,
             /* ADR-S058: the product variant of the line (null = product without variants). */
-            String variantId) {
+            String variantId,
+            /* ADR-S066: sold by size — pieces × length [× width [× height]] decide the quantity. */
+            BigDecimal pieces,
+            BigDecimal length,
+            BigDecimal width,
+            BigDecimal height,
+            /* ADR-S071: several taxes / groups / withholding / reverse charge (null = the single taxId applies). */
+            List<String> taxIds) {
+
+        /** A line without a size or a tax list. */
+        public InvoiceLine(String productId, String accountId, String description, BigDecimal quantity,
+                BigDecimal unitPrice, BigDecimal discountPercent, String taxId, String lineType, String uomId,
+                String variantId) {
+            this(productId, accountId, description, quantity, unitPrice, discountPercent, taxId, lineType, uomId,
+                    variantId, null, null, null, null, null);
+        }
 
         LineInput toInput() {
-            if (variantId == null || variantId.isBlank()) {
-                return LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
-                        lineType, uomId);
+            Sizing size = Sizing.raw(pieces, length, width, height);
+            LineInput in = variantId == null || variantId.isBlank()
+                    ? LineInput.of(productId, accountId, description, quantity, unitPrice, discountPercent, taxId,
+                            lineType, uomId)
+                    : new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
+                            discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            if (size != null) {
+                in = in.withSizing(size);
             }
-            return new LineInput(productId, null, variantId, null, accountId, description, quantity, unitPrice,
-                    discountPercent, null, null, null, null, taxId, lineType, null, uomId);
+            return taxIds == null ? in : in.withTaxIds(taxIds);
         }
     }
 

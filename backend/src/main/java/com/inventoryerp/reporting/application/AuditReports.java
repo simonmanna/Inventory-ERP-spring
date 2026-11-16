@@ -6,6 +6,7 @@ import static com.inventoryerp.reporting.application.Tables.money;
 import static com.inventoryerp.reporting.application.Tables.number;
 import static com.inventoryerp.reporting.application.Tables.text;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.security.Permissions;
@@ -135,6 +136,16 @@ public class AuditReports implements ReportProvider {
 
     private Timestamp to(ReportContext ctx) {
         return SqlRows.ts(ctx.endExclusive(ctx.current().to()));
+    }
+
+    /**
+     * {@code e."postingDate"} inside fiscal period {@code fp}: its stored bounds are org-local wall clock (ADR-S070),
+     * converted on the period side so {@code postingDate} stays unwrapped. Unchanged SQL semantics for UTC.
+     */
+    private static String inPeriod(ReportContext ctx) {
+        return " AND e.\"postingDate\" >= " + AccountingDay.sqlFromWallClock("fp.\"startDate\"", ctx.zone())
+                + " AND e.\"postingDate\" < " + AccountingDay.sqlFromWallClock("(fp.\"endDate\" + interval '1 day')",
+                        ctx.zone());
     }
 
     private static Map<String, Drill> entry(Object id) {
@@ -343,8 +354,8 @@ public class AuditReports implements ReportProvider {
                 + " fp.\"closedAt\", (SELECT sum(l.\"baseDebit\") FROM \"JournalLine\" l WHERE l.\"journalEntryId\" = e.id)"
                 + " AS amount, coalesce(nullif(concat_ws(' ', u.\"firstName\", u.\"lastName\"), ''), e.\"createdBy\") AS"
                 + " \"createdBy\" FROM \"JournalEntry\" e JOIN \"FiscalPeriod\" fp ON fp.\"organizationId\" ="
-                + " e.\"organizationId\" AND fp.\"deletedAt\" IS NULL AND e.\"postingDate\" >= fp.\"startDate\" AND"
-                + " e.\"postingDate\" < fp.\"endDate\" + interval '1 day' AND fp.status::text IN ('closed', 'locked') AND"
+                + " e.\"organizationId\" AND fp.\"deletedAt\" IS NULL" + inPeriod(ctx) + " AND fp.status::text IN"
+                + " ('closed', 'locked') AND"
                 + " fp.\"closedAt\" IS NOT NULL AND coalesce(e.\"postedAt\", e.\"createdAt\") > fp.\"closedAt\" LEFT JOIN"
                 + " \"User\" u ON u.id = e.\"createdBy\" WHERE e.\"organizationId\" = ? AND e.status::text IN ('posted',"
                 + " 'reversed') AND coalesce(e.\"postedAt\", e.\"createdAt\") >= ? AND coalesce(e.\"postedAt\","
@@ -502,7 +513,7 @@ public class AuditReports implements ReportProvider {
                 + " fp.\"endDate\", fp.status::text AS status, fp.\"closedAt\", coalesce(nullif(concat_ws(' ',"
                 + " u.\"firstName\", u.\"lastName\"), ''), fp.\"closedBy\") AS \"closedBy\", (SELECT count(*) FROM"
                 + " \"JournalEntry\" e WHERE e.\"organizationId\" = fp.\"organizationId\" AND e.status::text = 'draft' AND"
-                + " e.\"postingDate\" >= fp.\"startDate\" AND e.\"postingDate\" < fp.\"endDate\" + interval '1 day') AS"
+                + inPeriod(ctx).substring(" AND".length()) + ") AS"
                 + " drafts FROM \"FiscalPeriod\" fp LEFT JOIN \"User\" u ON u.id = fp.\"closedBy\" WHERE"
                 + " fp.\"organizationId\" = ? AND fp.\"deletedAt\" IS NULL AND fp.\"endDate\" >= ? AND fp.\"startDate\" < ?"
                 + " ORDER BY fp.\"startDate\"").params(ctx.organizationId(), from(ctx), to(ctx)));

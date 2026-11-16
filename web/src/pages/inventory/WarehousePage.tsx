@@ -131,6 +131,11 @@ function OverviewTab({ loc }: { loc: string }) {
             <Button variant="outline" disabled={pending} onClick={() => run('put', `/warehouse/locations/${loc}/settings`, { outboundSteps: Number(steps || data.settings.outboundSteps) }, tx('Saved'))}>
               {tx('Save')}
             </Button>
+            {(data.mismatches ?? 0) > 0 && (
+              <Button variant="destructive" disabled={pending} title={tx('Take bin stock above the stock ledger out of the bins (no stock or GL posting)')} onClick={() => run('post', `/warehouse/locations/${loc}/reconcile`, {}, tx('Bins reconciled with the stock ledger'))}>
+                {tx('Reconcile bins ({{count}})', { count: data.mismatches ?? 0 })}
+              </Button>
+            )}
           </>
         )}
       </div>
@@ -147,7 +152,10 @@ function OverviewTab({ loc }: { loc: string }) {
         <TableBody>
           {data.products.map((p) => (
             <TableRow key={p.productId + p.variantKey}>
-              <TableCell>{p.productName}</TableCell>
+              <TableCell>
+                {p.productName}
+                {p.mismatch && <Badge variant="destructive" className="ml-2">{tx('Bins exceed stock by {{qty}}', { qty: q(p.excessBinnedQty ?? 0) })}</Badge>}
+              </TableCell>
               <TableCell className="text-right">{q(p.locationQty)}</TableCell>
               <TableCell className="text-right">{q(p.binnedQty)}</TableCell>
               <TableCell className="text-right">{q(p.stagedQty)}</TableCell>

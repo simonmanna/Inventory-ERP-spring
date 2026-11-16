@@ -64,6 +64,13 @@ export const PERMISSIONS = {
     update: 'tax:update',
     delete: 'tax:delete',
   },
+  // ---- Withholding tax certificates (ADR-S071; Spring-native) ----
+  withholding: {
+    /// Withholding tax certificates (issued to suppliers, received from customers) and the filing report.
+    read: 'withholding:read',
+    /// Correct certificate notes and the number of a certificate received from a customer.
+    update: 'withholding:update',
+  },
   currency: {
     create: 'currency:create',
     read: 'currency:read',
@@ -218,6 +225,16 @@ export const PERMISSIONS = {
     post: 'journal_entry:post',
     reverse: 'journal_entry:reverse',
   },
+  /** ADR-S073: recurring journal templates (generate entries on a schedule). */
+  recurringEntry: {
+    read: 'recurring_entry:read',
+    manage: 'recurring_entry:manage',
+  },
+  /** ADR-S073: deferred revenue / prepaid expense schedules. */
+  deferral: {
+    read: 'deferral:read',
+    manage: 'deferral:manage',
+  },
   accountMapping: {
     read: 'account_mapping:read',
     update: 'account_mapping:update',
@@ -288,6 +305,12 @@ export const PERMISSIONS = {
   alerts: {
     read: 'alerts:read',
     manage: 'alerts:manage',
+  },
+  /// Who is told when something happens (ADR-S065): per event, the record's responsible people, extra roles/users and
+  /// channels. `read` lists the routing; `manage` changes it.
+  notificationRouting: {
+    read: 'notification_routing:read',
+    manage: 'notification_routing:manage',
   },
   /// Read-only reporting datasets as CSV (Phase 5 integrations).
   bi: {
@@ -671,6 +694,8 @@ export const PERMISSIONS = {
     dispose: 'fixed_asset:dispose',
     transfer: 'fixed_asset:transfer',
     approveTransfer: 'fixed_asset:approve_transfer',
+    /** ADR-S073: record an impairment loss or its reversal (IAS 36). */
+    impair: 'fixed_asset:impair',
   },
   assetCategory: {
     create: 'asset_category:create',
@@ -758,6 +783,14 @@ export const PERMISSIONS = {
     deliveryRead: 'sales:delivery:read',
     deliveryWrite: 'sales:delivery:write',
     deliveryApprove: 'sales:delivery:approve',
+    /// Issue the stock of a delivery and set it in transit.
+    deliveryDispatch: 'sales:delivery:dispatch',
+    /// Record proof of delivery, a failed attempt or a returned load.
+    deliveryConfirm: 'sales:delivery:confirm',
+    /// Correct a recorded proof of delivery, with evidence (Phase A A3; not the POD recorder).
+    deliveryPodCorrect: 'sales:delivery:pod_correct',
+    /// Cancel a delivery that has not left.
+    deliveryCancel: 'sales:delivery:cancel',
     /// Customer profile, duplicates, export (SG-5).
     customerRead: 'sales:customer:read',
     /// Edit profile, suspend, import (SG-5).
@@ -1217,6 +1250,23 @@ export const PERMISSIONS = {
     post: 'contract:post',
     /// Approve variations and onerous-contract assessments (never your own).
     approve: 'contract:approve',
+  },
+  // ---- Construction controls (ADR-S074) ----
+  bond: {
+    /// Bonds and guarantees register, lifecycle history and the exposure report (read only).
+    read: 'bond:read',
+    /// Record and edit draft bonds and guarantees (issued and received).
+    manage: 'bond:manage',
+    /// Activate, extend, reduce, release and call bonds (margin, commission and call journal entries).
+    post: 'bond:post',
+  },
+  compliance: {
+    /// Subcontractor compliance documents, lien waivers, gating settings and the gate log (read only).
+    read: 'compliance:read',
+    /// Record, verify and reject compliance documents and lien waivers; change the gating settings.
+    manage: 'compliance:manage',
+    /// Pass a blocking compliance gate once (valuation or payment) with a recorded reason (audited).
+    override: 'compliance:override',
   },
   profitability: {
     /// Profitability facts by layer (actual / standard / estimate) and the GL reconciliation.

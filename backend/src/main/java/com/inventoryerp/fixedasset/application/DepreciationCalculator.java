@@ -33,6 +33,28 @@ public final class DepreciationCalculator {
         };
     }
 
+    /**
+     * One month for an impaired asset (IAS 36.63, ADR-S073): straight line spreads the carrying amount after the latest
+     * impairment event less the residual value over the remaining life then; the declining methods apply their rate
+     * to the current carrying amount. The amount never takes the carrying amount below the residual value.
+     * {@code accumulatedDepreciation} grows by the amount; the book value is the carrying amount less the amount.
+     */
+    public static Result calculateImpaired(String method, BigDecimal salvageValue, int usefulLife, BigDecimal carrying,
+            BigDecimal accumulatedDepreciation, BigDecimal carryingAfterImpairment, int remainingLifeMonths) {
+        BigDecimal headroom = Money.max(BigDecimal.ZERO, carrying.subtract(salvageValue));
+        BigDecimal amount = switch (method == null ? "" : method) {
+            case "declining_balance", "double_declining" -> {
+                BigDecimal years = Money.max(BigDecimal.ONE, Money.div(BigDecimal.valueOf(usefulLife), TWELVE));
+                yield Money.div(carrying.multiply(Money.div(BigDecimal.valueOf(2), years), Money.DECIMAL_JS), TWELVE);
+            }
+            case "manual" -> BigDecimal.ZERO;
+            default -> Money.div(carryingAfterImpairment.subtract(salvageValue),
+                    BigDecimal.valueOf(Math.max(1, remainingLifeMonths)));
+        };
+        amount = Money.max(BigDecimal.ZERO, Money.min(amount, headroom));
+        return new Result(amount, accumulatedDepreciation.add(amount), carrying.subtract(amount));
+    }
+
     private static Result straightLine(Input in) {
         BigDecimal base = in.cost().subtract(in.salvageValue());
         BigDecimal monthly = Money.div(base, BigDecimal.valueOf(Math.max(1, in.usefulLife())));

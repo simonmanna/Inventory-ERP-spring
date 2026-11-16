@@ -15,7 +15,9 @@ permissions:
 jobs:
   backend:
     name: Backend build, tests, quality gates
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which has no postgresql-client-16 package (the backup round-trip test needs
+    # the client to match the Testcontainers server major).
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -232,7 +234,20 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Untranslated phrases only warn (owner decision 2026-11-16); stale keys, bad placeholders and invalid files fail.
       - run: pnpm web:i18n
+      - name: Translation completeness report
+        if: always()
+        run: |
+          node web/scripts/i18n-phrases.cjs --report "$RUNNER_TEMP/translation-completeness.md" > /dev/null
+          cat "$RUNNER_TEMP/translation-completeness.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: translation-completeness
+          path: |
+            ${{ runner.temp }}/translation-completeness.md
+            ${{ runner.temp }}/translation-completeness.csv
       - run: pnpm web:build
 
   docker:

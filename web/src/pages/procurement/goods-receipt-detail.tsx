@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/lib/api';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useUomCode } from '@/features/uom/api';
 
 interface GRNProduct {
   id: string;
@@ -27,6 +28,8 @@ interface GRNLine {
   description: string;
   quantity: number;
   unitCost: number;
+  /** Unit of quantity and cost (ADR-S003); null = the product's base unit. */
+  uomId?: string | null;
   batchNumber: string | null;
   expiryDate: string | null;
   notes: string | null;
@@ -83,6 +86,7 @@ export default function GoodsReceiptDetailPage() {
 
   const qc = useQueryClient();
   const has = useAuthStore((s) => s.hasPermission);
+  const uomCode = useUomCode();
   const [reversing, setReversing] = useState(false);
 
   const { data: grn, isLoading } = useQuery<GRNDetail>({
@@ -174,7 +178,9 @@ export default function GoodsReceiptDetailPage() {
     );
   }
 
-  const totalQty = grn.lines.reduce((sum, l) => sum + Number(l.quantity), 0);
+  // Quantities only add up when every line is in the same unit (a line without one is in its product's base unit).
+  const unitKeys = new Set(grn.lines.map((l) => l.uomId ?? `base:${l.productId ?? ''}`));
+  const totalQty = unitKeys.size === 1 ? grn.lines.reduce((sum, l) => sum + Number(l.quantity), 0) : null;
   const totalCost = grn.lines.reduce((sum, l) => sum + Number(l.quantity) * Number(l.unitCost), 0);
 
   return (
@@ -281,6 +287,7 @@ export default function GoodsReceiptDetailPage() {
                 <TableHead className="text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Product Name')}</TableHead>
                 <TableHead className="text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Description')}</TableHead>
                 <TableHead className="w-24 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Qty')}</TableHead>
+                <TableHead className="w-20 text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Unit')}</TableHead>
                 <TableHead className="w-28 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Unit Cost')}</TableHead>
                 <TableHead className="w-28 text-right text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Total')}</TableHead>
                 <TableHead className="w-24 text-sky-700 font-bold text-xs uppercase tracking-wider">{tx('Batch #')}</TableHead>
@@ -290,7 +297,7 @@ export default function GoodsReceiptDetailPage() {
             <TableBody>
               {grn.lines.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="py-10 text-center text-sky-400">
+                  <TableCell colSpan={10} className="py-10 text-center text-sky-400">
                     {tx('No line items found.')}
                   </TableCell>
                 </TableRow>
@@ -310,6 +317,7 @@ export default function GoodsReceiptDetailPage() {
                       {l.notes && <div className="text-[10px] text-slate-500 mt-0.5">({l.notes})</div>}
                     </TableCell>
                     <TableCell className="text-right text-sm text-sky-800">{Number(l.quantity).toLocaleString()}</TableCell>
+                    <TableCell className="text-sm text-sky-800">{uomCode(l.uomId) || '—'}</TableCell>
                     <TableCell className="text-right text-sm text-sky-800">{money(l.unitCost)}</TableCell>
                     <TableCell className="text-right text-sm font-bold text-sky-900">{money(lineTotal)}</TableCell>
                     <TableCell className="font-mono text-xs text-sky-700">{l.batchNumber ?? '—'}</TableCell>
@@ -330,7 +338,9 @@ export default function GoodsReceiptDetailPage() {
               </div>
               <div className="flex justify-between gap-8">
                 <span className="text-muted-foreground">{tx('Total Quantity')}</span>
-                <span className="font-semibold">{totalQty.toLocaleString()}</span>
+                <span className="font-semibold">
+                  {totalQty === null ? '—' : `${totalQty.toLocaleString()}${uomCode(grn.lines[0]?.uomId) ? ` ${uomCode(grn.lines[0]?.uomId)}` : ''}`}
+                </span>
               </div>
               <div className="border-t-2 border-sky-200 pt-2">
                 <div className="flex justify-between gap-8 font-bold text-sm">

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useAccounts } from '@/features/accounting/api';
+import { isPostingAccount, useAccounts } from '@/features/accounting/api';
 import { useOpeningBalances, usePostOpeningBalances, localDay } from '@/features/finance/api';
 import { usePartners } from '@/features/partners/api';
 import { date, money } from '@/lib/format';
@@ -32,7 +32,8 @@ export function OpeningBalancesPage() {
   const accountOptions = useMemo(
     () =>
       (accountList?.data ?? [])
-        .filter((a) => !a.isGroup && !a.isControlAccount)
+        // AR / AP control accounts are refused here (use the customer / supplier sections).
+        .filter((a) => isPostingAccount(a) && a.controlAccountType !== 'ar' && a.controlAccountType !== 'ap')
         .map((a) => ({ value: a.id, label: `${a.code} · ${a.name}`, code: a.code })),
     [accountList],
   );

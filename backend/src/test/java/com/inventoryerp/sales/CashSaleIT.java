@@ -10,6 +10,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.sales.application.FiscalAdapters;
 import com.inventoryerp.sales.web.CashSaleController;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -232,8 +233,10 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(d.get("grandTotal").asDouble()).isEqualTo(413_000);
         assertThat(d.get("customerTin").asString()).isEqualTo("1000123456");
         String p = pay(id, "cash", null, 413_000, null);
-        // unverified money never posts
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
+        // the collector's capture is the verification (no segregation on this branch); nothing posts before confirm
+        JsonNode captured = ok(200, "GET", "/sales/cash-sales/" + id, null).get("payments").get(0);
+        assertThat(captured.get("verificationStatus").asString()).isEqualTo("verified");
+        assertThat(captured.get("verificationSource").asString()).isEqualTo("collector");
         assertThat(glRows(id)).isZero();
         verify(id, p);
         JsonNode conf = money("/sales/cash-sales/" + id + "/confirm", null, 200);
@@ -286,9 +289,7 @@ class CashSaleIT extends ApiTestSupport {
         String momo = pay(id, "mobile_money", "mtn", 56_500, "MTN-" + sfx + "-1");
         String bank = pay(id, "bank", null, 50_000, "BNK-" + sfx + "-1");
         verify(id, cash);
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
         verify(id, momo);
-        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(400);
         assertThat(glRows(id)).isZero();
         verify(id, bank);
         money("/sales/cash-sales/" + id + "/confirm", null, 200);
@@ -318,8 +319,18 @@ class CashSaleIT extends ApiTestSupport {
             assertThat(modes.findValuesAsString("id")).contains(modeId);
             assertThat(modes.findValuesAsString("kind")).doesNotContain("card", "store_credit");
             JsonNode m = ok(201, "POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", modeId,
-                    "amount", 500, "reference", "BT-" + sfx));
+                    "amount", 500, "reference", "BT-" + sfx, "paymentDate", "2026-11-10", "payerName", "Jane Payer",
+                    "payerAccount", "0123456789", "notes", "Deposit slip at the counter"));
             JsonNode last = m.get("payments").get(m.get("payments").size() - 1);
+            assertThat(last.get("paymentDate").asString()).isEqualTo("2026-11-10");
+            assertThat(last.get("payerName").asString()).isEqualTo("Jane Payer");
+            assertThat(last.get("payerAccount").asString()).isEqualTo("0123456789");
+            assertThat(last.get("notes").asString()).isEqualTo("Deposit slip at the counter");
+            assertThat(last.get("attachments").size()).isZero();
+            assertThat(last.get("verificationStatus").asString()).isEqualTo("verified");
+            assertThat(as("POST", "/sales/cash-sales/" + other + "/payments", Map.of("paymentModeId", modeId,
+                    "amount", 500, "reference", "BT2-" + sfx, "attachmentIds", List.of("nope"))).status())
+                    .isEqualTo(400);
             assertThat(last.get("method").asString()).isEqualTo("bank");
             assertThat(last.get("accountId").asString()).isEqualTo(bankAccount);
             assertThat(last.get("paymentModeLabel").asString()).isEqualTo("Bank transfer " + sfx);
@@ -380,6 +391,10 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(as("PATCH", path, Map.of("deliveryMethod", "drone")).status()).isEqualTo(400);
         assertThat(as("PATCH", path, Map.of("grandTotal", 1)).status()).isEqualTo(400);
         ok(200, "PATCH", path, Map.of("deliveryStatus", "scheduled", "deliveryScheduledDate", "2026-11-10"));
+        assertThat(ok(200, "PATCH", path, Map.of("deliveryDeadline", "2026-11-12")).get("deliveryDeadline").asString())
+                .startsWith("2026-11-12");
+        assertThat(as("PATCH", path, Map.of("deliveryDeadline", "soon")).body().get("message").asString())
+                .isEqualTo("deliveryDeadline must be a valid ISO 8601 date string");
         JsonNode site = ok(200, "PATCH", path, Map.of("deliveryLandmark", "Behind Ntinda market",
                 "deliveryLoadingSite", "Showroom yard", "deliveryScope", "partial", "deliveryOffloadingEquipment", "yes"));
         assertThat(site.get("deliveryLandmark").asString()).isEqualTo("Behind Ntinda market");
@@ -399,6 +414,18 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(done.get("deliveredAt").isNull()).isFalse();
         assertThat(as("PATCH", p2, Map.of("deliveryStatus", "failed")).status()).isEqualTo(400);
         ok(200, "PATCH", p2, Map.of("deliveryNotes", "Signed delivery note filed"));
+        assertThat(as("PATCH", p2, Map.of("deliveryDeadline", "2026-12-01")).status()).isEqualTo(400);
+        JsonNode sale = ok(200, "GET", "/sales/cash-sales/" + id, null);
+        assertThat(sale.get("deliveryNoteNumber").asString()).isEqualTo("DN/" + sale.get("number").asString());
+        assertThat(sale.get("returns").size()).isZero();
+        assertThat(sale.get("lines").get(0).get("returnedQty").asDouble()).isZero();
+        java.net.http.HttpResponse<byte[]> note = downloadBytes("/sales/cash-sales/" + id + "/delivery-note");
+        assertThat(note.statusCode()).isEqualTo(200);
+        assertThat(new String(note.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(ok(200, "GET", "/dms/records/cash_sale_delivery/" + id + "/count", null).get("count").asLong())
+                .isZero();
+        assertThat(as("GET", "/dms/records/cash_sale_delivery/" + UUID.randomUUID() + "/attachments", null).status())
+                .isEqualTo(404);
         JsonNode timeline = ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null);
         assertThat(timeline.findValuesAsString("action")).contains("delivery_dispatched", "delivery_delivered",
                 "delivery_update");
@@ -513,6 +540,10 @@ class CashSaleIT extends ApiTestSupport {
                 .isEqualTo(400);
         money("/sales/cash-sales/" + id + "/void", Map.of("reason", "Keyed twice", "goodsReturned", true), 200);
         assertThat(onHand(goods, location)).isEqualByComparingTo(stockBefore);
+        JsonNode voided = ok(200, "GET", "/sales/cash-sales/" + id, null);
+        assertThat(voided.get("returns").get(0).get("kind").asString()).isEqualTo("void");
+        assertThat(voided.get("returns").get(0).get("reason").asString()).isEqualTo("Keyed twice");
+        assertThat(voided.get("lines").get(0).get("returnedQty").asDouble()).isEqualTo(4);
         assertThat(unbilled(c)).isEqualByComparingTo("0");
         assertThat(revenueOf(id)).isEqualByComparingTo("0");
         assertThat(partnerBalance("customer_deposit", c)).isEqualByComparingTo("0");
@@ -673,6 +704,8 @@ class CashSaleIT extends ApiTestSupport {
             String own = ok(201, "POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", body.get("lines")))
                     .get("id").asString();
             String cash = pay(own, "cash", null, 41_300, null);
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + own, null).get("payments").get(0).get("verificationStatus")
+                    .asString()).isEqualTo("pending");
             Res seg = as("POST", "/sales/cash-sales/" + own + "/payments/" + cash + "/verify", Map.of());
             assertThat(seg.status()).as(seg.raw().body() + " profile=" + jdbc.sql("SELECT \"requireSegregation\"::text"
                     + " FROM \"BranchSalesProfile\" WHERE id = ?").param(profile).query(String.class).single() + " sub="
@@ -682,6 +715,106 @@ class CashSaleIT extends ApiTestSupport {
             jdbc.sql("UPDATE \"BranchSalesProfile\" SET \"requireSegregation\" = false WHERE id = ?").param(profile)
                     .update();
         }
+    }
+
+    @Test
+    @DisplayName("ADR-S066: granite sold by the metre — size decides quantity, stock, Excel form and the invoice")
+    void soldBySize() throws Exception {
+        String granite = product("Granite kerb " + sfx, 20_000, 12_000);
+        stock(granite, location, 100, 12_000);
+        ok(200, "PUT", "/products/" + granite + "/sizing", Map.of("sizingMode", "length"));
+        BigDecimal before = onHand(granite, location);
+        JsonNode d = ok(201, "POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", List.of(Map.of(
+                "productId", granite, "pieces", 4, "length", 3, "unitPrice", 20_000, "taxId", vat))));
+        String id = d.get("id").asString();
+        JsonNode l = d.get("lines").get(0);
+        assertThat(l.get("quantity").asDouble()).isEqualTo(12);
+        assertThat(l.get("pieces").asDouble()).isEqualTo(4);
+        assertThat(l.get("length").asDouble()).isEqualTo(3);
+        assertThat(l.get("sizingUnit").asString()).isEqualTo("m");
+        // 12 m × 20,000 × 1.18
+        assertThat(d.get("grandTotal").asDouble()).isEqualTo(283_200);
+        // The printable form also downloads as a PDF.
+        java.net.http.HttpResponse<byte[]> pdf = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                "http://localhost:" + port + "/api/v1/sales/cash-sales/" + id + "/pdf"))
+                .header("Authorization", "Bearer " + adminToken).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(pdf.headers().firstValue("Content-Type").orElse("")).startsWith("application/pdf");
+        assertThat(pdf.headers().firstValue("Content-Disposition").orElse("")).contains(".pdf");
+        assertThat(new String(pdf.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(as("POST", "/sales/cash-sales", Map.of("branchId", branch, "lines", List.of(Map.of("productId",
+                granite, "pieces", 4, "length", 0)))).status()).isEqualTo(400);
+        pay(id, "cash", null, 283_200, null);
+        money("/sales/cash-sales/" + id + "/confirm", null, 200);
+        assertThat(onHand(granite, location)).isEqualByComparingTo(before.subtract(BigDecimal.valueOf(12)));
+        ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/start-review", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/approve", null);
+        String invoiceId = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId")
+                .asString();
+        JsonNode il = ok(200, "GET", "/invoices/" + invoiceId, null).get("lines").get(0);
+        assertThat(il.get("quantity").asDouble()).isEqualTo(12);
+        assertThat(il.get("pieces").asDouble()).isEqualTo(4);
+        assertThat(il.get("length").asDouble()).isEqualTo(3);
+        ledger.trialBalanceZero();
+    }
+
+    @Test
+    @DisplayName("Branch cash sales reports: takings, tenders, register, products, processing agree with the sales")
+    void branchCashSalesReports() {
+        String c = partner("Report Buyer " + sfx);
+        String a = confirmedCashSale(c, 2); // 70 000 + 12 600 VAT
+        String b = approved(c, 3); // 105 000 + 18 900 VAT
+        money("/sales/cash-sales/" + b + "/generate-invoice", null, 200);
+        String d = draft(c, 1); // a draft never counts as takings
+        String q = "from=" + LocalDate.now().minusDays(1) + "&to=" + LocalDate.now() + "&branchId=" + branch
+                + "&partnerId=" + c;
+
+        JsonNode sum = ok(200, "GET", "/sales/report-center/run/branch-cash-summary?" + q, null);
+        assertThat(sum.get("rows").size()).isEqualTo(1);
+        JsonNode row = sum.get("rows").get(0);
+        assertThat(row.get("sales").asInt()).isEqualTo(2);
+        assertThat(row.get("net").asDouble()).isEqualTo(175_000);
+        assertThat(row.get("tax").asDouble()).isEqualTo(31_500);
+        assertThat(row.get("total").asDouble()).isEqualTo(206_500);
+        assertThat(row.get("t_cash").asDouble()).isEqualTo(206_500);
+        assertThat(row.get("_drill").get("report").asString()).isEqualTo("branch-cash-daily");
+
+        JsonNode daily = ok(200, "GET", "/sales/report-center/run/branch-cash-daily?" + q, null);
+        assertThat(daily.get("totals").get("total").asDouble()).isEqualTo(206_500);
+        assertThat(daily.get("totals").get("b_" + branch).asDouble()).isEqualTo(206_500);
+
+        JsonNode tenders = ok(200, "GET", "/sales/report-center/run/branch-cash-tenders?" + q, null);
+        assertThat(tenders.get("totals").get("amount").asDouble()).isEqualTo(206_500);
+
+        JsonNode reg = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q, null);
+        assertThat(reg.get("rows").size()).isEqualTo(3);
+        JsonNode drafts = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=draft", null);
+        assertThat(drafts.get("rows").size()).isEqualTo(1);
+        assertThat(drafts.get("rows").get(0).get("_route").asString()).isEqualTo("/sales/cash-sales/" + d);
+        JsonNode inv = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=invoiced", null);
+        assertThat(inv.get("rows").size()).isEqualTo(1);
+        assertThat(inv.get("rows").get(0).get("invoice").isNull()).isFalse();
+        assertThat(as("GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=nope", null).status())
+                .isEqualTo(400);
+
+        JsonNode prod = ok(200, "GET", "/sales/report-center/run/branch-cash-products?" + q, null);
+        assertThat(prod.get("totals").get("quantity").asDouble()).isEqualTo(5);
+        assertThat(prod.get("totals").get("net").asDouble()).isEqualTo(175_000);
+        assertThat(prod.get("totals").get("cost").asDouble()).isEqualTo(105_000);
+
+        JsonNode proc = ok(200, "GET", "/sales/report-center/run/branch-cash-processing?" + q, null);
+        JsonNode p = proc.get("rows").get(0);
+        assertThat(p.get("not_submitted").asInt()).isEqualTo(1);
+        assertThat(p.get("invoiced").asInt()).isEqualTo(1);
+        assertThat(p.get("awaiting").asDouble()).isEqualTo(82_600);
+
+        for (String k : List.of("branch-cash-salespeople", "branch-cash-exceptions")) {
+            assertThat(ok(200, "GET", "/sales/report-center/run/" + k + "?" + q, null).get("key").asString())
+                    .isEqualTo(k);
+        }
+        assertThat(a).isNotNull();
     }
 
     @Test

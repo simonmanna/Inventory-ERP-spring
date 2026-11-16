@@ -1,5 +1,6 @@
 package com.inventoryerp.manufacturing.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
@@ -57,10 +58,12 @@ public class BomService {
     private final SequenceService seq;
     private final ApprovalsService approvals;
     private final TransactionTemplate newTx;
+    private final ProductVariantService variants;
 
     public BomService(MfgDb db, SequenceService seq, ApprovalsService approvals, PlatformTransactionManager txm,
-            PlmGate plmGate) {
+            PlmGate plmGate, ProductVariantService variants) {
         this.plmGate = plmGate;
+        this.variants = variants;
         this.db = db;
         this.seq = seq;
         this.approvals = approvals;
@@ -120,6 +123,9 @@ public class BomService {
         // ADR-S006 A7: references must exist; versions are allocated under a per-output lock.
         requireReferences(dto.outputProductId(), dto.lines(), dto.defaultLocationId(), dto.defaultOutputLocationId(),
                 dto.routingId());
+        // Phase I2 (D2, audit V-9): the output and every component of a product with variants name an active variant of
+        // their own product; the parent product is never produced or consumed in place of a missing variant.
+        variants.resolve(dto.outputProductId(), dto.outputVariantId());
         db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
                 .param("bom:" + MfgDb.org() + ":" + dto.outputProductId() + ":" + variantKey).query().listOfRows();
         Integer latest = db.jdbc().sql("SELECT version FROM \"Bom\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
@@ -394,6 +400,9 @@ public class BomService {
                     + " AND \"deletedAt\" IS NULL").params(p, MfgDb.org()).query(Long.class).single() == 0) {
                 throw ApiException.notFound("Product " + p + " not found");
             }
+        }
+        if (lines != null) {
+            lines.forEach(l -> variants.resolve(l.componentProductId(), l.componentVariantId()));
         }
         for (String loc : java.util.Arrays.asList(locationId, outputLocationId)) {
             if (loc != null && db.jdbc().sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ?"

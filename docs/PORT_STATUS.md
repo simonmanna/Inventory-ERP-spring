@@ -60,6 +60,45 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 **Cost accounting to production:** roadmap [PC-0 … PC-9](roadmap/costing-production-ready-plan.md) (proposed 2026-11-03; LC-0 is part of PC-0).
 
+**Stock engine hardening (`phase/inv-hardening`, V460; owner-approved deviations 2–9 in [inventory](spec/inventory.md#deviations)):**
+one quant lock order + lines posted in lock order (no deadlocks), lock conflicts → 409, negative-stock cost correction
+on every receipt, lot shortfall netting (open lots = max(0, on-hand)), strict `allowNegativeStock=false`, transit lines
+move their own lots/serials (`StockTransferLayer`), variant / serial / reservation / ATP guards — `StockConcurrencyIT`,
+`LockConflictMappingTest`.
+
+**Counts / warehouse / idempotency hardening (`phase/inv-hardening`, V465; owner-approved deviations 10–16 in
+[inventory](spec/inventory.md#deviations), ADR-S026 amendment):** count variance posted against the count time (delta
+under the quant lock), value-based `inventory_count_submit` approval + `stock_adjustment` maker-checker, validation
+before the approval gate, per-lot count lines and serial units on count lines, branch scope on preview / draft / submit
+/ cancel, required `Idempotency-Key` on direct stock in / out and count submit (web sends one per action); manual pick
+orders issue stock + GL on ship, no empty shipments, bin adjust (`POST /warehouse/bins/:id/adjust`) and reconcile
+(`POST /warehouse/locations/:id/reconcile`), release capped by ledger on-hand, `WarehouseSettings.enabled` enforced,
+bin row lock in putaway, order-then-task lock order — `InventoryIT`, `WarehouseIT`.
+
+**Valuation / reports / infrastructure hardening (`phase/inv-hardening`, V470; owner-approved deviations 17–27 in
+[inventory](spec/inventory.md#deviations)):** costing method locked while stock is on hand, STANDARD cost-price change
+revalues stock, POS COGS dated at the sale, GL tie-out on one date basis + daily `inventory-gl-tieout-check`
+(`inventory.glTieOut.*`), register reports in SQL with the cap in SQL, method-correct set-based valuation report,
+BigDecimal report sums, batched item / expiring / reorder lookups, validated posting-rule / replenishment bodies
+(literal account checked on save), duplicate ledger indexes dropped, evidence-guard bypass limited to the schema owner,
+stock events only after commit, cost policy / standard activation hourly on the organisation calendar —
+`InventoryHardeningIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`, `DetachedWritesTest`, `PosStockPostingIT`,
+`InventoryIT`, `ReplenishmentIT`.
+
+**Sales / variant / UOM / inventory integrity (Phase I, [audit](audits/2026-11-15-sales-variant-uom-inventory-audit.md); not counted above):**
+
+| Phase | Scope | Status |
+|---|---|---|
+| I0 | Read-only audit + owner decisions D1–D5 | done |
+| I1a | POS variant stock issue / refund and price extras, per-line stock-posting transactions, kitchen waste in the sold unit and variant with recorded failures (ADR-S072) | done — `PosVariantIntegrityIT` |
+| I1b | Unit validation (no silent factor 1), bill↔receipt matcher in real units, unit-aware transfer / adjustment, return quarantine in base units ([ADR-S003 addendum](adr/ADR-S003-product-units.md)) | done — `ProductUnitsIT` |
+| I1c | Web: retail POS variant picker and variant barcode scan (`/products/resolve-barcode` now answers variant barcodes and is filtered by organisation); posting monitor in the POS menu behind `pos:reports`, with status/kind filters, assign and invoice links | done — `PosVariantIntegrityIT.variantBarcodeResolves`; web typecheck/lint |
+| I-web | Web fixes for I1b–I5 that need no new backend: unknown-unit warnings instead of a stale price or factor 1, variant prices kept on unit change, variant on goods receipt / purchase request / stock screens, archived variants kept read-only, stock value from the server, pack price per D1, invoice / credit-note / goods-receipt errors shown with no duplicate on retry, return dispositions sent as shown | done — web typecheck/lint |
+| I1d | Review stabilization ([review](audits/2026-11-15-phase-I-regression-and-gap-review.md)): R1 quotation keeps the picked unit, R2 POS availability/reservations per variant in base units, R3 posting-job claims and CAS retry (pending jobs retryable), R4 retried line closes its exception; PO lines name their variant | done — `ProductUnitsIT`, `PosVariantIntegrityIT`, `PosStockPostingIT`, `ProductVariantIT` |
+| I2 (revised) | N1–N6, D2 + V-4…V-10, U-4…U-10, U-5, R-1 ledger traceability, C-1/C-2, production reservation units, purchasing gaps, offline POS posting hold (Decision 1); M-1…M-12, N7 tracked | in progress |
+| I6 | Android POS integrity ([addendum](audits/2026-11-15-ui-android-addendum.md) §2): variant catalog + picker + variant scan, server-exact totals (tax row inclusivity, menu-item tax, currency scale) with `expectedTotal`, offline price difference kept at the server price (Decision 1), partial refunds by line with dispositions, `kitchen.void` with manager PIN, per-variant counts / stock in-out; Room v14 | built, not merged — `SyncDeviceIntegrityIT`; Android unit tests |
+| I3–I5 | Variant pricing, `salesPrice` meaning (D1 — **not implemented**: `SalesPricingEngine` still multiplies by the unit factor), POS timings, posting CAS, opening stock, reconciliation | planned |
+
 **Landed cost to ERP grade (Spring-native, [plan](roadmap/landed-cost-plan.md), ADR-S053; not counted above):**
 
 | Phase | Scope | Status |
@@ -77,6 +116,40 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 
 **Sales gap closure SG-1..12** (Spring-native, [ADR-S059](adr/ADR-S059-sales-gap-closure.md), [spec](spec/sales.md)): access, orders, quotes, proforma, customers, deliveries, pricing tools, returns and credit, credit policy, statements, commissions, targets. Migrations V401-V409. Release gate not run.
 
+**Sales delivery & fulfilment management** (Spring-native, [spec](spec/sales.md#delivery--fulfilment-management-2026-11-13-v484-owner-request)): many deliveries per order with own method / schedule / transport / outcome, order delivery summary, edit / re-plan / cancel / fail / return / reschedule, history, `sales_delivery` documents; 5 new routes, V484, `SalesDeliveryManagementIT`. Done 2026-11-13; full build not run. Delivery columns (date scheduled, deadline, picked, invoiced, returned…), delivery note PDF for invoices / cash sales and a Returns tab on all three: 2 new routes, V485, `SalesHandoverIT`, `CashSaleIT`.
+
+**Phase A1 — weighbridge tickets on Sales deliveries** ([spec](spec/sales.md#weighbridge-tickets-on-sales-deliveries-phase-a1-2026-11-14-no-migration)): Sales delivery detail, list and delivery note show the Fleet ticket read-only (verification, weighings, void / reissue chain), plus a PDF view copy that is not counted as a print. 1 new route, no migration. Includes a fix: tickets can now be registered from a Sales delivery. `SalesWeighbridgeIT`, `FleetDeliveryNoteWeighLineTest`. 2026-11-14; full build not run. A2–A4 done (below).
+
+**Phase A2 — customer weight evidence on the proof of delivery** ([spec](spec/sales.md#customer-weight-evidence-on-the-proof-of-delivery-phase-a2-2026-11-16-v496)): the customer's weighing is compared with the quarry weight under the station tolerance. The tolerance triggers an investigation; it is not a deduction. Lighter beyond tolerance raises a full-variance weight claim through the approval engine, with the split confirmed for multi-product trucks. Heavier is flagged only. The ticket, stock and documents are unchanged. 4 new routes (2 Sales, 2 Fleet) and `confirm` accepts `customerWeight`. V496 (renumber at merge). `SalesCustomerWeightIT`, `WeightAllocationTest`. 2026-11-16; full build not run.
+
+**Phase A3 — quantity buckets, POD correction, line history** ([spec](spec/sales.md#quantity-buckets-pod-correction-and-line-history-phase-a3-2026-11-16-v497)):
+- Every delivered quantity sits in one bucket: accepted + returned + damaged + confirmed shortage + pending dispute =
+  dispatched, with excess beside it. Billable = accepted.
+- A dismissed POD shortage stays disputed until an authorised, evidenced POD correction reconciles it.
+- Claims raised before A3 keep their old meaning.
+- Damaged is its own fact with its own claim.
+- Each line has an immutable quantity history.
+- A nightly operational reconciliation records findings and repairs drifted billable quantities.
+- M-6 cumulative base rounding at dispatch.
+- 5 new routes (2 Sales, 3 Fleet), new permission `sales:delivery:pod_correct`, V497.
+- Tests: `LoadLineQuantitiesTest`, `SalesQuantityBucketsIT`.
+- 2026-11-16; full build not run.
+
+**Phase A4 — invoiceability, invoice ownership, legacy Fleet invoices** ([spec](spec/sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v500)):
+- One goods-invoicing owner per delivery-order source: Sales for Sales-module orders, Fleet otherwise.
+- Fleet invoices through the immutable `FleetDeliveryInvoiceLine` ledger.
+- Invoiceable = billable − live allocations: accepted / weighed bill the accepted, undisputed quantity (weighed only after the POD); the `ordered` basis and policy keep ordered-quantity billing.
+- An `InvoicePostGuard` SPI rechecks at post time.
+- Late-dispute draft credit notes.
+- Historical Fleet goods invoices on Sales orders block the order until a review is approved through the approval engine.
+- Financial reconciliation on both sides.
+- 8 new Sales routes (incl. `/legacy-invoice-reviews/{id}/reject`), V500.
+- Tests: `SalesInvoiceabilityIT`, `InvoiceLedgerWritersTest`.
+- Owner review 2026-11-16 returned two corrections, both made: ordered-quantity billing preserved for the `ordered`
+  basis / policy; the legacy review approved through the kernel approval engine. No deviations remain.
+- Financial sign-off by the owner 2026-11-16; merged into main.
+- 2026-11-16; full build not run.
+
 **Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.
 
 **Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**
@@ -92,6 +165,7 @@ and `/invoices/:id/email`. The tests are `AccountingExtensionsIT`.
 | ACC-6 | Direction-aware bank auto-match only (B5), reconciliation statement proof + lock (V322, `/bank-reconciliation/statement`) | done — `Acc0BankReconciliationIT`, `BankReconciliationIT` |
 | ACC-7 | Fiscal-position tax mapping + partner default (V323, `/fiscal-positions/:id/taxes|partners`), VAT settlement + tax-period lock (`/tax-settlements`) | done — `Acc7TaxIT` |
 | ACC-8 | Web: TB (range, pre/post closing, export, drill-down), P&L (other income/expense, net, export), AR aging (as-of, filter, export), Period-end page, 32 route guards | done — typecheck + lint + browser walk-through |
+| REV-1 | 2026-11-15 accounting review fixes: report end-day inclusive, closing filter in budget / commitment / consolidated / dashboard / cost-centre / analytic, snapshot staleness, VAT settlement measure + lock on drafts / reversals, FX settlement lines in document currency, period / year reopen rules, foreign-currency balance + V499 line checks, bill-cancel stock return, RTV VAT + bill residual, POS tax-group split, credit-note currency, asset clearing, ageing in base; web: account form, draft post / discard, drill-down, server filters, local dates, bank-rec sign-off; group accounts created directly ([review](audits/2026-11-15-accounting-review.md)) | done, merged to main 2026-11-16 — full build not run |
 | later | Integrity dashboard, accounting-policy engine, posting-rule versioning, recurring / deferred entries, tax groups, impairment / CIP, bank matching rules | open |
 
 ## kernel
@@ -1420,6 +1494,48 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/communication/templates — CommunicationController.upsertTemplate
 - [x] POST /api/v1/communication/webhooks/telegram/:channelId — TelegramWebhookController.receive
 
+## Discuss — staff and department communication (ADR-S064, extension: no Nest counterpart)
+
+[Spec](spec/communication.md#discuss--staff-and-department-communication-adr-s064-extension-no-nest-counterpart). 37 routes in `DiscussController`. Migration V443 (participant settings, reactions, stars, inbox, department / DM keys, staff permissions for every role). Hourly `DiscussDepartmentSyncJob`. Tests: `DiscussIT`. Web: `/communication` (Discuss), header badge, `RecordChatter` on record detail pages.
+
+- [x] GET /api/v1/communication/discuss/sidebar — DiscussController.sidebar
+- [x] GET /api/v1/communication/discuss/counters — DiscussController.counters
+- [x] GET /api/v1/communication/discuss/directory — DiscussController.directory
+- [x] GET /api/v1/communication/discuss/presence — DiscussController.presence
+- [x] GET /api/v1/communication/discuss/channels — DiscussController.channels
+- [x] POST /api/v1/communication/discuss/channels — DiscussController.createChannel
+- [x] POST /api/v1/communication/discuss/chats — DiscussController.chat
+- [x] POST /api/v1/communication/discuss/departments/sync — DiscussController.syncDepartments
+- [x] GET /api/v1/communication/discuss/conversations/:id — DiscussController.detail
+- [x] PATCH /api/v1/communication/discuss/conversations/:id — DiscussController.update
+- [x] POST /api/v1/communication/discuss/conversations/:id/join — DiscussController.join
+- [x] POST /api/v1/communication/discuss/conversations/:id/leave — DiscussController.leave
+- [x] POST /api/v1/communication/discuss/conversations/:id/members — DiscussController.addMembers
+- [x] DELETE /api/v1/communication/discuss/conversations/:id/members/:userId — DiscussController.removeMember
+- [x] PATCH /api/v1/communication/discuss/conversations/:id/settings — DiscussController.settings
+- [x] POST /api/v1/communication/discuss/conversations/:id/archive — DiscussController.archive
+- [x] POST /api/v1/communication/discuss/conversations/:id/unarchive — DiscussController.unarchive
+- [x] POST /api/v1/communication/discuss/conversations/:id/typing — DiscussController.typing
+- [x] POST /api/v1/communication/discuss/conversations/:id/read — DiscussController.read
+- [x] GET /api/v1/communication/discuss/conversations/:id/messages — DiscussController.messages
+- [x] POST /api/v1/communication/discuss/conversations/:id/messages — DiscussController.post
+- [x] GET /api/v1/communication/discuss/conversations/:id/pinned — DiscussController.pinned
+- [x] GET /api/v1/communication/discuss/conversations/:id/attachments — DiscussController.attachments
+- [x] PATCH /api/v1/communication/discuss/messages/:id — DiscussController.edit
+- [x] DELETE /api/v1/communication/discuss/messages/:id — DiscussController.delete
+- [x] POST /api/v1/communication/discuss/messages/:id/reactions — DiscussController.react
+- [x] POST /api/v1/communication/discuss/messages/:id/pin — DiscussController.pin
+- [x] POST /api/v1/communication/discuss/messages/:id/star — DiscussController.star
+- [x] POST /api/v1/communication/discuss/attachments — DiscussController.upload
+- [x] GET /api/v1/communication/discuss/inbox — DiscussController.inbox
+- [x] POST /api/v1/communication/discuss/inbox/read — DiscussController.inboxRead
+- [x] GET /api/v1/communication/discuss/starred — DiscussController.starred
+- [x] GET /api/v1/communication/discuss/search — DiscussController.search
+- [x] GET /api/v1/communication/discuss/records/:type/:recordId — DiscussController.record
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/messages — DiscussController.recordPost
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/follow — DiscussController.follow
+- [x] POST /api/v1/communication/discuss/records/:type/:recordId/unfollow — DiscussController.unfollow
+
 ## Configurable approval rules and hub (ADR-S061, extension: no Nest counterpart)
 
 - [x] GET /api/v1/approvals/inbox — ApprovalsController.inbox
@@ -1435,7 +1551,7 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 
 ## Projects — job costing, contracts and project management (ADR-S038 / S039 / S062, extension: no Nest counterpart)
 
-[Spec](spec/projects.md). 141 routes: job costing (`ProjectController`, 27), contracts (`ContractController`, 32), contractor billing / commitments / plant / overhead (`ContractorController`, 25, ADR-S075, V507–V509), project management workspace, tasks and timesheets (`ProjectWorkspaceController`, `ProjectTaskController`, `ProjectTimesheetController`, 57). Migrations V231, V232, V430. Tests: `ProjectCostScenarioIT`, `ContractRevenueScenarioIT`, `ProjectStructureIT`, `ProjectManagementIT`, `ProjectAuthorizationIT`, `ProjectTenantIsolationIT`, `ProjectTaskBehaviourIT`, `ProjectWorkspaceBehaviourIT`, `ContractorScenarioIT`. Web: `/projects/*` with Board, List, Overview, Timeline, Milestones, Status updates, Discussion, Costing, Contract and Settings tabs.
+[Spec](spec/projects.md). 141 routes here (167 in the project family with the 26 ADR-S074 routes listed under "Bonds, subcontractor compliance and CIP capitalisation" below): job costing (`ProjectController`, 27), contracts (`ContractController`, 32), contractor billing / commitments / plant / overhead (`ContractorController`, 25, ADR-S075, V507–V509), project management workspace, tasks and timesheets (`ProjectWorkspaceController`, `ProjectTaskController`, `ProjectTimesheetController`, 57). Migrations V231, V232, V430. Tests: `ProjectCostScenarioIT`, `ContractRevenueScenarioIT`, `ProjectStructureIT`, `ProjectManagementIT`, `ProjectAuthorizationIT`, `ProjectTenantIsolationIT`, `ProjectTaskBehaviourIT`, `ProjectWorkspaceBehaviourIT`, `ContractorScenarioIT`. Web: `/projects/*` with Board, List, Overview, Timeline, Milestones, Status updates, Discussion, Costing, Contract and Settings tabs.
 
 - [x] GET /api/v1/projects — ProjectController.list
 - [x] POST /api/v1/projects — ProjectController.create
@@ -1621,3 +1737,38 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+
+## Notification routing (ADR-S065, extension: no Nest counterpart)
+
+Module `notificationrouting`. Spec: [docs/spec/notification-routing.md](spec/notification-routing.md). This feature
+tells the people responsible for a record when one of 57 catalogued events happens, across sales, purchasing,
+inventory, projects, helpdesk, HR, fleet, maintenance, production and quality. Organizations can add roles, users and
+channels per event. The actor is never told.
+
+- [x] GET /api/v1/notification-routing/events — NotificationRoutingController.events
+- [x] PUT /api/v1/notification-routing/events/:event — NotificationRoutingController.save
+- [x] DELETE /api/v1/notification-routing/events/:event — NotificationRoutingController.reset
+- [x] GET /api/v1/notification-routing/activity — NotificationRoutingController.activity
+- [x] `EventOutbox."actorId"` + `OutboxHandlers.subscribeDelivery` (row id and actor for subscribers)
+- [x] New events: `hr.leave.requested`, `hr.leave.decided`, `manufacturing.order.completed`,
+  `manufacturing.order.cancelled`, `task.assigned`, `crm.deal.assigned`, `quality.capa.created`
+- [x] `NotificationRoutingIT` (catalog queries against the schema, routing, settings, tenancy, authorization)
+- [x] Web: Settings → Customization → Notification Routing
+
+## Sell by size and variant details (ADR-S066, extension: no Nest counterpart)
+
+- [x] V446: `Product.sizingMode/sizingUnit/defaultLength/defaultWidth/defaultHeight`; `ProductVariant.length/width/height/description`; `pieces/length/width/height` on quotation, sales-order, cash-sale and invoice (`DocumentLine`) lines
+- [x] `GET/PUT /products/{id}/sizing`; variant PATCH / list / picker carry size + description (`ProductSizingService`)
+- [x] Quantity computed from the size on quotation, sales order, cash sale and invoice lines; size carried quotation → order → invoice and cash sale → invoice; printed on quotation PDF and cash-sale Excel
+- [x] Web: "Sold by size" card + variant "Size & description" on the product's Attributes & Variants tab; size inputs and variant prefill (price, size, description) on cash sale, quotation, sales order and invoice lines; invoice create gains the variant picker
+- [x] Fix: quotation approval authorizes variant lines at the variant price
+- [x] Tests: `ProductSizingServiceTest`, `ProductSizingIT`, `CashSaleIT#soldBySize`
+
+## Tax groups, withholding and reverse charge (ADR-S071)
+
+- [x] ADR-S071 tax groups, multi-tax lines, withholding (bills, receipts, certificates: GET/PATCH /api/v1/withholding-certificates, GET /api/v1/withholding-certificates/report) and reverse-charge VAT — WithholdingCertificateController, TaxController
+- [x] ADR-S073 GL automation (extension): 28 routes — recurring entries, deferral schedules, bank matching rules + grouped/partial matches, asset impairment (V501–V503); tests `GlAutomationIT`, `GlSchedulesTest`.
+
+## Bonds, subcontractor compliance and CIP capitalisation (ADR-S074, extension: no Nest counterpart)
+
+[Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).

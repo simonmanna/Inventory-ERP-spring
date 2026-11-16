@@ -51,6 +51,7 @@ public class AssetDepreciationService {
     private final PostingService posting;
     private final AccountDeterminationService determination;
     private final TransactionTemplate tx;
+    private AssetImpairmentService impairments;
 
     public AssetDepreciationService(EntityManager em, EventBus events, AssetService assets, PostingService posting,
             AccountDeterminationService determination, PlatformTransactionManager txm) {
@@ -60,6 +61,12 @@ public class AssetDepreciationService {
         this.posting = posting;
         this.determination = determination;
         this.tx = new TransactionTemplate(txm);
+    }
+
+    /** ADR-S073: impaired assets depreciate from their carrying amount; optional for hand-built instances. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setImpairments(AssetImpairmentService impairments) {
+        this.impairments = impairments;
     }
 
     @Transactional(readOnly = true)
@@ -113,7 +120,7 @@ public class AssetDepreciationService {
         long already = em.createQuery("select count(d) from AssetDepreciation d where d.assetId = :id"
                 + " and d.period = :p", Long.class).setParameter("id", assetId).setParameter("p", period)
                 .getSingleResult();
-        if (asset == null || already > 0) {
+        if (asset == null || already > 0 || beforeInService(assetId, period)) {
             return null;
         }
         List<AssetDepreciation> last = em.createQuery("select d from AssetDepreciation d where d.assetId = :id"
@@ -130,8 +137,13 @@ public class AssetDepreciationService {
                 ? category.getDepreciationMethod().value() : "straight_line";
         BigDecimal accum = lastDepr != null ? lastDepr.getAccumulatedDepr() : BigDecimal.ZERO;
         BigDecimal book = lastDepr != null ? lastDepr.getBookValue() : cost.subtract(accum);
-        DepreciationCalculator.Result r = DepreciationCalculator.calculate(method,
-                new DepreciationCalculator.Input(cost, salvage, usefulLife, book, accum));
+        AssetImpairmentService.Base impaired = impairments == null ? null : impairments.latestBase(assetId);
+        DepreciationCalculator.Result r = impaired == null
+                ? DepreciationCalculator.calculate(method,
+                        new DepreciationCalculator.Input(cost, salvage, usefulLife, book, accum))
+                : DepreciationCalculator.calculateImpaired(method, salvage, usefulLife,
+                        asset.getCurrentValue() != null ? asset.getCurrentValue() : book, accum,
+                        impaired.carryingAfter(), impaired.remainingLifeMonths());
         if (r.depreciationAmount().signum() <= 0) {
             return null;
         }
@@ -152,6 +164,20 @@ public class AssetDepreciationService {
         asset.setCurrentValue(r.bookValue());
         em.flush();
         return e;
+    }
+
+    /**
+     * ADR-S074: an asset with an in-service date (capitalised from a capital project) is not depreciated for periods
+     * before the month it went into service. Assets without one are unaffected.
+     */
+    private boolean beforeInService(String assetId, String period) {
+        if (period == null || !PERIOD.matcher(period).matches()) {
+            return false;
+        }
+        List<?> rows = em.createNativeQuery("SELECT \"inServiceDate\" FROM \"Asset\" WHERE id = ?1")
+                .setParameter(1, assetId).getResultList();
+        Object v = rows.isEmpty() ? null : rows.getFirst();
+        return v != null && period.substring(0, 7).compareTo(v.toString().substring(0, 7)) < 0;
     }
 
     /** Dr Depreciation Expense / Cr Accumulated Depreciation; stamps the entry. No-op when already posted. */

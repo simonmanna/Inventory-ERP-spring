@@ -13,6 +13,7 @@ import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { RuleVariantSelect } from '@/features/products/variant-select';
 import { Field } from '@/pages/crm/crm-ui';
 import { useAuthStore } from '@/stores/auth.store';
 
@@ -26,9 +27,9 @@ function useProducts() {
 
 function Promotions({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ['sales', 'promotions'], queryFn: async () => (await api.get<Array<{ id: string; name: string; kind: string; value: number; productName: string | null; categoryName: string | null; startDate: string; endDate: string; isActive: boolean }>>('/sales/promotions')).data });
+  const { data } = useQuery({ queryKey: ['sales', 'promotions'], queryFn: async () => (await api.get<Array<{ id: string; name: string; kind: string; value: number; productName: string | null; variantName: string | null; categoryName: string | null; startDate: string; endDate: string; isActive: boolean }>>('/sales/promotions')).data });
   const productOpts = useProducts();
-  const blank = { name: '', kind: 'percent', value: 10, productId: '', startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10) };
+  const blank = { name: '', kind: 'percent', value: 10, productId: '', variantId: null as string | null, startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10) };
   const [f, setF] = useState(blank);
   const refresh = () => qc.invalidateQueries({ queryKey: ['sales', 'promotions'] });
   return (
@@ -38,16 +39,17 @@ function Promotions({ canManage }: { canManage: boolean }) {
           <Field label={tx('Name')}><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
           <Field label={tx('Type')}><select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}><option value="percent">{tx('Percent off')}</option><option value="fixed_price">{tx('Fixed price')}</option><option value="amount_off">{tx('Amount off')}</option></select></Field>
           <Field label={tx('Value')}><Input type="number" min={0} value={f.value} onChange={(e) => setF({ ...f, value: Number(e.target.value) })} /></Field>
-          <Field label={tx('Product')}><SearchableSelect value={f.productId} onValueChange={(productId) => setF({ ...f, productId })} options={productOpts} placeholder={tx('All products')} /></Field>
+          <Field label={tx('Product')}><SearchableSelect value={f.productId} onValueChange={(productId) => setF({ ...f, productId, variantId: null })} options={productOpts} placeholder={tx('All products')} />
+            <RuleVariantSelect productId={f.productId || null} value={f.variantId} onChange={(variantId) => setF({ ...f, variantId })} className="mt-1" /></Field>
           <Field label={tx('From')}><Input type="date" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} /></Field>
           <Field label={tx('To')}><Input type="date" value={f.endDate} onChange={(e) => setF({ ...f, endDate: e.target.value })} /></Field>
-          <Button disabled={!f.name.trim()} onClick={() => api.post('/sales/promotions', { ...f, productId: f.productId || null }).then(() => { setF(blank); void refresh(); }).catch(fail)}>{tx('Add promotion')}</Button>
+          <Button disabled={!f.name.trim()} onClick={() => api.post('/sales/promotions', { ...f, productId: f.productId || null, variantId: f.productId ? f.variantId : null }).then(() => { setF(blank); void refresh(); }).catch(fail)}>{tx('Add promotion')}</Button>
         </div>
       )}
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
         <table className="w-full min-w-[640px] text-sm"><thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className={th}>{tx('Name')}</th><th className={th}>{tx('Applies to')}</th><th className={th}>{tx('Offer')}</th><th className={th}>{tx('Dates')}</th><th className="w-8" /></tr></thead>
           <tbody>{(data ?? []).map((p) => (
-            <tr key={p.id} className="border-t"><td className={th}>{p.name}</td><td className={th}>{p.productName ?? p.categoryName ?? tx('All products')}</td><td className={th}>{tx(p.kind)} · {Number(p.value)}</td><td className={th}>{date(p.startDate)} – {date(p.endDate)}</td>
+            <tr key={p.id} className="border-t"><td className={th}>{p.name}</td><td className={th}>{p.productName ? (p.variantName ? `${p.productName} · ${p.variantName}` : p.productName) : p.categoryName ?? tx('All products')}</td><td className={th}>{tx(p.kind)} · {Number(p.value)}</td><td className={th}>{date(p.startDate)} – {date(p.endDate)}</td>
               <td className={th}>{canManage && <button aria-label={tx('Delete')} onClick={() => api.delete(`/sales/promotions/${p.id}`).then(refresh).catch(fail)}><Trash2 className="h-4 w-4 text-muted-foreground" /></button>}</td></tr>
           ))}</tbody></table>
       </div>

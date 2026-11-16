@@ -26,6 +26,7 @@ import {
   type ProductCategory,
 } from '@/features/products/api';
 import { useUoms } from '@/features/uom/api';
+import { unitPrice, type UnitAwareProduct } from '@/features/products/units';
 import { useAccounts, type Account } from '@/features/accounting/api';
 import { useKitchenStations } from '@/pages/pos/pos-features-api';
 import { api, resolveAssetUrl } from '@/lib/api';
@@ -781,6 +782,19 @@ export function ProductEditPage() {
                     const baseCode = units.find((u: any) => u.id === form.watch('uomId'))?.code ?? '';
                     const salesPrice = Number(form.watch('salesPrice') || 0);
                     const factor = Number(row.factor || 0);
+                    // D1: the sales price is per default sales unit, so the pack suggestion follows units.ts (never
+                    // salesPrice × factor when the default sales unit is itself a pack).
+                    const baseId = form.watch('uomId');
+                    const salesUomId = form.watch('salesUomId') || null;
+                    const draft: UnitAwareProduct = {
+                      uomId: baseId || null, salesUomId, salesPrice,
+                      uom: units.find((u) => u.id === baseId) ?? null,
+                      salesUom: salesUomId ? units.find((u) => u.id === salesUomId) ?? null : null,
+                      units: unitRows.filter((r) => r.uomId).map((r) => ({
+                        uomId: r.uomId, factor: r.factor, isPurchase: r.isPurchase, isSales: r.isSales, isActive: true,
+                      })),
+                    };
+                    const suggested = salesPrice && factor && row.uomId ? unitPrice(draft, row.uomId, 'sales') : null;
                     return (
                       <div key={i} className="grid grid-cols-2 md:grid-cols-[1fr_110px_60px_60px_110px_110px_auto] gap-2 items-center">
                         <select
@@ -816,7 +830,7 @@ export function ProductEditPage() {
                         <Input
                           type="number" step="0.01" min={0}
                           aria-label={tx('Sale price')}
-                          placeholder={salesPrice && factor ? String(Number((salesPrice * factor).toFixed(2))) : tx('Auto')}
+                          placeholder={suggested !== null ? String(Number(suggested.toFixed(2))) : tx('Auto')}
                           value={row.salePrice}
                           onChange={(e) => updateUnit(i, 'salePrice', e.target.value)}
                         />

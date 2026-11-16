@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
@@ -85,10 +86,13 @@ public class PurchaseRequestsService {
     private final ProcurementBudgetService budgets;
     private final ApprovalsService approvals;
     private final TransactionTemplate tx;
+    private final ProductVariantService variants;
 
     public PurchaseRequestsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
-            ProcurementBudgetService budgets, ApprovalsService approvals, PlatformTransactionManager txm) {
+            ProcurementBudgetService budgets, ApprovalsService approvals, PlatformTransactionManager txm,
+            ProductVariantService variants) {
         this.jdbc = jdbc;
+        this.variants = variants;
         this.budgets = budgets;
         this.approvals = approvals;
         this.sequence = sequence;
@@ -102,6 +106,11 @@ public class PurchaseRequestsService {
         String orgId = org();
         if (input.lines() == null || input.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line is required");
+        }
+        // Phase I2 (D2, audit V-7): a requested product with variants names an active variant of its own, as the PO and
+        // the goods receipt made from the request will.
+        for (LineInput ln : input.lines()) {
+            variants.resolve(ln.productId(), ln.variantId());
         }
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String requestNumber = sequence.next("pr:" + year, "PR-" + year + "-", 5);

@@ -140,6 +140,10 @@ when `app.jobs.enabled` and `app.modules.rental`). Per org in its tenant scope: 
    without `toUnitId`, `/rental/returns` without `agreementId`, rates / packages / units without `productId`). Spring
    binds SQL `NULL`, so these answer the route's not-found error (404 / 400) instead of acting on a random row.
 
+- **Swap returns the line's quantity (Phase I5, audit S-6).** `POST /rental/swaps` moves the line's quantity back from
+  the rented-out location, as checkout moved it out; Nest returned 1 whatever the line quantity, so swapping a line of
+  2 left 3 out. Test `RentalIT.swapMovesTheLineQuantity`.
+
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
 - Deposits are a sub-ledger only: collection, refund, forfeit and application post no journal entry.

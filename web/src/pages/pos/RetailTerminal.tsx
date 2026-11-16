@@ -30,6 +30,8 @@ import { ReprintDialog } from './ReprintDialog';
 import { OrdersListPanel } from './OrdersListPanel';
 import { HandoverDialog } from './HandoverDialog';
 import { CustomerProfileDialog } from './CustomerProfileDialog';
+import { ProductVariantDialog } from './ProductVariantDialog';
+import type { VariantOption } from '@/features/products/variants-api';
 
 import { useProductsForPos } from '@/features/pos/api';
 import { useProductCategories } from '@/features/products/api';
@@ -67,6 +69,28 @@ function cartToReceiptLines(ls: CartLine[]): ReceiptLine[] {
 const orderSig = (lines: CartLine[]) => cartSignature(lines) + JSON.stringify(draftPricing(useCartStore.getState())) + (useCartStore.getState().customer?.id ?? "");
 function toOrderLines(ls: CartLine[]): OrderLineBody[] { return ls.map(cartLinePayload) as OrderLineBody[]; }
 
+interface VariantBarcodeHit {
+  productId: string;
+  product?: { name?: string; sku?: string | null } | null;
+  variantId: string;
+  variant: { id: string; name: string; displayName?: string | null; salesPrice: string | number | null };
+}
+
+/**
+ * Resolve a scanned code to a ProductVariant via GET /products/resolve-barcode (ADR-S072). Only a variant barcode
+ * counts here: product and pack barcodes come back without `variantId` and keep the existing lookup path.
+ */
+async function resolveVariantBarcode(code: string): Promise<VariantBarcodeHit | null> {
+  try {
+    const res = await api.get('/products/resolve-barcode', { params: { code } });
+    const hit = res.data as Partial<VariantBarcodeHit> | null;
+    if (!hit?.variantId || !hit.productId || !hit.variant) return null;
+    return hit as VariantBarcodeHit;
+  } catch {
+    return null;
+  }
+}
+
 /** Rehydrate a resumed server order line back into a cart line. */
 
 const RetailTerminal: React.FC = () => {
@@ -101,6 +125,7 @@ const RetailTerminal: React.FC = () => {
         categoryId: p.categoryId,
         category: p.category ? { name: p.category.name } : null,
         image: p.image ? resolveAssetUrl(p.image) : null,
+        hasVariants: !!p.hasVariants,
       }));
   }, [products, activeCategory, search]);
 
@@ -360,6 +385,33 @@ const RetailTerminal: React.FC = () => {
     }
   }, [flushCurrentOrder, resumeOrderMut, clearCart, setOrderId, setTabVersion]);
 
+  /* ============== Product variants (ADR-S072) ============== */
+  // A product with variants is never added bare: the cashier picks the variant,
+  // the line carries its variantId (stock issues from that variant) and shows its
+  // effective price. The server re-prices the line from the variant either way.
+  const [variantProduct, setVariantProduct] = useState<{ id: string; name: string; sku?: string } | null>(null);
+
+  const addVariantLine = useCallback(
+    (product: { id: string; name: string; sku?: string | null }, variant: { id: string; name: string; displayName?: string | null; salesPrice: string | number | null; sku?: string | null }) => {
+      const price = Number(variant.salesPrice ?? 0);
+      addLine({
+        productId: product.id,
+        sku: variant.sku ?? product.sku ?? undefined,
+        name: variant.displayName || `${product.name} (${variant.name})`,
+        quantity: 1,
+        unitPrice: price,
+        variantId: variant.id,
+        variantPrice: price,
+      });
+    },
+    [addLine],
+  );
+
+  const onPickVariant = useCallback((v: VariantOption) => {
+    if (variantProduct) addVariantLine(variantProduct, v);
+    setVariantProduct(null);
+  }, [variantProduct, addVariantLine]);
+
   /* ============== Catalog actions ============== */
   const onPickProduct = useCallback(
     (p: any) => {
@@ -372,6 +424,10 @@ const RetailTerminal: React.FC = () => {
           unitPrice: Number(p.salesPrice || 0),
           comboId: p.id,
         });
+        return;
+      }
+      if (p.hasVariants) {
+        setVariantProduct({ id: p.id, name: p.name, sku: p.sku ?? undefined });
         return;
       }
       addLine({
@@ -406,14 +462,26 @@ const RetailTerminal: React.FC = () => {
       const rows = Array.isArray(res.data) ? res.data : [res.data];
       const product = rows.find((p: any) => p && p.id);
       if (product) {
-        addLine({ productId: product.id, sku: product.sku ?? undefined, name: product.name, quantity: 1, unitPrice: Number(product.salesPrice || 0) });
+        if (product.hasVariants) setVariantProduct({ id: product.id, name: product.name, sku: product.sku ?? undefined });
+        else addLine({ productId: product.id, sku: product.sku ?? undefined, name: product.name, quantity: 1, unitPrice: Number(product.salesPrice || 0) });
         setSearch('');
+        return;
+      }
+      // ADR-S072: a ProductVariant's own barcode. /products/resolve-barcode
+      // answers it with `variantId` + `variant`; that variant is added directly.
+      const variantHit = await resolveVariantBarcode(code);
+      if (seq !== scanSeq.current) return;
+      if (variantHit) {
+        addVariantLine(
+          { id: variantHit.productId, name: variantHit.product?.name ?? variantHit.variant.name, sku: variantHit.product?.sku },
+          variantHit.variant,
+        );
       } else {
         toast.error(tx('No product matches "{{v1}}"', { v1: code.slice(0, 24) }));
-        setSearch('');
       }
+      setSearch('');
     } catch { /* no match on server either */ }
-  }, [catalogItems, onPickProduct, addLine]);
+  }, [catalogItems, onPickProduct, addLine, addVariantLine]);
   useScannerDebounce(search, onScan);
 
   const onInc = (line: CartLine) => setQuantity(line.lineId, line.quantity + 1);
@@ -583,6 +651,7 @@ const RetailTerminal: React.FC = () => {
       note: l.note,
       modifiers: l.modifiers && l.modifiers.length > 0 ? l.modifiers : undefined,
       comboId: l.comboId,
+      variantId: l.variantId,
       taxInclusive: l.taxInclusive,
     }));
     const payload = {
@@ -821,6 +890,7 @@ const RetailTerminal: React.FC = () => {
 
       <HandoverDialog open={showHandover} session={session ?? null} currentUserId={posUser?.userId} onClose={() => setShowHandover(false)}
         onDone={() => { setShowHandover(false); refetchSession(); }} />
+      <ProductVariantDialog product={variantProduct} onClose={() => setVariantProduct(null)} onPick={onPickVariant} />
       <CustomerProfileDialog open={showCustomerProfile} partnerId={customer?.id ?? null} partnerName={customer?.name} onClose={() => setShowCustomerProfile(false)} />
 
       {lastCompleted?.invoiceId ? (

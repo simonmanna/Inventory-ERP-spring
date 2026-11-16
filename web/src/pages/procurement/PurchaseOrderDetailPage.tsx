@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { useState } from 'react';
 import {
   ArrowLeft, Truck, CreditCard, X, Package, Receipt,
@@ -383,6 +384,8 @@ export function PurchaseOrderDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <RecordChatter contextType="PurchaseOrder" contextId={data.id} />
     </div>
   );
 }

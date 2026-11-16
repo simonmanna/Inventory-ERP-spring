@@ -160,6 +160,18 @@ cd android && ./gradlew :app:testDebugUnitTest
 After a deliberate server pricing change, update the expected totals so the
 backend test passes, then make the Android test pass too.
 
+Phase I6: `CartEngine` computes the total the way the server does — decimal
+maths, tax rounded per line to the organisation currency's decimals (sent as
+`currency.decimalPlaces` on every pull, stored as `DeviceConfig.taxScale`),
+inclusive tax backed out as `amount − tax`, inclusivity taken from the tax row,
+menu lines taxed by `MenuItem.taxId` (`ServerExactTotalsTest`). The sale sends
+that total as `expectedTotal`, and the tender legs settle it exactly (cash
+overpay becomes change; a non-cash overpay is refused on the device). If the
+server still prices the sale differently (a stale catalog), the sale is **kept**
+at the server's price: an overpay is trimmed off the cash, a shortfall stays on
+account (`paymentMode=credit`), and the invoice is flagged
+"Offline price difference …" with an audit row — the op no longer fails.
+
 All prices on the wire are MAJOR units, `MenuItem.basePrice` included (the
 server's checkout and the web terminal use it as the unit price as is; the seed
 stores 7000 for a UGX 7,000 item). Builds before catalog-units v1 wrongly
@@ -263,6 +275,22 @@ the server's shift and stock rules accept (see the protocol doc):
 - **Stock** (retail products): purchases, waste and adjustments sync as
   `stock.in` / `stock.out` with an approver; physical counts sync as a server
   spot count. On-hand shows the server figure plus unsynced local movements.
+  A product with variants is shown, moved and counted per variant (`variantId`
+  on the movement and the op). Local movements carry the op id; when a manager
+  discards a rejected stock op, its local movements are removed.
+- **Variants** (Phase I6): the `productVariants` pull scope fills
+  `product_variants` (effective price, barcode, SKU; tombstones remove rows).
+  Tapping a product with variants opens a picker; a variant barcode/SKU scan
+  adds that variant. Sales send `variantId`, `taxId` and the product's sales
+  unit as `uomId` (the server POS prices and sells in its own sales unit).
+- **Refunds** (Phase I6): pick the quantity per line and one disposition —
+  back to stock, waste or not returned. Lines go to the server as
+  `lineNumber` (position in the sale). Mixed dispositions = refund again; a
+  void needs an untouched sale. Only "back to stock" restocks the device.
+- **Kitchen voids** (Phase I6): taking a line off a tab after its KOT asks for
+  a reason and a manager PIN (`pos:override` + `pos:void`) and queues
+  `kitchen.void`; the server wastes the recipe / product once. "Clear" is
+  refused while fired lines are on the tab.
 - **Expenses**: from the drawer (a cash-out), from a safe/bank/wallet, or on
   credit (`expense.create`).
 

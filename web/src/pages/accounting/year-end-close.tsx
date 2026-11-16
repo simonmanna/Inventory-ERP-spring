@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { FileText, Lock, Unlock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { FileText, Lock, Unlock, AlertTriangle, CheckCircle2, CalendarDays } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +11,7 @@ import {
 } from '@/components/ui/table';
 import { useFiscalPeriods, useClosePeriod, useLockPeriod, useReopenPeriod } from '@/features/accounting/api';
 import { format } from 'date-fns';
-import { notify } from '@/lib/notify';
+import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 
 const STATUS_BADGES: Record<string, { label: string; variant: string }> = {
@@ -18,7 +20,15 @@ const STATUS_BADGES: Record<string, { label: string; variant: string }> = {
   locked: { label: tx('Locked'), variant: 'bg-gray-100 text-gray-700 border-gray-200' },
 };
 
+/**
+ * Period close (route kept at /year-end-close): close, lock and reopen fiscal
+ * PERIODS. The fiscal-year close lives on /fiscal-years/:id.
+ */
 export function YearEndClosePage() {
+  const navigate = useNavigate();
+  const has = useAuthStore((s) => s.hasPermission);
+  const canUpdate = has(PERMISSIONS.fiscalPeriod.update);
+  const canReopen = has(PERMISSIONS.fiscalPeriod.reopen);
   const [page, setPage] = useState(1);
   const { data, isLoading } = useFiscalPeriods({ page });
   const closeMut = useClosePeriod();
@@ -28,25 +38,27 @@ export function YearEndClosePage() {
   const periods = data?.data ?? [];
   const meta = data?.meta;
 
-  const handleAction = async (id: string, action: 'close' | 'lock' | 'reopen') => {
-    try {
-      if (action === 'close') await closeMut.mutateAsync(id);
-      else if (action === 'lock') await lockMut.mutateAsync(id);
-      else await reopenMut.mutateAsync(id);
-    } catch (e: any) {
-      notify.error(tx('Action failed'), e?.response?.data?.message ?? e.message);
-    }
+  // Failures are toasted once by the mutation hooks.
+  const handleAction = (id: string, action: 'close' | 'lock' | 'reopen') => {
+    if (action === 'close') closeMut.mutate(id);
+    else if (action === 'lock') {
+      if (!confirm(tx('Lock this period? A locked period can never be reopened.'))) return;
+      lockMut.mutate(id);
+    } else reopenMut.mutate(id);
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="border-l-4 border-[#3b82f6] pl-4 space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900">{tx('Year-End Close')}</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-gray-900">{tx('Period Close')}</h1>
           <p className="text-sm text-gray-500">
-            {tx('Close periods, lock them permanently, and post retained earnings.')}
+            {tx('Close, lock or reopen individual fiscal periods. Closing a period moves that period\'s profit or loss into Retained Earnings; it does not close the fiscal year.')}
           </p>
         </div>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate('/fiscal-years')}>
+          <CalendarDays className="h-4 w-4" /> {tx('Close a fiscal year')}
+        </Button>
       </div>
 
       <Card>
@@ -84,7 +96,7 @@ export function YearEndClosePage() {
                   <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                     <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
                     <p className="font-medium text-sm">{tx('No fiscal periods defined')}</p>
-                    <p className="text-xs">{tx('Create periods from the Fiscal Periods page to enable year-end close.')}</p>
+                    <p className="text-xs">{tx('Create a fiscal year (it generates its periods) on the Fiscal Years page.')}</p>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -109,7 +121,7 @@ export function YearEndClosePage() {
                       </TableCell>
                       <TableCell className="text-right pr-4">
                         <div className="flex items-center justify-end gap-1.5">
-                          {p.status === 'open' && (
+                          {p.status === 'open' && canUpdate && (
                             <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1"
                               onClick={() => handleAction(p.id, 'close')} disabled={closeMut.isPending}>
                               <FileText className="h-3 w-3" /> {tx('Close')}
@@ -117,14 +129,18 @@ export function YearEndClosePage() {
                           )}
                           {p.status === 'closed' && (
                             <>
-                              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1"
-                                onClick={() => handleAction(p.id, 'lock')} disabled={lockMut.isPending}>
-                                <Lock className="h-3 w-3" /> {tx('Lock')}
-                              </Button>
-                              <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1"
-                                onClick={() => handleAction(p.id, 'reopen')} disabled={reopenMut.isPending}>
-                                <Unlock className="h-3 w-3" /> {tx('Reopen')}
-                              </Button>
+                              {canUpdate && (
+                                <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1"
+                                  onClick={() => handleAction(p.id, 'lock')} disabled={lockMut.isPending}>
+                                  <Lock className="h-3 w-3" /> {tx('Lock')}
+                                </Button>
+                              )}
+                              {canReopen && (
+                                <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1"
+                                  onClick={() => handleAction(p.id, 'reopen')} disabled={reopenMut.isPending}>
+                                  <Unlock className="h-3 w-3" /> {tx('Reopen')}
+                                </Button>
+                              )}
                             </>
                           )}
                           {p.status === 'locked' && (
@@ -151,9 +167,10 @@ export function YearEndClosePage() {
             </div>
           </CardHeader>
           <CardContent className="p-4 text-xs text-muted-foreground space-y-2">
-            <p>{tx('• Zeroes out all revenue and expense accounts into Retained Earnings.')}</p>
+            <p>{tx('• Zeroes out the period\'s revenue and expense accounts into Retained Earnings.')}</p>
             <p>{tx('• Posts a single closing journal entry with source type')} <code className="bg-muted px-1 rounded">period_close</code>.</p>
-            <p>{tx('• After closing, no more transactions can post to that period (until reopened).')}</p>
+            <p>{tx('• After closing, no more transactions can post to that period (until reopened, which reverses the closing entry).')}</p>
+            <p>{tx('• The fiscal year itself is closed separately, on the Fiscal Years page.')}</p>
           </CardContent>
         </Card>
         <Card className="border-amber-200">

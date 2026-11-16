@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronRight, ArrowLeft, ScrollText, FileText, RotateCcw, ExternalLink } from 'lucide-react';
+import { ChevronRight, ArrowLeft, ScrollText, FileText, RotateCcw, ExternalLink, CheckCircle2, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { money, date } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
-import { useJournalEntry, useReverseJournalEntry } from '@/features/accounting/api';
+import {
+  useDiscardJournalEntry, useJournalEntry, usePostJournalEntry, useReverseJournalEntry,
+} from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
 
 const statusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -61,8 +63,11 @@ export function JournalEntryDetailPage() {
   const navigate = useNavigate();
   const { data: entry, isLoading } = useJournalEntry(id);
   const reverse = useReverseJournalEntry();
+  const postEntry = usePostJournalEntry();
+  const discard = useDiscardJournalEntry();
   const has = useAuthStore((s) => s.hasPermission);
   const [reverseConfirm, setReverseConfirm] = useState(false);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
 
   if (isLoading) {
     return (
@@ -89,10 +94,25 @@ export function JournalEntryDetailPage() {
   const totalCredit = entry.lines.reduce((s, l) => s + Number(l.credit || 0), 0);
   const balanced = Math.abs(totalDebit - totalCredit) < 0.01;
 
+  // Errors are toasted by the mutation hooks (onError); the catch only stops navigation.
   const onReverse = async () => {
     setReverseConfirm(false);
-    const reversal = await reverse.mutateAsync(entry.id);
-    navigate(`/journal-entries/${reversal.id}`);
+    try {
+      const reversal = await reverse.mutateAsync(entry.id);
+      navigate(`/journal-entries/${reversal.id}`);
+    } catch { /* toasted by useReverseJournalEntry */ }
+  };
+
+  const onPost = () => {
+    postEntry.mutate(entry.id);
+  };
+
+  const onDiscard = async () => {
+    try {
+      await discard.mutateAsync(entry.id);
+      setDiscardConfirm(false);
+      navigate('/journal-entries');
+    } catch { /* toasted by useDiscardJournalEntry */ }
   };
 
   const sourceLink = entry.sourceType && entry.sourceId
@@ -132,6 +152,18 @@ export function JournalEntryDetailPage() {
             <Button variant="outline" size="sm" onClick={() => navigate('/journal-entries')}>
               {tx('Back to List')}
             </Button>
+            {entry.status === 'draft' && has(PERMISSIONS.journalEntry.create) && (
+              <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10 gap-1.5" onClick={() => setDiscardConfirm(true)} disabled={discard.isPending || postEntry.isPending}>
+                <Trash2 className="h-4 w-4" />
+                {tx('Discard draft')}
+              </Button>
+            )}
+            {entry.status === 'draft' && has(PERMISSIONS.journalEntry.post) && (
+              <Button size="sm" className="gap-1.5" onClick={onPost} disabled={postEntry.isPending || discard.isPending || !balanced}>
+                <CheckCircle2 className="h-4 w-4" />
+                {postEntry.isPending ? tx('Posting…') : tx('Post')}
+              </Button>
+            )}
             {entry.status === 'posted' && has(PERMISSIONS.journalEntry.reverse) && (
               <Button variant="outline" size="sm" className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5" onClick={() => setReverseConfirm(true)} disabled={reverse.isPending}>
                 <RotateCcw className="h-4 w-4" />
@@ -267,6 +299,24 @@ export function JournalEntryDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Discard-draft confirmation */}
+      <Dialog open={discardConfirm} onOpenChange={(o) => !o && setDiscardConfirm(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tx('Discard draft?')}</DialogTitle>
+            <DialogDescription>
+              {tx('Draft {{number}} will be deleted. It was never posted, so the books are not affected.', { number: entry.entryNumber })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscardConfirm(false)}>{tx('Cancel')}</Button>
+            <Button variant="destructive" onClick={onDiscard} disabled={discard.isPending}>
+              {discard.isPending ? tx('Discarding…') : tx('Discard draft')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reverse confirmation */}
       <Dialog open={reverseConfirm} onOpenChange={(o) => !o && setReverseConfirm(false)}>

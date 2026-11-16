@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAccounts } from '@/features/accounting/api';
+import { isPostingAccount, useAccounts } from '@/features/accounting/api';
 import {
   type CompanyGroup,
   useAddGroupMember,
@@ -30,6 +30,7 @@ import {
 import { money } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
+import { localDay } from '@/lib/dates';
 
 const SELECT = 'h-9 rounded-md border border-input bg-background px-3 text-sm';
 
@@ -222,7 +223,7 @@ function PartnersTab() {
   const { data: settings } = useIntercompanySettings();
   const save = useSaveIntercompanySettings();
   const { data: accounts } = useAccounts();
-  const expenseAccounts = (accounts?.data ?? []).filter((a) => !a.isGroup && a.isActive);
+  const expenseAccounts = (accounts?.data ?? []).filter((a) => isPostingAccount(a));
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -380,7 +381,7 @@ function JournalsTab({ group }: { group: CompanyGroup }) {
   const { data: accounts } = useAccounts();
   const post = usePostIntercompanyJournal();
   const others = group.members.filter((m) => m.organizationId !== orgId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
 
   return (
     <div className="space-y-4">
@@ -426,7 +427,7 @@ function JournalsTab({ group }: { group: CompanyGroup }) {
               <div className="space-y-1">
                 <Label>{tx('Credit account here')}</Label>
                 <select name="sourceAccountId" className={SELECT} required>
-                  {(accounts?.data ?? []).filter((a) => !a.isGroup && a.isActive).map((a) => (
+                  {(accounts?.data ?? []).filter((a) => isPostingAccount(a)).map((a) => (
                     <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
                   ))}
                 </select>

@@ -2,12 +2,12 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -382,7 +383,7 @@ public class StandardCostService {
                 throw ApiException.badRequest("Only an approved standard cost can be activated");
             }
             LocalDate from = (LocalDate) s.get("effectiveFrom");
-            if (from.isAfter(LocalDate.now(BusinessZone.get()))) {
+            if (from.isAfter(LocalDate.now(OrgDates.orgTimezone(jdbc, org())))) {
                 throw ApiException.badRequest("The standard takes effect on " + from + "; it cannot be activated earlier");
             }
             String productId = (String) s.get("productId");
@@ -395,48 +396,15 @@ public class StandardCostService {
                         + " switch it to standard cost");
             }
             BigDecimal std = SqlRows.dec(s, "totalCost");
-            BigDecimal qty = BigDecimal.ZERO;
-            BigDecimal before = BigDecimal.ZERO;
-            List<Object[]> quantDeltas = new java.util.ArrayList<>();
-            for (Map<String, Object> q : jdbc.sql("SELECT id, \"variantKey\", \"locationId\", quantity,"
-                    + " \"runningAverageCost\" FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
-                    + " FOR UPDATE").params(org(), productId).query().listOfRows()) {
-                BigDecimal qq = Money.dec(q.get("quantity"));
-                qty = qty.add(qq);
-                BigDecimal qv = quantValue(productId, q, method, Boolean.TRUE.equals(product.get("batchTracking")),
-                        Money.dec(product.get("costPrice")));
-                before = before.add(qv);
-                quantDeltas.add(new Object[] {q, qq.multiply(std).subtract(qv)});
-                jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
-                        .params(std, q.get("id")).update();
-            }
-            jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE"
-                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"isActive\" = true AND quantity > 0")
-                    .params(std, org(), productId).update();
-            BigDecimal after = qty.multiply(std).setScale(6, RoundingMode.HALF_UP);
-            BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
-            String je = null;
-            if (diff.abs().compareTo(CENT) >= 0) {
-                String sv = determination.mapped("stock_valuation");
-                String reval = varianceAccount("revaluation");
-                String v = JsNumbers.dec(diff.abs());
-                String description = "Standard cost revaluation · " + product.get("name") + " v" + s.get("version");
-                List<Line> lines = diff.signum() > 0
-                        ? List.of(Line.debit(sv, v, description), Line.credit(reval, v, description))
-                        : List.of(Line.debit(reval, v, description), Line.credit(sv, v, description));
-                Map<String, Object> posted = posting.post(PostingRequest.of("INV", Instant.now(), description,
-                        "standard_cost", id, "inventory:standard_cost:" + org() + ":" + id, lines));
-                je = posted == null ? null : (String) posted.get("id");
-                // CM-1: the stock ledger carries the revaluation per quant (value-only rows, source standard_cost).
-                for (Object[] qd : quantDeltas) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> q = (Map<String, Object>) qd[0];
-                    String variant = (String) q.get("variantKey");
-                    lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
-                            (String) q.get("locationId"), null, (BigDecimal) qd[1], "standard_cost", id, null,
-                            "Standard cost revaluation v" + s.get("version"));
-                }
-            }
+            String description = "Standard cost revaluation · " + product.get("name") + " v" + s.get("version");
+            Revaluation rv = revalueOnHand(productId, method, Boolean.TRUE.equals(product.get("batchTracking")),
+                    Money.dec(product.get("costPrice")), std, "standard_cost", id,
+                    "inventory:standard_cost:" + org() + ":" + id, description,
+                    "Standard cost revaluation v" + s.get("version"));
+            BigDecimal qty = rv.quantity();
+            BigDecimal before = rv.before();
+            BigDecimal diff = rv.difference();
+            String je = rv.journalEntryId();
             jdbc.sql("UPDATE \"ProductStandardCost\" SET status = 'superseded', \"updatedAt\" = " + NOW + " WHERE"
                     + " \"organizationId\" = ? AND \"productId\" = ? AND status = 'active'").params(org(), productId)
                     .update();
@@ -454,15 +422,106 @@ public class StandardCostService {
         return get(id);
     }
 
-    /** Daily: activate approved standards whose effective date has come. */
-    @Scheduled(cron = "0 20 0 * * *", zone = "UTC")
-    @SchedulerLock(name = "standard-cost-activation", lockAtMostFor = "PT1H")
+    /** A revaluation of a product's stock on hand: quantity, method-correct value before, posted difference, JE. */
+    public record Revaluation(BigDecimal quantity, BigDecimal before, BigDecimal difference, String journalEntryId) {}
+
+    /**
+     * Revalue every quant of a product to {@code unit} (caller holds the product row lock, inside its transaction):
+     * quant averages and open lots take the new cost; the difference to the method-correct value before is posted
+     * (Dr / Cr stock valuation against standard cost revaluation 5960, when ≥ 0.01) and carried in value-only ledger
+     * rows per quant ({@code sourceType} / {@code sourceId}), so the stock ledger, the valuation and the GL agree.
+     */
+    Revaluation revalueOnHand(String productId, String method, boolean lots, BigDecimal costPrice, BigDecimal unit,
+            String sourceType, String sourceId, String postingKey, String description, String ledgerNote) {
+        BigDecimal qty = BigDecimal.ZERO;
+        BigDecimal before = BigDecimal.ZERO;
+        List<Object[]> quantDeltas = new java.util.ArrayList<>();
+        for (Map<String, Object> q : jdbc.sql("SELECT id, \"variantKey\", \"locationId\", quantity,"
+                + " \"runningAverageCost\" FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
+                + " ORDER BY \"locationId\", \"variantKey\" FOR UPDATE").params(org(), productId).query().listOfRows()) {
+            BigDecimal qq = Money.dec(q.get("quantity"));
+            qty = qty.add(qq);
+            BigDecimal qv = quantValue(productId, q, method, lots, costPrice);
+            before = before.add(qv);
+            quantDeltas.add(new Object[] {q, qq.multiply(unit).subtract(qv)});
+            jdbc.sql("UPDATE \"StockItem\" SET \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                    .params(unit, q.get("id")).update();
+        }
+        jdbc.sql("UPDATE \"InventoryBatch\" SET \"unitCost\" = ?, \"updatedAt\" = " + NOW + " WHERE"
+                + " \"organizationId\" = ? AND \"productId\" = ? AND \"isActive\" = true AND quantity > 0")
+                .params(unit, org(), productId).update();
+        BigDecimal after = qty.multiply(unit).setScale(6, RoundingMode.HALF_UP);
+        BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
+        String je = null;
+        if (diff.abs().compareTo(CENT) >= 0) {
+            String sv = determination.mapped("stock_valuation");
+            String reval = varianceAccount("revaluation");
+            String v = JsNumbers.dec(diff.abs());
+            List<Line> lines = diff.signum() > 0
+                    ? List.of(Line.debit(sv, v, description), Line.credit(reval, v, description))
+                    : List.of(Line.debit(reval, v, description), Line.credit(sv, v, description));
+            Map<String, Object> posted = posting.post(PostingRequest.of("INV", Instant.now(), description, sourceType,
+                    sourceId, postingKey, lines));
+            je = posted == null ? null : (String) posted.get("id");
+            // CM-1: the stock ledger carries the revaluation per quant (value-only rows).
+            for (Object[] qd : quantDeltas) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> q = (Map<String, Object>) qd[0];
+                String variant = (String) q.get("variantKey");
+                lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
+                        (String) q.get("locationId"), null, (BigDecimal) qd[1], sourceType, sourceId, null, ledgerNote);
+            }
+        }
+        return new Revaluation(qty, before, diff, je);
+    }
+
+    /**
+     * A STANDARD product's cost price edited on the product (no active standard cost governs it): the stock on hand is
+     * revalued from {@code oldCost} to {@code newCost} in the caller's transaction, like a standard activation (source
+     * {@code product_cost_price}, Dr / Cr stock valuation against 5960). Returns the journal entry id (null when the
+     * difference is below 0.01 or nothing is on hand).
+     */
+    @Transactional
+    public String revalueCostPriceChange(String productId, BigDecimal oldCost, BigDecimal newCost) {
+        Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method,"
+                + " \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(productId, org()));
+        if (product == null) {
+            throw ApiException.notFound("Product not found");
+        }
+        String description = "Cost price change · " + product.get("name") + ": " + JsNumbers.dec(nz(oldCost)) + " → "
+                + JsNumbers.dec(nz(newCost));
+        Revaluation rv = revalueOnHand(productId, (String) product.get("method"),
+                Boolean.TRUE.equals(product.get("batchTracking")), nz(oldCost), nz(newCost), "product_cost_price",
+                productId, "inventory:cost_price:" + org() + ":" + productId + ":" + java.util.UUID.randomUUID(),
+                description, description);
+        audit.recordInTx(AuditInput.of("Product", productId, "update", null, Obj.of("kind", "cost_price_revaluation",
+                "oldCost", JsNumbers.dec(nz(oldCost)), "newCost", JsNumbers.dec(nz(newCost)), "quantity",
+                JsNumbers.dec(rv.quantity()), "revaluation", JsNumbers.dec(rv.difference()), "journalEntryId",
+                rv.journalEntryId())));
+        return rv.journalEntryId();
+    }
+
+    /**
+     * Hourly: activate approved standards whose effective date has come on their organisation's calendar (candidates
+     * up to tomorrow UTC, each checked against its organisation's today; a standard no longer approved is skipped).
+     */
+    @Scheduled(cron = "0 20 * * * *", zone = "UTC")
+    @SchedulerLock(name = "standard-cost-activation", lockAtMostFor = "PT50M")
     public void activateDue() {
-        for (Map<String, Object> d : jdbc.sql("SELECT id, \"organizationId\" FROM \"ProductStandardCost\" WHERE status ="
-                + " 'approved' AND \"effectiveFrom\" <= CURRENT_DATE ORDER BY \"effectiveFrom\"").query().listOfRows()) {
+        for (Map<String, Object> d : jdbc.sql("SELECT id, \"organizationId\", \"effectiveFrom\" FROM \"ProductStandardCost\""
+                + " WHERE status = 'approved' AND \"effectiveFrom\" <= ? ORDER BY \"effectiveFrom\"")
+                .param(LocalDate.now(ZoneOffset.UTC).plusDays(1)).query().listOfRows()) {
+            String orgId = (String) d.get("organizationId");
             try {
-                TenantContext.run(TenantContext.TenantStore.organization((String) d.get("organizationId")),
-                        () -> activate((String) d.get("id")));
+                TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
+                    Object from = d.get("effectiveFrom");
+                    LocalDate day = from instanceof java.sql.Date sd ? sd.toLocalDate() : (LocalDate) from;
+                    if (day.isAfter(LocalDate.now(OrgDates.orgTimezone(jdbc, orgId)))) {
+                        return;
+                    }
+                    activate((String) d.get("id"));
+                });
             } catch (RuntimeException e) {
                 log.warn("[standard-cost] activation of {} failed: {}", d.get("id"), e.getMessage());
             }

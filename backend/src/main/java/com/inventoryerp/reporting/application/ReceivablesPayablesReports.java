@@ -245,8 +245,9 @@ public class ReceivablesPayablesReports implements ReportProvider {
                 return m;
             });
             String b = bucket(days(i, asOf, basis), lim);
-            row.put(b, ((BigDecimal) row.get(b)).add(i.residual()));
-            row.put("total", ((BigDecimal) row.get("total")).add(i.residual()));
+            // base currency: one partner row may hold several document currencies, and it ties to the GL in base
+            row.put(b, ((BigDecimal) row.get(b)).add(i.baseResidual()));
+            row.put("total", ((BigDecimal) row.get("total")).add(i.baseResidual()));
         }
         for (Map.Entry<String, BigDecimal> u : open.unapplied(ctx, "AR".equals(side) ? "inbound" : "outbound",
                 asOf).entrySet()) {
@@ -411,7 +412,7 @@ public class ReceivablesPayablesReports implements ReportProvider {
             Map<String, String> labels = new LinkedHashMap<>();
             buckets(lim).forEach(b -> labels.put(b[0], b[1]));
             for (Item i : open.at(ctx, side, ctx.current().to())) {
-                ag.merge(labels.get(bucket(days(i, ctx.current().to(), "DUE_DATE"), lim)), i.residual(),
+                ag.merge(labels.get(bucket(days(i, ctx.current().to(), "DUE_DATE"), lim)), i.baseResidual(),
                         BigDecimal::add);
             }
             ag.forEach((k, v) -> t.add("kpi", 0, false, Obj.of("_id", "AGE:" + k, "description", "Aging — " + k,
@@ -511,7 +512,7 @@ public class ReceivablesPayablesReports implements ReportProvider {
     ReportBody creditUtilization(ReportContext ctx) {
         Map<String, BigDecimal> exposure = new LinkedHashMap<>();
         for (Item i : open.at(ctx, "AR", ctx.asOf())) {
-            exposure.merge(i.partnerId() == null ? "" : i.partnerId(), i.residual(), BigDecimal::add);
+            exposure.merge(i.partnerId() == null ? "" : i.partnerId(), i.baseResidual(), BigDecimal::add);
         }
         open.unapplied(ctx, "inbound", ctx.asOf()).forEach((k, v) -> exposure.merge(k, v.negate(), BigDecimal::add));
         List<Object> p = new ArrayList<>(List.of(ctx.asOf(), ctx.asOf(), ctx.organizationId()));
@@ -650,7 +651,7 @@ public class ReceivablesPayablesReports implements ReportProvider {
         Map<String, String> names = new LinkedHashMap<>();
         for (Item i : open.at(ctx, side, asOf)) {
             String k = i.partnerId() == null ? "" : i.partnerId();
-            sub.merge(k, i.residual(), BigDecimal::add);
+            sub.merge(k, i.baseResidual(), BigDecimal::add);
             names.put(k, i.partnerName());
         }
         open.unapplied(ctx, ar ? "inbound" : "outbound", asOf).forEach((k, v) -> sub.merge(k, v.negate(),
@@ -735,14 +736,14 @@ public class ReceivablesPayablesReports implements ReportProvider {
             for (Item i : open.at(ctx, "AR", start)) {
                 int w = week(i.dueDate(), start, weeks);
                 if (w >= 0) {
-                    in[w] = in[w].add(i.residual());
+                    in[w] = in[w].add(i.baseResidual());
                 }
             }
         }
         for (Item i : open.at(ctx, "AP", start)) {
             int w = week(i.dueDate(), start, weeks);
             if (w >= 0) {
-                out[w] = out[w].add(i.residual());
+                out[w] = out[w].add(i.baseResidual());
             }
         }
         BigDecimal cash = BigDecimal.ZERO;

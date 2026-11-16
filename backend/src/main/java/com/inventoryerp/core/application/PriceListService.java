@@ -37,9 +37,18 @@ public class PriceListService {
 
     private static final Set<String> TIERS = Set.of("retail", "wholesale", "contract", "negotiated");
 
-    /** One line to price; {@code uomId} null means the product's default sales unit. */
+    /**
+     * One line to price; {@code uomId} null means the product's default sales unit. {@code variantId} (ADR-S058
+     * addendum, audit P-1) prices that product variant: its list price, and the rules that name it.
+     */
     public record PriceQuery(String partnerId, String productId, BigDecimal quantity, String uomId, String branchId,
-            String siteId, LocalDate on) {}
+            String siteId, LocalDate on, String variantId) {
+
+        public PriceQuery(String partnerId, String productId, BigDecimal quantity, String uomId, String branchId,
+                String siteId, LocalDate on) {
+            this(partnerId, productId, quantity, uomId, branchId, siteId, on, null);
+        }
+    }
 
     /** The match. {@code unitPrice} is per the requested unit; null means the catalogue price with this discount. */
     public record ListPrice(BigDecimal unitPrice, BigDecimal discountPercent, String priceListId, String priceListName) {}

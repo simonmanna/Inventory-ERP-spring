@@ -67,8 +67,13 @@ public class PeriodCloseChecklistService {
     public Map<String, Object> checklist(String periodId) {
         String org = TenantContext.organizationId();
         Map<String, Object> p = period(periodId, org);
+        // Period bounds are org-local wall clock (ADR-S070): real timestamps are compared with the converted bounds
+        // (startAt / endAt); date-like columns stored as UTC-midnight dates keep the wall-clock ones.
         Timestamp start = SqlRows.ts((Instant) p.get("startDate"));
         Timestamp end = SqlRows.ts((Instant) p.get("endDate"));
+        java.time.ZoneId zone = AccountingDay.zone(jdbc, org);
+        Timestamp startAt = AccountingDay.fromWallClock(start, zone);
+        Timestamp endAt = AccountingDay.fromWallClock(end, zone);
 
         String pending = " WHERE \"organizationId\" = ? AND status::text IN ('draft', 'pending', 'approved')";
         long mutations = count("SELECT count(*) FROM \"StockOut\"" + pending, org)
@@ -78,19 +83,19 @@ public class PeriodCloseChecklistService {
         List<Map<String, Object>> checks = new ArrayList<>();
         checks.add(check("register_shifts", "Register shifts reconciled", true,
                 count("SELECT count(*) FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"openedAt\" <= ?"
-                        + " AND status::text <> 'reconciled'", org, end)));
+                        + " AND status::text <> 'reconciled'", org, endAt)));
         checks.add(check("stock_posting", "Stock postings finished", true,
                 count("SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND status::text IN"
                         + " ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org,
-                        start, end)));
+                        startAt, endAt)));
         checks.add(check("inventory_mutations", "No pending stock documents", true, mutations));
         checks.add(check("inventory_exceptions", "No open inventory exceptions", true,
                 count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = "
                         + "'open'"
-                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, start, end)));
+                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, startAt, endAt)));
         checks.add(check("draft_journals", "No draft journal entries", false,
                 count("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
-                        + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, start, end)));
+                        + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, startAt, endAt)));
         checks.add(check("draft_invoices", "No draft sales invoices", false, draftDocuments("sales_invoice", org, start,
                 end)));
         checks.add(check("draft_bills", "No draft vendor bills", false, draftDocuments("vendor_bill", org, start,
@@ -98,8 +103,8 @@ public class PeriodCloseChecklistService {
         checks.add(check("draft_receipts", "No draft goods receipts", false,
                 count("SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ? AND status::text = "
                         + "'draft'"
-                        + " AND \"deletedAt\" IS NULL AND \"receivedAt\" >= ? AND \"receivedAt\" <= ?", org, start,
-                        end)));
+                        + " AND \"deletedAt\" IS NULL AND \"receivedAt\" >= ? AND \"receivedAt\" <= ?", org, startAt,
+                        endAt)));
         checks.add(check("unmatched_bank_lines", "No unmatched bank statement lines", false,
                 count("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ? AND status = 'unmatched'"
                         + " AND \"postedAt\" >= ? AND \"postedAt\" <= ?", org, start, end)));
@@ -109,7 +114,7 @@ public class PeriodCloseChecklistService {
                 + " e.status::text <> 'draft' AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ? AND e.\"sourceType\" ="
                 + " ANY (?) AND NOT EXISTS (SELECT 1 FROM \"CostingPeriodLock\" l WHERE l.\"organizationId\" ="
                 + " e.\"organizationId\" AND l.status = 'locked' AND l.\"periodFrom\" <= e.\"postingDate\"::date AND"
-                + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, start, end,
+                + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, startAt, endAt,
                 CostingDimensionGuard.COSTING_SOURCES.toArray(String[]::new));
         checks.add(check("costing_close", "Costing period closed (cost close cockpit)", false, costingUnlocked));
         // LC-3 (ADR-S053): landed-cost shares parked because their goods could not be followed must be resolved.

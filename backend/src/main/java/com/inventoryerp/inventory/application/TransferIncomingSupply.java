@@ -20,7 +20,7 @@ public class TransferIncomingSupply implements IncomingSupplyProvider {
     }
 
     @Override
-    public BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
+    public BigDecimal incoming(String productId, String variantId, String locationId, boolean onlyRule) {
         return jdbc.sql("""
                         SELECT COALESCE(SUM(CASE
                                    WHEN t.status::text IN ('draft', 'pending', 'approved') AND i."qtyDispatched" = 0
@@ -30,8 +30,9 @@ public class TransferIncomingSupply implements IncomingSupplyProvider {
                         FROM "StockTransferItem" i
                         JOIN "StockTransfer" t ON t.id = i."transferId"
                         WHERE i."organizationId" = ? AND i."productId" = ? AND t."toLocId" = ?
+                          AND (?::text IS NULL OR i."variantId" = ?::text)
                           AND t.status::text IN ('draft', 'pending', 'approved', 'in_transit', 'partially_received')""")
-                .params(TenantContext.organizationId(), productId, locationId)
+                .params(TenantContext.organizationId(), productId, locationId, variantId, variantId)
                 .query(BigDecimal.class)
                 .single();
     }

@@ -80,6 +80,8 @@ public class FleetDispatchService {
     private final FleetDb db;
     private final FleetDeliveryOrderService orders;
     private final FleetDiscrepancyService discrepancies;
+    /** Phase A A2: customer weight evidence (set after construction; keeps the constructor stable). */
+    private CustomerWeightEvidence customerWeights;
     private final FleetVehicleService vehicles;
     private final FleetDriverService drivers;
     private final FleetDispatchEligibilityService eligibility;
@@ -189,6 +191,23 @@ public class FleetDispatchService {
                 + " LIMIT ? OFFSET ?").params(pp)), p, size, total);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCustomerWeights(CustomerWeightEvidence customerWeights) {
+        this.customerWeights = customerWeights;
+    }
+
+    private LoadLineQuantityService quantities;
+    private LoadLineHistory history;
+    private com.inventoryerp.core.application.UomConversionService uoms;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setQuantities(LoadLineQuantityService quantities, LoadLineHistory history,
+            com.inventoryerp.core.application.UomConversionService uoms) {
+        this.quantities = quantities;
+        this.history = history;
+        this.uoms = uoms;
+    }
+
     /** Trip with lines, delivery order + site, assignment, proof of delivery (signed URLs) and discrepancies. */
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
@@ -215,6 +234,11 @@ public class FleetDispatchService {
         if (pod != null) {
             pod.put("signatureUrl", url((String) pod.get("signatureFileId")));
             pod.put("photoUrl", url((String) pod.get("photoFileId")));
+            List<String> evidence = new ArrayList<>();
+            if (pod.get("customerWeightFileIds") instanceof List<?> ids) {
+                ids.forEach(f -> evidence.add(url((String) f)));
+            }
+            pod.put("customerWeightFileUrls", evidence);
         }
         t.put("pod", pod);
         t.put("discrepancies", SqlRows.list(db.jdbc().sql("SELECT x.*, pr.name AS \"productName\" FROM"
@@ -325,6 +349,105 @@ public class FleetDispatchService {
 
     private record PlannedQty(Map<String, Object> line, BigDecimal qty, String batch) {}
 
+    /**
+     * Re-plan the quantities of a trip that has not started loading: {@code in} is the full new set (a delivery-order
+     * line left out leaves the trip). Each line's increase must fit what remains to be planned, under the same delivery
+     * order lock as {@link #addLoad}, so two edits can never plan more than was ordered.
+     */
+    @Transactional
+    public Map<String, Object> replan(String id, List<LoadLineInput> in) {
+        Locked k = lockTrip(id);
+        Map<String, Object> t = k.trip();
+        String code = (String) t.get("code");
+        if (!"planned".equals(t.get("status"))) {
+            throw ApiException.badRequest("Trip " + code + " is " + TripStatusPolicy.label((String) t.get("status"))
+                    + "; its quantities can no longer change");
+        }
+        String deliveryOrderId = (String) k.order().get("id");
+        FleetDeliveryOrderService.assertEditable(k.order());
+        Map<String, Map<String, Object>> doLines = new HashMap<>();
+        for (Map<String, Object> l : orders.lines(deliveryOrderId)) {
+            doLines.put((String) l.get("id"), l);
+        }
+        Map<String, BigDecimal> wanted = new LinkedHashMap<>();
+        Map<String, String> batches = new HashMap<>();
+        for (LoadLineInput li : in) {
+            if (!doLines.containsKey(li.deliveryOrderLineId())) {
+                throw ApiException.badRequest("Delivery order line not found");
+            }
+            if (li.quantity() == null || li.quantity().signum() < 0) {
+                throw ApiException.badRequest("Quantities must not be less than 0");
+            }
+            wanted.merge(li.deliveryOrderLineId(), li.quantity(), BigDecimal::add);
+            if (li.batchNumber() != null) {
+                batches.put(li.deliveryOrderLineId(), li.batchNumber());
+            }
+        }
+        wanted.values().removeIf(q -> q.signum() == 0);
+        if (wanted.isEmpty()) {
+            throw ApiException.badRequest("Trip " + code + " needs at least one product; cancel it instead");
+        }
+        Map<String, Map<String, Object>> current = new HashMap<>();
+        for (Map<String, Object> l : lines(id)) {
+            current.put((String) l.get("deliveryOrderLineId"), l);
+        }
+        for (Map.Entry<String, BigDecimal> e : wanted.entrySet()) {
+            Map<String, Object> dl = doLines.get(e.getKey());
+            Map<String, Object> cur = current.get(e.getKey());
+            BigDecimal mine = cur == null ? BigDecimal.ZERO : SqlRows.dec(cur, "plannedQty");
+            BigDecimal remaining = SqlRows.dec(dl, "remainingQty");
+            if (e.getValue().subtract(mine).compareTo(remaining) > 0) {
+                throw ApiException.badRequest("Only " + JsNumbers.dec(remaining.add(mine)) + " " + unit(dl) + " of "
+                        + dl.get("productName") + " remain to be planned");
+            }
+        }
+        Map<String, Object> before = Obj.of("lines", current.values().stream().map(l -> Obj.of("deliveryOrderLineId",
+                l.get("deliveryOrderLineId"), "plannedQty", l.get("plannedQty"))).toList());
+        BigDecimal tonnes = BigDecimal.ZERO;
+        BigDecimal m3 = BigDecimal.ZERO;
+        boolean knownT = false;
+        boolean knownM = false;
+        for (Map<String, Object> cur : current.values()) {
+            String doLine = (String) cur.get("deliveryOrderLineId");
+            if (!wanted.containsKey(doLine)) {
+                db.jdbc().sql("DELETE FROM \"FleetLoadLine\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(cur.get("id"), FleetDb.org()).update();
+                adjustOrderLine(doLine, SqlRows.dec(cur, "plannedQty").negate(), null, null, null);
+            }
+        }
+        for (Map.Entry<String, BigDecimal> e : wanted.entrySet()) {
+            Map<String, Object> dl = doLines.get(e.getKey());
+            Map<String, Object> cur = current.get(e.getKey());
+            String batch = FleetVehicleService.trim(batches.getOrDefault(e.getKey(), cur == null
+                    ? (String) dl.get("batchNumber") : (String) cur.get("batchNumber")));
+            if (cur == null) {
+                db.insert(FleetLoadLine.class, Obj.of("loadId", id, "deliveryOrderLineId", e.getKey(), "productId",
+                        dl.get("productId"), "uomId", dl.get("uomId"), "uomFactor", dl.get("uomFactor"), "plannedQty",
+                        e.getValue(), "tonnesPerUnit", dl.get("tonnesPerUnit"), "m3PerUnit", dl.get("m3PerUnit"),
+                        "batchNumber", batch));
+                adjustOrderLine(e.getKey(), e.getValue(), null, null, null);
+            } else {
+                db.update(FleetLoadLine.class, (String) cur.get("id"), Obj.of("plannedQty", e.getValue(), "batchNumber",
+                        batch));
+                adjustOrderLine(e.getKey(), e.getValue().subtract(SqlRows.dec(cur, "plannedQty")), null, null, null);
+            }
+            if (dl.get("tonnesPerUnit") != null) {
+                tonnes = tonnes.add(e.getValue().multiply((BigDecimal) dl.get("tonnesPerUnit")));
+                knownT = true;
+            }
+            if (dl.get("m3PerUnit") != null) {
+                m3 = m3.add(e.getValue().multiply((BigDecimal) dl.get("m3PerUnit")));
+                knownM = true;
+            }
+        }
+        db.update(FleetLoad.class, id, Obj.of("plannedTonnes", knownT ? tonnes.setScale(3, RoundingMode.HALF_UP) : null,
+                "plannedM3", knownM ? m3.setScale(3, RoundingMode.HALF_UP) : null, "updatedBy", TenantContext.userId()));
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", before, Obj.of("lines", wanted.entrySet().stream()
+                .map(e -> Obj.of("deliveryOrderLineId", e.getKey(), "plannedQty", e.getValue())).toList())));
+        orders.refreshStatus(deliveryOrderId);
+        return get(id);
+    }
+
     private record Planning(LoadPlanner.Plan plan, LoadPlanner.Capacity capacity, Map<String, Map<String, Object>> lines) {}
 
     private Planning planning(String deliveryOrderId, PlanInput in) {
@@ -404,6 +527,120 @@ public class FleetDispatchService {
     }
 
     /** Adds the given deltas (null = 0) to a delivery-order line's planned / dispatched / delivered / returned. */
+    /**
+     * Phase I2 M-6: the base-unit quantity this load issues when its line is in another unit, rounded cumulatively per
+     * delivery-order line — round(Σ issued before + this load) − round(Σ issued before) — so two loads of 10.37 t of
+     * 50-kg bags issue 415 bags, not 2 × 207. Null (let the engine convert) for base-unit lines or when the result
+     * would not be positive.
+     */
+    private BigDecimal cumulativeBase(Map<String, Object> l, BigDecimal qty) {
+        if (l.get("uomFactor") == null || l.get("deliveryOrderLineId") == null) {
+            return null;
+        }
+        BigDecimal factor = SqlRows.dec(l, "uomFactor");
+        if (factor.signum() <= 0 || factor.compareTo(BigDecimal.ONE) == 0) {
+            return null;
+        }
+        String baseUom = db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ?").param(l.get("productId"))
+                .query(String.class).optional().orElse(null);
+        if (baseUom == null) {
+            return null;
+        }
+        BigDecimal before = db.jdbc().sql("SELECT COALESCE(sum(ll.\"dispatchedQty\"), 0) FROM \"FleetLoadLine\" ll JOIN"
+                + " \"FleetLoad\" t ON t.id = ll.\"loadId\" WHERE ll.\"organizationId\" = ? AND"
+                + " ll.\"deliveryOrderLineId\" = ? AND ll.id <> ? AND t.\"stockIssuedAt\" IS NOT NULL AND"
+                + " ll.\"uomFactor\" = ?").params(FleetDb.org(), l.get("deliveryOrderLineId"), l.get("id"), factor)
+                .query(BigDecimal.class).single();
+        BigDecimal base = uoms.applyFactor(before.add(qty), factor, baseUom, true)
+                .subtract(uoms.applyFactor(before, factor, baseUom, true));
+        return base.signum() > 0 ? base : null;
+    }
+
+    /** One evidence file of a POD correction (photo or PDF). */
+    public record Evidence(String filename, String contentType, byte[] bytes) {}
+
+    /** One corrected line: the new delivered quantity Δ'. */
+    public record PodCorrectionLine(String loadLineId, BigDecimal deliveredQty) {}
+
+    /**
+     * Phase A A3 (plan §2): authorised POD correction. Raises the delivered quantity of lines of a delivered trip (never
+     * above D − R − G, never down), reconciles that much of the lines' open POD-shortage claims, and records the
+     * change in the line history. Needs a reason and evidence; the person who recorded the POD cannot correct it.
+     * Lock order (plan §8): the caller holds the sales order; here delivery order → trip → claims.
+     */
+    @Transactional
+    public Map<String, Object> correctPod(String id, List<PodCorrectionLine> in, String reason, List<Evidence> evidence) {
+        Locked k = lockTrip(id);
+        Map<String, Object> t = k.trip();
+        String code = (String) t.get("code");
+        if (!List.of("delivered", "closed").contains(t.get("status"))) {
+            throw ApiException.badRequest("Trip " + code + " has no proof of delivery to correct");
+        }
+        String why = FleetVehicleService.trim(reason);
+        if (why == null) {
+            throw ApiException.badRequest("A reason is required to correct a proof of delivery");
+        }
+        if (evidence == null || evidence.isEmpty()) {
+            throw ApiException.badRequest("Evidence is required to correct a proof of delivery");
+        }
+        if (in == null || in.isEmpty()) {
+            throw ApiException.badRequest("lines should not be empty");
+        }
+        Map<String, Object> pod = SqlRows.one(db.jdbc().sql("SELECT \"recordedBy\" FROM \"FleetProofOfDelivery\" WHERE"
+                + " \"loadId\" = ? AND \"organizationId\" = ?").params(id, FleetDb.org()));
+        String actor = TenantContext.userId();
+        if (pod != null && actor != null && actor.equals(pod.get("recordedBy"))) {
+            throw ApiException.forbidden("The person who recorded the proof of delivery cannot correct it");
+        }
+        List<String> fileIds = new ArrayList<>();
+        for (Evidence e : evidence) {
+            if (e.contentType() == null || !(e.contentType().startsWith("image/")
+                    || "application/pdf".equals(e.contentType()))) {
+                throw ApiException.badRequest("Correction evidence must be an image or a PDF");
+            }
+            fileIds.add((String) files.upload(e.filename() == null ? "pod-correction-" + code : e.filename(),
+                    e.contentType(), e.bytes(), OWNER_TYPE, id).get("id"));
+        }
+        Map<String, Map<String, Object>> byId = new HashMap<>();
+        for (Map<String, Object> l : lines(id)) {
+            byId.put((String) l.get("id"), l);
+        }
+        for (PodCorrectionLine c : in) {
+            Map<String, Object> l = byId.get(c.loadLineId());
+            if (l == null) {
+                throw ApiException.badRequest("Trip line not found");
+            }
+            BigDecimal before = LoadLineQuantityService.dec(l, "deliveredQty");
+            BigDecimal ceiling = LoadLineQuantityService.dec(l, "dispatchedQty")
+                    .subtract(LoadLineQuantityService.dec(l, "returnedQty"))
+                    .subtract(LoadLineQuantityService.dec(l, "damagedQty"));
+            String name = productName((String) l.get("productId"));
+            if (c.deliveredQty() == null || c.deliveredQty().compareTo(before) <= 0) {
+                throw ApiException.badRequest("A proof-of-delivery correction can only raise the delivered quantity of "
+                        + name + " (now " + JsNumbers.dec(before) + ")");
+            }
+            if (c.deliveredQty().compareTo(ceiling) > 0) {
+                throw ApiException.badRequest("The corrected delivered quantity of " + name + " cannot exceed "
+                        + JsNumbers.dec(ceiling) + " (dispatched less returned and damaged)");
+            }
+            BigDecimal x = c.deliveredQty().subtract(before);
+            BigDecimal unmatched = discrepancies.reconcileShortage(l, x, why, fileIds);
+            if (unmatched.signum() > 0) {
+                throw ApiException.badRequest("The correction of " + name + " is more than its open shortage claims"
+                        + " (" + JsNumbers.dec(x.subtract(unmatched)) + ")");
+            }
+            db.update(FleetLoadLine.class, (String) l.get("id"), Obj.of("deliveredQty", c.deliveredQty()));
+            adjustOrderLine((String) l.get("deliveryOrderLineId"), null, null, x, null);
+            history.record(l, "pod_corrected", "delivered", before, c.deliveredQty(), why, fileIds, "trip", id);
+            quantities.refresh((String) l.get("id"));
+            audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("loadLineId", l.get("id"),
+                    "deliveredQty", JsNumbers.dec(before)), Obj.of("loadLineId", l.get("id"), "deliveredQty",
+                            JsNumbers.dec(c.deliveredQty()), "reason", why, "evidenceFileIds", fileIds)));
+        }
+        orders.refreshStatus((String) k.order().get("id"));
+        return get(id);
+    }
+
     private void adjustOrderLine(String lineId, BigDecimal planned, BigDecimal dispatched, BigDecimal delivered,
             BigDecimal returned) {
         db.jdbc().sql("UPDATE \"FleetDeliveryOrderLine\" SET \"plannedQty\" = GREATEST(\"plannedQty\" + ?, 0),"
@@ -832,7 +1069,8 @@ public class FleetDispatchService {
         BigDecimal tonnes = BigDecimal.ZERO;
         boolean knownT = false;
         BigDecimal total = BigDecimal.ZERO;
-        for (Map<String, Object> l : lines(id)) {
+        // Audit S-2: issue in the engine's lock order.
+        for (Map<String, Object> l : StockMove.inLockOrder(lines(id), r -> (String) r.get("productId"), this::variantOf)) {
             BigDecimal qty = l.get("loadedQty") != null ? SqlRows.dec(l, "loadedQty") : SqlRows.dec(l, "plannedQty");
             Map<String, Object> data = Obj.of("dispatchedQty", qty, "billableQty", qty, "loadedQty", qty);
             if (qty.signum() > 0 && moveStock) {
@@ -843,7 +1081,8 @@ public class FleetDispatchService {
                 StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
                         .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor")).batch(batch)
                         .moveType("issue").source(STOCK_SOURCE, id).reference(code).date(now)
-                        .notes("Delivery " + order.get("code") + " · trip " + code);
+                        .notes("Delivery " + order.get("code") + " · trip " + code)
+                        .baseQuantity(cumulativeBase(l, qty));
                 if (batch != null) {
                     m.strategy("MANUAL");
                 }
@@ -854,6 +1093,8 @@ public class FleetDispatchService {
                 total = total.add(issued.totalValue());
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
+            history.record(l, "dispatched", "dispatched", BigDecimal.ZERO, qty, "Dispatched on trip " + code, null,
+                    "trip", id);
             BigDecimal planned = SqlRows.dec(l, "plannedQty");
             adjustOrderLine((String) l.get("deliveryOrderLineId"), qty.subtract(planned), qty, null, null);
             if (l.get("tonnesPerUnit") != null) {
@@ -936,25 +1177,45 @@ public class FleetDispatchService {
             }
             BigDecimal delivered = p.deliveredQty();
             BigDecimal returned = p.returnedQty() == null ? BigDecimal.ZERO : p.returnedQty();
+            BigDecimal damaged = p.damagedQty() == null ? BigDecimal.ZERO : p.damagedQty();
             if (returned.compareTo(dispatched) > 0) {
                 throw ApiException.badRequest("More is returned than was dispatched on trip " + code);
             }
-            BigDecimal shortQty = dispatched.subtract(delivered).subtract(returned);
+            if (returned.add(damaged).compareTo(dispatched) > 0) {
+                throw ApiException.badRequest("Returned and damaged quantities exceed what was dispatched on trip "
+                        + code);
+            }
+            // Phase A A3 (plan §3): damaged is a physical fact of its own; the POD shortage is D − R − G − Δ.
+            BigDecimal shortQty = dispatched.subtract(delivered).subtract(returned).subtract(damaged);
             String productName = productName((String) l.get("productId"));
-            if ((shortQty.signum() != 0 || returned.signum() > 0) && p.reason() == null) {
+            if ((shortQty.signum() != 0 || returned.signum() > 0 || damaged.signum() > 0) && p.reason() == null) {
                 throw ApiException.badRequest("A reason is required for the difference on " + productName);
             }
-            Map<String, Object> data = Obj.of("deliveredQty", delivered, "returnedQty", returned);
+            Map<String, Object> data = Obj.of("deliveredQty", delivered, "returnedQty", returned, "damagedQty", damaged);
             if (returned.signum() > 0) {
                 String ledger = putBack(t, order, l, returned, "Returned at delivery of trip " + code);
                 data.put("returnLedgerCode", ledger);
                 diffs.add(new Diff(l, "returned", p.reason(), dispatched, delivered, returned, p.notes()));
+            }
+            if (damaged.signum() > 0) {
+                diffs.add(new Diff(l, "damaged", "damaged", dispatched, delivered, damaged, p.notes()));
             }
             if (shortQty.signum() != 0) {
                 diffs.add(new Diff(l, shortQty.signum() > 0 ? "shortage" : "excess", p.reason(), dispatched, delivered,
                         shortQty, p.notes()));
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
+            history.record(l, "pod_recorded", "delivered", BigDecimal.ZERO, delivered, p.reason(), null, "trip", id);
+            if (returned.signum() > 0) {
+                history.record(l, "returned", "returned", BigDecimal.ZERO, returned, p.reason(), null, "trip", id);
+            }
+            if (damaged.signum() > 0) {
+                history.record(l, "damaged_recorded", "damaged", BigDecimal.ZERO, damaged, p.reason(), null, "trip", id);
+            }
+            if (shortQty.signum() < 0) {
+                history.record(l, "excess_recorded", "excess", BigDecimal.ZERO, shortQty.negate(), p.reason(), null,
+                        "trip", id);
+            }
             adjustOrderLine((String) l.get("deliveryOrderLineId"), returned.negate(), null, delivered, returned);
             if (l.get("tonnesPerUnit") != null) {
                 deliveredT = deliveredT.add(delivered.multiply(SqlRows.dec(l, "tonnesPerUnit")));
@@ -1002,10 +1263,54 @@ public class FleetDispatchService {
             discrepancies.raise(after, d.line(), d.kind(), d.reason(), d.dispatched(), d.delivered(), d.diff(),
                     d.notes());
         }
+        quantities.refreshLoad(id);
+        if (in.customerWeight() != null) {
+            customerWeights.record(after, lines(id), in.customerWeight());
+        }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", t.get("status")),
                 Obj.of("status", "delivered", "receiver", in.receiverName().trim(), "discrepancies", diffs.size())));
         orders.refreshStatus((String) order.get("id"));
         events.publish(DomainEvents.FLEET_TRIP_DELIVERED, tripEvent(after));
+        return get(id);
+    }
+
+    /**
+     * Phase A A2: record or correct the customer's weighing of a delivered trip (plan §7). Locks the delivery order
+     * and the trip; returns the trip with {@code customerWeight} (the frozen comparison and the split).
+     */
+    @Transactional
+    public Map<String, Object> recordCustomerWeight(String id, DispatchCommands.CustomerWeightInput in) {
+        Locked k = lockTrip(id);
+        Map<String, Object> t = k.trip();
+        if (!List.of("delivered", "closed").contains(t.get("status"))) {
+            throw ApiException.badRequest("Record the proof of delivery of trip " + t.get("code")
+                    + " before the customer weight");
+        }
+        Map<String, Object> result = customerWeights.record(t, lines(id), in);
+        Map<String, Object> out = get(id);
+        out.put("customerWeight", result);
+        return out;
+    }
+
+    /** Phase A A2: a photo or scan of the customer's weighbridge ticket, kept with the POD evidence. */
+    @Transactional
+    public Map<String, Object> customerWeightPhoto(String id, String filename, String contentType, byte[] bytes) {
+        Map<String, Object> t = require(id, true);
+        if (contentType == null || !(contentType.startsWith("image/") || "application/pdf".equals(contentType))) {
+            throw ApiException.badRequest("Customer weight evidence must be an image or a PDF");
+        }
+        Map<String, Object> pod = SqlRows.one(FleetProofOfDelivery.class, db.jdbc().sql("SELECT * FROM"
+                + " \"FleetProofOfDelivery\" WHERE \"organizationId\" = ? AND \"loadId\" = ? FOR UPDATE")
+                .params(FleetDb.org(), id));
+        if (pod == null) {
+            throw ApiException.badRequest("Record the proof of delivery of trip " + t.get("code") + " first");
+        }
+        Map<String, Object> file = files.upload(filename, contentType, bytes, OWNER_TYPE, id);
+        db.jdbc().sql("UPDATE \"FleetProofOfDelivery\" SET \"customerWeightFileIds\" = array_append("
+                + "\"customerWeightFileIds\", ?), \"updatedAt\" = " + FleetDb.NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(file.get("id"), pod.get("id"), FleetDb.org()).update();
+        audit.recordInTx(AuditInput.of("FleetProofOfDelivery", (String) pod.get("id"), "update", null,
+                Obj.of("customerWeightFile", file.get("id"))));
         return get(id);
     }
 
@@ -1137,6 +1442,9 @@ public class FleetDispatchService {
                 data.put("returnLedgerCode", putBack(t, order, l, qty, "Load returned: trip " + code));
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
+            if (qty.signum() > 0) {
+                history.record(l, "returned", "returned", BigDecimal.ZERO, qty, in.reason().trim(), null, "trip", id);
+            }
             adjustOrderLine((String) l.get("deliveryOrderLineId"), qty.negate(), null, null, qty);
         }
         after = db.update(FleetLoad.class, id, Obj.of("status", "returned", "returnedAt", now, "returnReason",
@@ -1148,6 +1456,7 @@ public class FleetDispatchService {
                 discrepancies.raise(after, l, "returned", reason, qty, BigDecimal.ZERO, qty, in.reason().trim());
             }
         }
+        quantities.refreshLoad(id);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "receive", Obj.of("status", t.get("status")),
                 Obj.of("status", "returned", "reason", in.reason().trim())));
         orders.refreshStatus((String) order.get("id"));
@@ -1241,7 +1550,12 @@ public class FleetDispatchService {
             }
         } else if ("manual".equals(t.get("carrier"))) {
             // Sales delivery without the Fleet module (SG-9): vehicle and driver are typed in, no fleet record exists.
-            if (t.get("transporterPlate") == null) {
+            // A customer collection or a courier hand-off may leave without a plate of ours.
+            String method = db.jdbc().sql("SELECT \"deliveryMethod\" FROM \"FleetLoad\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(t.get("id"), FleetDb.org()).query(String.class).optional()
+                    .orElse(null);
+            boolean plateOptional = "customer_collect".equals(method) || "courier".equals(method);
+            if (t.get("transporterPlate") == null && !plateOptional) {
                 throw ApiException.badRequest("Enter the vehicle of trip " + t.get("code") + " first");
             }
         } else if (t.get("transporterPartnerId") == null) {

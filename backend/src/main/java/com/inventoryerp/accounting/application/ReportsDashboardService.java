@@ -82,8 +82,8 @@ public class ReportsDashboardService {
         return jdbc.sql("SELECT COALESCE(SUM(CASE WHEN ac.\"normalBalance\" = 'credit' THEN jl.\"baseCredit\" - jl.\"baseDebit\""
                         + " ELSE jl.\"baseDebit\" - jl.\"baseCredit\" END), 0)::text AS total FROM \"JournalLine\" jl"
                         + " JOIN \"Account\" a ON a.id = jl.\"accountId\" JOIN \"AccountCategory\" ac ON ac.id = a.\"categoryId\""
-                        + " JOIN \"JournalEntry\" je ON je.id = jl.\"journalEntryId\" WHERE jl.\"organizationId\" = :org"
-                        + " AND je.status IN ('posted', 'reversed') AND je.\"postingDate\" >= :since"
+                        + " JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\" WHERE jl.\"organizationId\" = :org"
+                        + " AND e.status IN ('posted', 'reversed') AND e.\"postingDate\" >= :since" + LedgerQueries.CLOSING_FILTER
                         + " AND ac.\"reportSection\"::text IN (:sections)")
                 .param("org", org).param("since", FiscalPeriodControl.ts(since)).param("sections", sections)
                 .query(String.class).single();

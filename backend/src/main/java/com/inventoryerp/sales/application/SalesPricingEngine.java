@@ -159,8 +159,8 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         String uomId = !blank(q.uomId()) ? q.uomId() : product.get("salesUomId") != null ? str(product.get("salesUomId"))
                 : str(product.get("uomId"));
         BigDecimal qty = q.quantity() == null ? BigDecimal.ONE : q.quantity();
-        Priced p = price(new Context(q.partnerId(), q.productId(), qty, uomId, q.siteId(), q.branchId(), null, q.on()),
-                q);
+        Priced p = price(new Context(q.partnerId(), q.productId(), qty, uomId, q.siteId(), q.branchId(), null, q.on(),
+                null, blank(q.variantId()) ? null : q.variantId()), q);
         Result r = p.result();
         return new Quote(r.source(), p.catalogueUnit() ? null : r.unitPrice(), r.discountPercent(), r.itemId(),
                 r.pricelistName(), breakdown(r));
@@ -188,6 +188,18 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         return Obj.of("partnerId", partnerId, "lines", out);
     }
 
+    /**
+     * Base units per 1 {@code uomId}. Replaying an offline sale (owner decision 1) a unit that does not convert prices
+     * at factor 1 instead of failing: the device's price stands and the line's stock posting is held.
+     */
+    private BigDecimal factorToBase(String productId, String uomId) {
+        if (com.inventoryerp.kernel.common.OfflineReplay.active()) {
+            BigDecimal f = uoms.tryFactorToBase(productId, uomId);
+            return f == null ? BigDecimal.ONE : f;
+        }
+        return uoms.factorToBase(productId, uomId);
+    }
+
     /** Resolve one line. */
     @Transactional(readOnly = true)
     public Result resolve(Context c) {
@@ -197,10 +209,17 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     /** {@code named}: the original query of a core caller, so the named-list tier sees its unit and site as given. */
     private Priced price(Context c, PriceQuery named) {
         Map<String, Object> product = db.row("SELECT id, name, \"salesPrice\", \"costPrice\", \"categoryId\", \"taxId\","
-                + " \"taxInclusive\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL",
-                c.productId(), org());
+                + " \"taxInclusive\", \"uomId\", \"salesUomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"deletedAt\" IS NULL", c.productId(), org());
         if (product == null) {
             throw ApiException.notFound("Product not found");
+        }
+        String baseUom = str(product.get("uomId"));
+        String salesUom = product.get("salesUomId") != null ? str(product.get("salesUomId")) : baseUom;
+        if (blank(c.uomId()) && salesUom != null) {
+            // D1: a line without a unit is in the product's default sales unit (as on every document).
+            c = new Context(c.partnerId(), c.productId(), c.quantity(), salesUom, c.siteId(), c.branchId(),
+                    c.currencyCode(), c.on(), c.agreementId(), c.variantId());
         }
         saleable.assertSaleable(c.productId());
         if (!blank(c.variantId())) {
@@ -218,8 +237,9 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             product.put("name", product.get("name") + " (" + v.get("name") + ")");
         }
         LocalDate on = c.on() == null ? LocalDate.now() : c.on();
-        BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : uoms.factorToBase(c.productId(), c.uomId());
-        BigDecimal list = dec(product.get("salesPrice")).multiply(factor).setScale(6, RoundingMode.HALF_UP);
+        BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : factorToBase(c.productId(), c.uomId());
+        BigDecimal list = listPrice(c, dec(product.get("salesPrice")), factor, baseUom, salesUom, !blank(c.variantId()))
+                .setScale(6, RoundingMode.HALF_UP);
         BigDecimal cost = product.get("costPrice") == null || dec(product.get("costPrice")).signum() == 0 ? null
                 : dec(product.get("costPrice")).multiply(factor).setScale(6, RoundingMode.HALF_UP);
         Map<String, Object> partner = c.partnerId() == null ? null : db.row("SELECT p.\"categoryId\", p.\"pricelistId\","
@@ -263,6 +283,29 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 taxId, incl, name, cost, floor.min, floor.price), false);
     }
 
+    /**
+     * Owner decision D1 (ADR-S003, audit P-2 / P-3): the list price of one line unit. {@code salesPrice} (the product's,
+     * or its variant's) is the price per default sales unit and is never multiplied by that unit's factor. Another unit
+     * takes its own {@code ProductUom.salePrice} when set (not for a variant: the variant's price wins), else the default
+     * price scaled by the two units' factors.
+     */
+    private BigDecimal listPrice(Context c, BigDecimal salesPrice, BigDecimal factor, String baseUom, String salesUom,
+            boolean variant) {
+        if (blank(c.uomId()) || c.uomId().equals(salesUom)) {
+            return salesPrice;
+        }
+        if (!variant && !c.uomId().equals(baseUom)) {
+            Object own = value("SELECT \"salePrice\" FROM \"ProductUom\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
+                    + " AND \"uomId\" = ? AND \"isActive\"", org(), c.productId(), c.uomId());
+            if (own != null) {
+                return dec(own);
+            }
+        }
+        BigDecimal salesFactor = salesUom == null || salesUom.equals(baseUom) ? BigDecimal.ONE
+                : factorToBase(c.productId(), salesUom);
+        return salesPrice.multiply(factor).divide(salesFactor, 10, RoundingMode.HALF_UP);
+    }
+
     /** The active project agreement of this customer that covers this site, or null. */
     public String projectAgreement(String partnerId, String siteId, LocalDate on) {
         if (blank(partnerId) || blank(siteId)) {
@@ -280,10 +323,11 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 SELECT s.id, s.name, s.kind, s.value FROM "SalesPromotion" s
                  WHERE s."organizationId" = ? AND s."isActive" AND s."startDate" <= ? AND s."endDate" >= ? AND s."minQuantity" <= ?
                    AND (s."productId" = ? OR s."productCategoryId" = ? OR (s."productId" IS NULL AND s."productCategoryId" IS NULL))
+                   AND (s."variantId" IS NULL OR s."variantId" = ?)
                    AND (s."branchId" IS NULL OR s."branchId" = ?) AND (s."partnerCategoryId" IS NULL OR s."partnerCategoryId" = ?)
-                 ORDER BY (s."productId" IS NOT NULL) DESC, (s."productCategoryId" IS NOT NULL) DESC, s.priority DESC, s."minQuantity" DESC
-                 LIMIT 1""", org(), l.on(), l.on(), c.quantity(), c.productId(), str(l.product().get("categoryId")), c.branchId(),
-                l.partnerCat());
+                 ORDER BY (s."variantId" IS NOT NULL) DESC, (s."productId" IS NOT NULL) DESC, (s."productCategoryId" IS NOT NULL) DESC, s.priority DESC, s."minQuantity" DESC
+                 LIMIT 1""", org(), l.on(), l.on(), c.quantity(), c.productId(), str(l.product().get("categoryId")),
+                c.variantId() == null ? "" : c.variantId(), c.branchId(), l.partnerCat());
         if (p == null) {
             return null;
         }
@@ -307,12 +351,13 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
         Map<String, Object> a = db.row("SELECT l.id, l.\"uomId\", l.\"unitPrice\", l.\"discountPercent\", a.name FROM"
                 + " \"SalesAgreementLine\" l JOIN \"SalesAgreement\" a ON a.id = l.\"agreementId\" WHERE a.id = ? AND"
                 + " a.\"organizationId\" = ? AND a.status = 'active' AND a.\"startDate\" <= ? AND a.\"endDate\" >= ? AND"
-                + " l.\"productId\" = ?", c.agreementId(), org(), l.on(), l.on(), c.productId());
+                + " l.\"productId\" = ? AND (l.\"variantId\" IS NULL OR l.\"variantId\" = ?)", c.agreementId(), org(), l.on(),
+                l.on(), c.productId(), c.variantId() == null ? "" : c.variantId());
         if (a == null) {
             return null;
         }
         BigDecimal agreed = blank(str(a.get("uomId"))) ? BigDecimal.ONE
-                : uoms.factorToBase(c.productId(), str(a.get("uomId")));
+                : factorToBase(c.productId(), str(a.get("uomId")));
         BigDecimal unit = dec(a.get("unitPrice")).multiply(l.factor()).divide(agreed, 6, RoundingMode.HALF_UP);
         return new Priced(new Result(c.productId(), c.quantity(), l.list(), unit, dec(a.get("discountPercent")),
                 "agreement", null, str(a.get("name")), str(a.get("id")), taxId, incl, name, l.cost(), floor.min,
@@ -360,7 +405,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     private Priced named(Line l, PriceQuery original, String taxId, boolean incl, String name, Floor floor) {
         Context c = l.c();
         PriceQuery q = original != null ? original : new PriceQuery(c.partnerId(), c.productId(), c.quantity(),
-                c.uomId(), c.branchId(), c.siteId(), l.on());
+                c.uomId(), c.branchId(), c.siteId(), l.on(), c.variantId());
         ListPrice lp = namedLists.namedListPrice(q);
         if (lp == null) {
             return null;
@@ -554,6 +599,9 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
                 + " i.\"productCategoryId\" = ?) OR i.scope = 'all')");
         params.add(c.productId());
         params.add(str(l.product().get("categoryId")) == null ? "" : str(l.product().get("categoryId")));
+        // P-1: a rule naming a variant applies to that variant only, and beats the product's rule of the same priority.
+        sql.append(" AND (i.\"variantId\" IS NULL OR i.\"variantId\" = ?)");
+        params.add(c.variantId() == null ? "" : c.variantId());
         // Unit: a rule in the line's unit compares the line quantity; a base-unit rule compares base quantity.
         sql.append(" AND ((i.\"uomId\" IS NULL AND i.\"minQuantity\" <= ?) OR (i.\"uomId\" = ? AND i.\"minQuantity\" <= ?))");
         params.add(baseQty);
@@ -573,7 +621,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             params.add(c.partnerId() == null ? "" : c.partnerId());
             params.add(l.partnerCat() == null ? "" : l.partnerCat());
         }
-        sql.append(" ORDER BY i.priority DESC, CASE i.scope WHEN 'product' THEN 3 WHEN 'category' THEN 2 ELSE 1 END DESC,"
+        sql.append(" ORDER BY i.priority DESC, (i.\"variantId\" IS NOT NULL) DESC, CASE i.scope WHEN 'product' THEN 3 WHEN 'category' THEN 2 ELSE 1 END DESC,"
                 + " CASE WHEN i.\"partnerId\" IS NOT NULL THEN 2 WHEN i.\"partnerCategoryId\" IS NOT NULL THEN 1 ELSE 0 END"
                 + " DESC, i.\"minQuantity\" DESC, i.\"createdAt\" LIMIT 1");
         return db.row(sql.toString(), params.toArray());

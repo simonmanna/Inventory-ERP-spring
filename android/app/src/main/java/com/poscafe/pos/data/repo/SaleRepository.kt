@@ -64,17 +64,22 @@ class SaleRepository @Inject constructor(
         partnerId: String? = null,
     ): CompletedSale {
         require(lines.isNotEmpty()) { "Cart is empty" }
+        CartEngine.taxScale = config.taxScale
         val totals = CartEngine.totals(lines, transactionDiscountPercent)
         val tenderSum = tenders.sumOf { it.amount }
-        require(tenderSum >= totals.total - 0.01) { "Tendered $tenderSum < due ${totals.total}" }
+        val minor = minorUnit()
+        require(tenderSum >= totals.total - minor) { "Tendered $tenderSum < due ${totals.total}" }
         require(tenders.none { it.method == "cash" } || cashSessionLocalId != null) {
             "Open a cash session before taking cash"
         }
-        // The server rejects tenders that sum past the amount due — change is
-        // carried separately as `amountTendered`. Trim the overpay off the cash
-        // legs (last first) so the legs settle exactly the total.
-        val applied = settleExactly(tenders, totals.total)
-        val cashHanded = if (tenderSum > totals.total + 0.005 && tenders.any { it.method == "cash" }) tenderSum else null
+        // The server wants the legs to settle exactly the amount due; change is
+        // carried separately as `amountTendered`. Cash overpay becomes change
+        // (taken off the cash legs, last first); a difference under one minor
+        // currency unit (the exact total has 6 decimals, money is typed in whole
+        // units) is absorbed by the last leg. Anything else is refused here —
+        // never trimmed silently.
+        val applied = settleExactly(tenders, totals.total, minor)
+        val cashHanded = if (tenderSum > totals.total + minor && tenders.any { it.method == "cash" }) tenderSum else null
 
         val localId = UUID.randomUUID().toString()
         val occurredAt = Instant.now()
@@ -93,6 +98,9 @@ class SaleRepository @Inject constructor(
                 }
             })
             cashHanded?.let { put("amountTendered", it) }
+            // Phase I6: the total the device charged. The server re-prices from its catalog; when it disagrees
+            // the sale is still kept (owner decision 1) and the difference is flagged on the invoice.
+            put("expectedTotal", totals.total)
             if (transactionDiscountPercent > 0) put("transactionDiscountPercent", transactionDiscountPercent)
             // clientId of the locally-opened session — the server resolves it
             // to the real session id created earlier in the same push batch.
@@ -134,6 +142,8 @@ class SaleRepository @Inject constructor(
                         id = UUID.randomUUID().toString(),
                         menuItemId = l.menuItemId ?: "",
                         productId = l.productId,
+                        // A retail line's variant is a product variant (its own quant on the server).
+                        variantId = if (l.productId != null) l.variantId else null,
                         type = "sale",
                         qtyDelta = -l.quantity,
                         unitCost = null,
@@ -164,22 +174,43 @@ class SaleRepository @Inject constructor(
         return CompletedSale(localId, provisionalNumber, totals, occurredAt, change = cashHanded?.let { it - totals.total } ?: 0.0)
     }
 
-    /** Legs that pay exactly [total]: any overpay (cash change) comes off the cash legs. */
-    private fun settleExactly(tenders: List<Tender>, total: Double): List<Tender> {
-        var over = tenders.sumOf { it.amount } - total
-        if (over <= 0.005) return tenders
-        require(tenders.any { it.method == "cash" }) { "Only cash can be overpaid — reduce the non-cash amount" }
+    /** One minor unit of the server's currency (tax rounding scale); 0.000001 when it keeps 6 places. */
+    private fun minorUnit(): Double = config.taxScale.let { s -> if (s < 0) 0.000001 else Math.pow(10.0, -s.toDouble()) }
+
+    companion object {
+    /**
+     * Legs that pay exactly [total]: a cash overpay is change and comes off the
+     * cash legs (last first); a rounding difference under [minor] goes on the
+     * last leg. Legs reduced to nothing are dropped (their cash is in the change).
+     */
+    internal fun settleExactly(tenders: List<Tender>, total: Double, minor: Double): List<Tender> {
+        val exact = java.math.BigDecimal.valueOf(total)
+        fun sum(ts: List<Tender>) = ts.fold(java.math.BigDecimal.ZERO) { a, t -> a.add(java.math.BigDecimal.valueOf(t.amount)) }
         val out = tenders.toMutableList()
-        for (i in out.indices.reversed()) {
-            if (over <= 0.005) break
-            val t = out[i]
-            if (t.method != "cash") continue
-            val cut = minOf(t.amount, over)
-            out[i] = t.copy(amount = t.amount - cut)
-            over -= cut
+        var over = sum(out).subtract(exact)
+        val tolerance = java.math.BigDecimal.valueOf(minor)
+        if (over > tolerance) {
+            require(out.any { it.method == "cash" }) { "Only cash can be overpaid — reduce the non-cash amount" }
+            for (i in out.indices.reversed()) {
+                if (over.signum() <= 0) break
+                val t = out[i]
+                if (t.method != "cash") continue
+                val amount = java.math.BigDecimal.valueOf(t.amount)
+                val cut = amount.min(over)
+                out[i] = t.copy(amount = amount.subtract(cut).toDouble())
+                over = over.subtract(cut)
+            }
+            require(over <= tolerance) { "Only cash can be overpaid — reduce the non-cash amount" }
         }
-        require(over <= 0.005) { "Only cash can be overpaid — reduce the non-cash amount" }
-        return out.filter { it.amount > 0.005 }
+        val kept = out.filter { it.amount > 0.0 }.toMutableList()
+        // Rounding residue (both signs, under one minor unit): the last leg settles it.
+        val residue = sum(kept).subtract(exact)
+        if (residue.signum() != 0 && kept.isNotEmpty()) {
+            val last = kept.last()
+            kept[kept.lastIndex] = last.copy(amount = java.math.BigDecimal.valueOf(last.amount).subtract(residue).toDouble())
+        }
+        return kept
+    }
     }
 
     private fun linesToJson(lines: List<CartEngine.CartLine>): JsonArray = buildJsonArray {
@@ -194,7 +225,13 @@ class SaleRepository @Inject constructor(
                 // the selections — never the folded unit price.
                 put("unitPrice", l.baseUnitPrice)
                 if (l.discountPercent > 0) put("discountPercent", l.discountPercent)
+                // A menu line's variant is a MenuItemVariant; a product line's a ProductVariant (ADR-S058).
                 l.variantId?.let { put("variantId", it) }
+                l.productVariantName?.let { put("variantName", it) }
+                // The server prices from its catalog and sells in the product's sales unit; the device states
+                // what it rang up so the op keeps a record of it (owner decision 1).
+                l.uomId?.let { put("uomId", it) }
+                l.taxId?.let { put("taxId", it) }
                 if (l.accompaniments.isNotEmpty()) {
                     put("accompanimentOptionIds", buildJsonArray {
                         l.accompaniments.forEach { add(JsonPrimitive(it.optionId)) }

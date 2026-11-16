@@ -72,15 +72,22 @@ public class CompanySettingsController {
     @SuppressWarnings("unchecked")
     public Map<String, Object> putDeveloperSettings(@RequestBody Map<String, Object> dto) {
         for (String k : dto.keySet()) {
-            if (!List.of("logoUrl", "name", "features").contains(k)) {
+            if (!List.of("logoUrl", "name", "features", "sidebarTagline").contains(k)) {
                 throw com.inventoryerp.shared.web.ApiException.withBody(org.springframework.http.HttpStatus.BAD_REQUEST,
                         com.inventoryerp.kernel.web.GlobalExceptionHandler.nestBody(
                                 org.springframework.http.HttpStatus.BAD_REQUEST, List.of("property " + k + " should not exist")));
             }
         }
         Object features = dto.get("features");
+        Object tagline = dto.get("sidebarTagline");
+        if (tagline != null && (!(tagline instanceof String t) || t.strip().length() > 60)) {
+            throw com.inventoryerp.shared.web.ApiException.withBody(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    com.inventoryerp.kernel.web.GlobalExceptionHandler.nestBody(org.springframework.http.HttpStatus.BAD_REQUEST,
+                            List.of("sidebarTagline must be a string of at most 60 characters")));
+        }
         return company.putDeveloperSettings((String) dto.get("name"), (String) dto.get("logoUrl"),
                 dto.containsKey("logoUrl"),
-                features instanceof Map<?, ?> f ? (Map<String, Object>) f : null);
+                features instanceof Map<?, ?> f ? (Map<String, Object>) f : null,
+                (String) tagline, dto.containsKey("sidebarTagline"));
     }
 }

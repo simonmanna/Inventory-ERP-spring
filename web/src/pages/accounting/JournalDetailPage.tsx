@@ -58,11 +58,12 @@ export function JournalDetailPage() {
   const accounts = accountsData?.data ?? [];
   const [activeTab, setActiveTab] = useState('entries');
   const [entriesPage] = useState(1);
-  const { data: entriesData } = useJournalEntries({ page: entriesPage, pageSize: 15 });
+  // Server-side filter by journal (the list used to filter one unfiltered page client-side).
+  const { data: entriesData } = useJournalEntries({ page: entriesPage, pageSize: 15, journalId: id });
 
   const accountMap = new Map(accounts.map((a) => [a.id, a]));
 
-  const journalEntries = (entriesData?.data ?? []).filter((e: JournalEntryRow) => e.journalId === id || e.journal?.code === journal?.code);
+  const journalEntries: JournalEntryRow[] = entriesData?.data ?? [];
 
   const getAccountLabel = (accountId: string | null | undefined): string => {
     if (!accountId) return '—';
@@ -136,7 +137,7 @@ export function JournalDetailPage() {
             <Button variant="outline" size="sm" className="border-primary text-primary hover:bg-primary/10 font-semibold" onClick={() => navigate(`/journals/${id}/edit`)}>
               <Edit className="h-4 w-4 mr-1.5" /> {tx('Edit')}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => navigate(`/journal-entries/new?journalCode=${journal.code}`)}>
+            <Button variant="outline" size="sm" onClick={() => navigate(`/journal-entries/new?journalCode=${encodeURIComponent(journal.code)}`)}>
               <FileText className="h-4 w-4 mr-1.5" /> {tx('New Entry')}
             </Button>
           </div>
@@ -177,7 +178,7 @@ export function JournalDetailPage() {
                     <FileText className="h-10 w-10 opacity-30" />
                     <p className="font-semibold">{tx('No entries in this journal')}</p>
                     <p className="text-xs">{tx('Post an invoice, payment, or manual entry to see it here')}</p>
-                    <Button variant="outline" size="sm" className="mt-2" onClick={() => navigate(`/journal-entries/new?journalCode=${journal.code}`)}>
+                    <Button variant="outline" size="sm" className="mt-2" onClick={() => navigate(`/journal-entries/new?journalCode=${encodeURIComponent(journal.code)}`)}>
                       <FileText className="h-4 w-4 mr-1" /> {tx('New Entry')}
                     </Button>
                   </CardContent>
@@ -186,7 +187,7 @@ export function JournalDetailPage() {
                 <Card>
                   <CardHeader className="pb-2 pt-4 px-5 flex-row items-center justify-between bg-muted/30 border-b rounded-t-lg">
                     <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Journal Entries')}</CardTitle>
-                    <p className="text-xs text-muted-foreground font-medium">{journalEntries.length} {tx('entries')}</p>
+                    <p className="text-xs text-muted-foreground font-medium">{entriesData?.meta?.total ?? journalEntries.length} {tx('entries')}</p>
                   </CardHeader>
                   <Table>
                     <TableHeader>

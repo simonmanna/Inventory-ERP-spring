@@ -293,6 +293,25 @@ class CostingAuditIT extends MfgTestSupport {
         assertThat(onHand(output, warehouse)).isEqualByComparingTo("1");
     }
 
+    @Test
+    @DisplayName("2 S-4: a reversal after the output's cost moved credits stock at the issued cost; WIP clears")
+    void reversalAfterTheCostMoved() {
+        String input = item("AVCO");
+        stockIn(bakery, input, 10, 10);
+        String output = product("CAREV");
+        mine.add(output);
+        String bomId = bom(output, input, 1, 2, Map.of());
+        String orderId = started(bomId).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/complete", Map.of("qtyProduced", 1));
+        // One more finished unit bought at 40: the average is now 30, the order's output stays at 20.
+        stockIn(warehouse, output, 1, 40);
+        Snap s = snap();
+        Res rev = as("POST", "/manufacturing/production-orders/" + orderId + "/reverse", Map.of());
+        assertThat(rev.status()).as(rev.raw().body()).isIn(200, 201);
+        // Out at 30 (the ledger's issue), WIP back 20, materials back 20: stock −10, the 10 to adjustment expense.
+        assertBooks(s, moves("stock_valuation", "-10", "stock_adjustment_expense", "10"));
+    }
+
     // ------------------------------------------------------------------ 3 valuation
 
     @Test

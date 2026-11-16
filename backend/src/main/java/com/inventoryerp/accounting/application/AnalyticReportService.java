@@ -92,16 +92,17 @@ public class AnalyticReportService {
     private Where where(LocalDate from, LocalDate to, Map<String, List<String>> filter, String accountId) {
         StringBuilder sql = new StringBuilder(" FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id ="
                 + " l.\"journalEntryId\" JOIN \"Account\" a ON a.id = l.\"accountId\" LEFT JOIN \"AccountCategory\" c"
-                + " ON c.id = a.\"categoryId\" WHERE l.\"organizationId\" = ? AND e.status IN ('posted', 'reversed')");
+                + " ON c.id = a.\"categoryId\" WHERE l.\"organizationId\" = ? AND e.status IN ('posted', 'reversed')"
+                + LedgerQueries.CLOSING_FILTER);
         List<Object> params = new ArrayList<>();
         params.add(org());
         if (from != null) {
             sql.append(" AND e.\"postingDate\" >= ?");
-            params.add(from);
+            params.add(AccountingDay.startTs(from, AccountingDay.zone(jdbc)));
         }
         if (to != null) {
             sql.append(" AND e.\"postingDate\" < ?");
-            params.add(to.plusDays(1));
+            params.add(AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc)));
         }
         if (accountId != null) {
             sql.append(" AND l.\"accountId\" = ?");

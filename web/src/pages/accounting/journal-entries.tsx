@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, X } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -13,7 +13,7 @@ import { date } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   useJournalEntries, useJournals,
-  type JournalEntryRow,
+  type JournalEntryRow, type JournalEntryStatus,
 } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
 
@@ -37,24 +37,21 @@ export function JournalEntriesPage() {
 
   const [page, setPage] = useState(1);
   const { data: journalsData } = useJournals();
-  const { data, isLoading } = useJournalEntries({ page, pageSize: 15, search: filterSearch || undefined });
-
   const journals = journalsData?.data ?? [];
-  const entries = useMemo(() => {
-    let result = data?.data ?? [];
-    if (filterJournalCode) result = result.filter((e) => e.journal?.code === filterJournalCode);
-    if (filterStatus) result = result.filter((e) => e.status === filterStatus);
-    if (filterFrom) {
-      const from = new Date(filterFrom);
-      result = result.filter((e) => new Date(e.postingDate) >= from);
-    }
-    if (filterTo) {
-      const to = new Date(filterTo);
-      to.setHours(23, 59, 59, 999);
-      result = result.filter((e) => new Date(e.postingDate) <= to);
-    }
-    return result;
-  }, [data?.data, filterJournalCode, filterStatus, filterFrom, filterTo]);
+  // The URL keeps the readable journal code; the API filters by journal id.
+  const filterJournalId = filterJournalCode ? journals.find((j) => j.code === filterJournalCode)?.id : undefined;
+  const status = (['draft', 'posted', 'reversed'] as const).find((s) => s === filterStatus) as JournalEntryStatus | undefined;
+  // Filters are applied server-side so pagination and totals are correct.
+  const { data, isLoading } = useJournalEntries({
+    page,
+    pageSize: 15,
+    search: filterSearch || undefined,
+    journalId: filterJournalId,
+    status,
+    from: filterFrom || undefined,
+    to: filterTo || undefined,
+  });
+  const entries = filterJournalCode && journalsData && !filterJournalId ? [] : (data?.data ?? []);
 
   const setFilter = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams);
@@ -108,7 +105,7 @@ export function JournalEntriesPage() {
           <h1 className="text-3xl font-bold tracking-tight text-gray-900">{tx('Journal Entries')}</h1>
           <p className="text-sm text-gray-500">{tx('Every posting — from invoices, payments, inventory adjustments and manual entries.')}</p>
         </div>
-        {hasPermission(PERMISSIONS.journalEntry.post) && (
+        {hasPermission(PERMISSIONS.journalEntry.create) && (
           <Button onClick={() => navigate('/journal-entries/new')}>
             <Plus className="h-4 w-4" /> {tx('New Entry')}
           </Button>

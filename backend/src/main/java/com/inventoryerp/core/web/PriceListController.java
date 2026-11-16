@@ -77,7 +77,9 @@ public class PriceListController {
             String uomId,
             String branchId,
             String siteId,
-            LocalDate date) {}
+            LocalDate date,
+            // ADR-S058 addendum (audit P-1): price this product variant (optional, additive).
+            String variantId) {}
 
     private final PriceListService lists;
 
@@ -123,7 +125,7 @@ public class PriceListController {
     @RequirePermissions(Permissions.PRICE_LIST__READ)
     public Map<String, Object> resolve(@Valid @RequestBody ResolveRequest dto) {
         ListPrice p = lists.resolve(new PriceQuery(dto.partnerId(), dto.productId(), dto.quantity(), dto.uomId(),
-                dto.branchId(), dto.siteId(), dto.date()));
+                dto.branchId(), dto.siteId(), dto.date(), dto.variantId()));
         if (p == null) {
             return Obj.of("matched", false);
         }

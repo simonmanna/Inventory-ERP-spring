@@ -2,6 +2,7 @@ package com.inventoryerp.sync.application;
 
 import com.inventoryerp.accounting.application.PosPaymentMethodService;
 import com.inventoryerp.accounting.domain.CashRegister;
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.communication.domain.Conversation;
 import com.inventoryerp.core.domain.Partner;
 import com.inventoryerp.core.domain.Product;
@@ -59,7 +60,7 @@ public class SyncPullService {
     public static final List<String> SCOPES = List.of("menuItems", "menuCategories", "modifierGroups", "taxes",
             "posTables", "cashRegisters", "staff", "settings", "products", "productCategories", "productPackagings",
             "partners", "reservations", "conversations", "messages", "paymentMethods", "ledgerAccounts",
-            "expenseCategories", "stockLocations", "stockLevels", "suppliers");
+            "expenseCategories", "stockLocations", "stockLevels", "suppliers", "productVariants");
 
     static final long OVERLAP_MS = 5_000;
     static final int MESSAGE_PAGE = 200;
@@ -110,7 +111,19 @@ public class SyncPullService {
         String json = EntityJson.toJson(nextCursor);
         return Obj.of("data", data,
                 "cursor", Base64.getUrlEncoder().withoutPadding().encodeToString(json.getBytes(StandardCharsets.UTF_8)),
-                "serverTime", JsonConfig.toJsIso(serverTime));
+                "serverTime", JsonConfig.toJsIso(serverTime), "currency", currency());
+    }
+
+    /**
+     * Phase I6 (additive): the organisation currency and its decimal places, the scale the server rounds line tax to,
+     * so an offline device prices a sale to the same total ({@code expectedTotal}).
+     */
+    private Map<String, Object> currency() {
+        Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT o.\"currencyCode\" AS code, c.\"decimalPlaces\" AS"
+                + " \"decimalPlaces\" FROM \"Organization\" o LEFT JOIN \"Currency\" c ON c.code = o.\"currencyCode\""
+                + " WHERE o.id = ?").param(org()));
+        return row == null || row.get("code") == null ? null
+                : Obj.of("code", row.get("code"), "decimalPlaces", row.get("decimalPlaces"));
     }
 
     static List<String> parseScopes(String raw) {
@@ -195,7 +208,8 @@ public class SyncPullService {
                 for (Map<String, Object> p : rows) {
                     p.put("category", pick(db.first(ProductCategory.class, "id = ?", p.get("categoryId")), "id", "name"));
                     p.put("uom", pick(db.first(UnitOfMeasure.class, "id = ?", p.get("uomId")), "id", "name", "code"));
-                    p.put("tax", pick(db.first(Tax.class, "id = ?", p.get("taxId")), "id", "rate"));
+                    // Phase I6: isInclusive lets the device compute the tax the way the server does (additive).
+                    p.put("tax", pick(db.first(Tax.class, "id = ?", p.get("taxId")), "id", "rate", "isInclusive"));
                 }
                 yield rows;
             }
@@ -217,6 +231,7 @@ public class SyncPullService {
                     + " \"InventoryLocation\" WHERE \"organizationId\" = ? AND \"isActive\" = true AND \"deletedAt\" IS NULL"
                     + " AND type::text <> 'transit' ORDER BY code ASC").param(org()));
             case "stockLevels" -> stockLevels(since);
+            case "productVariants" -> productVariants(since);
             case "suppliers" -> changed(Partner.class, since, "\"isSupplier\" = true").stream()
                     .map(r -> pick(r, "id", "name", "phone", "notes", "updatedAt", "deletedAt")).toList();
             case "reservations" -> changed(PosTableReservation.class, since, "\"startAt\" >= ?",
@@ -305,6 +320,31 @@ public class SyncPullService {
             row.put("updatedAt", u.get("updatedAt"));
             row.put("roles", roles);
             out.add(row);
+        }
+        return out;
+    }
+
+    /**
+     * Phase I6: the product variants a device can sell, with the effective price the server charges
+     * ({@link ProductVariantService#PRICE_SQL}). Read raw so deleted variants arrive as tombstones; a product price
+     * change re-sends its variants (their price may follow it).
+     */
+    private List<Map<String, Object>> productVariants(Instant since) {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String where = "v.\"organizationId\" = ?";
+        if (since != null) {
+            where += " AND (v.\"updatedAt\" > ? OR p.\"updatedAt\" > ?)";
+            params.add(SqlRows.ts(since));
+            params.add(SqlRows.ts(since));
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT v.id, v.\"productId\", v.sku, v.barcode, v.name,"
+                + " " + ProductVariantService.PRICE_SQL + " AS price, v.\"isActive\", COALESCE(v.\"deletedAt\","
+                + " p.\"deletedAt\") AS \"deletedAt\", v.\"updatedAt\" FROM \"ProductVariant\" v JOIN \"Product\" p"
+                + " ON p.id = v.\"productId\" AND p.\"organizationId\" = v.\"organizationId\" WHERE " + where
+                + " ORDER BY v.\"updatedAt\" ASC, v.id ASC").params(params))) {
+            r.put("price", PosSql.js(r.get("price")));
+            out.add(r);
         }
         return out;
     }

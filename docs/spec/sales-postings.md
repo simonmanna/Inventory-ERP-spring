@@ -88,6 +88,10 @@ Guards:
   warehouse").
 - P7 and P8 are mutually exclusive per billable unit; P8a clears P7.
 - Freight income (P8) and freight expense (P14) never net in the same account.
+- Customer weight evidence (Phase A2) posts **nothing**: it never moves stock, never posts to the GL and never changes
+  the quarry ticket or a document. A confirmed weight claim lowers the load line's billable quantity through the
+  existing discrepancy approval (no journal). Invoiceability by bucket and any financial effect are A3 / A4, which
+  need a separate financial review first.
 
 ## 5. Deposit and down-payment scenarios (each = one integration test)
 

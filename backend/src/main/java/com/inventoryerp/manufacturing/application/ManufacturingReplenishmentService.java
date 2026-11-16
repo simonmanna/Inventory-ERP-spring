@@ -33,7 +33,13 @@ public class ManufacturingReplenishmentService {
 
     /** One manufacture line of the event. */
     public record Line(String alertId, String productId, BigDecimal quantity, String uomId, String locationId,
-            String neededBy, String description) {}
+            String neededBy, String description, String variantId) {
+
+        public Line(String alertId, String productId, BigDecimal quantity, String uomId, String locationId,
+                String neededBy, String description) {
+            this(alertId, productId, quantity, uomId, locationId, neededBy, description, null);
+        }
+    }
 
     private final EventBus events;
     private final ProductionRequestService requests;
@@ -69,7 +75,8 @@ public class ManufacturingReplenishmentService {
             lines.add(new Line(l.path("alertId").asString(""), l.path("productId").asString(""),
                     new BigDecimal(l.path("quantity").asString("0")), uom.isEmpty() ? null : uom,
                     l.path("locationId").asString(""), l.path("neededBy").asString(""),
-                    l.path("description").asString("")));
+                    l.path("description").asString(""), l.path("variantId").asString("").isEmpty() ? null
+                            : l.path("variantId").asString("")));
         }
         if (lines.isEmpty()) {
             return;
@@ -90,10 +97,10 @@ public class ManufacturingReplenishmentService {
         List<RaisedLine> raised = new ArrayList<>();
         Instant neededBy = null;
         for (Line l : own) {
-            Map<String, Object> bom = boms.findActive(l.productId(), "");
+            Map<String, Object> bom = boms.findActive(l.productId(), l.variantId() == null ? "" : l.variantId());
             Instant due = date(l.neededBy());
             neededBy = neededBy == null || (due != null && due.isBefore(neededBy)) ? due : neededBy;
-            raised.add(new RaisedLine(l.productId(), null, l.quantity(), l.uomId(),
+            raised.add(new RaisedLine(l.productId(), l.variantId(), l.quantity(), l.uomId(),
                     bom == null ? null : (String) bom.get("id"), due, l.description()));
         }
         Map<String, Object> request = requests.raiseRequest("replenishment", null, neededBy,

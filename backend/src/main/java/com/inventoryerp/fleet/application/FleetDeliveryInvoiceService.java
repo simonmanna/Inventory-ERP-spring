@@ -44,10 +44,11 @@ public class FleetDeliveryInvoiceService {
     private final AccountResolverService accounts;
     private final FleetLoadFactors factors;
     private final AuditService audit;
+    private final DeliveryInvoicing ledger;
 
     public FleetDeliveryInvoiceService(FleetDb db, FleetDeliveryOrderService orders,
             FleetDispatchSettingsService settings, InvoiceService invoices, AccountResolverService accounts,
-            FleetLoadFactors factors, AuditService audit) {
+            FleetLoadFactors factors, AuditService audit, DeliveryInvoicing ledger) {
         this.db = db;
         this.orders = orders;
         this.settings = settings;
@@ -55,6 +56,7 @@ public class FleetDeliveryInvoiceService {
         this.accounts = accounts;
         this.factors = factors;
         this.audit = audit;
+        this.ledger = ledger;
     }
 
     /** Transport &amp; delivery revenue (4250, {@code fleet_transport_revenue}). */
@@ -68,10 +70,7 @@ public class FleetDeliveryInvoiceService {
      */
     @Transactional
     public void markGoodsInvoiced(String sourceType, String sourceId, String invoiceId, String invoiceNumber) {
-        db.jdbc().sql("UPDATE \"FleetDeliveryOrder\" SET \"goodsInvoiceId\" = ?, \"goodsInvoiceNumber\" = ?,"
-                + " \"goodsInvoiceKind\" = 'document', \"updatedAt\" = " + FleetDb.NOW + " WHERE \"organizationId\" = ? AND"
-                + " \"sourceType\" = ? AND \"sourceId\" = ? AND \"goodsInvoiceId\" IS NULL AND status <> 'cancelled'")
-                .params(invoiceId, invoiceNumber, FleetDb.org(), sourceType, sourceId).update();
+        ledger.markGoodsInvoiced(sourceType, sourceId, invoiceId, invoiceNumber);
     }
 
     /** The charge the delivery order would carry now: {@code {facts, rule, charge}} ({@code charge} null = no rule). */
@@ -115,24 +114,34 @@ public class FleetDeliveryInvoiceService {
                     + (pending == 1 ? "y" : "ies") + "; decide them first");
         }
         List<LineInput> lines = new ArrayList<>();
-        boolean goods = o.get("goodsInvoiceId") == null;
+        List<DeliveryInvoicing.Allocation> allocations = new ArrayList<>();
+        // Phase A A4 (plan §5): a Sales-module order invoices its own goods, so its delivery order carries transport
+        // charges only (a back-office order of the orders module keeps Fleet goods invoicing, as in Nest). Other delivery orders invoice what is accepted and not yet on a live invoice (ledger).
+        boolean goods = !ledger.salesOwned((String) o.get("sourceType"), (String) o.get("sourceId"));
+        Map<String, Map<String, BigDecimal>> invoiceable = goods ? ledger.fleetInvoiceable(deliveryOrderId) : Map.of();
         if (goods) {
-            for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT ol.\"productId\", ol.description,"
-                    + " ol.\"uomId\", ol.\"unitPrice\", ol.\"discountPercent\", ol.\"taxId\", p.name, COALESCE(SUM(ll.\"billableQty\")"
+            for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT ol.id AS \"lineId\", ol.\"productId\", ol.description,"
+                    + " ol.\"uomId\", ol.\"uomFactor\", ol.\"variantId\", ol.\"unitPrice\", ol.\"discountPercent\", ol.\"taxId\", p.name, COALESCE(SUM(ll.\"billableQty\")"
                     + " FILTER (WHERE t.status IN ('delivered', 'closed', 'returned')), 0) AS qty FROM"
                     + " \"FleetDeliveryOrderLine\" ol JOIN \"Product\" p ON p.id = ol.\"productId\" LEFT JOIN"
                     + " \"FleetLoadLine\" ll ON ll.\"deliveryOrderLineId\" = ol.id LEFT JOIN \"FleetLoad\" t ON t.id ="
                     + " ll.\"loadId\" WHERE ol.\"organizationId\" = ? AND ol.\"deliveryOrderId\" = ? GROUP BY ol.id, p.name"
                     + " ORDER BY ol.\"lineNumber\"").params(FleetDb.org(), deliveryOrderId))) {
-                BigDecimal qty = SqlRows.dec(l, "qty");
+                Map<String, BigDecimal> left = invoiceable.get((String) l.get("lineId"));
+                BigDecimal qty = left == null ? BigDecimal.ZERO : left.get("invoiceable");
                 if (qty.signum() <= 0) {
                     continue;
                 }
+                allocations.add(new DeliveryInvoicing.Allocation((String) l.get("lineId"), qty, (String) l.get("uomId")));
                 String desc = l.get("description") == null ? (String) l.get("name") : (String) l.get("description");
-                lines.add(LineInput.of((String) l.get("productId"), null, desc + " (delivery " + code + ")", qty,
+                // Phase I2 U-5: the invoice line keeps the delivery line's variant and the unit factor frozen on it.
+                lines.add(new LineInput((String) l.get("productId"), null, (String) l.get("variantId"), null, null,
+                        desc + " (delivery " + code + ")", qty,
                         l.get("unitPrice") == null ? null : SqlRows.dec(l, "unitPrice"),
-                        l.get("discountPercent") == null ? null : SqlRows.dec(l, "discountPercent"),
-                        (String) l.get("taxId"), null, (String) l.get("uomId")));
+                        l.get("discountPercent") == null ? null : SqlRows.dec(l, "discountPercent"), null, null, null,
+                        null, (String) l.get("taxId"), null, null, (String) l.get("uomId"))
+                        .withUnitSnapshot((String) l.get("uomId"), l.get("uomFactor") == null ? null
+                                : SqlRows.dec(l, "uomFactor")));
             }
         }
         DeliveryChargeCalculator.Charge charge = null;
@@ -159,20 +168,22 @@ public class FleetDeliveryInvoiceService {
         Instant delivered = db.jdbc().sql("SELECT MAX(\"deliveredAt\") FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND"
                 + " \"deliveryOrderId\" = ?").params(FleetDb.org(), deliveryOrderId).query(java.sql.Timestamp.class)
                 .optional().map(java.sql.Timestamp::toInstant).orElse(null);
-        Map<String, Object> inv = invoices.create(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
+        Map<String, Object> inv = invoices.createCopied(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
                 null, null, null, null, null, delivered == null ? null : JsonConfig.toJsIso(delivered), address, null,
                 null, code, null, null, code, "Delivery order " + code + (o.get("sourceNumber") == null ? ""
                         : " (from " + o.get("sourceNumber") + ")"), lines));
         String invoiceId = (String) inv.get("id");
         String number = (String) inv.get("documentNumber");
+        // ADR-S075: an invoice to a customer site carries the site and its project.
         invoices.setSiteReference(invoiceId, (String) o.get("siteId"), site == null ? null : (String) site.get(
                 "projectId"));
-        boolean goodsAdded = goods && lines.stream().anyMatch(l -> l.productId() != null);
+        boolean goodsAdded = !allocations.isEmpty();
         if (goodsAdded) {
             invoices.setStockIssuedByDelivery(invoiceId, code);
+            ledger.allocateFleetGoods(deliveryOrderId, invoiceId, allocations);
         }
         Map<String, Object> data = new java.util.LinkedHashMap<>();
-        if (goodsAdded) {
+        if (goodsAdded && o.get("goodsInvoiceId") == null) {
             data.put("goodsInvoiceId", invoiceId);
             data.put("goodsInvoiceNumber", number);
             data.put("goodsInvoiceKind", "document");
