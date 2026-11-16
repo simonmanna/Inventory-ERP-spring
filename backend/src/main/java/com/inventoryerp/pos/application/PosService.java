@@ -5,6 +5,8 @@ import static com.inventoryerp.pos.application.PosSql.num;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.DetachedWrites;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.common.OccurredAt;
@@ -16,6 +18,7 @@ import com.inventoryerp.pos.domain.Order;
 import com.inventoryerp.pos.domain.PosTableOrder;
 import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.ApiException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -54,10 +57,13 @@ public class PosService {
     private final PricingPolicy pricing;
     private final TransactionTemplate tx;
     private final DetachedWrites detached;
+    private final AuditService audit;
 
     public PosService(PosDb db, EventBus events, PosOrdersService orders, PosInvoiceService billing,
             PosTablesService tables, PosLoyaltyService loyalty, PosReceiptsService receipts, PosOverridesService overrides,
-            PosSettingsService settings, PricingPolicy pricing, PlatformTransactionManager txm, DetachedWrites detached) {
+            PosSettingsService settings, PricingPolicy pricing, PlatformTransactionManager txm, DetachedWrites detached,
+            AuditService audit) {
+        this.audit = audit;
         this.db = db;
         this.jdbc = db.jdbc();
         this.events = events;
@@ -123,6 +129,16 @@ public class PosService {
         }
         PosOrdersService.Quote quote = orders.quoteRaw(input);
         double effectiveDiscount = pricing.assertAuthority(PosOrdersService.pricingLines(quote.baseLines()), input);
+        // Phase I6 (owner decision 1): an offline sale already happened; a total the device saw differently is kept
+        // and flagged, never refused. Online checkout still refuses below.
+        input.remove("allowPartial");
+        Map<String, Object> offlineVariance = isCredit || !com.inventoryerp.kernel.common.OfflineReplay.active() ? null
+                : reconcileOfflineTenders(input, quote.total());
+        if (offlineVariance != null) {
+            String note = "Offline price difference: device charged " + PosSql.jsString(offlineVariance.get("deviceTotal"))
+                    + ", catalog price " + PosSql.jsString(offlineVariance.get("serverTotal"));
+            input.put("notes", PosSql.truthy(input.get("notes")) ? input.get("notes") + " | " + note : note);
+        }
         if (input.get("expectedTotal") != null && Math.abs(quote.total() - num(input.get("expectedTotal"))) > 0.000001) {
             throw ApiException.badRequest("The price changed. Refresh the quote before payment.");
         }
@@ -146,6 +162,11 @@ public class PosService {
             genDto.put("paymentMode", !tenders.isEmpty() ? resolvePaymentMode(tenders)
                     : "bank".equals(input.get("paymentMethod")) ? "card"
                     : input.get("paymentMethod") != null ? input.get("paymentMethod") : "cash");
+            if (offlineVariance != null && offlineVariance.get("shortfall") != null) {
+                // The part the device did not collect stays on the customer's account (like a credit sale), visible
+                // in receivables, instead of an unsettled cash sale that would block the shift close.
+                genDto.put("paymentMode", "credit");
+            }
         }
         Map<String, Object> invoice = billing.generateInvoice(orderId, genDto);
         // Phase I2 N7 (deviation from Nest, ADR-S072): the kitchen is fired once the sale is invoiced, not before. A
@@ -165,6 +186,17 @@ public class PosService {
         }
         ordered.put("discountPercent", PosSql.js(effectiveDiscount));
         putReceipt(ordered, out);
+        if (offlineVariance != null) {
+            offlineVariance.put("invoiceId", invoice.get("id"));
+            offlineVariance.put("invoiceNumber", invoice.get("invoiceNumber"));
+            try {
+                audit.record(AuditInput.of("Invoice", (String) invoice.get("id"), "update", null,
+                        Obj.of("kind", "offline_price_variance", "variance", offlineVariance)));
+            } catch (RuntimeException e) {
+                log.warn("offline price variance audit failed for {}: {}", invoice.get("invoiceNumber"), e.toString());
+            }
+            ordered.put("priceVariance", offlineVariance);
+        }
         return ordered;
     }
 
@@ -192,9 +224,80 @@ public class PosService {
         return d;
     }
 
+    /**
+     * Phase I6 (owner decision 1, ADR-S072 addendum): a {@code sale.checkout} replayed from an offline device whose
+     * total ({@code expectedTotal}, else its tender sum) differs from the server's catalog total is kept at the
+     * server price. The money the device collected is recorded as collected: an overpay is taken off the cash legs
+     * (then the others, last first) and shows as drawer cash over at the shift close; a shortfall leaves the invoice
+     * open for that amount (partial payment). Returns {@code null} when the device and the server agree.
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> reconcileOfflineTenders(Map<String, Object> input, double serverTotal) {
+        List<Object> raw = PosSql.list(input.get("tenders"));
+        if (raw.isEmpty()) {
+            return null;
+        }
+        BigDecimal eps = new BigDecimal("0.000001");
+        BigDecimal due = PosSql.decOf(serverTotal);
+        BigDecimal paid = BigDecimal.ZERO;
+        List<Map<String, Object>> tenders = new ArrayList<>();
+        for (Object o : raw) {
+            Map<String, Object> t = new LinkedHashMap<>((Map<String, Object>) o);
+            tenders.add(t);
+            paid = paid.add(PosSql.dec(t.get("amount")));
+        }
+        Object expectedRaw = input.get("expectedTotal");
+        BigDecimal expected = expectedRaw == null ? null : PosSql.dec(expectedRaw);
+        boolean priceMoved = expected != null && expected.subtract(due).abs().compareTo(eps) > 0;
+        boolean tendersOff = paid.subtract(due).abs().compareTo(eps) > 0;
+        if (!priceMoved && !tendersOff) {
+            return null;
+        }
+        input.remove("expectedTotal");
+        Map<String, Object> variance = new LinkedHashMap<>();
+        variance.put("deviceTotal", PosSql.js(expected != null ? expected : paid));
+        variance.put("serverTotal", PosSql.js(due));
+        variance.put("tendered", PosSql.js(paid));
+        BigDecimal over = paid.subtract(due);
+        if (over.compareTo(eps) > 0) {
+            // Cash legs first (change is cash), then any other leg, last first.
+            for (boolean cashPass : new boolean[] {true, false}) {
+                for (int i = tenders.size() - 1; i >= 0 && over.signum() > 0; i--) {
+                    Map<String, Object> t = tenders.get(i);
+                    if ("cash".equals(t.get("method")) != cashPass) {
+                        continue;
+                    }
+                    BigDecimal amount = PosSql.dec(t.get("amount"));
+                    BigDecimal cut = amount.min(over);
+                    t.put("amount", PosSql.js(amount.subtract(cut)));
+                    over = over.subtract(cut);
+                }
+            }
+            tenders.removeIf(t -> PosSql.dec(t.get("amount")).compareTo(eps) <= 0);
+            boolean anyCash = tenders.stream().anyMatch(t -> "cash".equals(t.get("method")));
+            if (!anyCash) {
+                input.remove("amountTendered");
+            } else if (input.get("amountTendered") == null) {
+                input.put("amountTendered", PosSql.js(paid));
+            }
+            variance.put("overpaid", PosSql.js(paid.subtract(due)));
+            variance.put("collected", PosSql.js(due));
+        } else if (over.signum() < 0 && over.negate().compareTo(eps) > 0) {
+            input.put("allowPartial", true);
+            input.remove("amountTendered");
+            variance.put("shortfall", PosSql.js(due.subtract(paid)));
+            variance.put("collected", PosSql.js(paid));
+        } else {
+            variance.put("collected", PosSql.js(paid));
+        }
+        input.put("tenders", tenders);
+        return variance;
+    }
+
     private static Map<String, Object> paymentDto(Map<String, Object> input) {
         Map<String, Object> d = new LinkedHashMap<>();
-        for (String k : List.of("tenders", "paymentMethod", "amountTendered", "cashSessionId", "occurredAt")) {
+        for (String k : List.of("tenders", "paymentMethod", "amountTendered", "cashSessionId", "occurredAt",
+                "allowPartial")) {
             if (input.get(k) != null) {
                 d.put(k, input.get(k));
             }

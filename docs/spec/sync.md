@@ -62,6 +62,15 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   payload). `cash_session.open` replays pass no shortage approval, so an offline open that would remove cash from the
   drawer is not auto-adjusted. See `docs/spec/pos.md` "Post-parity hardening".
 
+- **Phase I6 (Android POS integrity), additive wire changes:** pull gains the `productVariants` scope (id,
+  productId, sku, barcode, name, effective `price` = `ProductVariantService.PRICE_SQL`, isActive, `deletedAt`
+  tombstones from the variant or its product), `tax.isInclusive` on product rows, and a top-level
+  `currency: {code, decimalPlaces}` (null when the organisation has none). Push gains the `kitchen.void` op
+  (reason + manager approval for the `void` override kind, PIN re-verified; wastes the menu item's recipe / the product
+  at the shift's register location via `KitchenWaste.recordDeviceVoid`, ledger-deduplicated per op line; audit
+  `PosDevice cancel item_void`). `sale.refund` lines may name a sale line by `lineNumber` (1-based position) instead of
+  the invoice-item id. Older devices are unaffected. Tests `SyncDeviceIntegrityIT`.
+
 - **`stock.count` is one transaction (Phase I5, audit S-5).** Opening the spot count, entering the device's figures and
   submitting commit together; a refused count (e.g. "Choose a variant for …") leaves no draft count open. Test
   `SyncIT.stockCountPerVariant`.
