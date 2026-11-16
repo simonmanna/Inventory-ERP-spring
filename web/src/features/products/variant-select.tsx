@@ -64,3 +64,35 @@ export function VariantSelect({ productId, value, onChange, disabled, className,
     </Select>
   );
 }
+
+/**
+ * Optional variant for a pricing rule (audit P-1, V488): pricelist items, promotions and agreement lines. Empty means
+ * the rule covers every variant of the product; a chosen variant narrows it to that variant (and beats the same tier's
+ * whole-product rule). Renders nothing for a product without variants.
+ */
+export function RuleVariantSelect({ productId, value, onChange, className, label }: {
+  productId: string | null | undefined;
+  value: string | null | undefined;
+  onChange: (variantId: string | null, variant: VariantOption | null) => void;
+  className?: string;
+  /** Saved variant name, kept visible when the variant is no longer among the active options. */
+  label?: string | null;
+}) {
+  const { data: options = [] } = useProductVariantOptions(productId ?? undefined);
+  if (!productId || (options.length === 0 && !value)) return null;
+  const savedMissing = !!value && !options.some((o) => o.id === value);
+  return (
+    <select
+      aria-label={tx('Variant')}
+      className={cn('h-9 w-full rounded-md border bg-background px-2 text-sm', className)}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value || null, options.find((o) => o.id === e.target.value) ?? null)}
+    >
+      <option value="">{tx('All variants')}</option>
+      {savedMissing && <option value={value!}>{label ?? value} ({tx('Archived')})</option>}
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>{o.name}{o.sku ? ` · ${o.sku}` : ''} · {money(o.salesPrice)}</option>
+      ))}
+    </select>
+  );
+}

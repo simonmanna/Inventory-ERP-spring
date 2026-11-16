@@ -208,6 +208,9 @@ export interface PricelistItem {
   scope: 'product' | 'category' | 'all';
   productId: string | null;
   productName?: string | null;
+  /** P-1: a product rule may price one variant only (null = every variant). */
+  variantId?: string | null;
+  variantName?: string | null;
   productCategoryId: string | null;
   partnerId: string | null;
   partnerName?: string | null;
