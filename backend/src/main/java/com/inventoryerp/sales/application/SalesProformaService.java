@@ -85,6 +85,9 @@ public class SalesProformaService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> d = builder.document(id, TYPE);
+        if (d == null) {
+            throw ApiException.notFound("Proforma invoice not found");
+        }
         access.assertBranchIfScoped(str(d.get("branchId")));
         Map<String, Object> out = new java.util.LinkedHashMap<>(d);
         Map<String, Object> extra = extra(id);

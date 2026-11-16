@@ -327,9 +327,11 @@ public class PlmLifecycleService {
                 + " ('new', 'accepted') AND \"dueDate\" < CURRENT_DATE", null);
         long appliedLast30 = count("SELECT count(*) FROM \"EngineeringChange\" WHERE \"organizationId\" = ? AND status ="
                 + " 'applied' AND \"appliedAt\" >= now() - interval '30 days'", null);
+        // An aggregate always returns one row; its value is NULL when nothing was applied (singleValue() refuses null).
         Object avgCycle = db.jdbc().sql("SELECT round(avg(extract(epoch FROM (\"appliedAt\" - \"createdAt\")) / 86400)"
-                + "::numeric, 1) FROM \"EngineeringChange\" WHERE \"organizationId\" = ? AND status = 'applied' AND"
-                + " \"appliedAt\" >= now() - interval '180 days'").param(MfgDb.org()).query().singleValue();
+                + "::numeric, 1) AS avg FROM \"EngineeringChange\" WHERE \"organizationId\" = ? AND status = 'applied'"
+                + " AND \"appliedAt\" >= now() - interval '180 days'").param(MfgDb.org()).query().listOfRows().get(0)
+                .get("avg");
         Map<String, Object> docs = new LinkedHashMap<>();
         for (String s : List.of("draft", "released", "superseded", "obsolete")) {
             docs.put(s, 0L);

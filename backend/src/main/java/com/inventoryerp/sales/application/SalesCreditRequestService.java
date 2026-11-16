@@ -157,7 +157,7 @@ public class SalesCreditRequestService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> byBranch(String partnerId) {
         return db.rows("SELECT d.\"branchId\", b.name AS \"branchName\", COALESCE(sum(d.\"amountResidual\" * d.\"exchangeRate\"), 0) AS outstanding,"
-                + " COALESCE(sum(d.\"amountResidual\" * d.\"exchangeRate\") FILTER (WHERE d.\"dueDate\" < now()), 0) AS overdue, (SELECT l.\"limitAmount\" FROM"
+                + " COALESCE(sum(d.\"amountResidual\" * d.\"exchangeRate\") FILTER (WHERE d.\"dueDate\" < now()), 0) AS overdue, (SELECT l.amount FROM"
                 + " \"CreditLimit\" l WHERE l.\"organizationId\" = d.\"organizationId\" AND l.\"partnerId\" = d.\"partnerId\" AND l.\"branchId\" = d.\"branchId\" LIMIT 1)"
                 + " AS \"branchLimit\" FROM \"Document\" d LEFT JOIN \"Branch\" b ON b.id = d.\"branchId\" WHERE d.\"organizationId\" = ? AND d.\"partnerId\" = ? AND"
                 + " d.\"documentType\"::text = 'sales_invoice' AND d.status::text = 'posted' AND d.\"amountResidual\" > 0 GROUP BY d.\"branchId\", b.name,"
