@@ -321,7 +321,7 @@ public class SalesBillingService {
 
     /**
      * Phase A A4 (plan §13): a shortage or weight claim confirmed after the goods were invoiced. A draft credit note
-     * for min(confirmed, gross invoiced − credited − billable) of the order line, against the latest posted invoice
+     * for min(confirmed, gross invoiced − credited − invoiceable) of the order line, against the latest posted invoice
      * that carried it; the credit link makes a replay credit nothing more. Null when nothing is over-invoiced.
      */
     @Transactional
@@ -337,18 +337,22 @@ public class SalesBillingService {
         Map<String, Object> o = orders.lock(orderId);
         String lineId = str(x.get("orderLineId"));
         Map<String, Object> l = db.row("""
-                SELECT l.*, c."incomeAccountId",
+                SELECT l.*, c."incomeAccountId", p."invoicePolicy", o."billingPolicy",
                        COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k JOIN "Document" d ON d.id = k."documentId"
                                   WHERE k."orderLineId" = l.id AND k.kind = 'credit_note'
                                     AND d.status::text NOT IN ('cancelled', 'rejected')), 0) AS credited
-                  FROM "SalesOrderLine" l LEFT JOIN "Product" p ON p.id = l."productId"
+                  FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId" LEFT JOIN "Product" p ON p.id = l."productId"
                   LEFT JOIN "ProductCategory" c ON c.id = p."categoryId"
                  WHERE l.id = ? AND l."orderId" = ? FOR UPDATE OF l""", lineId, orderId);
         if (l == null) {
             return null;
         }
         BigDecimal confirmed = dec(x.get("differenceQty")).subtract(dec(x.get("reconciledQty")));
-        BigDecimal over = dec(l.get("qtyInvoiced")).subtract(dec(l.get("credited"))).subtract(dec(l.get("qtyBillable")));
+        // Over-invoiced against what the line may invoice: billable for accepted / delivered billing; an ordered-policy
+        // line invoices its ordered quantity, so a delivery claim never auto-credits it (returns and credit notes stay
+        // the route there, owner decision 2026-11-16).
+        BigDecimal base = base(policy(str(l.get("billingPolicy")), l), l);
+        BigDecimal over = dec(l.get("qtyInvoiced")).subtract(dec(l.get("credited"))).subtract(base);
         BigDecimal qty = confirmed.min(over);
         if (qty.signum() <= 0 || dec(l.get("unitPrice")).signum() <= 0) {
             return null;

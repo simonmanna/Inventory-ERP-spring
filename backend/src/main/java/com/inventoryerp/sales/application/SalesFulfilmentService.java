@@ -30,8 +30,10 @@ import org.springframework.transaction.annotation.Transactional;
  * fleet's records (loaded, dispatched − returned, received per POD, accepted = fleet billable after approved
  * discrepancies) — so duplicate or out-of-order fleet events are harmless and {@link #rebuild} is always safe.
  *
- * <p>The billable quantity is the POD-accepted quantity (Phase A A4, decision A-2: also for the {@code weighed} basis;
- * {@code ordered} caps it at the ordered quantity); every change is an immutable
+ * <p>The billable quantity follows the product's billing basis: {@code accepted} and {@code weighed} bill the POD-accepted,
+ * undisputed quantity (Phase A A4, decision A-2: the weighbridge ticket proves what left the quarry, not what was
+ * accepted); {@code ordered} keeps ordered-quantity billing, dispatched capped at the ordered quantity (owner decision
+ * 2026-11-16, unchanged from before A4); every change is an immutable
  * {@code SalesFulfilmentDecision}. A manual decision (permission {@code sales:billing:override}) sticks until replaced.
  */
 @Service
@@ -89,10 +91,10 @@ public class SalesFulfilmentService {
             BigDecimal received = dec(f.get("received"));
             BigDecimal accepted = dec(f.get("accepted"));
             String basis = l.get("billingBasis") == null ? "accepted" : str(l.get("billingBasis"));
-            // Phase A A4 (decision A-2): billable is what the customer accepted at the POD, whatever the basis — the
-            // weighbridge ticket proves what left the quarry, not what was accepted; pending disputes never count.
+            // Phase A A4: accepted / weighed bill what the customer accepted at the POD (pending disputes never count);
+            // the ordered basis keeps ordered-quantity billing as before A4 (owner decision 2026-11-16).
             BigDecimal auto = switch (basis) {
-                case "ordered" -> accepted.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled"))));
+                case "ordered" -> dispatched.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled"))));
                 default -> accepted;
             };
             Map<String, Object> last = db.row("SELECT basis, quantity FROM \"SalesFulfilmentDecision\" WHERE"

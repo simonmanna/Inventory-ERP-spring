@@ -38,13 +38,17 @@ CREATE TABLE "SalesLegacyInvoiceReview" (
     "deliveryOrderId" TEXT         NOT NULL,
     "documentId"      TEXT         NOT NULL REFERENCES "Document" (id),
     matches           JSONB        NOT NULL DEFAULT '[]',
-    status            TEXT         NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'reconciled', 'exception')),
+    -- open (reviewer editing) → submitted (approval-engine request pending) → reconciled; exception keeps it blocked.
+    status            TEXT         NOT NULL DEFAULT 'open'
+                                   CHECK (status IN ('open', 'submitted', 'reconciled', 'exception')),
     notes             TEXT,
     "evidenceFileIds" TEXT[]       NOT NULL DEFAULT '{}',
     "reviewedById"    TEXT,
     "reviewedAt"      TIMESTAMP(3),
     "approvedById"    TEXT,
     "approvedAt"      TIMESTAMP(3),
+    -- The kernel approval-engine request (entity type sales_legacy_invoice_review) of the current submission.
+    "approvalRequestId" TEXT,
     "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "SalesLegacyInvoiceReview_order_document_key" UNIQUE ("orderId", "documentId")

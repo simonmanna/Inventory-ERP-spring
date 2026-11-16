@@ -614,10 +614,14 @@ calculation (`LoadLineQuantities`, pure; `LoadLineQuantityService`); Sales only 
     → partial correction → full correction → reconciled, with 403 / SoD / evidence / ceiling refusals and the history
     kinds; partial correction then confirm; reconciliation repair and resolve.
 
-### Invoiceability, invoice ownership and legacy Fleet invoices (Phase A4, 2026-11-16, V498)
+### Invoiceability, invoice ownership and legacy Fleet invoices (Phase A4, 2026-11-16, V500)
 
 Plan: Phase A §5, §6, §10, §13 and decisions A-1, A-2, A-7. No GL posting rule and no accounting policy changes. A4 is
 built on its branch and **waits for the owner's financial review** (below) before it merges.
+
+*Owner review 2026-11-16 — returned for two corrections, both made:* (1) ordered-quantity billing is preserved for the
+`ordered` billing basis and the `ordered` invoice policy; (2) the legacy Fleet invoice review is approved through the
+kernel approval engine, not a direct check. A4 now has **no deviations**.
 
 **Financial / architectural review (the plan required one before code)**
 
@@ -629,14 +633,17 @@ built on its branch and **waits for the owner's financial review** (below) befor
   - **Clarification of the plan:** source type `sales_order` also covers back-office orders of the orders module
     (`/orders`). Those keep the Nest behaviour (Fleet invoices their goods, now through the ledger).
     `DeliveryInvoicing.salesOwned` tells the two apart through `DeliverySourcePort`.
-- *Invoiceable quantity.* Invoiceable = accepted − live allocations on both paths.
-  - Accepted is the A3 accepted bucket, so pending disputes are never invoiced.
+- *Invoiceable quantity.* Invoiceable = billable − live allocations on both paths. Billable by billing basis:
+
+  | Billing basis / invoice policy | Billable (Sales) | Change in A4 |
+  |---|---|---|
+  | `accepted` basis | A3 accepted bucket: dispatched − returned − damaged − confirmed shortage, **pending disputes excluded** | none |
+  | `weighed` basis | the same accepted, undisputed quantity — only after the POD (A-2: the ticket proves what left the quarry) | was ticket net at dispatch |
+  | `ordered` basis | dispatched, capped at ordered − cancelled (ordered-quantity billing, owner decision 2026-11-16) | none |
+  | `ordered` invoice policy | ordered − cancelled, before delivery (commercial choice) | none |
+
   - A draft reserves quantity; a cancelled or rejected document releases it; credit notes never restore it.
-  - The weighed basis is invoiceable only after the POD (A-2): the ticket proves what left the quarry, not what was
-    accepted.
-  - **Deviation for owner approval:** the `ordered` billing basis is now accepted capped at the ordered quantity, not
-    dispatched capped. Same reason: the owner decision "invoiceable = POD-accepted, not dispatched".
-  - The `ordered` *invoice policy* (invoicing before delivery) is a commercial choice and is unchanged.
+  - Fleet-owned delivery orders invoice accepted − live ledger allocations (Fleet's accepted excludes pending disputes).
 - *Guards.*
   - Service layer: `fleet/application/DeliveryInvoicing` is the only allocator. `allocateFleetGoods` locks the delivery
     order and rechecks the quantity; `assertSalesGoods` locks the Sales order's delivery orders (lock order: sales
@@ -654,7 +661,8 @@ built on its branch and **waits for the owner's financial review** (below) befor
   - Manual `/invoices`: cannot link to a sales order.
   - `SalesCollectionsService`: write-offs and interest only; no goods.
 - *Late customer evidence* (§13): a shortage or weight claim confirmed after invoicing produces a **draft** credit note
-  for min(confirmed, gross invoiced − credited − billable).
+  for min(confirmed, gross invoiced − credited − invoiceable). An `ordered`-policy line invoices its ordered quantity, so
+  a delivery claim never auto-credits it (returns and credit notes stay the route there).
   - Sales owner: against the latest posted invoice of the line, linked as `credit_note`. The line carries no product,
     so posting never moves stock, and the product category's income account is used, as on the existing Fleet path.
   - Fleet owner: the existing Fleet credit-note path, capped by the ledger.
@@ -672,14 +680,20 @@ built on its branch and **waits for the owner's financial review** (below) befor
     the delivery-order lines).
   - `POST /sales/orders/{id}/legacy-invoices/{documentId}/review`: `{matches: [{documentLineId, orderLineId,
     quantity}], notes}`. Each invoice line is matched once. A match above the order line's ordered quantity is refused
-    with "record an exception instead".
-  - `POST /sales/legacy-invoice-reviews/{id}/approve` (Idempotency-Key honoured): **a second user**; the reviewer gets
-    403. It writes one `legacy_fleet` regular link per order line, carrying `legacyReviewId`, recomputes the invoiced
-    quantities and unblocks the order.
-  - `POST /sales/legacy-invoice-reviews/{id}/exception` `{notes}` keeps the order blocked and logs a warning; `/reopen`
-    reopens it once the cause is resolved.
-  - **Deviation for owner approval:** the second-person approval is a direct separation-of-duties check, not a
-    request through the approval engine.
+    with "record an exception instead". The review becomes `submitted` and raises a **kernel approval-engine request**
+    (entity type `sales_legacy_invoice_review`; the default workflow "Legacy Fleet invoice review", step "Sales manager"
+    with `sales:billing:override` and distinct approvers, is created when the organisation has none). Re-submitting
+    withdraws the pending request and raises a new one. A switched-off workflow refuses the submission with 409 "The
+    approval workflow for legacy Fleet invoice reviews is switched off; …" — nothing is approved without a request.
+  - `POST /sales/legacy-invoice-reviews/{id}/approve` and `/reject` (Idempotency-Key honoured) decide that request
+    through the engine: permission, approval limits, distinct approvers and the self-approval refusal are the engine's
+    (the reviewer, as requester, gets 400 "You cannot approve a request you created"). An approved request writes one
+    `legacy_fleet` regular link per order line, carrying `legacyReviewId`, in the same transaction, recomputes the
+    invoiced quantities and unblocks the order; a rejected one returns the review to `open`. A decision taken in the
+    generic approvals inbox (`POST /approvals/{id}/decide`) is applied by `SalesLegacyInvoiceApprovalSubscriber`
+    (`approval.decided`, idempotent).
+  - `POST /sales/legacy-invoice-reviews/{id}/exception` `{notes}` withdraws a pending request, keeps the order blocked
+    and logs a warning; `/reopen` reopens it once the cause is resolved.
 - *Pre-flight query* (run read-only before deploying A4):
 
   ```sql
@@ -703,10 +717,10 @@ built on its branch and **waits for the owner's financial review** (below) befor
   - `over_invoiced`: ledger allocations above accepted;
   - `fleet_goods_on_sales_order`.
 
-**Migration `V498__delivery_invoiceability.sql`:**
+**Migration `V500__delivery_invoiceability.sql`:**
 
 - `FleetDeliveryInvoiceLine`: immutable, with unique keys on the document line and on (document, delivery-order line).
-- `SalesLegacyInvoiceReview`.
+- `SalesLegacyInvoiceReview` (status open | submitted | reconciled | exception, `approvalRequestId`).
 - `SalesInvoiceLink` gains `documentLineId`, `origin` and `legacyReviewId`.
 - The partial unique index (documentId, orderLineId) WHERE kind = 'regular' is created only when no duplicates exist.
   Otherwise a warning is raised and reconciliation reports them.
@@ -716,13 +730,17 @@ built on its branch and **waits for the owner's financial review** (below) befor
 
 **Tests:**
 
-- `SalesInvoiceabilityIT` (6):
+- `SalesInvoiceabilityIT` (9):
   - accepted only, with Fleet charges only on a Sales delivery order;
   - weighed basis invoiceable only after the POD;
+  - ordered basis keeps ordered-quantity billing (dispatched, before and after a disputed POD);
   - the post guard refuses until the claim is dismissed;
   - late credit after posting, with the over-invoiced finding;
-  - legacy block → review → SoD 403 → approve → unblocked;
-  - an exception stays blocked, and the routes need the permission.
+  - legacy block → review → engine request → requester refused (400) → rejected → re-submitted → approved →
+    unblocked;
+  - legacy review approved from the generic approvals inbox (subscriber);
+  - a switched-off workflow refuses the submission;
+  - an exception withdraws the request and stays blocked; the routes need the permission.
 - `InvoiceLedgerWritersTest`.
 - `SalesWeighbridgeIT` now expects billable 0 before the POD.
 

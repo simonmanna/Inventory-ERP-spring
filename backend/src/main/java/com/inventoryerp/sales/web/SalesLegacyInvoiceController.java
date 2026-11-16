@@ -60,7 +60,15 @@ public class SalesLegacyInvoiceController {
     @Idempotent
     @RequirePermissions(Permissions.SALES__BILLING_OVERRIDE)
     public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
-        return legacy.approve(id, SalesController.body(b));
+        return legacy.decide(id, true, SalesController.body(b));
+    }
+
+    /** Rejects the review's approval request (approval engine): the review goes back to the reviewer. */
+    @PostMapping("/legacy-invoice-reviews/{id}/reject")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__BILLING_OVERRIDE)
+    public Map<String, Object> reject(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return legacy.decide(id, false, SalesController.body(b));
     }
 
     @PostMapping("/legacy-invoice-reviews/{id}/exception")

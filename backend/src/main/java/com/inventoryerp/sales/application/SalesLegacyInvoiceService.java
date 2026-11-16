@@ -7,10 +7,13 @@ import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
 import com.inventoryerp.fleet.application.DeliveryInvoicing;
+import com.inventoryerp.kernel.approvals.ApprovalAdminService;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -26,13 +29,19 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Phase A A4 (plan §6): historical Fleet goods invoices on sales orders. Before A4 a delivery order of a sales order
  * could invoice the order's goods itself; such an order is blocked from Sales goods invoicing until a reviewer matches
- * the Fleet invoice lines to the order lines and a <em>second</em> user approves. Approval writes audited
- * {@code SalesInvoiceLink} rows with {@code origin = legacy_fleet} in one transaction and the order unblocks. An
- * exception keeps it blocked until a credit note or another decision allows a reconciliation. Nothing is moved without
- * an approved review.
+ * the Fleet invoice lines to the order lines and the match is approved through the kernel approval engine (entity type
+ * {@value #APPROVAL_ENTITY}; default workflow "Legacy Fleet invoice review", step "Sales manager" with
+ * {@code sales:billing:override}, distinct approvers). The engine enforces the second person: the reviewer raised the
+ * request and cannot decide it. An approved request writes audited {@code SalesInvoiceLink} rows with
+ * {@code origin = legacy_fleet} in one transaction and the order unblocks; a rejected one returns the review to the
+ * reviewer. An exception keeps the order blocked until a credit note or another decision allows a reconciliation.
+ * Nothing is moved without an approved request; a switched-off workflow refuses submissions (never auto-approves).
  */
 @Service
 public class SalesLegacyInvoiceService {
+
+    /** Approval-engine entity type of a legacy Fleet invoice review. */
+    public static final String APPROVAL_ENTITY = "sales_legacy_invoice_review";
 
     private static final Logger log = LoggerFactory.getLogger(SalesLegacyInvoiceService.class);
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -42,14 +51,19 @@ public class SalesLegacyInvoiceService {
     private final SalesBillingService billing;
     private final DeliveryInvoicing deliveryInvoicing;
     private final AuditService audit;
+    private final ApprovalsService approvals;
+    private final ApprovalAdminService approvalAdmin;
 
     public SalesLegacyInvoiceService(SalesDb db, SalesOrderService orders, SalesBillingService billing,
-            DeliveryInvoicing deliveryInvoicing, AuditService audit) {
+            DeliveryInvoicing deliveryInvoicing, AuditService audit, ApprovalsService approvals,
+            ApprovalAdminService approvalAdmin) {
         this.db = db;
         this.orders = orders;
         this.billing = billing;
         this.deliveryInvoicing = deliveryInvoicing;
         this.audit = audit;
+        this.approvals = approvals;
+        this.approvalAdmin = approvalAdmin;
     }
 
     /**
@@ -117,7 +131,7 @@ public class SalesLegacyInvoiceService {
                 .filter(x -> documentId.equals(x.get("documentId"))).findFirst()
                 .orElseThrow(() -> ApiException.notFound("No historical Fleet invoice " + documentId + " on this order"));
         Map<String, Object> existing = review(orderId, documentId);
-        if (existing != null && !"open".equals(existing.get("status"))) {
+        if (existing != null && !List.of("open", "submitted").contains(str(existing.get("status")))) {
             throw ApiException.conflict("This review is " + existing.get("status"));
         }
         List<Map<String, Object>> raw = in.get("matches") instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
@@ -168,34 +182,105 @@ public class SalesLegacyInvoiceService {
                     + " now())", id, org(), orderId, g.get("deliveryOrderId"), documentId, json, notes, user());
         } else {
             id = str(existing.get("id"));
+            // A re-submission replaces the pending request: the approver decides the matches as they now stand.
+            withdrawPending(existing, "Review re-submitted with new matches");
             db.update("UPDATE \"SalesLegacyInvoiceReview\" SET matches = ?::jsonb, notes = ?, \"reviewedById\" = ?,"
                     + " \"reviewedAt\" = now(), \"updatedAt\" = now() WHERE id = ?", json, notes, user(), id);
         }
+        ensureWorkflow();
+        Map<String, Object> request = approvals.requestApproval(APPROVAL_ENTITY, id, Obj.of("order", o.get("number"),
+                "document", g.get("documentNumber"), "deliveryOrder", g.get("deliveryOrderCode"), "matches", matches,
+                "amount", JsNumbers.dec(dec(g.get("totalAmount")))), null);
+        if (request == null) {
+            // The organisation switched the workflow off: there is nobody to approve, and nothing is approved without
+            // a request (owner decision 2026-11-16: no parallel direct check).
+            throw ApiException.conflict("The approval workflow for legacy Fleet invoice reviews is switched off; turn"
+                    + " it on in Approvals to submit this review");
+        }
+        db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'submitted', \"approvalRequestId\" = ?, \"updatedAt\" ="
+                + " now() WHERE id = ?", request.get("id"), id);
         audit.record(AuditInput.of("SalesLegacyInvoiceReview", id, existing == null ? "create" : "update",
-                existing, Obj.of("order", o.get("number"), "document", g.get("documentNumber"), "matches", matches)));
+                existing, Obj.of("order", o.get("number"), "document", g.get("documentNumber"), "matches", matches,
+                        "approvalRequestId", request.get("id"))));
         return review(orderId, documentId);
     }
 
+    /** Creates the default review workflow when the organization has none (active or not). */
+    private void ensureWorkflow() {
+        if (db.count("SELECT count(*) FROM \"ApprovalWorkflow\" WHERE \"organizationId\" = ? AND \"entityType\" = ?",
+                List.of(org(), APPROVAL_ENTITY)) == 0) {
+            approvalAdmin.createWorkflow("Legacy Fleet invoice review", APPROVAL_ENTITY, null, true, true,
+                    List.of(new ApprovalAdminService.Step(1, "Sales manager",
+                            List.of(Permissions.SALES__BILLING_OVERRIDE), 1, null, null)));
+        }
+    }
+
+    private void withdrawPending(Map<String, Object> review, String reason) {
+        String requestId = str(review.get("approvalRequestId"));
+        if (requestId != null && "pending".equals(requestStatus(requestId))) {
+            approvals.withdraw(requestId, reason);
+        }
+    }
+
+    private String requestStatus(String requestId) {
+        Map<String, Object> r = db.row("SELECT status::text AS status FROM \"ApprovalRequest\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", requestId, org());
+        return r == null ? null : str(r.get("status"));
+    }
+
     /**
-     * Second-person approval: writes one {@code legacy_fleet} regular link per matched order line (the review id
-     * recorded on each), closes the review as reconciled and recomputes the order's invoiced quantities.
+     * Decide the review's approval request through the kernel approval engine (permission, self-approval refusal, limits
+     * and distinct approvers are the engine's). When the request ends approved, the links are written in the same
+     * transaction ({@link #applyDecision}); a decision made in the generic approvals inbox reaches the same method
+     * through {@code approval.decided}.
      */
     @Transactional
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> approve(String reviewId, Map<String, Object> in) {
+    public Map<String, Object> decide(String reviewId, boolean approve, Map<String, Object> in) {
         Map<String, Object> peek = db.row("SELECT \"orderId\" FROM \"SalesLegacyInvoiceReview\" WHERE id = ? AND"
                 + " \"organizationId\" = ?", reviewId, org());
         if (peek == null) {
             throw ApiException.notFound("Legacy invoice review not found");
         }
-        String orderId = str(peek.get("orderId"));
-        orders.lock(orderId); // lock order: sales order first, then the review
+        orders.lock(str(peek.get("orderId"))); // lock order: sales order first, then the review
         Map<String, Object> r = lockReview(reviewId);
-        if (!"open".equals(r.get("status"))) {
-            throw ApiException.conflict("This review is " + r.get("status"));
+        if (!"submitted".equals(r.get("status")) || r.get("approvalRequestId") == null) {
+            throw ApiException.conflict("This review is " + r.get("status") + "; submit it for approval first");
         }
-        if (user() != null && user().equals(r.get("reviewedById"))) {
-            throw ApiException.forbidden("The reviewer cannot approve their own legacy invoice review");
+        String notes = in == null || blank(str(in.get("notes"))) ? null : str(in.get("notes")).trim();
+        String requestId = str(r.get("approvalRequestId"));
+        approvals.decide(requestId, approve ? "approved" : "rejected", notes);
+        String status = requestStatus(requestId);
+        if (!"pending".equals(status)) {
+            applyDecision(reviewId, requestId, "approved".equals(status), user(), notes);
+        }
+        return review(str(r.get("orderId")), str(r.get("documentId")));
+    }
+
+    /**
+     * Applies a decided approval request (idempotent: a review no longer waiting on that request is left alone).
+     * Approved: one {@code legacy_fleet} regular link per matched order line (the review id recorded on each), the
+     * review reconciled, the order's invoiced quantities recomputed. Rejected: back to the reviewer ({@code open}).
+     */
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public void applyDecision(String reviewId, String requestId, boolean approved, String deciderId, String comment) {
+        Map<String, Object> peek = db.row("SELECT \"orderId\" FROM \"SalesLegacyInvoiceReview\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", reviewId, org());
+        if (peek == null) {
+            return;
+        }
+        String orderId = str(peek.get("orderId"));
+        orders.lock(orderId);
+        Map<String, Object> r = lockReview(reviewId);
+        if (!"submitted".equals(r.get("status")) || !requestId.equals(r.get("approvalRequestId"))) {
+            return;
+        }
+        if (!approved) {
+            db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'open', notes = COALESCE(?, notes), \"updatedAt\" ="
+                    + " now() WHERE id = ?", comment, reviewId);
+            audit.recordInTx(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "reject", Obj.of("status", "submitted"),
+                    Obj.of("status", "open", "approvalRequestId", requestId, "comment", comment)));
+            return;
         }
         List<Map<String, Object>> matches = JSON.readValue(r.get("matches").toString(), List.class);
         Map<String, BigDecimal> perLine = new LinkedHashMap<>();
@@ -211,13 +296,11 @@ public class SalesLegacyInvoiceService {
                     + " 'regular', ?, 0, ?, 'legacy_fleet', ?)", SalesDb.newId(), org(), orderId, e.getKey(),
                     r.get("documentId"), e.getValue(), docLine.get(e.getKey()), reviewId);
         }
-        String notes = in == null || blank(str(in.get("notes"))) ? null : str(in.get("notes")).trim();
         db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'reconciled', \"approvedById\" = ?, \"approvedAt\" ="
-                + " now(), notes = COALESCE(?, notes), \"updatedAt\" = now() WHERE id = ?", user(), notes, reviewId);
+                + " now(), notes = COALESCE(?, notes), \"updatedAt\" = now() WHERE id = ?", deciderId, comment, reviewId);
         billing.recomputeInvoiced(orderId);
-        audit.record(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "approve", Obj.of("status", "open"),
-                Obj.of("status", "reconciled", "links", perLine.size())));
-        return review(orderId, str(r.get("documentId")));
+        audit.recordInTx(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "approve", Obj.of("status", "submitted"),
+                Obj.of("status", "reconciled", "links", perLine.size(), "approvalRequestId", requestId)));
     }
 
     /** The Fleet invoice cannot be matched (e.g. it billed more than the order line): the order stays blocked. */
@@ -231,6 +314,7 @@ public class SalesLegacyInvoiceService {
         if (blank(notes)) {
             throw ApiException.badRequest("notes should not be empty");
         }
+        withdrawPending(r, "Recorded as an exception");
         db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'exception', notes = ?, \"updatedAt\" = now() WHERE"
                 + " id = ?", notes.trim(), reviewId);
         audit.record(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "update", Obj.of("status", r.get("status")),

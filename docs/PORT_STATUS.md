@@ -135,18 +135,19 @@ stock events only after commit, cost policy / standard activation hourly on the 
 - Tests: `LoadLineQuantitiesTest`, `SalesQuantityBucketsIT`.
 - 2026-11-16; full build not run.
 
-**Phase A4 — invoiceability, invoice ownership, legacy Fleet invoices** ([spec](spec/sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v498)):
+**Phase A4 — invoiceability, invoice ownership, legacy Fleet invoices** ([spec](spec/sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v500)):
 - One goods-invoicing owner per delivery-order source: Sales for Sales-module orders, Fleet otherwise.
 - Fleet invoices through the immutable `FleetDeliveryInvoiceLine` ledger.
-- Invoiceable = accepted − live allocations; the weighed basis only after the POD.
+- Invoiceable = billable − live allocations: accepted / weighed bill the accepted, undisputed quantity (weighed only after the POD); the `ordered` basis and policy keep ordered-quantity billing.
 - An `InvoicePostGuard` SPI rechecks at post time.
 - Late-dispute draft credit notes.
-- Historical Fleet goods invoices on Sales orders block the order until a two-person review.
+- Historical Fleet goods invoices on Sales orders block the order until a review is approved through the approval engine.
 - Financial reconciliation on both sides.
-- 7 new Sales routes, V498.
+- 8 new Sales routes (incl. `/legacy-invoice-reviews/{id}/reject`), V500.
 - Tests: `SalesInvoiceabilityIT`, `InvoiceLedgerWritersTest`.
-- Built on the branch and **awaiting the owner's financial review** before merge. Two deviations need approval: the
-  `ordered` basis is now capped at accepted, and the SoD check is direct rather than through the approval engine.
+- Built on the branch and **awaiting the owner's financial review** before merge. Owner review 2026-11-16 returned
+  two corrections, both made: ordered-quantity billing preserved for the `ordered` basis / policy; the legacy review
+  approved through the kernel approval engine. No deviations remain.
 - 2026-11-16; full build not run.
 
 **Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.

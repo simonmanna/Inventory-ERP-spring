@@ -33,6 +33,7 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
     int seq;
     String sand;
     String gravel;
+    String byOrder;
     String yard;
     String customer;
     String decider;
@@ -48,6 +49,7 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
                 + " (?, ?, ?, ?, 'warehouse', now())").params(yard, demoOrg, "SIY-" + sfx, "SI yard").update();
         sand = product("SIS-", "SI sand", ton, "accepted");
         gravel = product("SIG-", "SI gravel", ton, "weighed");
+        byOrder = product("SIO-", "SI ordered", ton, "ordered");
         customer = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"updatedAt\")"
                 + " VALUES (?, ?, ?, ?, true, now())").params(customer, demoOrg, "SIC-" + sfx, "SI cust " + sfx).update();
@@ -57,6 +59,7 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
                 .executeWithoutResult(s -> {
                     stock.receive(StockMove.of(sand, yard, new BigDecimal("2000")).unitCost(new BigDecimal("20000")));
                     stock.receive(StockMove.of(gravel, yard, new BigDecimal("2000")).unitCost(new BigDecimal("20000")));
+                    stock.receive(StockMove.of(byOrder, yard, new BigDecimal("2000")).unitCost(new BigDecimal("20000")));
                 }));
         decider = tokenWith("fleet_dispatch:read", "fleet_dispatch:approve_discrepancy");
         reviewer = tokenWith("sales:order:read", "sales:order:read_all", "sales:billing:override");
@@ -176,6 +179,17 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("ordered basis keeps ordered-quantity billing: dispatched (capped at ordered) before and after the POD")
+    void orderedBasisUnchanged() {
+        Delivery v = dispatched(byOrder, 25);
+        settle(v);
+        assertThat(invoiceable(v.orderId())).as("no POD needed on the ordered basis").isEqualByComparingTo("25");
+        pod(v, Map.of("deliveredQty", 23, "reason", "spillage"));
+        assertThat(invoiceable(v.orderId())).as("a pending shortage does not change ordered billing")
+                .isEqualByComparingTo("25");
+    }
+
+    @Test
     @DisplayName("a draft that bills more than is invoiceable cannot post until the claim is dismissed")
     void postGuard() {
         Delivery v = dispatched(sand, 30);
@@ -255,9 +269,30 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
         JsonNode review = money(reviewer, "/sales/orders/" + v.orderId() + "/legacy-invoices/" + fleetInv + "/review",
                 Map.of("matches", List.of(match), "notes", "Matched against DN"));
         String reviewId = review.get("id").asString();
+        assertThat(review.get("status").asString()).isEqualTo("submitted");
+        String firstRequest = review.get("approvalRequestId").asString();
+        assertThat(jdbc.sql("SELECT \"entityType\" || ':' || status::text FROM \"ApprovalRequest\" WHERE id = ?")
+                .param(firstRequest).query(String.class).single()).isEqualTo("sales_legacy_invoice_review:pending");
+
+        // The approval engine keeps the reviewer (the requester) from deciding.
         Res self = call("POST", "/sales/legacy-invoice-reviews/" + reviewId + "/approve", null, headers(reviewer));
-        assertThat(self.status()).as("separation of duties").isEqualTo(403);
-        money(approver, "/sales/legacy-invoice-reviews/" + reviewId + "/approve", Map.of("notes", "OK"));
+        assertThat(self.status()).as("separation of duties (approval engine)").isEqualTo(400);
+        assertThat(msg(self)).isEqualTo("You cannot approve a request you created");
+
+        // Rejected → back to the reviewer, who re-submits (a new request).
+        JsonNode rejected = money(approver, "/sales/legacy-invoice-reviews/" + reviewId + "/reject", Map.of("notes",
+                "Attach the delivery note"));
+        assertThat(rejected.get("status").asString()).isEqualTo("open");
+        assertThat(call("POST", "/sales/orders/" + v.orderId() + "/invoices", Map.of("mode", "regular"),
+                headers(adminToken)).status()).as("still blocked").isEqualTo(409);
+        String secondRequest = money(reviewer, "/sales/orders/" + v.orderId() + "/legacy-invoices/" + fleetInv
+                + "/review", Map.of("matches", List.of(match), "notes", "DN attached")).get("approvalRequestId")
+                .asString();
+        assertThat(secondRequest).isNotEqualTo(firstRequest);
+        JsonNode approved = money(approver, "/sales/legacy-invoice-reviews/" + reviewId + "/approve", Map.of("notes",
+                "OK"));
+        assertThat(approved.get("status").asString()).isEqualTo("reconciled");
+        assertThat(approved.get("approvedById").asString()).isNotEqualTo(approved.get("reviewedById").asString());
 
         assertThat(jdbc.sql("SELECT origin FROM \"SalesInvoiceLink\" WHERE \"documentId\" = ? AND \"legacyReviewId\" = ?")
                 .params(fleetInv, reviewId).query(String.class).single()).isEqualTo("legacy_fleet");
@@ -289,10 +324,77 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
         String reviewId = money(reviewer, "/sales/orders/" + v.orderId() + "/legacy-invoices/" + fleetInv + "/review",
                 Map.of("matches", List.of(Map.of("documentLineId", proposed.get("documentLineId").asString(),
                         "orderLineId", proposed.get("orderLineId").asString(), "quantity", 5)))).get("id").asString();
+        String request = jdbc.sql("SELECT \"approvalRequestId\" FROM \"SalesLegacyInvoiceReview\" WHERE id = ?")
+                .param(reviewId).query(String.class).single();
         money(reviewer, "/sales/legacy-invoice-reviews/" + reviewId + "/exception", Map.of("notes",
                 "Fleet invoice billed 7 t of a 5 t order"));
+        assertThat(jdbc.sql("SELECT status::text FROM \"ApprovalRequest\" WHERE id = ?").param(request)
+                .query(String.class).single()).as("the pending request is withdrawn").isNotEqualTo("pending");
         Res blocked = call("POST", "/sales/orders/" + v.orderId() + "/invoices", Map.of("mode", "regular"),
                 headers(adminToken));
         assertThat(blocked.status()).isEqualTo(409);
+    }
+
+    /** A Fleet goods invoice from before A4 on the order's delivery order (stand-in), {@code qty} t of sand. */
+    String legacyInvoice(Delivery v, int qty) {
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate",
+                java.time.LocalDate.now().toString(), "lines", List.of(Map.of("productId", sand, "quantity", qty,
+                        "unitPrice", 45000)))).get("id").asString();
+        jdbc.sql("UPDATE \"FleetDeliveryOrder\" SET \"goodsInvoiceId\" = ?, \"goodsInvoiceKind\" = 'document' WHERE id = ?")
+                .params(inv, doOf(v.orderId())).update();
+        return inv;
+    }
+
+    Map<String, Object> fullMatch(Delivery v) {
+        JsonNode p = ok(200, "GET", "/sales/orders/" + v.orderId() + "/legacy-invoices", null).get("invoices").get(0)
+                .get("proposedMatches").get(0);
+        return Map.of("documentLineId", p.get("documentLineId").asString(), "orderLineId", p.get("orderLineId")
+                .asString(), "quantity", p.get("quantity").asDouble());
+    }
+
+    @Test
+    @DisplayName("legacy review approved in the generic approvals inbox reconciles through approval.decided")
+    void legacyApprovedFromApprovalsInbox() {
+        Delivery v = dispatched(sand, 4);
+        pod(v, Map.of("deliveredQty", 4));
+        String inv = legacyInvoice(v, 4);
+        JsonNode review = money(reviewer, "/sales/orders/" + v.orderId() + "/legacy-invoices/" + inv + "/review",
+                Map.of("matches", List.of(fullMatch(v))));
+        Res decided = call("POST", "/approvals/" + review.get("approvalRequestId").asString() + "/decide",
+                Map.of("status", "approved", "comment", "Checked in the inbox"), headers(adminToken));
+        assertThat(decided.status()).as(decided.raw().body()).isEqualTo(201);
+        drainOutboxFully();
+        assertThat(jdbc.sql("SELECT status FROM \"SalesLegacyInvoiceReview\" WHERE id = ?").param(review.get("id")
+                .asString()).query(String.class).single()).isEqualTo("reconciled");
+        assertThat(ok(200, "GET", "/sales/orders/" + v.orderId() + "/billing", null).get("blocked").asBoolean())
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("legacy review: a switched-off approval workflow refuses the submission (never auto-approves)")
+    void legacyWorkflowOffRefuses() {
+        Delivery v = dispatched(sand, 3);
+        pod(v, Map.of("deliveredQty", 3));
+        String inv = legacyInvoice(v, 3);
+        Map<String, Object> match = fullMatch(v);
+        // Make sure the organisation's workflow exists, then switch it off for this test only.
+        Delivery seedV = dispatched(sand, 2);
+        pod(seedV, Map.of("deliveredQty", 2));
+        String seedInv = legacyInvoice(seedV, 2);
+        money(reviewer, "/sales/orders/" + seedV.orderId() + "/legacy-invoices/" + seedInv + "/review",
+                Map.of("matches", List.of(fullMatch(seedV))));
+        jdbc.sql("UPDATE \"ApprovalWorkflow\" SET \"isActive\" = false WHERE \"organizationId\" = ? AND \"entityType\" ="
+                + " 'sales_legacy_invoice_review'").param(demoOrg).update();
+        try {
+            Res off = call("POST", "/sales/orders/" + v.orderId() + "/legacy-invoices/" + inv + "/review",
+                    Map.of("matches", List.of(match)), headers(reviewer));
+            assertThat(off.status()).isEqualTo(409);
+            assertThat(msg(off)).startsWith("The approval workflow for legacy Fleet invoice reviews is switched off");
+            assertThat(jdbc.sql("SELECT count(*) FROM \"SalesInvoiceLink\" WHERE \"documentId\" = ?").param(inv)
+                    .query(Long.class).single()).isZero();
+        } finally {
+            jdbc.sql("UPDATE \"ApprovalWorkflow\" SET \"isActive\" = true WHERE \"organizationId\" = ? AND"
+                    + " \"entityType\" = 'sales_legacy_invoice_review'").param(demoOrg).update();
+        }
     }
 }
