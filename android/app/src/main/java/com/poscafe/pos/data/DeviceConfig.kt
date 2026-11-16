@@ -232,6 +232,16 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         get() = prefs.getInt("taxScale", 2)
         set(v) = prefs.edit().putInt("taxScale", v).apply()
 
+    /** Organisation currency code shown next to every amount; UGX until a server says otherwise. */
+    var currencyCode: String
+        get() = prefs.getString("currencyCode", "UGX") ?: "UGX"
+        set(v) = prefs.edit().putString("currencyCode", v).apply()
+
+    /** Decimal places amounts are shown with (the organisation currency's). */
+    var currencyDecimals: Int
+        get() = prefs.getInt("currencyDecimals", 0)
+        set(v) = prefs.edit().putInt("currencyDecimals", v).apply()
+
     /** Queued legacy menuItem.upsert payloads already rescaled (one-shot). */
     var legacyMenuQueueRescaled: Boolean
         get() = prefs.getBoolean("legacyMenuQueueRescaled", false)

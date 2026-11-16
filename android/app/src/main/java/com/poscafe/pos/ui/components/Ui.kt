@@ -30,7 +30,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -46,18 +48,50 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import kotlin.math.abs
 
-/** UGX money formatting — whole shillings, thousands-grouped. */
+/**
+ * Money formatting in the organisation's currency, thousands-grouped. The code and
+ * its decimal places come from the server with every pull ([configure]); until a
+ * server has said otherwise the till shows whole Uganda shillings, as it always has.
+ */
 object Money {
-    fun format(v: Double): String = "UGX ${bare(v)}"
-    fun bare(v: Double): String {
-        val rounded = kotlin.math.round(v)
-        val s = "%,.0f".format(abs(rounded))
-        return if (rounded < 0) "-$s" else s
+    @Volatile var code: String = "UGX"
+        private set
+
+    @Volatile var decimals: Int = 0
+        private set
+
+    fun configure(code: String, decimals: Int) {
+        this.code = code.trim().ifBlank { "UGX" }
+        this.decimals = decimals.coerceIn(0, 4)
     }
+
+    fun format(v: Double): String = "$code ${bare(v)}"
+
+    fun bare(v: Double): String {
+        val rounded = java.math.BigDecimal.valueOf(v).setScale(decimals, java.math.RoundingMode.HALF_UP)
+        val s = "%,.${decimals}f".format(java.util.Locale.US, rounded.abs())
+        return if (rounded.signum() < 0) "-$s" else s
+    }
+}
+
+/**
+ * A stable accent per name, so staff and menu tiles without a photo are told apart
+ * by colour as well as by initial. Mid-tone hues: readable as ink on a wash of
+ * themselves in both the light and the dark scheme.
+ */
+private val AvatarHues = listOf(
+    Color(0xFF0E9F6E), Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899),
+    Color(0xFFF97316), Color(0xFF14B8A6), Color(0xFFCA8A04), Color(0xFF6366F1),
+)
+
+fun avatarHue(name: String): Color {
+    val key = name.trim().lowercase()
+    if (key.isEmpty()) return AvatarHues[0]
+    return AvatarHues[Math.floorMod(key.hashCode(), AvatarHues.size)]
 }
 
 /** Gentle press-scale used on tappable cards — subtle, never bouncy. */
@@ -171,6 +205,7 @@ private fun StepButton(label: String, onClick: () -> Unit, size: Dp, filled: Boo
 @Composable
 fun ItemImage(url: String?, name: String, modifier: Modifier = Modifier) {
     val initial = remember(name) { name.trim().take(1).uppercase().ifBlank { "•" } }
+    val hue = remember(name) { avatarHue(name) }
     Box(modifier.clip(RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
         // Branded fallback, always painted behind the photo: a soft gradient with
         // the item's initial in a circular chip — reads as intentional, not empty,
@@ -178,24 +213,21 @@ fun ItemImage(url: String?, name: String, modifier: Modifier = Modifier) {
         Box(
             Modifier.fillMaxSize().background(
                 Brush.linearGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                        MaterialTheme.colorScheme.surfaceContainerHighest,
-                    ),
+                    listOf(hue.copy(alpha = 0.20f), hue.copy(alpha = 0.06f)),
                 ),
             ),
         )
         Box(
             Modifier
                 .size(46.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), CircleShape),
+                .background(hue.copy(alpha = 0.18f), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 initial,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                color = hue,
             )
         }
         if (url != null) {
@@ -228,10 +260,17 @@ fun StatCard(value: String, label: String, modifier: Modifier = Modifier, accent
         modifier = modifier,
     ) {
         Column(Modifier.padding(16.dp)) {
+            // One line, shrunk to fit: three tiles side by side on a phone used to
+            // break "45,000" across two lines.
+            val base = MaterialTheme.typography.headlineSmall
+            var size by remember(value) { mutableStateOf(base.fontSize) }
             Text(
                 value,
-                style = MaterialTheme.typography.headlineSmall,
+                style = base.copy(fontSize = size),
                 color = accent ?: MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false,
+                onTextLayout = { if (it.hasVisualOverflow && size.value > 12f) size = (size.value * 0.9f).sp },
             )
             Spacer(Modifier.height(2.dp))
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -248,7 +248,7 @@ private fun ExpenseEditorDialog(
                 }
                 OutlinedTextField(
                     value = amount, onValueChange = { amount = it.filter { ch -> ch.isDigit() || ch == '.' } },
-                    label = { Text("Amount (UGX)") }, singleLine = true,
+                    label = { Text("Amount (${Money.code})") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
                 )

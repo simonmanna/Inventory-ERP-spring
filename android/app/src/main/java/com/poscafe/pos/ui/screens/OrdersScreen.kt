@@ -1,6 +1,7 @@
 package com.poscafe.pos.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,11 +9,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,6 +52,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -216,7 +221,25 @@ class OrdersViewModel @Inject constructor(
 @Composable
 fun OrdersScreen(onMenu: (() -> Unit)? = null, vm: OrdersViewModel = hiltViewModel()) {
     val sales by vm.sales.collectAsStateWithLifecycle()
-    val timeFmt = remember { DateTimeFormatter.ofPattern("EEE d MMM · HH:mm").withZone(ZoneId.systemDefault()) }
+    val zone = remember { ZoneId.systemDefault() }
+    val timeFmt = remember { DateTimeFormatter.ofPattern("EEE d MMM · HH:mm").withZone(zone) }
+    val cardFmt = remember { DateTimeFormatter.ofPattern("HH:mm").withZone(zone) }
+    val dayFmt = remember { DateTimeFormatter.ofPattern("EEE d MMM") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(OrderFilter.All) }
+    val standalone = vm.config.standalone
+    val shown = remember(sales, query, filter) {
+        val q = query.trim()
+        sales.filter { s ->
+            filter.matches(s.syncStatus) && (
+                q.isEmpty() || s.provisionalNumber.contains(q, ignoreCase = true) ||
+                    s.finalInvoiceNumber?.contains(q, ignoreCase = true) == true
+                )
+        }
+    }
+    // Newest first already, so the days come out in order.
+    val days = remember(shown) { shown.groupBy { Instant.ofEpochMilli(it.occurredAt).atZone(zone).toLocalDate() } }
+    val today = remember(sales) { LocalDate.now(zone) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(
@@ -237,12 +260,64 @@ fun OrdersScreen(onMenu: (() -> Unit)? = null, vm: OrdersViewModel = hiltViewMod
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 16.dp),
-            ) {
-                items(sales, key = { it.id }) { sale ->
-                    SaleCard(sale, timeFmt, standalone = vm.config.standalone, onClick = { vm.openDetail(sale) })
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search receipt number", maxLines = 1) },
+                leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(20.dp)) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Close, "Clear search") }
+                    }
+                },
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // Sync state only exists against a server; a standalone till has nothing to filter by.
+            if (!standalone) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OrderFilter.entries.forEach { f ->
+                        val n = if (f == OrderFilter.All) sales.size else sales.count { f.matches(it.syncStatus) }
+                        CategoryChip(if (f == OrderFilter.All) f.label else "${f.label} · $n", filter == f) { filter = f }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            if (shown.isEmpty()) {
+                EmptyState(
+                    icon = Icons.Outlined.ReceiptLong,
+                    title = "Nothing matches",
+                    subtitle = "Try another receipt number or filter.",
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                ) {
+                    days.forEach { (day, list) ->
+                        item(key = "day-$day") {
+                            // Rejected and discarded sales never reached the books; leave them out of the day's takings.
+                            val counted = list.filter { it.syncStatus != "failed" && it.syncStatus != "discarded" }
+                            DayHeader(
+                                label = when (day) {
+                                    today -> "Today"
+                                    today.minusDays(1) -> "Yesterday"
+                                    else -> dayFmt.format(day)
+                                },
+                                summary = "${counted.size} ${if (counted.size == 1) "order" else "orders"} · " +
+                                    Money.format(counted.sumOf { it.total }),
+                            )
+                        }
+                        items(list, key = { it.id }) { sale ->
+                            SaleCard(sale, cardFmt, standalone = standalone, onClick = { vm.openDetail(sale) })
+                        }
+                    }
                 }
             }
         }
@@ -272,6 +347,32 @@ fun OrdersScreen(onMenu: (() -> Unit)? = null, vm: OrdersViewModel = hiltViewMod
             onConfirm = { reason, pin, qty, disposition -> vm.confirmAction(reason, pin, qty, disposition) },
             onDismiss = { vm.cancelPin() },
         )
+    }
+}
+
+/** Which sales the list shows, by where they are on their way to the server. */
+private enum class OrderFilter(val label: String) {
+    All("All"),
+    Pending("Pending"),
+    Problems("Problems"),
+    ;
+
+    fun matches(status: String): Boolean = when (this) {
+        All -> true
+        Problems -> status == "failed" || status == "discarded"
+        Pending -> status !in setOf("pushed", "synced", "applied", "failed", "discarded")
+    }
+}
+
+@Composable
+private fun DayHeader(label: String, summary: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp, end = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Text(summary, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
