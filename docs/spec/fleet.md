@@ -1055,6 +1055,21 @@ since A3, kept in step in every transaction that changes a line's facts or claim
 - Dispatch issues a non-base-unit line's base quantity cumulatively per delivery-order line (Phase I2 M-6).
 
 Full rules: [sales.md, Phase A3](sales.md#quantity-buckets-pod-correction-and-line-history-phase-a3-2026-11-16-v497).
+
+### Goods invoice ledger and ownership (Phase A4, V498)
+
+`POST /fleet/delivery-orders/{id}/invoice` no longer invoices the goods of a **Sales-module** order's delivery order:
+Sales owns them, and only the transport charge is invoiced here. Other delivery orders, including back-office orders
+of the orders module (Nest parity), invoice what is accepted and not yet on a live invoice. Partial invoicing works;
+each goods line is recorded in the immutable `FleetDeliveryInvoiceLine` ledger through `DeliveryInvoicing`.
+
+- A goods invoice from before A4 (no ledger rows) counts as having invoiced the delivery order in full.
+- Cancelling or rejecting the invoice releases its allocations; credit notes do not.
+- A late confirmed claim credits at most what was invoiced beyond accepted.
+- `FleetInvoicePostGuard` refuses to post a draft whose delivery order now invoices more than it accepted.
+- The reconciliation run adds `financial` findings.
+
+Full rules: [sales.md, Phase A4](sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v498).
 ## 1.4 Weighbridge — done (1.4a core + 1.4b dispatch wiring)
 
 Requirements §5.1, ADR-S009 §3 / §7. 1.4a = stations, devices + adapter SPI, stored tares, the ticket workflow with

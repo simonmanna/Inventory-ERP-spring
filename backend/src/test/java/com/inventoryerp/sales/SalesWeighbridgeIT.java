@@ -232,9 +232,10 @@ class SalesWeighbridgeIT extends ApiTestSupport {
         // A replayed or second dispatch never issues again.
         assertThat(issue(d).status()).isBetween(400, 409);
         assertThat(before.subtract(onHand())).isEqualByComparingTo("20.04");
-        // Weighed basis bills the ticket net (current rule; D1 moves invoiceability to after POD in A4).
+        // Phase A A4 (decision A-2): the weighed basis is invoiceable only after the POD — the ticket proves what left
+        // the quarry, not what the customer accepted.
         assertThat(jdbc.sql("SELECT \"qtyBillable\" FROM \"SalesOrderLine\" WHERE id = ?").param(o.get("lines").get(0)
-                .get("id").asString()).query(BigDecimal.class).single()).isEqualByComparingTo("20.04");
+                .get("id").asString()).query(BigDecimal.class).single()).isEqualByComparingTo("0");
 
         HttpResponse<byte[]> note = downloadBytes("/sales/deliveries/" + d + "/note");
         assertThat(note.statusCode()).isEqualTo(200);

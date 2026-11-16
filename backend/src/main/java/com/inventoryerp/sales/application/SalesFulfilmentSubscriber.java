@@ -26,10 +26,12 @@ public class SalesFulfilmentSubscriber {
 
     private final EventBus events;
     private final SalesFulfilmentService fulfilment;
+    private final SalesBillingService billing;
 
-    public SalesFulfilmentSubscriber(EventBus events, SalesFulfilmentService fulfilment) {
+    public SalesFulfilmentSubscriber(EventBus events, SalesFulfilmentService fulfilment, SalesBillingService billing) {
         this.events = events;
         this.fulfilment = fulfilment;
+        this.billing = billing;
     }
 
     @PostConstruct
@@ -53,6 +55,11 @@ public class SalesFulfilmentSubscriber {
             }
             try {
                 fulfilment.rebuild(orderId);
+                // Phase A A4 (plan §13): a claim confirmed after invoicing gets a draft credit note (once).
+                if (DomainEvents.FLEET_DELIVERY_DISCREPANCY_DECIDED.equals(name)
+                        && "confirmed".equals(p.path("claimDecision").asString(""))) {
+                    billing.lateDisputeCredit(orderId, p.path("discrepancyId").asString(""));
+                }
                 fulfilment.logEvent(name, "fleet", sourceId, orderId, p.toString(), "applied", null);
             } catch (RuntimeException e) {
                 log.warn("Sales projection rebuild failed for order {} on {}: {}", orderId, name, e.toString());

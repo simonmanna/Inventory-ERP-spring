@@ -68,10 +68,13 @@ public class FleetDiscrepancyService {
     private final EventBus events;
     private final LoadLineQuantityService quantities;
     private final LoadLineHistory history;
+    private final DeliveryInvoicing ledger;
 
     public FleetDiscrepancyService(FleetDb db, SequenceService sequence, ApprovalsService approvals,
             ApprovalAdminService approvalAdmin, CreditNoteService creditNotes, FleetDeliveryOrderService orders,
-            AuditService audit, EventBus events, LoadLineQuantityService quantities, LoadLineHistory history) {
+            AuditService audit, EventBus events, LoadLineQuantityService quantities, LoadLineHistory history,
+            DeliveryInvoicing ledger) {
+        this.ledger = ledger;
         this.db = db;
         this.sequence = sequence;
         this.approvals = approvals;
@@ -464,8 +467,20 @@ public class FleetDiscrepancyService {
      * Sales-owned orders credit through Sales). A4 narrows the quantity to what was invoiced beyond accepted.
      */
     private Map<String, Object> lateCredit(Map<String, Object> x, Map<String, Object> order, BigDecimal qty) {
-        if (order.get("goodsInvoiceId") == null || "sales_order".equals(order.get("sourceType"))) {
+        if (order.get("goodsInvoiceId") == null
+                || ledger.salesOwned((String) order.get("sourceType"), (String) order.get("sourceId"))) {
             return null;
+        }
+        // Phase A A4 (plan §13): with the goods ledger, credit only what was invoiced beyond accepted —
+        // min(confirmed, gross invoiced − accepted). Accepted already excludes the pending claim being confirmed.
+        if (ledger.hasLedger((String) order.get("id"))) {
+            String doLine = db.jdbc().sql("SELECT \"deliveryOrderLineId\" FROM \"FleetLoadLine\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(x.get("loadLineId"), FleetDb.org()).query(String.class).optional()
+                    .orElse(null);
+            qty = doLine == null ? BigDecimal.ZERO : qty.min(ledger.overInvoiced(doLine));
+            if (qty.signum() <= 0) {
+                return null;
+            }
         }
         return creditNoteRequest(x, order, qty);
     }
