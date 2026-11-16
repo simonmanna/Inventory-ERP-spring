@@ -956,6 +956,16 @@
     "post": "contract:post",
     "approve": "contract:approve"
   },
+  "bond": {
+    "read": "bond:read",
+    "manage": "bond:manage",
+    "post": "bond:post"
+  },
+  "compliance": {
+    "read": "compliance:read",
+    "manage": "compliance:manage",
+    "override": "compliance:override"
+  },
   "profitability": {
     "read": "profitability:read",
     "manage": "profitability:manage"

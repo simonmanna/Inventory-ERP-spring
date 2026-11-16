@@ -95,6 +95,19 @@ public class ProjectCostService {
         return accounts.ensureByCode("1460", "Project Work in Progress", "current_asset", "project_wip");
     }
 
+    /**
+     * Construction in Progress (ADR-S074): where a capital (own-use) project accumulates its cost instead of 1460.
+     */
+    public String cipAccount() {
+        return accounts.ensureByCode("1690", "Construction in Progress", "construction_in_progress",
+                "construction_in_progress");
+    }
+
+    /** The account a project's cost is debited to: CIP for a capital project, otherwise project WIP 1460. */
+    public String costAccount(Map<String, Object> project) {
+        return Boolean.TRUE.equals(project.get("isCapital")) ? cipAccount() : wipAccount();
+    }
+
     public String labourAbsorbedAccount() {
         return accounts.ensureByCode("5390", "Labour Absorbed to Projects", "operating_expense",
                 "project_labour_absorbed");
@@ -449,8 +462,8 @@ public class ProjectCostService {
         BigDecimal wip = jdbc.sql("SELECT coalesce(sum(jl.\"baseDebit\" - jl.\"baseCredit\"), 0) FROM \"JournalLine\" jl"
                 + " JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\" WHERE jl.\"organizationId\" = ? AND"
                 + " jl.\"accountId\" = ? AND jl.dimensions ->> 'projectId' = ? AND e.status <> 'draft'").params(org(),
-                wipAccount(), projectId).query(BigDecimal.class).single();
-        BigDecimal released = releasedFromWip(projectId);
+                costAccount(p), projectId).query(BigDecimal.class).single();
+        BigDecimal released = releasedFromWip(projectId).add(capitalised(projectId));
         return Obj.of("projectId", projectId, "code", p.get("code"), "budgetId", budget, "rows", out, "totals",
                 Obj.of("budget", JsNumbers.dec(tb), "committed", JsNumbers.dec(committed), "actual",
                         JsNumbers.dec(ta), "costToComplete", JsNumbers.dec(te), "eac", JsNumbers.dec(eac),
@@ -463,6 +476,12 @@ public class ProjectCostService {
     public BigDecimal releasedFromWip(String projectId) {
         return jdbc.sql("SELECT coalesce(sum(\"costThisPeriod\"), 0) FROM \"RevenueRecognitionRun\" WHERE"
                 + " \"projectId\" = ? AND status = 'posted'").param(projectId).query(BigDecimal.class).single();
+    }
+
+    /** Cost moved out of CIP into fixed assets by posted capitalisations (ADR-S074); 0 for other projects. */
+    public BigDecimal capitalised(String projectId) {
+        return jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"ProjectCapitalisation\" WHERE \"projectId\" = ? AND"
+                + " status = 'posted'").param(projectId).query(BigDecimal.class).single();
     }
 
     private static Map<String, Object> row(Map<String, Map<String, Object>> rows, Map<String, Object> l) {
@@ -501,7 +520,7 @@ public class ProjectCostService {
     }
 
     private Line debit(Map<String, Object> p, Map<String, Object> w, String siteId, BigDecimal amount, String text) {
-        return new Line(wipAccount(), JsNumbers.dec(amount), null, (String) p.get("customerId"), text, branch(p),
+        return new Line(costAccount(p), JsNumbers.dec(amount), null, (String) p.get("customerId"), text, branch(p),
                 (String) p.get("costCenterId"), Obj.of("projectId", p.get("id"), "wbsId", w.get("id"), "siteId",
                         siteId));
     }

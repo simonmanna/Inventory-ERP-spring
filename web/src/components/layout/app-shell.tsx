@@ -829,6 +829,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/projects', label: tx('Projects'), icon: FolderKanban, permission: PERMISSIONS.projectTask.read },
       { to: '/projects/my-tasks', label: tx('My Tasks'), icon: ListTodo, permission: PERMISSIONS.projectTask.read },
       { to: '/projects/timesheets', label: tx('Timesheets'), icon: Timer, permission: PERMISSIONS.projectTimesheet.log },
+      { to: '/projects/bonds', label: tx('Bonds & Guarantees'), icon: ShieldCheck, permission: PERMISSIONS.bond.read },
       { to: '/projects/reports', label: tx('Project Reports'), icon: BarChart3, permission: PERMISSIONS.projectReport.read, group: 'Reporting' },
       { to: '/projects/tags', label: tx('Task Tags'), icon: Tags, permission: PERMISSIONS.projectTask.read, group: 'Configuration' },
     ],

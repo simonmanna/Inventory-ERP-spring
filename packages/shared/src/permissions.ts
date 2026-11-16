@@ -1216,6 +1216,23 @@ export const PERMISSIONS = {
     /// Approve variations and onerous-contract assessments (never your own).
     approve: 'contract:approve',
   },
+  // ---- Construction controls (ADR-S074) ----
+  bond: {
+    /// Bonds and guarantees register, lifecycle history and the exposure report (read only).
+    read: 'bond:read',
+    /// Record and edit draft bonds and guarantees (issued and received).
+    manage: 'bond:manage',
+    /// Activate, extend, reduce, release and call bonds (margin, commission and call journal entries).
+    post: 'bond:post',
+  },
+  compliance: {
+    /// Subcontractor compliance documents, lien waivers, gating settings and the gate log (read only).
+    read: 'compliance:read',
+    /// Record, verify and reject compliance documents and lien waivers; change the gating settings.
+    manage: 'compliance:manage',
+    /// Pass a blocking compliance gate once (valuation or payment) with a recorded reason (audited).
+    override: 'compliance:override',
+  },
   profitability: {
     /// Profitability facts by layer (actual / standard / estimate) and the GL reconciliation.
     read: 'profitability:read',

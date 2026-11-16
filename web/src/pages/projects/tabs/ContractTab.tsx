@@ -15,8 +15,9 @@ import { SubcontractsSection } from './contract/SubcontractsSection';
 import { RetentionsSection } from './contract/RetentionsSection';
 import { RevenueSection } from './contract/RevenueSection';
 import { OnerousSection } from './contract/OnerousSection';
+import { BondsSection } from './contract/BondsSection';
 
-type Sub = 'variations' | 'claims' | 'advances' | 'subcontracts' | 'retentions' | 'revenue' | 'onerous';
+type Sub = 'variations' | 'claims' | 'advances' | 'subcontracts' | 'retentions' | 'revenue' | 'onerous' | 'bonds';
 
 /**
  * Contract commercials of a project (CM-8b, ADR-S039): the contract position, then variations, progress claims,
@@ -52,6 +53,7 @@ export function ContractTab({ ws }: { ws: Workspace }) {
     { id: 'retentions', label: tx('Retentions') },
     { id: 'revenue', label: tx('Revenue') },
     { id: 'onerous', label: tx('Onerous') },
+    ...(has(PERMISSIONS.bond.read) ? [{ id: 'bonds' as Sub, label: tx('Bonds') }] : []),
   ];
 
   return (
@@ -79,6 +81,7 @@ export function ContractTab({ ws }: { ws: Workspace }) {
       {sub === 'retentions' && <RetentionsSection ws={ws} perms={perms} />}
       {sub === 'revenue' && <RevenueSection ws={ws} perms={perms} />}
       {sub === 'onerous' && <OnerousSection ws={ws} perms={perms} />}
+      {sub === 'bonds' && <BondsSection ws={ws} />}
     </div>
   );
 }

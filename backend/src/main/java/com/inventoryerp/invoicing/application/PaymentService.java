@@ -118,6 +118,14 @@ public class PaymentService {
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
+    /** Supplier payment guards (ADR-S074 subcontractor compliance), set by the container. */
+    private List<SupplierPaymentGuard> paymentGuards = List.of();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setPaymentGuards(List<SupplierPaymentGuard> paymentGuards) {
+        this.paymentGuards = paymentGuards;
+    }
+
     private static String org() {
         return TenantContext.organizationId();
     }
@@ -221,6 +229,11 @@ public class PaymentService {
     /** Supplier payment: Dr AP / Cr Cash|Bank (+ Cr withholding), behind the {@code supplier_payment} gate. */
     @Transactional
     public Map<String, Object> createSupplierPayment(PaymentInput dto, boolean nested) {
+        if (!paymentGuards.isEmpty()) {
+            List<String> billIds = dto.allocations() == null ? List.of() : dto.allocations().stream()
+                    .map(AllocationInput::documentId).filter(d -> d != null && !d.isEmpty()).toList();
+            paymentGuards.forEach(g -> g.beforeSupplierPayment(dto.partnerId(), billIds));
+        }
         Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(dto.amount()), "partnerId", dto.partnerId(),
                 "paymentMethod", dto.paymentMethod() != null ? dto.paymentMethod() : "cash");
         Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval("supplier_payment",

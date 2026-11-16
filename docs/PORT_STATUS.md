@@ -1596,3 +1596,7 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+
+## Bonds, subcontractor compliance and CIP capitalisation (ADR-S074, extension: no Nest counterpart)
+
+[Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).

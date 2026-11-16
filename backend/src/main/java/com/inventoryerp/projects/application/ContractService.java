@@ -112,6 +112,14 @@ public class ContractService {
         this.audit = audit;
     }
 
+    /** Subcontractor compliance gate (ADR-S074), set by the container; a hook so the constructor stays as is. */
+    private SubcontractComplianceService compliance;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCompliance(SubcontractComplianceService compliance) {
+        this.compliance = compliance;
+    }
+
     // ---- accounts -----------------------------------------------------------------------------------------------------
 
     public String unbilledAccount() {
@@ -605,6 +613,8 @@ public class ContractService {
         }
         Claim c = ContractCalculator.claim(cumulative, previous, SqlRows.dec(s, "retentionPct"), BigDecimal.ZERO,
                 BigDecimal.ZERO);
+        // ADR-S074: subcontractor compliance gate (no-op while no document type is gated).
+        List<String> complianceWarnings = compliance == null ? List.of() : compliance.checkValuation(subcontractId);
         String d = day(date) == null ? today().toString() : day(date);
         String id = UUID.randomUUID().toString();
         String number = seq.next("subcontract_valuation", "SCV/", 5);
@@ -614,7 +624,7 @@ public class ContractService {
         Map<String, Object> dims = Obj.of("projectId", projectId, "wbsId", s.get("wbsId"), "subcontractId",
                 subcontractId);
         List<Line> lines = new ArrayList<>();
-        lines.add(new Line(costs.wipAccount(), JsNumbers.dec(c.thisClaim()), null, supplier, label,
+        lines.add(new Line(costs.costAccount(p), JsNumbers.dec(c.thisClaim()), null, supplier, label,
                 (String) p.get("branchId"), (String) p.get("costCenterId"), dims));
         lines.add(new Line(clearing, null, JsNumbers.dec(c.net()), supplier, label, (String) p.get("branchId"), null,
                 dims));
@@ -647,7 +657,12 @@ public class ContractService {
         }
         audit.recordInTx(AuditInput.of("SubcontractValuation", id, "post", null, Obj.of("thisValuation",
                 c.thisClaim())));
-        return SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE id = ?").param(id));
+        Map<String, Object> result = SqlRows.one(jdbc.sql("SELECT * FROM \"SubcontractValuation\" WHERE id = ?")
+                .param(id));
+        if (!complianceWarnings.isEmpty()) {
+            result.put("complianceWarnings", complianceWarnings);
+        }
+        return result;
     }
 
     /** A back-charge or defects deduction: reduces the retention payable and the project cost. */
@@ -673,7 +688,7 @@ public class ContractService {
                 "project_back_charge", id, null, "projects:back_charge:" + org() + ":" + id, (String) p.get("branchId"),
                 null, null, List.of(new Line(retentionPayableAccount(), JsNumbers.dec(a), null,
                         (String) r.get("partnerId"), label, (String) p.get("branchId"), null, dims),
-                        new Line(costs.wipAccount(), null, JsNumbers.dec(a), (String) r.get("partnerId"), label,
+                        new Line(costs.costAccount(p), null, JsNumbers.dec(a), (String) r.get("partnerId"), label,
                                 (String) p.get("branchId"), (String) p.get("costCenterId"), dims))));
         String je = entry == null ? null : (String) entry.get("id");
         costLine(id, projectId, wbsId, "project_back_charge", id, retentionId, today().toString(), a.negate(),

@@ -65,6 +65,13 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 2. Depreciation maths runs on `BigDecimal` at 20 significant digits instead of JS doubles. The values stored in the
    `Decimal(18,6)` columns are the same apart from last-digit rounding edge cases.
 
+3. ADR-S074 (extension): assets created by a CIP capitalisation (`AssetCapitalisationService`, called by the projects
+   module) are `active`, acquisition method `constructed`, with no acquisition record and no `asset_acquisition`
+   approval gate (the projects capitalisation is the control). Their new `Asset.inServiceDate` column (V506) makes a
+   depreciation run skip periods before the in-service month. Assets without an in-service date are unaffected, and
+   the column is not part of the asset JSON. Reversing a capitalisation soft-deletes its assets. It is refused once
+   depreciation is posted.
+
 ## Same as Nest, kept on purpose
 
 - `period/:period` and `run` ignore the `:assetId` path segment. A run targets one asset only through `body.assetId`.

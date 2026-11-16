@@ -188,7 +188,10 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   with the gain/loss going to `asset_gain_loss`.
 - **Depreciation entries** carry the key `asset_depreciation:<id>`.
 - **`double_declining`** = 2 × the straight-line rate. Nest used 4 ×; `declining_balance` keeps Nest's 2 ×.
-- **Not built:** impairment, CIP capitalisation, units of production and per-category accounts.
+- **CIP capitalisation** (ADR-S074): a capital project's cost accumulates in 1690 Construction in Progress (mapping
+  `construction_in_progress`). A capitalisation posts Dr `fixed_asset_valuation` / Cr CIP and creates `constructed`
+  assets with an in-service date, where depreciation starts. It can be reversed while no depreciation is posted.
+- **Not built:** impairment, units of production and per-category accounts.
 
 **ACC-6: bank reconciliation (B5)**
 

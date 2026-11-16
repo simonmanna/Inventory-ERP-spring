@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Calculator, CheckCircle2, Plus, XCircle } from 'lucide-react';
+import { Calculator, CheckCircle2, Plus, ShieldCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
+import { notify } from '@/lib/notify';
 import { useSupplierOptions } from '@/features/procurement/api';
 import type { Workspace } from '@/features/projects/api';
 import { selectClass, shortDate, todayIso } from '@/features/projects/ui';
@@ -12,6 +13,7 @@ import {
   RETENTION_CONDITIONS, conditionLabel, contractApi, opt, useContractMutation, useSubcontracts,
   type RetentionCondition, type Subcontract, type Valuation,
 } from '@/features/projects/contract-api';
+import { SubcontractComplianceDialog, useCompliancePerms } from '../../compliance/ComplianceUi';
 import { Empty, Field, FormDialog, Money, Section, StatusPill, Table, isAmount, num, pct, td, tdRight, type ContractPerms } from './shared';
 
 /**
@@ -30,6 +32,8 @@ export function SubcontractsSection({ ws, perms }: { ws: Workspace; perms: Contr
   const { data: suppliers = [] } = useSupplierOptions(search);
   const [valuing, setValuing] = useState<SubcontractEntry | null>(null);
   const [v, setV] = useState({ cumulativeValue: '', date: todayIso() });
+  const compliancePerms = useCompliancePerms();
+  const [compliance, setCompliance] = useState<string | null>(null);
 
   const create = useContractMutation<void, Subcontract>(() => contractApi.createSubcontract(ws.id, {
     supplierId: f.supplierId, wbsId: f.wbsId, scope: opt(f.scope), value: f.value.trim(),
@@ -76,6 +80,11 @@ export function SubcontractsSection({ ws, perms }: { ws: Workspace; perms: Contr
                 <div className="flex items-center gap-3 text-sm">
                   <span>{tx('Valued')} <Money value={valued(e)} /> / <Money value={e.sub.value} /></span>
                   <StatusPill status={e.sub.status} />
+                  {compliancePerms.read && (
+                    <Button size="sm" variant="outline" onClick={() => setCompliance(e.sub.id)}>
+                      <ShieldCheck className="mr-1 h-3.5 w-3.5" />{tx('Compliance')}
+                    </Button>
+                  )}
                   {perms.post && e.sub.status === 'active' && (
                     <Button size="sm" variant="outline" onClick={() => { setV({ cumulativeValue: '', date: todayIso() }); setValuing(e); }}>
                       <Calculator className="mr-1 h-3.5 w-3.5" />{tx('Value')}
@@ -167,7 +176,11 @@ export function SubcontractsSection({ ws, perms }: { ws: Workspace; perms: Contr
         valid={vValid}
         pending={value.isPending}
         onSubmit={() => value.mutate(undefined, {
-          onSuccess: () => setValuing(null),
+          onSuccess: (r) => {
+            setValuing(null);
+            const warnings = (r as { complianceWarnings?: string[] } | undefined)?.complianceWarnings ?? [];
+            if (warnings.length > 0) notify.warning(tx('Compliance warnings'), warnings.join('; '));
+          },
         })}
       >
         <Field label={tx('Cumulative value to date')}>
@@ -177,6 +190,7 @@ export function SubcontractsSection({ ws, perms }: { ws: Workspace; perms: Contr
           <Input type="date" value={v.date} onChange={(e) => setV({ ...v, date: e.target.value })} />
         </Field>
       </FormDialog>
+      <SubcontractComplianceDialog subcontractId={compliance} onClose={() => setCompliance(null)} />
     </Section>
   );
 }
