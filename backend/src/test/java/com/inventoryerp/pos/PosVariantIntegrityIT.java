@@ -12,10 +12,15 @@ import com.inventoryerp.pos.application.PosStockPostingService;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -369,6 +374,57 @@ class PosVariantIntegrityIT extends ApiTestSupport {
         money(200, "POST", "/pos/invoices/" + invoiceId + "/refund", Map.of("reason", "Returned", "overrideById",
                 adminId, "overridePin", PIN, "stockDisposition", "restock", "cashSessionId", sessionId, "lines",
                 List.of(Map.of("lineId", lineId, "quantity", 1))));
+    }
+
+    /** Inventory subledger − GL inventory control account, org-wide (other tests' history is constant here). */
+    BigDecimal tieOutVariance() {
+        return new BigDecimal(ok(200, "GET", "/reports/inventory/gl-tieout", null).get("variance").asString());
+    }
+
+    @Test
+    @DisplayName("Reconciliation (I5): parallel drains on one variant quant issue each sale once; quant = Σ ledger;"
+            + " the GL moves with the subledger")
+    void parallelDrainsReconcile() throws Exception {
+        Map<String, String> v = variantProduct(100);
+        String p = v.get("product");
+        String smallId = v.get("Small");
+        BigDecimal varianceBefore = tieOutVariance();
+        List<String> invoices = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            invoices.add(sale(line(p, smallId, 2), 200).get("invoiceId").asString());
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        try {
+            List<Future<Object>> drains = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                drains.add(pool.submit((Callable<Object>) () -> {
+                    asOrgRun(() -> postings.drainSession(sessionId));
+                    return null;
+                }));
+            }
+            for (Future<Object> d : drains) {
+                d.get();
+            }
+        } finally {
+            pool.shutdown();
+        }
+        asOrgRun(() -> postings.drainSession(sessionId));
+
+        assertThat(quant(p, smallId)).as("20 − 6 × 2").isEqualByComparingTo("8");
+        for (String inv : invoices) {
+            assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                    + " \"referenceType\" = 'pos_invoice' AND \"referenceId\" = ?").params(demoOrg, inv)
+                    .query(Long.class).single()).as("one issue for " + inv).isEqualTo(1L);
+        }
+        List<Map<String, Object>> drift = jdbc.sql("SELECT s.\"variantKey\", s.\"locationId\", s.quantity,"
+                + " (SELECT coalesce(sum(l.\"quantityChange\"), 0) FROM \"InventoryLedger\" l WHERE"
+                + " l.\"organizationId\" = s.\"organizationId\" AND l.\"productId\" = s.\"productId\" AND"
+                + " coalesce(l.\"variantId\", '') = s.\"variantKey\" AND l.\"locationId\" = s.\"locationId\") AS ledger"
+                + " FROM \"StockItem\" s WHERE s.\"organizationId\" = ? AND s.\"productId\" = ?")
+                .params(demoOrg, p).query().listOfRows().stream()
+                .filter(r -> ((BigDecimal) r.get("quantity")).compareTo((BigDecimal) r.get("ledger")) != 0).toList();
+        assertThat(drift).as("StockItem.quantity = Σ ledger per variant quant").isEmpty();
+        assertThat(tieOutVariance()).as("subledger and GL inventory moved together").isEqualByComparingTo(varianceBefore);
     }
 
     @Test
