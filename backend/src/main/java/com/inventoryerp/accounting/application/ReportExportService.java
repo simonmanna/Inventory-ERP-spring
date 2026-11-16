@@ -71,7 +71,8 @@ public class ReportExportService {
     @Transactional(readOnly = true)
     public Export trialBalanceCsv(String asOf) {
         String org = TenantContext.organizationId();
-        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf, AccountingDay.zone(jdbc)) : Instant.now();
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf, zone) : Instant.now();
         // Verbatim Nest SQL: the entry filter sits in the LEFT JOIN condition.
         List<List<Object>> rows = SqlRows.list(jdbc.sql("SELECT a.code, a.name, ac.key AS \"categoryKey\", ac.name AS \"categoryName\","
                         + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\"), 0)::text AS debit,"
@@ -89,7 +90,9 @@ public class ReportExportService {
                         toFixed2(r.get("debit")), toFixed2(r.get("credit")), toFixed2(r.get("balance"))))
                 .toList();
         String body = csv(List.of("code", "name", "category", "classification", "debit", "credit", "balance"), rows);
-        return new Export("trial-balance-" + day(date) + ".csv", body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        // The as-of day is the organisation's calendar day (accounting day): name the file after it, not after the UTC
+        // instant of its midnight (which is the day before east of UTC).
+        return new Export("trial-balance-" + java.time.LocalDate.ofInstant(date, zone) + ".csv", body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Transactional(readOnly = true)

@@ -171,8 +171,9 @@ class SalesAgreementIT extends ApiTestSupport {
                         "EMP-" + sfx, rep).update();
         String c = customer();
         jdbc.sql("UPDATE \"Partner\" SET \"salespersonId\" = ? WHERE id = ?").params(rep, c).update();
+        // Explicit basis: a new org's default is "paid" (V409), and the invoice below is not paid.
         ok(201, "POST", "/sales/commissions/rules", Map.of("name", "Rep 5% " + sfx, "salespersonId", rep, "method",
-                "percent_revenue", "rate", 5, "priority", 10));
+                "percent_revenue", "rate", 5, "priority", 10, "basis", "invoiced"));
         assertThat(as("POST", "/sales/commissions/rules", Map.of("name", "x", "rate", 1, "method", "bogus")).status())
                 .isEqualTo(400);
         String inv = postedInvoice(c, 10, today);
