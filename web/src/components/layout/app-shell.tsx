@@ -365,6 +365,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/reports/orders', label: tx('Orders & Fulfilment'), icon: ClipboardList, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/quotations', label: tx('Quotations & Pipeline'), icon: FileText, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/billing', label: tx('Billing & Collections'), icon: Receipt, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/branch-cash', label: tx('Branch Cash Sales'), icon: Banknote, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/discounts', label: tx('Discounts & Returns'), icon: Percent, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/team', label: tx('Team Performance'), icon: UsersRound, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/profitability', label: tx('Profitability'), icon: BarChart3, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },

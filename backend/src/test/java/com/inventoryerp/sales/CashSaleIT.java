@@ -10,6 +10,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.sales.application.FiscalAdapters;
 import com.inventoryerp.sales.web.CashSaleController;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -757,6 +758,63 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(il.get("pieces").asDouble()).isEqualTo(4);
         assertThat(il.get("length").asDouble()).isEqualTo(3);
         ledger.trialBalanceZero();
+    }
+
+    @Test
+    @DisplayName("Branch cash sales reports: takings, tenders, register, products, processing agree with the sales")
+    void branchCashSalesReports() {
+        String c = partner("Report Buyer " + sfx);
+        String a = confirmedCashSale(c, 2); // 70 000 + 12 600 VAT
+        String b = approved(c, 3); // 105 000 + 18 900 VAT
+        money("/sales/cash-sales/" + b + "/generate-invoice", null, 200);
+        String d = draft(c, 1); // a draft never counts as takings
+        String q = "from=" + LocalDate.now().minusDays(1) + "&to=" + LocalDate.now() + "&branchId=" + branch
+                + "&partnerId=" + c;
+
+        JsonNode sum = ok(200, "GET", "/sales/report-center/run/branch-cash-summary?" + q, null);
+        assertThat(sum.get("rows").size()).isEqualTo(1);
+        JsonNode row = sum.get("rows").get(0);
+        assertThat(row.get("sales").asInt()).isEqualTo(2);
+        assertThat(row.get("net").asDouble()).isEqualTo(175_000);
+        assertThat(row.get("tax").asDouble()).isEqualTo(31_500);
+        assertThat(row.get("total").asDouble()).isEqualTo(206_500);
+        assertThat(row.get("t_cash").asDouble()).isEqualTo(206_500);
+        assertThat(row.get("_drill").get("report").asString()).isEqualTo("branch-cash-daily");
+
+        JsonNode daily = ok(200, "GET", "/sales/report-center/run/branch-cash-daily?" + q, null);
+        assertThat(daily.get("totals").get("total").asDouble()).isEqualTo(206_500);
+        assertThat(daily.get("totals").get("b_" + branch).asDouble()).isEqualTo(206_500);
+
+        JsonNode tenders = ok(200, "GET", "/sales/report-center/run/branch-cash-tenders?" + q, null);
+        assertThat(tenders.get("totals").get("amount").asDouble()).isEqualTo(206_500);
+
+        JsonNode reg = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q, null);
+        assertThat(reg.get("rows").size()).isEqualTo(3);
+        JsonNode drafts = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=draft", null);
+        assertThat(drafts.get("rows").size()).isEqualTo(1);
+        assertThat(drafts.get("rows").get(0).get("_route").asString()).isEqualTo("/sales/cash-sales/" + d);
+        JsonNode inv = ok(200, "GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=invoiced", null);
+        assertThat(inv.get("rows").size()).isEqualTo(1);
+        assertThat(inv.get("rows").get(0).get("invoice").isNull()).isFalse();
+        assertThat(as("GET", "/sales/report-center/run/branch-cash-register?" + q + "&status=nope", null).status())
+                .isEqualTo(400);
+
+        JsonNode prod = ok(200, "GET", "/sales/report-center/run/branch-cash-products?" + q, null);
+        assertThat(prod.get("totals").get("quantity").asDouble()).isEqualTo(5);
+        assertThat(prod.get("totals").get("net").asDouble()).isEqualTo(175_000);
+        assertThat(prod.get("totals").get("cost").asDouble()).isEqualTo(105_000);
+
+        JsonNode proc = ok(200, "GET", "/sales/report-center/run/branch-cash-processing?" + q, null);
+        JsonNode p = proc.get("rows").get(0);
+        assertThat(p.get("not_submitted").asInt()).isEqualTo(1);
+        assertThat(p.get("invoiced").asInt()).isEqualTo(1);
+        assertThat(p.get("awaiting").asDouble()).isEqualTo(82_600);
+
+        for (String k : List.of("branch-cash-salespeople", "branch-cash-exceptions")) {
+            assertThat(ok(200, "GET", "/sales/report-center/run/" + k + "?" + q, null).get("key").asString())
+                    .isEqualTo(k);
+        }
+        assertThat(a).isNotNull();
     }
 
     @Test

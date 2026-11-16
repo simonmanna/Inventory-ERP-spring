@@ -284,6 +284,27 @@ Each ledger test asserts the following with `SalesLedgerAssertions`:
 - **Moved to CS-5:** T5 (several tax categories) and T31.
 - **T6:** see deviation 1.
 
+## Reports (2026-11-10)
+
+Report center category `branch-cash` (`BranchCashSaleReports`, `GET /sales/report-center/run/<key>`, permission
+`sales:report:read`, branch scope applied), web page **Sales → Reporting → Branch Cash Sales**
+(`/sales/reports/branch-cash`). Takings are **confirmed** sales (stock issued, money verified, revenue accrued) whether or
+not head office has invoiced them; drafts, cancelled and voided sales never count. Amounts are `amount × exchangeRate`.
+
+| Key | Report |
+|---|---|
+| `branch-cash-summary` | takings per branch: gross, discount, net, VAT, total, tender split, share, voided |
+| `branch-cash-daily` | takings per day / week / month (`groupBy`), one column per branch |
+| `branch-cash-tenders` | verified money per branch × tender and the account banked to |
+| `branch-cash-register` | every sale with stage and invoice; `status` = execution or processing stage |
+| `branch-cash-products` | quantity, net, average price, issue cost and gross profit per product × branch |
+| `branch-cash-salespeople` | sales, customers, takings per salesperson × branch |
+| `branch-cash-processing` | head-office stage counts, value awaiting invoice, age since sale, days sale → invoice |
+| `branch-cash-exceptions` | voided, rejected, returned sales with the reason |
+
+The Report Library (`reporting/catalogue.json`) links summary and daily under Multi-Branch & Consolidation, tenders
+and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports` and `SalesReportCenterIT`.
+
 ## Deviations (owner to confirm)
 
 1. **Base currency only.**
